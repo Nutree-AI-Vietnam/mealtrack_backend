@@ -94,8 +94,8 @@ redis-cli ping
 
 ### Cloudflare Cache or Integration Event Stalls
 
-**Problem:** A mutation succeeds, but its cache/integration event stays pending,
-keeps retrying, or lands in a DLQ.
+**Problem:** A mutation succeeds, but its cache/integration event does not reach
+Cloudflare Queue or the Worker.
 
 **Diagnosis:**
 ```bash
@@ -104,15 +104,25 @@ rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|Integ
 ```
 
 **Solutions:**
-1. For hydration, confirm the business row committed and the
-   `hydration.created.v1` outbox row exists. Other mutation paths may still use
-   `cache_invalidation.v1`.
-2. Check the outbox worker logs for disabled Queue publication, missing credentials, timeout, or 4xx rejection.
-3. Check the Worker logs for `integration_event_ack`, `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching `event_id`.
-4. For hydration, verify the Worker has valid Upstash Redis REST access,
+1. For hydration, confirm the business row committed, then check the API log for
+   the direct Queue publish result. Hydration no longer waits for the outbox
+   worker.
+2. If `CLOUDFLARE_QUEUE_ENABLED=false`, no hydration Queue publish is expected
+   in local or disabled mode. That is the intended behavior, not a fallback.
+3. Verify `CLOUDFLARE_QUEUE_ENABLED=true`, the environment-specific queue name,
+   and valid Queue credentials for environments that should publish.
+4. Check the Worker logs for `integration_event_ack`,
+   `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching
+   `event_id`.
+5. For hydration, verify the Worker has valid Upstash Redis REST access,
    `NEON_DATABASE_URL` (or `DATABASE_URL`), and the environment ingress queue.
    A handler failure or database lookup failure retries the whole ingress event.
-5. Leave `CLOUDFLARE_QUEUE_ENABLED=false` only when you want to stop new Queue publications; it does not repair pending rows.
+6. Other mutation paths may still have pending `cache_invalidation.v1` rows;
+   those continue to use the outbox worker.
+
+**MVP risk note:** if the SQL transaction commits and the direct Queue publish
+fails afterward, the hydration row is still durable but the event can be lost.
+There is no automatic outbox fallback for that path in this MVP.
 
 **Evidence note:** staging/live deployment proof for this slice is currently pending or blocked on environment credentials. Do not mark the rollout complete until Queue, Worker, and Upstash access are verified separately.
 

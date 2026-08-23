@@ -220,6 +220,7 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityPolicy
+from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.cache.provider_budget import MemoryProviderBudget, RedisProviderBudget
 from src.infra.config.settings import settings
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -497,6 +498,7 @@ def get_configured_event_bus() -> EventBus:
             meal_analyze_graph_enabled=graph_settings["graph_enabled"],
         ),
     )
+
     async def _download_image_bytes_pooled(image_url: str) -> bytes:
         from src.infra.http import get_shared_http_client
 
@@ -949,6 +951,11 @@ def get_configured_event_bus() -> EventBus:
         LogHydrationCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     event_bus.register_handler(

@@ -1,4 +1,5 @@
 from datetime import date
+from unittest.mock import AsyncMock
 
 import pytest
 from tests.fixtures.fakes.fake_outbox_repository import FakeOutboxRepository
@@ -33,9 +34,10 @@ class _Uow:
 
 
 @pytest.mark.asyncio
-async def test_hydration_write_enqueues_generic_event_in_same_uow() -> None:
+async def test_hydration_write_publishes_generic_event_after_uow() -> None:
     uow = _Uow()
-    await LogHydrationCommandHandler(uow).handle(
+    event_publisher = AsyncMock()
+    await LogHydrationCommandHandler(uow, event_publisher=event_publisher).handle(
         LogHydrationCommand(
             user_id="22222222-2222-2222-2222-222222222222",
             drink_id="water",
@@ -44,19 +46,10 @@ async def test_hydration_write_enqueues_generic_event_in_same_uow() -> None:
         )
     )
 
-    event_calls = [
-        call
-        for call in uow.outbox.enqueue_calls
-        if call["event_type"] == "hydration.created.v1"
-    ]
-    legacy_cache_calls = [
-        call
-        for call in uow.outbox.enqueue_calls
-        if call["event_type"] == "cache_invalidation.v1"
-    ]
-    assert len(event_calls) == 1
-    assert legacy_cache_calls == []
-    event_call = event_calls[0]
-    assert event_call["event_id"] == event_call["payload"]["event_id"]
-    assert event_call["payload"]["aggregate_id"] == event_call["aggregate_id"]
-    assert "data" not in event_call["payload"]
+    assert uow.outbox.enqueue_calls == []
+    event_publisher.publish.assert_awaited_once()
+    event_payload = event_publisher.publish.await_args.args[0]
+    assert event_payload["event_type"] == "hydration.created.v1"
+    assert event_payload["event_id"]
+    assert event_payload["aggregate_id"].startswith("hydr_")
+    assert "data" not in event_payload

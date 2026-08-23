@@ -74,23 +74,31 @@ retry, lease fencing, and dead-letter handling.
 
 ### Durable Integration Events
 
-Meal writes and other integration-producing commands now follow one durable
-path:
+Hydration and other integration-producing commands use the simplest suitable
+delivery path:
 
-1. The business transaction writes the authoritative row and the transactional
-   outbox row in the same unit of work.
-2. The backend relay publishes one versioned `IntegrationEvent` envelope to the
-   environment-specific ingress Queue.
-3. The Worker validates the common envelope once and the in-process
+1. Hydration writes the authoritative row, commits the transaction, and then
+   publishes one versioned `IntegrationEvent` envelope directly to the
+   environment-specific ingress Queue when Queue delivery is enabled.
+2. When `CLOUDFLARE_QUEUE_ENABLED=false`, local hydration writes skip
+   integration publication entirely because no Queue publisher is injected.
+3. Other durable background work may still write a transactional outbox row;
+   the backend relay publishes those rows.
+4. The Worker validates the common envelope once and the in-process
    orchestrator invokes every registered handler for that event type in order.
    Handlers retrieve current source data through their own ports using the
    aggregate ID; hydration cache invalidation looks up the hydration row and
    the user's timezone in Neon.
-4. The Worker ACKs only after all handlers succeed. A failure retries the whole
+5. The Worker ACKs only after all handlers succeed. A failure retries the whole
    ingress message and eventually sends it to the ingress DLQ.
-5. `cache_invalidation.v1` remains the compatibility owner for other
+6. `cache_invalidation.v1` remains the compatibility owner for other
    delete-only cache paths; hydration creation now owns the generic hydration
    event.
+
+This MVP accepts the post-commit Queue loss window for hydration. If the SQL
+transaction commits and the direct publish fails before Cloudflare accepts the
+message, the hydration row remains durable but the integration event can be
+lost. There is no automatic transactional fallback for that hydration publish.
 
 Handlers are intentionally in code for the MVP. This path does not use HMAC,
 local-vs-Cloudflare dual routing, percentage canaries, cache-value writes, D1

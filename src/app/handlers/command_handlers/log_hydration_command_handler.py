@@ -10,6 +10,9 @@ from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.nutrition import Nutrition
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.services.hydration_catalog_service import find_by_id, localized_name
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
@@ -28,10 +31,12 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
     def __init__(
         self,
         uow: AsyncUnitOfWork,
+        event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
         self.uow = uow
         self.environment = environment
+        self.event_publisher = event_publisher
 
     async def handle(self, cmd: LogHydrationCommand) -> dict:
         drink = find_by_id(cmd.drink_id)
@@ -120,12 +125,13 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                 environment=self.environment,
                 aggregate_id=hydration_entry.id,
             )
-            await uow.outbox.enqueue(
-                integration_event.event_type,
-                integration_event.to_payload(),
-                event_id=integration_event.event_id,
-                aggregate_type=integration_event.aggregate_type,
-                aggregate_id=integration_event.aggregate_id,
+
+        if self.event_publisher is not None:
+            await self.event_publisher.publish(integration_event.to_payload())
+            logger.info(
+                "Published hydration integration event event_id=%s aggregate_id=%s",
+                integration_event.event_id,
+                integration_event.aggregate_id,
             )
 
         kcal = round(saved.nutrition.calories if saved.nutrition else 0.0, 1)

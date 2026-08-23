@@ -5,7 +5,7 @@ status: in-progress
 priority: P2
 branch: "architecture/optimize-architecture"
 tags: [architecture, integration-events, hydration, cloudflare-queues]
-blockedBy: []
+blockedBy: [260823-1754-simplify-hydration-direct-queue-delivery]
 blocks: []
 created: "2026-08-23T03:57:04.151Z"
 createdBy: ck:plan
@@ -17,13 +17,21 @@ source: skill
 ## Overview
 
 Use one versioned `hydration.created.v1` event as the stable boundary between
-`mealtrack_backend` and `nutreeai_async`. The backend writes a small ID-only
-event to the existing PostgreSQL outbox in the same transaction as the
-hydration. The Worker validates one generic envelope, routes by `event_type`,
-and lets each handler load the source data it needs by `aggregate_id`. The
+`mealtrack_backend` and `nutreeai_async`. The backend commits the hydration,
+then publishes a small ID-only event directly to the environment ingress
+Queue. The Worker validates one generic envelope, routes by `event_type`, and
+lets each handler load the source data it needs by `aggregate_id`. The
 orchestrator invokes each handler for the event and ACKs only when all handlers
 succeed. Cloudflare Queue retries the whole event when any handler fails and
-moves it to the ingress DLQ after the configured retry limit.
+moves it to the ingress DLQ after the configured retry limit. Other durable
+background flows may continue using the PostgreSQL outbox.
+
+Current status: the direct hydration publish is the intended MVP path when
+Queue delivery is enabled. Local or disabled Queue mode skips hydration
+publication entirely, and the remaining outbox-backed flows stay unchanged. The
+accepted MVP risk is the post-commit loss window: if Cloudflare rejects or
+fails the publish after the SQL commit, the hydration row is durable but the
+event can be lost.
 
 The MVP deliberately does not add a delivery database, lease ledger, runtime
 subscription service, or exactly-once claim. Queue delivery is at-least-once;
@@ -32,7 +40,7 @@ handlers own effect idempotency.
 ## Core flow
 
 ```text
-hydration write + outbox
+hydration write + commit + direct Queue publish
   -> mealtrack-events[-environment]
   -> event orchestrator
       -> CacheInvalidationHydrationHandler
@@ -54,7 +62,10 @@ hydration write + outbox
 
 ## Scope decisions
 
-- Keep the existing PostgreSQL outbox and backend ownership of business data.
+- Keep the existing PostgreSQL outbox for unrelated durable background work;
+  hydration publication is direct after commit.
+- Treat `CLOUDFLARE_QUEUE_ENABLED=false` as explicit local/disabled behavior for
+  hydration, not as an outbox fallback.
 - Keep one ingress queue per environment.
 - Use one Worker orchestrator and a code-owned handler registry for the MVP; do not add dynamic JSON subscription configuration.
 - Make hydration cache invalidation the first live generic handler.
@@ -67,17 +78,23 @@ hydration write + outbox
 
 ## Success criteria
 
-- One committed hydration creates one canonical integration outbox event.
-- The event reaches the ingress queue only through the outbox dispatcher.
+- One committed hydration creates one canonical integration event and publishes
+  it directly to the ingress queue when Queue delivery is enabled.
+- Local or disabled Queue mode skips hydration publication entirely and does
+  not route through the outbox.
+- Hydration creation does not depend on the outbox dispatcher.
 - The Worker invokes all configured typed handlers without a D1 delivery ledger.
 - A handler failure retries the whole event and reaches the ingress DLQ.
 - Previously successful handlers may run again after retry; cache invalidation is safe to repeat.
 - Independent handler retry/DLQ is explicitly deferred until a later fan-out phase.
+- The MVP explicitly documents the post-commit publish loss window as an
+  accepted risk rather than an unhandled regression.
 - Staging proves the complete path before production configuration is enabled.
 
 ## Dependencies
 
-- Existing PostgreSQL outbox, dispatcher, and Cloudflare publisher.
+- Existing Cloudflare publisher and Worker queue; the PostgreSQL outbox and
+  dispatcher remain dependencies only for unrelated durable flows.
 - Existing cache-delete port, Redis adapter, and queue infrastructure.
 - `nutreeai_async` Worker queue bindings and environment-specific credentials.
 - Related cache projection work remains a compatibility dependency, not a reason to duplicate cache publication.
