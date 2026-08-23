@@ -1540,6 +1540,24 @@ class TestMealMapper:
         with pytest.raises(Exception, match="User profile not found"):
             MealMapper.to_daily_nutrition_response(daily_macros_data)
 
+    def test_to_daily_nutrition_response_missing_target_macros(self):
+        """Calories without macros must not 500 — treat macros as zero."""
+        daily_macros_data = {
+            "target_calories": 2000.0,
+            "total_calories": 500.0,
+            "total_protein": 40.0,
+            "total_carbs": 50.0,
+            "total_fat": 10.0,
+        }
+
+        result = MealMapper.to_daily_nutrition_response(daily_macros_data)
+
+        assert result.target_calories == 2000.0
+        assert result.target_macros.protein == 0.0
+        assert result.target_macros.carbs == 0.0
+        assert result.target_macros.fat == 0.0
+        assert result.remaining_calories == 1500.0
+
     def test_to_daily_nutrition_response_over_target(self):
         """Test when consumed calories exceed target."""
         daily_macros_data = {

@@ -90,6 +90,22 @@ class AsyncFoodReferenceRepository:
         model = result.scalar_one_or_none()
         return food_reference_model_to_dict(model) if model else None
 
+    async def get_by_ids(self, ref_ids: list[int]) -> list[dict[str, Any]]:
+        """Load verified public references; caller reorders as needed."""
+        ids = sorted({int(value) for value in ref_ids})
+        if not ids:
+            return []
+        stmt = (
+            select(FoodReferenceModel)
+            .where(FoodReferenceModel.id.in_(ids))
+            .where(self._integrity_repository.public_eligibility_clause())
+            .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            food_reference_model_to_dict(model) for model in result.scalars().all()
+        ]
+
     async def get_nutrition_projection(
         self,
         food_reference_id: int,

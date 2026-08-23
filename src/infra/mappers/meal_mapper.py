@@ -43,14 +43,17 @@ _UNHYDRATABLE_READY_MEAL_ERRORS = {
 
 
 def _nutrition_override_from_orm(value: dict | None) -> NutritionOverride | None:
-    if not value:
+    if not value or not isinstance(value, dict):
         return None
-    return NutritionOverride(
-        calories=float(value["calories"]),
-        protein=float(value["protein"]),
-        carbs=float(value["carbs"]),
-        fat=float(value["fat"]),
-    )
+    try:
+        return NutritionOverride(
+            calories=float(value["calories"]),
+            protein=float(value["protein"]),
+            carbs=float(value["carbs"]),
+            fat=float(value["fat"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _to_naive_utc(dt: datetime | None) -> datetime | None:
