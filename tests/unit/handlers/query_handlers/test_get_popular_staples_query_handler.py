@@ -98,3 +98,20 @@ async def test_popular_staples_strip_vi_labels_for_english():
         if unit["unit"] == "oz, boneless, cooked"
     )
     assert "display_description" not in oz
+
+
+def test_normalize_ml_portion_only_rewrites_trivial_labels():
+    normalize = GetPopularStaplesQueryHandler._normalize_ml_portion
+
+    assert normalize(
+        {"unit": "ml", "gram_weight": 103.133, "description": "ml"}
+    )["description"] == "100 ml"
+    assert normalize(
+        {"unit": "ml", "gram_weight": 103.133, "description": "1 ml"}
+    )["description"] == "100 ml"
+    assert normalize(
+        {"unit": "ml", "gram_weight": 250.0, "description": "250 ml"}
+    )["description"] == "250 ml"
+    assert normalize(
+        {"unit": "ml", "gram_weight": 1.0, "description": "ml"}
+    )["description"] == "ml"

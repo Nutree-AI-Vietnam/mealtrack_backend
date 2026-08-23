@@ -125,9 +125,8 @@ class GetPopularStaplesQueryHandler(
         except (TypeError, ValueError):
             return unit
         description = str(unit.get("description") or "").strip().lower()
-        if grams > 2.5 and (
-            not description or description in {"ml", "1 ml"} or "100" not in description
-        ):
+        # Only rewrite empty/trivial labels — keep explicit portions like "250 ml".
+        if grams > 2.5 and (not description or description in {"ml", "1 ml"}):
             fixed = dict(unit)
             fixed["description"] = "100 ml"
             return fixed
