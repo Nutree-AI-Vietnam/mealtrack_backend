@@ -603,7 +603,7 @@ async def test_parse_text_unit_stays_compatible_with_prompt_manual_save():
 
 @pytest.mark.asyncio
 async def test_parse_text_countable_unit_survives_provider_outage():
-    """A countable-unit food that misses both the catalog and FatSecret drops."""
+    """A countable miss becomes a custom 100g row instead of being dropped."""
     meal_generation_service = _FakeMealGenerationService(
         responses=[
             {
@@ -633,8 +633,14 @@ async def test_parse_text_countable_unit_survives_provider_outage():
         ParseMealTextCommand(text="1 miếng sườn nướng", user_id="user-1", language="vi")
     )
 
-    assert response.items == []
-    assert response.unmatched_terms == ["Sườn Nướng"]
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert item.quantity == 100
+    assert item.food_reference_id is None
+    assert {option["unit"] for option in item.allowed_units} == {"g", "kg"}
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
@@ -1365,8 +1371,11 @@ async def test_parse_text_does_not_claim_fatsecret_for_invalid_structured_nutrit
         ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
     )
 
-    assert response.items == []
-    assert response.unmatched_terms == ["Potato"]
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
@@ -1392,8 +1401,11 @@ async def test_parse_text_does_not_claim_provider_without_durable_identity():
         ParseMealTextCommand(text="100g rice", user_id="user-1", language="en")
     )
 
-    assert response.items == []
-    assert response.unmatched_terms == ["Rice"]
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
@@ -1457,7 +1469,7 @@ async def test_parse_text_rejects_dense_fallback_when_ai_omits_quantity_g():
     )
 
     assert response.items == []
-    assert response.unmatched_terms == ["Potato"]
+    assert response.unmatched_terms == []
     assert len(meal_generation_service.calls) == 1
 
 
@@ -1596,13 +1608,17 @@ async def test_parse_text_rejects_fatsecret_using_backend_derived_calories(
         ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
     )
 
-    assert response.items == []
-    assert response.unmatched_terms == ["Pho bowl"]
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert item.quantity == 100
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
-async def test_parse_text_all_items_unmatched_returns_empty_items_with_terms():
-    """When every item misses the catalog and FatSecret, drop all and report terms."""
+async def test_parse_text_all_items_unmatched_become_custom_rows():
+    """When every item misses the catalog and FatSecret, keep them as custom g/kg rows."""
     meal_generation_service = _FakeMealGenerationService(
         responses=[
             {
@@ -1624,8 +1640,10 @@ async def test_parse_text_all_items_unmatched_returns_empty_items_with_terms():
         )
     )
 
-    assert response.items == []
-    assert response.unmatched_terms == ["Sườn Nướng", "Chả lụa"]
+    assert [item.name for item in response.items] == ["Sườn Nướng", "Chả lụa"]
+    assert {item.origin for item in response.items} == {"custom"}
+    assert {item.unit for item in response.items} == {"g"}
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
@@ -1675,6 +1693,26 @@ async def test_parse_text_guest_never_adopts_fatsecret_hit():
     )
 
     assert response.items[0].data_source == "fatsecret"
+    assert food_references.adopt_calls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_text_custom_miss_never_writes_catalog():
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[{"items": [_parse_item(name="Secret sauce")]}]
+    )
+    food_references = _FakeFoodReferenceAdoptRepository()
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_FakeFatSecretService(),
+        uow_factory=_FakeUowFactory(food_references),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="secret sauce", user_id="user-1", language="en")
+    )
+
+    assert response.items[0].origin == "custom"
     assert food_references.adopt_calls == []
 
 

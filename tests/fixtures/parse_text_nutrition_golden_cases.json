@@ -71,8 +71,9 @@
     "language": "en",
     "expected_lookup_name": "oats",
     "expected_quantity_g": 40,
-    "expected_drop": true,
-    "expected_unmatched_terms": ["Oats"],
+    "expected_source": "custom",
+    "expected_calorie_range": [130, 160],
+    "expected_candidate_id": null,
     "ai_payload": {"items": [{"name": "Oats", "lookup_name": "oats", "quantity": 40, "quantity_g": 40, "unit": "g", "macros": {"protein_g": 5, "carbs_g": 24, "fat_g": 3}}]},
     "provider_candidates": [],
     "provider_details": {}
@@ -83,12 +84,22 @@
     "language": "en",
     "expected_lookup_name": "potato",
     "expected_quantity_g": 100,
-    "expected_drop": true,
-    "expected_unmatched_terms": ["Potato"],
-    "expected_candidate_id": "potato-incomplete",
+    "expected_source": "custom",
+    "expected_calorie_range": [70, 90],
+    "expected_candidate_id": null,
     "ai_payload": {"items": [{"name": "Potato", "lookup_name": "potato", "quantity": 100, "quantity_g": 100, "unit": "g", "macros": {"protein_g": 2, "carbs_g": 17, "fat_g": 0.1}}]},
     "provider_candidates": [{"food_id": "potato-incomplete", "food_name": "Potato", "food_type": "Generic"}],
     "provider_details": {"potato-incomplete": {"food_id": "potato-incomplete", "food_name": "Potato", "protein_100g": 2, "carbs_100g": 17, "calories_100g": 77, "metric_serving_amount": 100}}
+  },
+  {
+    "case_id": "en-potato-impossible-density",
+    "text": "100g potato",
+    "language": "en",
+    "expected_drop": true,
+    "expected_unmatched_terms": [],
+    "ai_payload": {"items": [{"name": "Potato", "lookup_name": "potato", "quantity": 100, "quantity_g": 100, "unit": "g", "macros": {"protein_g": 0, "carbs_g": 0, "fat_g": 98.9}}]},
+    "provider_candidates": [],
+    "provider_details": {}
   },
   {
     "case_id": "vi-rice-fried-180g",

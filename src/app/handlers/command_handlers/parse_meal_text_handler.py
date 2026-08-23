@@ -28,6 +28,7 @@ from src.app.services.food_display_name import (
 )
 from src.app.services.food_name_localizer import translate_food_texts
 from src.app.services.parse_text_composition import composition_retry_feedback
+from src.app.services.parse_text_custom_estimate import apply_custom_estimate
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
 from src.domain.model.ai.nutrition_contracts import (
     LocalizedFoodNameBatch,
@@ -176,7 +177,6 @@ class ParseMealTextHandler(
         budget = _ParseTextRequestBudget()
         semantic_feedback: list[str] = []
         enhanced_items: list[dict[str, Any]] = []
-        unmatched_terms: list[str] = []
         validated_payload: dict[str, Any] | None = None
         for semantic_attempt in range(2):
             retry_prompt = sanitized_text
@@ -209,7 +209,6 @@ class ParseMealTextHandler(
             )
             try:
                 enhanced_items = []
-                unmatched_terms = []
                 for item in parsed_items:
                     resolved = await self._cascade_lookup(
                         item,
@@ -221,9 +220,6 @@ class ParseMealTextHandler(
                         ),
                     )
                     if resolved is None:
-                        original = str(item.get("name") or item.get("lookup_name") or "")
-                        if original:
-                            unmatched_terms.append(original)
                         continue
                     enhanced_items.append(resolved)
                 break
@@ -309,7 +305,7 @@ class ParseMealTextHandler(
             total_carbs=total_carbs,
             total_fat=total_fat,
             emoji=emoji,
-            unmatched_terms=unmatched_terms,
+            unmatched_terms=[],
         )
 
     def _attach_per_100g_snapshot(self, item: dict[str, Any]) -> None:
@@ -590,7 +586,7 @@ class ParseMealTextHandler(
         budget: _ParseTextRequestBudget,
         local_reference: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Resolve local reference, then FatSecret; drop when neither has a match."""
+        """Resolve local catalog, then FatSecret; otherwise keep a custom g/kg estimate."""
         name = str(item.get("name") or "")
         lookup_name = str(item.get("lookup_name") or self._extract_english_name(name))
         preparation = str(item.get("preparation") or "unknown")
@@ -624,9 +620,7 @@ class ParseMealTextHandler(
             if legacy is not None:
                 return legacy
 
-        # Neither the catalog nor FatSecret can back this phrase with a
-        # durable identity: drop it rather than trust AI-only macros.
-        return None
+        return apply_custom_estimate(item)
 
     async def _resolve_staged_provider(
         self,
