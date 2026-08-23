@@ -35,7 +35,7 @@ class _Uow:
 @pytest.mark.asyncio
 async def test_hydration_write_enqueues_generic_event_in_same_uow() -> None:
     uow = _Uow()
-    result = await LogHydrationCommandHandler(uow).handle(
+    await LogHydrationCommandHandler(uow).handle(
         LogHydrationCommand(
             user_id="22222222-2222-2222-2222-222222222222",
             drink_id="water",
@@ -58,6 +58,5 @@ async def test_hydration_write_enqueues_generic_event_in_same_uow() -> None:
     assert legacy_cache_calls == []
     event_call = event_calls[0]
     assert event_call["event_id"] == event_call["payload"]["event_id"]
-    assert event_call["aggregate_id"] == event_call["payload"]["data"]["hydration_id"]
-    assert event_call["payload"]["data"]["meal_id"] == result["meal_id"]
-    assert event_call["payload"]["data"]["volume_ml"] == 500
+    assert event_call["payload"]["aggregate_id"] == event_call["aggregate_id"]
+    assert "data" not in event_call["payload"]

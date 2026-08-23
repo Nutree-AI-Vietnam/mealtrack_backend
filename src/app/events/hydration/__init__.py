@@ -1,3 +1,9 @@
-"""Hydration domain events."""
+"""Hydration domain and integration events."""
 
-__all__: list = []
+from src.app.events.hydration.hydration_created_event import (
+    HydrationCreatedEvent,
+)
+
+__all__ = [
+    "HydrationCreatedEvent",
+]

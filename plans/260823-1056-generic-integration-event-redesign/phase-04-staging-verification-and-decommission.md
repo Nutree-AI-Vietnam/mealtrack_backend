@@ -18,6 +18,8 @@ after staging evidence is accepted.
 ## Requirements
 
 - Verify backend outbox, ingress, orchestrator, handler, ACK, retry, and DLQ.
+- Configure the Worker environment's `NEON_DATABASE_URL` for hydration context
+  lookup before live verification.
 - Separate local test proof from live Cloudflare proof.
 - Confirm staging and production queues cannot cross routes.
 - Delete the unused remote D1 delivery databases after confirming no Worker binding remains.
@@ -34,8 +36,10 @@ after staging evidence is accepted.
 
 1. Apply only the queue configuration required by the MVP; no D1 binding is deployed.
 2. Run backend unit tests, focused static checks, Worker typecheck, Worker tests, and Wrangler dry-run.
-3. Deploy Worker staging and configure the backend staging ingress queue.
-4. Create one hydration and trace its event ID through outbox, ingress, orchestrator, handlers, and ACK.
+3. Configure `NEON_DATABASE_URL` and deploy Worker staging with the active
+   Redis and database secrets.
+4. Create one hydration and trace its event ID through outbox, ingress,
+   orchestrator, Neon lookup, cache handler, and ACK.
 5. Force a handler failure and verify event retry plus ingress-DLQ behavior.
 6. Replay the same event and confirm cache invalidation remains safe.
 7. Remove unused D1 runtime files/configuration, delete the empty remote D1 resources, and update docs.

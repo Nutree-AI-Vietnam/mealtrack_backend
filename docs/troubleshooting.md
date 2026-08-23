@@ -109,7 +109,9 @@ rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|Integ
    `cache_invalidation.v1`.
 2. Check the outbox worker logs for disabled Queue publication, missing credentials, timeout, or 4xx rejection.
 3. Check the Worker logs for `integration_event_ack`, `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching `event_id`.
-4. For hydration, verify the Worker has valid Upstash Redis REST access and that the environment ingress queue is correct. A handler failure retries the whole ingress event.
+4. For hydration, verify the Worker has valid Upstash Redis REST access,
+   `NEON_DATABASE_URL` (or `DATABASE_URL`), and the environment ingress queue.
+   A handler failure or database lookup failure retries the whole ingress event.
 5. Leave `CLOUDFLARE_QUEUE_ENABLED=false` only when you want to stop new Queue publications; it does not repair pending rows.
 
 **Evidence note:** staging/live deployment proof for this slice is currently pending or blocked on environment credentials. Do not mark the rollout complete until Queue, Worker, and Upstash access are verified separately.

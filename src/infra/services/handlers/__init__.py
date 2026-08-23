@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.app.events.integration_event import HydrationCreatedEvent
+from src.app.events.integration_event import IntegrationEvent
 from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.services.handlers.affiliate_webhook_handler import (
     AffiliateWebhookHandler,
@@ -67,7 +67,7 @@ def create_default_handler_registry(
     )
     integration_handler = IntegrationEventQueueHandler(
         integration_event_publisher or CloudflareQueuePublisher.from_settings(),
-        event_model=HydrationCreatedEvent,
+        event_model=IntegrationEvent,
     )
 
     # Affiliate event routes

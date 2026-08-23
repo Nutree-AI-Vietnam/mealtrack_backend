@@ -169,7 +169,10 @@ optional caches.
 
 - The integration-event redesign uses one versioned `IntegrationEvent` as the
   ingress payload. The backend keeps SQL and outbox ownership; the Worker
-  validates the event and invokes the registered handlers in order.
+  validates the common envelope and invokes the registered handlers in order.
+- Hydration events carry the hydration aggregate ID rather than a snapshot.
+  The hydration cache handler queries Neon for the hydration owner and local log
+  date, so adding another event does not require another Worker parser.
 - One ingress message owns the retry lifecycle. If a handler fails, earlier
   handlers may run again on retry, so handlers must be idempotent.
 - Staging and production use separate ingress queues and matching

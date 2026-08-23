@@ -24,6 +24,8 @@ after all handlers succeed.
 - Retry the whole event when any handler throws; rely on the ingress Queue DLQ.
 - Keep handlers idempotent because earlier handlers may execute again after retry.
 - Preserve legacy direct consumers for unrelated event types.
+- Validate the common envelope once and let handlers retrieve their own data by
+  aggregate ID.
 
 ## Architecture
 
@@ -53,8 +55,9 @@ provider side effects are not silently invented for the MVP.
 
 1. Remove D1 imports, bindings, migrations, claim/lease writes, and delivery-state options.
 2. Remove dynamic `INTEGRATION_SUBSCRIPTIONS` parsing.
-3. Replace it with a typed event-to-handler registry.
-4. Implement `CacheInvalidationHydrationHandler` by adapting the existing cache handler.
+3. Replace it with a code-owned event-to-handler registry and generic envelope parser.
+4. Implement `CacheInvalidationHydrationHandler` by looking up hydration context
+   from Neon and adapting the existing cache handler.
 5. Make the orchestrator ACK after all handlers succeed and retry on any handler failure.
 6. Add tests for multiple handlers, ordering, failure retry, repeated cache invalidation, and unknown events.
 
@@ -64,6 +67,7 @@ provider side effects are not silently invented for the MVP.
 - [x] A handler failure retries the parent event and eventually reaches the ingress DLQ.
 - [x] No Worker code imports D1 or maintains a delivery ledger.
 - [x] Existing cache, notification, insight, and cleanup consumers remain compatible.
+- [x] Adding a new integration event does not require a new Worker parser.
 
 ## Risk Assessment
 

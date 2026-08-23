@@ -18,7 +18,10 @@ only in `nutreeai_async`.
 ## Requirements
 
 - Keep the versioned `IntegrationEvent` envelope and `hydration.created.v1`.
-- Keep stable IDs, timestamps, environment, aggregate identity, and minimal data.
+- Keep stable IDs, timestamps, environment, and aggregate identity. Event data
+  is optional; the hydration MVP sends only the aggregate ID.
+- Validate only the common envelope in the Worker. Route by `event_type`; do
+  not create an event-specific parser for every new event.
 - Define a typed Worker handler contract and a code-owned event-to-handlers registry.
 - Accept event-level retry/DLQ coupling for the MVP.
 - Make the generic hydration cache handler the sole cache owner for hydration writes.
@@ -34,9 +37,10 @@ HydrationCreatedEvent
       -> future EmailHydrationHandler
 ```
 
-The registry maps event type to typed handlers. It is static code for the MVP;
-adding a handler means adding a typed handler and one registry entry. No runtime
-subscription service or handler queue is needed.
+The registry maps event type to handlers. It is static code for the MVP; adding
+a handler means adding a handler implementation and one registry entry. The
+handler may retrieve current source data through a domain port. No runtime
+subscription service, event-specific parser, or handler queue is needed.
 
 ## Related Code Files
 

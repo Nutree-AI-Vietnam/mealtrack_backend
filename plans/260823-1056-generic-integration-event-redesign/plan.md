@@ -17,12 +17,13 @@ source: skill
 ## Overview
 
 Use one versioned `hydration.created.v1` event as the stable boundary between
-`mealtrack_backend` and `nutreeai_async`. The backend writes the event to the
-existing PostgreSQL outbox in the same transaction as the hydration. The Worker
-passes it to a code-owned handler registry. The orchestrator invokes each
-handler for the event and ACKs only when all handlers succeed. Cloudflare Queue
-retries the whole event when any handler fails and moves it to the ingress DLQ
-after the configured retry limit.
+`mealtrack_backend` and `nutreeai_async`. The backend writes a small ID-only
+event to the existing PostgreSQL outbox in the same transaction as the
+hydration. The Worker validates one generic envelope, routes by `event_type`,
+and lets each handler load the source data it needs by `aggregate_id`. The
+orchestrator invokes each handler for the event and ACKs only when all handlers
+succeed. Cloudflare Queue retries the whole event when any handler fails and
+moves it to the ingress DLQ after the configured retry limit.
 
 The MVP deliberately does not add a delivery database, lease ledger, runtime
 subscription service, or exactly-once claim. Queue delivery is at-least-once;
@@ -35,6 +36,8 @@ hydration write + outbox
   -> mealtrack-events[-environment]
   -> event orchestrator
       -> CacheInvalidationHydrationHandler
+          -> Neon lookup by hydration ID
+          -> Redis cache invalidation
       -> future NotificationHydrationHandler
       -> future EmailHydrationHandler
   -> ACK or ingress DLQ
@@ -55,6 +58,8 @@ hydration write + outbox
 - Keep one ingress queue per environment.
 - Use one Worker orchestrator and a code-owned handler registry for the MVP; do not add dynamic JSON subscription configuration.
 - Make hydration cache invalidation the first live generic handler.
+- Keep integration event payloads ID-only where consumers can retrieve current
+  source data; do not add a Worker parser for each new event type.
 - Keep notification and email handler contracts extensible but do not activate provider side effects until their recipient/enrichment and idempotency contracts are explicit.
 - Make `hydration.created.v1` the cache owner for hydration writes; remove the duplicate hydration-specific cache event publication.
 - The Worker uses one physical queue and one DLQ per environment. Legacy event payloads may still route by event type during migration, but they do not get separate queue bindings.
@@ -73,6 +78,6 @@ hydration write + outbox
 ## Dependencies
 
 - Existing PostgreSQL outbox, dispatcher, and Cloudflare publisher.
-- Existing Redis cache invalidation handler and queue infrastructure.
+- Existing cache-delete port, Redis adapter, and queue infrastructure.
 - `nutreeai_async` Worker queue bindings and environment-specific credentials.
 - Related cache projection work remains a compatibility dependency, not a reason to duplicate cache publication.

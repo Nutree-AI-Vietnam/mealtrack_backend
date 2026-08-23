@@ -5,10 +5,7 @@ from uuid import uuid4
 
 from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.integration_event import (
-    HydrationCreatedData,
-    HydrationCreatedEvent,
-)
+from src.app.events.hydration.hydration_created_event import HydrationCreatedEvent
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition.macros import Macros
@@ -121,18 +118,6 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
             integration_event = HydrationCreatedEvent(
                 environment=get_settings().ENVIRONMENT,
                 aggregate_id=hydration_entry.id,
-                data=HydrationCreatedData(
-                    user_id=cmd.user_id,
-                    hydration_id=hydration_entry.id,
-                    meal_id=saved.meal_id,
-                    drink_id=cmd.drink_id,
-                    drink_name=drink.name,
-                    emoji=drink.emoji,
-                    volume_ml=cmd.volume_ml,
-                    credited_ml=credited_ml,
-                    logged_at=hydration_entry.logged_at,
-                    log_date=log_date,
-                ),
             )
             await uow.outbox.enqueue(
                 integration_event.event_type,

@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.app.events.integration_event import HydrationCreatedEvent
+from src.app.events.integration_event import IntegrationEvent
 from src.domain.ports.outbox_handler_port import OutboxEventContext
 from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueueDisabledError
 from src.infra.services.handlers.integration_event_queue_handler import (
@@ -10,26 +10,16 @@ from src.infra.services.handlers.integration_event_queue_handler import (
 )
 
 
-def _event() -> HydrationCreatedEvent:
-    hydration_id = "hydr_" + "a" * 32
-    return HydrationCreatedEvent(
+def _event() -> IntegrationEvent:
+    return IntegrationEvent(
         event_id="00000000-0000-4000-8000-000000000001",
-        aggregate_id=hydration_id,
-        data={
-            "user_id": "00000000-0000-4000-8000-000000000002",
-            "hydration_id": hydration_id,
-            "meal_id": "meal-1",
-            "drink_id": "drink-1",
-            "drink_name": "Water",
-            "volume_ml": 500,
-            "credited_ml": 500,
-            "logged_at": "2026-08-23T00:00:00Z",
-            "log_date": "2026-08-23",
-        },
+        event_type="hydration.created.v1",
+        aggregate_type="hydration",
+        aggregate_id="hydr_" + "a" * 32,
     )
 
 
-def _context(event: HydrationCreatedEvent) -> OutboxEventContext:
+def _context(event: IntegrationEvent) -> OutboxEventContext:
     return OutboxEventContext(
         outbox_id="outbox-1",
         event_id=event.event_id,
@@ -45,9 +35,9 @@ async def test_valid_event_is_published_to_ingress_queue() -> None:
     publisher.queue_name = "mealtrack-events-staging"
     event = _event()
 
-    result = await IntegrationEventQueueHandler(
-        publisher, HydrationCreatedEvent
-    ).handle(event.to_payload(), _context(event))
+    result = await IntegrationEventQueueHandler(publisher, IntegrationEvent).handle(
+        event.to_payload(), _context(event)
+    )
 
     assert result.success is True
     publisher.publish.assert_awaited_once_with(event.to_payload())
@@ -57,9 +47,9 @@ async def test_valid_event_is_published_to_ingress_queue() -> None:
 @pytest.mark.asyncio
 async def test_invalid_event_is_permanent_failure_without_publish() -> None:
     publisher = AsyncMock()
-    result = await IntegrationEventQueueHandler(
-        publisher, HydrationCreatedEvent
-    ).handle({"event_type": "hydration.created.v1"}, _context(_event()))
+    result = await IntegrationEventQueueHandler(publisher, IntegrationEvent).handle(
+        {"event_type": "hydration.created.v1"}, _context(_event())
+    )
 
     assert result.success is False
     assert result.is_transient is False
@@ -80,9 +70,9 @@ async def test_event_context_mismatch_is_permanent_failure() -> None:
         created_at_iso=context.created_at_iso,
     )
 
-    result = await IntegrationEventQueueHandler(
-        publisher, HydrationCreatedEvent
-    ).handle(event.to_payload(), mismatched)
+    result = await IntegrationEventQueueHandler(publisher, IntegrationEvent).handle(
+        event.to_payload(), mismatched
+    )
 
     assert result.success is False
     assert result.error_type == "IntegrationEventContextMismatch"
@@ -97,9 +87,9 @@ async def test_disabled_ingress_publication_pauses_without_consuming_retry_budge
     publisher.publish.side_effect = CloudflareQueueDisabledError("disabled")
     event = _event()
 
-    result = await IntegrationEventQueueHandler(
-        publisher, HydrationCreatedEvent
-    ).handle(event.to_payload(), _context(event))
+    result = await IntegrationEventQueueHandler(publisher, IntegrationEvent).handle(
+        event.to_payload(), _context(event)
+    )
 
     assert result.success is False
     assert result.is_paused is True

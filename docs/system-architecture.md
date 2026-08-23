@@ -81,8 +81,11 @@ path:
    outbox row in the same unit of work.
 2. The backend relay publishes one versioned `IntegrationEvent` envelope to the
    environment-specific ingress Queue.
-3. The Worker validates the envelope and the in-process orchestrator invokes
-   every registered handler for that event type in order.
+3. The Worker validates the common envelope once and the in-process
+   orchestrator invokes every registered handler for that event type in order.
+   Handlers retrieve current source data through their own ports using the
+   aggregate ID; hydration cache invalidation looks up the hydration row and
+   the user's timezone in Neon.
 4. The Worker ACKs only after all handlers succeed. A failure retries the whole
    ingress message and eventually sends it to the ingress DLQ.
 5. `cache_invalidation.v1` remains the compatibility owner for other
