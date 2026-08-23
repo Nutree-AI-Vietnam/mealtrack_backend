@@ -92,21 +92,24 @@ redis-cli ping
 
 ---
 
-### Cloudflare Cache Invalidation Stalls
+### Cloudflare Cache or Integration Event Stalls
 
-**Problem:** Meal writes succeed, but cache invalidation events stay pending, keep retrying, or land in the DLQ.
+**Problem:** A mutation succeeds, but its cache/integration event stays pending,
+keeps retrying, or lands in a DLQ.
 
 **Diagnosis:**
 ```bash
 echo $CLOUDFLARE_QUEUE_ENABLED
-rg -n "cache_invalidation.v1|CloudflareQueuePublisher|CacheInvalidationQueueHandler" src workers
+rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|IntegrationEventQueueHandler|CacheInvalidationQueueHandler" src workers
 ```
 
 **Solutions:**
-1. Confirm the business row committed and the `cache_invalidation.v1` outbox row exists.
+1. For hydration, confirm the business row committed and the
+   `hydration.created.v1` outbox row exists. Other mutation paths may still use
+   `cache_invalidation.v1`.
 2. Check the outbox worker logs for disabled Queue publication, missing credentials, timeout, or 4xx rejection.
-3. Check the Cloudflare Worker logs for `ack`, `retry`, or DLQ movement on the matching `event_id`.
-4. Verify the Worker has valid Upstash Redis REST access and that the queue consumer is pointed at the correct staging or production queue.
+3. Check the Worker logs for `integration_event_ack`, `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching `event_id`.
+4. For hydration, verify the Worker has valid Upstash Redis REST access and that the environment ingress queue is correct. A handler failure retries the whole ingress event.
 5. Leave `CLOUDFLARE_QUEUE_ENABLED=false` only when you want to stop new Queue publications; it does not repair pending rows.
 
 **Evidence note:** staging/live deployment proof for this slice is currently pending or blocked on environment credentials. Do not mark the rollout complete until Queue, Worker, and Upstash access are verified separately.

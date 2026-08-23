@@ -151,23 +151,32 @@ async with AsyncUnitOfWork() as uow:
 ### Cache Work Is Outside the Business Critical Path
 
 The database transaction is authoritative for command completion. After the
-unit of work commits, mutation handlers enqueue cache invalidation through
-`CacheInvalidationService`; they do not await Redis maintenance. This applies
-to meal, hydration, movement, and derived macro/budget projections.
+unit of work commits, mutation handlers enqueue cache invalidation or
+integration events through the transactional outbox; they do not wait on Redis
+or Queue maintenance. This applies to meal, hydration, movement, and derived
+macro/budget projections.
 
 Query handlers may read Redis first. A cache miss falls back to SQL, and the
 concrete `CacheService` schedules any cache population write on
 `BackgroundTaskManager`. Cache consistency is therefore eventual, while SQL
 correctness and the command response remain independent of Redis availability.
 
+The integration-event redesign keeps the same boundary: the backend owns the
+SQL transaction and outbox row, then publishes one versioned
+`IntegrationEvent` to the environment-specific ingress Queue. The Worker
+orchestrator invokes all registered handlers for the event and ACKs only after
+they all succeed. A failure retries the whole ingress message, so handlers
+must be idempotent. `cache_invalidation.v1` remains the compatibility owner
+for other delete-only cache paths.
+
 External secondary effects follow the same boundary. Preference, timezone,
-language, and FCM changes commit SQL first and enqueue notification rescheduling;
-account deletion commits SQL first and enqueues Firebase cleanup. When a real
-unit of work exposes the transactional outbox, these jobs are durable and
-handled by the outbox worker. The managed task runner remains a local fallback
-for environments without an outbox-capable unit of work. AI discovery, recipe
-generation, and three-day recommendation creation remain synchronous until the
-HTTP contract exposes an accepted/job-status flow.
+language, and FCM changes commit SQL first and enqueue notification
+rescheduling; account deletion commits SQL first and enqueues Firebase cleanup.
+When a real unit of work exposes the transactional outbox, these jobs are
+durable and handled by the outbox worker. The managed task runner remains a
+local fallback for environments without an outbox-capable unit of work. AI
+discovery, recipe generation, and three-day recommendation creation remain
+synchronous until the HTTP contract exposes an accepted/job-status flow.
 
 ---
 

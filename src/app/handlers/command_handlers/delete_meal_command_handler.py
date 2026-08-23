@@ -34,6 +34,7 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
     async def handle(self, command: DeleteMealCommand) -> dict[str, Any]:
         """Handle meal deletion with data preservation."""
         deleted_kind = "meal"
+        hydration_cache_event_enqueued = False
         async with self.uow as uow:
             meal = await uow.meals.find_by_id(command.meal_id)
             if meal is not None:
@@ -72,17 +73,30 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                     )
                     deleted_kind = "hydration"
                     log_date = hydration_entry.logged_at.date()
+                    if (
+                        self.cache_invalidation
+                        and getattr(uow, "outbox", None) is not None
+                    ):
+                        event_id = await self.cache_invalidation.enqueue_hydration_invalidation(
+                            uow.outbox,
+                            command.user_id,
+                            log_date,
+                        )
+                        hydration_cache_event_enqueued = event_id is not None
                 else:
                     return {
                         "meal_id": command.meal_id,
                         "message": "Meal already deleted",
                     }
 
-        if self.cache_invalidation:
-            if deleted_kind == "hydration":
-                await self.cache_invalidation.after_hydration_write(
-                    command.user_id, log_date
-                )
+        if (
+            self.cache_invalidation
+            and deleted_kind == "hydration"
+            and not hydration_cache_event_enqueued
+        ):
+            await self.cache_invalidation.after_hydration_write(
+                command.user_id, log_date
+            )
 
         return {
             "meal_id": command.meal_id,

@@ -19,7 +19,7 @@ from src.infra.services.handlers.push_notification_queue_handler import (
 async def test_push_queue_handler_publishes_event_successfully() -> None:
     publisher = MagicMock(spec=CloudflareQueuePublisher)
     publisher.publish = AsyncMock()
-    publisher._queue_name = "mealtrack-notifications-staging"
+    publisher._queue_name = "mealtrack-events-staging"
 
     handler = PushNotificationQueueHandler(publisher)
     context = OutboxEventContext(
@@ -55,7 +55,7 @@ async def test_push_queue_handler_handles_transient_queue_failure() -> None:
     publisher.publish = AsyncMock(
         side_effect=CloudflareQueueTransientError("Queue timed out")
     )
-    publisher._queue_name = "mealtrack-notifications"
+    publisher._queue_name = "mealtrack-events"
 
     handler = PushNotificationQueueHandler(publisher)
     context = OutboxEventContext(
@@ -79,7 +79,7 @@ async def test_push_queue_handler_handles_permanent_queue_failure() -> None:
     publisher.publish = AsyncMock(
         side_effect=CloudflareQueuePermanentError("Queue rejected request")
     )
-    publisher._queue_name = "mealtrack-notifications"
+    publisher._queue_name = "mealtrack-events"
 
     handler = PushNotificationQueueHandler(publisher)
     context = OutboxEventContext(

@@ -211,7 +211,7 @@ class TestPushNotificationQueueHandler:
     async def test_push_queue_success(self):
         publisher = MagicMock()
         publisher.publish = AsyncMock()
-        publisher._queue_name = "mealtrack-notifications"
+        publisher._queue_name = "mealtrack-events"
         handler = PushNotificationQueueHandler(publisher)
 
         context = OutboxEventContext(
@@ -239,7 +239,7 @@ class TestPushNotificationQueueHandler:
         publisher.publish = AsyncMock(
             side_effect=CloudflareQueueTransientError("Rate limited")
         )
-        publisher._queue_name = "mealtrack-notifications"
+        publisher._queue_name = "mealtrack-events"
         handler = PushNotificationQueueHandler(publisher)
 
         context = OutboxEventContext(
@@ -266,7 +266,7 @@ class TestPushNotificationQueueHandler:
         publisher.publish = AsyncMock(
             side_effect=CloudflareQueuePermanentError("Bad auth")
         )
-        publisher._queue_name = "mealtrack-notifications"
+        publisher._queue_name = "mealtrack-events"
         handler = PushNotificationQueueHandler(publisher)
 
         context = OutboxEventContext(

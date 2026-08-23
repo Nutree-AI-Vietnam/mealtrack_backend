@@ -26,6 +26,7 @@ class OutboxHandlerResult:
     error_type: str | None = None
     status_code: int | None = None
     is_transient: bool = True
+    is_paused: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -68,6 +69,24 @@ class OutboxHandlerResult:
             error_type=error_type,
             status_code=status_code,
             is_transient=False,
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def paused(
+        cls,
+        error_message: str,
+        *,
+        error_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> OutboxHandlerResult:
+        """Keep an event pending without consuming its retry budget."""
+        return cls(
+            success=False,
+            error_message=error_message,
+            error_type=error_type,
+            is_transient=True,
+            is_paused=True,
             metadata=metadata or {},
         )
 

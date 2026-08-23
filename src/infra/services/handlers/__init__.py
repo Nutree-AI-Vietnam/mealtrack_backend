@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.app.events.integration_event import HydrationCreatedEvent
 from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.services.handlers.affiliate_webhook_handler import (
     AffiliateWebhookHandler,
@@ -13,6 +14,9 @@ from src.infra.services.handlers.cache_invalidation_queue_handler import (
 )
 from src.infra.services.handlers.firebase_account_cleanup_handler import (
     FirebaseAccountCleanupHandler,
+)
+from src.infra.services.handlers.integration_event_queue_handler import (
+    IntegrationEventQueueHandler,
 )
 from src.infra.services.handlers.notification_reschedule_handler import (
     NotificationRescheduleHandler,
@@ -34,6 +38,7 @@ __all__ = [
     "PushNotificationQueueHandler",
     "TelemetryHandler",
     "CacheInvalidationQueueHandler",
+    "IntegrationEventQueueHandler",
     "create_default_handler_registry",
 ]
 
@@ -44,6 +49,7 @@ def create_default_handler_registry(
     posthog_adapter: PostHogAdapter | None = None,
     cache_invalidation_publisher: CloudflareQueuePublisher | None = None,
     push_notification_publisher: CloudflareQueuePublisher | None = None,
+    integration_event_publisher: CloudflareQueuePublisher | None = None,
 ) -> OutboxHandlerRegistry:
     """Create and configure an OutboxHandlerRegistry with built-in handlers."""
     registry = OutboxHandlerRegistry()
@@ -58,6 +64,10 @@ def create_default_handler_registry(
     notification_reschedule_handler = NotificationRescheduleHandler()
     cache_invalidation_handler = CacheInvalidationQueueHandler(
         cache_invalidation_publisher or CloudflareQueuePublisher.from_settings()
+    )
+    integration_handler = IntegrationEventQueueHandler(
+        integration_event_publisher or CloudflareQueuePublisher.from_settings(),
+        event_model=HydrationCreatedEvent,
     )
 
     # Affiliate event routes
@@ -96,5 +106,6 @@ def create_default_handler_registry(
 
     registry.register("notification_reschedule", notification_reschedule_handler)
     registry.register("cache_invalidation.v1", cache_invalidation_handler)
+    registry.register("hydration.created.v1", integration_handler)
 
     return registry

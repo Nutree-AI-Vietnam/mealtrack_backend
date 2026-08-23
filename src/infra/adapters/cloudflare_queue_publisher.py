@@ -21,6 +21,10 @@ class CloudflareQueueTransientError(CloudflareQueueError):
     """Raised for Queue failures that should be retried."""
 
 
+class CloudflareQueueDisabledError(CloudflareQueueTransientError):
+    """Raised when Queue publication is intentionally paused by configuration."""
+
+
 class CloudflareQueuePermanentError(CloudflareQueueError):
     """Raised for a rejected or malformed Queue request."""
 
@@ -46,17 +50,28 @@ class CloudflareQueuePublisher:
         self._client = client
 
     @classmethod
-    def from_settings(cls) -> CloudflareQueuePublisher:
+    def from_settings(
+        cls,
+        *,
+        queue_name: str | None = None,
+    ) -> CloudflareQueuePublisher:
         from src.infra.config.settings import get_settings
 
         settings = get_settings()
         return cls(
             enabled=settings.CLOUDFLARE_QUEUE_ENABLED,
             account_id=settings.CLOUDFLARE_QUEUE_ACCOUNT_ID,
-            queue_name=settings.CLOUDFLARE_QUEUE_NAME,
+            queue_name=(
+                settings.CLOUDFLARE_QUEUE_NAME if queue_name is None else queue_name
+            ),
             api_token=settings.CLOUDFLARE_QUEUE_API_TOKEN,
             timeout_seconds=settings.CLOUDFLARE_QUEUE_TIMEOUT_SECONDS,
         )
+
+    @property
+    def queue_name(self) -> str:
+        """Configured destination name for observability and routing checks."""
+        return self._queue_name
 
     @property
     def endpoint(self) -> str:
@@ -67,7 +82,7 @@ class CloudflareQueuePublisher:
 
     def _validate_configuration(self) -> None:
         if not self._enabled:
-            raise CloudflareQueueTransientError(
+            raise CloudflareQueueDisabledError(
                 "Cloudflare Queue publication is disabled"
             )
         if not self._account_id or not self._queue_name or not self._api_token:

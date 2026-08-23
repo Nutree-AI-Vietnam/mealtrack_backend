@@ -72,29 +72,35 @@ transactional outbox and `src/cron/outbox_worker.py`. Firebase account cleanup
 and notification rescheduling are registered outbox event types with bounded
 retry, lease fencing, and dead-letter handling.
 
-### Durable Cache Invalidation Slice
+### Durable Integration Events
 
-Meal writes use a single durable path:
+Meal writes and other integration-producing commands now follow one durable
+path:
 
-1. The business transaction writes the authoritative row and the
-   `cache_invalidation.v1` outbox event in the same unit of work.
-2. `src/cron/outbox_worker.py` claims the outbox row and dispatches it through
-   `CacheInvalidationQueueHandler`.
-3. `CloudflareQueuePublisher` sends the event body to Cloudflare Queue when the
-   one global `CLOUDFLARE_QUEUE_ENABLED` switch and queue credentials are set.
-4. The Cloudflare Worker validates the event envelope, then deletes exact keys
-   or bounded patterns through the Upstash Redis REST API.
-5. Queue delivery owns ACK, retry, and DLQ handling. The backend never waits
-   for Redis deletes, pattern scans, or cache rebuilds before returning the
-   business response.
+1. The business transaction writes the authoritative row and the transactional
+   outbox row in the same unit of work.
+2. The backend relay publishes one versioned `IntegrationEvent` envelope to the
+   environment-specific ingress Queue.
+3. The Worker validates the envelope and the in-process orchestrator invokes
+   every registered handler for that event type in order.
+4. The Worker ACKs only after all handlers succeed. A failure retries the whole
+   ingress message and eventually sends it to the ingress DLQ.
+5. `cache_invalidation.v1` remains the compatibility owner for other
+   delete-only cache paths; hydration creation now owns the generic hydration
+   event.
 
-This slice is delete-only. It does not do HMAC signing, revision tables or
-fencing, cache-value writes, local-vs-Cloudflare dual routing, or percentage
-canaries. Those behaviors are intentionally out of scope here.
+Handlers are intentionally in code for the MVP. This path does not use HMAC,
+local-vs-Cloudflare dual routing, percentage canaries, cache-value writes, D1
+delivery state, or dynamic subscriptions. Separate staging and production
+deployments use separate ingress queues and environment values.
+
+The MVP has a hydration cache-invalidation handler. Notification and email
+handlers can be added to the same registry after their payload and idempotency
+contracts are defined. Live staging proof remains pending.
 
 Queries may still read Redis as an optimization on the read path. Existing
 cache-aside population behavior is unchanged; the Worker only owns deletes for
-this slice.
+the compatibility cache path.
 
 ### Repository Pattern
 Async SQLAlchemy repositories are accessed through `AsyncUnitOfWork`. The UoW owns commit/rollback boundaries; repositories flush only when generated IDs or relationship state are needed.

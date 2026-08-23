@@ -44,12 +44,13 @@ disable this shared write-path budget.
 images, emails, auth tokens, full barcodes, or secrets. Prefer operation name,
 internal IDs, status codes, and error class.
 
-**Cloudflare async cache invalidation rule:** the durable slice is
-`business write -> outbox row -> Python publisher -> Cloudflare Queue ->
-Worker -> Upstash Redis REST delete`. One global
-`CLOUDFLARE_QUEUE_ENABLED` switch controls publication. There is no local-vs-
-Cloudflare dual routing, no percentage canary, no HMAC, no revision table or
-fencing, and no cache-value write path in this slice.
+**Cloudflare async integration rule:** the backend owns the SQL transaction and
+transactional outbox, then publishes one versioned `IntegrationEvent` to the
+environment-specific ingress Queue. The Worker orchestrator invokes registered
+handlers in order and ACKs only after all handlers succeed. A failure retries
+the whole ingress message and eventually reaches the ingress DLQ. There is no
+HMAC, no local-vs-Cloudflare dual routing, no percentage canary, no D1 delivery
+ledger, and no cache-value write path in this slice.
 
 ---
 
@@ -148,9 +149,11 @@ optional caches.
 
 ### Cloudflare async cache invalidation
 
-- The backend publishes `cache_invalidation.v1` through the transactional
-  outbox. The `CacheInvalidationQueueHandler` only forwards validated payloads
-  to Cloudflare Queue; it does not write Redis values.
+- Non-hydration mutation paths may publish `cache_invalidation.v1` through the
+  transactional outbox. The `CacheInvalidationQueueHandler` only forwards
+  validated payloads to Cloudflare Queue; it does not write Redis values.
+- Hydration creation publishes `hydration.created.v1` instead. The Worker
+  orchestrator owns its cache translation and invokes the same delete handler.
 - `CloudflareQueuePublisher.from_settings()` reads the single global
   `CLOUDFLARE_QUEUE_ENABLED` switch plus the account, queue name, token, and
   timeout settings. If disabled or misconfigured, the outbox stays retryable or
@@ -161,6 +164,23 @@ optional caches.
 - `HMAC`, revision tables/fencing, cache writes, local-vs-Cloudflare dual
   routing, and percentage canaries are intentionally out of scope for this
   slice.
+
+### Cloudflare integration event orchestration
+
+- The integration-event redesign uses one versioned `IntegrationEvent` as the
+  ingress payload. The backend keeps SQL and outbox ownership; the Worker
+  validates the event and invokes the registered handlers in order.
+- One ingress message owns the retry lifecycle. If a handler fails, earlier
+  handlers may run again on retry, so handlers must be idempotent.
+- Staging and production use separate ingress queues and matching
+  `environment` values. The MVP does not use D1 or a dynamic subscription
+  catalog.
+- Configure one environment-specific `CLOUDFLARE_QUEUE_NAME` for the Worker
+  ingress queue. Generic integration events and compatibility payloads share
+  this queue during the migration.
+- Hydration creation currently registers cache invalidation. Notification and
+  email handlers remain follow-up work until their payload and idempotency
+  contracts are explicit.
 
 ### Parse-text nutrition validation
 

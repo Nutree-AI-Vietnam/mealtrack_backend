@@ -5,7 +5,10 @@ from uuid import uuid4
 
 from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.integration_event import (
+    HydrationCreatedData,
+    HydrationCreatedEvent,
+)
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition.macros import Macros
@@ -18,6 +21,7 @@ from src.domain.utils.timezone_utils import (
     resolve_user_timezone_async,
     utc_now,
 )
+from src.infra.config.settings import get_settings
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -28,10 +32,8 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
     def __init__(
         self,
         uow: AsyncUnitOfWork,
-        cache_invalidation: CacheInvalidationService | None = None,
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
 
     async def handle(self, cmd: LogHydrationCommand) -> dict:
         drink = find_by_id(cmd.drink_id)
@@ -116,14 +118,29 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                     legacy_meal_id=saved.meal_id,
                 )
             )
-            if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
-                await self.cache_invalidation.enqueue_hydration_invalidation(
-                    uow.outbox, cmd.user_id, log_date
-                )
-            elif self.cache_invalidation:
-                await self.cache_invalidation.after_hydration_write(
-                    cmd.user_id, log_date
-                )
+            integration_event = HydrationCreatedEvent(
+                environment=get_settings().ENVIRONMENT,
+                aggregate_id=hydration_entry.id,
+                data=HydrationCreatedData(
+                    user_id=cmd.user_id,
+                    hydration_id=hydration_entry.id,
+                    meal_id=saved.meal_id,
+                    drink_id=cmd.drink_id,
+                    drink_name=drink.name,
+                    emoji=drink.emoji,
+                    volume_ml=cmd.volume_ml,
+                    credited_ml=credited_ml,
+                    logged_at=hydration_entry.logged_at,
+                    log_date=log_date,
+                ),
+            )
+            await uow.outbox.enqueue(
+                integration_event.event_type,
+                integration_event.to_payload(),
+                event_id=integration_event.event_id,
+                aggregate_type=integration_event.aggregate_type,
+                aggregate_id=integration_event.aggregate_id,
+            )
 
         kcal = round(saved.nutrition.calories if saved.nutrition else 0.0, 1)
         return {

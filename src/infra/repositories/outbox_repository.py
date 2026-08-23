@@ -182,6 +182,16 @@ class AsyncOutboxRepository(OutboxRepositoryPort):
             return False
 
         now = utc_now()
+
+        if result.is_paused:
+            row.status = OutboxStatus.PENDING.value
+            row.lease_owner = None
+            row.lease_expires_at = None
+            row.next_retry_at = now + timedelta(minutes=5)
+            row.updated_at = now
+            await self._session.flush()
+            return False
+
         row.retry_count += 1
         effective_max = max_retries if max_retries is not None else row.max_retries
 

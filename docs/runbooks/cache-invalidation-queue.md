@@ -4,6 +4,12 @@ Use this runbook for the durable cache-invalidation slice:
 business transaction -> outbox row -> Python publisher -> Cloudflare Queue ->
 Cloudflare Worker -> Upstash Redis REST delete.
 
+This runbook covers the `cache_invalidation.v1` compatibility path. Hydration
+creation also publishes a generic `hydration.created.v1` event through the
+same backend outbox; the Worker orchestrator translates it to the same cache
+handler. The generic MVP retries the whole ingress message and does not use
+D1 delivery state.
+
 Do not use this runbook for HMAC signing, revision fencing, cache-value writes,
 local-vs-Cloudflare dual routing, or percentage canaries. Those are intentionally
 out of scope for this slice.
@@ -11,6 +17,8 @@ out of scope for this slice.
 ## Preconditions
 
 - `CLOUDFLARE_QUEUE_ENABLED` is set the way the target environment intends.
+- `CLOUDFLARE_QUEUE_NAME` points to the environment-specific Worker ingress
+  queue used by both generic and compatibility events.
 - Queue, DLQ, Worker, and Upstash Redis REST credentials are present in the
   deployment environment.
 - The outbox worker can reach PostgreSQL and claim `cache_invalidation.v1`

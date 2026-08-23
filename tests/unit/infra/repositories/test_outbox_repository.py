@@ -342,6 +342,35 @@ async def test_record_failure_transient_reschedules_with_backoff():
 
 
 @pytest.mark.asyncio
+async def test_record_failure_paused_keeps_retry_count_and_pending_state():
+    row = TransactionalOutboxORM(
+        id="outbox-1",
+        event_id="evt-1",
+        event_type="hydration.created.v1",
+        payload={},
+        status=OutboxStatus.IN_PROGRESS.value,
+        retry_count=4,
+        max_retries=5,
+        lease_owner="worker-1",
+        lease_expires_at=utc_now() + timedelta(minutes=1),
+        error_log=[],
+    )
+    session = _MockAsyncSession(execute_results=[_FakeResult([row])])
+    repo = AsyncOutboxRepository(session)
+
+    is_dlq = await repo.record_failure(
+        "outbox-1", OutboxHandlerResult.paused("queue disabled")
+    )
+
+    assert is_dlq is False
+    assert row.retry_count == 4
+    assert row.status == OutboxStatus.PENDING.value
+    assert row.lease_owner is None
+    assert row.lease_expires_at is None
+    assert row.next_retry_at > utc_now()
+
+
+@pytest.mark.asyncio
 async def test_record_failure_permanent_moves_to_dead_letter():
     row = TransactionalOutboxORM(
         id="outbox-1",
