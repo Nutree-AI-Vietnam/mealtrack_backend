@@ -22,13 +22,15 @@ def _run_entrypoint(
     *,
     auto_migrate: str | None = None,
     production_variable: str | None = None,
+    migration_exit_code: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     command_log = tmp_path / "commands.log"
     _write_executable(
         bin_dir / "python",
-        'printf "python %s\\n" "$*" >> "$ENTRYPOINT_TEST_LOG"\n',
+        'printf "python %s\\n" "$*" >> "$ENTRYPOINT_TEST_LOG"\n'
+        'exit "$MIGRATION_EXIT_CODE"\n',
     )
     _write_executable(
         bin_dir / "uvicorn",
@@ -40,6 +42,7 @@ def _run_entrypoint(
         {
             "PATH": f"{bin_dir}:{os.defpath}",
             "ENTRYPOINT_TEST_LOG": str(command_log),
+            "MIGRATION_EXIT_CODE": str(migration_exit_code),
             "PORT": "8000",
             "UVICORN_WORKERS": "1",
         }
@@ -78,6 +81,13 @@ def test_enabled_values_run_migrations(tmp_path: Path, value: str) -> None:
     assert any(command.startswith("uvicorn ") for command in commands)
 
 
+def test_unset_toggle_runs_migrations_by_default(tmp_path: Path) -> None:
+    result, commands = _run_entrypoint(tmp_path)
+
+    assert result.returncode == 0
+    assert any(command == "python migrations/run.py" for command in commands)
+
+
 @pytest.mark.parametrize("value", ["false", "0", "NO", "off"])
 def test_disabled_values_skip_migrations(tmp_path: Path, value: str) -> None:
     result, commands = _run_entrypoint(tmp_path, auto_migrate=value)
@@ -110,3 +120,15 @@ def test_invalid_non_production_toggle_fails_before_startup(
     assert result.returncode == 1
     assert "AUTO_MIGRATE must be one of" in result.stdout
     assert commands == []
+
+
+def test_migration_failure_stops_application_startup(tmp_path: Path) -> None:
+    result, commands = _run_entrypoint(
+        tmp_path,
+        auto_migrate="true",
+        migration_exit_code=7,
+    )
+
+    assert result.returncode == 1
+    assert "Migrations failed!" in result.stdout
+    assert commands == ["python migrations/run.py"]
