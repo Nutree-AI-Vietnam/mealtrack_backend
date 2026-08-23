@@ -568,6 +568,12 @@ def get_configured_event_bus() -> EventBus:
         DeleteMealCommandHandler(
             uow=AsyncUnitOfWork(),
             cache_invalidation=cache_invalidation_service,
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
 
@@ -961,19 +967,33 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogCaloricDrinkCommand,
         LogCaloricDrinkCommandHandler(
-            uow=AsyncUnitOfWork(), cache_invalidation=cache_invalidation_service
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     event_bus.register_handler(
         DeleteHydrationEntryCommand,
         DeleteHydrationEntryCommandHandler(
-            uow=AsyncUnitOfWork(), cache_invalidation=cache_invalidation_service
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     event_bus.register_handler(
         GetDailyHydrationQuery,
+
         GetDailyHydrationQueryHandler(cache_service=cache_service),
     )
+
     event_bus.register_handler(GetDrinkCatalogQuery, GetDrinkCatalogQueryHandler())
     event_bus.register_handler(
         GetWeeklyHydrationQuery,

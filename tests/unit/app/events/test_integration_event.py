@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from src.app.events.hydration.hydration_created_event import HydrationCreatedEvent
+from src.app.events.hydration import (
+    HydrateDeletedEvent,
+    HydrationCaloricCreatedEvent,
+    HydrationCaloricDeletedEvent,
+    HydrationCreatedEvent,
+    HydrationDeletedEvent,
+)
 from src.app.events.integration_event import IntegrationEvent
 
 EVENT_ID = "00000000-0000-4000-8000-000000000001"
@@ -25,6 +31,47 @@ def test_hydration_event_serializes_to_id_only_wire_envelope() -> None:
     assert payload["aggregate_type"] == "hydration"
     assert payload["aggregate_id"].startswith("hydr_")
     assert "data" not in payload
+
+
+def test_hydration_caloric_created_event_serialization() -> None:
+    event = HydrationCaloricCreatedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="hydr_" + "b" * 32,
+    )
+    payload = event.to_payload()
+    assert payload["event_type"] == "hydration.caloric_created.v1"
+    assert payload["aggregate_type"] == "hydration"
+    assert payload["aggregate_id"] == "hydr_" + "b" * 32
+
+
+def test_hydration_deleted_event_serialization() -> None:
+    event = HydrationDeletedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="hydr_" + "c" * 32,
+        data={"user_id": "user-1", "log_date": "2026-08-23"},
+    )
+    payload = event.to_payload()
+    assert payload["event_type"] == "hydration.deleted.v1"
+    assert payload["aggregate_type"] == "hydration"
+    assert payload["data"] == {"user_id": "user-1", "log_date": "2026-08-23"}
+
+    # Alias check
+    assert HydrateDeletedEvent is HydrationDeletedEvent
+
+
+def test_hydration_caloric_deleted_event_serialization() -> None:
+    event = HydrationCaloricDeletedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="hydr_" + "d" * 32,
+        data={"user_id": "user-1", "log_date": "2026-08-23"},
+    )
+    payload = event.to_payload()
+    assert payload["event_type"] == "hydration.caloric_deleted.v1"
+    assert payload["aggregate_type"] == "hydration"
+    assert payload["data"] == {"user_id": "user-1", "log_date": "2026-08-23"}
 
 
 def test_hydration_event_rejects_wrong_event_type() -> None:

@@ -1,5 +1,5 @@
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -90,11 +90,12 @@ async def test_log_caloric_drink_credits_hydration_weight_and_localizes_name():
 
 
 @pytest.mark.asyncio
-async def test_log_caloric_drink_invalidates_hydration_and_balance_caches():
-    cache_invalidation = MagicMock()
-    cache_invalidation.after_hydration_write = AsyncMock()
+async def test_log_caloric_drink_publishes_integration_event_post_commit():
+
+    event_publisher = AsyncMock()
+    uow = _Uow()
     handler = LogCaloricDrinkCommandHandler(
-        uow=_Uow(), cache_invalidation=cache_invalidation
+        uow=uow, event_publisher=event_publisher, environment="staging"
     )
 
     await handler.handle(
@@ -106,6 +107,13 @@ async def test_log_caloric_drink_invalidates_hydration_and_balance_caches():
         )
     )
 
-    cache_invalidation.after_hydration_write.assert_awaited_once_with(
-        "user-1", date(2026, 5, 26)
-    )
+    event_publisher.publish.assert_awaited_once()
+    payload = event_publisher.publish.await_args.args[0]
+    assert payload["event_type"] == "hydration.caloric_created.v1"
+    assert payload["environment"] == "staging"
+    assert payload["aggregate_type"] == "hydration"
+    assert payload["aggregate_id"] == uow.hydration_entries.saved.id
+    assert payload["data"] == {
+        "user_id": "user-1",
+        "log_date": "2026-05-26",
+    }

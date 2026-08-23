@@ -69,11 +69,11 @@ async def test_delete_meal_command_deletes_hydration_entry_alias():
     )
     uow.hydration_entries.delete_by_id_or_legacy_meal_id = AsyncMock(return_value=True)
 
-    cache = MagicMock()
-    cache.after_hydration_write = AsyncMock()
-    cache.after_meal_write = AsyncMock()
+    event_publisher = AsyncMock()
 
-    handler = DeleteMealCommandHandler(uow=uow, cache_invalidation=cache)
+    handler = DeleteMealCommandHandler(
+        uow=uow, event_publisher=event_publisher, environment="staging"
+    )
 
     result = await handler.handle(DeleteMealCommand(meal_id=entry_id, user_id=user_id))
 
@@ -81,37 +81,12 @@ async def test_delete_meal_command_deletes_hydration_entry_alias():
     uow.hydration_entries.delete_by_id_or_legacy_meal_id.assert_awaited_once_with(
         user_id, entry_id
     )
-    cache.after_hydration_write.assert_awaited_once_with(user_id, logged_at.date())
-    cache.after_meal_write.assert_not_called()
+    event_publisher.publish.assert_awaited_once()
+    payload = event_publisher.publish.await_args.args[0]
+    assert payload["event_type"] == "hydration.deleted.v1"
+    assert payload["aggregate_id"] == entry_id
+    assert payload["data"] == {
+        "user_id": user_id,
+        "log_date": "2026-06-16",
+    }
 
-
-@pytest.mark.asyncio
-async def test_delete_meal_hydration_alias_enqueues_durable_invalidation():
-    entry_id = "11111111-1111-1111-1111-111111111111"
-    user_id = "22222222-2222-2222-2222-222222222222"
-    logged_at = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
-
-    uow = MagicMock()
-    uow.__aenter__ = AsyncMock(return_value=uow)
-    uow.__aexit__ = AsyncMock(return_value=False)
-    uow.outbox = MagicMock()
-    uow.meals.find_by_id = AsyncMock(return_value=None)
-    uow.hydration_entries.find_by_id_or_legacy_meal_id = AsyncMock(
-        return_value=SimpleNamespace(id=entry_id, logged_at=logged_at)
-    )
-    uow.hydration_entries.delete_by_id_or_legacy_meal_id = AsyncMock(return_value=True)
-
-    cache = MagicMock()
-    cache.enqueue_hydration_invalidation = AsyncMock()
-    cache.after_hydration_write = AsyncMock()
-
-    handler = DeleteMealCommandHandler(uow=uow, cache_invalidation=cache)
-
-    await handler.handle(DeleteMealCommand(meal_id=entry_id, user_id=user_id))
-
-    cache.enqueue_hydration_invalidation.assert_awaited_once_with(
-        uow.outbox,
-        user_id,
-        logged_at.date(),
-    )
-    cache.after_hydration_write.assert_not_awaited()
