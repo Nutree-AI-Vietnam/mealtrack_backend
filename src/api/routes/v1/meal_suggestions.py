@@ -301,7 +301,7 @@ async def save_meal_suggestion(
 
     meal = await event_bus.send(GetMealByIdQuery(meal_id=meal_id, user_id=user_id))
     display_projections = await load_food_reference_display_projections(
-        meal, food_reference_repository
+        meal, food_reference_repository, language=language
     )
 
     return SaveMealSuggestionResponse(

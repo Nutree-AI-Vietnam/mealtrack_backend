@@ -173,7 +173,7 @@ async def _scan_by_url(
             source="api",
         )
     display_projections = await load_food_reference_display_projections(
-        meal, food_reference_repository
+        meal, food_reference_repository, language=language
     )
     return MealMapper.to_detailed_response(
         meal,

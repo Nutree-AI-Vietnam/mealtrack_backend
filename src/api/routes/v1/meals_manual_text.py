@@ -234,7 +234,9 @@ async def create_manual_meal(
                 image_url=getattr(getattr(meal, "image", None), "url", None),
                 target_language=get_request_language(request),
                 display_name_by_food_reference=await load_food_reference_display_projections(
-                    meal, food_reference_repository
+                    meal,
+                    food_reference_repository,
+                    language=get_request_language(request),
                 ),
             ),
         )

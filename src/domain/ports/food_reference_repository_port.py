@@ -127,5 +127,27 @@ class FoodReferenceRepositoryPort(Protocol):
     async def get_display_projections(
         self,
         food_reference_ids: list[int],
+        language: str | None = None,
     ) -> dict[int, dict[str, Any]]:
         """Return id-keyed display names for already-linked meal lines."""
+
+    async def get_serving_phrase_translations(
+        self,
+        phrases: list[str],
+        language: str,
+    ) -> dict[str, str]:
+        """Return cached exact serving-phrase translations."""
+
+    async def upsert_serving_phrase_translations(
+        self,
+        labels_by_source: dict[str, str],
+        language: str,
+    ) -> None:
+        """Persist exact serving-phrase translations for reuse."""
+
+    async def apply_serving_name_vi(
+        self,
+        food_reference_id: int,
+        labels_by_unit: dict[str, str],
+    ) -> None:
+        """Write Vietnamese serving labels onto matching catalog rows."""

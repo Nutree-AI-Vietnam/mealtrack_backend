@@ -5,7 +5,7 @@ Meal-related response DTOs.
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 
 def _serialize_datetime_utc(v: datetime) -> str:
@@ -40,7 +40,25 @@ class ServingUnitResponse(BaseModel):
 
     unit: str = Field(..., description="Unit token used for save/edit requests")
     gram_weight: float = Field(..., gt=0, description="Gram weight for one unit")
-    description: str = Field("", description="User-facing serving description")
+    description: str = Field(
+        "", description="English FatSecret serving description for quantity math"
+    )
+    display_description: str | None = Field(
+        None,
+        description="Localized exact serving label; unit stays English",
+    )
+
+    @model_serializer
+    def serialize_without_empty_label(self) -> dict[str, object]:
+        """Keep legacy response shape when no localized label exists."""
+        response: dict[str, object] = {
+            "unit": self.unit,
+            "gram_weight": self.gram_weight,
+            "description": self.description,
+        }
+        if self.display_description is not None:
+            response["display_description"] = self.display_description
+        return response
 
 
 class ParsedFoodItem(BaseModel):

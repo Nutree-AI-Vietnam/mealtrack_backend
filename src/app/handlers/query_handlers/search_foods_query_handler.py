@@ -12,6 +12,8 @@ from src.app.queries.food.search_foods_query import SearchFoodsQuery
 from src.app.services.food_display_name import leftover_display_names
 from src.app.services.food_name_localizer import translate_food_texts
 from src.app.services.search_result_localizer import localize_search_result_names
+from src.app.services.serving_label import leftover_serving_phrases
+from src.app.services.serving_label_localizer import localize_item_servings
 from src.domain.model.translation_result import TranslationOutcome
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
 from src.domain.ports.food_reference_repository_port import (
@@ -88,17 +90,25 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         if cached is not None:
             processed_cached = self._process_search_results(cached)
             processed_cached = processed_cached[: event.limit]
-            leftover_cached = language != "en" and leftover_display_names(
-                [
-                    {
-                        **item,
-                        "name": str(
-                            item.get("description") or item.get("name") or ""
-                        ),
-                    }
+            leftover_cached = language != "en" and (
+                leftover_display_names(
+                    [
+                        {
+                            **item,
+                            "name": str(
+                                item.get("description") or item.get("name") or ""
+                            ),
+                        }
+                        for item in processed_cached
+                    ],
+                    language,
+                )
+                or any(
+                    leftover_serving_phrases(
+                        item.get("allowed_units") or [], language
+                    )
                     for item in processed_cached
-                ],
-                language,
+                )
             )
             if not leftover_cached:
                 for item in processed_cached:
@@ -154,14 +164,25 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                     logger.warning("fatsecret search failed", exc_info=True)
 
         if is_non_english and processed_raw:
-            processed_raw = await self._localize_results(
+            processed_raw, cacheable = await self._localize_results(
                 processed_raw,
                 language=language,
-                cache_key=cache_key,
-                cache_context=cache_context,
             )
             if not event.autocomplete:
                 await self._adopt_provider_hits(processed_raw, locale=language)
+            await localize_item_servings(
+                processed_raw,
+                language=language,
+                translation_service=self.translation_service,
+                uow_factory=self.uow_factory,
+                persist=not event.autocomplete,
+            )
+            leftover_units = any(
+                leftover_serving_phrases(item.get("allowed_units") or [], language)
+                for item in processed_raw
+            )
+            if cacheable and not leftover_units:
+                await self._cache_search(cache_key, processed_raw, cache_context)
 
         mapped = self._map_search_items(processed_raw)
         self._record_search_metrics(
@@ -288,17 +309,13 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         results: list[dict[str, Any]],
         *,
         language: str,
-        cache_key: str,
-        cache_context: Mapping[str, int | str] | None,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], bool]:
         localized, cacheable = await localize_search_result_names(
             results,
             language=language,
             translation_service=self.translation_service,
         )
-        if cacheable:
-            await self._cache_search(cache_key, localized, cache_context)
-        return localized
+        return localized, cacheable
 
     async def _cache_search(
         self,

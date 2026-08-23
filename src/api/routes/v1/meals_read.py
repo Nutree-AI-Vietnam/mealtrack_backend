@@ -201,7 +201,7 @@ async def get_meal(
         meal, food_reference_repository
     )
     display_projections = await load_food_reference_display_projections(
-        meal, food_reference_repository
+        meal, food_reference_repository, language=language
     )
     return MealMapper.to_detailed_response(
         meal,
