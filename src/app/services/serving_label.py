@@ -80,7 +80,10 @@ def canonical_serving_labels(
         if key in _VI_CANONICAL_SERVING_LABELS:
             labels[key] = _VI_CANONICAL_SERVING_LABELS[key]
             continue
-        compact = re.sub(r"\s*\([^)]*\)", "", source).split(",", 1)[0].strip()
+        # Parenthetical provider measurements are detail-only. Comma-qualified
+        # phrases such as ``cup, cooked, diced`` carry semantic qualifiers and
+        # must remain intact for the phrase translator/cache.
+        compact = re.sub(r"\s*\([^)]*\)", "", source).strip()
         words = compact.lower().split()
         translated = [_VI_SERVING_WORDS.get(word, "") for word in words]
         if words and all(translated):
