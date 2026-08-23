@@ -32,7 +32,12 @@ CUSTOM_ALLOWED_UNITS = normalize_serving_options(
 
 
 def apply_custom_estimate(item: dict[str, Any]) -> dict[str, Any] | None:
-    """Keep AI portion macros as a custom estimate, stored in grams or kilograms."""
+    """Keep AI portion macros as a custom estimate, stored in grams or kilograms.
+
+    Countable misses bind those portion totals to 100 g × count. There is no
+    trusted original gram weight, so macros are not rescaled from cup/slice
+    heuristics. Density validation still drops impossible rows.
+    """
     quantity_g = custom_estimate_quantity_g(item)
     if quantity_g is None:
         return None

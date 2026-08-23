@@ -60,6 +60,9 @@ def test_countable_unit_uses_hundred_gram_serving():
     assert resolved is not None
     assert resolved["unit"] == "g"
     assert resolved["quantity"] == 100
+    assert resolved["protein"] == 18
+    assert resolved["carbs"] == 4
+    assert resolved["fat"] == 11
 
 
 def test_impossible_density_is_rejected():
