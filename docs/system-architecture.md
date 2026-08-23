@@ -195,7 +195,11 @@ identity, and idempotency key. `ManualMealNutritionResolver` resolves local,
 USDA, provider, and custom items server-side; client macros, gram weights, and
 serving lists do not replace reference nutrition. Each successful v2 item stores
 an immutable source snapshot on `food_item`, and meal detail reads use that
-snapshot before consulting legacy references. User-scoped write-operation leases
+snapshot before consulting legacy references. Edit-replace of the same
+`food_reference_id` rebuilds the snapshot from current catalog per-100g density;
+there is no dedicated refresh HTTP route. GET display names for tracked items
+come from live catalog `name` / `name_vi` while macros stay snapshot-derived.
+User-scoped write-operation leases
 make retries replayable and fence stale workers before a meal mutation commits.
 The additive contract is advertised only through
 `/v1/capabilities/durable-writes` after the persistence migration is available.

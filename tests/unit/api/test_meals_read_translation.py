@@ -236,3 +236,68 @@ async def test_ensure_requested_translation_does_not_serve_incomplete_cache():
     assert result.translations is None
     assert result.dish_name == meal.dish_name
     translation_service.translate_meal.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_requested_translation_reloads_identity_locale_row():
+    food_id = str(uuid4())
+    now = datetime.utcnow()
+    meal = Meal(
+        meal_id=str(uuid4()),
+        user_id=str(uuid4()),
+        status=MealStatus.READY,
+        created_at=now,
+        ready_at=now,
+        image=MealImage(image_id=str(uuid4()), format="jpeg", size_bytes=1),
+        dish_name="Cơm tấm",
+        nutrition=Nutrition(
+            macros=Macros(protein=12, carbs=70, fat=4),
+            food_items=[
+                FoodItem(
+                    id=food_id,
+                    name="Bì heo",
+                    quantity=1,
+                    unit="phần",
+                    macros=Macros(protein=6, carbs=2, fat=8),
+                )
+            ],
+        ),
+        translations={
+            "vi": MealTranslation(
+                meal_id="unused",
+                language="vi",
+                dish_name="Broken rice",
+                food_items=[],
+                meal_ingredients=[""],
+                meal_instruction=None,
+            )
+        },
+    )
+    identity = MealTranslation(
+        meal_id=meal.meal_id,
+        language="vi",
+        dish_name="Cơm tấm",
+        food_items=[
+            FoodItemTranslation(food_item_id=food_id, name="Bì heo"),
+        ],
+        meal_ingredients=["Bì heo"],
+        meal_instruction=None,
+    )
+    reloaded = replace(meal, translations={"vi": identity})
+    event_bus = _EventBus(reloaded)
+    translation_service = type("TranslationService", (), {})()
+    translation_service.translate_meal = AsyncMock(return_value=identity)
+    query = GetMealByIdQuery(meal_id=meal.meal_id, user_id=meal.user_id)
+
+    result = await meals_read._ensure_requested_meal_translation(
+        meal=meal,
+        language="vi",
+        query=query,
+        event_bus=event_bus,
+        meal_translation_service=translation_service,
+    )
+
+    assert result is reloaded
+    assert result.translations["vi"].dish_name == "Cơm tấm"
+    translation_service.translate_meal.assert_awaited_once()
+    assert event_bus.queries == [query]

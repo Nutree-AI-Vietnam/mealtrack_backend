@@ -193,6 +193,7 @@ class NutritionIntegrityPolicy:
         require_metric_basis: bool = False,
         provider_100g_label: bool = False,
         origin_fields: Mapping[str, Any] | None = None,
+        require_macros: bool = True,
     ) -> NutritionIntegrityResult:
         normalized_origin = None
         if origin_fields is not None:
@@ -205,7 +206,13 @@ class NutritionIntegrityPolicy:
         for field_name in ("protein_100g", "carbs_100g", "fat_100g"):
             raw = data.get(field_name)
             if raw is None:
-                return self._reject("missing_macro")
+                if require_macros:
+                    return self._reject("missing_macro")
+                return self._display_result_without_macros(
+                    data,
+                    provider_100g_label=provider_100g_label,
+                    origin=normalized_origin,
+                )
             converted = _finite_float(raw)
             if converted is None:
                 return self._reject("invalid_macro")
@@ -290,6 +297,27 @@ class NutritionIntegrityPolicy:
     @staticmethod
     def _reject(reason_code: str) -> NutritionIntegrityResult:
         return NutritionIntegrityResult(accepted=False, reason_code=reason_code)
+
+    @staticmethod
+    def _display_result_without_macros(
+        data: Mapping[str, Any],
+        *,
+        provider_100g_label: bool,
+        origin: str | None,
+    ) -> NutritionIntegrityResult:
+        raw_options = data.get("allowed_units")
+        if raw_options is None:
+            raw_options = data.get("serving_sizes")
+        options = normalize_serving_options(
+            raw_options,
+            provider_100g_label=provider_100g_label,
+        ) or [dict(DEFAULT_GRAM_SERVING)]
+        return NutritionIntegrityResult(
+            accepted=True,
+            reason_code=ACCEPTED_REASON,
+            serving_options=tuple(options),
+            origin=origin,
+        )
 
 
 def normalize_serving_options(

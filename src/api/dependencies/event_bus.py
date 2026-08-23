@@ -334,6 +334,7 @@ def get_food_search_event_bus() -> EventBus:
             translation_service=text_translation_service,
             local_search=_search_local_food_references,
             integrity_context=_food_integrity_cache_context,
+            uow_factory=AsyncUnitOfWork,
         ),
     )
     event_bus.register_handler(
@@ -591,6 +592,7 @@ def get_configured_event_bus() -> EventBus:
             structured_reference_enabled=parse_text_settings[
                 "structured_reference_enabled"
             ],
+            uow_factory=AsyncUnitOfWork,
         ),
     )
 
@@ -604,6 +606,7 @@ def get_configured_event_bus() -> EventBus:
             translation_service=text_translation_service,
             local_search=_search_local_food_references,
             integrity_context=_food_integrity_cache_context,
+            uow_factory=AsyncUnitOfWork,
         ),
     )
     event_bus.register_handler(

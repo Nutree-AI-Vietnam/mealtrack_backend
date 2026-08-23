@@ -9,11 +9,9 @@ from typing import Any
 
 from src.app.events.base import EventHandler, handles
 from src.app.queries.food.search_foods_query import SearchFoodsQuery
-from src.app.services.food_name_localizer import (
-    translate_food_texts,
-    translated_values,
-    translation_is_cacheable,
-)
+from src.app.services.food_display_name import leftover_display_names
+from src.app.services.food_name_localizer import translate_food_texts
+from src.app.services.search_result_localizer import localize_search_result_names
 from src.domain.model.translation_result import TranslationOutcome
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
 from src.domain.ports.food_reference_repository_port import (
@@ -37,6 +35,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         translation_service: Any | None = None,
         local_search: Callable[[str, str, int], Any] | None = None,
         integrity_context: Callable[[], Any] | None = None,
+        uow_factory: Any | None = None,
     ):
         self.cache_service = cache_service
         self.mapping_service = mapping_service
@@ -44,6 +43,10 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         self.translation_service = translation_service
         self.local_search = local_search
         self.integrity_context = integrity_context
+        # Request-scoped write access for catalog adoption (Phase 2+); this
+        # handler is a process-global singleton, so it must not hold an open
+        # session — callers open a fresh UoW per call via this factory.
+        self.uow_factory = uow_factory
 
     async def handle(self, event: SearchFoodsQuery) -> dict[str, Any]:
         started = perf_counter()
@@ -63,7 +66,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         # Integrity-controlled caches are versioned by policy and generation;
         # retain the query as the stable key for that namespace.
         cache_key = (
-            event.query
+            f"{language}:{event.query}"
             if self.integrity_context is not None
             else self._cache_key(event.query, language)
         )
@@ -85,17 +88,34 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         if cached is not None:
             processed_cached = self._process_search_results(cached)
             processed_cached = processed_cached[: event.limit]
-            for item in processed_cached:
-                if "source" not in item:
-                    item["source"] = "fatsecret"
-            mapped = self._map_search_items(processed_cached)
-            self._record_search_metrics(
-                started,
-                source="cache",
-                language=language,
-                status="success" if mapped else "empty",
+            leftover_cached = language != "en" and leftover_display_names(
+                [
+                    {
+                        **item,
+                        "name": str(
+                            item.get("description") or item.get("name") or ""
+                        ),
+                    }
+                    for item in processed_cached
+                ],
+                language,
             )
-            return {"results": mapped, "query": event.query, "total": len(mapped)}
+            if not leftover_cached:
+                for item in processed_cached:
+                    if "source" not in item:
+                        item["source"] = "fatsecret"
+                mapped = self._map_search_items(processed_cached)
+                self._record_search_metrics(
+                    started,
+                    source="cache",
+                    language=language,
+                    status="success" if mapped else "empty",
+                )
+                return {
+                    "results": mapped,
+                    "query": event.query,
+                    "total": len(mapped),
+                }
 
         canonical_query = await self._canonical_query(event.query, language)
         processed_raw = await self._search_local(
@@ -112,16 +132,15 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                 processed_raw = await self._search_localized(
                     canonical_query,
                     remaining_limit,
-                    language,
-                    cache_key,
                     processed_raw,
-                    cache_context,
                 )
             else:
                 try:
                     fs_results = await self.fat_secret_service.search_foods(
                         event.query, max_results=remaining_limit
                     )
+                    if not event.autocomplete:
+                        await self._adopt_provider_hits(fs_results, locale="en")
                     processed_raw = self._merge_search_results(
                         processed_raw,
                         fs_results,
@@ -133,6 +152,16 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                         )
                 except Exception:
                     logger.warning("fatsecret search failed", exc_info=True)
+
+        if is_non_english and processed_raw:
+            processed_raw = await self._localize_results(
+                processed_raw,
+                language=language,
+                cache_key=cache_key,
+                cache_context=cache_context,
+            )
+            if not event.autocomplete:
+                await self._adopt_provider_hits(processed_raw, locale=language)
 
         mapped = self._map_search_items(processed_raw)
         self._record_search_metrics(
@@ -151,37 +180,91 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         mapped: list[dict[str, Any]] = []
         for item in items:
             try:
-                mapped.append(self.mapping_service.map_search_item(item))
+                mapped_item = self.mapping_service.map_search_item(item)
             except NutritionIntegrityError as exc:
                 logger.info(
                     "food search item rejected by nutrition integrity policy: %s",
                     exc.result.reason_code,
                 )
+                continue
+            # The generic provider mapper does not know about adoption; carry
+            # the catalog id through so newly-adopted FatSecret hits resolve
+            # to the durable food_reference row instead of a thin provider id.
+            if (
+                item.get("food_reference_id") is not None
+                and "food_reference_id" not in mapped_item
+            ):
+                mapped_item["food_reference_id"] = item["food_reference_id"]
+            mapped.append(mapped_item)
         return mapped
+
+    async def _adopt_provider_hits(
+        self, items: list[dict[str, Any]], *, locale: str
+    ) -> None:
+        """Adopt fully-resolved FatSecret hits into the durable catalog.
+
+        Only hits with a durable ``source_food_id`` and valid per-100g macros
+        are adopted; thin/autocomplete stubs must be filtered by the caller
+        before this runs (never called when ``event.autocomplete`` is set).
+        """
+        if self.uow_factory is None:
+            return
+        for item in items:
+            if not self._is_adoptable_provider_hit(item):
+                continue
+            display_name = str(item.get("description") or item.get("name") or "")
+            english_name = str(item.get("canonical_name") or display_name)
+            try:
+                async with self.uow_factory() as uow:
+                    adopted = await uow.food_references.adopt_provider_food(
+                        item.get("source_namespace") or "fatsecret",
+                        str(item.get("source_food_id") or item.get("food_id")),
+                        english_name,
+                        {
+                            "protein_100g": item.get("protein_100g"),
+                            "carbs_100g": item.get("carbs_100g"),
+                            "fat_100g": item.get("fat_100g"),
+                            "fiber_100g": item.get("fiber_100g") or 0,
+                            "sugar_100g": item.get("sugar_100g") or 0,
+                        },
+                        item.get("allowed_units"),
+                        locale,
+                        display_name,
+                    )
+            except Exception:
+                logger.warning("food search adopt failed", exc_info=True)
+                continue
+            item["food_reference_id"] = adopted.get("id")
+
+    @staticmethod
+    def _is_adoptable_provider_hit(item: dict[str, Any]) -> bool:
+        if item.get("source") != "fatsecret":
+            return False
+        if not (item.get("source_food_id") or item.get("food_id")):
+            return False
+        return all(
+            item.get(field) is not None
+            for field in ("protein_100g", "carbs_100g", "fat_100g")
+        )
 
     async def _search_localized(
         self,
         query: str,
         limit: int,
-        language: str,
-        cache_key: str,
         local_raw: list[dict[str, Any]],
-        cache_context: Mapping[str, int | str] | None,
     ) -> list[dict[str, Any]]:
-        """Acquire canonical provider data, then localize complete results."""
+        """Acquire canonical provider data for later locale presentation."""
         try:
             results = await self.fat_secret_service.search_foods(
                 query, max_results=limit
             )
             if results:
-                merged = self._merge_search_results(
+                for item in results:
+                    english = str(item.get("description") or item.get("name") or "")
+                    if english:
+                        item.setdefault("canonical_name", english)
+                return self._merge_search_results(
                     local_raw, results, len(local_raw) + limit
-                )
-                return await self._localize_results(
-                    merged,
-                    language=language,
-                    cache_key=cache_key,
-                    cache_context=cache_context,
                 )
         except Exception:
             logger.warning("fatsecret canonical search failed", exc_info=True)
@@ -208,34 +291,12 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         cache_key: str,
         cache_context: Mapping[str, int | str] | None,
     ) -> list[dict[str, Any]]:
-        if not results or self.translation_service is None:
-            return results
-        names: list[str] = []
-        for item in results:
-            name = str(item.get("description") or item.get("name") or "")
-            if name and name not in names:
-                names.append(name)
-        if not names:
-            return results
-        result = await translate_food_texts(
-            names,
-            target_language=language,
+        localized, cacheable = await localize_search_result_names(
+            results,
+            language=language,
             translation_service=self.translation_service,
         )
-        translated = dict(zip(names, translated_values(names, result), strict=False))
-        localized = []
-        for item in results:
-            localized_item = item.copy()
-            original = str(
-                localized_item.get("description") or localized_item.get("name") or ""
-            )
-            if original in translated:
-                if "description" in localized_item:
-                    localized_item["description"] = translated[original]
-                if "name" in localized_item:
-                    localized_item["name"] = translated[original]
-            localized.append(localized_item)
-        if translation_is_cacheable(result):
+        if cacheable:
             await self._cache_search(cache_key, localized, cache_context)
         return localized
 
@@ -306,6 +367,8 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
             "source_food_id": item.source_food_id or str(item.id),
             "food_id": f"food_reference:{item.id}",
             "description": item.name,
+            "name": item.name,
+            "name_vi": item.name_vi,
             "name_normalized": item.name_normalized,
             "brand": item.brand,
             "provider_source": item.source,

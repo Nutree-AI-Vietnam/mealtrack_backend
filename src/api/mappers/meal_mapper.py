@@ -5,6 +5,9 @@ Mapper for meal-related DTOs and domain models.
 import json
 from typing import Any
 
+from src.api.mappers.food_reference_display_name import (
+    resolve_food_reference_display_name,
+)
 from src.api.schemas.response import (
     DetailedMealResponse,
     FoodItemResponse,
@@ -28,6 +31,7 @@ from src.domain.model.nutrition import FoodItem, Macros, Micros, Nutrition
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
+from src.domain.services.localized_display_name import keep_stored_display_name
 from src.domain.services.meal_calorie_service import (
     effective_food_item_calories,
     effective_meal_calories,
@@ -46,6 +50,29 @@ STATUS_MAPPING = {
     "READY": "ready",
     "FAILED": "failed",
 }
+
+
+def _snapshot_canonical_name(item) -> str | None:
+    snapshot = getattr(item, "source_snapshot", None) or {}
+    if not isinstance(snapshot, dict):
+        return None
+    name = snapshot.get("canonical_name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return None
+
+
+def _apply_translated_food_name(food_item, translated_name, language: str | None) -> None:
+    if not translated_name:
+        return
+    if keep_stored_display_name(
+        stored=food_item.name,
+        translated=translated_name,
+        language=language,
+    ):
+        return
+    food_item.name = translated_name
+    food_item.display_name = translated_name
 
 
 class MealMapper:
@@ -82,6 +109,7 @@ class MealMapper:
         value_insights: MealValueInsights | None = None,
         source_nutrition_by_food_reference: dict[int, FoodReferenceNutritionProjection]
         | None = None,
+        display_name_by_food_reference: dict[int, Any] | None = None,
     ) -> DetailedMealResponse:
         """
         Convert Meal domain model to DetailedMealResponse DTO.
@@ -93,6 +121,11 @@ class MealMapper:
                 the photo on meal-detail responses.
             target_language: ISO 639-1 code; if provided and a cached
                 translation exists, translated fields are applied to the response.
+            display_name_by_food_reference: Id-keyed catalog display
+                projections (``get_display_projections``). Items whose
+                ``food_reference_id`` is present here get their name/
+                display_name/canonical_name from the live catalog row instead
+                of the snapshot/raw-payload/meal-translation chain.
 
         Returns:
             DetailedMealResponse DTO
@@ -116,6 +149,8 @@ class MealMapper:
         requested_language = (
             normalize_language(target_language) if target_language else None
         )
+        display_projections = display_name_by_food_reference or {}
+        tracked_food_reference_ids = set(display_projections.keys())
         canonical_dish_name, canonical_food_names = MealMapper._raw_response_canonical(
             meal,
             expected_food_count=(
@@ -147,11 +182,27 @@ class MealMapper:
             # Map persisted food-item display names and retain canonical aliases.
             if meal.nutrition.food_items:
                 for index, item in enumerate(meal.nutrition.food_items):
-                    canonical_name = (
-                        canonical_food_names[index]
-                        if index < len(canonical_food_names)
-                        else item.name
+                    item_food_reference_id = getattr(item, "food_reference_id", None)
+                    tracked_projection = (
+                        display_projections.get(item_food_reference_id)
+                        if item_food_reference_id is not None
+                        else None
                     )
+                    if tracked_projection is not None:
+                        canonical_name = tracked_projection.get("name") or item.name
+                        display_name = resolve_food_reference_display_name(
+                            tracked_projection, requested_language
+                        )
+                    else:
+                        canonical_name = (
+                            _snapshot_canonical_name(item)
+                            or (
+                                canonical_food_names[index]
+                                if index < len(canonical_food_names)
+                                else item.name
+                            )
+                        )
+                        display_name = item.name
                     item_calories = effective_food_item_calories(
                         item,
                         meal_source=meal.source,
@@ -186,9 +237,14 @@ class MealMapper:
                     )
                     food_item_dto = FoodItemResponse(
                         id=str(item.id),
-                        name=item.name,
-                        display_name=item.name,
+                        name=display_name,
+                        display_name=display_name,
                         canonical_name=canonical_name,
+                        name_vi=(
+                            tracked_projection.get("name_vi")
+                            if tracked_projection is not None
+                            else None
+                        ),
                         category=None,
                         quantity=item.quantity,
                         unit=item.unit,
@@ -257,6 +313,8 @@ class MealMapper:
                 canonical_food_names,
                 strict=False,
             ):
+                if food_item.food_reference_id in tracked_food_reference_ids:
+                    continue
                 food_item.name = canonical_name
                 food_item.display_name = canonical_name
         elif not persisted_image_names and direct_localization:
@@ -267,6 +325,8 @@ class MealMapper:
                 direct_localization.food_item_names,
                 strict=True,
             ):
+                if food_item.food_reference_id in tracked_food_reference_ids:
+                    continue
                 food_item.name = localized_name
                 food_item.display_name = localized_name
         elif (
@@ -280,7 +340,11 @@ class MealMapper:
                 translation_language = requested_language
                 # Apply each translated field independently if it exists
                 # (lenient check - scanned meals may not have instructions)
-                if tr.dish_name:
+                if tr.dish_name and not keep_stored_display_name(
+                    stored=dish_name,
+                    translated=tr.dish_name,
+                    language=requested_language,
+                ):
                     dish_name = tr.dish_name
                 if tr.meal_instruction:
                     instructions = tr.meal_instruction
@@ -298,16 +362,21 @@ class MealMapper:
                     }
                 if translated_names_by_id:
                     for fi in food_items:
+                        if fi.food_reference_id in tracked_food_reference_ids:
+                            continue
                         translated_name = translated_names_by_id.get(
                             str(fi.id)
                         ) or legacy_names_by_id.get(str(fi.id))
-                        if translated_name:
-                            fi.name = translated_name
-                            fi.display_name = translated_name
+                        _apply_translated_food_name(
+                            fi, translated_name, requested_language
+                        )
                 elif legacy_names_by_id:
                     for i, fi in enumerate(food_items):
-                        fi.name = tr.meal_ingredients[i]
-                        fi.display_name = tr.meal_ingredients[i]
+                        if fi.food_reference_id in tracked_food_reference_ids:
+                            continue
+                        _apply_translated_food_name(
+                            fi, tr.meal_ingredients[i], requested_language
+                        )
 
         value_insights_response = MealMapper._value_insights_response(value_insights)
 
@@ -342,7 +411,7 @@ class MealMapper:
             ready_at=meal.ready_at,
             error_message=meal.error_message,
             created_at=meal.created_at,
-            updated_at=None,
+            updated_at=getattr(meal, "updated_at", None),
             food_items=food_items,
             image_url=image_url,
             total_calories=total_calories,

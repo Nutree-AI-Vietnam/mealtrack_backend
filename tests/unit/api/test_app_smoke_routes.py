@@ -571,6 +571,101 @@ def test_meals_edit_ingredients_v2_includes_meal_detail(client: TestClient):
     assert edit_command.override_intent == "user_entered"
 
 
+def test_meals_edit_ingredients_v2_meal_detail_keeps_requested_locale(
+    client: TestClient,
+):
+    """PUT meal_detail must use Accept-Language the same way GET does."""
+    import json
+    from datetime import datetime
+    from uuid import uuid4
+
+    from src.api.dependencies.event_bus import get_configured_event_bus
+    from src.app.commands.meal import EditMealCommand
+    from src.domain.model.meal import FoodItemTranslation, Meal, MealStatus, MealTranslation
+    from src.domain.model.nutrition import FoodItem, Macros, Nutrition
+
+    meal_id = str(uuid4())
+    food_id = str(uuid4())
+    meal = Meal(
+        meal_id=meal_id,
+        user_id=str(uuid4()),
+        status=MealStatus.READY,
+        created_at=datetime(2026, 8, 22, 12, 0),
+        ready_at=datetime(2026, 8, 22, 12, 0),
+        image=None,
+        dish_name="Broken rice with grilled pork chop",
+        source="scanner",
+        raw_gpt_json=json.dumps(
+            {
+                "dish_name": "Broken rice with grilled pork chop",
+                "foods": [{"name": "Broken Rice"}],
+            }
+        ),
+        nutrition=Nutrition(
+            macros=Macros(protein=35, carbs=45, fat=20),
+            food_items=[
+                FoodItem(
+                    id=food_id,
+                    name="Broken Rice",
+                    quantity=200,
+                    unit="g",
+                    macros=Macros(protein=8, carbs=45, fat=1),
+                )
+            ],
+        ),
+        translations={
+            "vi": MealTranslation(
+                meal_id=meal_id,
+                language="vi",
+                dish_name="Cơm tấm sườn, bì, chả",
+                meal_ingredients=["Cơm tấm"],
+                food_items=[
+                    FoodItemTranslation(food_item_id=food_id, name="Cơm tấm"),
+                ],
+            )
+        },
+    )
+
+    sent = []
+
+    class _EditBus:
+        async def send(self, msg):
+            sent.append(msg)
+            if isinstance(msg, EditMealCommand):
+                return {"success": True}
+            return meal
+
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: _EditBus()
+
+    r = client.put(
+        f"/v1/meals/{meal_id}/ingredients",
+        json={
+            "food_item_changes": [],
+            "nutrition_contract_version": 2,
+            "nutrition_override": {
+                "calories": 500,
+                "protein": 20,
+                "carbs": 30,
+                "fat": 15,
+            },
+        },
+        headers={
+            "Accept-Language": "vi",
+            "X-Nutrition-Contract-Version": "2",
+            "X-App-Version": "1.0.0",
+            "X-Platform": "ios",
+            "Idempotency-Key": "smoke-edit-v2-locale",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()["meal_detail"]
+    assert body["dish_name"] == "Cơm tấm sườn, bì, chả"
+    assert body["food_items"][0]["name"] == "Cơm tấm"
+    assert body["food_items"][0]["canonical_name"] == "Broken Rice"
+    assert body["translation_language"] == "vi"
+
+
 def test_meals_streak_smoke(client: TestClient):
     """Smoke coverage for GET /v1/meals/streak."""
     from src.api.dependencies.event_bus import get_configured_event_bus

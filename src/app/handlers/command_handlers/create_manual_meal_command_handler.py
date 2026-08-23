@@ -54,6 +54,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             provider=provider,
             provider_budget=provider_budget,
             provider_rpm=provider_rpm,
+            uow_factory=uow_factory,
         )
 
     async def handle(self, event: CreateManualMealCommand):
@@ -201,6 +202,10 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                     )
 
             return saved_meal
+        except ValueError as exc:
+            await self._release_v2_write(reservation)
+            logger.warning("Validation error creating manual meal: %s", str(exc))
+            raise ValidationException(str(exc)) from None
         except Exception:
             await self._release_v2_write(reservation)
             raise

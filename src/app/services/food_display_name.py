@@ -34,12 +34,29 @@ _GENERIC_FALLBACK = {
 }
 _GLOSSARY = {
     "vi": {
+        "apple": "Táo",
         "baguette": "Bánh mì",
+        "banana": "Chuối",
+        "bananas": "Chuối",
+        "beef": "Thịt bò",
+        "beef broth": "Nước dùng bò",
+        "broth": "Nước dùng",
+        "chicken": "Gà",
+        "chicken broth": "Nước dùng gà",
         "cilantro": "Rau mùi",
         "coriander": "Rau mùi",
+        "egg": "Trứng",
+        "eggs": "Trứng",
+        "fried rice": "Cơm chiên",
         "mayo": "Sốt mayonnaise",
         "mayonnaise": "Sốt mayonnaise",
+        "milk": "Sữa",
+        "rose apple": "Táo hồng",
+        "whole milk": "Sữa tươi",
         "pork pate": "Pate heo",
+        "rice": "Cơm",
+        "tomato sauce": "Sốt cà chua",
+        "vegetable broth": "Nước dùng rau",
         "vietnamese baguette": "Bánh mì",
     }
 }

@@ -45,9 +45,9 @@ def _valid_parse_text_response():
         "items": [
             {
                 "name": "Pho bowl",
-                "quantity": 1,
-                "unit": "one very full noodle bowl",
-                "english_unit": "one very full noodle bowl",
+                "quantity": 100,
+                "unit": "g",
+                "english_unit": "g",
                 "calories": 560,
                 "protein": 30,
                 "carbs": 80,
@@ -139,6 +139,40 @@ class _StructuredFatSecretService:
                 "allowed_units": [{"unit": "g", "gram_weight": 100.0}],
             }
         ]
+
+
+class _BeefFatSecretService:
+    """Provider that only resolves beef so mixed local/FatSecret lists stay mixed."""
+
+    def __init__(self):
+        self.search_calls = []
+
+    async def search_food_candidates(self, query, **kwargs):
+        self.search_calls.append(query)
+        if "beef" not in str(query).lower():
+            return []
+        return [
+            {
+                "food_id": "fs-beef",
+                "food_name": "Beef",
+                "food_type": "Generic",
+            }
+        ]
+
+    async def get_food_details(self, food_id, **kwargs):
+        return {
+            "food_id": food_id,
+            "food_name": "Beef",
+            "source": "fatsecret",
+            "protein_100g": 26.3,
+            "carbs_100g": 0.0,
+            "fat_100g": 19.5,
+            "calories_100g": 282.0,
+            "metric_serving_amount": 100.0,
+            "allowed_units": [
+                {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
+            ],
+        }
 
 
 class _StagedFatSecretService:
@@ -256,6 +290,77 @@ class _CountingFatSecretService:
         return []
 
 
+def _survivable_local_lookup(**macros):
+    """Universal seed hit so collateral (localization/retry) tests don't drop."""
+    values = {
+        "protein_100g": 5.0,
+        "carbs_100g": 5.0,
+        "fat_100g": 5.0,
+        "fiber_100g": 0.0,
+        "sugar_100g": 0.0,
+        **macros,
+    }
+
+    async def lookup(names):
+        return {
+            name: {
+                "id": 900,
+                "food_reference_id": 900,
+                "name": name,
+                "source": "food_reference",
+                "is_verified": True,
+                **values,
+            }
+            for name in names
+        }
+
+    return lookup
+
+
+class _FakeFoodReferenceAdoptRepository:
+    def __init__(self, adopt_return=None):
+        self.adopt_calls = []
+        self._adopt_return = adopt_return or {"id": 501}
+
+    async def adopt_provider_food(
+        self, namespace, food_id, english_name, per_100g, servings, locale, locale_name
+    ):
+        self.adopt_calls.append(
+            {
+                "namespace": namespace,
+                "food_id": food_id,
+                "english_name": english_name,
+                "per_100g": dict(per_100g),
+                "servings": servings,
+                "locale": locale,
+                "locale_name": locale_name,
+            }
+        )
+        return self._adopt_return
+
+    async def find_by_locale_names(self, language, names):
+        return {}
+
+
+class _FakeUow:
+    def __init__(self, food_references):
+        self.food_references = food_references
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+class _FakeUowFactory:
+    def __init__(self, food_references):
+        self._food_references = food_references
+
+    def __call__(self):
+        return _FakeUow(self._food_references)
+
+
 @pytest.mark.asyncio
 async def test_expired_provider_budget_does_not_leak_unawaited_coroutine(recwarn):
     provider = _CountingFatSecretService()
@@ -365,13 +470,89 @@ def test_parse_text_exposes_portion_density_for_confirmed_save():
         "sugar": 0,
     }
 
+    handler._retain_canonical_name(item)
     handler._attach_per_100g_snapshot(item)
 
     assert item["protein_per_100g"] == pytest.approx(90)
     assert item["fat_per_100g"] == pytest.approx(50)
     assert item["calories_per_100g"] == pytest.approx(810)
+    assert item["canonical_name"] == "Pork rib"
     assert item["source_snapshot"]["basis"] == "100g"
     assert item["source_snapshot"]["protein_per_100g"] == pytest.approx(90)
+    assert item["source_snapshot"]["canonical_name"] == "Pork rib"
+
+
+@pytest.mark.asyncio
+async def test_parse_text_keeps_local_reference_beside_fatsecret():
+    async def local_lookup(names):
+        return {
+            name: {
+                "id": 42,
+                "food_reference_id": 42,
+                "name": "Rice noodles",
+                "source": "food_reference",
+                "is_verified": True,
+                "protein_100g": 1.5,
+                "carbs_100g": 24.0,
+                "fat_100g": 0.22,
+                "fiber_100g": 0.4,
+                "sugar_100g": 0.1,
+                "allowed_units": [
+                    {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
+                ],
+            }
+            for name in names
+            if name == "rice noodles"
+        }
+
+    provider = _BeefFatSecretService()
+    handler = ParseMealTextHandler(
+        meal_generation_service=_FakeMealGenerationService(
+            responses=[
+                {
+                    "items": [
+                        {
+                            "name": "Bún gạo",
+                            "lookup_name": "Rice noodles",
+                            "quantity": 180,
+                            "unit": "g",
+                            "english_unit": "g",
+                            "protein": 2.7,
+                            "carbs": 43.2,
+                            "fat": 0.4,
+                        },
+                        {
+                            "name": "Thịt bò",
+                            "lookup_name": "Beef",
+                            "quantity": 60,
+                            "unit": "g",
+                            "english_unit": "g",
+                            "protein": 15.8,
+                            "carbs": 0,
+                            "fat": 11.7,
+                        },
+                    ]
+                }
+            ]
+        ),
+        fat_secret_service=provider,
+        food_reference_batch_lookup=local_lookup,
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(
+            text="bún gạo thịt bò", user_id="user-1", language="en"
+        )
+    )
+
+    assert [item.name for item in response.items] == ["Bún gạo", "Thịt bò"]
+    assert response.items[0].origin == "local"
+    assert response.items[0].food_reference_id == 42
+    assert response.items[0].canonical_name == "Rice noodles"
+    assert response.items[1].origin == "provider"
+    assert response.items[1].source_food_id == "fs-beef"
+    assert response.items[1].canonical_name == "Beef"
+    assert provider.search_calls == ["Beef"]
 
 
 @pytest.mark.asyncio
@@ -380,6 +561,9 @@ async def test_parse_text_unit_stays_compatible_with_prompt_manual_save():
     handler = ParseMealTextHandler(
         meal_generation_service=meal_generation_service,
         fat_secret_service=_FakeFatSecretService(),
+        food_reference_batch_lookup=_survivable_local_lookup(
+            protein_100g=30.0, carbs_100g=40.0, fat_100g=12.0
+        ),
     )
 
     response = await handler.handle(
@@ -390,9 +574,9 @@ async def test_parse_text_unit_stays_compatible_with_prompt_manual_save():
     assert meal_generation_service.call_kwargs["model_purpose"] == "parse_text"
     assert meal_generation_service.call_kwargs["thinking_budget"] == 0
     assert meal_generation_service.call_kwargs["schema"] is MealTextNutritionResponse
-    assert item.unit == "one very full noodle bowl"
+    assert item.unit == "g"
     assert item.protein == 30
-    assert item.carbs == 80
+    assert item.carbs == 40
     assert item.fat == 12
 
     quantity_in_grams = convert_quantity_to_grams(item.quantity, item.unit, item.name)
@@ -418,46 +602,8 @@ async def test_parse_text_unit_stays_compatible_with_prompt_manual_save():
 
 
 @pytest.mark.asyncio
-async def test_parse_text_unmatched_countable_unit_is_saved_as_allowed_unit():
-    meal_generation_service = _FakeMealGenerationService(
-        responses=[
-            {
-                "items": [
-                    {
-                        "name": "Sườn Nướng",
-                        "quantity": 1,
-                        "unit": "miếng",
-                        "english_unit": "piece",
-                        "calories": 298,
-                        "protein": 18,
-                        "carbs": 4,
-                        "fat": 11,
-                    }
-                ]
-            }
-        ]
-    )
-    handler = ParseMealTextHandler(
-        meal_generation_service=meal_generation_service,
-        fat_secret_service=_FakeFatSecretService(),
-    )
-
-    response = await handler.handle(
-        ParseMealTextCommand(text="1 miếng sườn nướng", user_id="user-1", language="vi")
-    )
-    item = response.items[0]
-    units = {option["unit"]: option["gram_weight"] for option in item.allowed_units}
-
-    assert len(meal_generation_service.calls) == 1
-    assert item.unit == "miếng"
-    assert item.quantity == 1
-    assert "miếng" in units
-    assert units["miếng"] == pytest.approx(100.0)
-    assert units["g"] == pytest.approx(1.0)
-
-
-@pytest.mark.asyncio
 async def test_parse_text_countable_unit_survives_provider_outage():
+    """A countable miss becomes a custom 100g row instead of being dropped."""
     meal_generation_service = _FakeMealGenerationService(
         responses=[
             {
@@ -486,12 +632,15 @@ async def test_parse_text_countable_unit_survives_provider_outage():
     response = await handler.handle(
         ParseMealTextCommand(text="1 miếng sườn nướng", user_id="user-1", language="vi")
     )
-    item = response.items[0]
 
-    assert item.unit == "miếng"
-    assert item.quantity == 1
-    assert item.protein == pytest.approx(18)
-    assert item.data_source == "ai_estimate"
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert item.quantity == 100
+    assert item.food_reference_id is None
+    assert {option["unit"] for option in item.allowed_units} == {"g", "kg"}
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
@@ -503,8 +652,8 @@ async def test_parse_text_translates_only_structurally_identified_english_name()
                     {
                         "name": "Chicken",
                         "english_name": "Chicken",
-                        "quantity": 1,
-                        "unit": "serving",
+                        "quantity": 100,
+                        "unit": "g",
                         "protein": 20,
                         "carbs": 0,
                         "fat": 5,
@@ -518,6 +667,7 @@ async def test_parse_text_translates_only_structurally_identified_english_name()
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
         translation_service=translator,
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -537,8 +687,8 @@ async def test_parse_text_ascii_display_name_is_localized():
                     {
                         "name": "Chicken",
                         "lookup_name": "Chicken",
-                        "quantity": 1,
-                        "unit": "serving",
+                        "quantity": 100,
+                        "unit": "g",
                         "protein": 20,
                         "carbs": 0,
                         "fat": 5,
@@ -552,6 +702,7 @@ async def test_parse_text_ascii_display_name_is_localized():
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
         translation_service=translator,
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -599,7 +750,7 @@ async def test_parse_text_keeps_localized_names_and_translates_ascii_leftovers()
                         "name": "Nước dùng Bún bò Huế",
                         "lookup_name": "Bun bo Hue broth",
                         "quantity": 300,
-                        "unit": "ml",
+                        "unit": "g",
                         "protein": 4.5,
                         "carbs": 3,
                         "fat": 6,
@@ -618,6 +769,7 @@ async def test_parse_text_keeps_localized_names_and_translates_ascii_leftovers()
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
         translation_service=translator,
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -647,8 +799,8 @@ async def test_parse_text_force_localizes_english_when_translator_leaves_origina
                     {
                         "name": "Shredded pork skin and pork",
                         "lookup_name": "Shredded pork skin and pork",
-                        "quantity": 1,
-                        "unit": "phần",
+                        "quantity": 100,
+                        "unit": "g",
                         "protein": 8,
                         "carbs": 2,
                         "fat": 7,
@@ -663,6 +815,7 @@ async def test_parse_text_force_localizes_english_when_translator_leaves_origina
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
         translation_service=translator,
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -693,8 +846,8 @@ def _localized_item(name: str, lookup_name: str) -> dict:
     return {
         "name": name,
         "lookup_name": lookup_name,
-        "quantity": 1,
-        "unit": "phần",
+        "quantity": 100,
+        "unit": "g",
         "protein": 8,
         "carbs": 2,
         "fat": 7,
@@ -723,6 +876,7 @@ async def test_parse_text_fail_closes_leaked_english_and_mixed_slash_names():
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
         translation_service=translator,
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -764,6 +918,7 @@ async def test_parse_text_retries_when_a_named_dish_returns_one_row():
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -790,6 +945,7 @@ async def test_parse_text_does_not_retry_listed_ingredients():
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -815,6 +971,7 @@ async def test_parse_text_prefers_localized_side_of_bilingual_pate_name():
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
         translation_service=_IdentityTranslator(),
+        food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
     response = await handler.handle(
@@ -917,6 +1074,9 @@ async def test_parse_text_retries_invalid_ai_output_once():
     handler = ParseMealTextHandler(
         meal_generation_service=meal_generation_service,
         fat_secret_service=_FakeFatSecretService(),
+        food_reference_batch_lookup=_survivable_local_lookup(
+            protein_100g=31.0, carbs_100g=0.0, fat_100g=3.6
+        ),
     )
 
     response = await handler.handle(
@@ -1211,7 +1371,11 @@ async def test_parse_text_does_not_claim_fatsecret_for_invalid_structured_nutrit
         ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
     )
 
-    assert response.items[0].data_source != "fatsecret"
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
@@ -1237,7 +1401,11 @@ async def test_parse_text_does_not_claim_provider_without_durable_identity():
         ParseMealTextCommand(text="100g rice", user_id="user-1", language="en")
     )
 
-    assert response.items[0].data_source != "fatsecret"
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert response.unmatched_terms == []
 
 
 @pytest.mark.asyncio
@@ -1296,12 +1464,13 @@ async def test_parse_text_rejects_dense_fallback_when_ai_omits_quantity_g():
         fat_secret_service=_FakeFatSecretService(),
     )
 
-    with pytest.raises(AIOutputValidationError, match="physical validation"):
-        await handler.handle(
-            ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
-        )
+    response = await handler.handle(
+        ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
+    )
 
-    assert len(meal_generation_service.calls) == 2
+    assert response.items == []
+    assert response.unmatched_terms == []
+    assert len(meal_generation_service.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -1438,12 +1607,113 @@ async def test_parse_text_rejects_fatsecret_using_backend_derived_calories(
     response = await handler.handle(
         ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
     )
+
+    item = response.items[0]
+    assert item.origin == "custom"
+    assert item.data_source == "custom"
+    assert item.unit == "g"
+    assert item.quantity == 100
+    assert response.unmatched_terms == []
+
+
+@pytest.mark.asyncio
+async def test_parse_text_all_items_unmatched_become_custom_rows():
+    """When every item misses the catalog and FatSecret, keep them as custom g/kg rows."""
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[
+            {
+                "items": [
+                    _parse_item(name="Sườn Nướng", quantity=1, unit="miếng"),
+                    _parse_item(name="Chả lụa", quantity=1, unit="miếng"),
+                ]
+            }
+        ]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_FakeFatSecretService(),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(
+            text="sườn nướng, chả lụa", user_id="user-1", language="vi"
+        )
+    )
+
+    assert [item.name for item in response.items] == ["Sườn Nướng", "Chả lụa"]
+    assert {item.origin for item in response.items} == {"custom"}
+    assert {item.unit for item in response.items} == {"g"}
+    assert response.unmatched_terms == []
+
+
+@pytest.mark.asyncio
+async def test_parse_text_authenticated_adopts_fatsecret_hit_into_catalog():
+    """Authenticated FatSecret hits get adopted so repeat parses hit the catalog."""
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[{"items": [_parse_item(name="Potato")]}]
+    )
+    food_references = _FakeFoodReferenceAdoptRepository(adopt_return={"id": 501})
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_StructuredFatSecretService(),
+        uow_factory=_FakeUowFactory(food_references),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
+    )
     item = response.items[0]
 
-    assert item.data_source == "ai_estimate"
-    assert item.protein == 10
-    assert item.carbs == 10
-    assert item.fat == 0
+    assert item.data_source == "fatsecret"
+    assert item.food_reference_id == 501
+    assert item.origin == "local"
+    assert item.source_namespace == "fatsecret"
+    assert item.source_food_id == "potato-generic"
+    assert len(food_references.adopt_calls) == 1
+    call = food_references.adopt_calls[0]
+    assert call["english_name"] == "Potato, raw"
+    assert call["locale_name"] == "Potato"
+
+
+@pytest.mark.asyncio
+async def test_parse_text_guest_never_adopts_fatsecret_hit():
+    """Guest parses (user_id=None) keep FatSecret names but never write the catalog."""
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[{"items": [_parse_item(name="Potato")]}]
+    )
+    food_references = _FakeFoodReferenceAdoptRepository()
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_StructuredFatSecretService(),
+        uow_factory=_FakeUowFactory(food_references),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="100g potato", user_id=None, language="en")
+    )
+
+    assert response.items[0].data_source == "fatsecret"
+    assert food_references.adopt_calls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_text_custom_miss_never_writes_catalog():
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[{"items": [_parse_item(name="Secret sauce")]}]
+    )
+    food_references = _FakeFoodReferenceAdoptRepository()
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_FakeFatSecretService(),
+        uow_factory=_FakeUowFactory(food_references),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="secret sauce", user_id="user-1", language="en")
+    )
+
+    assert response.items[0].origin == "custom"
+    assert food_references.adopt_calls == []
 
 
 def test_canonicalize_reference_quantity_maps_gram_alias_to_g():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -22,6 +23,8 @@ from src.domain.services.nutrition_integrity_policy import (
 )
 from src.observability import increment_metric
 
+logger = logging.getLogger(__name__)
+
 
 class ManualMealNutritionResolver:
     """Resolve v2 source identity and build immutable per-item snapshots."""
@@ -33,12 +36,16 @@ class ManualMealNutritionResolver:
         provider_budget: ProviderBudgetPort | None = None,
         provider_rpm: int | None = None,
         provider_timeout_seconds: float = 5.0,
+        uow_factory: Any | None = None,
     ):
         self.policy = policy or NutritionIntegrityPolicy()
         self.provider = provider
         self.provider_budget = provider_budget
         self.provider_rpm = provider_rpm
         self.provider_timeout_seconds = provider_timeout_seconds
+        # Request-scoped write access for catalog adoption; the resolver is
+        # reused across requests, so callers open a fresh UoW per adopt call.
+        self.uow_factory = uow_factory
         self._provider_semaphore = asyncio.Semaphore(4)
         self._provider_inflight: dict[tuple[str, str], asyncio.Task] = {}
         self._provider_inflight_lock = asyncio.Lock()
@@ -265,7 +272,12 @@ class ManualMealNutritionResolver:
             source_food_id=source_id,
             nutrition_contract_version="2",
             source_snapshot=self._snapshot(
-                result, origin, source_namespace, source_id, allowed_units
+                result,
+                origin,
+                source_namespace,
+                source_id,
+                allowed_units,
+                canonical_name=reference.name,
             ),
         )
 
@@ -294,16 +306,22 @@ class ManualMealNutritionResolver:
             require_metric_basis=False,
         )
         source_id = str(item.fdc_id)
+        canonical_name = reference.get("name") or reference.get("description")
         return replace(
             item,
-            name=reference.get("name") or reference.get("description") or item.name,
+            name=canonical_name or item.name,
             custom_nutrition=self._custom_from_result(result),
             allowed_units=allowed_units,
             source_kind=origin,
             source_food_id=source_id,
             nutrition_contract_version="2",
             source_snapshot=self._snapshot(
-                result, origin, "usda_fdc", source_id, allowed_units
+                result,
+                origin,
+                "usda_fdc",
+                source_id,
+                allowed_units,
+                canonical_name=canonical_name,
             ),
         )
 
@@ -353,21 +371,94 @@ class ManualMealNutritionResolver:
             require_metric_basis=False,
             provider_100g_label=True,
         )
+        english_name = str(
+            details.get("food_name") or details.get("name") or item.name or "Food Item"
+        ).strip()
+        food_reference_id, result, allowed_units, english_name = (
+            await self._adopt_provider_identity(
+                namespace, source_id, english_name, result, allowed_units
+            )
+        )
         return replace(
             item,
-            name=details.get("food_name") or details.get("name") or item.name,
+            name=english_name,
             custom_nutrition=self._custom_from_result(result),
             allowed_units=allowed_units,
+            food_reference_id=food_reference_id,
             source_kind="provider",
             nutrition_contract_version="2",
             source_snapshot=self._snapshot(
                 result,
                 "provider",
-                item.source_namespace or "fatsecret",
+                namespace,
                 source_id,
                 allowed_units,
+                canonical_name=english_name,
             ),
         )
+
+    async def _adopt_provider_identity(
+        self,
+        namespace: str,
+        source_id: str,
+        english_name: str,
+        result: Any,
+        allowed_units: list[dict[str, Any]],
+    ) -> tuple[int | None, Any, list[dict[str, Any]], str]:
+        """Materialize a provider identity into the catalog before save.
+
+        Save must never search FatSecret by name; this only ever adopts by
+        the identity the client already supplied. When the catalog already
+        has this identity verified, the adopted (frozen) density wins over
+        whatever was just fetched from the provider. Adopt failures degrade
+        to the freshly fetched provider density rather than blocking save.
+        """
+        if self.uow_factory is None:
+            return None, result, allowed_units, english_name
+        per_100g = {
+            "protein_100g": result.protein_100g,
+            "carbs_100g": result.carbs_100g,
+            "fat_100g": result.fat_100g,
+            "fiber_100g": result.fiber_100g,
+            "sugar_100g": result.sugar_100g,
+        }
+        try:
+            async with self.uow_factory() as uow:
+                adopted = await uow.food_references.adopt_provider_food(
+                    namespace,
+                    source_id,
+                    english_name,
+                    per_100g,
+                    allowed_units,
+                    "en",
+                    "",
+                )
+        except Exception:
+            logger.warning(
+                "manual_meal_nutrition_resolver.adopt_failed namespace=%s food_id=%s",
+                namespace,
+                source_id,
+                exc_info=True,
+            )
+            return None, result, allowed_units, english_name
+        if not isinstance(adopted, dict) or adopted.get("id") is None:
+            return None, result, allowed_units, english_name
+        adopted_units = adopted.get("allowed_units") or allowed_units
+        adopted_result = self.policy.require_valid(
+            {
+                "protein_100g": adopted.get("protein_100g"),
+                "carbs_100g": adopted.get("carbs_100g"),
+                "fat_100g": adopted.get("fat_100g"),
+                "fiber_100g": adopted.get("fiber_100g", 0),
+                "sugar_100g": adopted.get("sugar_100g", 0),
+                "allowed_units": adopted_units,
+            },
+            require_energy=False,
+            require_metric_basis=False,
+            provider_100g_label=True,
+        )
+        adopted_name = str(adopted.get("name") or "").strip() or english_name
+        return adopted.get("id"), adopted_result, adopted_units, adopted_name
 
     async def _get_provider_details(
         self, source_id: str, *, namespace: str, deadline: float | None
@@ -472,8 +563,10 @@ class ManualMealNutritionResolver:
         )
 
     @staticmethod
-    def _snapshot(result, origin, namespace, source_id, allowed_units=None):
-        return {
+    def _snapshot(
+        result, origin, namespace, source_id, allowed_units=None, canonical_name=None
+    ):
+        snapshot = {
             "origin": origin,
             "source_namespace": namespace,
             "source_food_id": source_id,
@@ -487,3 +580,7 @@ class ManualMealNutritionResolver:
             "allowed_units": allowed_units
             or [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
         }
+        clean_name = str(canonical_name or "").strip()
+        if clean_name:
+            snapshot["canonical_name"] = clean_name
+        return snapshot

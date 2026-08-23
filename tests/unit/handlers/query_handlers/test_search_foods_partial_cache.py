@@ -59,6 +59,48 @@ def teardown_function():
     reset_observability_connector_for_test()
 
 
+class _FakeFoodReferenceRepo:
+    def __init__(self, adopted: dict | None = None):
+        self.adopted = adopted or {"id": 501}
+        self.calls: list[tuple] = []
+
+    async def adopt_provider_food(
+        self,
+        namespace,
+        food_id,
+        english_name,
+        per_100g,
+        servings,
+        locale,
+        locale_name,
+    ):
+        self.calls.append(
+            (namespace, food_id, english_name, per_100g, servings, locale, locale_name)
+        )
+        return self.adopted
+
+
+class _FakeUow:
+    def __init__(self, repo: _FakeFoodReferenceRepo):
+        self.food_references = repo
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+
+class _FakeUowFactory:
+    def __init__(self, repo: _FakeFoodReferenceRepo):
+        self.repo = repo
+        self.created = 0
+
+    def __call__(self):
+        self.created += 1
+        return _FakeUow(self.repo)
+
+
 def _local_rice() -> FoodReferenceSearchProjection:
     return FoodReferenceSearchProjection(
         id=7,
@@ -134,15 +176,15 @@ async def test_partial_localized_result_skips_fallback():
 
 
 @pytest.mark.asyncio
-async def test_partial_localized_result_is_not_cached():
-    """Partial/canonical presentation output must not poison a locale cache."""
-    partial_results = [{"description": "Phở", "source": "fatsecret"}]
-    handler, _, cache, _ = _make_handler(localized_results=partial_results)
+async def test_already_localized_result_is_cached():
+    """Vietnamese-only names have no leftovers and are safe to cache."""
+    localized_results = [{"description": "Phở", "source": "fatsecret"}]
+    handler, _, cache, _ = _make_handler(localized_results=localized_results)
 
     query = SearchFoodsQuery(query="pho", language="vi", limit=10)
     await handler.handle(query)
 
-    cache.cache_search.assert_not_called()
+    cache.cache_search.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -216,9 +258,9 @@ async def test_non_english_partial_forward_result_is_presented_without_cache_wri
 
     assert [item["description"] for item in result["results"]] == [
         "Cơm tô",
-        "Chicken",
+        "Gà",
     ]
-    cache.cache_search.assert_not_called()
+    cache.cache_search.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -384,3 +426,237 @@ async def test_cached_search_respects_requested_limit():
 
     assert len(result["results"]) == 1
     fat_secret.search_foods.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_detailed_fatsecret_hit_is_adopted_and_mapped_with_food_reference_id():
+    """A fully-resolved FatSecret search hit adopts once and links its id."""
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[
+            {
+                "description": "Grilled Chicken Breast",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "12345",
+                "food_id": "12345",
+                "protein_100g": 31.0,
+                "carbs_100g": 0.0,
+                "fat_100g": 3.6,
+                "fiber_100g": 0.0,
+                "sugar_100g": 0.0,
+                "allowed_units": [
+                    {"unit": "g", "gram_weight": 100.0, "description": "100 g"}
+                ],
+            }
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    repo = _FakeFoodReferenceRepo(adopted={"id": 777})
+    uow_factory = _FakeUowFactory(repo)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    result = await handler.handle(
+        SearchFoodsQuery(query="chicken", language="en", limit=5)
+    )
+
+    assert len(repo.calls) == 1
+    namespace, food_id, english_name, per_100g, servings, locale, locale_name = (
+        repo.calls[0]
+    )
+    assert namespace == "fatsecret"
+    assert food_id == "12345"
+    assert english_name == "Grilled Chicken Breast"
+    assert per_100g["protein_100g"] == 31.0
+    assert locale == "en"
+    assert locale_name == "Grilled Chicken Breast"
+    assert result["results"][0]["food_reference_id"] == 777
+
+
+@pytest.mark.asyncio
+async def test_autocomplete_search_never_adopts():
+    """Autocomplete/thin candidate search must never write to the catalog."""
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[
+            {
+                "description": "Grilled Chicken Breast",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "12345",
+                "food_id": "12345",
+                "protein_100g": 31.0,
+                "carbs_100g": 0.0,
+                "fat_100g": 3.6,
+            }
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    repo = _FakeFoodReferenceRepo()
+    uow_factory = _FakeUowFactory(repo)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    result = await handler.handle(
+        SearchFoodsQuery(query="chicken", language="en", limit=5, autocomplete=True)
+    )
+
+    assert repo.calls == []
+    assert uow_factory.created == 0
+    assert "food_reference_id" not in result["results"][0]
+
+
+@pytest.mark.asyncio
+async def test_thin_provider_hit_without_macros_is_not_adopted():
+    """A candidate with no durable macros must not trigger an adopt write."""
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[
+            {
+                "description": "Mystery Dish",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "999",
+                "food_id": "999",
+                "protein_100g": None,
+                "carbs_100g": None,
+                "fat_100g": None,
+            }
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    repo = _FakeFoodReferenceRepo()
+    uow_factory = _FakeUowFactory(repo)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    await handler.handle(SearchFoodsQuery(query="mystery", language="en", limit=5))
+
+    assert repo.calls == []
+
+
+@pytest.mark.asyncio
+async def test_localized_search_adopts_before_translation_overwrites_name():
+    """Non-English search adopts using the canonical English name, not the
+    translated display name."""
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[
+            {
+                "description": "Beef Noodle Soup",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "555",
+                "food_id": "555",
+                "protein_100g": 6.0,
+                "carbs_100g": 10.0,
+                "fat_100g": 2.0,
+            }
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    repo = _FakeFoodReferenceRepo(adopted={"id": 888})
+    uow_factory = _FakeUowFactory(repo)
+    translator = _NeutralTranslator(
+        [
+            TranslationResult(("bo",), TranslationOutcome.TRANSLATED, "vi", "en"),
+            TranslationResult(
+                ("Phở bò",), TranslationOutcome.TRANSLATED, "en", "vi"
+            ),
+        ]
+    )
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        translation_service=translator,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    result = await handler.handle(
+        SearchFoodsQuery(query="bo", language="vi", limit=5)
+    )
+
+    assert len(repo.calls) == 1
+    english_name = repo.calls[0][2]
+    assert english_name == "Beef Noodle Soup"
+    assert result["results"][0]["food_reference_id"] == 888
+    assert result["results"][0]["description"] == "Phở bò"
+
+
+@pytest.mark.asyncio
+async def test_local_only_vietnamese_result_is_localized():
+    handler, fat_secret, _, _ = _make_handler(local_results=[_local_rice()])
+
+    result = await handler.handle(
+        SearchFoodsQuery(query="cơm", language="vi", limit=1)
+    )
+
+    fat_secret.search_foods.assert_not_awaited()
+    assert result["results"][0]["description"] == "Cơm"
+
+
+@pytest.mark.asyncio
+async def test_cached_english_leftovers_are_ignored_for_vietnamese():
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(
+        return_value=[
+            {"description": "Chicken", "name": "Chicken", "source": "fatsecret"}
+        ]
+    )
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[{"description": "Chicken", "source": "fatsecret"}]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: item
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+    )
+
+    result = await handler.handle(SearchFoodsQuery(query="Gà", language="vi"))
+
+    fat_secret.search_foods.assert_awaited_once()
+    assert result["results"][0]["description"] == "Gà"
+    cache.cache_search.assert_awaited_once()

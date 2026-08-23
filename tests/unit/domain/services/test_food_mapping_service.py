@@ -60,6 +60,50 @@ def test_map_search_item_rejects_catastrophic_provider_nutrition():
         )
 
 
+def test_map_search_item_keeps_fatsecret_hit_without_macros():
+    result = FoodMappingService().map_search_item(
+        {
+            "source": "fatsecret",
+            "food_id": "1",
+            "source_namespace": "fatsecret",
+            "source_food_id": "1",
+            "description": "Mystery soup",
+        }
+    )
+
+    assert result["name"] == "Mystery soup"
+    assert result["origin"] == "provider"
+    assert result["food_id"] == "fatsecret:1"
+    assert result["nutrients"]["protein"] is None
+    assert result["custom_nutrition"] is None
+
+
+def test_map_search_item_treats_adopted_fatsecret_hit_as_local_catalog():
+    result = FoodMappingService().map_search_item(
+        {
+            "source": "fatsecret",
+            "food_id": "12345",
+            "source_namespace": "fatsecret",
+            "source_food_id": "12345",
+            "food_reference_id": 777,
+            "description": "Banana",
+            "protein_100g": 1.1,
+            "carbs_100g": 23.0,
+            "fat_100g": 0.3,
+            "fiber_100g": 2.6,
+            "sugar_100g": 12.2,
+            "allowed_units": [
+                {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
+            ],
+        }
+    )
+
+    assert result["origin"] == "local"
+    assert result["food_reference_id"] == 777
+    assert result["source"] == "food_reference"
+    assert result["food_id"] == "food_reference:777"
+
+
 def test_map_search_item_rejects_unverified_local_reference():
     with pytest.raises(NutritionIntegrityError, match="unverified_reference"):
         FoodMappingService().map_search_item(

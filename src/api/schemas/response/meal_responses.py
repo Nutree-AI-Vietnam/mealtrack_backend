@@ -92,6 +92,9 @@ class ParsedFoodItem(BaseModel):
     sugar_per_100g: float | None = Field(
         None, ge=0, description="Backend-derived sugar per 100g"
     )
+    canonical_name: str | None = Field(
+        None, description="English catalog identity retained beside the display name"
+    )
     source_snapshot: dict | None = Field(
         None, description="Validated nutrition snapshot for the confirmed item"
     )
@@ -106,6 +109,10 @@ class ParseMealTextResponse(BaseModel):
     total_carbs: float = Field(..., description="Total carbohydrates in grams")
     total_fat: float = Field(..., description="Total fat in grams")
     emoji: str | None = Field(None, description="AI-assigned dish emoji")
+    unmatched_terms: list[str] = Field(
+        default_factory=list,
+        description="Unused. Kept empty for older clients; misses become custom rows.",
+    )
 
 
 class TranslatedFoodItemResponse(BaseModel):
@@ -253,6 +260,9 @@ class FoodItemResponse(BaseModel):
     )
     canonical_name: str | None = Field(
         None, description="Canonical source food item name"
+    )
+    name_vi: str | None = Field(
+        None, description="Persisted Vietnamese catalog name"
     )
     category: str | None = Field(None, description="Food category")
     quantity: float = Field(..., description="Quantity")

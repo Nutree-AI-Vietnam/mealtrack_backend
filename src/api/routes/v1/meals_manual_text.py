@@ -8,7 +8,11 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
-from src.api.base_dependencies import get_ai_model_manager, get_cache_service
+from src.api.base_dependencies import (
+    get_ai_model_manager,
+    get_async_food_reference_repository,
+    get_cache_service,
+)
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.dependencies.guest_quota import get_guest_quota_service
@@ -18,7 +22,10 @@ from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.manual_meal_durable import manual_meal_fingerprint
-from src.api.routes.v1.meals_route_helpers import parsed_food_item_to_response
+from src.api.routes.v1.meals_route_helpers import (
+    load_food_reference_display_projections,
+    parsed_food_item_to_response,
+)
 from src.api.schemas.request.meal_requests import (
     CreateManualMealFromFoodsRequest,
     ParseMealTextRequest,
@@ -69,6 +76,7 @@ async def create_manual_meal(
     cache_service: CachePort | None = Depends(get_cache_service),
     task_manager: BackgroundTaskManager | None = Depends(get_optional_task_manager),
     ai_manager: MealInsightAIPort = Depends(get_ai_model_manager),
+    food_reference_repository=Depends(get_async_food_reference_repository),
     x_nutrition_contract_version: int | None = Header(
         default=None, alias="X-Nutrition-Contract-Version"
     ),
@@ -225,6 +233,9 @@ async def create_manual_meal(
                 meal,
                 image_url=getattr(getattr(meal, "image", None), "url", None),
                 target_language=get_request_language(request),
+                display_name_by_food_reference=await load_food_reference_display_projections(
+                    meal, food_reference_repository
+                ),
             ),
         )
         if legacy_claimed and idempotency_key and legacy_fingerprint:
@@ -335,6 +346,7 @@ async def parse_meal_text(
             total_carbs=app_response.total_carbs,
             total_fat=app_response.total_fat,
             emoji=app_response.emoji,
+            unmatched_terms=app_response.unmatched_terms,
         )
     except Exception as e:
         raise handle_exception(e) from e
@@ -413,4 +425,5 @@ async def parse_meal_text_guest_trial(
         total_carbs=app_response.total_carbs,
         total_fat=app_response.total_fat,
         emoji=app_response.emoji,
+        unmatched_terms=app_response.unmatched_terms,
     )

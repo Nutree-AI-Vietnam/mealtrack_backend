@@ -1,7 +1,7 @@
 """Domain port for canonical food-reference lookups."""
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,7 @@ class FoodReferenceSearchProjection:
     allowed_units: list[dict] = field(default_factory=list)
     source_namespace: str | None = None
     source_food_id: str | None = None
+    name_vi: str | None = None
 
 
 class FoodReferenceRepositoryPort(Protocol):
@@ -96,3 +97,35 @@ class FoodReferenceRepositoryPort(Protocol):
         limit: int,
     ) -> list[FoodReferenceSearchProjection]:
         """Return bounded, verified-first local search results."""
+
+    async def find_by_source_identity(
+        self,
+        namespace: str,
+        food_id: str,
+    ) -> dict[str, Any] | None:
+        """Return the food-reference row already tagged with this provider id."""
+
+    async def adopt_provider_food(
+        self,
+        namespace: str,
+        food_id: str,
+        english_name: str,
+        per_100g: dict[str, Any],
+        servings: list[dict[str, Any]] | None,
+        locale: str,
+        locale_name: str,
+    ) -> dict[str, Any]:
+        """Adopt one identity-scoped provider food and persist ``name_vi``."""
+
+    async def find_by_locale_names(
+        self,
+        language: str,
+        names: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Return eligible rows whose display name matches (casefold) exactly."""
+
+    async def get_display_projections(
+        self,
+        food_reference_ids: list[int],
+    ) -> dict[int, dict[str, Any]]:
+        """Return id-keyed display names for already-linked meal lines."""

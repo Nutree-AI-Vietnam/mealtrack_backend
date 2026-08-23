@@ -81,3 +81,46 @@ class AsyncFoodReferenceUowAdapter:
     async def get_nutrition_projection(self, food_reference_id: int) -> Any | None:
         async with self._uow_factory() as uow:
             return await uow.food_references.get_nutrition_projection(food_reference_id)
+
+    async def find_by_source_identity(
+        self, namespace: str, food_id: str
+    ) -> dict[str, Any] | None:
+        async with self._uow_factory() as uow:
+            return await uow.food_references.find_by_source_identity(
+                namespace, food_id
+            )
+
+    async def adopt_provider_food(
+        self,
+        namespace: str,
+        food_id: str,
+        english_name: str,
+        per_100g: dict[str, Any],
+        servings: list[dict[str, Any]] | None,
+        locale: str,
+        locale_name: str,
+    ) -> dict[str, Any]:
+        async with self._uow_factory() as uow:
+            return await uow.food_references.adopt_provider_food(
+                namespace,
+                food_id,
+                english_name,
+                per_100g,
+                servings,
+                locale,
+                locale_name,
+            )
+
+    async def find_by_locale_names(
+        self, language: str, names: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        async with self._uow_factory() as uow:
+            return await uow.food_references.find_by_locale_names(language, names)
+
+    async def get_display_projections(
+        self, food_reference_ids: list[int]
+    ) -> dict[int, dict[str, Any]]:
+        async with self._uow_factory() as uow:
+            return await uow.food_references.get_display_projections(
+                food_reference_ids
+            )

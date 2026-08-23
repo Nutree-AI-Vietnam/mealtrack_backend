@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.api.exceptions import ValidationException
 from src.app.commands.meal.create_manual_meal_command import (
     CreateManualMealCommand,
     CustomNutrition,
@@ -280,6 +281,128 @@ async def test_v2_prepared_nutrition_uses_confirmed_food_specific_unit():
     assert meal.nutrition.macros.fat == pytest.approx(40)
     assert meal.nutrition.calories == pytest.approx(648)
     resolver.resolve_items.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_v2_prepared_mixed_sources_keep_confirmed_display_names():
+    local_item = ManualMealItem(
+        name="Bún gạo",
+        quantity=180,
+        unit="g",
+        origin="local",
+        food_reference_id=42,
+        nutrition_contract_version="2",
+        custom_nutrition=CustomNutrition(
+            calories_per_100g=103,
+            protein_per_100g=2.7,
+            carbs_per_100g=43.2,
+            fat_per_100g=0.4,
+        ),
+        source_snapshot={
+            "basis": "100g",
+            "canonical_name": "Rice noodles",
+            "protein_per_100g": 2.7,
+            "carbs_per_100g": 43.2,
+            "fat_per_100g": 0.4,
+        },
+    )
+    provider_item = ManualMealItem(
+        name="Thịt bò",
+        quantity=60,
+        unit="g",
+        origin="provider",
+        source_namespace="fatsecret",
+        source_food_id="fs-beef",
+        nutrition_contract_version="2",
+        custom_nutrition=CustomNutrition(
+            calories_per_100g=282,
+            protein_per_100g=15.8,
+            carbs_per_100g=0,
+            fat_per_100g=11.7,
+        ),
+        source_snapshot={
+            "basis": "100g",
+            "canonical_name": "Beef",
+            "protein_per_100g": 15.8,
+            "carbs_per_100g": 0,
+            "fat_per_100g": 11.7,
+        },
+    )
+    command = CreateManualMealCommand(
+        user_id=_UUID_1,
+        items=[local_item, provider_item],
+        dish_name="Bún bò",
+        source="prompt",
+        nutrition_contract_version=2,
+        idempotency_key="write-mixed",
+        request_fingerprint="fingerprint-mixed",
+    )
+    resolver = MagicMock()
+    resolver.resolve_items = AsyncMock()
+    resolver.revalidate_local_items = AsyncMock()
+    uow = _PreparedV2Uow()
+    handler = CreateManualMealCommandHandler(
+        uow=uow,
+        uow_factory=object(),
+        nutrition_resolver=resolver,
+    )
+    handler._reserve_v2_write_short = AsyncMock(
+        return_value=SimpleNamespace(state="claimed")
+    )
+    handler._release_v2_write = AsyncMock()
+
+    meal = await handler.handle(command)
+
+    resolver.resolve_items.assert_not_awaited()
+    assert [item.name for item in meal.nutrition.food_items] == ["Bún gạo", "Thịt bò"]
+    assert meal.nutrition.food_items[0].food_reference_id == 42
+    assert meal.nutrition.food_items[1].source_food_id == "fs-beef"
+    assert meal.nutrition.food_items[0].source_snapshot["canonical_name"] == (
+        "Rice noodles"
+    )
+    assert meal.nutrition.food_items[1].source_snapshot["canonical_name"] == "Beef"
+
+
+class _ResolveUow:
+    food_references = object()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_v2_item_missing_identity_is_rejected_with_validation_error():
+    """A v2 item with no origin/id/snapshot/custom must 422, never AI-estimate."""
+    item = ManualMealItem(
+        name="Mystery food",
+        quantity=100,
+        unit="g",
+        nutrition_contract_version="2",
+    )
+    command = CreateManualMealCommand(
+        user_id=_UUID_1,
+        items=[item],
+        dish_name="Mystery plate",
+        nutrition_contract_version=2,
+        idempotency_key="write-422",
+        request_fingerprint="fingerprint-422",
+    )
+    handler = CreateManualMealCommandHandler(
+        uow=_PreparedV2Uow(),
+        uow_factory=lambda: _ResolveUow(),
+    )
+    handler._reserve_v2_write_short = AsyncMock(
+        return_value=SimpleNamespace(state="claimed")
+    )
+    handler._release_v2_write = AsyncMock()
+
+    with pytest.raises(ValidationException, match="v2 item origin is required"):
+        await handler.handle(command)
+
+    handler._release_v2_write.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
