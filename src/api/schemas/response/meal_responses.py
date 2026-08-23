@@ -111,7 +111,7 @@ class ParseMealTextResponse(BaseModel):
     emoji: str | None = Field(None, description="AI-assigned dish emoji")
     unmatched_terms: list[str] = Field(
         default_factory=list,
-        description="Original phrases dropped: not found in the catalog or FatSecret",
+        description="Unused. Kept empty for older clients; misses become custom rows.",
     )
 
 
