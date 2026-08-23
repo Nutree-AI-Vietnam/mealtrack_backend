@@ -693,8 +693,11 @@ class TestGetEffectiveAdjustedDailyAsync:
             cheat_dates=[],
         )
 
-        # Budget cap: both are capped at actual_remaining / remaining_days (8000/5=1600)
-        assert result_with_cheat.adjusted.calories == result_no_cheat.adjusted.calories
+        leftover_split = (14000 - 6000) / 5
+        floor = WeeklyBudgetService.calorie_safety_floor(_BASE_CAL, _BMR)
+        assert leftover_split < floor
+        assert result_with_cheat.adjusted.calories == pytest.approx(floor, abs=1)
+        assert result_no_cheat.adjusted.calories == pytest.approx(floor, abs=1)
         # Macros may differ due to different redistribution paths
         assert result_with_cheat.adjusted.carbs != result_no_cheat.adjusted.carbs
 
@@ -859,3 +862,42 @@ class TestGetEffectiveAdjustedDailyAsync:
 
         assert result.consumed_before_today["calories"] == 995
         assert result.adjusted.calories == pytest.approx((14000 - 995) / 6, abs=2)
+
+    @pytest.mark.asyncio
+    async def test_overeating_leftover_split_holds_safety_floor(self):
+        """Monday 8,000 must not smash Tuesday to leftover/days (1,000)."""
+        week_start = date(2026, 3, 23)
+        tuesday = date(2026, 3, 24)
+        meals = [
+            FakeMeal(
+                status=MealStatus.READY,
+                nutrition=FakeNutrition(
+                    calories=8000,
+                    macros=FakeNutritionMacros(protein=200, carbs=900, fat=400),
+                ),
+                created_at=datetime(2026, 3, 23, 12, 0, tzinfo=UTC),
+            ),
+        ]
+        daily_counts = {date(2026, 3, 23): 1}
+        budget = _make_budget(week_start)
+        uow = FakeUoWAsync(meals=meals, daily_counts=daily_counts)
+
+        result = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=uow,
+            user_id="user-1",
+            week_start=week_start,
+            target_date=tuesday,
+            weekly_budget=budget,
+            base_daily_cal=_BASE_CAL,
+            base_daily_protein=_BASE_P,
+            base_daily_carbs=_BASE_C,
+            base_daily_fat=_BASE_F,
+            bmr=_BMR,
+            cheat_dates=[],
+        )
+
+        leftover_split = (14000 - 8000) / 6
+        floor = WeeklyBudgetService.calorie_safety_floor(_BASE_CAL, _BMR)
+        assert leftover_split < floor
+        assert result.adjusted.calories == pytest.approx(floor, abs=1)
+        assert result.adjusted.protein == _BASE_P

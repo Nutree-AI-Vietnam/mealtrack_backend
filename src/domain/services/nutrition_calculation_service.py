@@ -180,6 +180,13 @@ def _normalize_authoritative_unit(unit: str) -> str:
     return unit_lower
 
 
+def authoritative_units_match(left: str | None, right: str | None) -> bool:
+    """True when two unit strings are the same after alias translation."""
+    return _normalize_authoritative_unit(left or "g") == _normalize_authoritative_unit(
+        right or "g"
+    )
+
+
 def canonicalize_mass_volume_unit(unit: str | None) -> str:
     """Collapse gram/ounce/liter aliases onto the canonical mass-volume token."""
     raw = (unit or "g").strip() or "g"

@@ -175,6 +175,57 @@ class TestMealMapper:
         # total_weight_grams is calculated from food items
         assert result.total_weight_grams == 350 or result.total_weight_grams is None
 
+    def test_to_detailed_response_uses_snapshot_canonical_name(self):
+        item = FoodItem(
+            id="item-1",
+            name="Bún gạo",
+            quantity=180,
+            unit="g",
+            macros=Macros(protein=2.7, carbs=43.2, fat=0.4),
+            food_reference_id=901,
+            source_snapshot={"canonical_name": "Rice noodles", "basis": "100g"},
+        )
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/bun.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            source="prompt",
+            dish_name="Bún bò",
+            created_at=datetime(2025, 1, 15),
+            ready_at=datetime(2025, 1, 15),
+            nutrition=Nutrition(macros=item.macros, food_items=[item]),
+        )
+
+        # Without catalog display projections loaded, the frozen snapshot
+        # still supplies the canonical alias (legacy chain).
+        result = MealMapper.to_detailed_response(meal, target_language="vi")
+
+        assert result.food_items[0].name == "Bún gạo"
+        assert result.food_items[0].canonical_name == "Rice noodles"
+
+        # Once display projections are loaded for this tracked line, the
+        # live catalog row outranks the frozen snapshot for name and
+        # canonical_name alike.
+        tracked_result = MealMapper.to_detailed_response(
+            meal,
+            target_language="vi",
+            display_name_by_food_reference={
+                901: {
+                    "name": "Rice vermicelli",
+                    "name_vi": "Bún gạo tươi",
+                }
+            },
+        )
+
+        assert tracked_result.food_items[0].name == "Bún gạo tươi"
+        assert tracked_result.food_items[0].canonical_name == "Rice vermicelli"
+
     def test_to_detailed_response_falls_back_to_meal_image_url(self):
         """Meal detail must keep the photo when callers omit image_url."""
         image = MealImage(
@@ -248,6 +299,245 @@ class TestMealMapper:
         assert nutrition.carbs_per_100g == 10
         assert nutrition.fat_per_100g == 30
         assert nutrition.calories_per_100g == pytest.approx(386)
+
+    def _tracked_item_meal(self, *, food_reference_id: int, item_name: str) -> Meal:
+        item = FoodItem(
+            id="item-1",
+            name=item_name,
+            quantity=100,
+            unit="g",
+            macros=Macros(protein=10, carbs=5, fat=2),
+            food_reference_id=food_reference_id,
+        )
+        return Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/tracked.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            dish_name="Tracked Meal",
+            created_at=datetime(2026, 8, 22),
+            ready_at=datetime(2026, 8, 22),
+            nutrition=Nutrition(macros=item.macros, food_items=[item]),
+        )
+
+    def test_to_detailed_response_tracked_item_uses_catalog_translation(self):
+        """vi GET with name_vi shows the Vietnamese catalog name."""
+        meal = self._tracked_item_meal(food_reference_id=42, item_name="Stale name")
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            target_language="vi",
+            display_name_by_food_reference={
+                42: {
+                    "name": "Grilled chicken",
+                    "name_vi": "Gà nướng",
+                }
+            },
+        )
+
+        assert result.food_items[0].name == "Gà nướng"
+        assert result.food_items[0].display_name == "Gà nướng"
+        assert result.food_items[0].canonical_name == "Grilled chicken"
+
+    def test_to_detailed_response_overlays_serving_labels_for_vi(self):
+        from src.app.services.serving_label import serving_phrase_key
+
+        item = FoodItem(
+            id="item-1",
+            name="Rice",
+            quantity=1,
+            unit="cup, cooked, diced",
+            macros=Macros(protein=4, carbs=45, fat=0),
+            food_reference_id=42,
+            allowed_units=[
+                {
+                    "unit": "cup, cooked, diced",
+                    "gram_weight": 158.0,
+                    "description": "1 cup cooked, diced",
+                }
+            ],
+        )
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/rice.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            dish_name="Rice",
+            created_at=datetime(2026, 8, 22),
+            ready_at=datetime(2026, 8, 22),
+            nutrition=Nutrition(macros=item.macros, food_items=[item]),
+        )
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            target_language="vi",
+            display_name_by_food_reference={
+                42: {
+                    "name": "Rice",
+                    "name_vi": "Cơm",
+                    "serving_labels": {
+                        serving_phrase_key("cup, cooked, diced"): (
+                            "cốc, đã nấu, thái hạt lựu"
+                        )
+                    },
+                }
+            },
+        )
+
+        labeled = result.food_items[0].allowed_units[0]
+        assert labeled.unit == "cup, cooked, diced"
+        assert labeled.description == "1 cup cooked, diced"
+        assert labeled.display_description == "cốc, đã nấu, thái hạt lựu"
+
+    def test_to_detailed_response_tracked_item_english_ignores_stored_locale_name(
+        self,
+    ):
+        """en GET shows the live catalog name even if the stored item name is Vietnamese."""
+        meal = self._tracked_item_meal(food_reference_id=42, item_name="Gà nướng")
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            target_language="en",
+            display_name_by_food_reference={
+                42: {
+                    "name": "Grilled chicken",
+                    "name_vi": "Gà nướng",
+                }
+            },
+        )
+
+        assert result.food_items[0].name == "Grilled chicken"
+        assert result.food_items[0].canonical_name == "Grilled chicken"
+
+    def test_to_detailed_response_tracked_item_falls_back_to_name_vi(self):
+        """vi GET uses name_vi when present."""
+        meal = self._tracked_item_meal(food_reference_id=42, item_name="Whatever")
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            target_language="vi",
+            display_name_by_food_reference={
+                42: {
+                    "name": "Grilled chicken",
+                    "name_vi": "Gà nướng",
+                }
+            },
+        )
+
+        assert result.food_items[0].name == "Gà nướng"
+
+    def test_to_detailed_response_tracked_item_missing_translation_falls_back_to_english(
+        self,
+    ):
+        """A missing ja translation shows English rather than crashing."""
+        meal = self._tracked_item_meal(food_reference_id=42, item_name="Whatever")
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            target_language="ja",
+            display_name_by_food_reference={
+                42: {
+                    "name": "Grilled chicken",
+                    "name_vi": "Gà nướng",
+                }
+            },
+        )
+
+        assert result.food_items[0].name == "Grilled chicken"
+        assert result.food_items[0].canonical_name == "Grilled chicken"
+
+    def test_to_detailed_response_tracked_item_keeps_snapshot_kcal_and_macros(self):
+        """Catalog display-name resolution never touches snapshot-derived macros."""
+        item = FoodItem(
+            id="item-1",
+            name="Old label",
+            quantity=100,
+            unit="g",
+            macros=Macros(protein=10, carbs=5, fat=2),
+            food_reference_id=42,
+            source_snapshot={"canonical_name": "Old label", "basis": "100g"},
+        )
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/tracked-snapshot.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            dish_name="Tracked Meal",
+            created_at=datetime(2026, 8, 22),
+            ready_at=datetime(2026, 8, 22),
+            nutrition=Nutrition(macros=item.macros, food_items=[item]),
+        )
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            target_language="vi",
+            display_name_by_food_reference={
+                42: {
+                    "name": "Grilled chicken",
+                    "name_vi": "Gà nướng",
+                }
+            },
+        )
+
+        assert result.food_items[0].name == "Gà nướng"
+        assert result.food_items[0].canonical_name == "Grilled chicken"
+        assert result.food_items[0].nutrition.protein_g == 10
+        assert result.food_items[0].nutrition.carbs_g == 5
+        assert result.food_items[0].nutrition.fat_g == 2
+
+    def test_to_detailed_response_untracked_item_ignores_unrelated_projections(self):
+        """Custom items without a food_reference_id keep the stored name."""
+        food_items = [
+            FoodItem(
+                id="item-custom",
+                name="Homemade Sauce",
+                quantity=50,
+                unit="g",
+                macros=Macros(protein=1, carbs=8, fat=2),
+                is_custom=True,
+            )
+        ]
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/custom-untracked.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            dish_name="Custom Meal",
+            created_at=datetime(2026, 8, 22),
+            ready_at=datetime(2026, 8, 22),
+            nutrition=Nutrition(
+                macros=Macros(protein=1, carbs=8, fat=2), food_items=food_items
+            ),
+        )
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            display_name_by_food_reference={
+                999: {"name": "Unrelated", "name_vi": None}
+            },
+        )
+
+        assert result.food_items[0].name == "Homemade Sauce"
 
     def test_to_detailed_response_uses_same_call_locale_without_translation_row(self):
         item = FoodItem(
@@ -475,6 +765,73 @@ class TestMealMapper:
             "Rice",
         ]
         assert result.translation_language == "vi"
+
+    def test_to_detailed_response_does_not_apply_leftover_english_vi_translation(
+        self,
+    ):
+        """Parse-text names are already Vietnamese; inverted vi rows must not paint."""
+        food_items = [
+            FoodItem(
+                id="item-1",
+                name="Cơm tấm",
+                quantity=1,
+                unit="dĩa",
+                macros=Macros(protein=12, carbs=70, fat=4),
+            ),
+            FoodItem(
+                id="item-2",
+                name="Bì heo",
+                quantity=1,
+                unit="phần",
+                macros=Macros(protein=6, carbs=2, fat=8),
+            ),
+        ]
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/com-tam.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            source="prompt",
+            dish_name="Cơm tấm với sườn, bì, chả",
+            ready_at=datetime(2026, 8, 22, 13, 50),
+            created_at=datetime(2026, 8, 22, 13, 50),
+            nutrition=Nutrition(
+                macros=Macros(protein=18, carbs=72, fat=12),
+                food_items=food_items,
+            ),
+            translations={
+                "vi": MealTranslation(
+                    meal_id="meal-1",
+                    language="vi",
+                    dish_name="Cơm tấm với sườn, bì, chả",
+                    meal_ingredients=["Broken rice", "Shredded pork skin"],
+                    food_items=[
+                        FoodItemTranslation(
+                            food_item_id="item-1",
+                            name="Broken rice",
+                        ),
+                        FoodItemTranslation(
+                            food_item_id="item-2",
+                            name="Shredded pork skin",
+                        ),
+                    ],
+                )
+            },
+        )
+
+        result = MealMapper.to_detailed_response(meal, target_language="vi")
+
+        assert result.dish_name == "Cơm tấm với sườn, bì, chả"
+        assert [item.name for item in result.food_items] == ["Cơm tấm", "Bì heo"]
+        assert [item.canonical_name for item in result.food_items] == [
+            "Cơm tấm",
+            "Bì heo",
+        ]
 
     def test_to_detailed_response_falls_back_per_item_to_safe_legacy_translation(
         self,
@@ -1182,6 +1539,24 @@ class TestMealMapper:
 
         with pytest.raises(Exception, match="User profile not found"):
             MealMapper.to_daily_nutrition_response(daily_macros_data)
+
+    def test_to_daily_nutrition_response_missing_target_macros(self):
+        """Calories without macros must not 500 — treat macros as zero."""
+        daily_macros_data = {
+            "target_calories": 2000.0,
+            "total_calories": 500.0,
+            "total_protein": 40.0,
+            "total_carbs": 50.0,
+            "total_fat": 10.0,
+        }
+
+        result = MealMapper.to_daily_nutrition_response(daily_macros_data)
+
+        assert result.target_calories == 2000.0
+        assert result.target_macros.protein == 0.0
+        assert result.target_macros.carbs == 0.0
+        assert result.target_macros.fat == 0.0
+        assert result.remaining_calories == 1500.0
 
     def test_to_daily_nutrition_response_over_target(self):
         """Test when consumed calories exceed target."""

@@ -27,7 +27,7 @@ async def test_search_reads_integrity_control_before_cache_and_uses_namespace():
     assert result["results"] == []
     context.assert_awaited_once()
     cache.get_cached_search.assert_awaited_once_with(
-        "rice",
+        "en:rice",
         policy_version="nutrition_integrity_v1",
         generation=8,
     )

@@ -27,7 +27,9 @@ from src.app.services.food_display_name import (
     needs_display_localization,
 )
 from src.app.services.food_name_localizer import translate_food_texts
+from src.app.services.serving_label_localizer import localize_item_servings
 from src.app.services.parse_text_composition import composition_retry_feedback
+from src.app.services.parse_text_custom_estimate import apply_custom_estimate
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
 from src.domain.model.ai.nutrition_contracts import (
     LocalizedFoodNameBatch,
@@ -143,12 +145,14 @@ class ParseMealTextHandler(
         translation_service: Any | None = None,
         food_reference_batch_lookup: Any | None = None,
         structured_reference_enabled: bool = True,
+        uow_factory: Any | None = None,
     ):
         self._meal_generation_service = meal_generation_service
         self._fat_secret_service = fat_secret_service
         self._translation_service = translation_service
         self._food_reference_batch_lookup = food_reference_batch_lookup
         self._structured_reference_enabled = structured_reference_enabled
+        self._uow_factory = uow_factory
 
     async def handle(self, command: ParseMealTextCommand) -> ParseMealTextResponseDto:
         # Sanitize user input
@@ -201,10 +205,13 @@ class ParseMealTextHandler(
                 budget.deadline = (
                     time.monotonic() + _parse_text_fatsecret_timeout_seconds()
                 )
-            local_references = await self._find_local_references(parsed_items, budget)
+            local_references = await self._find_local_references(
+                parsed_items, budget, command.language
+            )
             try:
-                enhanced_items = [
-                    await self._cascade_lookup(
+                enhanced_items = []
+                for item in parsed_items:
+                    resolved = await self._cascade_lookup(
                         item,
                         budget=budget,
                         local_reference=local_references.get(
@@ -213,8 +220,9 @@ class ParseMealTextHandler(
                             )
                         ),
                     )
-                    for item in parsed_items
-                ]
+                    if resolved is None:
+                        continue
+                    enhanced_items.append(resolved)
                 break
             except AIOutputValidationError as exc:
                 if semantic_attempt >= 1 or budget.ai_generations >= 2:
@@ -234,6 +242,7 @@ class ParseMealTextHandler(
         for item in enhanced_items:
             clamped = clamp_nutrition_values(item)
             item.update(clamped)
+            self._retain_canonical_name(item)
             self._attach_per_100g_snapshot(item)
 
         # Calculate totals
@@ -250,6 +259,16 @@ class ParseMealTextHandler(
                 )
             await self._localize_english_display_names(
                 enhanced_items, command.language
+            )
+
+        await self._adopt_fatsecret_items(enhanced_items, command)
+        if command.language and command.language != "en":
+            await localize_item_servings(
+                enhanced_items,
+                language=command.language,
+                translation_service=self._translation_service,
+                uow_factory=self._uow_factory,
+                persist=True,
             )
 
         # Build response items
@@ -283,6 +302,7 @@ class ParseMealTextHandler(
                 fat_per_100g=item.get("fat_per_100g"),
                 fiber_per_100g=item.get("fiber_per_100g"),
                 sugar_per_100g=item.get("sugar_per_100g"),
+                canonical_name=item.get("canonical_name"),
                 source_snapshot=item.get("source_snapshot"),
             )
             for item in enhanced_items
@@ -294,6 +314,7 @@ class ParseMealTextHandler(
             total_carbs=total_carbs,
             total_fat=total_fat,
             emoji=emoji,
+            unmatched_terms=[],
         )
 
     def _attach_per_100g_snapshot(self, item: dict[str, Any]) -> None:
@@ -329,7 +350,7 @@ class ParseMealTextHandler(
                 ),
                 4,
             )
-        item["source_snapshot"] = {
+        snapshot = {
             "basis": "100g",
             "protein_per_100g": item["protein_per_100g"],
             "carbs_per_100g": item["carbs_per_100g"],
@@ -342,6 +363,29 @@ class ParseMealTextHandler(
             "source_namespace": item.get("source_namespace"),
             "source_food_id": item.get("source_food_id"),
         }
+        canonical_name = item.get("canonical_name")
+        if isinstance(canonical_name, str) and canonical_name.strip():
+            snapshot["canonical_name"] = canonical_name.strip()
+        item["source_snapshot"] = snapshot
+
+    def _retain_canonical_name(self, item: dict[str, Any]) -> None:
+        """Keep English catalog identity before display-name localization."""
+        existing = str(item.get("canonical_name") or "").strip()
+        if existing:
+            item["canonical_name"] = existing
+            return
+        for key in ("food_name", "description"):
+            candidate = item.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                item["canonical_name"] = candidate.strip()
+                return
+        lookup_name = str(item.get("lookup_name") or "").strip()
+        if lookup_name:
+            item["canonical_name"] = lookup_name
+            return
+        extracted = self._extract_english_name(str(item.get("name") or "")).strip()
+        if extracted:
+            item["canonical_name"] = extracted
 
     async def _generate_parse_text_payload(
         self,
@@ -477,31 +521,72 @@ class ParseMealTextHandler(
         self,
         items: list[dict[str, Any]],
         budget: _ParseTextRequestBudget,
+        language: str,
     ) -> dict[str, dict[str, Any]]:
-        if not self._food_reference_batch_lookup:
+        key_by_display_name: dict[str, str] = {}
+        keys: set[str] = set()
+        for item in items:
+            display_name = str(item.get("lookup_name") or item.get("name", "") or "")
+            key = normalize_food_lookup_name(display_name)
+            if not key:
+                continue
+            keys.add(key)
+            for candidate in (display_name, str(item.get("name") or "")):
+                candidate = candidate.strip()
+                if candidate:
+                    key_by_display_name.setdefault(candidate, key)
+        if not keys:
             return {}
-        names = sorted(
-            {
-                normalize_food_lookup_name(
-                    item.get("lookup_name") or item.get("name", "")
-                )
-                for item in items
-            }
-            - {""}
-        )
         deadline = budget.deadline
-        if not names or deadline is None or time.monotonic() >= deadline:
+        if deadline is None or time.monotonic() >= deadline:
             return {}
-        try:
-            remaining = max(0.01, deadline - time.monotonic())
-            return await asyncio.wait_for(
-                self._food_reference_batch_lookup(names), timeout=remaining
+
+        hits: dict[str, dict[str, Any]] = {}
+        if self._food_reference_batch_lookup:
+            try:
+                remaining = max(0.01, deadline - time.monotonic())
+                hits = await asyncio.wait_for(
+                    self._food_reference_batch_lookup(sorted(keys)), timeout=remaining
+                )
+            except Exception as exc:
+                logger.debug(
+                    "parse_text local reference lookup failed: %s", type(exc).__name__
+                )
+                hits = {}
+
+        missing_keys = keys - set(hits)
+        if missing_keys and self._uow_factory is not None:
+            missing_names = sorted(
+                {
+                    display_name
+                    for display_name, key in key_by_display_name.items()
+                    if key in missing_keys
+                }
             )
-        except Exception as exc:
-            logger.debug(
-                "parse_text local reference lookup failed: %s", type(exc).__name__
-            )
-            return {}
+            if missing_names and time.monotonic() < deadline:
+                try:
+                    remaining = max(0.01, deadline - time.monotonic())
+                    locale_hits = await asyncio.wait_for(
+                        self._locale_reference_lookup(language, missing_names),
+                        timeout=remaining,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "parse_text locale reference lookup failed: %s",
+                        type(exc).__name__,
+                    )
+                    locale_hits = {}
+                for display_name, row in (locale_hits or {}).items():
+                    key = key_by_display_name.get(display_name)
+                    if key and key not in hits:
+                        hits[key] = row
+        return hits
+
+    async def _locale_reference_lookup(
+        self, language: str, names: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        async with self._uow_factory() as uow:
+            return await uow.food_references.find_by_locale_names(language, names)
 
     async def _cascade_lookup(
         self,
@@ -509,15 +594,14 @@ class ParseMealTextHandler(
         *,
         budget: _ParseTextRequestBudget,
         local_reference: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Resolve local reference, one staged provider detail, then safe AI fallback."""
+    ) -> dict[str, Any] | None:
+        """Resolve local catalog, then FatSecret; otherwise keep a custom g/kg estimate."""
         name = str(item.get("name") or "")
         lookup_name = str(item.get("lookup_name") or self._extract_english_name(name))
         preparation = str(item.get("preparation") or "unknown")
         quantity = float(item.get("quantity") or 1.0)
         unit = item.get("english_unit") or item.get("unit", "serving")
         quantity_g = self._quantity_in_grams(item, lookup_name)
-        fallback_quantity_g = self._trusted_quantity_in_grams(item, lookup_name)
 
         if local_reference and self._local_reference_is_usable(
             local_reference, lookup_name, preparation
@@ -545,22 +629,7 @@ class ParseMealTextHandler(
             if legacy is not None:
                 return legacy
 
-        if not validate_ai_fallback(
-            name=lookup_name,
-            protein=item.get("protein", 0),
-            carbs=item.get("carbs", 0),
-            fat=item.get("fat", 0),
-            fiber=item.get("fiber", 0),
-            quantity_g=fallback_quantity_g,
-        ):
-            raise AIOutputValidationError(
-                "AI nutrition fallback failed physical validation",
-                purpose=PARSE_TEXT_VALIDATION_PURPOSE,
-                attempt_count=1,
-                validation_details=["unsafe_density_fallback"],
-            )
-        item["data_source"] = "ai_estimate"
-        return item
+        return apply_custom_estimate(item)
 
     async def _resolve_staged_provider(
         self,
@@ -687,6 +756,14 @@ class ParseMealTextHandler(
         item["allowed_units"] = allowed_units
         item["data_source"] = "fatsecret"
         item.update(self._reference_identity(selected, "fatsecret"))
+        catalog_name = str(
+            selected.get("food_name")
+            or selected.get("description")
+            or selected.get("name")
+            or ""
+        ).strip()
+        if catalog_name:
+            item["canonical_name"] = catalog_name
         item["nutrition_basis"] = "100g"
         item["nutrition_contract_version"] = NUTRITION_INTEGRITY_POLICY_VERSION
         item["calories_per_100g"] = self._derive_calories_from_macros(
@@ -739,29 +816,6 @@ class ParseMealTextHandler(
             quantity, normalize_unit_for_manual_save(unit), food_name
         )
 
-    def _trusted_quantity_in_grams(
-        self, item: dict[str, Any], food_name: str
-    ) -> float | None:
-        """Return grams only for mass/volume units, where density is meaningful.
-
-        Countable units (miếng/piece/slice) use estimated gram weights. Treating
-        those estimates as exact grams 422s parse-text whenever FatSecret is down.
-        """
-        local_raw = str(item.get("unit") or "").strip()
-        english_raw = str(item.get("english_unit") or "").strip()
-        local_norm = _normalize_unit(local_raw) if local_raw else ""
-        english_norm = _normalize_unit(english_raw) if english_raw else ""
-        if local_norm and local_norm not in TRUSTED_QUANTITY_UNITS:
-            return None
-        if (
-            local_norm not in TRUSTED_QUANTITY_UNITS
-            and english_norm not in TRUSTED_QUANTITY_UNITS
-        ):
-            return None
-        if item.get("quantity_g") is not None:
-            return float(item["quantity_g"])
-        return self._quantity_in_grams(item, food_name)
-
     def _local_reference_is_usable(
         self, reference: dict[str, Any], lookup_name: str, preparation: str
     ) -> bool:
@@ -782,6 +836,70 @@ class ParseMealTextHandler(
         return preparation_matches(
             str(reference.get("name") or lookup_name), preparation
         )
+
+    async def _adopt_fatsecret_items(
+        self,
+        items: list[dict[str, Any]],
+        command: ParseMealTextCommand,
+    ) -> None:
+        """Persist authenticated FatSecret hits so repeat parses hit the catalog.
+
+        Guest parses (``user_id is None``) never write the catalog: unauthenticated
+        adopt is a flood/poison vector against the shared food_reference table.
+        """
+        if command.user_id is None or self._uow_factory is None:
+            return
+        for item in items:
+            if item.get("origin") != "provider":
+                continue
+            namespace = item.get("source_namespace")
+            source_food_id = item.get("source_food_id")
+            if not namespace or not source_food_id:
+                continue
+            english_name = str(
+                item.get("canonical_name")
+                or item.get("lookup_name")
+                or item.get("name")
+                or ""
+            ).strip()
+            if not english_name:
+                continue
+            locale_name = str(item.get("name") or item.get("lookup_name") or "").strip()
+            per_100g = {
+                "protein_100g": item.get("protein_per_100g") or 0.0,
+                "carbs_100g": item.get("carbs_per_100g") or 0.0,
+                "fat_100g": item.get("fat_per_100g") or 0.0,
+                "fiber_100g": item.get("fiber_per_100g") or 0.0,
+                "sugar_100g": item.get("sugar_per_100g") or 0.0,
+            }
+            servings = item.get("allowed_units") or None
+            try:
+                async with self._uow_factory() as uow:
+                    adopted = await uow.food_references.adopt_provider_food(
+                        str(namespace),
+                        str(source_food_id),
+                        english_name,
+                        per_100g,
+                        servings,
+                        command.language,
+                        locale_name,
+                    )
+            except Exception:
+                logger.warning(
+                    "parse_text adopt_provider_food failed namespace=%s food_id=%s",
+                    namespace,
+                    source_food_id,
+                    exc_info=True,
+                )
+                continue
+            reference_id = adopted.get("id") if isinstance(adopted, dict) else None
+            if reference_id is None:
+                continue
+            item["food_reference_id"] = reference_id
+            item["origin"] = "local"
+            snapshot = item.get("source_snapshot")
+            if isinstance(snapshot, dict):
+                snapshot["origin"] = "local"
 
     def _apply_reference(
         self,
@@ -820,6 +938,15 @@ class ParseMealTextHandler(
         )
         item["fdc_id"] = raw.get("fdc_id")
         item.update(self._reference_identity(raw, source))
+        catalog_name = str(
+            raw.get("food_name")
+            or raw.get("description")
+            or raw.get("name")
+            or item.get("lookup_name")
+            or ""
+        ).strip()
+        if catalog_name:
+            item["canonical_name"] = catalog_name
         item["nutrition_basis"] = "100g"
         item["nutrition_contract_version"] = NUTRITION_INTEGRITY_POLICY_VERSION
         item["calories_per_100g"] = self._derive_calories_from_macros(

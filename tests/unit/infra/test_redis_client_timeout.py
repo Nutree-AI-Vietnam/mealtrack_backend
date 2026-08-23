@@ -102,7 +102,11 @@ async def test_delete_pattern_uses_scan_not_keys():
 
     mock_client = AsyncMock()
     mock_client.scan_iter = fake_scan_iter
-    mock_client.delete = AsyncMock(side_effect=lambda k: deleted_keys.append(k))
+
+    async def fake_delete(*keys):
+        deleted_keys.extend(keys)
+
+    mock_client.delete = AsyncMock(side_effect=fake_delete)
     client.client = mock_client
 
     count = await client.delete_pattern("user:abc:macros:*")
@@ -110,4 +114,5 @@ async def test_delete_pattern_uses_scan_not_keys():
     assert count == 2
     assert "user:abc:macros:2026-01-01" in deleted_keys
     assert "user:abc:macros:2026-01-02" in deleted_keys
+    mock_client.delete.assert_awaited_once()
     assert mock_client.keys.call_count == 0  # must NOT use blocking KEYS

@@ -278,3 +278,35 @@ async def test_service_noop_when_cache_is_none():
     await svc.after_movement_write("u", date(2026, 6, 2))
     await svc.after_hydration_write("u", date(2026, 6, 2))
     await svc.after_custom_macros_update("u")
+
+
+class _FakeTaskManager:
+    def __init__(self):
+        self.spawned: list[tuple[str, object]] = []
+
+    def spawn(self, name, coro):
+        self.spawned.append((name, coro))
+        return None
+
+
+@pytest.mark.asyncio
+async def test_schedule_after_movement_write_awaits_without_task_manager(cache_mock):
+    svc = CacheInvalidationService(cache_mock)
+    await svc.schedule_after_movement_write("user2", date(2026, 6, 2))
+    cache_mock.invalidate_pattern.assert_any_call("user:user2:activities:2026-06-02:*")
+
+
+@pytest.mark.asyncio
+async def test_schedule_after_movement_write_spawns_when_task_manager_present(cache_mock):
+    tasks = _FakeTaskManager()
+    svc = CacheInvalidationService(cache_mock, task_manager=tasks)
+
+    await svc.schedule_after_movement_write("user2", date(2026, 6, 2))
+
+    assert cache_mock.invalidate_pattern.call_count == 0
+    assert cache_mock.invalidate.call_count == 0
+    assert len(tasks.spawned) == 1
+    assert tasks.spawned[0][0].startswith("cache:after_movement_write:user2:")
+
+    await tasks.spawned[0][1]
+    cache_mock.invalidate_pattern.assert_any_call("user:user2:activities:2026-06-02:*")

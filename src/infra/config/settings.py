@@ -116,10 +116,10 @@ class Settings(BaseSettings):
     FATSECRET_CLIENT_SECRET: str | None = Field(
         default=None, description="fatsecret OAuth 2.0 client secret"
     )
-    NUTRITION_PROVIDER_GLOBAL_RPM: int | None = Field(
-        default=None,
+    NUTRITION_PROVIDER_GLOBAL_RPM: int = Field(
+        default=60,
         ge=1,
-        description="Required shared per-minute budget for authoritative provider saves",
+        description="Shared per-minute FatSecret budget for provider-origin meal saves.",
     )
     BRAVE_SEARCH_API_KEY: str | None = Field(
         default=None, description="Brave Search API key (free tier: 2K/mo)"
@@ -343,6 +343,13 @@ class Settings(BaseSettings):
         default={"USD": 25000, "EUR": 27000, "default": 25000},
         description="Fixed exchange rates to VND for wallet conversion",
     )
+
+    @field_validator("NUTRITION_PROVIDER_GLOBAL_RPM", mode="before")
+    @classmethod
+    def default_provider_rpm(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return 60
+        return value
 
     @field_validator("REFERRAL_COMMISSIONS", "EXCHANGE_RATES_TO_VND", mode="before")
     @classmethod

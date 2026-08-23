@@ -128,6 +128,43 @@ async def test_translate_meal_uses_cache_when_fully_cached(
 
 
 @pytest.mark.asyncio
+async def test_translate_meal_skips_when_names_already_in_target_language(
+    service, meal, text_translation_service, repo
+):
+    food_items = [
+        FoodItem(
+            id=str(uuid4()),
+            name="Cơm tấm",
+            quantity=1,
+            unit="dĩa",
+            macros=Macros(protein=12, carbs=70, fat=4),
+        ),
+        FoodItem(
+            id=str(uuid4()),
+            name="Bì heo",
+            quantity=1,
+            unit="phần",
+            macros=Macros(protein=6, carbs=2, fat=8),
+        ),
+    ]
+
+    result = await service.translate_meal(
+        meal,
+        dish_name="Cơm tấm với sườn, bì, chả",
+        food_items=food_items,
+        target_language="vi",
+    )
+
+    assert result is not None
+    assert result.dish_name == "Cơm tấm với sườn, bì, chả"
+    assert result.meal_ingredients == ["Cơm tấm", "Bì heo"]
+    assert result.food_items[0].name == "Cơm tấm"
+    assert result.food_items[1].name == "Bì heo"
+    text_translation_service.translate_texts.assert_not_called()
+    repo.save.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_translate_meal_calls_provider_and_saves(
     service, meal, food_items, text_translation_service, repo
 ):

@@ -144,6 +144,18 @@ def test_logical_origin_normalizes_exactly_one_source(fields, expected):
     assert result.origin == expected
 
 
+def test_search_display_allows_missing_macros(policy):
+    result = policy.evaluate(
+        {"source": "fatsecret", "food_id": "1"},
+        require_macros=False,
+        origin_fields={"source": "fatsecret", "food_id": "1"},
+    )
+
+    assert result.accepted is True
+    assert result.protein_100g is None
+    assert result.serving_options
+
+
 def test_logical_origin_rejects_multiple_sources():
     result = normalize_logical_origin({"food_reference_id": 7, "fdc_id": 123})
 

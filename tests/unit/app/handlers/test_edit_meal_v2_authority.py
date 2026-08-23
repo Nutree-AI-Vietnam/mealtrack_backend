@@ -1,5 +1,6 @@
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -213,6 +214,62 @@ async def test_v2_quantity_update_canonicalizes_arbitrary_unit_before_strategy()
 
 
 @pytest.mark.asyncio
+async def test_v2_quantity_update_treats_translated_unit_as_unchanged():
+    current = FoodItem(
+        id="item-1",
+        name="Thịt",
+        quantity=1,
+        unit="serving",
+        macros=Macros(protein=20, carbs=0, fat=16),
+        nutrition_contract_version="2",
+    )
+    change = FoodItemChange(
+        action="update",
+        id="item-1",
+        quantity=2,
+        unit="phần",
+    )
+    handler = EditMealCommandHandler(uow=None)
+
+    prepared = await handler._prepare_v2_changes(
+        [current], [change], SimpleNamespace(food_references=object())
+    )
+
+    assert prepared[0].quantity == pytest.approx(2)
+    assert prepared[0].unit == "serving"
+
+
+@pytest.mark.asyncio
+async def test_v2_quantity_update_uses_item_units_when_snapshot_missing():
+    current = FoodItem(
+        id="item-1",
+        name="Pork rib",
+        quantity=1,
+        unit="slice",
+        macros=Macros(protein=27, carbs=0, fat=15),
+        nutrition_contract_version="2",
+        allowed_units=[
+            {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
+            {"unit": "slice", "gram_weight": 80.0, "description": "1 slice"},
+        ],
+    )
+    change = FoodItemChange(
+        action="update",
+        id="item-1",
+        quantity=100,
+        unit="unknown-unit",
+    )
+    handler = EditMealCommandHandler(uow=None)
+
+    prepared = await handler._prepare_v2_changes(
+        [current], [change], SimpleNamespace(food_references=object())
+    )
+
+    assert prepared[0].quantity == pytest.approx(100)
+    assert prepared[0].unit == "g"
+
+
+@pytest.mark.asyncio
 async def test_v2_item_override_does_not_require_intent_in_handler():
     current = FoodItem(
         id="item-1",
@@ -335,6 +392,175 @@ async def test_v2_remove_ignores_extra_override_fields_when_applying():
 
     assert prepared == [change]
     assert updated == []
+
+
+class _FoodReferencesAdopt:
+    """Fake ``uow.food_references`` exposing only ``adopt_provider_food``."""
+
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    async def adopt_provider_food(
+        self, namespace, food_id, english_name, per_100g, servings, locale, locale_name
+    ):
+        self.calls.append((namespace, food_id))
+        return self.response
+
+    async def get_nutrition_projection(self, food_reference_id):
+        return None
+
+
+class _AdoptUow:
+    def __init__(self, food_references):
+        self.food_references = food_references
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_v2_same_food_reference_replace_rebuilds_snapshot_from_catalog():
+    """Re-selecting the same catalog row refreshes per-100g density without mutating food_reference."""
+    current = FoodItem(
+        id="item-1",
+        name="Canonical rice",
+        quantity=100,
+        unit="g",
+        macros=Macros(protein=1.0, carbs=28.0, fat=0.3),
+        food_reference_id=42,
+        nutrition_contract_version="2",
+        source_snapshot={
+            "basis": "100g",
+            "protein_per_100g": 1.0,
+            "carbs_per_100g": 28.0,
+            "fat_per_100g": 0.3,
+            "fiber_per_100g": 0.4,
+            "sugar_per_100g": 0.1,
+            "allowed_units": [
+                {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
+            ],
+        },
+    )
+    change = FoodItemChange(
+        action="update",
+        id="item-1",
+        origin="local",
+        food_reference_id=42,
+        quantity=100,
+        unit="g",
+    )
+    handler = EditMealCommandHandler(uow=None)
+
+    prepared = await handler._prepare_v2_changes(
+        [current], [change], SimpleNamespace(food_references=_References())
+    )
+
+    assert prepared[0].source_snapshot["protein_per_100g"] == pytest.approx(2.7)
+    assert prepared[0].custom_nutrition.protein_per_100g == pytest.approx(2.7)
+
+
+@pytest.mark.asyncio
+async def test_v2_add_by_fatsecret_id_adopts_once_not_search():
+    """Edit-add with only provider identity must adopt, never search by name."""
+    current = FoodItem(
+        id="item-1",
+        name="Rice",
+        quantity=100,
+        unit="g",
+        macros=Macros(protein=2.7, carbs=28.0, fat=0.3),
+    )
+    change = FoodItemChange(
+        action="add",
+        id="client-generated-id",
+        name="Thịt bò",
+        quantity=60,
+        unit="g",
+        origin="provider",
+        source_namespace="fatsecret",
+        source_food_id="fs-beef",
+    )
+    provider = SimpleNamespace(
+        get_food_details=AsyncMock(
+            return_value={
+                "food_id": "fs-beef",
+                "food_name": "Beef",
+                "protein_100g": 15.8,
+                "carbs_100g": 0,
+                "fat_100g": 11.7,
+                "calories_100g": 172.0,
+            }
+        )
+    )
+    adopt_repo = _FoodReferencesAdopt(
+        response={
+            "id": 501,
+            "name": "Beef",
+            "protein_100g": 15.8,
+            "carbs_100g": 0,
+            "fat_100g": 11.7,
+            "fiber_100g": 0,
+            "sugar_100g": 0,
+            "allowed_units": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+        }
+    )
+
+    class _Budget:
+        async def acquire(self, namespace, limit):
+            return True
+
+    handler = EditMealCommandHandler(
+        uow=None,
+        provider=provider,
+        provider_budget=_Budget(),
+        provider_rpm=10,
+        uow_factory=lambda: _AdoptUow(adopt_repo),
+    )
+
+    prepared = await handler._prepare_v2_changes(
+        [current], [change], SimpleNamespace(food_references=adopt_repo)
+    )
+
+    assert prepared[0].food_reference_id == 501
+    assert len(adopt_repo.calls) == 1
+    assert adopt_repo.calls[0] == ("fatsecret", "fs-beef")
+    provider.get_food_details.assert_awaited_once_with("fs-beef")
+    assert not hasattr(provider, "search_foods")
+
+
+@pytest.mark.asyncio
+async def test_v2_add_by_food_reference_id_never_calls_provider():
+    """Edit-add with an owned catalog id must not touch the provider at all."""
+    current = FoodItem(
+        id="item-1",
+        name="Old rice",
+        quantity=100,
+        unit="g",
+        macros=Macros(protein=1, carbs=1, fat=1),
+    )
+    change = FoodItemChange(
+        action="add",
+        id="client-generated-id",
+        origin="local",
+        food_reference_id=42,
+        quantity=100,
+        unit="g",
+    )
+    provider = SimpleNamespace(get_food_details=AsyncMock())
+    handler = EditMealCommandHandler(
+        uow=None,
+        provider=provider,
+    )
+
+    prepared = await handler._prepare_v2_changes(
+        [current], [change], SimpleNamespace(food_references=_References())
+    )
+
+    assert prepared[0].food_reference_id == 42
+    provider.get_food_details.assert_not_awaited()
 
 
 @pytest.mark.asyncio

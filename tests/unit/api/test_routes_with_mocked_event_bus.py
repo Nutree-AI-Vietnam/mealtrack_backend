@@ -352,6 +352,7 @@ def test_meals_parse_text_happy_path(monkeypatch, client: TestClient):
             self.total_carbs = 13
             self.total_fat = 11
             self.emoji = "🍳"
+            self.unmatched_terms = []
 
     async def send(msg):
         return _Resp()
@@ -394,6 +395,7 @@ def test_authenticated_parse_text_preserves_fiber_sugar_and_calorie_parity(
         total_carbs = 40.0
         total_fat = 10.0
         emoji = "🥣"
+        unmatched_terms: list = []
 
     async def send(msg):
         return _Resp()

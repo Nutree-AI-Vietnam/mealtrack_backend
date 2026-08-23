@@ -30,6 +30,7 @@ from .feature_flag import FeatureFlag
 from .food_reference_model import FoodReferenceModel
 from .food_reference_nutrient import FoodReferenceNutrientModel
 from .food_reference_serving_size import FoodReferenceServingSizeModel
+from .serving_phrase_translation import ServingPhraseTranslationModel
 from .hydration_entry import HydrationEntryORM
 from .meal.food_item_translation_model import FoodItemTranslationORM
 
@@ -158,6 +159,7 @@ __all__ = [
     "FoodReferenceModel",
     "FoodReferenceNutrientModel",
     "FoodReferenceServingSizeModel",
+    "ServingPhraseTranslationModel",
     "FoodReferenceIntegrityControlModel",
     "FoodReferenceIntegrityEventModel",
     "BarcodeProductModel",  # backward-compatible alias

@@ -47,3 +47,20 @@ does not authorize production data mutation.
 - Keep legacy removal as a separate approval. The attempts, completeness,
   active-device, release-age, and zero-regression gates must be recorded for
   the required observation window before any sunset change.
+
+## Adopted catalog names and parse-text (FatSecret)
+
+- Confirm migrations for `food_reference.source_namespace` /
+  `source_food_id` and meal translation version are applied in the target
+  environment before enabling staged parse resolution.
+- Enable `PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED` in SIT/staging only after
+  offline eval passes: `python scripts/development/evaluate_parse_text_nutrition.py
+  --mode offline`. Expect a non-zero drop rate for unmatched terms; dropped
+  items must not contribute kcal.
+- Smoke one authenticated adopt row: parse a known FatSecret food, verify
+  `fatsecret:{id}` identity, save, then `GET` the meal in `en` and `vi`.
+  English shows `food_reference.name`; Vietnamese shows translation or
+  `name_vi`. Item kcal must match the saved snapshot, not live catalog edits.
+- Catalog density changes do not retroactively alter logged meals until the
+  user edit-replaces the same `food_reference_id`. There is no bulk refresh
+  HTTP route.

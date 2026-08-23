@@ -3,7 +3,7 @@ App layer DTOs for meal-related operations.
 Domain-agnostic - used by handlers, mapped to API DTOs at the presentation layer.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -35,6 +35,7 @@ class ParsedFoodItemDto:
     fat_per_100g: float | None = None
     fiber_per_100g: float | None = None
     sugar_per_100g: float | None = None
+    canonical_name: str | None = None
     source_snapshot: dict[str, Any] | None = None
 
 
@@ -47,3 +48,4 @@ class ParseMealTextResponseDto:
     total_carbs: float
     total_fat: float
     emoji: str | None = None
+    unmatched_terms: list[str] = field(default_factory=list)

@@ -19,10 +19,11 @@ def _module():
 
 
 def test_golden_corpus_is_synthetic_and_versioned():
-    cases = _module().load_corpus()
-    assert len(cases) >= 10
-    assert all("@" not in case.case_id for case in cases)
+    cases, drop_cases = _module().load_corpus()
+    assert len(cases) + len(drop_cases) >= 10
+    assert all("@" not in case.case_id for case in (*cases, *drop_cases))
     assert any(case.case_id == "vi-potato-raw-100g" for case in cases)
+    assert any(case.expected_source == "custom" for case in cases)
 
 
 def test_live_mode_fails_closed_for_unset_or_non_staging_environment(monkeypatch):
@@ -72,7 +73,7 @@ def test_explicit_repository_report_path_must_be_ignored():
 @pytest.mark.asyncio
 async def test_live_runner_stops_at_hard_case_deadline(monkeypatch):
     module = _module()
-    case = module.load_corpus()[0]
+    case = module.load_corpus()[0][0]
 
     async def slow_case(*_args, **_kwargs):
         await asyncio.sleep(0.05)
@@ -86,7 +87,7 @@ async def test_live_runner_stops_at_hard_case_deadline(monkeypatch):
 
 def test_live_runner_reserves_worst_case_provider_capacity():
     module = _module()
-    case = module.load_corpus()[0]
+    case = module.load_corpus()[0][0]
     case.ai_payload["items"] = [{}] * 20
 
     assert module._case_item_count(case) == module.MAX_HANDLER_ITEMS

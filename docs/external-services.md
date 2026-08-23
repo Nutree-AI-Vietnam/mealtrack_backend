@@ -32,10 +32,11 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 **Redis rule:** optional caches are never the source of truth for nutrition,
 notification delivery, FCM token ownership, or write-path correctness. Cache
 admission policy: `docs/decisions/260608-2223-selective-cache-admission-policy.md`.
-Provider-origin v2 manual saves additionally require Redis and an explicit
-`NUTRITION_PROVIDER_GLOBAL_RPM` deployment setting. `CACHE_ENABLED=false` may
-disable optional cache reads, but it must not disable this shared write-path
-budget.
+Provider-origin v2 manual saves use Redis and `NUTRITION_PROVIDER_GLOBAL_RPM`
+(default **60** if unset or empty). `ENVIRONMENT=development` may use a
+process-local budget if Redis is down so local catalog-food saves work.
+`CACHE_ENABLED=false` may disable optional cache reads, but it must not
+disable this shared write-path budget.
 
 **Privacy rule:** never log prompts, food payloads, raw AI output, base64
 images, emails, auth tokens, full barcodes, or secrets. Prefer operation name,

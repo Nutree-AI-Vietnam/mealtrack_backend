@@ -15,6 +15,7 @@ from src.app.services.food_name_localizer import (
     translate_food_texts,
     translated_values,
 )
+from src.app.services.serving_label_localizer import localize_item_servings
 from src.domain.model.translation_result import TranslationOutcome
 from src.domain.services.barcode.barcode_logging import redact_barcode
 from src.domain.services.barcode.barcode_nutrition_validator import (
@@ -579,30 +580,44 @@ class LookupBarcodeQueryHandler(
     ) -> dict[str, Any]:
         """Translate known-English or leftover-English names for presentation."""
         name = result.get("name")
-        if language == "en" or not self.translation_service or not name:
+        if language == "en":
             return result
+        if not name:
+            return await self._localize_result_servings(result, language)
 
         # Proven English sources always localize. Unknown provenance only
         # localizes when the display name still looks like leftover English,
         # so printed non-English product names are not mangled.
-        if source_language != "en" and not (
+        localized = dict(result)
+        if source_language == "en" or (
             source_language is None and needs_display_localization(str(name), language)
         ):
-            return result
+            translated = await translate_food_texts(
+                [str(name)],
+                target_language=language,
+                translation_service=self.translation_service,
+            )
+            if translated.outcome in {
+                TranslationOutcome.TRANSLATED,
+                TranslationOutcome.PARTIAL,
+            }:
+                localized["name"] = translated_values([str(name)], translated)[0]
+        return await self._localize_result_servings(localized, language)
 
-        translated = await translate_food_texts(
-            [str(name)],
-            target_language=language,
+    async def _localize_result_servings(
+        self, result: dict[str, Any], language: str
+    ) -> dict[str, Any]:
+        if not result.get("allowed_units"):
+            return result
+        batch = [dict(result)]
+        await localize_item_servings(
+            batch,
+            language=language,
             translation_service=self.translation_service,
+            uow_factory=self.async_uow_factory,
+            persist=True,
         )
-        if translated.outcome in {
-            TranslationOutcome.TRANSLATED,
-            TranslationOutcome.PARTIAL,
-        }:
-            localized = dict(result)
-            localized["name"] = translated_values([str(name)], translated)[0]
-            return localized
-        return result
+        return batch[0]
 
     async def _get_cached_product(
         self, aliases: tuple[str, ...]

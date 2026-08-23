@@ -263,6 +263,223 @@ async def test_provider_unit_prefix_cannot_multiply_arbitrary_suffix(caplog):
     assert raw_unit not in caplog.text
 
 
+class _FoodReferencesAdopt:
+    """Fake ``uow.food_references`` exposing only ``adopt_provider_food``."""
+
+    def __init__(self, response=None, exc=None):
+        self.response = response
+        self.exc = exc
+        self.calls = []
+
+    async def adopt_provider_food(
+        self,
+        namespace,
+        food_id,
+        english_name,
+        per_100g,
+        servings,
+        locale,
+        locale_name,
+    ):
+        self.calls.append(
+            {
+                "namespace": namespace,
+                "food_id": food_id,
+                "english_name": english_name,
+                "per_100g": per_100g,
+                "servings": servings,
+                "locale": locale,
+                "locale_name": locale_name,
+            }
+        )
+        if self.exc:
+            raise self.exc
+        return self.response
+
+
+class _AdoptUow:
+    def __init__(self, food_references):
+        self.food_references = food_references
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+def _adopt_uow_factory(food_references):
+    def factory():
+        return _AdoptUow(food_references)
+
+    return factory
+
+
+@pytest.mark.asyncio
+async def test_provider_resolution_adopts_identity_and_sets_food_reference_id():
+    """Save must never search FatSecret by name — only adopt the given identity."""
+    provider = SimpleNamespace(
+        get_food_details=AsyncMock(
+            return_value={
+                "food_id": "provider-1",
+                "food_name": "Rice",
+                "protein_100g": 2.7,
+                "carbs_100g": 28.0,
+                "fat_100g": 0.3,
+                "calories_100g": 124.7,
+            }
+        )
+    )
+
+    class _Budget:
+        async def acquire(self, namespace, limit):
+            return True
+
+    adopt_repo = _FoodReferencesAdopt(
+        response={
+            "id": 99,
+            "name": "Rice",
+            "protein_100g": 2.7,
+            "carbs_100g": 28.0,
+            "fat_100g": 0.3,
+            "fiber_100g": 0.0,
+            "sugar_100g": 0.0,
+            "allowed_units": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+        }
+    )
+
+    resolved = await ManualMealNutritionResolver(
+        provider=provider,
+        provider_budget=_Budget(),
+        provider_rpm=10,
+        uow_factory=_adopt_uow_factory(adopt_repo),
+    ).resolve_items(
+        [
+            ManualMealItem(
+                name="Cơm",
+                quantity=100,
+                unit="g",
+                origin="provider",
+                source_namespace="fatsecret",
+                source_food_id="provider-1",
+            )
+        ],
+        _References(),
+        contract_version=2,
+    )
+
+    assert resolved[0].food_reference_id == 99
+    assert resolved[0].source_snapshot["canonical_name"] == "Rice"
+    assert len(adopt_repo.calls) == 1
+    assert adopt_repo.calls[0]["namespace"] == "fatsecret"
+    assert adopt_repo.calls[0]["food_id"] == "provider-1"
+    provider.get_food_details.assert_awaited_once_with("provider-1")
+    assert not hasattr(provider, "search_foods")
+
+
+@pytest.mark.asyncio
+async def test_provider_resolution_prefers_adopted_catalog_density():
+    """A frozen/verified catalog row wins over a fresh provider re-fetch."""
+    provider = SimpleNamespace(
+        get_food_details=AsyncMock(
+            return_value={
+                "food_id": "provider-1",
+                "food_name": "Rice",
+                "protein_100g": 50.0,
+                "carbs_100g": 28.0,
+                "fat_100g": 0.3,
+                "calories_100g": 314.7,
+            }
+        )
+    )
+
+    class _Budget:
+        async def acquire(self, namespace, limit):
+            return True
+
+    adopt_repo = _FoodReferencesAdopt(
+        response={
+            "id": 7,
+            "name": "Rice",
+            "protein_100g": 2.7,
+            "carbs_100g": 28.0,
+            "fat_100g": 0.3,
+            "fiber_100g": 0.4,
+            "sugar_100g": 0.1,
+            "allowed_units": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+        }
+    )
+
+    resolved = await ManualMealNutritionResolver(
+        provider=provider,
+        provider_budget=_Budget(),
+        provider_rpm=10,
+        uow_factory=_adopt_uow_factory(adopt_repo),
+    ).resolve_items(
+        [
+            ManualMealItem(
+                name="Cơm",
+                quantity=100,
+                unit="g",
+                origin="provider",
+                source_namespace="fatsecret",
+                source_food_id="provider-1",
+            )
+        ],
+        _References(),
+        contract_version=2,
+    )
+
+    assert resolved[0].custom_nutrition.protein_per_100g == pytest.approx(2.7)
+    assert resolved[0].food_reference_id == 7
+
+
+@pytest.mark.asyncio
+async def test_provider_resolution_adopt_failure_falls_back_to_provider_density():
+    """A catalog write failure must not block an otherwise-valid save."""
+    provider = SimpleNamespace(
+        get_food_details=AsyncMock(
+            return_value={
+                "food_id": "provider-1",
+                "food_name": "Rice",
+                "protein_100g": 2.7,
+                "carbs_100g": 28.0,
+                "fat_100g": 0.3,
+                "calories_100g": 124.7,
+            }
+        )
+    )
+
+    class _Budget:
+        async def acquire(self, namespace, limit):
+            return True
+
+    adopt_repo = _FoodReferencesAdopt(exc=RuntimeError("db unavailable"))
+
+    resolved = await ManualMealNutritionResolver(
+        provider=provider,
+        provider_budget=_Budget(),
+        provider_rpm=10,
+        uow_factory=_adopt_uow_factory(adopt_repo),
+    ).resolve_items(
+        [
+            ManualMealItem(
+                name="Cơm",
+                quantity=100,
+                unit="g",
+                origin="provider",
+                source_namespace="fatsecret",
+                source_food_id="provider-1",
+            )
+        ],
+        _References(),
+        contract_version=2,
+    )
+
+    assert resolved[0].food_reference_id is None
+    assert resolved[0].custom_nutrition.protein_per_100g == pytest.approx(2.7)
+
+
 @pytest.mark.asyncio
 async def test_custom_parse_text_unit_is_not_canonicalized_to_grams():
     resolved = await ManualMealNutritionResolver().resolve_items(

@@ -16,6 +16,7 @@ from src.app.handlers.command_handlers.edit_meal_command_handler import (
     EditMealCommandHandler,
 )
 from src.domain.model.meal import MealTranslation
+from src.domain.model.nutrition import FoodItem, Macros
 from src.infra.database.models import MealORM
 
 
@@ -333,6 +334,40 @@ class TestEditMealCommandHandler:
         assert len(translation.food_items) == len(updated_items)
         assert translation.food_items[0].food_item_id == str(original_items[1].id)
         assert translation.food_items[0].name == translated_names[1]
+
+    def test_realign_does_not_fill_missing_names_with_english_identity(
+        self, sample_meal_with_nutrition
+    ):
+        meal = sample_meal_with_nutrition
+        original_items = meal.nutrition.food_items
+        translated_names = [
+            f"vi ingredient {index}" for index, _ in enumerate(original_items)
+        ]
+        meal.translations = {
+            "vi": MealTranslation(
+                meal_id=meal.meal_id,
+                language="vi",
+                dish_name="Bữa ăn",
+                food_items=[],
+                meal_ingredients=list(translated_names),
+            )
+        }
+        added_item = FoodItem(
+            id="added-avocado",
+            name="Avocado",
+            quantity=50.0,
+            unit="g",
+            macros=Macros(protein=1.0, carbs=4.0, fat=7.0),
+        )
+        handler = EditMealCommandHandler(uow=None)
+
+        handler._realign_translations_after_food_item_changes(
+            meal, [*original_items, added_item]
+        )
+
+        translation = meal.translations["vi"]
+        assert translation.meal_ingredients == translated_names
+        assert "Avocado" not in translation.meal_ingredients
 
 
 @pytest.mark.unit

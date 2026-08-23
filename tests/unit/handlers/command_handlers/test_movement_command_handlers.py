@@ -445,6 +445,84 @@ async def test_update_movement_handler_updates_and_invalidates_caches():
     assert _weekly_budget_key() in cache.invalidated
 
 
+class _FakeTaskManager:
+    def __init__(self):
+        self.spawned = []
+
+    def spawn(self, name, coro):
+        self.spawned.append((name, coro))
+        return None
+
+
+@pytest.mark.asyncio
+async def test_log_movement_returns_before_scheduled_cache_invalidation():
+    uow = _FakeUow()
+    cache = _FakeCache()
+    tasks = _FakeTaskManager()
+    handler = LogMovementCommandHandler(
+        uow=uow,
+        cache_invalidation=CacheInvalidationService(cache, task_manager=tasks),
+    )
+
+    result = await handler.handle(
+        LogMovementCommand(
+            user_id="user-1",
+            activity_id="badminton",
+            activity_name="Badminton",
+            duration_min=45,
+            kcal_burned=200.5,
+            intensity="moderate",
+            include_in_balance=True,
+            target_date=date(2026, 5, 30),
+            header_timezone="Asia/Ho_Chi_Minh",
+        )
+    )
+
+    assert result["id"] == uow.movement_entries.added[0].id
+    assert uow.committed is True
+    assert cache.invalidated == []
+    assert cache.patterns == []
+    assert len(tasks.spawned) == 1
+
+    await tasks.spawned[0][1]
+    assert "user:user-1:macros:2026-05-30" in cache.invalidated
+    assert "user:user-1:activities:2026-05-30:*" in cache.patterns
+
+
+@pytest.mark.asyncio
+async def test_delete_movement_returns_before_scheduled_cache_invalidation():
+    uow = _FakeUow(timezone="Asia/Ho_Chi_Minh")
+    cache = _FakeCache()
+    tasks = _FakeTaskManager()
+    uow.movement_entries.entry = log_movement_command_handler.MovementEntry(
+        id="mvmt_123",
+        user_id="user-1",
+        activity_id="badminton",
+        activity_name="Badminton",
+        duration_min=45,
+        kcal_burned=200.5,
+        intensity="moderate",
+        include_in_balance=True,
+        logged_at=datetime(2026, 5, 30, 18, 0, tzinfo=timezone.utc),
+    )
+    handler = DeleteMovementEntryCommandHandler(
+        uow=uow,
+        cache_invalidation=CacheInvalidationService(cache, task_manager=tasks),
+    )
+
+    result = await handler.handle(
+        DeleteMovementEntryCommand(user_id="user-1", entry_id="mvmt_123")
+    )
+
+    assert result == {}
+    assert uow.committed is True
+    assert cache.invalidated == []
+    assert len(tasks.spawned) == 1
+
+    await tasks.spawned[0][1]
+    assert "user:user-1:macros:2026-05-31" in cache.invalidated
+
+
 def test_validate_log_movement_rejects_kcal_above_absolute_max():
     with pytest.raises(ValidationException) as exc:
         _validate_log_movement(

@@ -216,6 +216,35 @@ handler/schema when implementing; the bullets below are the durable WHY.
   written to the global catalog, and are not eligible for canonical meal
   creation.
 
+### Parse text (`POST /v1/meals/parse-text`)
+
+- Foods that miss both the local catalog and a valid FatSecret structured match
+  are **dropped**; the handler does not emit `ai_estimate` fallback items.
+  Responses may include `unmatched_terms[]` with the original phrases.
+- Authenticated parses adopt provider hits into verified `food_reference` rows.
+  Provider identity is namespaced (`source_namespace` + `source_food_id`); the
+  opaque client id is `fatsecret:{provider_food_id}`. Seed/import catalog keys
+  remain distinct and must not collide with adopted provider identities.
+- Staged candidate resolution is gated by
+  `PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED` (default off outside staged eval).
+
+### GET meal food item display names
+
+- `Accept-Language: en` (or English primary) → live `food_reference.name`.
+- `Accept-Language: vi` → `food_reference.name_vi` when present, else English
+  `name`. Other locales use English `name`. The read path does **not**
+  translate on GET miss.
+- Logged item kcal and macros come from the immutable `food_item.source_snapshot`,
+  not from live catalog density. Catalog renames affect display only.
+
+### Meal catalog snapshot refresh (explicit user action)
+
+- There is **no** `POST /v1/meals/{id}/food-items/{item_id}/refresh-catalog`
+  route. To pick up updated catalog per-100g density, the meal owner performs an
+  edit-replace of the same `food_reference_id` (`origin=local`). The server
+  copies current catalog density into a new `source_snapshot`, rescales quantity,
+  and leaves the `food_reference` row unchanged.
+
 ### Onboarding TDEE preview
 
 - Unauthenticated `POST /v1/tdee/preview` uses `onboarding_preview_v2`. Bodies
