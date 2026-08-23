@@ -344,6 +344,61 @@ class TestMealMapper:
         assert result.food_items[0].display_name == "Gà nướng"
         assert result.food_items[0].canonical_name == "Grilled chicken"
 
+    def test_to_detailed_response_overlays_serving_labels_for_vi(self):
+        from src.app.services.serving_label import serving_phrase_key
+
+        item = FoodItem(
+            id="item-1",
+            name="Rice",
+            quantity=1,
+            unit="cup, cooked, diced",
+            macros=Macros(protein=4, carbs=45, fat=0),
+            food_reference_id=42,
+            allowed_units=[
+                {
+                    "unit": "cup, cooked, diced",
+                    "gram_weight": 158.0,
+                    "description": "1 cup cooked, diced",
+                }
+            ],
+        )
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            image=MealImage(
+                url="https://example.com/rice.jpg",
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=1024,
+            ),
+            dish_name="Rice",
+            created_at=datetime(2026, 8, 22),
+            ready_at=datetime(2026, 8, 22),
+            nutrition=Nutrition(macros=item.macros, food_items=[item]),
+        )
+
+        result = MealMapper.to_detailed_response(
+            meal,
+            target_language="vi",
+            display_name_by_food_reference={
+                42: {
+                    "name": "Rice",
+                    "name_vi": "Cơm",
+                    "serving_labels": {
+                        serving_phrase_key("cup, cooked, diced"): (
+                            "cốc, đã nấu, thái hạt lựu"
+                        )
+                    },
+                }
+            },
+        )
+
+        labeled = result.food_items[0].allowed_units[0]
+        assert labeled.unit == "cup, cooked, diced"
+        assert labeled.description == "1 cup cooked, diced"
+        assert labeled.display_description == "cốc, đã nấu, thái hạt lựu"
+
     def test_to_detailed_response_tracked_item_english_ignores_stored_locale_name(
         self,
     ):

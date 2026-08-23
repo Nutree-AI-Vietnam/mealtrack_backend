@@ -9,7 +9,10 @@ from src.domain.model.nutrition.macros import Macros as MacrosModel
 
 
 async def load_food_reference_display_projections(
-    meal, food_reference_repository
+    meal,
+    food_reference_repository,
+    *,
+    language: str | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Load id-keyed catalog display names for every tracked line on a meal.
 
@@ -25,8 +28,28 @@ async def load_food_reference_display_projections(
     }
     if not food_reference_ids:
         return {}
-    return await food_reference_repository.get_display_projections(
-        list(food_reference_ids)
+    projections = await food_reference_repository.get_display_projections(
+        list(food_reference_ids),
+        language=language,
+    )
+    if not language or language == "en":
+        return projections
+    return await _enrich_serving_labels(meal, projections, language)
+
+
+async def _enrich_serving_labels(meal, projections, language: str):
+    from src.api.base_dependencies import get_text_translation_service
+    from src.app.services.meal_serving_label_enricher import (
+        enrich_meal_serving_labels,
+    )
+    from src.infra.database.uow_async import AsyncUnitOfWork
+
+    return await enrich_meal_serving_labels(
+        meal,
+        projections,
+        language=language,
+        translation_service=get_text_translation_service(),
+        uow_factory=AsyncUnitOfWork,
     )
 
 

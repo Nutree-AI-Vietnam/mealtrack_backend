@@ -80,6 +80,29 @@ def test_food_reference_nutrient_projection_preserves_legacy_object_shape():
     }
 
 
+def test_food_reference_projection_keeps_exact_serving_description_and_label():
+    model = _make_food_reference_model("rice")
+    model.serving_size_rows = build_food_reference_serving_rows(
+        [
+            {
+                "unit": "cup, cooked, diced",
+                "gram_weight": 158,
+                "description": "1 cup cooked, diced",
+                "display_description": "cốc, đã nấu, thái hạt lựu",
+            }
+        ]
+    )
+
+    result = food_reference_model_to_dict(model)
+    cooked = next(
+        option
+        for option in result["allowed_units"]
+        if option["unit"] == "cup, cooked, diced"
+    )
+    assert cooked["description"] == "1 cup cooked, diced"
+    assert cooked["display_description"] == "cốc, đã nấu, thái hạt lựu"
+
+
 def test_food_reference_projection_returns_allowed_units_from_serving_rows():
     model = _make_food_reference_model("spinach")
     model.serving_size_rows = build_food_reference_serving_rows(

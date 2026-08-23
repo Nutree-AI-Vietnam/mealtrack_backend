@@ -18,6 +18,8 @@ class FoodReferenceServingSizeModel(Base):
         nullable=False,
     )
     name = Column(String(100), nullable=False)
+    description = Column(String(100), nullable=True)
+    name_vi = Column(String(100), nullable=True)
     grams = Column(Float, nullable=True)
     milliliters = Column(Float, nullable=True)
     is_default = Column(Boolean, nullable=False, default=False)

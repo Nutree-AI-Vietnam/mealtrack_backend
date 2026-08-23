@@ -15,13 +15,18 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.app.services.serving_label import serving_phrase_key
 from src.infra.database.models.food_reference_model import FoodReferenceModel
+from src.infra.database.models.food_reference_serving_size import (
+    FoodReferenceServingSizeModel,
+)
 from src.infra.repositories.food_reference_integrity_repository import (
     FoodReferenceIntegrityRepository,
 )
 from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_dict,
 )
+from src.infra.repositories.serving_phrase_repository import ServingPhraseRepository
 
 _DISPLAY_LOAD_OPTIONS = (
     selectinload(FoodReferenceModel.serving_size_rows),
@@ -35,6 +40,7 @@ class FoodReferenceLocaleRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._integrity_repository = FoodReferenceIntegrityRepository(session)
+        self._phrase_repository = ServingPhraseRepository(session)
 
     async def find_by_locale_names(
         self, language: str, names: list[str]
@@ -73,7 +79,7 @@ class FoodReferenceLocaleRepository:
         return matched
 
     async def get_display_projections(
-        self, food_reference_ids: list[int]
+        self, food_reference_ids: list[int], language: str | None = None
     ) -> dict[int, dict[str, Any]]:
         """Id-keyed English name + ``name_vi`` for linked meal lines.
 
@@ -90,13 +96,70 @@ class FoodReferenceLocaleRepository:
                 FoodReferenceModel.name_vi,
             ).where(FoodReferenceModel.id.in_(ids))
         )
-        return {
+        projections = {
             row.id: {
                 "name": row.name,
                 "name_vi": row.name_vi,
+                "serving_labels": {},
             }
             for row in result.all()
         }
+        serving_rows = await self._session.execute(
+            select(
+                FoodReferenceServingSizeModel.food_reference_id,
+                FoodReferenceServingSizeModel.name,
+                FoodReferenceServingSizeModel.name_vi,
+            ).where(FoodReferenceServingSizeModel.food_reference_id.in_(ids))
+        )
+        missing_phrases: list[str] = []
+        pending: list[tuple[int, str]] = []
+        for food_reference_id, name, name_vi in serving_rows.all():
+            if name_vi:
+                projections[food_reference_id]["serving_labels"][
+                    serving_phrase_key(name)
+                ] = name_vi
+                continue
+            missing_phrases.append(name)
+            pending.append((food_reference_id, name))
+        phrase_language = language or "vi"
+        cached = {}
+        if missing_phrases and phrase_language != "en":
+            cached = await self._phrase_repository.get_translations(
+                missing_phrases, phrase_language
+            )
+        for food_reference_id, name in pending:
+            label = cached.get(serving_phrase_key(name))
+            if label:
+                projections[food_reference_id]["serving_labels"][
+                    serving_phrase_key(name)
+                ] = label
+        return projections
+
+    async def get_serving_phrase_translations(
+        self, phrases: list[str], language: str
+    ) -> dict[str, str]:
+        return await self._phrase_repository.get_translations(phrases, language)
+
+    async def upsert_serving_phrase_translations(
+        self, labels_by_source: dict[str, str], language: str
+    ) -> None:
+        await self._phrase_repository.upsert_translations(labels_by_source, language)
+
+    async def apply_serving_name_vi(
+        self, food_reference_id: int, labels_by_unit: dict[str, str]
+    ) -> None:
+        if not labels_by_unit:
+            return
+        keyed = {serving_phrase_key(unit): label for unit, label in labels_by_unit.items()}
+        result = await self._session.execute(
+            select(FoodReferenceServingSizeModel).where(
+                FoodReferenceServingSizeModel.food_reference_id == food_reference_id
+            )
+        )
+        for row in result.scalars().all():
+            label = keyed.get(serving_phrase_key(row.name))
+            if label:
+                row.name_vi = label[:100]
 
 
 __all__ = ["FoodReferenceLocaleRepository"]

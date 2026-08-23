@@ -132,9 +132,17 @@ def build_food_reference_serving_rows(
         ).strip()
         if not name:
             continue
+        description = str(
+            item.get("description") or item.get("serving_description") or ""
+        ).strip()
+        name_vi = str(
+            item.get("name_vi") or item.get("display_description") or ""
+        ).strip()
         rows.append(
             FoodReferenceServingSizeModel(
                 name=name[:100],
+                description=description[:100] or None,
+                name_vi=name_vi[:100] or None,
                 grams=as_optional_float(item.get("grams") or item.get("gram_weight")),
                 milliliters=as_optional_float(
                     item.get("milliliters") or item.get("ml")
@@ -176,6 +184,8 @@ def food_reference_serving_sizes_to_dict(model: FoodReferenceModel) -> Any:
     return [
         {
             "name": row.name,
+            "description": row.description,
+            "name_vi": row.name_vi,
             "grams": row.grams,
             "milliliters": row.milliliters,
             "is_default": row.is_default,
@@ -232,7 +242,12 @@ def food_reference_allowed_units_to_dict(
             {
                 "unit": row.name,
                 "gram_weight": row.grams,
-                "description": row.name,
+                "description": row.description or row.name,
+                **(
+                    {"display_description": row.name_vi}
+                    if row.name_vi
+                    else {}
+                ),
             }
             for row in raw_rows
             if row.grams is not None and row.grams > 0
@@ -271,7 +286,7 @@ def _raw_allowed_units(model: FoodReferenceModel) -> list[dict[str, Any]]:
             {
                 "unit": row.name,
                 "gram_weight": row.grams,
-                "description": row.name,
+                "description": row.description or row.name,
             }
             for row in rows
         ]

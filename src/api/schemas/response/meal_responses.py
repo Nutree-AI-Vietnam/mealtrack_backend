@@ -40,7 +40,13 @@ class ServingUnitResponse(BaseModel):
 
     unit: str = Field(..., description="Unit token used for save/edit requests")
     gram_weight: float = Field(..., gt=0, description="Gram weight for one unit")
-    description: str = Field("", description="User-facing serving description")
+    description: str = Field(
+        "", description="English FatSecret serving description for quantity math"
+    )
+    display_description: str | None = Field(
+        None,
+        description="Localized exact serving label; unit stays English",
+    )
 
 
 class ParsedFoodItem(BaseModel):
