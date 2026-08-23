@@ -118,9 +118,33 @@ class AsyncFoodReferenceUowAdapter:
             return await uow.food_references.find_by_locale_names(language, names)
 
     async def get_display_projections(
-        self, food_reference_ids: list[int]
+        self, food_reference_ids: list[int], language: str | None = None
     ) -> dict[int, dict[str, Any]]:
         async with self._uow_factory() as uow:
             return await uow.food_references.get_display_projections(
-                food_reference_ids
+                food_reference_ids, language
+            )
+
+    async def get_serving_phrase_translations(
+        self, phrases: list[str], language: str
+    ) -> dict[str, str]:
+        async with self._uow_factory() as uow:
+            return await uow.food_references.get_serving_phrase_translations(
+                phrases, language
+            )
+
+    async def upsert_serving_phrase_translations(
+        self, labels_by_source: dict[str, str], language: str
+    ) -> None:
+        async with self._uow_factory() as uow:
+            await uow.food_references.upsert_serving_phrase_translations(
+                labels_by_source, language
+            )
+
+    async def apply_serving_name_vi(
+        self, food_reference_id: int, labels_by_unit: dict[str, str]
+    ) -> None:
+        async with self._uow_factory() as uow:
+            await uow.food_references.apply_serving_name_vi(
+                food_reference_id, labels_by_unit
             )

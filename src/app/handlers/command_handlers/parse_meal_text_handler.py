@@ -28,6 +28,7 @@ from src.app.services.food_display_name import (
     needs_display_localization,
 )
 from src.app.services.food_name_localizer import translate_food_texts
+from src.app.services.serving_label_localizer import localize_item_servings
 from src.app.services.parse_text_composition import composition_retry_feedback
 from src.app.services.parse_text_custom_estimate import apply_custom_estimate
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
@@ -321,6 +322,14 @@ class ParseMealTextHandler(
             await self._localize_english_display_names(enhanced_items, command.language)
 
         await self._adopt_fatsecret_items(enhanced_items, command)
+        if command.language and command.language != "en":
+            await localize_item_servings(
+                enhanced_items,
+                language=command.language,
+                translation_service=self._translation_service,
+                uow_factory=self._uow_factory,
+                persist=True,
+            )
 
         # Build response items
         items = [

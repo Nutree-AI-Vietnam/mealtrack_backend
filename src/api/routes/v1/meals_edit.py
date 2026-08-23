@@ -211,7 +211,7 @@ async def update_meal_ingredients(
         result = dict(result)
         image_url = getattr(getattr(meal, "image", None), "url", None)
         display_projections = await load_food_reference_display_projections(
-            meal, food_reference_repository
+            meal, food_reference_repository, language=language
         )
         result["meal_detail"] = MealMapper.to_detailed_response(
             meal,

@@ -372,9 +372,32 @@ class AsyncFoodReferenceRepository:
         return await self._locale_repository.find_by_locale_names(language, names)
 
     async def get_display_projections(
-        self, food_reference_ids: list[int]
+        self, food_reference_ids: list[int], language: str | None = None
     ) -> dict[int, dict[str, Any]]:
-        return await self._locale_repository.get_display_projections(food_reference_ids)
+        return await self._locale_repository.get_display_projections(
+            food_reference_ids, language
+        )
+
+    async def get_serving_phrase_translations(
+        self, phrases: list[str], language: str
+    ) -> dict[str, str]:
+        return await self._locale_repository.get_serving_phrase_translations(
+            phrases, language
+        )
+
+    async def upsert_serving_phrase_translations(
+        self, labels_by_source: dict[str, str], language: str
+    ) -> None:
+        await self._locale_repository.upsert_serving_phrase_translations(
+            labels_by_source, language
+        )
+
+    async def apply_serving_name_vi(
+        self, food_reference_id: int, labels_by_unit: dict[str, str]
+    ) -> None:
+        await self._locale_repository.apply_serving_name_vi(
+            food_reference_id, labels_by_unit
+        )
 
     async def upsert(self, data: dict[str, Any]) -> None:
         """Insert or update a food reference by barcode without owning commit."""

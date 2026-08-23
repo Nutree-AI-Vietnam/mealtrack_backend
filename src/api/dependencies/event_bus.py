@@ -946,7 +946,10 @@ def get_configured_event_bus() -> EventBus:
 
     event_bus.register_handler(
         LogHydrationCommand,
-        LogHydrationCommandHandler(uow=AsyncUnitOfWork()),
+        LogHydrationCommandHandler(
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+        ),
     )
     event_bus.register_handler(
         LogCaloricDrinkCommand,

@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from src.app.events.integration_event import IntegrationEvent
+from src.domain.events.integration_event import IntegrationEvent
 from src.domain.ports.outbox_handler_port import (
     OutboxEventContext,
     OutboxEventHandler,

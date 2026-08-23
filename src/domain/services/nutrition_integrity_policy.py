@@ -370,6 +370,11 @@ def normalize_serving_options(
             "gram_weight": float(gram_weight),
             "description": description[:100] or unit_key,
         }
+        display = str(
+            raw.get("display_description") or raw.get("name_vi") or ""
+        ).strip()
+        if display:
+            candidate["display_description"] = display[:100]
         if not any(
             item["unit"] == candidate["unit"]
             and isinstance(item["gram_weight"], (int, float))

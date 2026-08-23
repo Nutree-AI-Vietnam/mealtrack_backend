@@ -181,10 +181,14 @@ class FoodReferenceAdoptRepository:
             setattr(model, field, value)
         existing_servings = _loaded_collection(model, "serving_size_rows")
         if servings:
+            incoming = _preserve_serving_locale(
+                existing_servings,
+                build_food_reference_serving_rows(servings),
+            )
             _replace_relationship_collection(
                 model,
                 "serving_size_rows",
-                build_food_reference_serving_rows(servings),
+                incoming,
             )
         elif existing_servings is not None and not existing_servings:
             _replace_relationship_collection(
@@ -211,6 +215,32 @@ class FoodReferenceAdoptRepository:
         )
         result = await self._session.execute(stmt.options(*_ADOPT_LOAD_OPTIONS))
         return result.scalars().first()
+
+
+def _preserve_serving_locale(
+    existing: list[Any] | None,
+    incoming: list[Any],
+) -> list[Any]:
+    """Keep ``name_vi`` when the English FatSecret phrase did not change."""
+    if not existing:
+        return incoming
+    by_key = {
+        (
+            str(row.name or "").casefold(),
+            str(getattr(row, "description", None) or "").casefold(),
+        ): row
+        for row in existing
+    }
+    for row in incoming:
+        old = by_key.get(
+            (
+                str(row.name or "").casefold(),
+                str(getattr(row, "description", None) or "").casefold(),
+            )
+        )
+        if old is not None and getattr(old, "name_vi", None) and not row.name_vi:
+            row.name_vi = old.name_vi
+    return incoming
 
 
 __all__ = ["FoodReferenceAdoptRepository", "sanitize_locale_name"]

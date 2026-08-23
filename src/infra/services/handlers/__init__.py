@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.app.events.integration_event import IntegrationEvent
+from src.domain.events.integration_event import IntegrationEvent
 from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.services.handlers.affiliate_webhook_handler import (
     AffiliateWebhookHandler,

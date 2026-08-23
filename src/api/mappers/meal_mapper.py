@@ -18,6 +18,7 @@ from src.api.schemas.response import (
     SimpleMealResponse,
 )
 from src.api.schemas.response.daily_nutrition_response import DailyNutritionResponse
+from src.app.services.serving_label import overlay_serving_labels
 from src.domain.constants.languages import normalize_language
 from src.domain.model.meal import Meal
 from src.domain.model.meal.meal_response_localization import (
@@ -62,7 +63,9 @@ def _snapshot_canonical_name(item) -> str | None:
     return None
 
 
-def _apply_translated_food_name(food_item, translated_name, language: str | None) -> None:
+def _apply_translated_food_name(
+    food_item, translated_name, language: str | None
+) -> None:
     if not translated_name:
         return
     if keep_stored_display_name(
@@ -194,13 +197,10 @@ class MealMapper:
                             tracked_projection, requested_language
                         )
                     else:
-                        canonical_name = (
-                            _snapshot_canonical_name(item)
-                            or (
-                                canonical_food_names[index]
-                                if index < len(canonical_food_names)
-                                else item.name
-                            )
+                        canonical_name = _snapshot_canonical_name(item) or (
+                            canonical_food_names[index]
+                            if index < len(canonical_food_names)
+                            else item.name
                         )
                         display_name = item.name
                     item_calories = effective_food_item_calories(
@@ -276,7 +276,13 @@ class MealMapper:
                             item, "nutrition_contract_version", None
                         ),
                         source_snapshot=getattr(item, "source_snapshot", None),
-                        allowed_units=getattr(item, "allowed_units", None) or [],
+                        allowed_units=overlay_serving_labels(
+                            getattr(item, "allowed_units", None) or [],
+                            (tracked_projection or {}).get("serving_labels") or {},
+                            language=requested_language,
+                        )
+                        if requested_language == "vi"
+                        else (getattr(item, "allowed_units", None) or []),
                     )
                     food_items.append(food_item_dto)
 

@@ -18,7 +18,6 @@ from src.domain.utils.timezone_utils import (
     resolve_user_timezone_async,
     utc_now,
 )
-from src.infra.config.settings import get_settings
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -29,8 +28,10 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
     def __init__(
         self,
         uow: AsyncUnitOfWork,
+        environment: str = "development",
     ):
         self.uow = uow
+        self.environment = environment
 
     async def handle(self, cmd: LogHydrationCommand) -> dict:
         drink = find_by_id(cmd.drink_id)
@@ -116,7 +117,7 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                 )
             )
             integration_event = HydrationCreatedEvent(
-                environment=get_settings().ENVIRONMENT,
+                environment=self.environment,
                 aggregate_id=hydration_entry.id,
             )
             await uow.outbox.enqueue(

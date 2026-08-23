@@ -116,13 +116,40 @@ async def test_get_display_projections_returns_name_and_name_vi():
         SimpleNamespace(id=7, name="Beef", name_vi="Thit bo"),
         SimpleNamespace(id=8, name="Rice", name_vi=None),
     ]
-    session = _Session([_Result(all_rows=rows)])
+    session = _Session(
+        [_Result(all_rows=rows), _Result(all_rows=[])]
+    )
     repo = FoodReferenceLocaleRepository(session)
 
     result = await repo.get_display_projections([7, 8])
 
-    assert result[7] == {"name": "Beef", "name_vi": "Thit bo"}
-    assert result[8] == {"name": "Rice", "name_vi": None}
+    assert result[7] == {
+        "name": "Beef",
+        "name_vi": "Thit bo",
+        "serving_labels": {},
+    }
+    assert result[8] == {"name": "Rice", "name_vi": None, "serving_labels": {}}
+
+
+@pytest.mark.asyncio
+async def test_get_display_projections_includes_serving_name_vi():
+    from src.app.services.serving_label import serving_phrase_key
+
+    rows = [SimpleNamespace(id=7, name="Rice", name_vi="Cơm")]
+    serving_rows = [
+        (7, "cup, cooked, diced", "cốc, đã nấu, thái hạt lựu"),
+    ]
+    session = _Session(
+        [_Result(all_rows=rows), _Result(all_rows=serving_rows)]
+    )
+    repo = FoodReferenceLocaleRepository(session)
+
+    result = await repo.get_display_projections([7], language="vi")
+
+    assert result[7]["serving_labels"][
+        serving_phrase_key("cup, cooked, diced")
+    ] == "cốc, đã nấu, thái hạt lựu"
+    assert serving_phrase_key("g") not in result[7]["serving_labels"]
 
 
 @pytest.mark.asyncio

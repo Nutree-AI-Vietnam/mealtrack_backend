@@ -560,6 +560,15 @@ def get_text_translation_service():
     return _text_translation_service
 
 
+def get_serving_label_dependencies():
+    """Compose serving-label enrichment dependencies for read routes."""
+    from src.app.services.meal_serving_label_enricher import (
+        enrich_meal_serving_labels,
+    )
+
+    return enrich_meal_serving_labels, get_text_translation_service(), AsyncUnitOfWork
+
+
 def get_ai_model_manager():
     """Get provider-agnostic AI manager singleton."""
     from src.infra.services.ai.ai_model_manager import AIModelManager
