@@ -7,13 +7,13 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.app.services.food_display_name import (
-    fold_latin_display_name,
     is_ascii_display_name,
     needs_display_localization,
 )
 from src.domain.services.nutrition_calculation_service import (
     MASS_VOLUME_CANONICAL_UNITS,
 )
+from src.domain.services.serving_phrase import serving_phrase_key
 
 DISPLAY_DESCRIPTION_KEY = "display_description"
 
@@ -53,11 +53,6 @@ _VI_SERVING_WORDS = {
     "tsp": "muỗng cà phê",
 }
 _VI_SERVING_ADJECTIVES = {"mỏng", "dày", "lớn", "vừa", "nhỏ"}
-
-
-def serving_phrase_key(text: str) -> str:
-    """Stable lookup key for an exact FatSecret serving phrase."""
-    return " ".join(fold_latin_display_name(text).lower().split())[:120]
 
 
 def serving_display_source(option: Mapping[str, Any]) -> str:

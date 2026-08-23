@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.services.serving_label import serving_phrase_key
+from src.domain.services.serving_phrase import serving_phrase_key
 from src.infra.database.models.serving_phrase_translation import (
     ServingPhraseTranslationModel,
 )

@@ -38,18 +38,18 @@ async def load_food_reference_display_projections(
 
 
 async def _enrich_serving_labels(meal, projections, language: str):
-    from src.api.base_dependencies import get_text_translation_service
-    from src.app.services.meal_serving_label_enricher import (
-        enrich_meal_serving_labels,
+    from src.api.base_dependencies import get_serving_label_dependencies
+
+    enrich_meal_serving_labels, translation_service, uow_factory = (
+        get_serving_label_dependencies()
     )
-    from src.infra.database.uow_async import AsyncUnitOfWork
 
     return await enrich_meal_serving_labels(
         meal,
         projections,
         language=language,
-        translation_service=get_text_translation_service(),
-        uow_factory=AsyncUnitOfWork,
+        translation_service=translation_service,
+        uow_factory=uow_factory,
     )
 
 

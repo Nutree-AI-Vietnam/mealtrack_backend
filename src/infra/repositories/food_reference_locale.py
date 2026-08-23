@@ -15,7 +15,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.app.services.serving_label import serving_phrase_key
+from src.domain.services.serving_phrase import serving_phrase_key
 from src.infra.database.models.food_reference_model import FoodReferenceModel
 from src.infra.database.models.food_reference_serving_size import (
     FoodReferenceServingSizeModel,
