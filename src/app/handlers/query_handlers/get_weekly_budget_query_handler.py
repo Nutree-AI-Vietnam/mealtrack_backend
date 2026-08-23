@@ -213,21 +213,20 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                         tomorrow_adjusted, policy
                     )
 
-                    # Budget cap: preview can't exceed actual remaining after today
                     actual_remaining_after_today = (
                         weekly_budget.target_calories
                         - consumed_including_today["calories"]
                     )
-                    if tomorrow_remaining > 0 and actual_remaining_after_today > 0:
-                        max_tomorrow = actual_remaining_after_today / tomorrow_remaining
-                        if tomorrow_adjusted.calories > max_tomorrow:
-                            tomorrow_adjusted = self._apply_target_policy(
-                                replace(
-                                    tomorrow_adjusted,
-                                    calories=round(max_tomorrow, 1),
-                                ),
-                                policy,
-                            )
+                    tomorrow_adjusted = WeeklyBudgetService.apply_leftover_budget_cap(
+                        tomorrow_adjusted,
+                        remaining_before_today=actual_remaining_after_today,
+                        remaining_days=tomorrow_remaining,
+                        standard_daily_calories=base_daily_cal,
+                        bmr=bmr,
+                    )
+                    tomorrow_adjusted = self._apply_target_policy(
+                        tomorrow_adjusted, policy
+                    )
 
                     deviation = abs(tomorrow_adjusted.calories - base_daily_cal) / max(
                         base_daily_cal, 1

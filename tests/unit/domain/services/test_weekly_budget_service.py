@@ -15,7 +15,10 @@ import pytest
 
 from src.domain.constants import WeeklyBudgetConstants
 from src.domain.model.weekly import WeeklyMacroBudget
-from src.domain.services.weekly_budget_service import WeeklyBudgetService
+from src.domain.services.weekly_budget_service import (
+    AdjustedDailyTargets,
+    WeeklyBudgetService,
+)
 
 
 class TestWeeklyBudgetService:
@@ -484,3 +487,74 @@ class TestWeeklyMacroBudgetDomain:
         )
 
         assert budget.consumption_percentage == 50.0
+
+
+class TestLeftoverBudgetCap:
+    """Leftover weekly split must not undo the deficit/BMR floor."""
+
+    def test_calorie_safety_floor_uses_deficit_cap_when_higher_than_bmr(self):
+        floor = WeeklyBudgetService.calorie_safety_floor(2000, bmr=1500)
+        assert floor == 1800
+
+    def test_calorie_safety_floor_uses_bmr_when_higher_than_deficit_cap(self):
+        floor = WeeklyBudgetService.calorie_safety_floor(2000, bmr=1900)
+        assert floor == 1900
+
+    def test_large_overeating_does_not_drop_below_floor(self):
+        """8,000 Monday leaves 6,000 / 6 days = 1,000 leftover; floor holds 1,800."""
+        adjusted = AdjustedDailyTargets(
+            calories=1800,
+            carbs=171.4,
+            fat=57.1,
+            protein=150,
+            bmr_floor_active=False,
+            remaining_days=6,
+        )
+        result = WeeklyBudgetService.apply_leftover_budget_cap(
+            adjusted,
+            remaining_before_today=6000,
+            remaining_days=6,
+            standard_daily_calories=2000,
+            bmr=1600,
+        )
+        assert result.calories == 1800
+        assert result.protein == 150
+
+    def test_leftover_split_still_lowers_a_day_above_the_floor(self):
+        """11,400 leftover / 6 days = 1,900, which is still above the 1,800 floor."""
+        adjusted = AdjustedDailyTargets(
+            calories=2000,
+            carbs=200,
+            fat=67,
+            protein=150,
+            bmr_floor_active=False,
+            remaining_days=6,
+        )
+        result = WeeklyBudgetService.apply_leftover_budget_cap(
+            adjusted,
+            remaining_before_today=11400,
+            remaining_days=6,
+            standard_daily_calories=2000,
+            bmr=1600,
+        )
+        assert result.calories == pytest.approx(1900, abs=1)
+        assert result.protein == 150
+        assert result.carbs < 200
+
+    def test_empty_leftover_skips_cap(self):
+        adjusted = AdjustedDailyTargets(
+            calories=1800,
+            carbs=171.4,
+            fat=57.1,
+            protein=150,
+            bmr_floor_active=False,
+            remaining_days=3,
+        )
+        result = WeeklyBudgetService.apply_leftover_budget_cap(
+            adjusted,
+            remaining_before_today=0,
+            remaining_days=3,
+            standard_daily_calories=2000,
+            bmr=1600,
+        )
+        assert result.calories == 1800

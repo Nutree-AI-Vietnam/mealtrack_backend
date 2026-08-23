@@ -404,18 +404,13 @@ class WeeklyBudgetService:
         remaining_before_today = (
             weekly_budget.target_calories - consumed_before_today["calories"]
         )
-        if remaining_days > 0 and remaining_before_today > 0:
-            max_daily = remaining_before_today / remaining_days
-            if adjusted.calories > max_daily:
-                scale = max_daily / adjusted.calories
-                adjusted = AdjustedDailyTargets(
-                    calories=round(max_daily, 1),
-                    carbs=round(adjusted.carbs * scale, 1),
-                    fat=round(adjusted.fat * scale, 1),
-                    protein=adjusted.protein,
-                    bmr_floor_active=adjusted.bmr_floor_active,
-                    remaining_days=adjusted.remaining_days,
-                )
+        adjusted = calc.apply_leftover_budget_cap(
+            adjusted,
+            remaining_before_today=remaining_before_today,
+            remaining_days=remaining_days,
+            standard_daily_calories=base_daily_cal,
+            bmr=bmr,
+        )
 
         return EffectiveAdjustedResult(
             adjusted=adjusted,
@@ -633,6 +628,55 @@ class WeeklyBudgetService:
             protein=rounded_protein,
             bmr_floor_active=bmr_floor_active,
             remaining_days=remaining_days,
+        )
+
+    @staticmethod
+    def calorie_safety_floor(standard_daily_calories: float, bmr: float) -> float:
+        """Lowest allowed adjusted day: deficit cap or BMR floor, whichever is higher."""
+        bmr_floor = max(
+            bmr, standard_daily_calories * WeeklyBudgetConstants.BMR_FLOOR_RATIO
+        )
+        deficit_floor = standard_daily_calories * (
+            1 - WeeklyBudgetConstants.MAX_DAILY_DEFICIT_RATIO
+        )
+        return max(bmr_floor, deficit_floor)
+
+    @staticmethod
+    def apply_leftover_budget_cap(
+        adjusted: AdjustedDailyTargets,
+        *,
+        remaining_before_today: float,
+        remaining_days: int,
+        standard_daily_calories: float,
+        bmr: float,
+    ) -> AdjustedDailyTargets:
+        """Split leftover weekly calories, but never below the safety floor.
+
+        Leftover / remaining days can still lower a day that is above the
+        floor. It must not undo the deficit cap or BMR floor.
+        """
+        if remaining_days <= 0 or remaining_before_today <= 0:
+            return adjusted
+
+        leftover_daily = remaining_before_today / remaining_days
+        if adjusted.calories <= leftover_daily:
+            return adjusted
+
+        floor = WeeklyBudgetService.calorie_safety_floor(
+            standard_daily_calories, bmr
+        )
+        capped = max(leftover_daily, floor)
+        if capped >= adjusted.calories:
+            return adjusted
+
+        scale = capped / adjusted.calories
+        return AdjustedDailyTargets(
+            calories=round(capped, 1),
+            carbs=round(adjusted.carbs * scale, 1),
+            fat=round(adjusted.fat * scale, 1),
+            protein=adjusted.protein,
+            bmr_floor_active=adjusted.bmr_floor_active,
+            remaining_days=adjusted.remaining_days,
         )
 
     @staticmethod

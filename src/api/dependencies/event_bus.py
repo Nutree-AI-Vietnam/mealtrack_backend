@@ -135,6 +135,7 @@ from src.app.handlers.query_handlers import (
     GetDailyMacrosQueryHandler,
     GetDailyMovementQueryHandler,
     GetFoodDetailsQueryHandler,
+    GetPopularStaplesQueryHandler,
     GetJourneyProgressQueryHandler,
     GetMealByIdQueryHandler,
     GetMealsByDateQueryHandler,
@@ -177,6 +178,7 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 from src.app.queries.activity import GetBulkActivitiesQuery, GetDailyActivitiesQuery
 from src.app.queries.cheat_day import GetCheatDaysQuery
 from src.app.queries.food.get_food_details_query import GetFoodDetailsQuery
+from src.app.queries.food.get_popular_staples_query import GetPopularStaplesQuery
 from src.app.queries.food.lookup_barcode_query import LookupBarcodeQuery
 from src.app.queries.food.search_foods_query import SearchFoodsQuery
 from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
@@ -220,7 +222,7 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityPolicy
-from src.infra.cache.provider_budget import RedisProviderBudget
+from src.infra.cache.provider_budget import MemoryProviderBudget, RedisProviderBudget
 from src.infra.config.settings import settings
 from src.infra.database.uow_async import AsyncUnitOfWork
 from src.infra.event_bus import EventBus, PyMediatorEventBus
@@ -233,13 +235,26 @@ _configured_event_bus: EventBus | None = None
 
 
 def _build_provider_budget(cache_service):
-    """Build the required shared provider budget from the initialized Redis client."""
-    if cache_service is None or settings.NUTRITION_PROVIDER_GLOBAL_RPM is None:
+    """Build the shared provider budget. Production fail-closes without Redis."""
+    if settings.NUTRITION_PROVIDER_GLOBAL_RPM is None:
+        logger.error(
+            "NUTRITION_PROVIDER_GLOBAL_RPM is unset; provider-origin meal saves "
+            "will return NUTRITION_PROVIDER_UNAVAILABLE"
+        )
         return None
     redis_client = getattr(cache_service, "redis", None)
-    if redis_client is None:
-        return None
-    return RedisProviderBudget(redis_client)
+    if redis_client is not None:
+        return RedisProviderBudget(redis_client)
+    if settings.ENVIRONMENT.lower() == "development":
+        logger.warning(
+            "Redis cache unavailable; using process-local provider budget in development"
+        )
+        return MemoryProviderBudget()
+    logger.error(
+        "Redis cache unavailable; provider-origin meal saves will return "
+        "NUTRITION_PROVIDER_UNAVAILABLE"
+    )
+    return None
 
 
 async def _search_local_food_references(
@@ -249,6 +264,13 @@ async def _search_local_food_references(
 ) -> list[FoodReferenceSearchProjection]:
     async with AsyncUnitOfWork() as uow:
         return await uow.food_references.search_local(query, region, limit)
+
+
+async def _load_popular_staple_food_references(
+    ref_ids: list[int],
+) -> list[dict]:
+    async with AsyncUnitOfWork() as uow:
+        return await uow.food_references.get_by_ids(ref_ids)
 
 
 async def _food_integrity_cache_context() -> dict[str, int | str]:
@@ -321,6 +343,14 @@ def get_food_search_event_bus() -> EventBus:
             translation_service=text_translation_service,
             local_search=_search_local_food_references,
             integrity_context=_food_integrity_cache_context,
+            uow_factory=AsyncUnitOfWork,
+        ),
+    )
+    event_bus.register_handler(
+        GetPopularStaplesQuery,
+        GetPopularStaplesQueryHandler(
+            food_mapping_service,
+            _load_popular_staple_food_references,
         ),
     )
     event_bus.register_handler(
@@ -414,9 +444,11 @@ def get_configured_event_bus() -> EventBus:
     )
     from src.infra.database.uow_async import AsyncUnitOfWork
 
-    # Synchronous invalidation service — handlers await this before returning,
-    # eliminating the fire-and-forget race condition.
-    cache_invalidation_service = CacheInvalidationService(cache_service)
+    # Meal/hydration handlers still await invalidation. Movement handlers
+    # schedule it on the task manager so log/delete can return after persist.
+    cache_invalidation_service = CacheInvalidationService(
+        cache_service, task_manager=task_manager
+    )
     provider_budget = _build_provider_budget(cache_service)
     nutrition_integrity_policy = NutritionIntegrityPolicy()
 
@@ -559,6 +591,7 @@ def get_configured_event_bus() -> EventBus:
             structured_reference_enabled=parse_text_settings[
                 "structured_reference_enabled"
             ],
+            uow_factory=AsyncUnitOfWork,
         ),
     )
 
@@ -572,6 +605,14 @@ def get_configured_event_bus() -> EventBus:
             translation_service=text_translation_service,
             local_search=_search_local_food_references,
             integrity_context=_food_integrity_cache_context,
+            uow_factory=AsyncUnitOfWork,
+        ),
+    )
+    event_bus.register_handler(
+        GetPopularStaplesQuery,
+        GetPopularStaplesQueryHandler(
+            food_mapping_service,
+            _load_popular_staple_food_references,
         ),
     )
     event_bus.register_handler(

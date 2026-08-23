@@ -1,14 +1,18 @@
-"""Centralized, synchronous cache invalidation for all mutations.
+"""Centralized cache invalidation for all mutations.
 
-Synchronous invalidation guarantees Redis is cleared before the response
-returns to the client, eliminating the race condition where a Flutter GET
-immediately after a POST would hit a stale Redis key.
+Meal/hydration writes still await invalidation before the HTTP response so a
+follow-up GET cannot hit a stale Redis key.
+
+Movement writes persist first, then schedule invalidation on the process
+task manager. The Flutter client already projects SQLite locally and must
+not wait on Redis SCAN of `nutrition_bulk:*` / weekly-budget patterns.
 """
 
 import logging
 import time
+from collections.abc import Coroutine
 from datetime import date, timedelta
-from typing import Optional
+from typing import Any
 
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.ports.cache_port import CachePort
@@ -21,10 +25,15 @@ def _get_week_start(d: date) -> date:
 
 
 class CacheInvalidationService:
-    """Synchronous cache invalidation called by command handlers before returning."""
+    """Cache invalidation called by command handlers after a successful write."""
 
-    def __init__(self, cache: Optional[CachePort]):
+    def __init__(
+        self,
+        cache: CachePort | None,
+        task_manager: Any | None = None,
+    ):
         self._cache = cache
+        self._task_manager = task_manager
 
     async def _invalidate_key(self, key: str) -> None:
         if not self._cache:
@@ -94,6 +103,7 @@ class CacheInvalidationService:
 
     async def after_movement_write(self, user_id: str, log_date: date) -> None:
         """Invalidate all caches affected by a movement log/edit/delete."""
+        _t0 = time.perf_counter()
         week_start = _get_week_start(log_date)
         current_week_start = _get_week_start(date.today())
 
@@ -112,6 +122,29 @@ class CacheInvalidationService:
         if week_start != current_week_start:
             await self._invalidate_weekly_budget(user_id, current_week_start)
             await self._invalidate_key(CacheKeys.daily_breakdown(user_id, current_week_start)[0])
+
+        logger.info(
+            "cache_invalidation movement timing: user=%s total_ms=%.1f",
+            user_id,
+            (time.perf_counter() - _t0) * 1000,
+        )
+
+    async def schedule_after_movement_write(self, user_id: str, log_date: date) -> None:
+        """Run movement cache invalidation after the HTTP response when possible.
+
+        Without a task manager (unit tests, scripts) this awaits in-process so
+        callers still observe the same cache effects.
+        """
+        await self._schedule(
+            f"cache:after_movement_write:{user_id}:{log_date.isoformat()}",
+            self.after_movement_write(user_id, log_date),
+        )
+
+    async def _schedule(self, name: str, coro: Coroutine[Any, Any, Any]) -> None:
+        if self._task_manager is not None:
+            self._task_manager.spawn(name, coro)
+            return
+        await coro
 
     async def after_hydration_write(self, user_id: str, log_date: date) -> None:
         """Invalidate all caches affected by a hydration log/delete.

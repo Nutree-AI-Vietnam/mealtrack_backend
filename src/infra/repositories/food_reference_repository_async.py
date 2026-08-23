@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,14 +14,25 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
     FoodReferenceSearchProjection,
 )
+from src.domain.services.food_reference_identity import (
+    FATSECRET_NAMESPACE,
+    platform_identity_prefix,
+    platform_name_normalized,
+)
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
     normalize_food_name,
 )
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityPolicy
 from src.infra.database.models.food_reference_model import FoodReferenceModel
+from src.infra.repositories.food_reference_adopt import (
+    FoodReferenceAdoptRepository,
+    _loaded_collection,
+    _replace_relationship_collection,
+)
 from src.infra.repositories.food_reference_integrity_repository import (
     FoodReferenceIntegrityRepository,
 )
+from src.infra.repositories.food_reference_locale import FoodReferenceLocaleRepository
 from src.infra.repositories.food_reference_projection import (
     FOOD_REFERENCE_SEED_COLUMNS,
     build_food_reference_nutrient_rows,
@@ -52,6 +63,10 @@ class AsyncFoodReferenceRepository:
         self._session = session
         self._integrity_policy = integrity_policy or NutritionIntegrityPolicy()
         self._integrity_repository = FoodReferenceIntegrityRepository(session)
+        self._adopt_repository = FoodReferenceAdoptRepository(
+            session, self._integrity_policy
+        )
+        self._locale_repository = FoodReferenceLocaleRepository(session)
 
     async def get_by_barcode(self, barcode: str) -> dict[str, Any] | None:
         stmt = (
@@ -74,6 +89,22 @@ class AsyncFoodReferenceRepository:
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
         return food_reference_model_to_dict(model) if model else None
+
+    async def get_by_ids(self, ref_ids: list[int]) -> list[dict[str, Any]]:
+        """Load verified public references; caller reorders as needed."""
+        ids = sorted({int(value) for value in ref_ids})
+        if not ids:
+            return []
+        stmt = (
+            select(FoodReferenceModel)
+            .where(FoodReferenceModel.id.in_(ids))
+            .where(self._integrity_repository.public_eligibility_clause())
+            .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            food_reference_model_to_dict(model) for model in result.scalars().all()
+        ]
 
     async def get_nutrition_projection(
         self,
@@ -250,26 +281,51 @@ class AsyncFoodReferenceRepository:
         region: str,
         limit: int,
     ) -> list[FoodReferenceSearchProjection]:
+        raw_query = str(query or "").strip()
+        identity_query = (
+            raw_query.lower()
+            if raw_query.lower().startswith(f"{FATSECRET_NAMESPACE}:")
+            else None
+        )
         normalized_query = normalize_food_name(query)
-        if not normalized_query:
+        if not normalized_query and not identity_query:
             return []
 
         bounded_limit = min(max(limit, 1), 50)
-        similarity_score = func.similarity(
-            FoodReferenceModel.name_normalized,
-            normalized_query,
+        like = f"%{normalized_query}%" if normalized_query else None
+        identity_prefix = f"{platform_identity_prefix(FATSECRET_NAMESPACE)}%"
+        display_match = (
+            or_(
+                FoodReferenceModel.name.ilike(like),
+                FoodReferenceModel.name_vi.ilike(like),
+            )
+            if like
+            else None
         )
+        if identity_query:
+            key_match = func.lower(FoodReferenceModel.name_normalized) == identity_query
+            match_clause = (
+                or_(display_match, key_match) if display_match is not None else key_match
+            )
+            similarity_score = func.similarity(
+                FoodReferenceModel.name_normalized, identity_query
+            )
+        else:
+            key_match = and_(
+                FoodReferenceModel.name_normalized.ilike(like),
+                FoodReferenceModel.name_normalized.notlike(identity_prefix),
+            )
+            match_clause = (
+                or_(display_match, key_match) if display_match is not None else key_match
+            )
+            similarity_score = func.similarity(
+                FoodReferenceModel.name, normalized_query
+            )
         base_stmt = (
             select(FoodReferenceModel)
-            .where(FoodReferenceModel.name_normalized.isnot(None))
             .where(self._integrity_repository.public_eligibility_clause())
             .where(FoodReferenceModel.region.in_([region, "global"]))
-            .where(
-                or_(
-                    FoodReferenceModel.name_normalized.ilike(f"%{normalized_query}%"),
-                    similarity_score >= 0.15,
-                )
-            )
+            .where(match_clause)
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
             .order_by(
                 FoodReferenceModel.is_verified.desc(),
@@ -301,15 +357,83 @@ class AsyncFoodReferenceRepository:
                 break
         return projections
 
+    async def find_by_source_identity(
+        self, namespace: str, food_id: str
+    ) -> dict[str, Any] | None:
+        return await self._adopt_repository.find_by_source_identity(namespace, food_id)
+
+    async def adopt_provider_food(
+        self,
+        namespace: str,
+        food_id: str,
+        english_name: str,
+        per_100g: dict[str, Any],
+        servings: list[dict[str, Any]] | None,
+        locale: str,
+        locale_name: str,
+    ) -> dict[str, Any]:
+        return await self._adopt_repository.adopt_provider_food(
+            namespace,
+            food_id,
+            english_name,
+            per_100g,
+            servings,
+            locale,
+            locale_name,
+        )
+
+    async def find_by_locale_names(
+        self, language: str, names: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        return await self._locale_repository.find_by_locale_names(language, names)
+
+    async def get_display_projections(
+        self, food_reference_ids: list[int], language: str | None = None
+    ) -> dict[int, dict[str, Any]]:
+        return await self._locale_repository.get_display_projections(
+            food_reference_ids, language
+        )
+
+    async def get_serving_phrase_translations(
+        self, phrases: list[str], language: str
+    ) -> dict[str, str]:
+        return await self._locale_repository.get_serving_phrase_translations(
+            phrases, language
+        )
+
+    async def upsert_serving_phrase_translations(
+        self, labels_by_source: dict[str, str], language: str
+    ) -> None:
+        await self._locale_repository.upsert_serving_phrase_translations(
+            labels_by_source, language
+        )
+
+    async def apply_serving_name_vi(
+        self, food_reference_id: int, labels_by_unit: dict[str, str]
+    ) -> None:
+        await self._locale_repository.apply_serving_name_vi(
+            food_reference_id, labels_by_unit
+        )
+
     async def upsert(self, data: dict[str, Any]) -> None:
         """Insert or update a food reference by barcode without owning commit."""
         source_namespace, source_food_id = _source_identity_from_data(data)
+        identity_name_normalized = None
         if source_namespace and source_food_id:
-            await self._ensure_source_identity_collision_safe(
-                normalize_food_name(str(data.get("name") or "")),
-                source_namespace,
-                source_food_id,
+            existing = (
+                await self._find_model_by_barcode(data["barcode"])
+                if data.get("barcode")
+                else None
             )
+            existing_key = existing.name_normalized if existing is not None else None
+            if existing_key:
+                await self._ensure_source_identity_collision_safe(
+                    existing_key, source_namespace, source_food_id
+                )
+            else:
+                identity_name_normalized = platform_name_normalized(
+                    source_namespace, source_food_id
+                )
         if data.get("is_verified", False):
             self._integrity_policy.require_valid(
                 data,
@@ -324,6 +448,7 @@ class AsyncFoodReferenceRepository:
         values = {
             "barcode": data.get("barcode"),
             "name": data.get("name"),
+            "name_normalized": identity_name_normalized,
             "name_vi": data.get("name_vi"),
             "brand": data.get("brand"),
             "protein_100g": data.get("protein_100g"),
@@ -346,6 +471,8 @@ class AsyncFoodReferenceRepository:
         }
         stmt = pg_insert(FoodReferenceModel).values(**values)
         update_fields = {k: v for k, v in values.items() if k != "barcode"}
+        if identity_name_normalized is None:
+            update_fields.pop("name_normalized", None)
         if values["source_namespace"] is None or values["source_food_id"] is None:
             update_fields.pop("source_namespace", None)
             update_fields.pop("source_food_id", None)
@@ -637,14 +764,25 @@ class AsyncFoodReferenceRepository:
     ) -> None:
         serving_sizes = data.get("serving_sizes") or data.get("allowed_units")
         extra_nutrients = data.get("extra_nutrients")
+        existing_servings = _loaded_collection(model, "serving_size_rows")
         if serving_sizes is not None:
-            model.serving_size_rows = build_food_reference_serving_rows(serving_sizes)
-        elif not getattr(model, "serving_size_rows", None):
-            model.serving_size_rows = build_food_reference_serving_rows(
-                [{"name": "g", "grams": 1.0}]
+            _replace_relationship_collection(
+                model,
+                "serving_size_rows",
+                build_food_reference_serving_rows(serving_sizes),
+            )
+        elif existing_servings is not None and not existing_servings:
+            _replace_relationship_collection(
+                model,
+                "serving_size_rows",
+                build_food_reference_serving_rows([{"name": "g", "grams": 1.0}]),
             )
         if extra_nutrients is not None:
-            model.nutrient_rows = build_food_reference_nutrient_rows(extra_nutrients)
+            _replace_relationship_collection(
+                model,
+                "nutrient_rows",
+                build_food_reference_nutrient_rows(extra_nutrients),
+            )
         await self._session.flush()
 
 
@@ -733,6 +871,7 @@ def _dedupe_search_projections(
             FoodReferenceSearchProjection(
                 id=model.id,
                 name=model.name,
+                name_vi=model.name_vi,
                 name_normalized=model.name_normalized,
                 brand=model.brand,
                 source=model.source,

@@ -58,6 +58,8 @@ class UpdateMovementEntryCommandHandler(
             )
 
         if self.cache_invalidation:
-            await self.cache_invalidation.after_movement_write(cmd.user_id, log_date)
+            await self.cache_invalidation.schedule_after_movement_write(
+                cmd.user_id, log_date
+            )
 
         return _movement_response(updated)

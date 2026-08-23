@@ -167,13 +167,29 @@ class RedisClient:
         return await self._with_client("DELETE", operation, False, key)
 
     async def delete_pattern(self, pattern: str) -> int:
-        """Delete keys matching a pattern using non-blocking SCAN."""
+        """Delete keys matching a pattern using non-blocking SCAN.
+
+        Keys are deleted in batches to avoid one Redis round-trip per match.
+        `nutrition_bulk:*` invalidation otherwise dominates movement writes.
+        """
 
         async def operation(client: redis.Redis) -> int:
             deleted = 0
+            batch: list[str] = []
+
+            async def flush() -> None:
+                nonlocal deleted
+                if not batch:
+                    return
+                await client.delete(*batch)
+                deleted += len(batch)
+                batch.clear()
+
             async for key in client.scan_iter(match=pattern):
-                await client.delete(key)
-                deleted += 1
+                batch.append(key)
+                if len(batch) >= 100:
+                    await flush()
+            await flush()
             if deleted:
                 logger.debug("Deleted %d keys matching %s", deleted, pattern)
             return deleted

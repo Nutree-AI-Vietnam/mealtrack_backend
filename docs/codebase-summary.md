@@ -87,6 +87,12 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   `src/api/routes/v1/meal_catalog.py`; the browse contract is documented in
   `api-endpoints.md` and the import manifest contract in
   `meal-catalog-import-schema.md`.
+- Parse-text eval harness:
+  `scripts/development/evaluate_parse_text_nutrition.py` with fixtures in
+  `tests/fixtures/parse_text_nutrition_golden_cases.json`. Unmatched foods are
+  dropped (no AI-fallback goldens); offline gates cover reference resolution only.
+- Adopted FatSecret catalog names and GET display rules:
+  `api-endpoints.md` (parse-text, GET names, edit-replace snapshot refresh).
 
 Non-derivable calorie and weekly-budget rules: `AGENTS.md` / `CLAUDE.md`
 MUST-Follow. Meal scan vs hydration and other system rules:

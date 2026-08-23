@@ -8,16 +8,35 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Run database migrations (skip production only — uses pre-deploy)
-if [ "${ENV:-}" = "production" ]; then
+# Run database migrations unless disabled or handled by the production pre-deploy.
+if [ "${ENV:-}" = "production" ] || [ "${ENVIRONMENT:-}" = "production" ]; then
     log "⏭️ Skipping migrations (pre-deploy handles this)"
 else
-    log "📦 Running database migrations..."
-    if python migrations/run.py; then
-        log "✅ Migrations completed successfully"
+    AUTO_MIGRATE="${AUTO_MIGRATE:-true}"
+    AUTO_MIGRATE_NORMALIZED="$(printf '%s' "$AUTO_MIGRATE" | tr '[:upper:]' '[:lower:]')"
+    case "$AUTO_MIGRATE_NORMALIZED" in
+        1|true|yes|on)
+            RUN_MIGRATIONS=true
+            ;;
+        0|false|no|off)
+            RUN_MIGRATIONS=false
+            ;;
+        *)
+            log "❌ AUTO_MIGRATE must be one of: true, false, 1, 0, yes, no, on, off"
+            exit 1
+            ;;
+    esac
+
+    if [ "$RUN_MIGRATIONS" = true ]; then
+        log "📦 Running database migrations..."
+        if python migrations/run.py; then
+            log "✅ Migrations completed successfully"
+        else
+            log "❌ Migrations failed!"
+            exit 1
+        fi
     else
-        log "❌ Migrations failed!"
-        exit 1
+        log "⏭️ Skipping migrations (AUTO_MIGRATE=${AUTO_MIGRATE})"
     fi
 fi
 

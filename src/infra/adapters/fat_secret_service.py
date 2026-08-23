@@ -40,6 +40,13 @@ LANGUAGE_TO_REGION = {
 }
 
 
+def _has_search_macros(food: dict[str, Any]) -> bool:
+    return all(
+        food.get(field) is not None
+        for field in ("protein_100g", "carbs_100g", "fat_100g")
+    )
+
+
 class FatSecretService:
     """HTTP client for fatsecret API with OAuth 2.0."""
 
@@ -226,9 +233,7 @@ class FatSecretService:
             async def _process(food: dict) -> dict:
                 food_id = food.get("food_id")
                 mapped = dict(food)
-
-                # Fetch detailed nutrition if we have a food_id
-                if food_id:
+                if food_id and not _has_search_macros(mapped):
                     try:
                         details = await self.get_food_details(
                             food_id,
@@ -238,7 +243,7 @@ class FatSecretService:
                         if details:
                             mapped.update(details)
                     except Exception:
-                        pass  # Use basic mapped data if details fail
+                        pass
 
                 return mapped
 
@@ -534,16 +539,21 @@ class FatSecretService:
 
     def _map_search_result(self, food: dict[str, Any]) -> dict[str, Any]:
         """Map fatsecret search result to clean dict."""
-        return {
+        food_id = food.get("food_id")
+        mapped: dict[str, Any] = {
             "description": food.get("food_name", ""),
             "brand": food.get("brand_name"),
             "food_description": food.get("food_description", ""),
             "source": "fatsecret",
-            "food_id": food.get(
-                "food_id"
-            ),  # fatsecret's internal ID for getting details
-            "allowed_units": self._default_allowed_units(),  # Will be enriched with details
+            "food_id": food_id,
+            "origin": "provider",
+            "source_namespace": "fatsecret",
+            "source_food_id": str(food_id) if food_id else None,
+            "allowed_units": self._default_allowed_units(),
         }
+        if food.get("servings"):
+            mapped.update(self._extract_nutrition_from_details(food))
+        return mapped
 
     def _safe_float(self, value: Any) -> float | None:
         """Safely convert value to float."""

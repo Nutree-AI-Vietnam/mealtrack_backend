@@ -79,7 +79,8 @@ uvicorn src.api.main:app --reload
 
 Production uses `python migrations/run.py` as the pre-deploy command. The
 production container then starts through `docker-entrypoint.sh` without
-re-running migrations; non-production containers run migrations at startup.
+re-running migrations; non-production containers run migrations at startup
+unless `AUTO_MIGRATE=false` (also accepts `0`, `no`, or `off`).
 
 - **Swagger Docs**: http://localhost:8000/docs
 - **Tests**: `pytest tests/unit --cov=src --cov-fail-under=65` for the default CI-aligned suite. Broad unscoped `pytest` currently hits two duplicate-package import collisions, so prefer targeted paths.

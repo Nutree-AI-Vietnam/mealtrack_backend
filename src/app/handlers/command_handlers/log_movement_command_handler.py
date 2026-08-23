@@ -109,6 +109,8 @@ class LogMovementCommandHandler(EventHandler[LogMovementCommand, dict]):
             saved = await uow.movement_entries.add(entry)
 
         if self.cache_invalidation:
-            await self.cache_invalidation.after_movement_write(cmd.user_id, log_date)
+            await self.cache_invalidation.schedule_after_movement_write(
+                cmd.user_id, log_date
+            )
 
         return _movement_response(saved)

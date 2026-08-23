@@ -55,6 +55,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             provider=provider,
             provider_budget=provider_budget,
             provider_rpm=provider_rpm,
+            uow_factory=uow_factory,
         )
 
     async def handle(self, event: CreateManualMealCommand):
@@ -168,6 +169,11 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             else:
                 resolved_items = list(event.items)
 
+            resolved_items = [
+                ManualMealNutritionResolver.ensure_source_snapshot(item)
+                for item in resolved_items
+            ]
+
             async with self.uow as uow:
                 if items_needing_resolution:
                     await self.nutrition_resolver.revalidate_local_items(
@@ -189,6 +195,10 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             if self.cache_invalidation:
                 await self.cache_invalidation.after_meal_write(event.user_id, meal_date)
             return saved_meal
+        except ValueError as exc:
+            await self._release_v2_write(reservation)
+            logger.warning("Validation error creating manual meal: %s", str(exc))
+            raise ValidationException(str(exc)) from None
         except Exception:
             await self._release_v2_write(reservation)
             raise

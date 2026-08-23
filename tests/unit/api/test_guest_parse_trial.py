@@ -49,6 +49,7 @@ class _Resp:
     total_carbs = 1.0
     total_fat = 10.0
     emoji = "🍳"
+    unmatched_terms: list[str] = []
 
 
 class _DummyImageStore:

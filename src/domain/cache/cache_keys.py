@@ -14,6 +14,11 @@ from src.domain.services.nutrition_integrity_policy import (
 class CacheKeys:
     """Centralized cache key generator with TTL policies."""
 
+    # Bumped when search-time catalog adoption changes what a cached search
+    # result contains (e.g. adding food_reference_id to provider hits), so
+    # stale pre-adoption entries expire instead of serving thin ids forever.
+    CATALOG_ADOPT_CACHE_VERSION = "catalog_adopt_v1"
+
     TTL_10_MIN = 600
     TTL_5_MIN = 300
     TTL_30_MIN = 1800
@@ -109,7 +114,8 @@ class CacheKeys:
                 CacheKeys.TTL_7_DAYS,
             )
         return (
-            f"food:search:v3:{policy}:generation:{generation}:{normalized}",
+            f"food:search:v3:{CacheKeys.CATALOG_ADOPT_CACHE_VERSION}:"
+            f"{policy}:generation:{generation}:{normalized}",
             CacheKeys.TTL_7_DAYS,
         )
 

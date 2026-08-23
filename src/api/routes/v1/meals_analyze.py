@@ -14,6 +14,7 @@ from fastapi import (
 
 from src.api.base_dependencies import (
     get_ai_model_manager,
+    get_async_food_reference_repository,
     get_cache_service,
     get_image_store,
 )
@@ -24,7 +25,10 @@ from src.api.exceptions import ValidationException, handle_exception
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
-from src.api.routes.v1.meals_route_helpers import parse_target_date
+from src.api.routes.v1.meals_route_helpers import (
+    load_food_reference_display_projections,
+    parse_target_date,
+)
 from src.api.schemas.response import DetailedMealResponse
 from src.app.commands.meal.upload_meal_image_immediately_command import (
     UploadMealImageImmediatelyCommand,
@@ -58,6 +62,7 @@ async def _analyze_uploaded_image(
     cache_service: CachePort | None,
     task_manager: BackgroundTaskManager | None,
     ai_manager: MealInsightAIPort,
+    food_reference_repository=None,
 ) -> DetailedMealResponse:
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise ValidationException(
@@ -129,10 +134,14 @@ async def _analyze_uploaded_image(
         user_id=user_id,
     )
 
+    display_projections = await load_food_reference_display_projections(
+        meal, food_reference_repository, language=language
+    )
     return MealMapper.to_detailed_response(
         meal,
         image_url,
         target_language=language,
+        display_name_by_food_reference=display_projections,
     )
 
 
@@ -162,6 +171,7 @@ async def analyze_meal_image_immediate(
     cache_service: CachePort | None = Depends(get_cache_service),
     task_manager: BackgroundTaskManager | None = Depends(get_optional_task_manager),
     ai_manager: MealInsightAIPort = Depends(get_ai_model_manager),
+    food_reference_repository=Depends(get_async_food_reference_repository),
 ):
     """
     Send meal photo and return immediate meal analysis with nutritional data.
@@ -192,6 +202,7 @@ async def analyze_meal_image_immediate(
             cache_service=cache_service,
             task_manager=task_manager,
             ai_manager=ai_manager,
+            food_reference_repository=food_reference_repository,
         )
 
     except Exception as e:

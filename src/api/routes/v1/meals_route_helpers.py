@@ -1,10 +1,56 @@
 """Shared helpers for meals route modules."""
 
 from datetime import datetime
+from typing import Any
 
 from src.api.exceptions import ValidationException
 from src.api.schemas.response.meal_responses import ParsedFoodItem
 from src.domain.model.nutrition.macros import Macros as MacrosModel
+
+
+async def load_food_reference_display_projections(
+    meal,
+    food_reference_repository,
+    *,
+    language: str | None = None,
+) -> dict[int, dict[str, Any]]:
+    """Load id-keyed catalog display names for every tracked line on a meal.
+
+    Unlike nutrition-density batching, this must include items that already
+    carry a ``source_snapshot`` — display names always follow the live
+    catalog row, while kcal/macros stay frozen on the snapshot.
+    """
+    food_items = getattr(getattr(meal, "nutrition", None), "food_items", None) or []
+    food_reference_ids = {
+        item.food_reference_id
+        for item in food_items
+        if getattr(item, "food_reference_id", None) is not None
+    }
+    if not food_reference_ids:
+        return {}
+    projections = await food_reference_repository.get_display_projections(
+        list(food_reference_ids),
+        language=language,
+    )
+    if not language or language == "en":
+        return projections
+    return await _enrich_serving_labels(meal, projections, language)
+
+
+async def _enrich_serving_labels(meal, projections, language: str):
+    from src.api.base_dependencies import get_serving_label_dependencies
+
+    enrich_meal_serving_labels, translation_service, uow_factory = (
+        get_serving_label_dependencies()
+    )
+
+    return await enrich_meal_serving_labels(
+        meal,
+        projections,
+        language=language,
+        translation_service=translation_service,
+        uow_factory=uow_factory,
+    )
 
 
 def parse_target_date(target_date: str | None):
@@ -52,5 +98,6 @@ def parsed_food_item_to_response(item) -> ParsedFoodItem:
         fat_per_100g=getattr(item, "fat_per_100g", None),
         fiber_per_100g=getattr(item, "fiber_per_100g", None),
         sugar_per_100g=getattr(item, "sugar_per_100g", None),
+        canonical_name=getattr(item, "canonical_name", None),
         source_snapshot=getattr(item, "source_snapshot", None),
     )

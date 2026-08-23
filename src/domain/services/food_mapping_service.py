@@ -66,6 +66,20 @@ def _opaque_source_id(namespace: Any, source_id: Any) -> str:
     )
 
 
+def _catalog_identity_for_adopted_hit(item: dict[str, Any]) -> dict[str, Any]:
+    """Adopted FatSecret hits keep provider ids; catalog id is the save origin."""
+    adopted_id = item.get("food_reference_id")
+    if item.get("source") != "fatsecret" or adopted_id is None:
+        return item
+    return {
+        **item,
+        "source": "food_reference",
+        "origin": "local",
+        "is_verified": True,
+        "food_id": f"food_reference:{adopted_id}",
+    }
+
+
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
 from src.domain.services.nutrition_integrity_policy import (
     NutritionIntegrityError,
@@ -79,6 +93,7 @@ class FoodMappingService(FoodMappingServicePort):
         self._integrity_policy = integrity_policy or NutritionIntegrityPolicy()
 
     def map_search_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        item = _catalog_identity_for_adopted_hit(item)
         if item.get("source") == "food_reference":
             if item.get("is_verified") is not True:
                 raise NutritionIntegrityError(
@@ -125,12 +140,16 @@ class FoodMappingService(FoodMappingServicePort):
                 "provider_source": item.get("provider_source"),
                 "is_verified": item.get("is_verified"),
                 "allowed_units": list(result.serving_options),
-                "custom_nutrition": {
-                    "calories_per_100g": calories,
-                    "protein_per_100g": protein,
-                    "carbs_per_100g": carbs,
-                    "fat_per_100g": fat,
-                },
+                "custom_nutrition": (
+                    {
+                        "calories_per_100g": calories,
+                        "protein_per_100g": protein,
+                        "carbs_per_100g": carbs,
+                        "fat_per_100g": fat,
+                    }
+                    if protein is not None and carbs is not None and fat is not None
+                    else None
+                ),
                 "nutrition_basis": "100g",
                 "nutrition_contract_version": result.policy_version,
                 "calories_per_100g": calories,
@@ -284,6 +303,7 @@ class FoodMappingService(FoodMappingServicePort):
             require_metric_basis=False,
             provider_100g_label=provider,
             origin_fields=item if require_origin else None,
+            require_macros=False,
         )
         if not result.accepted:
             raise NutritionIntegrityError(result)

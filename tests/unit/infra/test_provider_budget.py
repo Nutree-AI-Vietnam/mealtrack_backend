@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.infra.cache.provider_budget import RedisProviderBudget
+from src.infra.cache.provider_budget import MemoryProviderBudget, RedisProviderBudget
 
 
 @pytest.mark.asyncio
@@ -29,3 +29,12 @@ async def test_redis_provider_budget_fails_closed_on_unavailable_or_exhausted_bu
 
     redis.incr_with_expiry.return_value = 11
     assert await budget.acquire("fatsecret", 10) is False
+
+
+@pytest.mark.asyncio
+async def test_memory_provider_budget_accepts_calls_inside_limit():
+    budget = MemoryProviderBudget(window_seconds=60)
+
+    assert await budget.acquire("fatsecret", 2) is True
+    assert await budget.acquire("fatsecret", 2) is True
+    assert await budget.acquire("fatsecret", 2) is False

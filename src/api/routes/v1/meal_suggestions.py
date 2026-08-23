@@ -10,11 +10,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
+from src.api.base_dependencies import get_async_food_reference_repository
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
+from src.api.routes.v1.meals_route_helpers import (
+    load_food_reference_display_projections,
+)
 from src.api.schemas.request.meal_suggestion_requests import (
     DiscoverMealsRequest,
     GenerateRecipesRequest,
@@ -233,6 +237,7 @@ async def save_meal_suggestion(
     body: SaveMealSuggestionRequest,
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
+    food_reference_repository=Depends(get_async_food_reference_repository),
 ):
     """
     Save a meal suggestion as a regular meal in the meals table.
@@ -295,6 +300,9 @@ async def save_meal_suggestion(
         )
 
     meal = await event_bus.send(GetMealByIdQuery(meal_id=meal_id, user_id=user_id))
+    display_projections = await load_food_reference_display_projections(
+        meal, food_reference_repository, language=language
+    )
 
     return SaveMealSuggestionResponse(
         meal_id=meal_id,
@@ -304,5 +312,6 @@ async def save_meal_suggestion(
             meal,
             image_url=body.image_url,
             target_language=language,
+            display_name_by_food_reference=display_projections,
         ),
     )

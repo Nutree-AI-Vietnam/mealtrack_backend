@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,11 +46,26 @@ LIVE_TIMEOUT_SECONDS = 300.0
 MAX_HANDLER_ITEMS = 8
 
 
-def load_corpus(path: Path = CORPUS_PATH) -> list[ParseTextEvalCase]:
+@dataclass(frozen=True)
+class ParseTextDropCase:
+    case_id: str
+    text: str
+    language: str
+    expected_unmatched_terms: tuple[str, ...]
+    ai_payload: dict[str, Any]
+    provider_candidates: list[dict[str, Any]]
+    provider_details: dict[str, dict[str, Any]]
+    local_reference: dict[str, Any] | None = None
+
+
+def load_corpus(
+    path: Path = CORPUS_PATH,
+) -> tuple[list[ParseTextEvalCase], list[ParseTextDropCase]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list) or not raw:
         raise ValueError("evaluation corpus must be a non-empty JSON array")
     cases: list[ParseTextEvalCase] = []
+    drop_cases: list[ParseTextDropCase] = []
     seen: set[str] = set()
     for entry in raw:
         if not isinstance(entry, dict):
@@ -62,6 +78,23 @@ def load_corpus(path: Path = CORPUS_PATH) -> list[ParseTextEvalCase]:
         if not str(entry.get("text") or "").strip():
             raise ValueError(f"evaluation case {case_id} has no text")
         seen.add(case_id)
+        if entry.get("expected_drop"):
+            drop_cases.append(
+                ParseTextDropCase(
+                    case_id=case_id,
+                    text=str(entry["text"]),
+                    language=str(entry.get("language") or "en"),
+                    expected_unmatched_terms=tuple(
+                        str(term)
+                        for term in entry.get("expected_unmatched_terms") or []
+                    ),
+                    ai_payload=entry["ai_payload"],
+                    provider_candidates=entry.get("provider_candidates", []),
+                    provider_details=entry.get("provider_details", {}),
+                    local_reference=entry.get("local_reference"),
+                )
+            )
+            continue
         cases.append(
             ParseTextEvalCase(
                 case_id=case_id,
@@ -80,7 +113,9 @@ def load_corpus(path: Path = CORPUS_PATH) -> list[ParseTextEvalCase]:
                 local_reference=entry.get("local_reference"),
             )
         )
-    return cases
+    if not cases and not drop_cases:
+        raise ValueError("evaluation corpus must contain at least one case")
+    return cases, drop_cases
 
 
 class _OfflineAI:
@@ -143,6 +178,39 @@ class _CountingLiveProvider:
         return await self.delegate.get_food_details(food_id, *args, **kwargs)
 
 
+async def _run_drop_case(case: ParseTextDropCase) -> None:
+    """Unmatched foods are dropped and must not contribute kcal."""
+    eval_case = ParseTextEvalCase(
+        case_id=case.case_id,
+        text=case.text,
+        language=case.language,
+        expected_lookup_name="",
+        expected_quantity_g=0.0,
+        expected_source="unmatched",
+        expected_calorie_range=(0.0, 0.0),
+        ai_payload=case.ai_payload,
+        provider_candidates=case.provider_candidates,
+        provider_details=case.provider_details,
+        local_reference=case.local_reference,
+    )
+    observation = await _run_case(eval_case, live=False)
+    response = observation.response
+    if response.items:
+        raise ValueError(
+            f"{case.case_id}: dropped foods must not appear in parse-text items"
+        )
+    if float(response.total_calories or 0.0) != 0.0:
+        raise ValueError(
+            f"{case.case_id}: unmatched foods must not contribute kcal"
+        )
+    if list(response.unmatched_terms) != list(case.expected_unmatched_terms):
+        raise ValueError(
+            f"{case.case_id}: expected unmatched_terms "
+            f"{list(case.expected_unmatched_terms)!r}, got "
+            f"{list(response.unmatched_terms)!r}"
+        )
+
+
 async def _run_case(
     case: ParseTextEvalCase, *, live: bool = False
 ) -> ParseTextEvalObservation:
@@ -181,6 +249,7 @@ async def _run_case(
         total_carbs=response.total_carbs,
         total_fat=response.total_fat,
         emoji=response.emoji,
+        unmatched_terms=response.unmatched_terms,
     )
     ai_item = getattr(ai, "last_payload", case.ai_payload).get("items", [{}])[0]
     extracted_lookup = ai_item.get("lookup_name")
@@ -202,7 +271,12 @@ async def _run_case(
     )
 
 
-async def run_offline(cases: list[ParseTextEvalCase]) -> ParseTextEvalSummary:
+async def run_offline(
+    cases: list[ParseTextEvalCase],
+    drop_cases: list[ParseTextDropCase],
+) -> ParseTextEvalSummary:
+    for drop_case in drop_cases:
+        await _run_drop_case(drop_case)
     loop = ParseTextNutritionEvalLoop()
     summary = await loop.evaluate(cases, lambda case: _run_case(case))
     loop.enforce_gates(summary)
@@ -316,20 +390,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confirm-live-staging", action="store_true")
     args = parser.parse_args(argv)
     try:
-        cases = load_corpus()[: max(1, min(args.max_cases, 25))]
+        reference_cases, drop_cases = load_corpus()
+        max_cases = max(1, min(args.max_cases, 25))
+        reference_cases = reference_cases[:max_cases]
+        drop_cases = drop_cases[:max_cases]
         if args.mode == "live":
             assert_live_staging_allowed(args.confirm_live_staging)
-            summary = asyncio.run(run_live(cases))
+            summary = asyncio.run(run_live(reference_cases))
             ParseTextNutritionEvalLoop.enforce_gates(summary)
             path = write_report(summary, args.output)
             print(
                 f"mode=live cases={summary.case_count} p50_ms={summary.latency_p50_ms:.3f} p95_ms={summary.latency_p95_ms:.3f} report={path}"
             )
             return 0
-        summary = asyncio.run(run_offline(cases))
+        summary = asyncio.run(run_offline(reference_cases, drop_cases))
         path = write_report(summary, args.output)
+        total_cases = summary.case_count + len(drop_cases)
+        drop_rate = len(drop_cases) / total_cases if total_cases else 0.0
         print(
-            f"mode=offline cases={summary.case_count} p50_ms={summary.latency_p50_ms:.3f} p95_ms={summary.latency_p95_ms:.3f} report={path}"
+            f"mode=offline cases={summary.case_count} drop_cases={len(drop_cases)} "
+            f"drop_rate={drop_rate:.3f} p50_ms={summary.latency_p50_ms:.3f} "
+            f"p95_ms={summary.latency_p95_ms:.3f} report={path}"
         )
         return 0
     except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
