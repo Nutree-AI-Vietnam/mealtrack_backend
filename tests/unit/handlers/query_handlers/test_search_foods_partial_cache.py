@@ -114,7 +114,7 @@ def _local_rice() -> FoodReferenceSearchProjection:
         fat_100g=0.3,
         fiber_100g=0.4,
         sugar_100g=0.1,
-        allowed_units=[{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+        serving_options=[{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
     )
 
 
@@ -448,7 +448,7 @@ async def test_detailed_fatsecret_hit_is_adopted_and_mapped_with_food_reference_
                 "fat_100g": 3.6,
                 "fiber_100g": 0.0,
                 "sugar_100g": 0.0,
-                "allowed_units": [
+                "serving_options": [
                     {"unit": "g", "gram_weight": 100.0, "description": "100 g"}
                 ],
             }

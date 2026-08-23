@@ -145,9 +145,6 @@ async def update_meal_ingredients(
                     else None
                 ),
                 clear_nutrition_override=change_request.clear_nutrition_override,
-                allowed_units=[
-                    unit.model_dump() for unit in change_request.allowed_units
-                ],
                 origin=change_request.origin,
                 food_reference_id=change_request.food_reference_id,
                 source_namespace=change_request.source_namespace,

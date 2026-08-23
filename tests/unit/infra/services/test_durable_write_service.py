@@ -6,7 +6,6 @@ from src.api.routes.v1.manual_meal_durable import manual_meal_fingerprint
 from src.api.schemas.request.meal_requests import (
     CreateManualMealFromFoodsRequest,
     ManualMealItemRequest,
-    ServingUnitRequest,
 )
 from src.infra.services.durable_write_service import (
     canonicalize_fingerprint,
@@ -35,7 +34,7 @@ def test_normalize_idempotency_key_rejects_too_long():
         normalize_idempotency_key("k" * 161)
 
 
-def test_manual_meal_fingerprint_ignores_allowed_units():
+def test_manual_meal_fingerprint_is_stable_for_same_food_payload():
     base_item = dict(fdc_id=123, name="Oats", quantity=40, unit="g")
     left = CreateManualMealFromFoodsRequest(
         dish_name="Oats",
@@ -49,13 +48,6 @@ def test_manual_meal_fingerprint_ignores_allowed_units():
         meal_type="breakfast",
         target_date="2026-08-11",
         source="manual",
-        items=[
-            ManualMealItemRequest(
-                **base_item,
-                allowed_units=[
-                    ServingUnitRequest(unit="g", gram_weight=1.0, description="gram")
-                ],
-            )
-        ],
+        items=[ManualMealItemRequest(**base_item)],
     )
     assert manual_meal_fingerprint(left) == manual_meal_fingerprint(right)

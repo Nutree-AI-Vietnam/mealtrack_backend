@@ -30,7 +30,7 @@ class ManualMealItem:
     quantity: float = 1.0  # in grams or unit-specified grams base
     unit: str = "g"  # unit name, e.g., "g"
     custom_nutrition: Optional[CustomNutrition] = None
-    allowed_units: Optional[List[dict[str, Any]]] = None
+    serving_options: Optional[List[dict[str, Any]]] = None
     origin: Optional[str] = None
     food_reference_id: Optional[int] = None
     source_namespace: Optional[str] = None

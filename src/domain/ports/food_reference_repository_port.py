@@ -50,7 +50,7 @@ class FoodReferenceSearchProjection:
     fiber_100g: float = 0.0
     sugar_100g: float = 0.0
     serving_size: str | None = None
-    allowed_units: list[dict] = field(default_factory=list)
+    serving_options: list[dict] = field(default_factory=list)
     source_namespace: str | None = None
     source_food_id: str | None = None
     name_vi: str | None = None

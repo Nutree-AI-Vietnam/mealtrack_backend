@@ -45,7 +45,7 @@ async def enrich_meal_serving_labels(
         bucket = projections.setdefault(int(reference_id), {"serving_labels": {}})
         bucket["serving_labels"] = merge_serving_labels(
             bucket.get("serving_labels") or {},
-            payload.get("allowed_units") or [],
+            payload.get("serving_options") or [],
         )
     return projections
 
@@ -59,7 +59,7 @@ def _meal_serving_payloads(
         reference_id = getattr(item, "food_reference_id", None)
         labels = (projections.get(reference_id) or {}).get("serving_labels") or {}
         options = overlay_serving_labels(
-            getattr(item, "allowed_units", None) or [],
+            getattr(item, "serving_options", None) or [],
             labels,
             language=language,
         )
@@ -69,7 +69,7 @@ def _meal_serving_payloads(
             payloads.append(
                 {
                     "food_reference_id": reference_id,
-                    "allowed_units": options,
+                    "serving_options": options,
                 }
             )
     return payloads

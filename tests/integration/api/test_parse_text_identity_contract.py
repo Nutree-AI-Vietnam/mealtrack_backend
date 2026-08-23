@@ -26,7 +26,7 @@ def _provider_item() -> dict:
         "fiber_100g": 0.4,
         "sugar_100g": 0.1,
         "calories_100g": 126.1,
-        "allowed_units": [{"unit": "g", "gram_weight": 100, "description": "100 g"}],
+        "serving_options": [{"unit": "g", "gram_weight": 100, "description": "100 g"}],
     }
 
 
@@ -42,7 +42,7 @@ def test_local_search_result_emits_one_canonical_origin_and_alias():
             "fat_100g": 0.3,
             "fiber_100g": 0.4,
             "sugar_100g": 0.1,
-            "allowed_units": [{"unit": "g", "gram_weight": 1}],
+            "serving_options": [{"unit": "g", "gram_weight": 1}],
         }
     )
 
@@ -67,7 +67,7 @@ def test_mismatching_local_alias_is_rejected():
         "fat_100g": 0.3,
         "fiber_100g": 0.4,
         "sugar_100g": 0.1,
-        "allowed_units": [{"unit": "g", "gram_weight": 1}],
+        "serving_options": [{"unit": "g", "gram_weight": 1}],
     }
 
     try:
@@ -85,7 +85,7 @@ def test_provider_search_result_uses_namespaced_opaque_identity():
     assert result["source_namespace"] == "fatsecret"
     assert result["source_food_id"] == "fs-42"
     assert result["food_id"] == "fatsecret:fs-42"
-    assert result["allowed_units"] == [
+    assert result["serving_options"] == [
         {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
         {"unit": "serving", "gram_weight": 100.0, "description": "100 g"},
     ]
@@ -163,7 +163,7 @@ class _RoundtripFatSecretProvider:
             "sugar_100g": 0.1,
             "calories_100g": 126.1,
             "metric_serving_amount": 100,
-            "allowed_units": [{"unit": "g", "gram_weight": 100, "description": "100 g"}],
+            "serving_options": [{"unit": "g", "gram_weight": 100, "description": "100 g"}],
         }
 
 

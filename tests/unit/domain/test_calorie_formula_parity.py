@@ -231,7 +231,7 @@ class TestCalorieFormulaParityDirectCall:
                 sugar=12.0,
                 data_source="fatsecret",
                 fdc_id=None,
-                allowed_units=[],
+                serving_options=[],
             )
         )
 

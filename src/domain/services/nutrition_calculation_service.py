@@ -13,10 +13,6 @@ from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 logger = logging.getLogger(__name__)
 
 
-class AuthoritativeUnitMismatchError(ValueError):
-    """The requested unit is absent from a source-controlled serving snapshot."""
-
-
 # Shared unit-to-grams conversion table for common serving units.
 # Used by both parse-text and manual-meal handlers to ensure consistent nutrition.
 UNIT_TO_GRAMS = {
@@ -39,7 +35,7 @@ UNIT_TO_GRAMS = {
 
 # Safety-net translation for when AI ignores the English-unit prompt instruction.
 # Not exhaustive — primary fix is the dual-unit approach (unit + english_unit).
-# Fuzzy matching + smart fallback in _convert_with_allowed_units handles the rest.
+# Unknown units use the safe global fallback in convert_quantity_to_grams.
 UNIT_TRANSLATION = {
     # English long-form weight/volume units
     "gram": "g",
@@ -167,30 +163,10 @@ def _normalize_unit(unit: str) -> str:
     return base
 
 
-def _normalize_authoritative_unit(unit: str) -> str:
-    """Normalize only exact aliases; never discard arbitrary suffix text."""
-    unit_lower = (unit or "g").lower().strip()
-    translated = UNIT_TRANSLATION.get(unit_lower)
-    if translated is not None:
-        return translated
-    if " " not in unit_lower and unit_lower.endswith("s"):
-        singular = unit_lower[:-1]
-        if singular in UNIT_TO_GRAMS:
-            return singular
-    return unit_lower
-
-
-def authoritative_units_match(left: str | None, right: str | None) -> bool:
-    """True when two unit strings are the same after alias translation."""
-    return _normalize_authoritative_unit(left or "g") == _normalize_authoritative_unit(
-        right or "g"
-    )
-
-
 def canonicalize_mass_volume_unit(unit: str | None) -> str:
     """Collapse gram/ounce/liter aliases onto the canonical mass-volume token."""
     raw = (unit or "g").strip() or "g"
-    normalized = _normalize_authoritative_unit(raw)
+    normalized = _normalize_unit(raw)
     if normalized in MASS_VOLUME_CANONICAL_UNITS:
         return normalized
     return raw
@@ -207,36 +183,6 @@ def normalize_unit_for_manual_save(unit: str | None) -> str:
         "returning 'serving' for manual-save compatibility"
     )
     return "serving"
-
-
-def fallback_custom_serving_options(
-    unit: str,
-    food_name: str = "",
-    existing: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    """Keep a custom/parse-text unit saveable instead of collapsing to grams."""
-    from src.domain.services.nutrition_integrity_policy import normalize_serving_options
-
-    selected = (unit or "g").strip()
-    selected_key = selected.lower()
-    raw = [option for option in (existing or []) if isinstance(option, dict)]
-    has_selected = any(
-        str(option.get("unit") or "").strip().lower() == selected_key for option in raw
-    )
-    if selected_key not in {"", "g"} and not has_selected:
-        grams = convert_quantity_to_grams(1.0, selected, food_name)
-        if grams <= 0 or (grams == 1.0 and selected_key not in {"g", "ml"}):
-            grams = 100.0
-        raw.append(
-            {
-                "unit": selected,
-                "gram_weight": grams,
-                "description": f"1 {selected}",
-            }
-        )
-    return normalize_serving_options(raw) or [
-        {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
-    ]
 
 
 def convert_quantity_to_grams(quantity: float, unit: str, food_name: str = "") -> float:
@@ -258,8 +204,8 @@ def convert_quantity_to_grams(quantity: float, unit: str, food_name: str = "") -
 
     grams_per_unit = UNIT_TO_GRAMS.get(normalized)
     if grams_per_unit is None:
-        logger.warning("Unknown unit used quantity as grams")
-        return quantity
+        logger.warning("Unknown unit used safe 100g fallback")
+        return quantity * 100.0
     return quantity * grams_per_unit
 
 
@@ -267,24 +213,82 @@ def quantity_to_grams(
     quantity: float,
     unit: str,
     food_name: str = "",
-    allowed_units: list[dict[str, Any]] | None = None,
+    serving_options: list[dict] | None = None,
     *,
     strict: bool = False,
 ) -> float:
-    """Convert using food servings first, then the shared unit table."""
-    if allowed_units:
-        try:
-            return _convert_with_allowed_units(
-                quantity,
-                unit,
-                allowed_units,
-                food_name,
-                strict=strict,
-            )
-        except AuthoritativeUnitMismatchError:
-            if strict:
-                raise
+    """Convert quantity and unit using source servings when available."""
+    if serving_options:
+        return _convert_with_serving_options(
+            quantity, unit, serving_options, food_name, strict=strict
+        )
     return convert_quantity_to_grams(quantity, unit, food_name)
+
+
+def _convert_with_serving_options(
+    quantity: float,
+    unit: str,
+    serving_options: list[dict] | None = None,
+    food_name: str = "",
+    *,
+    strict: bool = False,
+) -> float:
+    """Convert using a provider's serving options, then global unit mappings."""
+    normalized = _normalize_unit(unit)
+    if normalized == "g":
+        return quantity
+
+    for option in serving_options or []:
+        option_unit = str(option.get("unit") or "")
+        gram_weight = float(option.get("gram_weight") or 0)
+        if not _units_refer_to_same_serving(option_unit, unit):
+            continue
+        if not _has_trusted_portion_weight(option_unit, gram_weight):
+            continue
+        logger.debug("Matched source serving option for unit=%s", unit)
+        return quantity * gram_weight
+
+    if strict:
+        raise ValueError("unit is not present in the supplied serving options")
+
+    grams = convert_quantity_to_grams(quantity, unit, food_name)
+    if not is_unknown_unit(unit):
+        return grams
+
+    for option in serving_options or []:
+        option_unit = str(option.get("unit") or "")
+        gram_weight = float(option.get("gram_weight") or 0)
+        if _normalize_unit(option_unit) == "g" or not _has_trusted_portion_weight(
+            option_unit, gram_weight
+        ):
+            continue
+        return quantity * gram_weight
+    return grams
+
+
+def is_unknown_unit(unit: str) -> bool:
+    normalized = _normalize_unit(unit)
+    return normalized not in UNIT_TO_GRAMS and normalized not in {
+        "g",
+        "ml",
+        "l",
+        "liter",
+        "litre",
+    }
+
+
+def _has_trusted_portion_weight(unit: str, gram_weight: float) -> bool:
+    return gram_weight > 0 if _normalize_unit(unit) in {"g", "ml"} else gram_weight > 1
+
+
+def _units_refer_to_same_serving(left: str, right: str) -> bool:
+    a = left.strip().lower()
+    b = right.strip().lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return _normalize_unit(a) == _normalize_unit(b)
 
 
 MAX_KCAL_PER_100G = 900.0
@@ -309,9 +313,9 @@ def scale_per_100g_nutrition(
     quantity: float,
     unit: str,
     base_serving: float = 100.0,
-    allowed_units: list[dict[str, Any]] | None = None,
+    serving_options: list[dict] | None = None,
     food_name: str = "",
-    strict_allowed_units: bool = False,
+    strict_serving_options: bool = False,
 ) -> dict:
     """Scale per-100g nutrition values for a given quantity and unit.
 
@@ -320,23 +324,18 @@ def scale_per_100g_nutrition(
         quantity: The quantity amount
         unit: The unit name (e.g., "cup", "g", "piece")
         base_serving: The base serving size in grams (default 100g)
-        allowed_units: Optional list of allowed ServingUnits for the food
         food_name: Food name for density-aware ml→g conversion
 
     Returns:
         dict with keys: calories, protein, carbs, fat.
     """
-    # Use food-specific allowed_units if available, otherwise fallback to global mapping
-    if allowed_units:
-        quantity_in_grams = _convert_with_allowed_units(
-            quantity,
-            unit,
-            allowed_units,
-            food_name,
-            strict=strict_allowed_units,
-        )
-    else:
-        quantity_in_grams = convert_quantity_to_grams(quantity, unit, food_name)
+    quantity_in_grams = quantity_to_grams(
+        quantity,
+        unit,
+        food_name,
+        serving_options,
+        strict=strict_serving_options,
+    )
 
     factor = (quantity_in_grams / base_serving) if base_serving > 0 else 0.0
     return {
@@ -347,141 +346,6 @@ def scale_per_100g_nutrition(
         "fiber": round(per_100g.get("fiber", 0.0) * factor, 2),
         "sugar": round(per_100g.get("sugar", 0.0) * factor, 2),
     }
-
-
-def _convert_with_allowed_units(
-    quantity: float,
-    unit: str,
-    allowed_units: list[dict[str, Any]],
-    food_name: str = "",
-    *,
-    strict: bool = False,
-) -> float:
-    """Convert quantity to grams using food-specific allowed_units.
-
-    Resolution order:
-    1. Exact match against allowed_units
-    2. Translate unit → re-match allowed_units
-    3. Keyword match (translated unit found in allowed_unit description)
-    4. Global UNIT_TO_GRAMS mapping
-    5. Smart fallback: first non-gram allowed_unit (common serving size)
-    """
-    unit_lower = unit.lower().strip()
-    translated = (
-        _normalize_authoritative_unit(unit) if strict else _normalize_unit(unit)
-    )
-    if translated == "g":
-        return quantity
-
-    for au in allowed_units:
-        au_unit = str(au.get("unit") or "")
-        gram_weight = float(au.get("gram_weight") or 0)
-        if not _units_refer_to_same_serving(au_unit, unit, strict=strict):
-            continue
-        if not _has_trusted_portion_weight(au_unit, gram_weight):
-            continue
-        if au_unit.lower().strip() != unit_lower:
-            logger.info("Unit alias matched an allowed unit")
-        return quantity * gram_weight
-
-    if strict:
-        raise AuthoritativeUnitMismatchError(
-            "unit is not present in the authoritative source snapshot"
-        )
-
-    # Legacy keyword match: check if translated unit appears in description.
-    # Authoritative writes never use free-form description tokens as unit identity.
-    for au in allowed_units:
-        desc = au.get("description", "").lower()
-        gram_weight = float(au.get("gram_weight") or 0)
-        if translated not in desc.split():
-            continue
-        if not _has_trusted_portion_weight(str(au.get("unit") or ""), gram_weight):
-            continue
-        logger.info("Unit keyword matched an allowed-unit description")
-        return quantity * gram_weight
-
-    # Global UNIT_TO_GRAMS mapping for legacy, non-authoritative writes.
-    grams = UNIT_TO_GRAMS.get(translated)
-    if grams is not None:
-        logger.warning(
-            f"Unit '{unit}' not in allowed_units, using global mapping '{translated}'={grams}g"
-        )
-        return quantity * grams
-
-    # Smart fallback: use first non-gram serving (common portion) instead of raw grams
-    for au in allowed_units:
-        au_unit = au.get("unit", "").lower()
-        gram_weight = float(au.get("gram_weight") or 0)
-        if _normalize_unit(au_unit) == "g" or au_unit in ("100 g", "1 g"):
-            continue
-        if not _has_trusted_portion_weight(au_unit, gram_weight):
-            continue
-        logger.warning("Unknown unit used the default allowed serving")
-        return quantity * gram_weight
-
-    # Last resort: treat as grams (only if no allowed_units have useful servings)
-    logger.warning(f"Unit '{unit}' unresolvable — treating quantity as grams")
-    return quantity
-
-
-def _has_trusted_portion_weight(unit: str, gram_weight: float) -> bool:
-    normalized = _normalize_unit(unit)
-    if normalized in {"g", "ml"}:
-        return gram_weight > 0
-    return gram_weight > 1
-
-
-def _units_refer_to_same_serving(
-    left: str, right: str, *, strict: bool = False
-) -> bool:
-    a = (left or "").lower().strip()
-    b = (right or "").lower().strip()
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    left_alias = UNIT_TRANSLATION.get(a, a)
-    right_alias = UNIT_TRANSLATION.get(b, b)
-    if left_alias == right_alias:
-        return True
-    if strict:
-        return False
-    return _normalize_unit(a) == _normalize_unit(b)
-
-
-def canonicalize_authoritative_quantity(
-    quantity: float,
-    unit: str,
-    allowed_units: list[dict[str, Any]],
-    food_name: str = "",
-) -> tuple[float, str, bool]:
-    """Return an authoritative unit unchanged or a bounded gram fallback."""
-    try:
-        _convert_with_allowed_units(
-            quantity,
-            unit,
-            allowed_units,
-            food_name,
-            strict=True,
-        )
-        return quantity, unit, False
-    except AuthoritativeUnitMismatchError:
-        normalized = _normalize_authoritative_unit(unit)
-        if normalized == "g":
-            quantity_g = quantity
-        elif normalized in ("ml", "l", "liter", "litre"):
-            base_ml = quantity if normalized == "ml" else quantity * 1000
-            density = get_density(food_name) if food_name else DEFAULT_DENSITY
-            quantity_g = base_ml * density
-        else:
-            grams_per_unit = UNIT_TO_GRAMS.get(normalized)
-            if grams_per_unit is None:
-                logger.warning("Unknown authoritative unit used quantity as grams")
-                quantity_g = quantity
-            else:
-                quantity_g = quantity * grams_per_unit
-        return quantity_g, "g", True
 
 
 def clamp_nutrition_values(item: dict) -> dict:
@@ -620,20 +484,12 @@ class NutritionCalculationService:
                 item.unit,
                 item_name,
             )
-            if getattr(item, "nutrition_contract_version", None) == "2":
-                allowed_units = getattr(item, "allowed_units", None) or []
-                quantity_grams = _convert_with_allowed_units(
+            if getattr(item, "serving_options", None):
+                quantity_grams = quantity_to_grams(
                     item.quantity,
                     item.unit,
-                    allowed_units,
                     item_name,
-                    # Source-less prepared custom items may come from older
-                    # clients that omit the optional unit table. Preserve the
-                    # established global unit mapping for those items; source
-                    # backed v2 items remain strict against their snapshot.
-                    strict=not (
-                        getattr(item, "origin", None) == "custom" and not allowed_units
-                    ),
+                    item.serving_options,
                 )
             factor = quantity_grams / 100.0
             protein = item.custom_nutrition.protein_per_100g * factor
@@ -664,7 +520,7 @@ class NutritionCalculationService:
                     fdc_id=getattr(item, "fdc_id", None),
                     food_reference_id=getattr(item, "food_reference_id", None),
                     is_custom=getattr(item, "origin", None) == "custom",
-                    allowed_units=getattr(item, "allowed_units", None),
+                    serving_options=getattr(item, "serving_options", None),
                     source_kind=getattr(item, "source_kind", None),
                     source_food_id=getattr(item, "source_food_id", None),
                     nutrition_contract_version=getattr(

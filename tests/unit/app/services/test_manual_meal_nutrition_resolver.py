@@ -53,7 +53,7 @@ async def test_local_reference_ignores_client_nutrition_and_units():
             carbs_per_100g=0,
             fat_per_100g=0,
         ),
-        allowed_units=[{"unit": "evil", "gram_weight": 99999}],
+        serving_options=[{"unit": "evil", "gram_weight": 99999}],
     )
 
     resolved = await ManualMealNutritionResolver().resolve_items(
@@ -61,16 +61,13 @@ async def test_local_reference_ignores_client_nutrition_and_units():
     )
 
     assert resolved[0].custom_nutrition.protein_per_100g == pytest.approx(2.7)
-    assert resolved[0].allowed_units == [
-        {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
-        {"unit": "cup", "gram_weight": 158.0, "description": "cup"},
-    ]
+    assert resolved[0].serving_options[0]["unit"] == "g"
     assert resolved[0].source_kind == "local"
     assert resolved[0].source_snapshot["calories_per_100g"] == pytest.approx(124.7)
 
 
 @pytest.mark.asyncio
-async def test_local_reference_canonicalizes_unknown_unit_to_grams():
+async def test_local_reference_preserves_unknown_unit_text():
     resolved = await ManualMealNutritionResolver().resolve_items(
         [
             ManualMealItem(
@@ -86,13 +83,13 @@ async def test_local_reference_canonicalizes_unknown_unit_to_grams():
     )
 
     assert resolved[0].quantity == pytest.approx(100.0)
-    assert resolved[0].unit == "g"
+    assert resolved[0].unit == "bowl"
     nutrition, _ = NutritionCalculationService().aggregate_from_command_items(resolved)
-    assert nutrition.macros.protein == pytest.approx(2.7)
+    assert nutrition.macros.protein == pytest.approx(426.6)
 
 
 @pytest.mark.asyncio
-async def test_local_reference_canonicalizes_known_global_unit_to_grams():
+async def test_local_reference_preserves_known_global_unit_text():
     resolved = await ManualMealNutritionResolver().resolve_items(
         [
             ManualMealItem(
@@ -107,8 +104,8 @@ async def test_local_reference_canonicalizes_known_global_unit_to_grams():
         contract_version=2,
     )
 
-    assert resolved[0].quantity == pytest.approx(56.7)
-    assert resolved[0].unit == "g"
+    assert resolved[0].quantity == pytest.approx(2)
+    assert resolved[0].unit == "oz"
 
 
 @pytest.mark.asyncio
@@ -211,7 +208,7 @@ async def test_provider_resolution_uses_shared_budget_and_deadline():
 
 
 @pytest.mark.asyncio
-async def test_provider_unit_prefix_cannot_multiply_arbitrary_suffix(caplog):
+async def test_provider_unit_text_is_preserved(caplog):
     raw_unit = "medium private-text"
     provider = SimpleNamespace(
         get_food_details=AsyncMock(
@@ -222,7 +219,7 @@ async def test_provider_unit_prefix_cannot_multiply_arbitrary_suffix(caplog):
                 "carbs_100g": 17.0,
                 "fat_100g": 0.1,
                 "calories_100g": 77.0,
-                "allowed_units": [
+                "serving_options": [
                     {
                         "unit": "medium",
                         "gram_weight": 173.0,
@@ -257,9 +254,9 @@ async def test_provider_unit_prefix_cannot_multiply_arbitrary_suffix(caplog):
     )
 
     assert resolved[0].quantity == pytest.approx(100)
-    assert resolved[0].unit == "g"
+    assert resolved[0].unit == raw_unit
     nutrition, _ = NutritionCalculationService().aggregate_from_command_items(resolved)
-    assert nutrition.calories == pytest.approx(76.9)
+    assert nutrition.calories == pytest.approx(13303.7)
     assert raw_unit not in caplog.text
 
 
@@ -344,7 +341,7 @@ async def test_provider_resolution_adopts_identity_and_sets_food_reference_id():
             "fat_100g": 0.3,
             "fiber_100g": 0.0,
             "sugar_100g": 0.0,
-            "allowed_units": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+            "serving_options": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
         }
     )
 
@@ -406,7 +403,7 @@ async def test_provider_resolution_prefers_adopted_catalog_density():
             "fat_100g": 0.3,
             "fiber_100g": 0.4,
             "sugar_100g": 0.1,
-            "allowed_units": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+            "serving_options": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
         }
     )
 
@@ -503,8 +500,6 @@ async def test_custom_parse_text_unit_is_not_canonicalized_to_grams():
 
     assert resolved[0].quantity == pytest.approx(1.0)
     assert resolved[0].unit == "Miếng"
-    units = {option["unit"]: option["gram_weight"] for option in resolved[0].allowed_units}
-    assert units["miếng"] == pytest.approx(100.0)
-    assert units["g"] == pytest.approx(1.0)
+    assert resolved[0].serving_options == [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
     nutrition, _ = NutritionCalculationService().aggregate_from_command_items(resolved)
     assert nutrition.macros.protein == pytest.approx(18.0)

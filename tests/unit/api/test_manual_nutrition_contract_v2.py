@@ -81,7 +81,7 @@ def test_v2_prepared_source_item_requires_and_keeps_snapshot():
             _v2_create_item(
                 custom_nutrition=nutrition,
                 source_snapshot=snapshot,
-                allowed_units=[{"unit": "g", "gram_weight": 1, "description": "1 g"}],
+                serving_options=[{"unit": "g", "gram_weight": 1, "description": "1 g"}],
             )
         ],
     )
@@ -192,7 +192,7 @@ def test_v2_quantity_update_strips_legacy_source_echoes():
                     "carbs_per_100g": 20,
                     "fat_per_100g": 8,
                 },
-                "allowed_units": [
+                "serving_options": [
                     {"unit": "g", "gram_weight": 1, "description": "1 g"}
                 ],
             }
@@ -205,7 +205,7 @@ def test_v2_quantity_update_strips_legacy_source_echoes():
     assert change.unit == "g"
     assert change.name is None
     assert change.custom_nutrition is None
-    assert change.allowed_units == []
+    assert "serving_options" not in change.model_dump()
 
 
 def test_v2_quantity_update_rejects_identity_with_legacy_source_echoes():

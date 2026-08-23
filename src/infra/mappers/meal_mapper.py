@@ -68,6 +68,7 @@ def _to_naive_utc(dt: datetime | None) -> datetime | None:
 
 
 def food_item_orm_to_domain(orm: FoodItemORM) -> DomainFoodItem:
+    snapshot = getattr(orm, "source_snapshot", None) or {}
     return DomainFoodItem(
         id=orm.id,
         name=orm.name,
@@ -85,7 +86,7 @@ def food_item_orm_to_domain(orm: FoodItemORM) -> DomainFoodItem:
         fdc_id=orm.fdc_id,
         food_reference_id=orm.food_reference_id,
         is_custom=orm.is_custom,
-        allowed_units=orm.allowed_units,
+        serving_options=snapshot.get("serving_options") or [],
         nutrition_override=_nutrition_override_from_orm(orm.nutrition_override),
         source_kind=getattr(orm, "source_kind", None),
         source_food_id=getattr(orm, "source_food_id", None),
@@ -230,7 +231,6 @@ def food_item_domain_to_orm(domain: DomainFoodItem, nutrition_id=None) -> FoodIt
         fdc_id=getattr(domain, "fdc_id", None),
         food_reference_id=getattr(domain, "food_reference_id", None),
         is_custom=getattr(domain, "is_custom", False),
-        allowed_units=getattr(domain, "allowed_units", None),
         nutrition_override=(
             domain.nutrition_override.to_dict() if domain.nutrition_override else None
         ),

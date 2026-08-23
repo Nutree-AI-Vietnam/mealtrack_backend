@@ -235,6 +235,22 @@ class MealMapper:
                         getattr(item, "food_reference_id", None),
                         getattr(item, "source_snapshot", None),
                     )
+                    serving_options = (
+                        getattr(item, "serving_options", None)
+                        or (getattr(item, "source_snapshot", None) or {}).get(
+                            "serving_options", []
+                        )
+                    )
+                    if (
+                        tracked_projection is not None
+                        and requested_language
+                        and requested_language != "en"
+                    ):
+                        serving_options = overlay_serving_labels(
+                            serving_options,
+                            tracked_projection.get("serving_labels") or {},
+                            language=requested_language,
+                        )
                     food_item_dto = FoodItemResponse(
                         id=str(item.id),
                         name=display_name,
@@ -276,13 +292,7 @@ class MealMapper:
                             item, "nutrition_contract_version", None
                         ),
                         source_snapshot=getattr(item, "source_snapshot", None),
-                        allowed_units=overlay_serving_labels(
-                            getattr(item, "allowed_units", None) or [],
-                            (tracked_projection or {}).get("serving_labels") or {},
-                            language=requested_language,
-                        )
-                        if requested_language == "vi"
-                        else (getattr(item, "allowed_units", None) or []),
+                        serving_options=serving_options,
                     )
                     food_items.append(food_item_dto)
 
@@ -605,7 +615,6 @@ class MealMapper:
             item.quantity,
             item.unit,
             food_name or item.name,
-            getattr(item, "allowed_units", None) or [],
         )
         if quantity_grams <= 0:
             return None
@@ -843,7 +852,6 @@ class MealMapper:
             fdc_id=item_dict.get("fdc_id"),
             food_reference_id=item_dict.get("food_reference_id"),
             is_custom=item_dict.get("is_custom", False),
-            allowed_units=item_dict.get("allowed_units") or None,
             source_kind=item_dict.get("origin") or item_dict.get("source_kind"),
             source_food_id=item_dict.get("source_food_id"),
             nutrition_contract_version=item_dict.get("nutrition_contract_version"),

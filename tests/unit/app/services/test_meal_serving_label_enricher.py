@@ -21,7 +21,7 @@ class _Translator:
 def _meal_with_leftover_serving():
     item = SimpleNamespace(
         food_reference_id=42,
-        allowed_units=[
+        serving_options=[
             {
                 "unit": "cup, cooked, diced",
                 "gram_weight": 158.0,
@@ -110,7 +110,7 @@ async def test_enrich_meal_serving_labels_persists_canonical_serving():
             food_items=[
                 SimpleNamespace(
                     food_reference_id=42,
-                    allowed_units=[
+                    serving_options=[
                         {
                             "unit": "serving",
                             "gram_weight": 98.0,

@@ -21,7 +21,6 @@ class ParsedFoodItemDto:
     sugar: float = 0.0
     data_source: str | None = None
     fdc_id: int | None = None
-    allowed_units: list[dict[str, Any]] | None = None
     food_id: str | None = None
     food_reference_id: int | None = None
     origin: str | None = None
@@ -37,6 +36,7 @@ class ParsedFoodItemDto:
     sugar_per_100g: float | None = None
     canonical_name: str | None = None
     source_snapshot: dict[str, Any] | None = None
+    serving_options: list[dict[str, Any]] | None = None
 
 
 @dataclass

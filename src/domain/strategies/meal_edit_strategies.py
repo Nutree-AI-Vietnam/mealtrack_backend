@@ -99,16 +99,10 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
 
         # Priority 1: Custom nutrition provided (user-edited macros)
         if change.custom_nutrition:
-            allowed_units = change.allowed_units or existing_item.allowed_units
             quantity_grams = quantity_to_grams(
                 new_quantity,
                 new_unit,
                 existing_item.name,
-                allowed_units or [],
-                strict=(
-                    change.origin is not None
-                    or existing_item.nutrition_contract_version == "2"
-                ),
             )
             _validate_quantity_grams(quantity_grams, new_quantity, new_unit)
             scale_factor = quantity_grams / 100.0
@@ -137,7 +131,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
                 is_custom=(
                     change.origin == "custom" if change.origin is not None else True
                 ),
-                allowed_units=allowed_units,
                 nutrition_override=_resolved_nutrition_override(change, existing_item),
                 source_kind=(
                     change.origin
@@ -192,7 +185,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
                     fdc_id=existing_item.fdc_id,
                     food_reference_id=existing_item.food_reference_id,
                     is_custom=existing_item.is_custom,
-                    allowed_units=change.allowed_units or existing_item.allowed_units,
                     nutrition_override=_resolved_nutrition_override(
                         change, existing_item
                     ),
@@ -230,7 +222,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
             new_quantity,
             new_unit,
             existing_item.name,
-            existing_item.allowed_units or [],
         )
         _validate_quantity_grams(new_quantity_grams, new_quantity, new_unit)
 
@@ -238,7 +229,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
             existing_item.quantity,
             existing_item.unit,
             existing_item.name,
-            existing_item.allowed_units or [],
         )
 
         # Scale factor based on gram conversion
@@ -264,7 +254,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
             fdc_id=existing_item.fdc_id,
             food_reference_id=existing_item.food_reference_id,
             is_custom=existing_item.is_custom,
-            allowed_units=change.allowed_units or existing_item.allowed_units,
             nutrition_override=_resolved_nutrition_override(change, existing_item),
             source_kind=existing_item.source_kind,
             source_food_id=existing_item.source_food_id,
@@ -291,9 +280,7 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
                 },
                 quantity,
                 unit,
-                allowed_units=snapshot.get("allowed_units") or [],
                 food_name=existing_item.name,
-                strict_allowed_units=existing_item.nutrition_contract_version == "2",
             )
             return ScaledNutritionResult(
                 calories=nutrition["calories"],
@@ -314,15 +301,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
                     reference.fat_100g,
                 )
             ):
-                allowed_units = [
-                    {
-                        "unit": serving.name,
-                        "gram_weight": serving.grams,
-                        "description": serving.name,
-                    }
-                    for serving in reference.servings
-                    if serving.grams is not None and serving.grams > 0
-                ]
                 nutrition = scale_per_100g_nutrition(
                     {
                         "protein": reference.protein_100g,
@@ -333,7 +311,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
                     },
                     quantity,
                     unit,
-                    allowed_units=allowed_units,
                     food_name=reference.name,
                 )
                 return ScaledNutritionResult(
@@ -373,7 +350,6 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
             fdc_id=existing_item.fdc_id,
             food_reference_id=existing_item.food_reference_id,
             is_custom=existing_item.is_custom,
-            allowed_units=change.allowed_units or existing_item.allowed_units,
             nutrition_override=_resolved_nutrition_override(change, existing_item),
             source_kind=existing_item.source_kind,
             source_food_id=existing_item.source_food_id,
@@ -409,7 +385,6 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
                 quantity,
                 unit,
                 change.custom_nutrition,
-                change.allowed_units,
                 change.nutrition_override,
                 change,
             )
@@ -438,7 +413,6 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
                     fdc_id=change.fdc_id,
                     food_reference_id=change.food_reference_id,
                     is_custom=False,
-                    allowed_units=change.allowed_units,
                     nutrition_override=_resolved_nutrition_override(change),
                     source_kind=change.origin,
                     source_food_id=change.source_food_id,
@@ -462,7 +436,6 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
             fdc_id=change.fdc_id,
             food_reference_id=change.food_reference_id,
             is_custom=True,
-            allowed_units=change.allowed_units,
             nutrition_override=_resolved_nutrition_override(change),
             source_kind=change.origin or "custom",
             source_food_id=change.source_food_id,
@@ -477,7 +450,6 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
         quantity: float,
         unit: str,
         custom_nutrition,
-        allowed_units=None,
         nutrition_override=None,
         change=None,
     ) -> FoodItem:
@@ -486,8 +458,6 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
             quantity,
             unit,
             name,
-            allowed_units or [],
-            strict=change is not None and change.origin is not None,
         )
         _validate_quantity_grams(quantity_grams, quantity, unit)
         scale_factor = quantity_grams / 100.0  # Custom nutrition is per 100g
@@ -508,7 +478,6 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
             fdc_id=change.fdc_id if change else None,
             food_reference_id=(change.food_reference_id if change else None),
             is_custom=True,
-            allowed_units=allowed_units,
             nutrition_override=(
                 NutritionOverride(
                     calories=nutrition_override.calories,

@@ -38,7 +38,7 @@ def _meal(source: str = "scanner") -> Meal:
                     quantity=150,
                     unit="g",
                     macros=Macros(protein=4, carbs=45, fat=1),
-                    allowed_units=[
+                    serving_options=[
                         {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
                     ],
                 )
@@ -121,7 +121,7 @@ async def test_provider_details_only_selected_candidate():
             "protein_100g": 2.7,
             "carbs_100g": 30,
             "fat_100g": 0.7,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "serving", "gram_weight": 150, "description": "1 bowl"}
             ],
         }
@@ -139,9 +139,8 @@ async def test_provider_details_only_selected_candidate():
         "White Rice", max_results=3
     )
     provider.get_food_details.assert_awaited_once_with("selected")
-    assert meal.nutrition.food_items[0].allowed_units == [
-        {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
-        {"unit": "serving", "gram_weight": 150.0, "description": "1 bowl"},
+    assert meal.nutrition.food_items[0].serving_options == [
+        {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
     ]
 
 
@@ -156,19 +155,19 @@ async def test_divergent_provider_details_do_not_enrich_item():
             "protein_100g": 90,
             "carbs_100g": 1,
             "fat_100g": 90,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "serving", "gram_weight": 150, "description": "wrong"}
             ],
         }
     )
     service = FoodReferenceValidationService(nutrition_reference_provider=provider)
     meal = _meal()
-    original_units = meal.nutrition.food_items[0].allowed_units
+    original_units = meal.nutrition.food_items[0].serving_options
 
     result = await service.validate_meal(meal)
 
     assert result is meal
-    assert meal.nutrition.food_items[0].allowed_units == original_units
+    assert meal.nutrition.food_items[0].serving_options == original_units
 
 
 @pytest.mark.asyncio

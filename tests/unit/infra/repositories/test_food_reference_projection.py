@@ -96,14 +96,14 @@ def test_food_reference_projection_keeps_exact_serving_description_and_label():
     result = food_reference_model_to_dict(model)
     cooked = next(
         option
-        for option in result["allowed_units"]
+        for option in result["serving_options"]
         if option["unit"] == "cup, cooked, diced"
     )
     assert cooked["description"] == "1 cup cooked, diced"
     assert cooked["display_description"] == "cốc, đã nấu, thái hạt lựu"
 
 
-def test_food_reference_projection_returns_allowed_units_from_serving_rows():
+def test_food_reference_projection_returns_serving_options_from_serving_rows():
     model = _make_food_reference_model("spinach")
     model.serving_size_rows = build_food_reference_serving_rows(
         [{"unit": "serving", "gram_weight": 85}]
@@ -111,7 +111,7 @@ def test_food_reference_projection_returns_allowed_units_from_serving_rows():
 
     result = food_reference_model_to_dict(model)
 
-    assert result["allowed_units"] == [
+    assert result["serving_options"] == [
         {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
         {"unit": "serving", "gram_weight": 85.0, "description": "serving"},
     ]

@@ -171,7 +171,7 @@ class FoodReferenceAdoptRepository:
             "sugar_100g": per_100g.get("sugar_100g", 0),
         }
         self._integrity_policy.require_valid(
-            {**macros, "allowed_units": servings},
+            {**macros, "serving_options": servings},
             require_energy=False,
             require_metric_basis=False,
         )

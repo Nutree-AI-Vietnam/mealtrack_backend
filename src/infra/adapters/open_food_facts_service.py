@@ -103,11 +103,11 @@ class OpenFoodFactsService:
             "fiber_100g": self._safe_float(nutriments.get("fiber_100g")),
             "sugar_100g": self._safe_float(nutriments.get("sugars_100g")),
             "serving_size": serving_size,
-            "allowed_units": self._allowed_units(serving_size),
+            "serving_options": self._serving_options(serving_size),
             "image_url": image_url,
         }
 
-    def _allowed_units(self, serving_size: str | None) -> list[dict[str, Any]]:
+    def _serving_options(self, serving_size: str | None) -> list[dict[str, Any]]:
         units = [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
         grams = self._serving_grams(serving_size)
         if grams:

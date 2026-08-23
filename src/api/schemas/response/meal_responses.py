@@ -35,22 +35,18 @@ class ValueInsightCategoryEnum(StrEnum):
 # Translation Response DTOs
 
 
-class ServingUnitResponse(BaseModel):
-    """Food-specific serving conversion option."""
+class ServingOptionResponse(BaseModel):
+    """Provider-specific serving conversion option."""
 
-    unit: str = Field(..., description="Unit token used for save/edit requests")
+    unit: str = Field(..., description="Unit token used for display and selection")
     gram_weight: float = Field(..., gt=0, description="Gram weight for one unit")
-    description: str = Field(
-        "", description="English FatSecret serving description for quantity math"
-    )
+    description: str = Field("", description="Provider serving description")
     display_description: str | None = Field(
-        None,
-        description="Localized exact serving label; unit stays English",
+        None, description="Localized serving label when available"
     )
 
     @model_serializer
     def serialize_without_empty_label(self) -> dict[str, object]:
-        """Keep legacy response shape when no localized label exists."""
         response: dict[str, object] = {
             "unit": self.unit,
             "gram_weight": self.gram_weight,
@@ -77,10 +73,6 @@ class ParsedFoodItem(BaseModel):
         None, description="Data source: usda, fatsecret, or ai_estimate"
     )
     fdc_id: int | None = Field(None, description="USDA FDC ID when available")
-    allowed_units: list[ServingUnitResponse] = Field(
-        default_factory=list,
-        description="Allowed unit options for this food item",
-    )
     food_id: str | None = Field(None, description="Namespaced source food identity")
     food_reference_id: int | None = Field(
         None, description="Canonical local food-reference id"
@@ -115,6 +107,9 @@ class ParsedFoodItem(BaseModel):
     )
     source_snapshot: dict | None = Field(
         None, description="Validated nutrition snapshot for the confirmed item"
+    )
+    serving_options: list[ServingOptionResponse] = Field(
+        default_factory=list, description="Provider-specific serving choices"
     )
 
 
@@ -313,9 +308,8 @@ class FoodItemResponse(BaseModel):
     source_snapshot: dict | None = Field(
         None, description="Immutable nutrition source snapshot used for this save"
     )
-    allowed_units: list[ServingUnitResponse] = Field(
-        default_factory=list,
-        description="Allowed unit options for this food item",
+    serving_options: list[ServingOptionResponse] = Field(
+        default_factory=list, description="Provider-specific serving choices"
     )
 
 

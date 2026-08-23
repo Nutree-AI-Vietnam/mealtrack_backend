@@ -112,12 +112,12 @@ def validate_refinement_items(items: Any) -> list[dict[str, Any]] | None:
     validated: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict) or set(item) - _REFINEMENT_SCALAR_KEYS - {
-            "allowed_units"
+            "serving_options"
         }:
             raise ValueError("refinement contains unsupported nested content")
         normalized_item = dict(item)
         for key, value in item.items():
-            if key == "allowed_units":
+            if key == "serving_options":
                 if not isinstance(value, list) or len(value) > 12:
                     raise ValueError("refinement serving metadata is invalid")
                 normalized_units: list[dict[str, Any]] = []

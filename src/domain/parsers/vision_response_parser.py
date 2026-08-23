@@ -104,22 +104,6 @@ class VisionResponseParser:
                 micros=None,
                 confidence=min(max(0.0, float(canonical.confidence)), 1.0),
                 is_custom=True,
-                allowed_units=[
-                    {
-                        "unit": "serving",
-                        "gram_weight": float(canonical.serving_size.grams),
-                        "description": (
-                            f"1 serving ({canonical.serving_size.display_text})"
-                        ),
-                    },
-                    {
-                        "unit": "package",
-                        "gram_weight": float(canonical.serving_size.grams)
-                        * float(canonical.servings_per_package),
-                        "description": "1 package",
-                    },
-                    {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
-                ],
             )
             return Nutrition(
                 macros=macros,
@@ -223,9 +207,6 @@ class VisionResponseParser:
                     macros=macros,
                     micros=None,
                     confidence=min(max(0.0, float(food_data.confidence)), 1.0),
-                    allowed_units=[
-                        {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
-                    ],
                 )
             )
 

@@ -141,13 +141,13 @@ NUTRITION_INTEGRITY_V1_FIXTURE_MATRIX = (
     ),
     (
         "bad canonical gram",
-        {"allowed_units": [{"unit": "g", "gram_weight": 100}]},
+        {"serving_options": [{"unit": "g", "gram_weight": 100}]},
         False,
         "invalid_base_gram",
     ),
     (
         "bad serving weight",
-        {"allowed_units": [{"unit": "cup", "gram_weight": 10001}]},
+        {"serving_options": [{"unit": "cup", "gram_weight": 10001}]},
         False,
         "invalid_serving",
     ),
@@ -255,7 +255,7 @@ class NutritionIntegrityPolicy:
             if basis_value is None or not 0.0 < basis_value <= MAX_FOOD_ITEM_QUANTITY:
                 return self._reject("invalid_metric_basis")
 
-        raw_options = data.get("allowed_units")
+        raw_options = data.get("serving_options")
         if raw_options is None:
             raw_options = data.get("serving_sizes")
         options = normalize_serving_options(
@@ -305,7 +305,7 @@ class NutritionIntegrityPolicy:
         provider_100g_label: bool,
         origin: str | None,
     ) -> NutritionIntegrityResult:
-        raw_options = data.get("allowed_units")
+        raw_options = data.get("serving_options")
         if raw_options is None:
             raw_options = data.get("serving_sizes")
         options = normalize_serving_options(

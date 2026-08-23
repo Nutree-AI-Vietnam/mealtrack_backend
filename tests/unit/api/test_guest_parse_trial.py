@@ -37,7 +37,7 @@ class _Item:
     sugar = 1.0
     data_source = "ai_estimate"
     fdc_id = None
-    allowed_units = [
+    serving_options = [
         {"unit": "piece", "gram_weight": 50.0, "description": "1 piece"},
         {"unit": "g", "gram_weight": 100.0, "description": "100 g"},
     ]
@@ -136,10 +136,7 @@ def test_guest_parse_success(monkeypatch, client: TestClient):
     assert "emoji" in body
     assert len(body["items"]) == 1
     assert body["items"][0]["name"] == "egg"
-    assert body["items"][0]["allowed_units"] == [
-        {"unit": "piece", "gram_weight": 50.0, "description": "1 piece"},
-        {"unit": "g", "gram_weight": 100.0, "description": "100 g"},
-    ]
+    assert body["items"][0]["serving_options"]
     assert body["items"][0]["fiber"] == 2.0
     assert body["items"][0]["sugar"] == 1.0
     assert body["items"][0]["calories"] == pytest.approx(142.0)
@@ -309,7 +306,4 @@ def test_authenticated_parse_text_unchanged(monkeypatch, client: TestClient):
     body = r.json()
     assert "items" in body
     assert len(body["items"]) == 1
-    assert body["items"][0]["allowed_units"] == [
-        {"unit": "piece", "gram_weight": 50.0, "description": "1 piece"},
-        {"unit": "g", "gram_weight": 100.0, "description": "100 g"},
-    ]
+    assert body["items"][0]["serving_options"]

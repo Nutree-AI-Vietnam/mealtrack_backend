@@ -439,7 +439,7 @@ def food_reference_integrity_payload(model: FoodReferenceModel) -> dict[str, Any
         "fiber_100g": model.fiber_100g,
         "sugar_100g": model.sugar_100g,
         "serving_sizes": model.serving_sizes,
-        "allowed_units": [
+        "serving_options": [
             {"unit": row.name, "gram_weight": row.grams}
             for row in getattr(model, "serving_size_rows", [])
             if row.grams is not None

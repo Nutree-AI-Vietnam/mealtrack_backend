@@ -23,7 +23,7 @@ def test_mass_unit_stays_in_grams():
     assert resolved["quantity"] == 80
     assert resolved["unit"] == "g"
     assert resolved["food_reference_id"] is None
-    assert {option["unit"] for option in resolved["allowed_units"]} == {"g", "kg"}
+    assert "serving_options" not in resolved
 
 
 def test_large_mass_stores_as_kilograms():

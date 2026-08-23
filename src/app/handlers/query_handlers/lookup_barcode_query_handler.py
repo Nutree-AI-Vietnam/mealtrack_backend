@@ -607,7 +607,7 @@ class LookupBarcodeQueryHandler(
     async def _localize_result_servings(
         self, result: dict[str, Any], language: str
     ) -> dict[str, Any]:
-        if not result.get("allowed_units"):
+        if not result.get("serving_options"):
             return result
         batch = [dict(result)]
         await localize_item_servings(

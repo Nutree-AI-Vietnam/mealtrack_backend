@@ -20,7 +20,7 @@ def _valid_payload() -> dict:
         "sugar_100g": 0.1,
         "calories_100g": 123.1,
         "metric_serving_amount": 100.0,
-        "allowed_units": [{"unit": "g", "gram_weight": 1.0}],
+        "serving_options": [{"unit": "g", "gram_weight": 1.0}],
     }
 
 

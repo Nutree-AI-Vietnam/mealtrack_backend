@@ -195,14 +195,6 @@ class ManualMealCustomNutritionRequest(BaseModel):
         )
 
 
-class ServingUnitRequest(BaseModel):
-    """Food-specific serving conversion option."""
-
-    unit: str = Field(..., min_length=1, max_length=120)
-    gram_weight: float = Field(..., gt=0)
-    description: str = Field("", max_length=200)
-
-
 class ManualMealItemRequest(BaseModel):
     """Single selected food item with portion to create a manual meal.
 
@@ -239,9 +231,9 @@ class ManualMealItemRequest(BaseModel):
     unit: str = Field(
         "g", min_length=1, max_length=120, description="Unit, default grams"
     )
-    allowed_units: list[ServingUnitRequest] = Field(
-        default_factory=list,
-        description="Food-specific units allowed for editing this ingredient",
+    serving_options: Optional[list[dict[str, Any]]] = Field(
+        None,
+        description="Validated serving measurements for custom foods",
     )
     source_snapshot: Optional[dict[str, Any]] = Field(
         None,
@@ -389,10 +381,6 @@ class FoodItemChangeRequest(BaseModel):
     )
     unit: Optional[str] = Field(
         None, min_length=1, max_length=120, description="Unit of measurement"
-    )
-    allowed_units: list[ServingUnitRequest] = Field(
-        default_factory=list,
-        description="Food-specific units allowed for editing this ingredient",
     )
     custom_nutrition: Optional["CustomNutritionRequest"] = Field(
         None, description="Custom nutrition data for non-USDA ingredients"
@@ -563,21 +551,19 @@ class EditMealIngredientsRequest(BaseModel):
                 has_legacy_source_echo = any(
                     value is not None
                     for value in (change.name, change.custom_nutrition)
-                ) or bool(change.allowed_units)
+                )
                 if is_portion_update and has_legacy_source_echo:
                     # Older clients echo source fields on portion updates. They
                     # cannot replace authoritative nutrition without an origin,
                     # so discard the echoes before the domain strategy runs.
                     change.name = None
                     change.custom_nutrition = None
-                    change.allowed_units = []
                     continue
                 if any(
                     value is not None
                     for value in (
                         change.name,
                         change.custom_nutrition,
-                        change.allowed_units or None,
                     )
                 ):
                     raise ValueError("v2 quantity update cannot replace source")
@@ -609,8 +595,8 @@ class EditMealIngredientsRequest(BaseModel):
 
 
 def _validate_change_origin(change: FoodItemChangeRequest) -> None:
-    if change.food_id is not None or change.allowed_units:
-        raise ValueError("v2 saves cannot provide deprecated aliases or client units")
+    if change.food_id is not None:
+        raise ValueError("v2 saves cannot provide deprecated aliases")
     if change.origin == "local":
         if change.food_reference_id is None or any(
             value is not None

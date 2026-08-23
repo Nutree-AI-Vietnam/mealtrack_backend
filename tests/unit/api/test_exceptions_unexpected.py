@@ -8,9 +8,6 @@ from src.domain.exceptions.ai_exceptions import (
     AIUnavailableError,
     MealResponseLocalizationError,
 )
-from src.domain.services.nutrition_calculation_service import (
-    AuthoritativeUnitMismatchError,
-)
 from src.domain.services.nutrition_integrity_policy import (
     NutritionIntegrityError,
     NutritionIntegrityResult,
@@ -84,22 +81,6 @@ def test_handle_exception_localization_validation_returns_422_without_internal_d
         "details": {},
     }
     assert "missing" not in str(exc.detail)
-
-
-def test_handle_exception_authoritative_unit_mismatch_returns_422():
-    exc = handle_exception(
-        AuthoritativeUnitMismatchError(
-            "unit is not present in the authoritative source snapshot"
-        )
-    )
-
-    assert isinstance(exc, HTTPException)
-    assert exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-    assert exc.detail == {
-        "error_code": "NUTRITION_UNIT_INVALID",
-        "message": "The selected serving unit is not available for this food.",
-        "details": {},
-    }
 
 
 def test_handle_exception_provider_failure_returns_503_without_internal_details():

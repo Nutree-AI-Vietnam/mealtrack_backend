@@ -334,7 +334,7 @@ class FatSecretService:
         """Extract all serving units from fatsecret food details."""
         servings = food.get("servings", {}).get("serving", [])
         if not servings:
-            return self._default_allowed_units()
+            return self._default_serving_options()
 
         if isinstance(servings, dict):
             servings = [servings]
@@ -364,7 +364,7 @@ class FatSecretService:
 
         return (
             normalize_serving_options(units, provider_100g_label=True)
-            or self._default_allowed_units()
+            or self._default_serving_options()
         )
 
     def _select_per_100g_serving(self, food: dict[str, Any]) -> dict | None:
@@ -386,7 +386,7 @@ class FatSecretService:
         serving = self._select_per_100g_serving(food)
 
         if not isinstance(serving, dict):
-            return {"allowed_units": self._default_allowed_units()}
+            return {"serving_options": self._default_serving_options()}
 
         # Get metric serving amount for per-100g calculation
         metric_amount = self._safe_float(serving.get("metric_serving_amount"))
@@ -399,7 +399,7 @@ class FatSecretService:
                 "fat_100g": None,
                 "fiber_100g": None,
                 "sugar_100g": None,
-                "allowed_units": self._extract_serving_units(food),
+                "serving_options": self._extract_serving_units(food),
             }
 
         return self._apply_integrity_policy(
@@ -418,13 +418,13 @@ class FatSecretService:
                 "fiber_100g": self._calc_per_100g(serving.get("fiber"), metric_amount),
                 "sugar_100g": self._calc_per_100g(serving.get("sugar"), metric_amount),
                 "serving_description": serving.get("serving_description"),
-                "allowed_units": self._extract_serving_units(food),
+                "serving_options": self._extract_serving_units(food),
             },
             require_metric_basis=True,
         )
 
-    def _default_allowed_units(self) -> list[dict]:
-        """Return default allowed units when none are provided."""
+    def _default_serving_options(self) -> list[dict]:
+        """Return default serving options when none are provided."""
         return normalize_serving_options(
             [{"unit": "g", "gram_weight": 100.0, "description": "100 g"}],
             provider_100g_label=True,
@@ -460,7 +460,7 @@ class FatSecretService:
                 "fat_100g": None,
                 "serving_size": None,
                 "image_url": None,
-                "allowed_units": self._default_allowed_units(),
+                "serving_options": self._default_serving_options(),
             }
         # Use metric_serving_amount for accurate per-100g calculation
         metric_amount = self._safe_float(serving.get("metric_serving_amount")) or 100
@@ -482,7 +482,7 @@ class FatSecretService:
                 "fat_100g": self._calc_per_100g(serving.get("fat"), metric_amount),
                 "serving_size": serving.get("serving_description"),
                 "image_url": food.get("food_url"),
-                "allowed_units": self._extract_serving_units(food),
+                "serving_options": self._extract_serving_units(food),
                 "metric_serving_amount": metric_amount,
             },
             require_metric_basis=True,
@@ -500,7 +500,7 @@ class FatSecretService:
             require_metric_basis=require_metric_basis,
             provider_100g_label=True,
         )
-        payload["allowed_units"] = list(result.serving_options)
+        payload["serving_options"] = list(result.serving_options)
         if not result.accepted:
             payload["nutrition_integrity_reason"] = result.reason_code
             for field in (
@@ -549,7 +549,7 @@ class FatSecretService:
             "origin": "provider",
             "source_namespace": "fatsecret",
             "source_food_id": str(food_id) if food_id else None,
-            "allowed_units": self._default_allowed_units(),
+            "serving_options": self._default_serving_options(),
         }
         if food.get("servings"):
             mapped.update(self._extract_nutrition_from_details(food))

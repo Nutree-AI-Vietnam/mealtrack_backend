@@ -44,7 +44,7 @@ def _prepared_v2_payload() -> CreateManualMealFromFoodsRequest:
                 unit="slice",
                 origin="local",
                 food_reference_id=42,
-                allowed_units=[
+                serving_options=[
                     {"unit": "g", "gram_weight": 1, "description": "1 g"},
                     {"unit": "slice", "gram_weight": 30, "description": "1 slice"},
                 ],
@@ -265,7 +265,7 @@ async def test_manual_meal_route_forwards_prepared_nutrition_contract():
     assert item.nutrition_contract_version == "2"
     assert item.source_kind == "local"
     assert item.source_snapshot["basis"] == "100g"
-    assert item.allowed_units[1]["gram_weight"] == 30
+    assert "serving_options" not in item.source_snapshot
 
 
 @pytest.mark.asyncio

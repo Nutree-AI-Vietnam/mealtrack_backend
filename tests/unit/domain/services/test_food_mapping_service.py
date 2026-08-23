@@ -37,7 +37,7 @@ def test_map_fdc_barcode_product_returns_flat_barcode_shape():
     assert result["source_namespace"] == "usda_fdc"
     assert result["source_food_id"] == "1"
     assert result["is_verified"] is True
-    assert result["allowed_units"] == [
+    assert result["serving_options"] == [
         {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
         {"unit": "serving", "gram_weight": 30.0, "description": "1 serving (30 g)"},
     ]
@@ -92,7 +92,7 @@ def test_map_search_item_treats_adopted_fatsecret_hit_as_local_catalog():
             "fat_100g": 0.3,
             "fiber_100g": 2.6,
             "sugar_100g": 12.2,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
             ],
         }

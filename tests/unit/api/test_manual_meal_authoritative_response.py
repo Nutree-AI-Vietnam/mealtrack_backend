@@ -18,7 +18,7 @@ def test_meal_detail_uses_persisted_source_snapshot_without_reference_lookup():
         "fat_per_100g": 0.3,
         "fiber_per_100g": 0.4,
         "sugar_per_100g": 0.1,
-        "allowed_units": [{"unit": "g", "gram_weight": 1.0}],
+        "serving_options": [{"unit": "g", "gram_weight": 1.0}],
     }
     item = FoodItem(
         id="item-1",
@@ -31,7 +31,7 @@ def test_meal_detail_uses_persisted_source_snapshot_without_reference_lookup():
         source_food_id="42",
         nutrition_contract_version="2",
         source_snapshot=snapshot,
-        allowed_units=snapshot["allowed_units"],
+        serving_options=snapshot["serving_options"],
     )
     meal = Meal(
         meal_id=str(uuid4()),

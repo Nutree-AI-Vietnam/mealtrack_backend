@@ -387,7 +387,7 @@ def test_authenticated_parse_text_preserves_fiber_sugar_and_calorie_parity(
         sugar = 12.0
         data_source = "fatsecret"
         fdc_id = None
-        allowed_units = []
+        serving_options = []
 
     class _Resp:
         items = [_Item()]
@@ -426,7 +426,7 @@ def test_authenticated_parse_text_preserves_fiber_sugar_and_calorie_parity(
                 "name": "potato",
                 "quantity": 1,
                 "unit": "piece",
-                "allowed_units": [{"unit": "   ", "gram_weight": 100}],
+                "serving_options": [{"unit": "   ", "gram_weight": 100}],
             }
         ],
     ],

@@ -21,7 +21,7 @@ class FoodItemChange:
     nutrition_override: Optional["NutritionOverride"] = None
     clear_nutrition_override: bool = False
     override_intent: Optional[str] = None
-    allowed_units: Optional[list[dict[str, Any]]] = None
+    serving_options: Optional[list[dict[str, Any]]] = None
     origin: Optional[str] = None
     food_reference_id: Optional[int] = None
     source_namespace: Optional[str] = None

@@ -20,9 +20,6 @@ from src.api.exceptions import (
     handle_exception,
 )
 from src.domain.exceptions.ai_exceptions import AIUnavailableError
-from src.domain.services.nutrition_calculation_service import (
-    AuthoritativeUnitMismatchError,
-)
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityError
 
 logger = logging.getLogger(__name__)
@@ -69,7 +66,7 @@ async def _ai_unavailable_handler(
 
 async def _nutrition_exception_handler(
     request: Request,
-    exc: NutritionIntegrityError | AuthoritativeUnitMismatchError,
+    exc: NutritionIntegrityError,
 ) -> JSONResponse:
     """Convert nutrition trust-boundary failures at the global API boundary."""
     http_exc = handle_exception(exc)
@@ -136,10 +133,5 @@ def register_exception_handlers(app: FastAPI) -> None:
         NutritionIntegrityError,
         _nutrition_exception_handler,  # type: ignore[arg-type]
     )
-    app.add_exception_handler(
-        AuthoritativeUnitMismatchError,
-        _nutrition_exception_handler,  # type: ignore[arg-type]
-    )
-
     # Catch-all for truly unexpected exceptions — one ERROR (ServerErrorMiddleware)
     app.add_exception_handler(Exception, _unexpected_exception_handler)

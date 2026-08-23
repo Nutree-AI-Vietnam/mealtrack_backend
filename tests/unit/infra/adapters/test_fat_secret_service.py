@@ -104,12 +104,12 @@ def test_fatsecret_nutrition_prefers_100g_serving():
     assert nutrition["protein_100g"] == 10.0
     assert nutrition["carbs_100g"] == 66.67
     assert nutrition["fat_100g"] == 6.67
-    assert nutrition["allowed_units"][0] == {
+    assert nutrition["serving_options"][0] == {
         "unit": "g",
         "gram_weight": 1.0,
         "description": "1 g",
     }
-    assert nutrition["allowed_units"][1]["description"] == "1 cup"
+    assert nutrition["serving_options"][1]["description"] == "1 cup"
 
 
 @pytest.mark.unit
@@ -224,7 +224,7 @@ async def test_fatsecret_search_uses_v5_methods():
     assert search_params["method"] == "foods.search.v5"
     assert search_params["flag_default_serving"] == "true"
     assert detail_params["method"] == "food.get.v5"
-    assert results[0]["allowed_units"][0]["gram_weight"] == 1.0
+    assert results[0]["serving_options"][0]["gram_weight"] == 1.0
 
 
 @pytest.mark.unit
@@ -263,7 +263,7 @@ async def test_fatsecret_search_candidates_does_not_fetch_details():
             "origin": "provider",
             "source_namespace": "fatsecret",
             "source_food_id": "50953",
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
                 {"unit": "serving", "gram_weight": 100.0, "description": "100 g"},
             ],
@@ -402,7 +402,7 @@ async def test_fatsecret_barcode_lookup_uses_method_based_endpoint():
     assert result["origin"] == "provider"
     assert result["source_namespace"] == "fatsecret"
     assert result["source_food_id"] == "50953"
-    assert result["allowed_units"][0] == {
+    assert result["serving_options"][0] == {
         "unit": "g",
         "gram_weight": 1.0,
         "description": "1 g",

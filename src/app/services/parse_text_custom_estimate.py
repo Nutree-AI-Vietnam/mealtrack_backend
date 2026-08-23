@@ -10,27 +10,13 @@ from src.domain.services.nutrition_calculation_service import (
     canonicalize_mass_volume_unit,
     convert_quantity_to_grams,
 )
-from src.domain.services.nutrition_integrity_policy import (
-    NUTRITION_INTEGRITY_POLICY_VERSION,
-    normalize_serving_options,
-)
+from src.domain.services.nutrition_integrity_policy import NUTRITION_INTEGRITY_POLICY_VERSION
 from src.domain.services.nutrition_resolver import validate_ai_fallback
 
 CUSTOM_COUNT_GRAMS = 100.0
 CUSTOM_KG_THRESHOLD_G = 1000.0
 _MASS_UNITS = {"g", "gram", "grams", "kg", "kilogram", "kilograms"}
 _VOLUME_UNITS = {"ml", "l", "liter", "litre"}
-CUSTOM_ALLOWED_UNITS = normalize_serving_options(
-    [
-        {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
-        {"unit": "kg", "gram_weight": 1000.0, "description": "1 kg"},
-    ]
-) or [
-    {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
-    {"unit": "kg", "gram_weight": 1000.0, "description": "1 kg"},
-]
-
-
 def apply_custom_estimate(item: dict[str, Any]) -> dict[str, Any] | None:
     """Keep AI portion macros as a custom estimate, stored in grams or kilograms.
 
@@ -72,7 +58,6 @@ def apply_custom_estimate(item: dict[str, Any]) -> dict[str, Any] | None:
     item["source_namespace"] = None
     item["source_food_id"] = None
     item["fdc_id"] = None
-    item["allowed_units"] = [dict(option) for option in CUSTOM_ALLOWED_UNITS]
     item["nutrition_basis"] = "100g"
     item["nutrition_contract_version"] = NUTRITION_INTEGRITY_POLICY_VERSION
     return item

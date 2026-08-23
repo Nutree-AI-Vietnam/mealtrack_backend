@@ -105,7 +105,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                 )
                 or any(
                     leftover_serving_phrases(
-                        item.get("allowed_units") or [], language
+                        item.get("serving_options") or [], language
                     )
                     for item in processed_cached
                 )
@@ -178,7 +178,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                 persist=not event.autocomplete,
             )
             leftover_units = any(
-                leftover_serving_phrases(item.get("allowed_units") or [], language)
+                leftover_serving_phrases(item.get("serving_options") or [], language)
                 for item in processed_raw
             )
             if cacheable and not leftover_units:
@@ -248,7 +248,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                             "fiber_100g": item.get("fiber_100g") or 0,
                             "sugar_100g": item.get("sugar_100g") or 0,
                         },
-                        item.get("allowed_units"),
+                        item.get("serving_options"),
                         locale,
                         display_name,
                     )
@@ -391,7 +391,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
             "provider_source": item.source,
             "is_verified": item.is_verified,
             "serving_description": item.serving_size,
-            "allowed_units": item.allowed_units,
+            "serving_options": item.serving_options,
             "protein_100g": item.protein_100g,
             "carbs_100g": item.carbs_100g,
             "fat_100g": item.fat_100g,

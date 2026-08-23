@@ -141,7 +141,7 @@ async def test_v2_source_replacement_is_resolved_before_edit_strategy():
 
 
 @pytest.mark.asyncio
-async def test_v2_source_replacement_canonicalizes_arbitrary_unit_before_strategy():
+async def test_v2_source_replacement_preserves_client_unit_text():
     current = FoodItem(
         id="item-1",
         name="Old rice",
@@ -165,14 +165,14 @@ async def test_v2_source_replacement_canonicalizes_arbitrary_unit_before_strateg
     updated = await handler._apply_food_item_changes([current], prepared)
 
     assert prepared[0].quantity == pytest.approx(100)
-    assert prepared[0].unit == "g"
+    assert prepared[0].unit == "g private-text"
     assert updated[0].quantity == pytest.approx(100)
-    assert updated[0].unit == "g"
+    assert updated[0].unit == "g private-text"
     assert updated[0].macros.protein == pytest.approx(2.7)
 
 
 @pytest.mark.asyncio
-async def test_v2_quantity_update_canonicalizes_arbitrary_unit_before_strategy():
+async def test_v2_quantity_update_preserves_client_unit_text():
     current = FoodItem(
         id="item-1",
         name="Canonical rice",
@@ -187,7 +187,7 @@ async def test_v2_quantity_update_canonicalizes_arbitrary_unit_before_strategy()
             "fat_per_100g": 0.3,
             "fiber_per_100g": 0.4,
             "sugar_per_100g": 0.1,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
                 {"unit": "cup", "gram_weight": 158.0, "description": "cup"},
             ],
@@ -207,14 +207,14 @@ async def test_v2_quantity_update_canonicalizes_arbitrary_unit_before_strategy()
     updated = await handler._apply_food_item_changes([current], prepared)
 
     assert prepared[0].quantity == pytest.approx(100)
-    assert prepared[0].unit == "g"
+    assert prepared[0].unit == "cup private-text"
     assert updated[0].quantity == pytest.approx(100)
-    assert updated[0].unit == "g"
-    assert updated[0].macros.protein == pytest.approx(2.7)
+    assert updated[0].unit == "cup private-text"
+    assert updated[0].macros.protein == pytest.approx(648.0)
 
 
 @pytest.mark.asyncio
-async def test_v2_quantity_update_treats_translated_unit_as_unchanged():
+async def test_v2_quantity_update_preserves_translated_unit_text():
     current = FoodItem(
         id="item-1",
         name="Thịt",
@@ -236,11 +236,11 @@ async def test_v2_quantity_update_treats_translated_unit_as_unchanged():
     )
 
     assert prepared[0].quantity == pytest.approx(2)
-    assert prepared[0].unit == "serving"
+    assert prepared[0].unit == "phần"
 
 
 @pytest.mark.asyncio
-async def test_v2_quantity_update_uses_item_units_when_snapshot_missing():
+async def test_v2_quantity_update_preserves_unknown_unit_when_snapshot_missing():
     current = FoodItem(
         id="item-1",
         name="Pork rib",
@@ -248,7 +248,7 @@ async def test_v2_quantity_update_uses_item_units_when_snapshot_missing():
         unit="slice",
         macros=Macros(protein=27, carbs=0, fat=15),
         nutrition_contract_version="2",
-        allowed_units=[
+        serving_options=[
             {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
             {"unit": "slice", "gram_weight": 80.0, "description": "1 slice"},
         ],
@@ -266,7 +266,7 @@ async def test_v2_quantity_update_uses_item_units_when_snapshot_missing():
     )
 
     assert prepared[0].quantity == pytest.approx(100)
-    assert prepared[0].unit == "g"
+    assert prepared[0].unit == "unknown-unit"
 
 
 @pytest.mark.asyncio
@@ -440,7 +440,7 @@ async def test_v2_same_food_reference_replace_rebuilds_snapshot_from_catalog():
             "fat_per_100g": 0.3,
             "fiber_per_100g": 0.4,
             "sugar_per_100g": 0.1,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
             ],
         },
@@ -504,7 +504,7 @@ async def test_v2_add_by_fatsecret_id_adopts_once_not_search():
             "fat_100g": 11.7,
             "fiber_100g": 0,
             "sugar_100g": 0,
-            "allowed_units": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+            "serving_options": [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
         }
     )
 

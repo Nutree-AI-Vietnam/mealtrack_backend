@@ -70,7 +70,7 @@ async def localize_item_servings(
     uow_factory: Any | None = None,
     persist: bool = False,
 ) -> dict[str, str]:
-    """Localize each item's ``allowed_units`` and optionally persist labels.
+    """Localize each item's ``serving_options`` and optionally persist labels.
 
     Returns newly cacheable phrase translations (English source → label).
     """
@@ -82,10 +82,10 @@ async def localize_item_servings(
     leftovers: list[str] = []
     seen: set[str] = set()
     for item in items:
-        options = _empty_units(item.get("allowed_units"))
+        options = _empty_units(item.get("serving_options"))
         canonical.update(canonical_serving_labels(options, normalized))
-        item["allowed_units"] = apply_serving_labels(options, cached, normalized)
-        for phrase in leftover_serving_phrases(item["allowed_units"], normalized):
+        item["serving_options"] = apply_serving_labels(options, cached, normalized)
+        for phrase in leftover_serving_phrases(item["serving_options"], normalized):
             key = serving_phrase_key(phrase)
             if key not in seen:
                 seen.add(key)
@@ -97,8 +97,8 @@ async def localize_item_servings(
     if not resolved:
         return {}
     for item in items:
-        item["allowed_units"] = apply_serving_labels(
-            _empty_units(item.get("allowed_units")),
+        item["serving_options"] = apply_serving_labels(
+            _empty_units(item.get("serving_options")),
             resolved,
             normalized,
         )
@@ -138,7 +138,7 @@ async def _load_phrase_cache(
     phrases: list[str] = []
     for item in items:
         phrases.extend(
-            leftover_serving_phrases(_empty_units(item.get("allowed_units")), language)
+            leftover_serving_phrases(_empty_units(item.get("serving_options")), language)
         )
     if not phrases or uow_factory is None:
         return {}
@@ -166,7 +166,7 @@ async def _persist_labels(
             serving_phrase_key(source): label
             for source, label in labels_by_source.items()
         }
-        for option in _empty_units(item.get("allowed_units")):
+        for option in _empty_units(item.get("serving_options")):
             source = str(option.get("unit") or "").strip()
             label = labels_by_source.get(source) or keyed.get(
                 serving_phrase_key(source)

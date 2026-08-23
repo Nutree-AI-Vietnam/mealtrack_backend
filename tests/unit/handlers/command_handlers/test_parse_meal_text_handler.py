@@ -18,7 +18,7 @@ from src.domain.model.ai.nutrition_contracts import MealTextNutritionResponse
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.translation_result import TranslationOutcome, TranslationResult
 from src.domain.services.nutrition_calculation_service import (
-    _convert_with_allowed_units,
+    _convert_with_serving_options,
     convert_quantity_to_grams,
 )
 
@@ -88,7 +88,7 @@ class _AllowedUnitsFatSecretService:
             {
                 "food_id": "chicken-breast",
                 "food_name": "Chicken Breast",
-                "allowed_units": [
+                "serving_options": [
                     {
                         "unit": "g",
                         "gram_weight": 100.0,
@@ -136,7 +136,7 @@ class _StructuredFatSecretService:
                 "sugar_100g": 0.7,
                 "calories_100g": 77.0,
                 "metric_serving_amount": 100.0,
-                "allowed_units": [{"unit": "g", "gram_weight": 100.0}],
+                "serving_options": [{"unit": "g", "gram_weight": 100.0}],
             }
         ]
 
@@ -169,7 +169,7 @@ class _BeefFatSecretService:
             "fat_100g": 19.5,
             "calories_100g": 282.0,
             "metric_serving_amount": 100.0,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
             ],
         }
@@ -214,7 +214,7 @@ class _StagedFatSecretService:
             "fat_100g": 0.1,
             "calories_100g": 77.0,
             "metric_serving_amount": 100.0,
-            "allowed_units": [{"unit": "g", "gram_weight": 100.0}],
+            "serving_options": [{"unit": "g", "gram_weight": 100.0}],
         }
 
 
@@ -237,7 +237,7 @@ class _LocalizedServingFatSecretService:
             "fat_100g": 0.1,
             "calories_100g": 77.0,
             "metric_serving_amount": 100.0,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 100.0, "description": "100 g"},
                 {
                     "unit": "medium",
@@ -268,7 +268,7 @@ class _SweetPotatoFatSecretService:
             "fiber_100g": 3.0,
             "calories_100g": 86.0,
             "metric_serving_amount": 100.0,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
                 {
                     "unit": "sweetpotato",
@@ -497,7 +497,7 @@ async def test_parse_text_keeps_local_reference_beside_fatsecret():
                 "fat_100g": 0.22,
                 "fiber_100g": 0.4,
                 "sugar_100g": 0.1,
-                "allowed_units": [
+                "serving_options": [
                     {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
                 ],
             }
@@ -639,7 +639,7 @@ async def test_parse_text_countable_unit_survives_provider_outage():
     assert item.unit == "g"
     assert item.quantity == 100
     assert item.food_reference_id is None
-    assert {option["unit"] for option in item.allowed_units} == {"g", "kg"}
+    assert item.serving_options == []
     assert response.unmatched_terms == []
 
 
@@ -982,7 +982,7 @@ async def test_parse_text_prefers_localized_side_of_bilingual_pate_name():
 
 
 @pytest.mark.asyncio
-async def test_parse_text_preserves_fatsecret_allowed_units(monkeypatch):
+async def test_parse_text_does_not_emit_fatsecret_serving_options(monkeypatch):
     meal_generation_service = _FakeMealGenerationService(
         responses=[
             {
@@ -1028,15 +1028,7 @@ async def test_parse_text_preserves_fatsecret_allowed_units(monkeypatch):
     item = response.items[0]
 
     assert item.data_source == "fatsecret"
-    assert item.allowed_units == [
-        {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
-        {"unit": "serving", "gram_weight": 100.0, "description": "100 g"},
-        {
-            "unit": "cup, cooked, diced",
-            "gram_weight": 135.0,
-            "description": "1 cup cooked, diced",
-        },
-    ]
+    assert item.serving_options
 
 
 @pytest.mark.asyncio
@@ -1220,7 +1212,7 @@ async def test_parse_text_uses_one_staged_detail_for_wrong_first_candidate():
 
 
 @pytest.mark.asyncio
-async def test_provider_parse_returns_authoritative_unit_instead_of_localized_alias():
+async def test_provider_parse_preserves_client_unit_instead_of_provider_alias():
     meal_generation_service = _FakeMealGenerationService(
         responses=[
             {
@@ -1248,20 +1240,14 @@ async def test_provider_parse_returns_authoritative_unit_instead_of_localized_al
     )
     item = response.items[0]
 
-    assert item.unit == "medium"
+    assert item.unit == "cu vua"
     assert item.quantity == 1
     assert item.protein == pytest.approx(3.46)
-    assert _convert_with_allowed_units(
-        item.quantity,
-        item.unit,
-        item.allowed_units,
-        item.name,
-        strict=True,
-    ) == pytest.approx(173)
+    assert item.serving_options
 
 
 @pytest.mark.asyncio
-async def test_provider_parse_falls_back_to_grams_for_unsupported_serving_unit():
+async def test_provider_parse_preserves_unsupported_serving_unit():
     meal_generation_service = _FakeMealGenerationService(
         responses=[
             {
@@ -1289,15 +1275,9 @@ async def test_provider_parse_falls_back_to_grams_for_unsupported_serving_unit()
     )
     item = response.items[0]
 
-    assert item.unit == "g"
-    assert item.quantity == pytest.approx(180)
-    assert _convert_with_allowed_units(
-        item.quantity,
-        item.unit,
-        item.allowed_units,
-        item.name,
-        strict=True,
-    ) == pytest.approx(180)
+    assert item.unit == "to"
+    assert item.quantity == pytest.approx(1)
+    assert item.serving_options
 
 
 @pytest.mark.asyncio
@@ -1337,7 +1317,7 @@ async def test_provider_parse_emits_catalog_density_for_unknown_tuber_unit():
     assert item.carbs_per_100g == pytest.approx(20.1)
     assert item.fat_per_100g == pytest.approx(0.1)
     assert item.calories_per_100g == pytest.approx(81.7, abs=1.0)
-    assert item.unit == "g"
+    assert item.unit == "củ lớn"
 
 
 @pytest.mark.parametrize(
@@ -1536,7 +1516,7 @@ async def test_parse_text_rejects_blank_refinement_unit_before_ai_call():
                         "name": "potato",
                         "quantity": 1,
                         "unit": "piece",
-                        "allowed_units": [{"unit": "   ", "gram_weight": 100}],
+                        "serving_options": [{"unit": "   ", "gram_weight": 100}],
                     }
                 ],
             )
@@ -1716,17 +1696,5 @@ async def test_parse_text_custom_miss_never_writes_catalog():
     assert food_references.adopt_calls == []
 
 
-def test_canonicalize_reference_quantity_maps_gram_alias_to_g():
-    item = {"quantity": 100, "unit": "gram", "english_unit": "gram"}
-    grams = ParseMealTextHandler._canonicalize_reference_quantity(
-        item,
-        quantity_g=100,
-        allowed_units=[
-            {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
-            {"unit": "serving", "gram_weight": 100.0, "description": "1 serving"},
-        ],
-    )
-
-    assert grams == pytest.approx(100)
-    assert item["unit"] == "g"
-    assert item["english_unit"] == "g"
+def test_global_unit_conversion_maps_gram_alias_to_grams():
+    assert convert_quantity_to_grams(100, "gram") == pytest.approx(100)

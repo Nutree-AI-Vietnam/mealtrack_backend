@@ -42,7 +42,7 @@ FALLBACK_UNIT_CATEGORIES = {
     ],
 }
 
-DEFAULT_ALLOWED_UNITS = [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
+DEFAULT_SERVING_OPTIONS = [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
 
 
 def _namespaced_id(namespace: Any, source_id: Any) -> str:
@@ -139,7 +139,7 @@ class FoodMappingService(FoodMappingServicePort):
                 "source": "food_reference",
                 "provider_source": item.get("provider_source"),
                 "is_verified": item.get("is_verified"),
-                "allowed_units": list(result.serving_options),
+                "serving_options": list(result.serving_options),
                 "custom_nutrition": (
                     {
                         "calories_per_100g": calories,
@@ -188,7 +188,7 @@ class FoodMappingService(FoodMappingServicePort):
                     "sugar": result.sugar_100g,
                 },
                 "source": "fatsecret",
-                "allowed_units": list(result.serving_options),
+                "serving_options": list(result.serving_options),
                 # Include custom nutrition for manual meal creation
                 "custom_nutrition": (
                     {
@@ -224,10 +224,10 @@ class FoodMappingService(FoodMappingServicePort):
                 "fiber": nutrients.get("fiber"),
                 "sugar": nutrients.get("sugar"),
             },
-            "allowed_units": (
+            "serving_options": (
                 self._parse_usda_portions(item.get("foodPortions"))
                 if item.get("foodPortions")
-                else DEFAULT_ALLOWED_UNITS
+                else DEFAULT_SERVING_OPTIONS
             ),
         }
         integrity = self._require_search_integrity(
@@ -238,7 +238,7 @@ class FoodMappingService(FoodMappingServicePort):
                 "fiber_100g": nutrients.get("fiber"),
                 "sugar_100g": nutrients.get("sugar"),
                 "calories_100g": nutrients.get("calories"),
-                "allowed_units": result["allowed_units"],
+                "serving_options": result["serving_options"],
                 "source": item.get("source", "usda"),
                 "fdc_id": item.get("fdcId"),
             },
@@ -246,7 +246,7 @@ class FoodMappingService(FoodMappingServicePort):
             require_origin=True,
         )
         result["calories"] = integrity.derived_calories_100g
-        result["allowed_units"] = list(integrity.serving_options)
+        result["serving_options"] = list(integrity.serving_options)
         result["origin"] = "usda"
         result["source_namespace"] = "usda_fdc"
         result["source_food_id"] = str(item.get("fdcId"))
@@ -261,9 +261,9 @@ class FoodMappingService(FoodMappingServicePort):
     def _parse_usda_portions(
         self, portions: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Parse USDA foodPortions into allowed_units format."""
+        """Parse USDA foodPortions into serving_options format."""
         if not portions:
-            return DEFAULT_ALLOWED_UNITS
+            return DEFAULT_SERVING_OPTIONS
 
         units = []
         for portion in portions:
@@ -282,11 +282,11 @@ class FoodMappingService(FoodMappingServicePort):
                 )
 
         if not units:
-            return DEFAULT_ALLOWED_UNITS
+            return DEFAULT_SERVING_OPTIONS
 
         return (
             normalize_serving_options(units, provider_100g_label=True)
-            or DEFAULT_ALLOWED_UNITS
+            or DEFAULT_SERVING_OPTIONS
         )
 
     def _require_search_integrity(
@@ -384,12 +384,12 @@ class FoodMappingService(FoodMappingServicePort):
             ),
             "is_verified": True,
             "is_estimate": False,
-            "allowed_units": self._barcode_allowed_units(
+            "serving_options": self._barcode_serving_options(
                 item, serving_size, serving_unit
             ),
         }
 
-    def _barcode_allowed_units(
+    def _barcode_serving_options(
         self,
         item: dict[str, Any],
         serving_size: Any,
@@ -398,17 +398,17 @@ class FoodMappingService(FoodMappingServicePort):
         if item.get("foodPortions"):
             return self._parse_usda_portions(item.get("foodPortions"))
         if not serving_size:
-            return DEFAULT_ALLOWED_UNITS
+            return DEFAULT_SERVING_OPTIONS
         try:
             grams = float(serving_size)
         except (TypeError, ValueError):
-            return DEFAULT_ALLOWED_UNITS
+            return DEFAULT_SERVING_OPTIONS
         if grams <= 0 or str(serving_unit or "").lower() not in {
             "g",
             "gram",
             "grams",
         }:
-            return DEFAULT_ALLOWED_UNITS
+            return DEFAULT_SERVING_OPTIONS
         return [
             {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
             {
@@ -433,9 +433,9 @@ class FoodMappingService(FoodMappingServicePort):
                 "fat": macros.get("fat"),
             },
             "portions": details.get("foodPortions") or [],
-            "allowed_units": (
+            "serving_options": (
                 self._parse_usda_portions(details.get("foodPortions"))
                 if details.get("foodPortions")
-                else DEFAULT_ALLOWED_UNITS
+                else DEFAULT_SERVING_OPTIONS
             ),
         }

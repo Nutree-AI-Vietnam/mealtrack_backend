@@ -84,7 +84,6 @@ def parsed_food_item_to_response(item) -> ParsedFoodItem:
         sugar=getattr(item, "sugar", 0.0) or 0.0,
         data_source=item.data_source,
         fdc_id=item.fdc_id,
-        allowed_units=getattr(item, "allowed_units", None) or [],
         food_id=getattr(item, "food_id", None),
         food_reference_id=getattr(item, "food_reference_id", None),
         origin=getattr(item, "origin", None),
@@ -100,4 +99,5 @@ def parsed_food_item_to_response(item) -> ParsedFoodItem:
         sugar_per_100g=getattr(item, "sugar_per_100g", None),
         canonical_name=getattr(item, "canonical_name", None),
         source_snapshot=getattr(item, "source_snapshot", None),
+        serving_options=getattr(item, "serving_options", None) or [],
     )

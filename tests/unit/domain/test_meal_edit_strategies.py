@@ -310,7 +310,7 @@ class TestUpdateFoodItemStrategy:
         mock_nutrition_service.get_nutrition_for_ingredient.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_v2_update_unit_uses_snapshot_serving_weight(self):
+    async def test_v2_update_unit_uses_global_unit_weight(self):
         strategy = UpdateFoodItemStrategy(Mock())
         snapshot = {
             "protein_per_100g": 2.7,
@@ -318,7 +318,7 @@ class TestUpdateFoodItemStrategy:
             "fat_per_100g": 0.3,
             "fiber_per_100g": 0.4,
             "sugar_per_100g": 0.1,
-            "allowed_units": [
+            "serving_options": [
                 {"unit": "g", "gram_weight": 1.0},
                 {"unit": "cup", "gram_weight": 158.0},
             ],
@@ -332,7 +332,7 @@ class TestUpdateFoodItemStrategy:
                 macros=Macros(protein=2.7, carbs=28.0, fat=0.3),
                 nutrition_contract_version="2",
                 source_snapshot=snapshot,
-                allowed_units=snapshot["allowed_units"],
+                serving_options=snapshot["serving_options"],
             )
         }
 
@@ -341,7 +341,7 @@ class TestUpdateFoodItemStrategy:
             FoodItemChange(action="update", id="item-1", quantity=1, unit="cup"),
         )
 
-        assert food_items_dict["item-1"].macros.protein == pytest.approx(4.27)
+        assert food_items_dict["item-1"].macros.protein == pytest.approx(6.48)
 
     @pytest.mark.asyncio
     async def test_update_custom_nutrition_preserves_food_reference_id(self):

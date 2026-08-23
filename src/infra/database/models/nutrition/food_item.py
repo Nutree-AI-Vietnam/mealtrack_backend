@@ -18,7 +18,6 @@ class FoodItemORM(Base, PrimaryEntityMixin):
     quantity = Column(Float, nullable=False)
     unit = Column(String(120), nullable=False)
     confidence = Column(Float, nullable=True)
-    allowed_units = Column(JSON, nullable=True)
     nutrition_override = Column(JSON, nullable=True)
     source_kind = Column(String(32), nullable=True)
     source_food_id = Column(String(255), nullable=True)

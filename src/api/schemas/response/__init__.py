@@ -38,6 +38,7 @@ from .meal_responses import (
     NutritionResponse,
     NutritionSummaryResponse,
     SimpleMealResponse,
+    ServingOptionResponse,
 )
 from .meal_suggestion_responses import (
     MacrosSchema as MealSuggestionMacrosSchema,
@@ -93,6 +94,7 @@ __all__ = [
     "ManualMealCreationResponse",
     "MealValueInsightsStatusResponse",
     "MealStatusEnum",
+    "ServingOptionResponse",
     # TDEE
     "TdeeCalculationResponse",
     "BatchTdeeCalculationResponse",

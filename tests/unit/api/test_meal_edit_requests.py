@@ -44,14 +44,14 @@ class TestFoodItemChangeRequest:
         # Derived: 10*4 + 20*4 + 8*9 = 192
         assert request.custom_nutrition.calories_per_100g == 192.0
 
-    def test_valid_add_request_with_allowed_units(self):
-        """Test preserving food-specific unit options."""
+    def test_add_request_ignores_legacy_serving_options(self):
+        """Legacy source-specific unit options are not part of the request model."""
         request = FoodItemChangeRequest(
             action="add",
             name="Chicken Breast",
             quantity=100.0,
             unit="g",
-            allowed_units=[
+            serving_options=[
                 {
                     "unit": "g",
                     "gram_weight": 100.0,
@@ -70,11 +70,7 @@ class TestFoodItemChangeRequest:
             ],
         )
 
-        assert len(request.allowed_units) == 3
-        assert request.allowed_units[0].unit == "g"
-        assert request.allowed_units[0].description == "100 g"
-        assert request.allowed_units[1].unit.startswith("small breast")
-        assert request.allowed_units[2].unit == "cup, cooked, diced"
+        assert "serving_options" not in request.model_dump()
 
     def test_valid_update_request(self):
         """Test valid update request."""

@@ -19,7 +19,7 @@ def test_food_item_source_snapshot_round_trips_through_orm_mapping():
         source_snapshot={
             "basis": "100g",
             "calories_per_100g": 124.7,
-            "allowed_units": [{"unit": "g", "gram_weight": 1}],
+            "serving_options": [{"unit": "g", "gram_weight": 1}],
         },
     )
 

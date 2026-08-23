@@ -148,8 +148,6 @@ class FoodReferenceValidationService:
         if not self._is_macro_close(item, reference):
             return False
 
-        if integrity.serving_options:
-            item.allowed_units = list(integrity.serving_options)
         return True
 
     def _is_macro_close(self, item: Any, reference: dict[str, Any]) -> bool:

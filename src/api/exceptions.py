@@ -19,9 +19,6 @@ from src.domain.exceptions.ai_exceptions import (
     AIUnavailableError,
     MealResponseLocalizationError,
 )
-from src.domain.services.nutrition_calculation_service import (
-    AuthoritativeUnitMismatchError,
-)
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityError
 
 logger = logging.getLogger(__name__)
@@ -182,16 +179,6 @@ def handle_exception(exc: Exception) -> HTTPException:
                     "AI could not produce complete localized meal information. "
                     "Please try again with a clearer photo."
                 ),
-                "details": {},
-            },
-        )
-
-    if isinstance(exc, AuthoritativeUnitMismatchError):
-        return HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error_code": "NUTRITION_UNIT_INVALID",
-                "message": "The selected serving unit is not available for this food.",
                 "details": {},
             },
         )

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Any
-
 from .macros import Macros
 from .micros import Micros
 
@@ -39,7 +38,7 @@ class FoodItem:
     fdc_id: int | None = None  # USDA FDC ID if available
     food_reference_id: int | None = None
     is_custom: bool = False  # Whether this is a custom ingredient
-    allowed_units: list[dict[str, Any]] | None = None
+    serving_options: list[dict[str, Any]] | None = None
     nutrition_override: NutritionOverride | None = None
     source_kind: str | None = None
     source_food_id: str | None = None
@@ -102,8 +101,6 @@ class FoodItem:
             result["fdc_id"] = self.fdc_id
         if self.food_reference_id:
             result["food_reference_id"] = self.food_reference_id
-        if self.allowed_units:
-            result["allowed_units"] = self.allowed_units
         if self.nutrition_override:
             result["nutrition_override"] = self.nutrition_override.to_dict()
         if self.source_kind:
@@ -114,6 +111,8 @@ class FoodItem:
             result["nutrition_contract_version"] = self.nutrition_contract_version
         if self.source_snapshot:
             result["source_snapshot"] = self.source_snapshot
+        if self.serving_options:
+            result["serving_options"] = self.serving_options
         return result
 
 

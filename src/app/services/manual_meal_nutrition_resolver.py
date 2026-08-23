@@ -12,10 +12,6 @@ from src.app.commands.meal.create_manual_meal_command import (
     ManualMealItem,
 )
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
-from src.domain.services.nutrition_calculation_service import (
-    canonicalize_authoritative_quantity,
-    fallback_custom_serving_options,
-)
 from src.domain.services.nutrition_integrity_policy import (
     NutritionIntegrityError,
     NutritionIntegrityPolicy,
@@ -103,7 +99,6 @@ class ManualMealNutritionResolver:
                     )
                 else:
                     raise ValueError("v2 item origin is required")
-                resolved_item = self._canonicalize_unmatched_unit(resolved_item)
                 resolved.append(resolved_item)
             except Exception as exc:
                 result = getattr(exc, "result", None)
@@ -120,23 +115,6 @@ class ManualMealNutritionResolver:
                 attributes={"origin": item.origin or "unknown"},
             )
         return resolved
-
-    @staticmethod
-    def _canonicalize_unmatched_unit(item: ManualMealItem) -> ManualMealItem:
-        """Keep valid source units; convert any other request unit to grams."""
-        quantity, unit, used_fallback = canonicalize_authoritative_quantity(
-            item.quantity,
-            item.unit,
-            item.allowed_units or [],
-            item.name or "Food Item",
-        )
-        if used_fallback:
-            increment_metric(
-                "manual_nutrition_resolution.unit_fallback",
-                attributes={"origin": item.origin or "unknown"},
-            )
-            return replace(item, quantity=quantity, unit=unit)
-        return item
 
     async def revalidate_local_items(self, items, food_references) -> None:
         """Lock local references and reject a snapshot changed mid-write."""
@@ -207,15 +185,12 @@ class ManualMealNutritionResolver:
                 "fat_100g": item.custom_nutrition.fat_per_100g,
                 "fiber_100g": item.custom_nutrition.fiber_per_100g,
                 "sugar_100g": item.custom_nutrition.sugar_per_100g,
+                "serving_options": item.serving_options,
             },
             require_energy=False,
             require_metric_basis=False,
         )
-        allowed_units = fallback_custom_serving_options(
-            item.unit,
-            item.name or "",
-            item.allowed_units,
-        )
+        serving_options = list(result.serving_options)
         return replace(
             item,
             custom_nutrition=CustomNutrition(
@@ -226,11 +201,11 @@ class ManualMealNutritionResolver:
                 fiber_per_100g=result.fiber_100g or 0.0,
                 sugar_per_100g=result.sugar_100g or 0.0,
             ),
-            allowed_units=allowed_units,
+            serving_options=serving_options,
             source_kind="custom",
             nutrition_contract_version="2",
             source_snapshot=self._snapshot(
-                result, "custom", None, None, allowed_units
+                result, "custom", None, None, serving_options
             ),
         )
 
@@ -243,7 +218,7 @@ class ManualMealNutritionResolver:
             )
         if not getattr(reference, "is_verified", False):
             raise NutritionIntegrityError(self.policy.rejection("unverified_reference"))
-        allowed_units = self._reference_units(reference)
+        serving_options = self._reference_serving_options(reference)
         result = self.policy.require_valid(
             {
                 "protein_100g": reference.protein_100g,
@@ -251,11 +226,12 @@ class ManualMealNutritionResolver:
                 "fat_100g": reference.fat_100g,
                 "fiber_100g": reference.fiber_100g,
                 "sugar_100g": reference.sugar_100g,
-                "allowed_units": allowed_units,
+                "serving_options": serving_options,
             },
             require_energy=False,
             require_metric_basis=False,
         )
+        serving_options = list(result.serving_options)
         source_id = str(getattr(reference, "source_food_id", None) or reference.id)
         source_namespace = (
             item.source_namespace
@@ -266,7 +242,7 @@ class ManualMealNutritionResolver:
             item,
             name=reference.name,
             custom_nutrition=self._custom_from_result(result),
-            allowed_units=allowed_units,
+            serving_options=serving_options,
             food_reference_id=reference.id,
             source_kind=origin,
             source_food_id=source_id,
@@ -276,7 +252,7 @@ class ManualMealNutritionResolver:
                 origin,
                 source_namespace,
                 source_id,
-                allowed_units,
+                serving_options,
                 canonical_name=reference.name,
             ),
         )
@@ -288,8 +264,8 @@ class ManualMealNutritionResolver:
             raise NutritionIntegrityError(
                 self.policy.rejection("reference_identity_mismatch")
             )
-        allowed_units = normalize_serving_options(
-            reference.get("allowed_units") or reference.get("serving_sizes"),
+        serving_options = normalize_serving_options(
+            reference.get("serving_options") or reference.get("serving_sizes"),
             provider_100g_label=origin != "local",
         ) or [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
         result = self.policy.require_valid(
@@ -300,18 +276,19 @@ class ManualMealNutritionResolver:
                 "fiber_100g": reference.get("fiber_100g", 0),
                 "sugar_100g": reference.get("sugar_100g", 0),
                 "calories_100g": reference.get("calories_100g"),
-                "allowed_units": allowed_units,
+                "serving_options": serving_options,
             },
             require_energy=False,
             require_metric_basis=False,
         )
+        serving_options = list(result.serving_options)
         source_id = str(item.fdc_id)
         canonical_name = reference.get("name") or reference.get("description")
         return replace(
             item,
             name=canonical_name or item.name,
             custom_nutrition=self._custom_from_result(result),
-            allowed_units=allowed_units,
+            serving_options=serving_options,
             source_kind=origin,
             source_food_id=source_id,
             nutrition_contract_version="2",
@@ -320,7 +297,7 @@ class ManualMealNutritionResolver:
                 origin,
                 "usda_fdc",
                 source_id,
-                allowed_units,
+                serving_options,
                 canonical_name=canonical_name,
             ),
         )
@@ -353,8 +330,8 @@ class ManualMealNutritionResolver:
             raise NutritionIntegrityError(
                 self.policy.rejection("provider_identity_mismatch")
             )
-        allowed_units = normalize_serving_options(
-            details.get("allowed_units") or details.get("serving_sizes"),
+        serving_options = normalize_serving_options(
+            details.get("serving_options") or details.get("serving_sizes"),
             provider_100g_label=True,
         ) or [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
         result = self.policy.require_valid(
@@ -365,7 +342,7 @@ class ManualMealNutritionResolver:
                 "fiber_100g": details.get("fiber_100g", 0),
                 "sugar_100g": details.get("sugar_100g", 0),
                 "calories_100g": details.get("calories_100g"),
-                "allowed_units": allowed_units,
+                "serving_options": serving_options,
             },
             require_energy=False,
             require_metric_basis=False,
@@ -374,16 +351,16 @@ class ManualMealNutritionResolver:
         english_name = str(
             details.get("food_name") or details.get("name") or item.name or "Food Item"
         ).strip()
-        food_reference_id, result, allowed_units, english_name = (
+        food_reference_id, result, serving_options, english_name = (
             await self._adopt_provider_identity(
-                namespace, source_id, english_name, result, allowed_units
+                namespace, source_id, english_name, result, serving_options
             )
         )
         return replace(
             item,
             name=english_name,
             custom_nutrition=self._custom_from_result(result),
-            allowed_units=allowed_units,
+            serving_options=serving_options,
             food_reference_id=food_reference_id,
             source_kind="provider",
             nutrition_contract_version="2",
@@ -392,7 +369,7 @@ class ManualMealNutritionResolver:
                 "provider",
                 namespace,
                 source_id,
-                allowed_units,
+                serving_options,
                 canonical_name=english_name,
             ),
         )
@@ -403,7 +380,7 @@ class ManualMealNutritionResolver:
         source_id: str,
         english_name: str,
         result: Any,
-        allowed_units: list[dict[str, Any]],
+        serving_options: list[dict[str, Any]],
     ) -> tuple[int | None, Any, list[dict[str, Any]], str]:
         """Materialize a provider identity into the catalog before save.
 
@@ -414,7 +391,7 @@ class ManualMealNutritionResolver:
         to the freshly fetched provider density rather than blocking save.
         """
         if self.uow_factory is None:
-            return None, result, allowed_units, english_name
+            return None, result, serving_options, english_name
         per_100g = {
             "protein_100g": result.protein_100g,
             "carbs_100g": result.carbs_100g,
@@ -429,7 +406,7 @@ class ManualMealNutritionResolver:
                     source_id,
                     english_name,
                     per_100g,
-                    allowed_units,
+                    serving_options,
                     "en",
                     "",
                 )
@@ -440,10 +417,13 @@ class ManualMealNutritionResolver:
                 source_id,
                 exc_info=True,
             )
-            return None, result, allowed_units, english_name
+            return None, result, serving_options, english_name
         if not isinstance(adopted, dict) or adopted.get("id") is None:
-            return None, result, allowed_units, english_name
-        adopted_units = adopted.get("allowed_units") or allowed_units
+            return None, result, serving_options, english_name
+        adopted_options = normalize_serving_options(
+            adopted.get("serving_options") or serving_options,
+            provider_100g_label=True,
+        ) or serving_options
         adopted_result = self.policy.require_valid(
             {
                 "protein_100g": adopted.get("protein_100g"),
@@ -451,14 +431,19 @@ class ManualMealNutritionResolver:
                 "fat_100g": adopted.get("fat_100g"),
                 "fiber_100g": adopted.get("fiber_100g", 0),
                 "sugar_100g": adopted.get("sugar_100g", 0),
-                "allowed_units": adopted_units,
+                "serving_options": adopted_options,
             },
             require_energy=False,
             require_metric_basis=False,
             provider_100g_label=True,
         )
         adopted_name = str(adopted.get("name") or "").strip() or english_name
-        return adopted.get("id"), adopted_result, adopted_units, adopted_name
+        return (
+            adopted.get("id"),
+            adopted_result,
+            list(adopted_result.serving_options),
+            adopted_name,
+        )
 
     async def _get_provider_details(
         self, source_id: str, *, namespace: str, deadline: float | None
@@ -503,7 +488,7 @@ class ManualMealNutritionResolver:
             return await provider.get_food_details(source_id)
 
     @staticmethod
-    def _reference_units(reference) -> list[dict[str, Any]]:
+    def _reference_serving_options(reference) -> list[dict[str, Any]]:
         raw = []
         for serving in getattr(reference, "servings", []) or []:
             grams = getattr(serving, "grams", None)
@@ -557,14 +542,18 @@ class ManualMealNutritionResolver:
                 "fiber_per_100g": nutrition.fiber_per_100g,
                 "sugar_per_100g": nutrition.sugar_per_100g,
                 "calories_per_100g": nutrition.calories_per_100g,
-                "allowed_units": item.allowed_units
-                or [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+                "serving_options": item.serving_options or [],
             },
         )
 
     @staticmethod
     def _snapshot(
-        result, origin, namespace, source_id, allowed_units=None, canonical_name=None
+        result,
+        origin,
+        namespace,
+        source_id,
+        serving_options=None,
+        canonical_name=None,
     ):
         snapshot = {
             "origin": origin,
@@ -577,8 +566,7 @@ class ManualMealNutritionResolver:
             "fiber_per_100g": result.fiber_100g,
             "sugar_per_100g": result.sugar_100g,
             "calories_per_100g": result.derived_calories_100g,
-            "allowed_units": allowed_units
-            or [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}],
+            "serving_options": list(serving_options or result.serving_options),
         }
         clean_name = str(canonical_name or "").strip()
         if clean_name:

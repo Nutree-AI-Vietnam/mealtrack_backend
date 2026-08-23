@@ -45,12 +45,10 @@ from src.domain.services.emoji_validator import validate_emoji
 from src.domain.services.nutrition_calculation_service import (
     MASS_VOLUME_CANONICAL_UNITS,
     UNIT_TO_GRAMS,
-    _convert_with_allowed_units,
     _normalize_unit,
     canonicalize_mass_volume_unit,
     clamp_nutrition_values,
     convert_quantity_to_grams,
-    fallback_custom_serving_options,
     normalize_unit_for_manual_save,
     scale_per_100g_nutrition,
 )
@@ -284,11 +282,7 @@ class ParseMealTextHandler(
                 sugar=item.get("sugar", 0),
                 data_source=item.get("data_source"),
                 fdc_id=item.get("fdc_id"),
-                allowed_units=item.get("allowed_units")
-                or fallback_custom_serving_options(
-                    item.get("unit") or "serving",
-                    item.get("name") or "",
-                ),
+                serving_options=item.get("serving_options") or [],
                 food_id=item.get("food_id"),
                 food_reference_id=item.get("food_reference_id"),
                 origin=item.get("origin"),
@@ -358,10 +352,10 @@ class ParseMealTextHandler(
             "fiber_per_100g": item["fiber_per_100g"],
             "sugar_per_100g": item["sugar_per_100g"],
             "calories_per_100g": item["calories_per_100g"],
-            "allowed_units": item.get("allowed_units") or [],
             "origin": item.get("origin"),
             "source_namespace": item.get("source_namespace"),
             "source_food_id": item.get("source_food_id"),
+            "serving_options": item.get("serving_options") or [],
         }
         canonical_name = item.get("canonical_name")
         if isinstance(canonical_name, str) and canonical_name.strip():
@@ -721,12 +715,11 @@ class ParseMealTextHandler(
         )
         if not per_100g:
             return None
-        allowed_units = self._safe_allowed_units(selected.get("allowed_units"))
-        quantity_g = self._canonicalize_reference_quantity(
-            item,
-            quantity_g=self._quantity_in_grams(item, lookup_name),
-            allowed_units=allowed_units,
-        )
+        serving_options = normalize_serving_options(
+            selected.get("serving_options") or selected.get("serving_sizes"),
+            provider_100g_label=True,
+        ) or [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
+        quantity_g = self._quantity_in_grams(item, lookup_name)
         scaled = scale_per_100g_nutrition(
             {
                 "calories": per_100g.get("calories_100g", per_100g.get("calories", 0)),
@@ -738,9 +731,8 @@ class ParseMealTextHandler(
             },
             item["quantity"],
             item["unit"],
-            allowed_units=allowed_units,
+            serving_options=serving_options,
             food_name=lookup_name,
-            strict_allowed_units=True,
         )
         if not validate_ai_fallback(
             name=lookup_name,
@@ -753,9 +745,9 @@ class ParseMealTextHandler(
             return None
         item.update(scaled)
         item["calories"] = self._derive_calories_from_macros(item)
-        item["allowed_units"] = allowed_units
         item["data_source"] = "fatsecret"
         item.update(self._reference_identity(selected, "fatsecret"))
+        item["serving_options"] = serving_options
         catalog_name = str(
             selected.get("food_name")
             or selected.get("description")
@@ -872,7 +864,6 @@ class ParseMealTextHandler(
                 "fiber_100g": item.get("fiber_per_100g") or 0.0,
                 "sugar_100g": item.get("sugar_per_100g") or 0.0,
             }
-            servings = item.get("allowed_units") or None
             try:
                 async with self._uow_factory() as uow:
                     adopted = await uow.food_references.adopt_provider_food(
@@ -880,7 +871,7 @@ class ParseMealTextHandler(
                         str(source_food_id),
                         english_name,
                         per_100g,
-                        servings,
+                        None,
                         command.language,
                         locale_name,
                     )
@@ -909,16 +900,6 @@ class ParseMealTextHandler(
         source: str,
         raw: dict[str, Any],
     ) -> dict[str, Any]:
-        allowed_units = self._safe_allowed_units(
-            raw.get("allowed_units") or raw.get("serving_sizes")
-        )
-        if not allowed_units:
-            allowed_units = list(candidate.allowed_units or [])
-        quantity_g = self._canonicalize_reference_quantity(
-            item,
-            quantity_g=quantity_g,
-            allowed_units=allowed_units,
-        )
         factor = quantity_g / 100.0
         item.update(
             {
@@ -962,40 +943,11 @@ class ParseMealTextHandler(
         item["fat_per_100g"] = candidate.fat_per_100g
         item["fiber_per_100g"] = candidate.fiber_per_100g
         item["sugar_per_100g"] = candidate.sugar_per_100g
-        item["allowed_units"] = allowed_units
+        item["serving_options"] = normalize_serving_options(
+            raw.get("serving_options") or raw.get("serving_sizes"),
+            provider_100g_label=source == "fatsecret",
+        ) or [{"unit": "g", "gram_weight": 1.0, "description": "1 g"}]
         return item
-
-    @staticmethod
-    def _canonicalize_reference_quantity(
-        item: dict[str, Any],
-        *,
-        quantity_g: float,
-        allowed_units: list[dict[str, Any]],
-    ) -> float:
-        """Keep parsed portions saveable against the same source snapshot."""
-        quantity = float(item.get("quantity") or 1.0)
-        source_unit = canonicalize_mass_volume_unit(
-            str(item.get("english_unit") or item.get("unit") or "g")
-        )
-        try:
-            authoritative_grams = _convert_with_allowed_units(
-                quantity,
-                source_unit,
-                allowed_units,
-                str(item.get("lookup_name") or item.get("name") or ""),
-                strict=True,
-            )
-        except ValueError:
-            item["quantity"] = quantity_g
-            item["unit"] = "g"
-            item["english_unit"] = "g"
-            item["quantity_g"] = quantity_g
-            return quantity_g
-
-        item["unit"] = source_unit
-        item["english_unit"] = source_unit
-        item["quantity_g"] = authoritative_grams
-        return authoritative_grams
 
     @staticmethod
     def _reference_identity(raw: dict[str, Any], source: str) -> dict[str, Any]:
@@ -1039,39 +991,6 @@ class ParseMealTextHandler(
             "source_food_id": source_id,
         }
 
-    @staticmethod
-    def _safe_allowed_units(raw: Any) -> list[dict[str, Any]]:
-        if not isinstance(raw, list):
-            return []
-        units: list[dict[str, Any]] = []
-        for entry in raw[:12]:
-            if not isinstance(entry, dict):
-                continue
-            unit = str(entry.get("unit") or entry.get("name") or "").strip()
-            description = str(entry.get("description") or "").strip()
-            raw_gram_weight = entry.get("gram_weight") or entry.get("grams")
-            if raw_gram_weight is None:
-                continue
-            try:
-                gram_weight = float(raw_gram_weight)
-            except (TypeError, ValueError):
-                continue
-            if (
-                not unit
-                or len(unit) > 100
-                or len(description) > 100
-                or not gram_weight > 0
-                or not all(ord(char) >= 32 for char in unit + description)
-            ):
-                continue
-            units.append(
-                {
-                    "unit": unit,
-                    "gram_weight": gram_weight,
-                    "description": description,
-                }
-            )
-        return normalize_serving_options(units, provider_100g_label=True) or []
 
     async def _localize_english_display_names(
         self, items: list[dict[str, Any]], language: str

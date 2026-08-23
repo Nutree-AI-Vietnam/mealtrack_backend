@@ -110,7 +110,7 @@ def _refinement_with_blank_allowed_unit() -> list[dict]:
             "name": "potato",
             "quantity": 1,
             "unit": "piece",
-            "allowed_units": [{"unit": "   ", "gram_weight": 100}],
+            "serving_options": [{"unit": "   ", "gram_weight": 100}],
         }
     ]
 

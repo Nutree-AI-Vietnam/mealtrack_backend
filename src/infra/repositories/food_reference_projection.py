@@ -57,7 +57,7 @@ def food_reference_model_to_dict(model: FoodReferenceModel) -> dict[str, Any]:
         "fiber_100g": model.fiber_100g,
         "sugar_100g": model.sugar_100g,
         "serving_sizes": food_reference_serving_sizes_to_dict(model),
-        "allowed_units": food_reference_allowed_units_to_dict(model),
+        "serving_options": food_reference_serving_options_to_dict(model),
         "density": model.density,
         "serving_size": model.serving_size,
         "extra_nutrients": food_reference_nutrients_to_dict(model),
@@ -83,7 +83,7 @@ def food_reference_model_to_integrity_data(model: FoodReferenceModel) -> dict[st
         "fat_100g": model.fat_100g,
         "fiber_100g": model.fiber_100g,
         "sugar_100g": model.sugar_100g,
-        "allowed_units": _raw_allowed_units(model),
+        "serving_options": _raw_serving_options(model),
         "source": model.source,
     }
 
@@ -233,7 +233,7 @@ def _serving_sizes_for_projection(model: FoodReferenceModel) -> list[dict[str, A
     return servings
 
 
-def food_reference_allowed_units_to_dict(
+def food_reference_serving_options_to_dict(
     model: FoodReferenceModel,
 ) -> list[dict[str, Any]]:
     raw_rows = getattr(model, "serving_size_rows", None)
@@ -253,11 +253,11 @@ def food_reference_allowed_units_to_dict(
             if row.grams is not None and row.grams > 0
         ]
     else:
-        units = _legacy_serving_sizes_to_allowed_units(model.serving_sizes)
+        units = _legacy_serving_sizes_to_serving_options(model.serving_sizes)
     return normalize_serving_options(units) or []
 
 
-def _legacy_serving_sizes_to_allowed_units(raw: Any) -> list[dict[str, Any]]:
+def _legacy_serving_sizes_to_serving_options(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     units: list[dict[str, Any]] = []
@@ -279,7 +279,7 @@ def _legacy_serving_sizes_to_allowed_units(raw: Any) -> list[dict[str, Any]]:
     return units
 
 
-def _raw_allowed_units(model: FoodReferenceModel) -> list[dict[str, Any]]:
+def _raw_serving_options(model: FoodReferenceModel) -> list[dict[str, Any]]:
     rows = getattr(model, "serving_size_rows", None)
     if rows:
         return [
@@ -290,7 +290,7 @@ def _raw_allowed_units(model: FoodReferenceModel) -> list[dict[str, Any]]:
             }
             for row in rows
         ]
-    return _legacy_serving_sizes_to_allowed_units(model.serving_sizes)
+    return _legacy_serving_sizes_to_serving_options(model.serving_sizes)
 
 
 def food_reference_nutrients_to_dict(model: FoodReferenceModel) -> Any:

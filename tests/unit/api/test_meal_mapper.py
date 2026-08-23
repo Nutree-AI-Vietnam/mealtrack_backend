@@ -354,12 +354,17 @@ class TestMealMapper:
             unit="cup, cooked, diced",
             macros=Macros(protein=4, carbs=45, fat=0),
             food_reference_id=42,
-            allowed_units=[
+            serving_options=[
                 {
                     "unit": "cup, cooked, diced",
                     "gram_weight": 158.0,
                     "description": "1 cup cooked, diced",
-                }
+                },
+                {
+                    "unit": "serving (85g)",
+                    "gram_weight": 85.0,
+                    "description": "1 serving (85 g)",
+                },
             ],
         )
         meal = Meal(
@@ -386,18 +391,21 @@ class TestMealMapper:
                     "name": "Rice",
                     "name_vi": "Cơm",
                     "serving_labels": {
-                        serving_phrase_key("cup, cooked, diced"): (
-                            "cốc, đã nấu, thái hạt lựu"
-                        )
-                    },
+                    serving_phrase_key("cup, cooked, diced"): (
+                        "cốc, đã nấu, thái hạt lựu"
+                    ),
+                    serving_phrase_key("serving (85g)"): "Khẩu phần",
+                },
                 }
             },
         )
 
-        labeled = result.food_items[0].allowed_units[0]
-        assert labeled.unit == "cup, cooked, diced"
-        assert labeled.description == "1 cup cooked, diced"
-        assert labeled.display_description == "cốc, đã nấu, thái hạt lựu"
+        assert result.food_items[0].serving_options[0].display_description == (
+            "cốc, đã nấu, thái hạt lựu"
+        )
+        assert result.food_items[0].serving_options[1].display_description == (
+            "Khẩu phần"
+        )
 
     def test_to_detailed_response_tracked_item_english_ignores_stored_locale_name(
         self,
@@ -1299,7 +1307,7 @@ class TestMealMapper:
                 macros=Macros(protein=5, carbs=5, fat=0),
                 confidence=0.8,
                 is_custom=True,
-                allowed_units=[
+                serving_options=[
                     {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
                     {"unit": "nhánh", "gram_weight": 100.0, "description": "1 nhánh"},
                 ],

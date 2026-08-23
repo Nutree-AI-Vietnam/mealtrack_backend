@@ -221,14 +221,14 @@ async def test_v2_prepared_custom_nutrition_is_saved_without_resolution():
 
 
 @pytest.mark.asyncio
-async def test_v2_prepared_nutrition_uses_confirmed_food_specific_unit():
+async def test_v2_prepared_nutrition_uses_provider_serving_weight():
     item = ManualMealItem(
         name="Pork rib",
         quantity=1,
         unit="slice",
         origin="custom",
         nutrition_contract_version="2",
-        allowed_units=[
+        serving_options=[
             {"unit": "g", "gram_weight": 1, "description": "1 g"},
             {"unit": "slice", "gram_weight": 80, "description": "1 slice"},
         ],

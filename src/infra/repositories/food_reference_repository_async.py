@@ -441,7 +441,7 @@ class AsyncFoodReferenceRepository:
             "fiber_100g": data.get("fiber_100g", 0),
             "sugar_100g": data.get("sugar_100g", 0),
             "serving_size": data.get("serving_size"),
-            "serving_sizes": data.get("serving_sizes") or data.get("allowed_units"),
+            "serving_sizes": data.get("serving_sizes") or data.get("serving_options"),
             "image_url": data.get("image_url"),
             "source": data.get("source", "fatsecret"),
             "is_verified": data.get("is_verified", False),
@@ -513,7 +513,7 @@ class AsyncFoodReferenceRepository:
             "fiber_100g": data.get("fiber_100g", 0),
             "sugar_100g": data.get("sugar_100g", 0),
             "serving_size": data.get("serving_size"),
-            "serving_sizes": data.get("serving_sizes") or data.get("allowed_units"),
+            "serving_sizes": data.get("serving_sizes") or data.get("serving_options"),
             "image_url": data.get("image_url"),
             "source": data.get("source", "seed"),
             "source_namespace": data.get("source_namespace"),
@@ -746,7 +746,7 @@ class AsyncFoodReferenceRepository:
         model: FoodReferenceModel,
         data: dict[str, Any],
     ) -> None:
-        serving_sizes = data.get("serving_sizes") or data.get("allowed_units")
+        serving_sizes = data.get("serving_sizes") or data.get("serving_options")
         extra_nutrients = data.get("extra_nutrients")
         existing_servings = _loaded_collection(model, "serving_size_rows")
         if serving_sizes is not None:
@@ -868,7 +868,7 @@ def _dedupe_search_projections(
                 fiber_100g=model.fiber_100g or 0.0,
                 sugar_100g=model.sugar_100g or 0.0,
                 serving_size=model.serving_size,
-                allowed_units=food_reference_model_to_dict(model)["allowed_units"],
+                serving_options=food_reference_model_to_dict(model)["serving_options"],
             )
         )
         if len(projections) >= limit:

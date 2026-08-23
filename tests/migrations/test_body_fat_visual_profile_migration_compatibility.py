@@ -24,8 +24,8 @@ MIGRATIONS = (
         {},
     ),
     (
-        "20260730102158384558_ensure_food_item_allowed_units.py",
-        {"food_item": {"allowed_units"}},
+        "20260730102158384558_ensure_food_item_serving_options.py",
+        {"food_item": {"serving_options"}},
     ),
 )
 
@@ -74,10 +74,10 @@ def test_upgrade_skips_ddl_when_legacy_body_fat_schema_exists(
     assert operations.calls == []
 
 
-def test_allowed_units_repair_adds_missing_legacy_column(
+def test_serving_options_repair_adds_missing_legacy_column(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    filename = "20260730102158384558_ensure_food_item_allowed_units.py"
+    filename = "20260730102158384558_ensure_food_item_serving_options.py"
     path = Path("migrations/versions") / filename
     spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), path)
     assert spec and spec.loader
@@ -97,10 +97,10 @@ def test_allowed_units_repair_adds_missing_legacy_column(
     assert operations.calls == ["add_column"]
 
 
-def test_allowed_units_repair_downgrade_preserves_existing_column(
+def test_serving_options_repair_downgrade_preserves_existing_column(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    filename = "20260730102158384558_ensure_food_item_allowed_units.py"
+    filename = "20260730102158384558_ensure_food_item_serving_options.py"
     path = Path("migrations/versions") / filename
     spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), path)
     assert spec and spec.loader
@@ -112,7 +112,7 @@ def test_allowed_units_repair_downgrade_preserves_existing_column(
     monkeypatch.setattr(
         module.sa,
         "inspect",
-        lambda _bind: _Inspector({"food_item": {"id", "allowed_units"}}),
+        lambda _bind: _Inspector({"food_item": {"id", "serving_options"}}),
     )
 
     module.downgrade()

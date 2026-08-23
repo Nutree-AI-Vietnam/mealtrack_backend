@@ -20,7 +20,7 @@ async def test_localize_item_servings_fills_display_description():
     items = [
         {
             "name": "Rice",
-            "allowed_units": [
+            "serving_options": [
                 {
                     "unit": "cup, cooked, diced",
                     "gram_weight": 158.0,
@@ -36,7 +36,7 @@ async def test_localize_item_servings_fills_display_description():
         translation_service=_Translator(),
     )
 
-    labeled = items[0]["allowed_units"][0]
+    labeled = items[0]["serving_options"][0]
     assert labeled["display_description"] == "cốc, đã nấu, thái hạt lựu"
     assert labeled["unit"] == "cup, cooked, diced"
     assert labeled["description"] == "1 cup cooked, diced"
@@ -62,7 +62,7 @@ async def test_localize_item_servings_uses_cached_phrase_before_translate():
                 return {"cup, cooked, diced": "cốc, đã nấu, thái hạt lựu"}
 
     items = [
-        {"allowed_units": [{"unit": "cup, cooked, diced", "description": "1 cup"}]}
+        {"serving_options": [{"unit": "cup, cooked, diced", "description": "1 cup"}]}
     ]
     await localize_item_servings(
         items,
@@ -71,7 +71,7 @@ async def test_localize_item_servings_uses_cached_phrase_before_translate():
         uow_factory=lambda: _Uow(),
     )
     assert (
-        items[0]["allowed_units"][0]["display_description"]
+        items[0]["serving_options"][0]["display_description"]
         == "cốc, đã nấu, thái hạt lựu"
     )
 
@@ -112,7 +112,7 @@ async def test_localize_item_servings_does_not_persist_partial_translations():
     items = [
         {
             "food_reference_id": 9,
-            "allowed_units": [{"unit": "thin strip", "description": "1 thin strip"}],
+            "serving_options": [{"unit": "thin strip", "description": "1 thin strip"}],
         }
     ]
     await localize_item_servings(
@@ -153,7 +153,7 @@ async def test_localize_item_servings_persists_canonical_vietnamese_serving():
     items = [
         {
             "food_reference_id": 9,
-            "allowed_units": [{"unit": "serving", "description": "1 serving"}],
+            "serving_options": [{"unit": "serving", "description": "1 serving"}],
         }
     ]
 
@@ -165,6 +165,6 @@ async def test_localize_item_servings_persists_canonical_vietnamese_serving():
         persist=True,
     )
 
-    assert items[0]["allowed_units"][0]["display_description"] == "Khẩu phần"
+    assert items[0]["serving_options"][0]["display_description"] == "Khẩu phần"
     assert _Uow.saved_labels == ({"serving": "Khẩu phần"}, "vi")
     assert _Uow.saved_food_labels == (9, {"serving": "Khẩu phần"})

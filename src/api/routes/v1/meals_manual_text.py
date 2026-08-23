@@ -167,7 +167,7 @@ async def create_manual_meal(
                     quantity=i.quantity,
                     unit=i.unit,
                     custom_nutrition=custom_nutrition,
-                    allowed_units=[unit.model_dump() for unit in i.allowed_units],
+                    serving_options=i.serving_options,
                     origin=i.origin,
                     food_reference_id=i.food_reference_id,
                     source_namespace=i.source_namespace,

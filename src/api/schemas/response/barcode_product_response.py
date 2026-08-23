@@ -6,9 +6,6 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from src.api.schemas.response.meal_responses import ServingUnitResponse
-
-
 class BarcodeProductResponse(BaseModel):
     """Response DTO for barcode product lookup."""
 
@@ -45,9 +42,8 @@ class BarcodeProductResponse(BaseModel):
     is_estimate: bool = Field(
         False, description="True when macros are AI-estimated, user should verify"
     )
-    allowed_units: list[ServingUnitResponse] = Field(
-        default_factory=list,
-        description="Food-specific serving conversion options",
+    serving_options: list[dict] = Field(
+        default_factory=list, description="Provider-specific serving choices"
     )
 
     model_config = {"from_attributes": True}

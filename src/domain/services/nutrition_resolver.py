@@ -28,7 +28,6 @@ class NutritionCandidate:
     food_id: str | None = None
     brand: str | None = None
     food_type: str | None = None
-    allowed_units: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -195,7 +194,6 @@ def validate_reference_candidate(
         source=source,
         calories_per_100g=result.calories_100g,
         food_id=str(data["food_id"]) if data.get("food_id") is not None else None,
-        allowed_units=list(result.serving_options),
     )
 
 
