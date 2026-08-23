@@ -676,21 +676,40 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogMovementCommand,
         LogMovementCommandHandler(
-            uow=AsyncUnitOfWork(), cache_invalidation=cache_invalidation_service
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     event_bus.register_handler(
         DeleteMovementEntryCommand,
         DeleteMovementEntryCommandHandler(
-            uow=AsyncUnitOfWork(), cache_invalidation=cache_invalidation_service
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     event_bus.register_handler(
         UpdateMovementEntryCommand,
         UpdateMovementEntryCommandHandler(
-            uow=AsyncUnitOfWork(), cache_invalidation=cache_invalidation_service
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
+
 
     event_bus.register_handler(GetMealsByDateQuery, GetMealsByDateQueryHandler())
 
@@ -797,8 +816,13 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveUserOnboardingCommand,
         SaveUserOnboardingCommandHandler(
-            cache_service=cache_service,
-            cache_invalidation=cache_invalidation_service,
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     event_bus.register_handler(
@@ -812,8 +836,13 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         CompleteOnboardingCommand,
         CompleteOnboardingCommandHandler(
-            cache_service=cache_service,
-            cache_invalidation=cache_invalidation_service,
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     event_bus.register_handler(
@@ -826,8 +855,12 @@ def get_configured_event_bus() -> EventBus:
         UpdateUserMetricsCommand,
         UpdateUserMetricsCommandHandler(
             uow=AsyncUnitOfWork(),
-            cache_service=cache_service,
-            cache_invalidation=cache_invalidation_service,
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
         ),
     )
     precompute_service = get_daily_context_precompute_service()
@@ -845,8 +878,17 @@ def get_configured_event_bus() -> EventBus:
     )
     event_bus.register_handler(
         UpdateCustomMacrosCommand,
-        UpdateCustomMacrosCommandHandler(cache_invalidation=cache_invalidation_service),
+        UpdateCustomMacrosCommandHandler(
+            uow=AsyncUnitOfWork(),
+            environment=settings.ENVIRONMENT,
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
+        ),
     )
+
     event_bus.register_handler(
         GetUserProfileQuery,
         GetUserProfileQueryHandler(cache_service=cache_service),
@@ -883,15 +925,15 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UpdateNotificationPreferencesCommand,
         UpdateNotificationPreferencesCommandHandler(
-            cache_service=cache_service,
             precompute_service=precompute_service,
             task_manager=task_manager,
         ),
     )
     event_bus.register_handler(
         GetNotificationPreferencesQuery,
-        GetNotificationPreferencesQueryHandler(cache_service=cache_service),
+        GetNotificationPreferencesQueryHandler(),
     )
+
 
     # Register ingredient recognition handler
     event_bus.register_handler(
@@ -905,13 +947,29 @@ def get_configured_event_bus() -> EventBus:
     # Register cheat day handlers
     event_bus.register_handler(
         MarkCheatDayCommand,
-        MarkCheatDayCommandHandler(cache_invalidation=cache_invalidation_service),
+        MarkCheatDayCommandHandler(
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
+            environment=settings.ENVIRONMENT,
+        ),
     )
     event_bus.register_handler(
         UnmarkCheatDayCommand,
-        UnmarkCheatDayCommandHandler(cache_invalidation=cache_invalidation_service),
+        UnmarkCheatDayCommandHandler(
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
+            environment=settings.ENVIRONMENT,
+        ),
     )
     event_bus.register_handler(GetCheatDaysQuery, GetCheatDaysQueryHandler())
+
+
 
     # Register weight entry handlers
     event_bus.register_handler(AddWeightEntryCommand, AddWeightEntryCommandHandler())
@@ -1004,19 +1062,31 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveSuggestionCommand,
         SaveSuggestionCommandHandler(
-            uow=AsyncUnitOfWork(), cache_invalidation=cache_invalidation_service
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
+            environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(
         DeleteSavedSuggestionCommand,
         DeleteSavedSuggestionCommandHandler(
-            cache_invalidation=cache_invalidation_service
+            event_publisher=(
+                CloudflareQueuePublisher.from_settings()
+                if settings.CLOUDFLARE_QUEUE_ENABLED
+                else None
+            ),
+            environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(
         GetSavedSuggestionsQuery,
         GetSavedSuggestionsQueryHandler(cache_service=cache_service),
     )
+
+
 
     _configured_event_bus = event_bus
     return _configured_event_bus

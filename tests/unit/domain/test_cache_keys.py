@@ -1,10 +1,12 @@
 """Tests for new CacheKeys static methods."""
 
 from datetime import date
+
 from src.domain.cache.cache_keys import CacheKeys
 
 
 class TestCacheKeysNewMethods:
+
     def test_user_streak_key_format(self):
         key, ttl = CacheKeys.user_streak("user-123")
         assert key == "user:streak:user-123"
@@ -27,10 +29,6 @@ class TestCacheKeysNewMethods:
         assert key == "user:user-123:saved_suggestions"
         assert ttl == CacheKeys.TTL_1_HOUR
 
-    def test_notification_prefs_key_format(self):
-        key, ttl = CacheKeys.notification_prefs("user-123")
-        assert key == "user:user-123:notification_prefs"
-        assert ttl == CacheKeys.TTL_1_DAY
 
     def test_keys_are_distinct_per_user(self):
         key_a, _ = CacheKeys.user_streak("user-a")

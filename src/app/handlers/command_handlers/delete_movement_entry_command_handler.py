@@ -1,11 +1,16 @@
-"""Command handler for deleting a movement entry."""
+import logging
 
 from src.api.exceptions import AuthorizationException, ResourceNotFoundException
 from src.app.commands.movement import DeleteMovementEntryCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.movement.movement_deleted_event import MovementDeletedEvent
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.utils.timezone_utils import get_zone_info, resolve_user_timezone_async
 from src.infra.database.uow_async import AsyncUnitOfWork
+
+logger = logging.getLogger(__name__)
 
 
 @handles(DeleteMovementEntryCommand)
@@ -13,10 +18,12 @@ class DeleteMovementEntryCommandHandler(EventHandler[DeleteMovementEntryCommand,
     def __init__(
         self,
         uow: AsyncUnitOfWork,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, cmd: DeleteMovementEntryCommand) -> dict:
         async with self.uow as uow:
@@ -37,13 +44,29 @@ class DeleteMovementEntryCommandHandler(EventHandler[DeleteMovementEntryCommand,
                 raise ResourceNotFoundException(
                     "Movement entry not found", "ENTRY_NOT_FOUND"
                 )
-            if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
-                await self.cache_invalidation.enqueue_movement_invalidation(
-                    uow.outbox, cmd.user_id, log_date
+            integration_event = MovementDeletedEvent(
+                environment=self.environment,
+                aggregate_id=cmd.entry_id,
+                data={
+                    "user_id": cmd.user_id,
+                    "log_date": log_date.isoformat(),
+                },
+            )
+
+        if self.event_publisher is not None:
+            try:
+                await self.event_publisher.publish(integration_event.to_payload())
+                logger.info(
+                    "Published movement deleted integration event event_id=%s aggregate_id=%s",
+                    integration_event.event_id,
+                    integration_event.aggregate_id,
                 )
-            elif self.cache_invalidation:
-                await self.cache_invalidation.after_movement_write(
-                    cmd.user_id, log_date
+            except Exception as exc:
+                logger.error(
+                    "Failed to publish movement deleted event event_id=%s error=%s",
+                    integration_event.event_id,
+                    exc,
                 )
 
         return {}
+

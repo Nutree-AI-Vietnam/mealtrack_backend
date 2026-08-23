@@ -91,6 +91,144 @@ def test_generic_event_rejects_invalid_event_id() -> None:
         )
 
 
+from src.app.events.movement import (
+    MovementCreatedEvent,
+    MovementDeletedEvent,
+    MovementUpdatedEvent,
+)
+from src.app.events.user import (
+    UserCustomMacrosUpdatedEvent,
+    UserOnboardingCompletedEvent,
+    UserProfileUpdatedIntegrationEvent,
+)
+
+
+def test_movement_events_serialization() -> None:
+    create_evt = MovementCreatedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="mov-1",
+        data={"user_id": "user-1", "log_date": "2026-08-23"},
+    )
+    p1 = create_evt.to_payload()
+    assert p1["event_type"] == "movement.created.v1"
+    assert p1["aggregate_type"] == "movement"
+    assert p1["aggregate_id"] == "mov-1"
+    assert p1["data"] == {"user_id": "user-1", "log_date": "2026-08-23"}
+
+    upd_evt = MovementUpdatedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="mov-1",
+        data={"user_id": "user-1", "log_date": "2026-08-23"},
+    )
+    p2 = upd_evt.to_payload()
+    assert p2["event_type"] == "movement.updated.v1"
+    assert p2["aggregate_type"] == "movement"
+
+    del_evt = MovementDeletedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="mov-1",
+        data={"user_id": "user-1", "log_date": "2026-08-23"},
+    )
+    p3 = del_evt.to_payload()
+    assert p3["event_type"] == "movement.deleted.v1"
+    assert p3["aggregate_type"] == "movement"
+
+
+def test_user_events_serialization() -> None:
+    prof_evt = UserProfileUpdatedIntegrationEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="user-1",
+        data={"user_id": "user-1"},
+    )
+    p1 = prof_evt.to_payload()
+    assert p1["event_type"] == "user.profile_updated.v1"
+    assert p1["aggregate_type"] == "user"
+    assert p1["aggregate_id"] == "user-1"
+
+    onb_evt = UserOnboardingCompletedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="user-1",
+        data={"user_id": "user-1"},
+    )
+    p2 = onb_evt.to_payload()
+    assert p2["event_type"] == "user.onboarding_completed.v1"
+    assert p2["aggregate_type"] == "user"
+
+    macro_evt = UserCustomMacrosUpdatedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="user-1",
+        data={"user_id": "user-1"},
+    )
+    p3 = macro_evt.to_payload()
+    assert p3["event_type"] == "user.custom_macros_updated.v1"
+    assert p3["aggregate_type"] == "user"
+
+
+from src.app.events.cheat_day import (
+    CheatDayMarkedEvent,
+    CheatDayUnmarkedEvent,
+)
+from src.app.events.saved_suggestion import (
+    SavedSuggestionCreatedEvent,
+    SavedSuggestionDeletedEvent,
+)
+
+
+def test_cheat_day_events_serialization() -> None:
+    marked_evt = CheatDayMarkedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="cheat-1",
+        data={"user_id": "user-1", "date": "2026-08-23"},
+    )
+    p1 = marked_evt.to_payload()
+    assert p1["event_type"] == "cheat_day.marked.v1"
+    assert p1["aggregate_type"] == "cheat_day"
+    assert p1["aggregate_id"] == "cheat-1"
+    assert p1["data"] == {"user_id": "user-1", "date": "2026-08-23"}
+
+    unmarked_evt = CheatDayUnmarkedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="cheat-1",
+        data={"user_id": "user-1", "date": "2026-08-23"},
+    )
+    p2 = unmarked_evt.to_payload()
+    assert p2["event_type"] == "cheat_day.unmarked.v1"
+    assert p2["aggregate_type"] == "cheat_day"
+    assert p2["aggregate_id"] == "cheat-1"
+
+
+def test_saved_suggestion_events_serialization() -> None:
+    created_evt = SavedSuggestionCreatedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="sug-1",
+        data={"user_id": "user-1"},
+    )
+    p1 = created_evt.to_payload()
+    assert p1["event_type"] == "saved_suggestion.created.v1"
+    assert p1["aggregate_type"] == "saved_suggestion"
+    assert p1["aggregate_id"] == "sug-1"
+    assert p1["data"] == {"user_id": "user-1"}
+
+    del_evt = SavedSuggestionDeletedEvent(
+        event_id=EVENT_ID,
+        environment="staging",
+        aggregate_id="sug-1",
+        data={"user_id": "user-1"},
+    )
+    p2 = del_evt.to_payload()
+    assert p2["event_type"] == "saved_suggestion.deleted.v1"
+    assert p2["aggregate_type"] == "saved_suggestion"
+
+
 def test_generic_event_rejects_oversized_payload() -> None:
     with pytest.raises(ValidationError, match="exceeds"):
         IntegrationEvent(
@@ -99,3 +237,5 @@ def test_generic_event_rejects_oversized_payload() -> None:
             aggregate_id="test-1",
             data={"value": "x" * 40_000},
         )
+
+

@@ -7,9 +7,12 @@ from typing import Any
 from src.api.exceptions import ValidationException
 from src.app.commands.cheat_day import MarkCheatDayCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.cheat_day.cheat_day_marked_event import CheatDayMarkedEvent
 from src.domain.model.cheat_day import CheatDay
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.utils.timezone_utils import (
     resolve_user_timezone_async,
     user_today,
@@ -25,10 +28,12 @@ class MarkCheatDayCommandHandler(EventHandler[MarkCheatDayCommand, dict[str, Any
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: MarkCheatDayCommand) -> dict[str, Any]:
         uow = self.uow or AsyncUnitOfWork()
@@ -61,14 +66,6 @@ class MarkCheatDayCommandHandler(EventHandler[MarkCheatDayCommand, dict[str, Any
                 )
 
                 await uow.cheat_days.add(cheat_day)
-                if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
-                    import inspect
-
-                    res = self.cache_invalidation.enqueue_cheat_day_invalidation(
-                        uow.outbox, command.user_id, target_date
-                    )
-                    if inspect.isawaitable(res):
-                        await res
                 await uow.commit()
 
                 result = {
@@ -83,13 +80,29 @@ class MarkCheatDayCommandHandler(EventHandler[MarkCheatDayCommand, dict[str, Any
                 await uow.rollback()
                 raise
 
-        if self.cache_invalidation and getattr(uow, "outbox", None) is None:
-            import inspect
-
-            res = self.cache_invalidation.after_cheat_day_write(
-                command.user_id, target_date
+        if self.event_publisher is not None:
+            event = CheatDayMarkedEvent(
+                environment=self.environment,
+                aggregate_id=cheat_day.cheat_day_id,
+                data={
+                    "user_id": command.user_id,
+                    "date": target_date.isoformat(),
+                },
             )
-            if inspect.isawaitable(res):
-                await res
+            try:
+                await self.event_publisher.publish(event.to_payload())
+                logger.info(
+                    "Published cheat day marked event event_id=%s user_id=%s date=%s",
+                    event.event_id,
+                    command.user_id,
+                    target_date.isoformat(),
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to publish cheat day marked event event_id=%s error=%s",
+                    event.event_id,
+                    exc,
+                )
 
         return result
+

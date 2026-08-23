@@ -37,11 +37,11 @@ class TrackingUnitOfWork:
 
 
 @pytest.mark.asyncio
-async def test_mark_cheat_day_publishes_invalidation_after_commit_and_uow_exit():
+async def test_mark_cheat_day_publishes_event_after_commit_and_uow_exit():
     events: list[str] = []
     uow = TrackingUnitOfWork(events)
-    cache_invalidation = SimpleNamespace(
-        after_cheat_day_write=AsyncMock(side_effect=lambda *_: events.append("cache"))
+    publisher = SimpleNamespace(
+        publish=AsyncMock(side_effect=lambda *_: events.append("publish"))
     )
     target_date = date(2026, 8, 23)
 
@@ -55,24 +55,34 @@ async def test_mark_cheat_day_publishes_invalidation_after_commit_and_uow_exit()
             return_value=date(2026, 8, 22),
         ),
     ):
-        await MarkCheatDayCommandHandler(uow, cache_invalidation).handle(
-            MarkCheatDayCommand(user_id="u1", date=target_date)
-        )
+        await MarkCheatDayCommandHandler(
+            uow=uow, event_publisher=publisher, environment="test"
+        ).handle(MarkCheatDayCommand(user_id="u1", date=target_date))
 
-    assert events == ["commit", "uow_exit", "cache"]
+    assert events == ["commit", "uow_exit", "publish"]
+    publisher.publish.assert_awaited_once()
+    payload = publisher.publish.await_args.args[0]
+    assert payload["event_type"] == "cheat_day.marked.v1"
+    assert payload["data"] == {"user_id": "u1", "date": "2026-08-23"}
 
 
 @pytest.mark.asyncio
-async def test_unmark_cheat_day_publishes_invalidation_after_commit_and_uow_exit():
+async def test_unmark_cheat_day_publishes_event_after_commit_and_uow_exit():
     events: list[str] = []
     uow = TrackingUnitOfWork(events, existing=SimpleNamespace(cheat_day_id="cheat-1"))
-    cache_invalidation = SimpleNamespace(
-        after_cheat_day_write=AsyncMock(side_effect=lambda *_: events.append("cache"))
+    publisher = SimpleNamespace(
+        publish=AsyncMock(side_effect=lambda *_: events.append("publish"))
     )
     target_date = date(2026, 8, 22)
 
-    await UnmarkCheatDayCommandHandler(uow, cache_invalidation).handle(
-        UnmarkCheatDayCommand(user_id="u1", date=target_date)
-    )
+    await UnmarkCheatDayCommandHandler(
+        uow=uow, event_publisher=publisher, environment="test"
+    ).handle(UnmarkCheatDayCommand(user_id="u1", date=target_date))
 
-    assert events == ["commit", "uow_exit", "cache"]
+    assert events == ["commit", "uow_exit", "publish"]
+    publisher.publish.assert_awaited_once()
+    payload = publisher.publish.await_args.args[0]
+    assert payload["event_type"] == "cheat_day.unmarked.v1"
+    assert payload["aggregate_id"] == "cheat-1"
+    assert payload["data"] == {"user_id": "u1", "date": "2026-08-22"}
+

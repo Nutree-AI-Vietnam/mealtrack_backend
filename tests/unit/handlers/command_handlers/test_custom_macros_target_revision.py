@@ -27,13 +27,13 @@ async def test_custom_macro_reset_increments_revision_once():
         custom_fat_g=60.0,
         profile_target_revision=1,
     )
-    invalidation = MagicMock(after_profile_write=AsyncMock())
+    publisher = MagicMock(publish=AsyncMock())
 
     with patch(
         "src.app.handlers.command_handlers.update_custom_macros_command_handler.AsyncUnitOfWork",
         return_value=_uow_for(profile),
     ):
-        await UpdateCustomMacrosCommandHandler(invalidation).handle(
+        await UpdateCustomMacrosCommandHandler(event_publisher=publisher).handle(
             UpdateCustomMacrosCommand(user_id="u1")
         )
 
@@ -43,7 +43,7 @@ async def test_custom_macro_reset_increments_revision_once():
         None,
     )
     assert profile.profile_target_revision == 2
-    invalidation.after_profile_write.assert_awaited_once_with("u1")
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -64,3 +64,4 @@ async def test_identical_custom_macro_reset_is_a_revision_noop():
         )
 
     assert profile.profile_target_revision == 1
+

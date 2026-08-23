@@ -997,8 +997,9 @@ def event_bus(
 
     # Register user handlers
     # Note: Handlers now use UnitOfWork internally instead of receiving db in constructor
-    save_user_handler = SaveUserOnboardingCommandHandler(cache_service=None)
+    save_user_handler = SaveUserOnboardingCommandHandler(uow=test_uow)
     event_bus.register_handler(SaveUserOnboardingCommand, save_user_handler)
+
 
     # GetUserProfileQueryHandler resolves dependencies through the async UoW.
     event_bus.register_handler(GetUserProfileQuery, GetUserProfileQueryHandler())

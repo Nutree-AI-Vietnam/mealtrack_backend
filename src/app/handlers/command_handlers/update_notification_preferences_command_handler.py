@@ -4,14 +4,12 @@ Handler for updating notification preferences.
 
 import inspect
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.app.commands.notification import UpdateNotificationPreferencesCommand
 from src.app.events.base import EventHandler, handles
 from src.app.services.background_job_scheduler import schedule_background_job
-from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.notification import NotificationPreferences
-from src.domain.ports.cache_port import CachePort
 from src.infra.database.uow_async import AsyncUnitOfWork
 from src.infra.services.daily_context_precompute_service import (
     DailyContextPrecomputeService,
@@ -22,17 +20,15 @@ logger = logging.getLogger(__name__)
 
 @handles(UpdateNotificationPreferencesCommand)
 class UpdateNotificationPreferencesCommandHandler(
-    EventHandler[UpdateNotificationPreferencesCommand, Dict[str, Any]]
+    EventHandler[UpdateNotificationPreferencesCommand, dict[str, Any]]
 ):
     """Handler for updating notification preferences."""
 
     def __init__(
         self,
-        cache_service: Optional[CachePort] = None,
-        precompute_service: Optional[DailyContextPrecomputeService] = None,
+        precompute_service: DailyContextPrecomputeService | None = None,
         task_manager: Any | None = None,
     ):
-        self.cache_service = cache_service
         self.precompute_service = precompute_service
         self.task_manager = task_manager
 
@@ -43,7 +39,7 @@ class UpdateNotificationPreferencesCommandHandler(
 
     async def handle(
         self, command: UpdateNotificationPreferencesCommand
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Handle notification preferences update."""
         try:
             async with AsyncUnitOfWork() as uow:
@@ -101,14 +97,10 @@ class UpdateNotificationPreferencesCommandHandler(
         except Exception as e:
             raise e
 
-        # Invalidate cache
-        if self.cache_service:
-            cache_key, _ = CacheKeys.notification_prefs(command.user_id)
-            await self.cache_service.invalidate(cache_key)
-
         self._schedule_notification_reschedule(command.user_id, "preferences")
 
         return result
+
 
     def _schedule_notification_reschedule(self, user_id: str, reason: str) -> None:
         if self.precompute_service is None:

@@ -5,7 +5,13 @@ import logging
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user.update_custom_macros_command import UpdateCustomMacrosCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.user.user_custom_macros_updated_event import (
+    UserCustomMacrosUpdatedEvent,
+)
+from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -16,11 +22,19 @@ logger = logging.getLogger(__name__)
 class UpdateCustomMacrosCommandHandler(EventHandler[UpdateCustomMacrosCommand, None]):
     """Set or clear custom macro overrides on user profile."""
 
-    def __init__(self, cache_invalidation: CacheInvalidationService | None = None):
-        self.cache_invalidation = cache_invalidation
+    def __init__(
+        self,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
+    ):
+        self.uow = uow
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: UpdateCustomMacrosCommand) -> None:
-        async with AsyncUnitOfWork() as uow:
+        uow = self.uow or AsyncUnitOfWork()
+        async with uow:
             from sqlalchemy import select
 
             result = await uow.session.execute(
@@ -60,19 +74,23 @@ class UpdateCustomMacrosCommandHandler(EventHandler[UpdateCustomMacrosCommand, N
             action = "cleared" if non_null_count == 0 else "set"
             logger.info(f"Custom macros {action} for user {command.user_id}")
 
-            from unittest.mock import Mock
-
-            if (
-                isinstance(self.cache_invalidation, CacheInvalidationService)
-                and getattr(uow, "outbox", None) is not None
-                and not isinstance(getattr(uow, "outbox", None), Mock)
-            ):
-                await self.cache_invalidation.enqueue_profile_invalidation(
-                    uow.outbox, command.user_id
+        if self.event_publisher is not None:
+            try:
+                event = UserCustomMacrosUpdatedEvent(
+                    environment=self.environment,
+                    aggregate_id=str(command.user_id),
+                    data={"user_id": str(command.user_id)},
                 )
-            elif self.cache_invalidation:
-                import inspect
+                await self.event_publisher.publish(event.to_payload())
+                logger.info(
+                    "Published custom macros updated integration event event_id=%s aggregate_id=%s",
+                    event.event_id,
+                    event.aggregate_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to publish custom macros updated event user_id=%s error=%s",
+                    command.user_id,
+                    exc,
+                )
 
-                res = self.cache_invalidation.after_profile_write(command.user_id)
-                if inspect.isawaitable(res):
-                    await res

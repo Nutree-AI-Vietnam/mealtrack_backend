@@ -36,25 +36,35 @@ def _uow(profile):
 
 
 def _command(user_id, **overrides):
-    values = dict(age=30, gender="male", height_cm=175.0, weight_kg=70.0,
-                  job_type="desk", training_days_per_week=3,
-                  training_minutes_per_session=45, fitness_goal="recomp",
-                  training_level="beginner", dietary_preferences=[])
+    values = {
+        "age": 30,
+        "gender": "male",
+        "height_cm": 175.0,
+        "weight_kg": 70.0,
+        "job_type": "desk",
+        "training_days_per_week": 3,
+        "training_minutes_per_session": 45,
+        "fitness_goal": "recomp",
+        "training_level": "beginner",
+        "dietary_preferences": [],
+    }
     values.update(overrides)
     return SaveUserOnboardingCommand(user_id=user_id, **values)
 
 
+
 @pytest.mark.asyncio
-async def test_onboarding_target_change_increments_revision_and_cache_failure_is_non_fatal():
+async def test_onboarding_target_change_increments_revision_and_publishes_event():
     user_id = str(uuid4())
     profile = _profile()
-    cache = MagicMock(invalidate=AsyncMock(side_effect=RuntimeError("redis unavailable")))
+    publisher = MagicMock(publish=AsyncMock())
 
-    await SaveUserOnboardingCommandHandler(_uow(profile), cache).handle(
-        _command(user_id, weight_kg=71.0)
-    )
+    await SaveUserOnboardingCommandHandler(
+        _uow(profile), event_publisher=publisher
+    ).handle(_command(user_id, weight_kg=71.0))
 
     assert profile.profile_target_revision == 2
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -65,3 +75,4 @@ async def test_identical_onboarding_target_values_do_not_increment_revision():
     await SaveUserOnboardingCommandHandler(_uow(profile)).handle(_command(user_id))
 
     assert profile.profile_target_revision == 1
+

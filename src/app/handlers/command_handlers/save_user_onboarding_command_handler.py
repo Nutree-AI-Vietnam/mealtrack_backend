@@ -9,10 +9,14 @@ from uuid import UUID
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user import SaveUserOnboardingCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.user.user_profile_updated_integration_event import (
+    UserProfileUpdatedIntegrationEvent,
+)
 from src.domain.model.user import UserProfileDomainModel
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.ports.cache_port import CachePort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -26,13 +30,13 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort | None = None,
-        cache_service: CachePort | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation or CacheInvalidationService(
-            cache_service
-        )
+        self.event_publisher = event_publisher
+        self.environment = environment
+
 
     async def handle(self, command: SaveUserOnboardingCommand) -> None:
         """Save user onboarding data."""
@@ -176,14 +180,29 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
 
                 # Save profile
                 await uow.users.update_profile(profile)
-                if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
-                    await self.cache_invalidation.enqueue_profile_invalidation(
-                        uow.outbox, command.user_id
-                    )
-                elif self.cache_invalidation:
-                    await self.cache_invalidation.after_profile_write(command.user_id)
                 await uow.commit()
 
             except Exception:
                 await uow.rollback()
                 raise
+
+        if self.event_publisher is not None:
+            try:
+                event = UserProfileUpdatedIntegrationEvent(
+                    environment=self.environment,
+                    aggregate_id=str(command.user_id),
+                    data={"user_id": str(command.user_id)},
+                )
+                await self.event_publisher.publish(event.to_payload())
+                logger.info(
+                    "Published user profile updated integration event event_id=%s aggregate_id=%s",
+                    event.event_id,
+                    event.aggregate_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to publish user profile updated event user_id=%s error=%s",
+                    command.user_id,
+                    exc,
+                )
+
