@@ -37,8 +37,13 @@ class DeleteMovementEntryCommandHandler(EventHandler[DeleteMovementEntryCommand,
                 raise ResourceNotFoundException(
                     "Movement entry not found", "ENTRY_NOT_FOUND"
                 )
-
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_movement_write(cmd.user_id, log_date)
+            if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                await self.cache_invalidation.enqueue_movement_invalidation(
+                    uow.outbox, cmd.user_id, log_date
+                )
+            elif self.cache_invalidation:
+                await self.cache_invalidation.after_movement_write(
+                    cmd.user_id, log_date
+                )
 
         return {}

@@ -1,6 +1,5 @@
 """Build transactional cache invalidation events and retain legacy local jobs."""
 
-import asyncio
 import json
 import logging
 import time
@@ -12,7 +11,12 @@ from uuid import UUID, uuid4
 from src.domain.cache.cache_invalidation_operations import (
     DELETE_KEY,
     DELETE_PATTERN,
+    build_cheat_day_invalidation_operations,
+    build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
+    build_movement_invalidation_operations,
+    build_profile_invalidation_operations,
+    build_saved_suggestion_invalidation_operations,
 )
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.ports.cache_port import CachePort
@@ -42,16 +46,14 @@ class CacheInvalidationService:
         self._task_manager = task_manager
         self._queue_enabled = queue_enabled
 
-    async def enqueue_meal_invalidation(
+    async def _enqueue_invalidation_operations(
         self,
         outbox: OutboxRepositoryPort,
         user_id: str,
-        meal_date: date,
+        operations: list[dict[str, str]],
         *,
         event_id: str | None = None,
-        current_date: date | None = None,
     ) -> str | None:
-        """Persist a meal cache event in the caller's active transaction."""
         if self._cache is None or not self._queue_enabled:
             return None
 
@@ -67,17 +69,14 @@ class CacheInvalidationService:
             raise ValueError("Cache invalidation event_id must be a UUID") from exc
         if resolved_uuid.version != 4:
             raise ValueError("Cache invalidation event_id must be UUID4")
+
         payload = {
             "version": 1,
             "event_type": CACHE_INVALIDATION_EVENT_TYPE,
             "event_id": resolved_event_id,
             "user_id": user_id,
             "occurred_at": utc_now().isoformat(),
-            "operations": build_meal_invalidation_operations(
-                user_id,
-                meal_date,
-                current_date=current_date,
-            ),
+            "operations": operations,
         }
         payload_size = len(
             json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
@@ -85,14 +84,121 @@ class CacheInvalidationService:
         if payload_size > MAX_CACHE_EVENT_BYTES:
             raise ValueError("Cache invalidation event exceeds 32 KB")
 
-        await outbox.enqueue(
+        import inspect
+
+        enqueue_res = outbox.enqueue(
             CACHE_INVALIDATION_EVENT_TYPE,
             payload,
             event_id=resolved_event_id,
             aggregate_type="user",
             aggregate_id=user_id,
         )
+        if inspect.isawaitable(enqueue_res):
+            await enqueue_res
         return resolved_event_id
+
+    async def enqueue_meal_invalidation(
+        self,
+        outbox: OutboxRepositoryPort,
+        user_id: str,
+        meal_date: date,
+        *,
+        event_id: str | None = None,
+        current_date: date | None = None,
+    ) -> str | None:
+        """Persist a meal cache event in the caller's active transaction."""
+        return await self._enqueue_invalidation_operations(
+            outbox,
+            user_id,
+            build_meal_invalidation_operations(
+                user_id, meal_date, current_date=current_date
+            ),
+            event_id=event_id,
+        )
+
+    async def enqueue_hydration_invalidation(
+        self,
+        outbox: OutboxRepositoryPort,
+        user_id: str,
+        log_date: date,
+        *,
+        event_id: str | None = None,
+        current_date: date | None = None,
+    ) -> str | None:
+        """Persist a hydration cache event in the caller's active transaction."""
+        return await self._enqueue_invalidation_operations(
+            outbox,
+            user_id,
+            build_hydration_invalidation_operations(
+                user_id, log_date, current_date=current_date
+            ),
+            event_id=event_id,
+        )
+
+    async def enqueue_movement_invalidation(
+        self,
+        outbox: OutboxRepositoryPort,
+        user_id: str,
+        log_date: date,
+        *,
+        event_id: str | None = None,
+        current_date: date | None = None,
+    ) -> str | None:
+        """Persist a movement cache event in the caller's active transaction."""
+        return await self._enqueue_invalidation_operations(
+            outbox,
+            user_id,
+            build_movement_invalidation_operations(
+                user_id, log_date, current_date=current_date
+            ),
+            event_id=event_id,
+        )
+
+    async def enqueue_profile_invalidation(
+        self,
+        outbox: OutboxRepositoryPort,
+        user_id: str,
+        *,
+        event_id: str | None = None,
+    ) -> str | None:
+        """Persist a profile/targets cache event in the caller's active transaction."""
+        return await self._enqueue_invalidation_operations(
+            outbox,
+            user_id,
+            build_profile_invalidation_operations(user_id),
+            event_id=event_id,
+        )
+
+    async def enqueue_cheat_day_invalidation(
+        self,
+        outbox: OutboxRepositoryPort,
+        user_id: str,
+        cheat_day: date,
+        *,
+        event_id: str | None = None,
+    ) -> str | None:
+        """Persist a cheat day cache event in the caller's active transaction."""
+        return await self._enqueue_invalidation_operations(
+            outbox,
+            user_id,
+            build_cheat_day_invalidation_operations(user_id, cheat_day),
+            event_id=event_id,
+        )
+
+    async def enqueue_saved_suggestion_invalidation(
+        self,
+        outbox: OutboxRepositoryPort,
+        user_id: str,
+        *,
+        event_id: str | None = None,
+    ) -> str | None:
+        """Persist a saved suggestion cache event in the caller's active transaction."""
+        return await self._enqueue_invalidation_operations(
+            outbox,
+            user_id,
+            build_saved_suggestion_invalidation_operations(user_id),
+            event_id=event_id,
+        )
 
     async def _invalidate_key(self, key: str) -> None:
         if not self._cache:
@@ -131,12 +237,9 @@ class CacheInvalidationService:
                     )
 
     async def _invalidate_weekly_budget(self, user_id: str, week_start: date) -> None:
-        await asyncio.gather(
-            self._invalidate_key(CacheKeys.weekly_budget(user_id, week_start)[0]),
-            self._invalidate_pattern(
-                CacheKeys.weekly_budget_pattern(user_id, week_start)
-            ),
-            return_exceptions=True,
+        await self._invalidate_key(CacheKeys.weekly_budget(user_id, week_start)[0])
+        await self._invalidate_pattern(
+            CacheKeys.weekly_budget_pattern(user_id, week_start)
         )
 
     async def _schedule(
@@ -192,18 +295,16 @@ class CacheInvalidationService:
         )
 
     async def _run_operations(self, operations: list[dict[str, str]]) -> None:
-        tasks = []
         for operation in operations:
             if operation["op"] == DELETE_KEY:
-                tasks.append(self._invalidate_key(operation["key"]))
+                await self._invalidate_key(operation["key"])
             elif operation["op"] == DELETE_PATTERN:
-                tasks.append(self._invalidate_pattern(operation["pattern"]))
+                await self._invalidate_pattern(operation["pattern"])
             else:
                 logger.error(
                     "Unsupported cache invalidation operation: %s",
                     operation.get("op"),
                 )
-        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def after_movement_write(self, user_id: str, log_date: date) -> None:
         """Enqueue every movement-derived cache projection after SQL commit."""
@@ -223,25 +324,9 @@ class CacheInvalidationService:
         week_start: date,
         current_week_start: date,
     ) -> None:
-        tasks = [
-            self._invalidate_pattern(
-                f"user:{user_id}:activities:{log_date.isoformat()}:*"
-            ),
-            self._invalidate_key(CacheKeys.daily_macros(user_id, log_date)[0]),
-            self._invalidate_weekly_budget(user_id, week_start),
-            self._invalidate_pattern(f"user:{user_id}:nutrition_bulk:*"),
-            self._invalidate_key(CacheKeys.daily_breakdown(user_id, week_start)[0]),
-        ]
-        if week_start != current_week_start:
-            tasks.extend(
-                [
-                    self._invalidate_weekly_budget(user_id, current_week_start),
-                    self._invalidate_key(
-                        CacheKeys.daily_breakdown(user_id, current_week_start)[0]
-                    ),
-                ]
-            )
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await self._run_operations(
+            build_movement_invalidation_operations(user_id, log_date)
+        )
 
     async def schedule_after_movement_write(self, user_id: str, log_date: date) -> None:
         """Compatibility alias for callers using the former method name."""
@@ -265,30 +350,9 @@ class CacheInvalidationService:
         week_start: date,
         current_week_start: date,
     ) -> None:
-        tasks = [
-            self._invalidate_pattern(
-                f"user:{user_id}:activities:{log_date.isoformat()}:*"
-            ),
-            self._invalidate_pattern(
-                f"user:{user_id}:hydration:{log_date.isoformat()}:*"
-            ),
-            self._invalidate_key(CacheKeys.daily_macros(user_id, log_date)[0]),
-            self._invalidate_weekly_budget(user_id, week_start),
-            self._invalidate_pattern(f"user:{user_id}:nutrition_bulk:*"),
-            self._invalidate_key(CacheKeys.weekly_hydration(user_id, week_start)[0]),
-            self._invalidate_key(CacheKeys.daily_breakdown(user_id, week_start)[0]),
-            self._invalidate_key(CacheKeys.user_streak(user_id)[0]),
-        ]
-        if week_start != current_week_start:
-            tasks.extend(
-                [
-                    self._invalidate_weekly_budget(user_id, current_week_start),
-                    self._invalidate_key(
-                        CacheKeys.daily_breakdown(user_id, current_week_start)[0]
-                    ),
-                ]
-            )
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await self._run_operations(
+            build_hydration_invalidation_operations(user_id, log_date)
+        )
 
     async def after_custom_macros_update(self, user_id: str) -> None:
         """Compatibility alias for profile-derived target updates."""
@@ -302,18 +366,7 @@ class CacheInvalidationService:
         )
 
     async def _run_profile_invalidations(self, user_id: str) -> None:
-        await asyncio.gather(
-            self._invalidate_key(CacheKeys.user_tdee(user_id)[0]),
-            self._invalidate_key(CacheKeys.user_profile(user_id)[0]),
-            self._invalidate_key(CacheKeys.user_metrics(user_id)[0]),
-            self._invalidate_pattern(f"user:{user_id}:macros:*"),
-            self._invalidate_pattern(f"user:{user_id}:nutrition_bulk:*"),
-            self._invalidate_pattern(CacheKeys.weekly_budget_user_pattern(user_id)),
-            self._invalidate_pattern(f"user:{user_id}:daily_breakdown:*"),
-            self._invalidate_pattern(f"user:{user_id}:hydration:*"),
-            self._invalidate_pattern(f"user:{user_id}:activities:*"),
-            return_exceptions=True,
-        )
+        await self._run_operations(build_profile_invalidation_operations(user_id))
 
     async def after_cheat_day_write(self, user_id: str, cheat_day: date) -> None:
         """Enqueue weekly-budget maintenance after a cheat-day mutation."""
@@ -323,11 +376,15 @@ class CacheInvalidationService:
         )
 
     async def _run_cheat_day_invalidations(self, user_id: str, cheat_day: date) -> None:
-        await self._invalidate_weekly_budget(user_id, _get_week_start(cheat_day))
+        await self._run_operations(
+            build_cheat_day_invalidation_operations(user_id, cheat_day)
+        )
 
     async def after_saved_suggestion_write(self, user_id: str) -> None:
         """Enqueue saved-suggestion cache maintenance after SQL commit."""
         await self._schedule(
             f"cache:after_saved_suggestion_write:{user_id}",
-            self._invalidate_key(CacheKeys.saved_suggestions(user_id)[0]),
+            self._run_operations(
+                build_saved_suggestion_invalidation_operations(user_id)
+            ),
         )

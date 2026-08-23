@@ -38,8 +38,13 @@ class DeleteSavedSuggestionCommandHandler(
                     command.suggestion_id,
                     command.user_id,
                 )
-
-        if deleted:
-            await self.cache_invalidation.after_saved_suggestion_write(command.user_id)
+                if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                    await self.cache_invalidation.enqueue_saved_suggestion_invalidation(
+                        uow.outbox, command.user_id
+                    )
+                elif self.cache_invalidation:
+                    await self.cache_invalidation.after_saved_suggestion_write(
+                        command.user_id
+                    )
 
         return {"success": deleted}

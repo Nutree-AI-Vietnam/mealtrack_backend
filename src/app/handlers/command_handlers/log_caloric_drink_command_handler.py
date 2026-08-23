@@ -80,12 +80,19 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
                     source="hydration",
                 )
             )
-
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_hydration_write(cmd.user_id, log_date)
+            if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                await self.cache_invalidation.enqueue_hydration_invalidation(
+                    uow.outbox, cmd.user_id, log_date
+                )
+            elif self.cache_invalidation:
+                await self.cache_invalidation.after_hydration_write(
+                    cmd.user_id, log_date
+                )
 
         kcal = round(
-            Macros(protein=0.0, carbs=carbs, fat=fat, fiber=0.0, sugar=sugar).total_calories,
+            Macros(
+                protein=0.0, carbs=carbs, fat=fat, fiber=0.0, sugar=sugar
+            ).total_calories,
             1,
         )
         return {

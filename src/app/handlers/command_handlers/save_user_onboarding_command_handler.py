@@ -176,10 +176,14 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
 
                 # Save profile
                 await uow.users.update_profile(profile)
+                if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                    await self.cache_invalidation.enqueue_profile_invalidation(
+                        uow.outbox, command.user_id
+                    )
+                elif self.cache_invalidation:
+                    await self.cache_invalidation.after_profile_write(command.user_id)
                 await uow.commit()
 
             except Exception:
                 await uow.rollback()
                 raise
-
-        await self.cache_invalidation.after_profile_write(command.user_id)

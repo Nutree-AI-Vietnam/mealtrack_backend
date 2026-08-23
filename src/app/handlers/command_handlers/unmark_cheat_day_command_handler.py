@@ -37,6 +37,14 @@ class UnmarkCheatDayCommandHandler(EventHandler[UnmarkCheatDayCommand, dict[str,
                     )
 
                 await uow.cheat_days.delete(existing.cheat_day_id)
+                if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                    import inspect
+
+                    res = self.cache_invalidation.enqueue_cheat_day_invalidation(
+                        uow.outbox, command.user_id, command.date
+                    )
+                    if inspect.isawaitable(res):
+                        await res
                 await uow.commit()
 
                 result = {
@@ -50,8 +58,13 @@ class UnmarkCheatDayCommandHandler(EventHandler[UnmarkCheatDayCommand, dict[str,
                 await uow.rollback()
                 raise
 
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_cheat_day_write(
+        if self.cache_invalidation and getattr(uow, "outbox", None) is None:
+            import inspect
+
+            res = self.cache_invalidation.after_cheat_day_write(
                 command.user_id, command.date
             )
+            if inspect.isawaitable(res):
+                await res
+
         return result

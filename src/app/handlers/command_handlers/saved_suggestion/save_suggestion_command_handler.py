@@ -46,7 +46,13 @@ class SaveSuggestionCommandHandler(EventHandler[SaveSuggestionCommand, dict[str,
             logger.info(
                 f"Saved suggestion {command.suggestion_id} for user {command.user_id}"
             )
-
-        await self.cache_invalidation.after_saved_suggestion_write(command.user_id)
+            if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                await self.cache_invalidation.enqueue_saved_suggestion_invalidation(
+                    uow.outbox, command.user_id
+                )
+            elif self.cache_invalidation:
+                await self.cache_invalidation.after_saved_suggestion_write(
+                    command.user_id
+                )
 
         return result

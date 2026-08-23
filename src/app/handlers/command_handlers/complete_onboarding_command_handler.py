@@ -57,12 +57,12 @@ class CompleteOnboardingCommandHandler(
             user.last_accessed = utc_now()
 
             await uow.users.save(user)
-            # UoW auto-commits on exit
-
-            user_id = user.id
-
-        # The UoW must be fully closed before cache maintenance is published.
-        await self.cache_invalidation.after_profile_write(str(user_id))
+            if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                await self.cache_invalidation.enqueue_profile_invalidation(
+                    uow.outbox, str(user.id)
+                )
+            elif self.cache_invalidation:
+                await self.cache_invalidation.after_profile_write(str(user.id))
 
         return {
             "firebase_uid": command.firebase_uid,

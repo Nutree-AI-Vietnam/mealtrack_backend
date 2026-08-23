@@ -116,11 +116,14 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                     legacy_meal_id=saved.meal_id,
                 )
             )
-
-        # SQL has committed when the UoW exits; cache projection maintenance is
-        # queued and is not part of the response critical path.
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_hydration_write(cmd.user_id, log_date)
+            if self.cache_invalidation and getattr(uow, "outbox", None) is not None:
+                await self.cache_invalidation.enqueue_hydration_invalidation(
+                    uow.outbox, cmd.user_id, log_date
+                )
+            elif self.cache_invalidation:
+                await self.cache_invalidation.after_hydration_write(
+                    cmd.user_id, log_date
+                )
 
         kcal = round(saved.nutrition.calories if saved.nutrition else 0.0, 1)
         return {
