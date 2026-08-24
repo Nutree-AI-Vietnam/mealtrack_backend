@@ -22,7 +22,6 @@ from src.app.commands.meal.create_manual_meal_command import (
 from src.app.handlers.command_handlers.create_manual_meal_command_handler import (
     CreateManualMealCommandHandler,
 )
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 
 # ---------------------------------------------------------------------------
 # Minimal fakes (no mocking framework dependency for simple objects)
@@ -144,16 +143,13 @@ async def test_handler_timing_logs_do_not_wait_for_redis(caplog):
     async def slow_invalidate_pattern(pattern):
         await asyncio.sleep(DELAY_S)
 
-    slow_cache.invalidate = slow_invalidate
-    slow_cache.invalidate_pattern = slow_invalidate_pattern
-
-    tasks = _FakeTaskManager()
-    cache_svc = CacheInvalidationService(cache=slow_cache, task_manager=tasks)
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
     fake_meal = _make_meal()
     uow = _FakeUow(fake_meal)
     handler = CreateManualMealCommandHandler(
         uow=uow,
-        cache_invalidation=cache_svc,
+        event_publisher=publisher,
     )
 
     cmd = _make_command()
@@ -407,21 +403,16 @@ async def test_v2_item_missing_identity_is_rejected_with_validation_error():
 
 # ---------------------------------------------------------------------------
 # Test B: fast (no-op) cache emits timing log without bloating elapsed time
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_handler_timing_logs_fast_cache(caplog):
-    """Fast (no-op) cache completes quickly and still emits a timing log."""
-    fast_cache = MagicMock()
-    fast_cache.invalidate = AsyncMock()
-    fast_cache.invalidate_pattern = AsyncMock()
-    cache_svc = CacheInvalidationService(cache=fast_cache)
+async def test_handler_timing_logs(caplog):
+    """Handler completes and emits a timing log."""
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     fake_meal = _make_meal()
     handler = CreateManualMealCommandHandler(
         uow=_FakeUow(fake_meal),
-        cache_invalidation=cache_svc,
+        event_publisher=publisher,
     )
 
     cmd = _make_command(user_id=_UUID_2)
@@ -437,31 +428,4 @@ async def test_handler_timing_logs_fast_cache(caplog):
     )
 
     assert result is fake_meal
-
-
-# ---------------------------------------------------------------------------
-# Test C: cache_invalidation_service emits per-family timing log
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_cache_invalidation_service_emits_timing_log(caplog):
-    """after_meal_write emits a cache-job enqueue timing log."""
-    fast_cache = MagicMock()
-    fast_cache.invalidate = AsyncMock()
-    fast_cache.invalidate_pattern = AsyncMock()
-    svc = CacheInvalidationService(cache=fast_cache)
-
-    with caplog.at_level(logging.INFO):
-        await svc.after_meal_write(
-            "550e8400-e29b-41d4-a716-446655440003", date(2026, 6, 10)
-        )
-
-    timing_logs = [
-        r.message for r in caplog.records if "cache_invalidation timing" in r.message
-    ]
-    assert timing_logs, (
-        "No 'cache_invalidation timing' log found in CacheInvalidationService."
-    )
-    assert "enqueue_ms" in timing_logs[0]
-    assert "total_ms" in timing_logs[0]
+    assert publisher.publish.called

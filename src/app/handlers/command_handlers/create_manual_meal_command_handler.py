@@ -11,12 +11,15 @@ from uuid import uuid4
 from src.api.exceptions import ConflictException, ValidationException
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.events.base import EventHandler
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.meal.meal_events import MealCreatedEvent
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
 from src.domain.services.nutrition_calculation_service import (
@@ -36,7 +39,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
         meal_repository: MealRepositoryPort | None = None,
         nutrition_service: NutritionCalculationService | None = None,
         nutrition_resolver: ManualMealNutritionResolver | None = None,
@@ -44,9 +47,11 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         provider_budget: ProviderBudgetPort | None = None,
         provider_rpm: int | None = None,
         uow_factory=None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
         self.meal_repository = meal_repository
         self.uow_factory = uow_factory
         self.nutrition_service = nutrition_service or NutritionCalculationService()
@@ -94,12 +99,20 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                         if reservation:
                             await uow.meal_write_operations.release(reservation)
                         raise
-                if cache_event_needed and self.cache_invalidation:
-                    await self.cache_invalidation.enqueue_meal_invalidation(
-                        uow.outbox,
-                        event.user_id,
-                        meal_date,
-                    )
+                if cache_event_needed and self.event_publisher is not None:
+                    try:
+                        event = MealCreatedEvent(
+                            environment=self.environment,
+                            aggregate_id=saved_meal.meal_id,
+                            data={
+                                "user_id": event.user_id,
+                                "meal_id": saved_meal.meal_id,
+                                "meal_date": meal_date.isoformat(),
+                            },
+                        )
+                        await self.event_publisher.publish(event.to_payload())
+                    except Exception as exc:
+                        logger.error("Failed to publish meal created event: %s", exc)
             _db_ms = (time.perf_counter() - _t_db_start) * 1000
 
             # Queue publication is asynchronous; the outbox row committed above.
@@ -194,12 +207,20 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                     target_meal_id=saved_meal.meal_id,
                     response={"meal_id": saved_meal.meal_id},
                 )
-                if self.cache_invalidation:
-                    await self.cache_invalidation.enqueue_meal_invalidation(
-                        uow.outbox,
-                        event.user_id,
-                        meal_date,
-                    )
+                if self.event_publisher is not None:
+                    try:
+                        event_payload = MealCreatedEvent(
+                            environment=self.environment,
+                            aggregate_id=saved_meal.meal_id,
+                            data={
+                                "user_id": event.user_id,
+                                "meal_id": saved_meal.meal_id,
+                                "meal_date": meal_date.isoformat(),
+                            },
+                        )
+                        await self.event_publisher.publish(event_payload.to_payload())
+                    except Exception as exc:
+                        logger.error("Failed to publish meal created event: %s", exc)
 
             return saved_meal
         except ValueError as exc:
@@ -323,12 +344,6 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         )
 
         if uow is None:
-            if self.cache_invalidation is not None:
-                raise RuntimeError(
-                    "Transactional UoW is required for durable cache invalidation"
-                )
-            # The compatibility repository path has no transactional outbox.
-            # Production wiring uses the UoW path for durable invalidation.
             return await meal_repo.save(meal)
         saved_meal = await meal_repo.save(meal)
         # The caller enqueues the event before the active UoW commits.

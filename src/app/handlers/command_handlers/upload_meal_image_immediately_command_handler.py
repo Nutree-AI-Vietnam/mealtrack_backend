@@ -10,8 +10,8 @@ from uuid import uuid4
 from src.api.exceptions import ValidationException
 from src.app.commands.meal import UploadMealImageImmediatelyCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.meal.meal_events import MealCreatedEvent
 from src.app.graphs.meal_analyze.runtime import MealAnalyzeRuntime
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 from src.app.services.meal_analyze_workflow import MealAnalyzeWorkflow
 from src.domain.exceptions.ai_exceptions import (
     AIVisionError,
@@ -29,6 +29,9 @@ from src.domain.parsers.vision_response_parser import (
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.cache_port import CachePort
 from src.domain.ports.image_store_port import ImageStorePort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.meal_analysis.fast_path_policy import MealAnalyzeFastPathPolicy
@@ -65,7 +68,8 @@ class UploadMealImageImmediatelyHandler(
         gpt_parser: GPTResponseParser = None,
         meal_translation_service: MealTranslationService | None = None,
         fast_path_policy: MealAnalyzeFastPathPolicy | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
         meal_value_insight_task_manager: Any | None = None,
         meal_value_insight_cache: CachePort | None = None,
         meal_value_insight_ai_manager: MealInsightAIPort | None = None,
@@ -74,7 +78,8 @@ class UploadMealImageImmediatelyHandler(
     ):
         self.uow = uow
         self.event_bus = event_bus
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
         self.image_store = image_store
         self.vision_service = vision_service
         self.gpt_parser = gpt_parser
@@ -366,13 +371,22 @@ class UploadMealImageImmediatelyHandler(
             meal = persist_meal_response_localization(meal, localization)
 
             saved_meal = await uow.meals.save(meal)
-            if self.cache_invalidation:
-                await self.cache_invalidation.enqueue_meal_invalidation(
-                    uow.outbox,
-                    command.user_id,
-                    meal_date,
-                )
             await uow.commit()
+
+        if self.event_publisher is not None and meal_date is not None:
+            try:
+                event = MealCreatedEvent(
+                    environment=self.environment,
+                    aggregate_id=saved_meal.meal_id,
+                    data={
+                        "user_id": command.user_id,
+                        "meal_id": saved_meal.meal_id,
+                        "meal_date": meal_date.isoformat(),
+                    },
+                )
+                await self.event_publisher.publish(event.to_payload())
+            except Exception as exc:
+                logger.error("Failed to publish meal created event: %s", exc)
 
         total_elapsed = time.time() - start
         logger.info(
@@ -409,7 +423,8 @@ class UploadMealImageImmediatelyHandler(
                     vision_service=self.vision_service,
                     gpt_parser=self.gpt_parser,
                     uow=self.uow,
-                    cache_invalidation=self.cache_invalidation,
+                    event_publisher=self.event_publisher,
+                    environment=self.environment,
                     meal_value_insight_task_manager=self.meal_value_insight_task_manager,
                     meal_value_insight_cache=self.meal_value_insight_cache,
                     meal_value_insight_ai_manager=self.meal_value_insight_ai_manager,

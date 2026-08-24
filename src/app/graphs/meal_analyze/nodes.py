@@ -7,6 +7,7 @@ from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.commands.meal.upload_meal_image_immediately_command import (
     UploadMealImageImmediatelyCommand,
 )
+from src.app.events.meal.meal_events import MealCreatedEvent
 from src.app.graphs.meal_analyze.quality_gate import (
     DEFAULT_GRAPH_VERSION,
     normalize_scan_mode,
@@ -120,7 +121,9 @@ async def _acquire_scan_by_url_image(
         source_url = command.label_crop_image_url
         source_public_id = command.label_crop_public_id or command.public_id
 
-    download_url = source_url if is_food_label else to_compressed_cloudinary_url(source_url)
+    download_url = (
+        source_url if is_food_label else to_compressed_cloudinary_url(source_url)
+    )
     raw_bytes = await runtime.download_image_bytes(download_url)
     analysis_bytes = (
         raw_bytes
@@ -421,13 +424,24 @@ async def persist_meal(
 
     async with runtime.uow as uow:
         saved_meal = await uow.meals.save(meal)
-        if runtime.cache_invalidation and runtime.meal_date:
-            await runtime.cache_invalidation.enqueue_meal_invalidation(
-                uow.outbox,
-                runtime.command.user_id,
-                runtime.meal_date,
-            )
         await uow.commit()
+
+    if runtime.event_publisher is not None and runtime.meal_date is not None:
+        try:
+            event = MealCreatedEvent(
+                environment=runtime.environment,
+                aggregate_id=saved_meal.meal_id,
+                data={
+                    "user_id": runtime.command.user_id,
+                    "meal_id": saved_meal.meal_id,
+                    "meal_date": runtime.meal_date.isoformat(),
+                },
+            )
+            await runtime.event_publisher.publish(event.to_payload())
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                "Failed to publish meal created event: %s", exc
+            )
 
     runtime.saved_meal = saved_meal
     return {

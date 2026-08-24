@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from typing import Any
 
 from sqlalchemy import text
 
@@ -15,6 +16,11 @@ from src.api.routes.v1.webhook_referral_funnel import (
     credit_referral_on_purchase,
     revoke_referral_on_refund,
 )
+from src.app.events.affiliate.affiliate_events import (
+    SubscriptionLifecycleEvent,
+)
+from src.app.services.background_job_scheduler import schedule_background_job
+from src.domain.ports.outbox_handler_port import OutboxEventContext
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.adapters.posthog_adapter import PostHogAdapter
 from src.infra.database.models.subscription import Subscription
@@ -36,7 +42,73 @@ def _get_subscription_service():
     return get_subscription_service()
 
 
-async def handle_purchase(uow, user, event):
+async def _publish_subscription_event(
+    event_publisher: Any,
+    event_type: str,
+    payload: dict,
+    event_id: str | None,
+    user_id: str,
+    environment: str = "development",
+) -> None:
+    """Publish a subscription lifecycle integration event to the queue."""
+    if event_publisher is None:
+        return
+    try:
+        event = SubscriptionLifecycleEvent(
+            environment=environment,
+            aggregate_id=str(user_id),
+            data={
+                "lifecycle_type": event_type,
+                **payload,
+            },
+        )
+        await event_publisher.publish(event.to_payload())
+    except Exception as exc:
+        logger.error("Failed to publish subscription lifecycle event: %s", exc)
+
+
+def _spawn_affiliate_event(
+    task_manager: Any,
+    affiliate_handler: Any,
+    event_type: str,
+    payload: dict,
+    event_id: str | None,
+    event_publisher: Any = None,
+    user_id: str | None = None,
+) -> None:
+    """Spawn an affiliate webhook delivery or publish to queue."""
+    if event_publisher is not None and user_id is not None:
+        import asyncio
+
+        try:
+            asyncio.create_task(
+                _publish_subscription_event(
+                    event_publisher, event_type, payload, event_id, user_id
+                )
+            )
+        except RuntimeError:
+            pass
+    if affiliate_handler is None or task_manager is None:
+        return
+    resolved_event_id = event_id or str(uuid.uuid4())
+    context = OutboxEventContext(
+        outbox_id=resolved_event_id,
+        event_id=resolved_event_id,
+        event_type=event_type,
+        retry_count=0,
+        created_at_iso=utc_now().isoformat(),
+    )
+    schedule_background_job(
+        task_manager,
+        f"affiliate:{event_type}:{resolved_event_id}",
+        affiliate_handler.handle(payload, context),
+        logger=logger,
+    )
+
+
+async def handle_purchase(
+    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+):
     """Handle initial purchase."""
     logger.info(f"Creating subscription for user {user.id}")
 
@@ -45,7 +117,9 @@ async def handle_purchase(uow, user, event):
 
     if existing:
         logger.warning(f"Subscription already exists for {user.id}, updating instead")
-        await handle_renewal(uow, user, event)
+        await handle_renewal(
+            uow, user, event, task_manager, affiliate_handler, event_publisher
+        )
         return
 
     # Create new subscription record
@@ -67,7 +141,9 @@ async def handle_purchase(uow, user, event):
 
     # Credit referrer if this user has a pending referral conversion
     await credit_referral_on_purchase(uow, str(user.id))
-    await uow.affiliate_outbox.enqueue(
+    _spawn_affiliate_event(
+        task_manager,
+        affiliate_handler,
         "subscription_initial_purchase",
         {
             "mealtrack_user_id": str(user.id),
@@ -79,11 +155,15 @@ async def handle_purchase(uow, user, event):
                 parse_timestamp(event.get("purchased_at_ms")) or utc_now()
             ).isoformat(),
         },
-        event_id=event.get("id"),
+        event.get("id"),
+        event_publisher=event_publisher,
+        user_id=str(user.id),
     )
 
 
-async def handle_renewal(uow, user, event):
+async def handle_renewal(
+    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+):
     """Handle subscription renewal."""
     subscription = await get_subscription_by_revenuecat_id(
         uow, event.get("app_user_id")
@@ -98,10 +178,15 @@ async def handle_renewal(uow, user, event):
         )
     else:
         logger.warning("Subscription not found for renewal, creating new one")
-        await handle_purchase(uow, user, event)
+        await handle_purchase(
+            uow, user, event, task_manager, affiliate_handler, event_publisher
+        )
+        return
 
     await capture_subscription_lifecycle_event(user, event, "RENEWAL", subscription)
-    await uow.affiliate_outbox.enqueue(
+    _spawn_affiliate_event(
+        task_manager,
+        affiliate_handler,
         "subscription_renewal",
         {
             "mealtrack_user_id": str(user.id),
@@ -109,14 +194,14 @@ async def handle_renewal(uow, user, event):
             "period_type": event.get("period_type"),
             "subscription_id": event.get("transaction_id")
             or event.get("original_transaction_id"),
-            "occurred_at": (
-                parse_timestamp(event.get("purchased_at_ms")) or utc_now()
-            ).isoformat(),
+            "occurred_at": utc_now().isoformat(),
         },
-        event_id=event.get("id"),
+        event.get("id"),
+        event_publisher=event_publisher,
+        user_id=str(user.id),
     )
 
-    # Purge any pending trial-expiry pushes so renewed users don't get a
+    # Purge stale trial-expiry pushes so we don't send a
     # "your trial ends tomorrow" push for a sub that just auto-renewed.
     try:
         await uow.session.execute(
@@ -135,7 +220,9 @@ async def handle_renewal(uow, user, event):
         )
 
 
-async def handle_cancellation(uow, user, event):
+async def handle_cancellation(
+    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+):
     """Handle subscription cancellation."""
     subscription = await get_or_create_subscription(uow, user, event)
 
@@ -151,7 +238,9 @@ async def handle_cancellation(uow, user, event):
     await capture_subscription_lifecycle_event(
         user, event, "CANCELLATION", subscription
     )
-    await uow.affiliate_outbox.enqueue(
+    _spawn_affiliate_event(
+        task_manager,
+        affiliate_handler,
         "subscription_canceled",
         {
             "mealtrack_user_id": str(user.id),
@@ -160,11 +249,15 @@ async def handle_cancellation(uow, user, event):
             or event.get("original_transaction_id"),
             "occurred_at": utc_now().isoformat(),
         },
-        event_id=event.get("id"),
+        event.get("id"),
+        event_publisher=event_publisher,
+        user_id=str(user.id),
     )
 
 
-async def handle_expiration(uow, user, event):
+async def handle_expiration(
+    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+):
     """Handle subscription expiration."""
     subscription = await get_or_create_subscription(uow, user, event)
 
@@ -174,7 +267,9 @@ async def handle_expiration(uow, user, event):
         logger.info(f"User {user.id} subscription expired")
 
     await capture_subscription_lifecycle_event(user, event, "EXPIRATION", subscription)
-    await uow.affiliate_outbox.enqueue(
+    _spawn_affiliate_event(
+        task_manager,
+        affiliate_handler,
         "subscription_expired",
         {
             "mealtrack_user_id": str(user.id),
@@ -183,11 +278,15 @@ async def handle_expiration(uow, user, event):
             or event.get("original_transaction_id"),
             "occurred_at": utc_now().isoformat(),
         },
-        event_id=event.get("id"),
+        event.get("id"),
+        event_publisher=event_publisher,
+        user_id=str(user.id),
     )
 
 
-async def handle_billing_issue(uow, user, event):
+async def handle_billing_issue(
+    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+):
     """Handle billing issues."""
     subscription = await get_or_create_subscription(uow, user, event)
 
@@ -201,7 +300,9 @@ async def handle_billing_issue(uow, user, event):
     )
 
 
-async def handle_product_change(uow, user, event):
+async def handle_product_change(
+    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+):
     """Handle product change (e.g., monthly to yearly)."""
     subscription = await get_or_create_subscription(uow, user, event)
 
@@ -217,7 +318,9 @@ async def handle_product_change(uow, user, event):
     )
 
 
-async def handle_refund(uow, user, event):
+async def handle_refund(
+    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+):
     """Handle refund — update subscription status and revoke referral credit."""
     subscription = await get_or_create_subscription(uow, user, event)
     if subscription:
@@ -226,7 +329,9 @@ async def handle_refund(uow, user, event):
         logger.info(f"User {user.id} subscription refunded")
 
     await capture_subscription_lifecycle_event(user, event, "REFUND", subscription)
-    await uow.affiliate_outbox.enqueue(
+    _spawn_affiliate_event(
+        task_manager,
+        affiliate_handler,
         "subscription_refund",
         {
             "mealtrack_user_id": str(user.id),
@@ -235,7 +340,9 @@ async def handle_refund(uow, user, event):
             or event.get("original_transaction_id"),
             "occurred_at": utc_now().isoformat(),
         },
-        event_id=event.get("id"),
+        event.get("id"),
+        event_publisher=event_publisher,
+        user_id=str(user.id),
     )
     await revoke_referral_on_refund(uow, str(user.id))
 

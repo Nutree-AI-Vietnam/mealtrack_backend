@@ -9,8 +9,8 @@ from uuid import UUID
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user import SaveUserOnboardingCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.user.user_profile_updated_integration_event import (
-    UserProfileUpdatedIntegrationEvent,
+from src.app.events.user.user_profile_updated_event import (
+    UserProfileUpdatedEvent,
 )
 from src.domain.model.user import UserProfileDomainModel
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -36,7 +36,6 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
         self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
-
 
     async def handle(self, command: SaveUserOnboardingCommand) -> None:
         """Save user onboarding data."""
@@ -188,7 +187,7 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
 
         if self.event_publisher is not None:
             try:
-                event = UserProfileUpdatedIntegrationEvent(
+                event = UserProfileUpdatedEvent(
                     environment=self.environment,
                     aggregate_id=str(command.user_id),
                     data={"user_id": str(command.user_id)},
@@ -205,4 +204,3 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                     command.user_id,
                     exc,
                 )
-

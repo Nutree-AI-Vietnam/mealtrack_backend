@@ -16,7 +16,7 @@ from src.app.commands.meal import EditMealCommand
 from src.app.commands.meal.create_manual_meal_command import ManualMealItem
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal import MealEditedEvent
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.meal.meal_events import MealUpdatedEvent
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
@@ -24,6 +24,9 @@ from src.domain.model.meal import FoodItemTranslation, MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition import Macros, NutritionOverride
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
@@ -44,16 +47,18 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
         nutrition_resolver: ManualMealNutritionResolver | None = None,
         provider=None,
         provider_budget: ProviderBudgetPort | None = None,
         provider_rpm: int | None = None,
         uow_factory=None,
+        environment: str = "development",
     ):
         self.uow = uow
         self.uow_factory = uow_factory
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
         self.nutrition_resolver = nutrition_resolver or ManualMealNutritionResolver(
             provider=provider,
             provider_budget=provider_budget,
@@ -207,19 +212,25 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
 
                 old_meal_date = (meal.created_at or utc_now()).date()
                 meal_date = (saved_meal.created_at or utc_now()).date()
-                if self.cache_invalidation:
-                    if old_meal_date != meal_date:
-                        await self.cache_invalidation.enqueue_meal_invalidation(
-                            uow.outbox,
-                            saved_meal.user_id,
-                            old_meal_date,
-                        )
-                    await self.cache_invalidation.enqueue_meal_invalidation(
-                        uow.outbox,
-                        saved_meal.user_id,
-                        meal_date,
-                    )
                 await uow.commit()
+
+                if self.event_publisher is not None:
+                    try:
+                        event = MealUpdatedEvent(
+                            environment=self.environment,
+                            aggregate_id=saved_meal.meal_id,
+                            data={
+                                "user_id": saved_meal.user_id,
+                                "meal_id": saved_meal.meal_id,
+                                "meal_date": meal_date.isoformat(),
+                                "old_meal_date": old_meal_date.isoformat()
+                                if old_meal_date != meal_date
+                                else None,
+                            },
+                        )
+                        await self.event_publisher.publish(event.to_payload())
+                    except Exception as exc:
+                        logger.error("Failed to publish meal updated event: %s", exc)
 
                 # 6. Calculate nutrition delta for event
                 nutrition_delta = self._calculate_nutrition_delta(
@@ -395,19 +406,25 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 )
                 old_meal_date = (meal.created_at or utc_now()).date()
                 meal_date = (saved_meal.created_at or utc_now()).date()
-                if self.cache_invalidation:
-                    if old_meal_date != meal_date:
-                        await self.cache_invalidation.enqueue_meal_invalidation(
-                            uow.outbox,
-                            saved_meal.user_id,
-                            old_meal_date,
-                        )
-                    await self.cache_invalidation.enqueue_meal_invalidation(
-                        uow.outbox,
-                        saved_meal.user_id,
-                        meal_date,
-                    )
                 await uow.commit()
+
+                if self.event_publisher is not None:
+                    try:
+                        event = MealUpdatedEvent(
+                            environment=self.environment,
+                            aggregate_id=saved_meal.meal_id,
+                            data={
+                                "user_id": saved_meal.user_id,
+                                "meal_id": saved_meal.meal_id,
+                                "meal_date": meal_date.isoformat(),
+                                "old_meal_date": old_meal_date.isoformat()
+                                if old_meal_date != meal_date
+                                else None,
+                            },
+                        )
+                        await self.event_publisher.publish(event.to_payload())
+                    except Exception as exc:
+                        logger.error("Failed to publish meal updated event: %s", exc)
 
             replay_response["events"] = [
                 MealEditedEvent(

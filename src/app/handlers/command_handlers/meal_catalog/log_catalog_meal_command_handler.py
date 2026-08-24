@@ -11,32 +11,34 @@ from datetime import date
 from typing import Any
 
 from src.api.exceptions import ConflictException, ResourceNotFoundException
-from src.app.commands.meal_catalog import LogCatalogMealCommand
-from src.app.events.base import EventHandler, handles
-from src.app.services.background_job_scheduler import schedule_background_job
-from src.app.services.cache_invalidation_service import CacheInvalidationService
-from src.app.services.catalog_meal_log_service import (
-    CatalogMealLogService,
+from src.app.commands.meal.meal_catalog.log_catalog_meal_command import (
+    LogCatalogMealCommand,
     LogCatalogMealResult,
 )
-from src.app.services.meal_translation_persistence import persist_meal_translation
-from src.app.services.remaining_recommendation_recalculator import (
-    RemainingRecommendationRecalculator,
+from src.app.events.base import EventHandler, handles
+from src.app.events.meal.meal_events import MealCreatedEvent
+from src.app.services.background_job_scheduler import schedule_background_job
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
 )
-from src.domain.services.meal_analysis.meal_translation_service import (
+from src.domain.services.meal_catalog.catalog_meal_log_service import (
+    CatalogMealLogService,
+)
+from src.domain.services.meal_catalog.meal_translation_service import (
     MealTranslationService,
+    persist_meal_translation,
+)
+from src.domain.services.meal_recommendation.remaining_recommendation_recalculator import (
+    RemainingRecommendationRecalculator,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def catalog_log_fingerprint(
-    catalog_meal_id: str, meal_date: date, meal_type: str
-) -> str:
+def catalog_log_fingerprint(catalog_meal_id: str, meal_date: date) -> str:
     payload = {
         "catalog_meal_id": catalog_meal_id,
         "meal_date": meal_date.isoformat(),
-        "meal_type": meal_type,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -54,7 +56,8 @@ class LogCatalogMealCommandHandler(
         *,
         log_service: CatalogMealLogService | None = None,
         meal_translation_service: MealTranslationService | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
         recalculator: RemainingRecommendationRecalculator | None = None,
         insight_scheduler=None,
         task_manager=None,
@@ -63,7 +66,8 @@ class LogCatalogMealCommandHandler(
         self.browse_service = browse_service
         self.log_service = log_service or CatalogMealLogService()
         self.meal_translation_service = meal_translation_service
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
         self.recalculator = recalculator
         self.insight_scheduler = insight_scheduler
         self.task_manager = task_manager
@@ -140,12 +144,20 @@ class LogCatalogMealCommandHandler(
                     target_meal_id=result.meal_id,
                     response=result.to_replay_payload(),
                 )
-                if self.cache_invalidation is not None:
-                    await self.cache_invalidation.enqueue_meal_invalidation(
-                        uow.outbox,
-                        command.user_id,
-                        command.meal_date,
-                    )
+                if self.event_publisher is not None:
+                    try:
+                        event = MealCreatedEvent(
+                            environment=self.environment,
+                            aggregate_id=result.meal_id,
+                            data={
+                                "user_id": command.user_id,
+                                "meal_id": result.meal_id,
+                                "meal_date": command.meal_date.isoformat(),
+                            },
+                        )
+                        await self.event_publisher.publish(event.to_payload())
+                    except Exception as exc:
+                        logger.error("Failed to publish meal created event: %s", exc)
                 return result
             except Exception:
                 await uow.meal_write_operations.release(reservation)

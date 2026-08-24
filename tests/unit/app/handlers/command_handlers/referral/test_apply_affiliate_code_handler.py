@@ -2,11 +2,14 @@
 
 MealTrack stores no attribution state — sends event to nutree-affiliate directly.
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.commands.referral.apply_referral_code_command import ApplyReferralCodeCommand
+from src.app.commands.referral.apply_referral_code_command import (
+    ApplyReferralCodeCommand,
+)
 from src.app.handlers.command_handlers.referral.apply_referral_code_handler import (
     ApplyReferralCodeCommandHandler,
 )
@@ -15,7 +18,10 @@ from src.domain.ports.affiliate_service_port import AffiliateCodeValidationResul
 MODULE = "src.app.handlers.command_handlers.referral.apply_referral_code_handler"
 
 CMD = ApplyReferralCodeCommand(
-    user_id="user-1", code="AFFCODE1", discount_applied=199000, currency="VND",
+    user_id="user-1",
+    code="AFFCODE1",
+    discount_applied=199000,
+    currency="VND",
 )
 
 
@@ -73,12 +79,17 @@ async def test_referral_already_referred_raises():
 
 @pytest.mark.asyncio
 async def test_affiliate_path_enqueues_attribution_no_local_state():
-    """Affiliate apply enqueues attribution to outbox; nothing stored in MealTrack."""
+    """Affiliate apply dispatches attribution via event_publisher; nothing stored in MealTrack."""
     mock_uow = _make_uow()
     aff_result = AffiliateCodeValidationResult(
-        active=True, affiliate_id="aff-1", code_id="code-1",
-        display_name="Alex", partner_type="pt",
+        active=True,
+        affiliate_id="aff-1",
+        code_id="code-1",
+        display_name="Alex",
+        partner_type="pt",
     )
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     with (
         patch.dict("os.environ", {"AFFILIATE_INTEGRATION_ENABLED": "true"}),
@@ -86,27 +97,29 @@ async def test_affiliate_path_enqueues_attribution_no_local_state():
         patch(f"{MODULE}.AffiliateServiceAdapter") as mock_svc_cls,
     ):
         mock_svc_cls.return_value.validate_code = AsyncMock(return_value=aff_result)
-        await ApplyReferralCodeCommandHandler().handle(CMD)
+        handler = ApplyReferralCodeCommandHandler(event_publisher=publisher)
+        await handler.handle(CMD)
 
-    mock_uow.affiliate_outbox.enqueue.assert_awaited_once()
-    call = mock_uow.affiliate_outbox.enqueue.call_args
-    assert call[0][0] == "affiliate_attribution_created"
-    payload = call[0][1]
-    assert payload["mealtrack_user_id"] == "user-1"
-    assert payload["affiliate_id"] == "aff-1"
-    assert payload["affiliate_code"] == "AFFCODE1"
-    assert call[1]["event_id"] == "attribution_user-1_AFFCODE1"
+    publisher.publish.assert_called_once()
+    payload = publisher.publish.call_args[0][0]
+    assert payload["event_type"] == "affiliate.attribution_created.v1"
+    assert payload["data"]["affiliate_id"] == "aff-1"
+    assert payload["data"]["affiliate_code"] == "AFFCODE1"
 
 
 @pytest.mark.asyncio
 async def test_affiliate_duplicate_attribution_does_not_raise():
-    """Outbox returning None (duplicate event_id) is silently ignored."""
+    """Publisher failure is non-fatal."""
     mock_uow = _make_uow()
-    mock_uow.affiliate_outbox.enqueue = AsyncMock(return_value=None)
     aff_result = AffiliateCodeValidationResult(
-        active=True, affiliate_id="aff-1", code_id="code-1",
-        display_name="Alex", partner_type="pt",
+        active=True,
+        affiliate_id="aff-1",
+        code_id="code-1",
+        display_name="Alex",
+        partner_type="pt",
     )
+    publisher = MagicMock()
+    publisher.publish = AsyncMock(side_effect=RuntimeError("queue error"))
 
     with (
         patch.dict("os.environ", {"AFFILIATE_INTEGRATION_ENABLED": "true"}),
@@ -114,7 +127,8 @@ async def test_affiliate_duplicate_attribution_does_not_raise():
         patch(f"{MODULE}.AffiliateServiceAdapter") as mock_svc_cls,
     ):
         mock_svc_cls.return_value.validate_code = AsyncMock(return_value=aff_result)
-        await ApplyReferralCodeCommandHandler().handle(CMD)  # must not raise
+        handler = ApplyReferralCodeCommandHandler(event_publisher=publisher)
+        await handler.handle(CMD)  # must not raise
 
 
 @pytest.mark.asyncio
@@ -133,6 +147,8 @@ async def test_invalid_code_with_integration_disabled_raises():
 async def test_affiliate_api_inactive_raises_invalid_code():
     """Affiliate validate returns active=False → invalid_code, no event sent."""
     mock_uow = _make_uow()
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     with (
         patch.dict("os.environ", {"AFFILIATE_INTEGRATION_ENABLED": "true"}),
@@ -143,6 +159,7 @@ async def test_affiliate_api_inactive_raises_invalid_code():
             return_value=AffiliateCodeValidationResult(active=False)
         )
         with pytest.raises(ValueError, match="invalid_code"):
-            await ApplyReferralCodeCommandHandler().handle(CMD)
+            handler = ApplyReferralCodeCommandHandler(event_publisher=publisher)
+            await handler.handle(CMD)
 
-    mock_uow.affiliate_outbox.enqueue.assert_not_awaited()
+    publisher.publish.assert_not_called()

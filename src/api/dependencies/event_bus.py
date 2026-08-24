@@ -220,7 +220,6 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityPolicy
-from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.cache.provider_budget import MemoryProviderBudget, RedisProviderBudget
 from src.infra.config.settings import settings
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -384,7 +383,6 @@ def get_configured_event_bus() -> EventBus:
     from src.api.base_dependencies import (
         get_ai_model_manager,
         get_cache_service,
-        get_daily_context_precompute_service,
         get_fat_secret_service_instance,
         get_food_cache_service,
         get_food_data_service,
@@ -423,7 +421,6 @@ def get_configured_event_bus() -> EventBus:
             configure_cache_writer(task_manager)
     suggestion_service = get_suggestion_orchestration_service()
 
-    from src.app.services.cache_invalidation_service import CacheInvalidationService
     from src.app.services.food_reference_validation_service import (
         FoodReferenceValidationService,
     )
@@ -431,16 +428,13 @@ def get_configured_event_bus() -> EventBus:
     from src.domain.services.meal_recommendation.three_day_plan_optimizer import (
         ThreeDayPlanOptimizer,
     )
-    from src.infra.config.settings import get_settings
+    from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
     from src.infra.database.uow_async import AsyncUnitOfWork
 
-    # Mutation handlers enqueue all cache projections after the SQL write; the
-    # managed task runner keeps Redis maintenance off the business path.
-    queue_enabled = getattr(get_settings(), "CLOUDFLARE_QUEUE_ENABLED", False)
-    cache_invalidation_service = CacheInvalidationService(
-        cache_service,
-        task_manager=task_manager,
-        queue_enabled=queue_enabled,
+    queue_publisher = (
+        CloudflareQueuePublisher.from_settings()
+        if settings.CLOUDFLARE_QUEUE_ENABLED
+        else None
     )
     provider_budget = _build_provider_budget(cache_service)
     nutrition_integrity_policy = NutritionIntegrityPolicy()
@@ -490,7 +484,8 @@ def get_configured_event_bus() -> EventBus:
             vision_service=vision_service,
             gpt_parser=gpt_parser,
             meal_translation_service=meal_translation_service,
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
             meal_value_insight_task_manager=task_manager,
             meal_value_insight_cache=cache_service,
             meal_value_insight_ai_manager=ai_manager,
@@ -516,7 +511,8 @@ def get_configured_event_bus() -> EventBus:
             gpt_parser=gpt_parser,
             meal_translation_service=meal_translation_service,
             text_translation_service=text_translation_service,
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
             meal_value_insight_task_manager=task_manager,
             meal_value_insight_cache=cache_service,
             meal_value_insight_ai_manager=ai_manager,
@@ -532,7 +528,8 @@ def get_configured_event_bus() -> EventBus:
         EditMealCommandHandler(
             uow=AsyncUnitOfWork(),
             uow_factory=AsyncUnitOfWork,
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
             provider=fat_secret_service,
             provider_budget=provider_budget,
             provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
@@ -543,7 +540,8 @@ def get_configured_event_bus() -> EventBus:
         AddCustomIngredientCommand,
         AddCustomIngredientCommandHandler(
             uow=AsyncUnitOfWork(),
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
 
@@ -551,7 +549,8 @@ def get_configured_event_bus() -> EventBus:
         AttachMealPhotoCommand,
         AttachMealPhotoCommandHandler(
             uow=AsyncUnitOfWork(),
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
 
@@ -559,7 +558,8 @@ def get_configured_event_bus() -> EventBus:
         DeleteMealPhotoCommand,
         DeleteMealPhotoCommandHandler(
             uow=AsyncUnitOfWork(),
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
 
@@ -567,13 +567,8 @@ def get_configured_event_bus() -> EventBus:
         DeleteMealCommand,
         DeleteMealCommandHandler(
             uow=AsyncUnitOfWork(),
-            cache_invalidation=cache_invalidation_service,
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
 
@@ -582,7 +577,8 @@ def get_configured_event_bus() -> EventBus:
         CreateManualMealCommandHandler(
             uow=AsyncUnitOfWork(),
             uow_factory=AsyncUnitOfWork,
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
             provider=fat_secret_service,
             provider_budget=provider_budget,
             provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
@@ -710,7 +706,6 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
 
-
     event_bus.register_handler(GetMealsByDateQuery, GetMealsByDateQueryHandler())
 
     event_bus.register_handler(
@@ -735,7 +730,8 @@ def get_configured_event_bus() -> EventBus:
         LogRecommendedMealCommandHandler(
             uow=AsyncUnitOfWork(),
             meal_translation_service=meal_translation_service,
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
             task_manager=task_manager,
         ),
     )
@@ -765,7 +761,8 @@ def get_configured_event_bus() -> EventBus:
             uow=AsyncUnitOfWork(),
             browse_service=get_catalog_meal_browse_service(),
             meal_translation_service=meal_translation_service,
-            cache_invalidation=cache_invalidation_service,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
             recalculator=RemainingRecommendationRecalculator(
                 AsyncUnitOfWork,
                 optimizer=ThreeDayPlanOptimizer(),
@@ -808,7 +805,9 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveMealSuggestionCommand,
         SaveMealSuggestionCommandHandler(
-            uow=AsyncUnitOfWork(), cache_invalidation=cache_invalidation_service
+            uow=AsyncUnitOfWork(),
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
 
@@ -818,11 +817,7 @@ def get_configured_event_bus() -> EventBus:
         SaveUserOnboardingCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
@@ -838,17 +833,15 @@ def get_configured_event_bus() -> EventBus:
         CompleteOnboardingCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
         DeleteUserCommand,
         DeleteUserCommandHandler(
-            cache_service=cache_service, task_manager=task_manager
+            cache_service=cache_service,
+            environment=settings.ENVIRONMENT,
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
@@ -856,24 +849,21 @@ def get_configured_event_bus() -> EventBus:
         UpdateUserMetricsCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
-    precompute_service = get_daily_context_precompute_service()
     event_bus.register_handler(
         UpdateTimezoneCommand,
         UpdateTimezoneCommandHandler(
-            precompute_service=precompute_service, task_manager=task_manager
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(
         UpdateLanguageCommand,
         UpdateLanguageCommandHandler(
-            precompute_service=precompute_service, task_manager=task_manager
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(
@@ -881,11 +871,7 @@ def get_configured_event_bus() -> EventBus:
         UpdateCustomMacrosCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
 
@@ -918,22 +904,22 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         RegisterFcmTokenCommand,
         RegisterFcmTokenCommandHandler(
-            precompute_service=precompute_service, task_manager=task_manager
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(DeleteFcmTokenCommand, DeleteFcmTokenCommandHandler())
     event_bus.register_handler(
         UpdateNotificationPreferencesCommand,
         UpdateNotificationPreferencesCommandHandler(
-            precompute_service=precompute_service,
-            task_manager=task_manager,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(
         GetNotificationPreferencesQuery,
         GetNotificationPreferencesQueryHandler(),
     )
-
 
     # Register ingredient recognition handler
     event_bus.register_handler(
@@ -968,8 +954,6 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
     event_bus.register_handler(GetCheatDaysQuery, GetCheatDaysQueryHandler())
-
-
 
     # Register weight entry handlers
     event_bus.register_handler(AddWeightEntryCommand, AddWeightEntryCommandHandler())
@@ -1048,7 +1032,6 @@ def get_configured_event_bus() -> EventBus:
     )
     event_bus.register_handler(
         GetDailyHydrationQuery,
-
         GetDailyHydrationQueryHandler(cache_service=cache_service),
     )
 
@@ -1085,8 +1068,6 @@ def get_configured_event_bus() -> EventBus:
         GetSavedSuggestionsQuery,
         GetSavedSuggestionsQueryHandler(cache_service=cache_service),
     )
-
-
 
     _configured_event_bus = event_bus
     return _configured_event_bus

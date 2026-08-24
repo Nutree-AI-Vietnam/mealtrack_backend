@@ -1,25 +1,14 @@
-"""
-User profile updated event.
-"""
+"""Integration event emitted after a user profile is updated."""
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from uuid import uuid4
+from __future__ import annotations
 
-from src.app.events.base import DomainEvent
+from typing import Literal
+
+from src.app.events.integration_event import IntegrationEvent
 
 
-@dataclass
-class UserProfileUpdatedEvent(DomainEvent):
-    """Event raised when user profile is updated."""
+class UserProfileUpdatedEvent(IntegrationEvent):
+    """Published after a user profile or metrics is updated."""
 
-    aggregate_id: str
-    profile_id: str
-    updated_fields: list[str]
-    old_tdee: float | None = None
-    new_tdee: float | None = None
-    # Metadata fields with defaults
-    event_id: str = field(default_factory=lambda: str(uuid4()))
-    timestamp: datetime = field(default_factory=datetime.now)
-    correlation_id: str = field(default_factory=lambda: str(uuid4()))
-
+    event_type: Literal["user.profile_updated.v1"] = "user.profile_updated.v1"
+    aggregate_type: Literal["user"] = "user"

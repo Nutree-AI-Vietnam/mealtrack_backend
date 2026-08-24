@@ -67,33 +67,16 @@ await event_bus.publish(MealCreatedEvent(...))           # fire-and-forget
 
 Background subscriber tasks are owned by `BackgroundTaskManager` (`src/infra/event_bus/background_task_manager.py`), which replaces bare `asyncio.create_task` in the event bus and routes; it exposes `spawn`, `drain`, and `shutdown` so subscriber failures are observable and app shutdown can cancel outstanding tasks cleanly.
 
-Secondary external work that must survive API-process restarts uses the
-transactional outbox and `src/cron/outbox_worker.py`. Firebase account cleanup
-and notification rescheduling are registered outbox event types with bounded
-retry, lease fencing, and dead-letter handling.
+Process-local cron jobs have been completely eliminated (see `docs/decisions/ADR-cron-jobs-removal.md`). All side effects that must survive API-process restarts (cache invalidation, Firebase account cleanup, affiliate attribution webhooks, and subscription lifecycle dispatch) are modeled as versioned `IntegrationEvent` payloads published to Cloudflare Queue and processed asynchronously by `nutreeai_async`.
 
 ### Durable Integration Events
 
-Hydration and other integration-producing commands use the simplest suitable
-delivery path:
+Mutations (Meal, Hydration, Movement, User Profile/Settings, Cheat Day, Saved Suggestions, Affiliate) use direct asynchronous event dispatch:
 
-1. Hydration writes the authoritative row, commits the transaction, and then
-   publishes one versioned `IntegrationEvent` envelope directly to the
-   environment-specific ingress Queue when Queue delivery is enabled.
-2. When `CLOUDFLARE_QUEUE_ENABLED=false`, local hydration writes skip
-   integration publication entirely because no Queue publisher is injected.
-3. Other durable background work may still write a transactional outbox row;
-   the backend relay publishes those rows.
-4. The Worker validates the common envelope once and the in-process
-   orchestrator invokes every registered handler for that event type in order.
-   Handlers retrieve current source data through their own ports using the
-   aggregate ID; hydration cache invalidation looks up the hydration row and
-   the user's timezone in Neon.
-5. The Worker ACKs only after all handlers succeed. A failure retries the whole
-   ingress message and eventually sends it to the ingress DLQ.
-6. `cache_invalidation.v1` remains the compatibility owner for other
-   delete-only cache paths; hydration creation now owns the generic hydration
-   event.
+1. Handlers commit their authoritative database transaction, and then publish one versioned `IntegrationEvent` envelope directly to the environment-specific Cloudflare Queue when Queue delivery is enabled.
+2. When `CLOUDFLARE_QUEUE_ENABLED=false`, local mutations skip integration publication entirely because no Queue publisher is injected.
+3. The Cloudflare Worker (`nutreeai_async`) validates the common envelope and its in-process router invokes every registered handler for that event type (e.g. cache invalidation, external API calls).
+4. The Worker ACKs only after all handlers succeed. A failure retries the message with backoff and eventually routes it to the DLQ.
 
 This MVP accepts the post-commit Queue loss window for hydration. If the SQL
 transaction commits and the direct publish fails before Cloudflare accepts the

@@ -7,8 +7,8 @@ import logging
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user.update_user_metrics_command import UpdateUserMetricsCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.user.user_profile_updated_integration_event import (
-    UserProfileUpdatedIntegrationEvent,
+from src.app.events.user.user_profile_updated_event import (
+    UserProfileUpdatedEvent,
 )
 from src.domain.model.common.enums import FitnessGoal, JobType, TrainingLevel
 from src.domain.model.user.body_fat_visual import remap_visual_profile_selection
@@ -66,7 +66,6 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
         self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
-
 
     async def handle(self, command: UpdateUserMetricsCommand) -> None:
         # Validate at least one field is provided
@@ -276,7 +275,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
 
         if self.event_publisher is not None:
             try:
-                event = UserProfileUpdatedIntegrationEvent(
+                event = UserProfileUpdatedEvent(
                     environment=self.environment,
                     aggregate_id=str(command.user_id),
                     data={"user_id": str(command.user_id)},
@@ -293,4 +292,3 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                     command.user_id,
                     exc,
                 )
-

@@ -74,12 +74,7 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   `external-services.md` and `decisions/260608-2223-selective-cache-admission-policy.md`).
 - Vector cache: active meal-image-name path uses `pgvector`.
 - AI: OpenAI default; optional Cloudflare Workers AI for configured text/vision.
-- Integration events: backend writes the transactional outbox and publishes one
-  versioned `IntegrationEvent` to the environment-specific ingress Queue. The
-  Worker orchestrator invokes registered handlers in order and retries the
-  whole ingress message on failure. Hydration creation uses this path for cache
-  invalidation; `cache_invalidation.v1` remains the compatibility owner for
-  other cache deletes.
+- Integration events: domain handlers publish versioned `IntegrationEvent` payloads to the environment-specific Cloudflare Queue. The sibling `nutreeai_async` worker invokes registered handlers (cache invalidation, Firebase account cleanup, affiliate webhooks) and retries on failure. Process-local cron jobs have been completely removed (see `docs/decisions/ADR-cron-jobs-removal.md`).
 - Translation: OpenAI-backed read-path localization via
   `src/app/services/food_name_localizer.py` and
   `src/infra/adapters/openai_translation_adapter.py`; Responses API payload

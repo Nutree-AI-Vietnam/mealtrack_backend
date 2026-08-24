@@ -2,20 +2,21 @@
 Handler for registering FCM tokens.
 """
 
-import inspect
 import logging
 from typing import Any
 
 from src.app.commands.notification import RegisterFcmTokenCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.background_job_scheduler import schedule_background_job
+from src.app.events.user.user_profile_updated_event import (
+    UserProfileUpdatedEvent,
+)
 from src.domain.model.notification import DeviceType, UserFcmToken
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.notification_repository_port import NotificationRepositoryPort
 from src.domain.utils.timezone_utils import is_valid_timezone, normalize_timezone
 from src.infra.database.uow_async import AsyncUnitOfWork
-from src.infra.services.daily_context_precompute_service import (
-    DailyContextPrecomputeService,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -29,24 +30,24 @@ class RegisterFcmTokenCommandHandler(
     def __init__(
         self,
         notification_repository: NotificationRepositoryPort = None,
-        precompute_service: DailyContextPrecomputeService | None = None,
-        task_manager=None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
+        **kwargs: Any,
     ):
         self.notification_repository = notification_repository
-        self.precompute_service = precompute_service
-        self.task_manager = task_manager
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     def set_dependencies(self, **kwargs):
         """Set dependencies for dependency injection."""
-        if "precompute_service" in kwargs:
-            self.precompute_service = kwargs["precompute_service"]
-        if "task_manager" in kwargs:
-            self.task_manager = kwargs["task_manager"]
+        if "notification_repository" in kwargs:
+            self.notification_repository = kwargs["notification_repository"]
+        if "event_publisher" in kwargs:
+            self.event_publisher = kwargs["event_publisher"]
 
     async def handle(self, command: RegisterFcmTokenCommand) -> dict[str, Any]:
         """Handle FCM token registration with old token cleanup."""
         timezone_changed = False
-        durable_reschedule_queued = False
         async with AsyncUnitOfWork() as uow:
             # Use notification repository from UoW if not injected
             notification_repo = self.notification_repository or uow.notifications
@@ -96,27 +97,21 @@ class RegisterFcmTokenCommandHandler(
                     command.user_id,
                 )
 
-            if timezone_changed:
-                outbox = getattr(uow, "outbox", None)
-                if outbox is not None and inspect.iscoroutinefunction(
-                    getattr(outbox, "enqueue", None)
-                ):
-                    await outbox.enqueue(
-                        "notification_reschedule",
-                        {"user_id": command.user_id, "reason": "fcm_timezone"},
-                        event_id=(
-                            f"notification-reschedule:fcm-timezone:{command.user_id}:"
-                            f"{command.timezone}"
-                        ),
-                        aggregate_type="user",
-                        aggregate_id=command.user_id,
-                    )
-                    durable_reschedule_queued = True
-
             # UoW auto-commits on exit
 
-        if timezone_changed and not durable_reschedule_queued:
-            self._schedule_notification_reschedule(command.user_id, "fcm_timezone")
+        if timezone_changed and self.event_publisher is not None:
+            try:
+                event = UserProfileUpdatedEvent(
+                    environment=self.environment,
+                    aggregate_id=str(command.user_id),
+                    data={
+                        "user_id": str(command.user_id),
+                        "timezone": command.timezone,
+                    },
+                )
+                await self.event_publisher.publish(event.to_payload())
+            except Exception as exc:
+                logger.error("Failed to publish user profile updated event: %s", exc)
 
         logger.info(
             f"FCM token registered for user {command.user_id}, "
@@ -129,13 +124,3 @@ class RegisterFcmTokenCommandHandler(
             "token_id": saved_token.token_id,
             "deactivated_old_tokens": deactivated_count,
         }
-
-    def _schedule_notification_reschedule(self, user_id: str, reason: str) -> None:
-        if self.precompute_service is None:
-            return
-        schedule_background_job(
-            self.task_manager,
-            f"notifications:reschedule:{user_id}:{reason}",
-            self.precompute_service.reschedule_user_notifications(user_id),
-            logger=logger,
-        )

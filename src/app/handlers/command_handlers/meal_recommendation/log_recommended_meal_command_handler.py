@@ -6,8 +6,8 @@ from typing import Any
 
 from src.app.commands.meal_recommendation import LogRecommendedMealCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.meal.meal_events import MealCreatedEvent
 from src.app.services.background_job_scheduler import schedule_background_job
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 from src.app.services.meal_translation_persistence import persist_meal_translation
 from src.app.services.recommended_meal_materialization_service import (
     RecommendedMealMaterializationService,
@@ -15,6 +15,9 @@ from src.app.services.recommended_meal_materialization_service import (
 from src.domain.model.meal import Meal
 from src.domain.model.meal_recommendation import (
     PersistedMealRecommendationSlotMutationResult,
+)
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
 )
 from src.domain.services.meal_analysis.meal_translation_service import (
     MealTranslationService,
@@ -35,13 +38,15 @@ class LogRecommendedMealCommandHandler(
         uow,
         materializer: RecommendedMealMaterializationService | None = None,
         meal_translation_service: MealTranslationService | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
         task_manager=None,
     ):
         self.uow = uow
         self.materializer = materializer or RecommendedMealMaterializationService()
         self.meal_translation_service = meal_translation_service
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
         self.task_manager = task_manager
 
     async def handle(
@@ -74,12 +79,25 @@ class LogRecommendedMealCommandHandler(
                 )
                 saved_meal = meal
                 meal_date = slot.slot_date
-                if self.cache_invalidation is not None:
-                    await self.cache_invalidation.enqueue_meal_invalidation(
-                        uow.outbox,
-                        command.user_id,
-                        meal_date,
-                    )
+
+        if (
+            saved_meal is not None
+            and self.event_publisher is not None
+            and meal_date is not None
+        ):
+            try:
+                event = MealCreatedEvent(
+                    environment=self.environment,
+                    aggregate_id=saved_meal.meal_id,
+                    data={
+                        "user_id": command.user_id,
+                        "meal_id": saved_meal.meal_id,
+                        "meal_date": meal_date.isoformat(),
+                    },
+                )
+                await self.event_publisher.publish(event.to_payload())
+            except Exception as exc:
+                logger.error("Failed to publish meal created event: %s", exc)
 
         # meal_translation uses its own DB session; parent meal must be committed first.
         if saved_meal is not None:

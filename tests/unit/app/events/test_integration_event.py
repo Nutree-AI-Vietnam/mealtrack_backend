@@ -99,7 +99,7 @@ from src.app.events.movement import (
 from src.app.events.user import (
     UserCustomMacrosUpdatedEvent,
     UserOnboardingCompletedEvent,
-    UserProfileUpdatedIntegrationEvent,
+    UserProfileUpdatedEvent,
 )
 
 
@@ -138,7 +138,7 @@ def test_movement_events_serialization() -> None:
 
 
 def test_user_events_serialization() -> None:
-    prof_evt = UserProfileUpdatedIntegrationEvent(
+    prof_evt = UserProfileUpdatedEvent(
         event_id=EVENT_ID,
         environment="staging",
         aggregate_id="user-1",
@@ -237,5 +237,3 @@ def test_generic_event_rejects_oversized_payload() -> None:
             aggregate_id="test-1",
             data={"value": "x" * 40_000},
         )
-
-

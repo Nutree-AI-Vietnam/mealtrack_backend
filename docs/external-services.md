@@ -72,7 +72,7 @@ outbox.
 | OpenAI prompt-cache policy | `src/infra/services/ai/openai_prompt_cache_policy.py` |
 | Food providers (USDA, FatSecret, OFF, Brave) | `src/infra/adapters/food_data_service.py`, `fat_secret_service.py`, `open_food_facts_service.py`, `brave_search_nutrition_service.py` |
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
-| Cloudflare cache invalidation relay | `src/infra/adapters/cloudflare_queue_publisher.py`, `src/infra/services/handlers/cache_invalidation_queue_handler.py`, `src/cron/outbox_worker.py` |
+| Cloudflare cache invalidation relay | `src/infra/adapters/cloudflare_queue_publisher.py`, `src/infra/services/handlers/cache_invalidation_queue_handler.py` (dispatch trigger removed — see `docs/decisions/ADR-cron-jobs-removal.md`) |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
@@ -81,7 +81,7 @@ outbox.
 | Redis | `src/infra/cache/` |
 | Queue consumer | sibling `nutreeai_async` repository |
 | Sentry / observability facade | `src/infra/monitoring/`, `src/observability.py` |
-| Affiliate outbox client | `src/infra/adapters/affiliate_service_adapter.py`; cron `src/cron/affiliate_outbox.py` |
+| Affiliate outbox client | `src/infra/adapters/affiliate_service_adapter.py`; dispatch trigger removed — see `docs/decisions/ADR-cron-jobs-removal.md` |
 | DB pool | `src/infra/database/config_async.py`, `connection_policy.py` — see `database-guide.md` |
 
 ---
