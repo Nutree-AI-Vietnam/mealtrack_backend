@@ -88,7 +88,7 @@ class TdeeCalculationService:
         """Calculate macro targets using weight-based approach.
 
         Weight-based calculation (more accurate than percentage-based):
-        - Protein: g/kg body weight (higher during cut to preserve muscle)
+        - Protein: g/kg body weight (cut 1.8 / recomp 1.7 / bulk 1.6)
         - Fat: g/kg body weight (essential for hormone production)
         - Carbs: Remaining calories after protein and fat
 
@@ -124,8 +124,9 @@ class TdeeCalculationService:
             )
             calories = max(calories, bmr, clinical_min)
 
-        if macro_preset == MacroPreset.KETO:
-            return self.allocate_preset_macros(calories, macro_preset)
+        # Diet presets (e.g. keto) are labels for meal guidance only — they must
+        # not rewrite base daily macros. Weight-based allocation always wins.
+        _ = macro_preset
 
         # Calculate protein from body weight (g/kg)
         # Use training-level-aware protein if provided, otherwise use default
@@ -181,7 +182,11 @@ class TdeeCalculationService:
 
     @staticmethod
     def allocate_preset_macros(calories: float, preset: MacroPreset) -> MacroTargets:
-        """Allocate grams from the active diet policy and derive calories from grams."""
+        """Legacy keto calorie split helper.
+
+        Kept for tests and any explicit callers. Base daily and adjusted daily
+        targets no longer use this — keto is a diet label only.
+        """
         if preset != MacroPreset.KETO:
             raise ValueError(f"Unsupported calculated preset: {preset.value}")
         protein = round(
@@ -215,9 +220,13 @@ class TdeeCalculationService:
     def apply_adjusted_macro_policy(
         calories: float, macros: MacroTargets, preset: MacroPreset, is_custom: bool
     ) -> MacroTargets:
-        """Keep adjusted targets on the resolved policy, not the previous preset."""
-        if preset == MacroPreset.KETO and not is_custom:
-            return TdeeCalculationService.allocate_preset_macros(calories, preset)
+        """Preserve redistributed macros; diet presets do not rewrite grams.
+
+        `calories` / `preset` / `is_custom` remain in the signature for call-site
+        compatibility. Keto used to re-split adjusted calories 20/5/75; that
+        changed base daily when users selected keto and is intentionally gone.
+        """
+        _ = (calories, preset, is_custom)
         return macros
 
     def calculate_macros(

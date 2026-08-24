@@ -116,13 +116,20 @@ class FoodMappingService(FoodMappingServicePort):
             fat = result.fat_100g
             fiber = result.fiber_100g
             calories = result.derived_calories_100g
+            source_namespace = str(item.get("source_namespace") or "").strip()
+            source_food_id = item.get("source_food_id")
+            if not source_namespace or source_namespace == "food_reference":
+                source_namespace = "food_reference"
+                source_food_id = str(food_reference_id)
+            else:
+                source_food_id = str(source_food_id or food_reference_id)
             return {
                 "fdc_id": None,
                 "food_id": expected_alias,
                 "food_reference_id": food_reference_id,
                 "origin": "local",
-                "source_namespace": "food_reference",
-                "source_food_id": str(food_reference_id),
+                "source_namespace": source_namespace,
+                "source_food_id": source_food_id,
                 "name": item.get("description"),
                 "brand": item.get("brand"),
                 "data_type": "food_reference",
