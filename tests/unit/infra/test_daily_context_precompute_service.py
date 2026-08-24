@@ -184,7 +184,7 @@ async def test_user_calorie_goal_rejects_stale_weekly_target_revision():
 
 
 @pytest.mark.asyncio
-async def test_precompute_applies_keto_policy_before_returning_adjusted_goal():
+async def test_precompute_preserves_adjusted_goal_for_keto_users():
     from src.domain.model.user import MacroPreset
     from src.domain.services.weekly_budget_service import AdjustedDailyTargets
     from src.infra.services.daily_context_precompute_service import (
@@ -226,14 +226,8 @@ async def test_precompute_applies_keto_policy_before_returning_adjusted_goal():
         )
 
     apply_policy.assert_called_once()
-    policy_macros = svc._tdee_service.allocate_preset_macros(1900.0, MacroPreset.KETO)
-    assert (policy_macros.protein, policy_macros.carbs, policy_macros.fat) == (
-        95.0,
-        23.8,
-        158.3,
-    )
-    assert policy_macros.calories == 1899.9
-    assert result == round(policy_macros.calories)
+    assert apply_policy.call_args.args[2] is MacroPreset.KETO
+    assert result == 1900.0
 
 
 @pytest.mark.asyncio
