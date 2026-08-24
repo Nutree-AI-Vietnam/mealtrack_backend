@@ -24,9 +24,6 @@ from src.infra.database.models.meal.meal import MealORM
 from src.infra.database.models.notification.notification_preferences import (
     NotificationPreferencesORM as NotificationPreferences,
 )
-from src.infra.database.models.notification.user_fcm_token import (
-    UserFcmTokenORM as UserFcmToken,
-)
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -152,18 +149,7 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             )
             meals_count = meals_result.rowcount
 
-            # 2. Soft-delete meal plans - no longer applicable (feature removed)
-            meal_plans_count = 0
-
-            # 3. Deactivate FCM tokens (set is_active=False)
-            fcm_result = await uow.session.execute(
-                sa_update(UserFcmToken)
-                .where(UserFcmToken.user_id == user_id)
-                .values(is_active=False)
-            )
-            fcm_tokens_count = fcm_result.rowcount
-
-            # 4. Mark notification preferences as deleted (set is_deleted=True)
+            # 3. Mark notification preferences as deleted (set is_deleted=True)
             notif_result = await uow.session.execute(
                 sa_update(NotificationPreferences)
                 .where(NotificationPreferences.user_id == user_id)
@@ -175,8 +161,8 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             await uow.session.flush()
 
             logger.info(
-                f"Soft-deleted related data: meals={meals_count}, meal_plans={meal_plans_count}, "
-                f"fcm_tokens={fcm_tokens_count}, notification_prefs={notif_prefs_count}"
+                f"Soft-deleted related data: meals={meals_count}, "
+                f"notification_prefs={notif_prefs_count}"
             )
         except Exception:
             raise

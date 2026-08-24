@@ -9,7 +9,6 @@ from .complete_onboarding_command_handler import CompleteOnboardingCommandHandle
 
 # Standalone handlers (already individual files)
 from .create_manual_meal_command_handler import CreateManualMealCommandHandler
-from .delete_fcm_token_command_handler import DeleteFcmTokenCommandHandler
 from .delete_hydration_entry_command_handler import DeleteHydrationEntryCommandHandler
 from .delete_meal_command_handler import DeleteMealCommandHandler
 from .delete_meal_photo_command_handler import DeleteMealPhotoCommandHandler
@@ -36,7 +35,6 @@ from .parse_meal_text_handler import ParseMealTextHandler
 from .recognize_ingredient_command_handler import RecognizeIngredientCommandHandler
 
 # Notification handlers
-from .register_fcm_token_command_handler import RegisterFcmTokenCommandHandler
 from .save_body_fat_visual_profile_command_handler import (
     SaveBodyFatVisualProfileCommandHandler,
 )
@@ -92,8 +90,6 @@ __all__ = [
     "UploadMealImageImmediatelyHandler",
     "ScanByUrlCommandHandler",
     # Notification handlers
-    "RegisterFcmTokenCommandHandler",
-    "DeleteFcmTokenCommandHandler",
     "UpdateNotificationPreferencesCommandHandler",
     # Ingredient handlers
     "RecognizeIngredientCommandHandler",

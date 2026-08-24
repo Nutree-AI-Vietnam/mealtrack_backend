@@ -37,8 +37,6 @@ from src.app.commands.movement import (
     UpdateMovementEntryCommand,
 )
 from src.app.commands.notification import (
-    DeleteFcmTokenCommand,
-    RegisterFcmTokenCommand,
     UpdateNotificationPreferencesCommand,
 )
 from src.app.commands.saved_suggestion import (
@@ -73,7 +71,6 @@ from src.app.handlers.command_handlers import (
     AttachMealPhotoCommandHandler,
     CompleteOnboardingCommandHandler,
     CreateManualMealCommandHandler,
-    DeleteFcmTokenCommandHandler,
     DeleteMealCommandHandler,
     DeleteMealPhotoCommandHandler,
     DeleteMovementEntryCommandHandler,
@@ -85,7 +82,6 @@ from src.app.handlers.command_handlers import (
     LogMovementCommandHandler,
     ParseMealTextHandler,
     RecognizeIngredientCommandHandler,
-    RegisterFcmTokenCommandHandler,
     SaveBodyFatVisualProfileCommandHandler,
     SaveMealSuggestionCommandHandler,
     SaveSuggestionCommandHandler,
@@ -867,14 +863,6 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(PreviewTdeeQuery, PreviewTdeeQueryHandler())
 
     # Register notification handlers
-    event_bus.register_handler(
-        RegisterFcmTokenCommand,
-        RegisterFcmTokenCommandHandler(
-            event_publisher=queue_publisher,
-            environment=settings.ENVIRONMENT,
-        ),
-    )
-    event_bus.register_handler(DeleteFcmTokenCommand, DeleteFcmTokenCommandHandler())
     event_bus.register_handler(
         UpdateNotificationPreferencesCommand,
         UpdateNotificationPreferencesCommandHandler(

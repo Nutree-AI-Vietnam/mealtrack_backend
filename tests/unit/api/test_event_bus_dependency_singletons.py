@@ -164,8 +164,6 @@ def test_get_configured_event_bus_is_singleton(monkeypatch):
         "GetUserMetricsQueryHandler",
         "GetUserTdeeQueryHandler",
         "PreviewTdeeQueryHandler",
-        "RegisterFcmTokenCommandHandler",
-        "DeleteFcmTokenCommandHandler",
         "UpdateNotificationPreferencesCommandHandler",
         "GetNotificationPreferencesQueryHandler",
         "RecognizeIngredientCommandHandler",
@@ -293,8 +291,6 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         "GetUserMetricsQueryHandler",
         "GetUserTdeeQueryHandler",
         "PreviewTdeeQueryHandler",
-        "RegisterFcmTokenCommandHandler",
-        "DeleteFcmTokenCommandHandler",
         "UpdateNotificationPreferencesCommandHandler",
         "GetNotificationPreferencesQueryHandler",
         "RecognizeIngredientCommandHandler",
@@ -313,7 +309,6 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         "UpdateMovementEntryCommandHandler",
         "LookupBarcodeQueryHandler",
         "AttachMealPhotoCommandHandler",
-        "DeleteFcmTokenCommandHandler",
     ]
 
     for name in handler_names:
@@ -418,8 +413,6 @@ async def test_configured_event_bus_can_send_movement_catalog_query(monkeypatch)
         "GetUserMetricsQueryHandler",
         "GetUserTdeeQueryHandler",
         "PreviewTdeeQueryHandler",
-        "RegisterFcmTokenCommandHandler",
-        "DeleteFcmTokenCommandHandler",
         "UpdateNotificationPreferencesCommandHandler",
         "GetNotificationPreferencesQueryHandler",
         "RecognizeIngredientCommandHandler",

@@ -75,9 +75,6 @@ class User(Base, BaseMixin):
     referral_wallet = relationship(
         "ReferralWallet", back_populates="user", uselist=False
     )
-    email_logs = relationship(
-        "EmailLog", back_populates="user", cascade="all, delete-orphan", lazy="raise"
-    )
 
     @property
     def current_profile(self):

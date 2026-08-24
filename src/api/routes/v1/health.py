@@ -19,7 +19,6 @@ from src.infra.database.config_async import (
     CONNECTION_MODE,
     async_engine,
 )
-from src.infra.database.models.notification import UserFcmTokenORM as DBToken
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 router = APIRouter(prefix="/v1", tags=["Health"])
@@ -175,55 +174,3 @@ async def _fetch_pg_connection_stats() -> dict[str, Any]:
                 round(utilization_pct, 2) if utilization_pct is not None else None
             ),
         }
-
-
-@router.get("/health/notifications")
-async def notification_health_check(_monitor=Depends(require_monitoring_access)):
-    """
-    Health check for notification system database tokens.
-    """
-    try:
-        health_status = {
-            "status": "healthy",
-            "deployment": _deployment_info(),
-            "components": {},
-        }
-        async with AsyncUnitOfWork() as uow:
-            total_tokens = (
-                await uow.session.execute(select(func.count(DBToken.id)))
-            ).scalar_one()
-            active_tokens = (
-                await uow.session.execute(
-                    select(func.count(DBToken.id)).where(DBToken.is_active.is_(True))
-                )
-            ).scalar_one()
-            inactive_tokens = total_tokens - active_tokens
-
-        health_status["components"]["fcm_tokens"] = {
-            "status": "healthy",
-            "total": total_tokens,
-            "active": active_tokens,
-            "inactive": inactive_tokens,
-            "inactive_rate": (
-                round(inactive_tokens / total_tokens * 100, 2)
-                if total_tokens > 0
-                else 0
-            ),
-        }
-
-        # Warn if high inactive rate
-        if total_tokens > 0 and (inactive_tokens / total_tokens) > 0.5:
-            health_status["status"] = "warning"
-            health_status["components"]["fcm_tokens"][
-                "message"
-            ] = "High inactive token rate"
-
-        return JSONResponse(
-            status_code=200 if health_status["status"] == "healthy" else 503,
-            content=health_status,
-        )
-
-    except Exception as e:
-        return JSONResponse(
-            status_code=503, content={"status": "error", "error": str(e)}
-        )
