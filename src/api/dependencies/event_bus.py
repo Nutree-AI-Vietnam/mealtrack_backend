@@ -267,10 +267,10 @@ async def _search_local_food_references(
 
 
 async def _load_popular_staple_food_references(
-    ref_ids: list[int],
+    identities: list[tuple[str, str]],
 ) -> list[dict]:
     async with AsyncUnitOfWork() as uow:
-        return await uow.food_references.get_by_ids(ref_ids)
+        return await uow.food_references.get_by_source_identities(identities)
 
 
 async def _food_integrity_cache_context() -> dict[str, int | str]:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Awaitable
 from typing import Any
 
 from src.api.mappers.food_reference_display_name import (
@@ -11,7 +11,7 @@ from src.api.mappers.food_reference_display_name import (
 )
 from src.app.events.base import EventHandler, handles
 from src.app.queries.food.get_popular_staples_query import (
-    POPULAR_STAPLE_FOOD_REFERENCE_IDS,
+    POPULAR_STAPLE_SOURCE_IDENTITIES,
     GetPopularStaplesQuery,
 )
 from src.domain.constants.languages import normalize_language
@@ -19,6 +19,10 @@ from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityError
 
 logger = logging.getLogger(__name__)
+
+LoadBySourceIdentities = Callable[
+    [list[tuple[str, str]]], Awaitable[list[dict[str, Any]]]
+]
 
 
 @handles(GetPopularStaplesQuery)
@@ -30,27 +34,31 @@ class GetPopularStaplesQueryHandler(
     def __init__(
         self,
         mapping_service: FoodMappingServicePort,
-        load_by_ids: Callable[[list[int]], Any],
+        load_by_source_identities: LoadBySourceIdentities,
     ):
         self.mapping_service = mapping_service
-        self.load_by_ids = load_by_ids
+        self.load_by_source_identities = load_by_source_identities
 
     async def handle(self, event: GetPopularStaplesQuery) -> dict[str, Any]:
         language = normalize_language(event.language)
+        identities = list(POPULAR_STAPLE_SOURCE_IDENTITIES)
         try:
-            rows = await self.load_by_ids(list(POPULAR_STAPLE_FOOD_REFERENCE_IDS))
+            rows = await self.load_by_source_identities(identities)
         except Exception:
             logger.warning("popular staples load failed", exc_info=True)
             return {"results": [], "total": 0}
 
-        by_id = {
-            int(row["id"]): row
+        by_identity = {
+            (
+                str(row.get("source_namespace") or ""),
+                str(row.get("source_food_id") or ""),
+            ): row
             for row in rows
-            if isinstance(row, dict) and row.get("id") is not None
+            if isinstance(row, dict)
         }
         mapped: list[dict[str, Any]] = []
-        for ref_id in POPULAR_STAPLE_FOOD_REFERENCE_IDS:
-            row = by_id.get(ref_id)
+        for namespace, food_id in identities:
+            row = by_identity.get((namespace, food_id))
             if row is None:
                 continue
             raw = self._to_raw(row, language=language)
@@ -59,12 +67,18 @@ class GetPopularStaplesQueryHandler(
             except NutritionIntegrityError:
                 logger.info(
                     "popular staple skipped by integrity",
-                    extra={"food_reference_id": ref_id},
+                    extra={
+                        "source_namespace": namespace,
+                        "source_food_id": food_id,
+                    },
                 )
             except Exception:
                 logger.warning(
                     "popular staple map failed",
-                    extra={"food_reference_id": ref_id},
+                    extra={
+                        "source_namespace": namespace,
+                        "source_food_id": food_id,
+                    },
                     exc_info=True,
                 )
 
