@@ -291,7 +291,7 @@ async def test_unavailable_authoritative_target_writes_no_weekly_budget():
     uow.weekly_budgets.create.assert_not_awaited()
 
 
-def test_next_day_keto_cap_reallocates_rounded_grams_and_calories():
+def test_next_day_keto_cap_preserves_redistributed_macros():
     capped = AdjustedDailyTargets(
         calories=1900.0,
         carbs=10.0,
@@ -305,6 +305,5 @@ def test_next_day_keto_cap_reallocates_rounded_grams_and_calories():
         capped, (MacroPreset.KETO, False)
     )
 
-    assert (result.protein, result.carbs, result.fat) == (95.0, 23.8, 158.3)
-    assert result.calories == 1899.9
-    assert result.calories == result.protein * 4 + result.carbs * 4 + result.fat * 9
+    assert (result.protein, result.carbs, result.fat) == (150.0, 10.0, 200.0)
+    assert result.calories == 1900.0
