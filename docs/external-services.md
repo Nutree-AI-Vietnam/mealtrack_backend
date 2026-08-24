@@ -32,7 +32,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | nutree-affiliate | **Optional partner** | Validate may return inactive; lifecycle events retry via outbox |
 
 **Redis rule:** optional caches are never the source of truth for nutrition,
-notification delivery, FCM token ownership, or write-path correctness. Cache
+notification preferences, user state, or write-path correctness. Cache
 admission policy: `docs/decisions/260608-2223-selective-cache-admission-policy.md`.
 Provider-origin v2 manual saves use Redis and `NUTRITION_PROVIDER_GLOBAL_RPM`
 (default **60** if unset or empty). `ENVIRONMENT=development` may use a
