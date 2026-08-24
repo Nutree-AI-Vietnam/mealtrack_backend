@@ -106,6 +106,35 @@ class AsyncFoodReferenceRepository:
             food_reference_model_to_dict(model) for model in result.scalars().all()
         ]
 
+    async def get_by_source_identities(
+        self, identities: list[tuple[str, str]]
+    ) -> list[dict[str, Any]]:
+        """Load verified public references by provider identity; caller reorders."""
+        cleaned = [
+            (str(namespace).strip(), str(food_id).strip())
+            for namespace, food_id in identities
+            if str(namespace).strip() and str(food_id).strip()
+        ]
+        if not cleaned:
+            return []
+        clauses = [
+            and_(
+                FoodReferenceModel.source_namespace == namespace,
+                FoodReferenceModel.source_food_id == food_id,
+            )
+            for namespace, food_id in cleaned
+        ]
+        stmt = (
+            select(FoodReferenceModel)
+            .where(or_(*clauses))
+            .where(self._integrity_repository.public_eligibility_clause())
+            .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            food_reference_model_to_dict(model) for model in result.scalars().all()
+        ]
+
     async def get_nutrition_projection(
         self,
         food_reference_id: int,
