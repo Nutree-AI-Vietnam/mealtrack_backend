@@ -88,7 +88,7 @@ class TdeeCalculationService:
         """Calculate macro targets using weight-based approach.
 
         Weight-based calculation (more accurate than percentage-based):
-        - Protein: g/kg body weight (higher during cut to preserve muscle)
+        - Protein: g/kg body weight (cut 1.8 / recomp 1.7 / bulk 1.6)
         - Fat: g/kg body weight (essential for hormone production)
         - Carbs: Remaining calories after protein and fat
 
