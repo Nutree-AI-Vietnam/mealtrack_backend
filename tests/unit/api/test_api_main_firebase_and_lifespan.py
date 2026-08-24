@@ -16,7 +16,7 @@ def _reload_main():
 def _patch_lifespan_side_effects(main_mod):
     main_mod.initialize_firebase = lambda: None  # type: ignore[assignment]
 
-    async def _noop(task_manager=None):
+    async def _noop():
         return None
 
     main_mod.warm_database_connection = _noop  # type: ignore[assignment]
@@ -59,7 +59,7 @@ def test_lifespan_cache_failure_raises_when_env_true_with_critical_log(
 ):
     monkeypatch.setenv("FAIL_ON_CACHE_ERROR", "true")
 
-    async def boom(task_manager=None):
+    async def boom():
         raise RuntimeError("cache")
 
     fresh_main.initialize_cache_layer = boom  # type: ignore[assignment]
@@ -80,7 +80,7 @@ def test_lifespan_cache_failure_without_fail_fast_does_not_log_critical(
 ):
     monkeypatch.setenv("FAIL_ON_CACHE_ERROR", "false")
 
-    async def boom(task_manager=None):
+    async def boom():
         raise RuntimeError("cache")
 
     fresh_main.initialize_cache_layer = boom  # type: ignore[assignment]

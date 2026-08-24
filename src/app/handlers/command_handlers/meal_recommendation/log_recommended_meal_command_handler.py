@@ -1,13 +1,11 @@
 """Handler for logging recommended meals through normal meal persistence."""
 
 import logging
-from collections.abc import Coroutine
 from typing import Any
 
 from src.app.commands.meal_recommendation import LogRecommendedMealCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
-from src.app.services.background_job_scheduler import schedule_background_job
 from src.app.services.meal_translation_persistence import persist_meal_translation
 from src.app.services.recommended_meal_materialization_service import (
     RecommendedMealMaterializationService,
@@ -41,7 +39,6 @@ class LogRecommendedMealCommandHandler(
         event_publisher: IntegrationEventPublisherPort | None = None,
         event_bus: Any | None = None,
         environment: str = "development",
-        task_manager=None,
     ):
         self.uow = uow
         self.materializer = materializer or RecommendedMealMaterializationService()
@@ -49,7 +46,6 @@ class LogRecommendedMealCommandHandler(
         self.event_publisher = event_publisher
         self.event_bus = event_bus
         self.environment = environment
-        self.task_manager = task_manager
 
     async def handle(
         self, command: LogRecommendedMealCommand
@@ -101,14 +97,11 @@ class LogRecommendedMealCommandHandler(
 
         # meal_translation uses its own DB session; parent meal must be committed first.
         if saved_meal is not None:
-            await self._defer(
-                f"recommendation-log-translation:{saved_meal.meal_id}",
-                persist_meal_translation(
+            try:
+                await persist_meal_translation(
                     self.meal_translation_service, saved_meal, command.language
-                ),
-            )
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist recommended meal translation: %s", exc)
 
         return result
-
-    async def _defer(self, name: str, coro: Coroutine[Any, Any, Any]) -> None:
-        schedule_background_job(self.task_manager, name, coro, logger=logger)

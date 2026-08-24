@@ -127,7 +127,6 @@ def _handler(
     log_service,
     event_publisher=None,
     recalculator=None,
-    task_manager=None,
     translation=None,
 ):
     return LogCatalogMealCommandHandler(
@@ -137,7 +136,6 @@ def _handler(
         meal_translation_service=translation,
         event_publisher=event_publisher,
         recalculator=recalculator,
-        task_manager=task_manager,
     )
 
 
@@ -160,18 +158,6 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
     )
     recalculator = SimpleNamespace(recalculate=AsyncMock())
 
-    class _Tasks:
-        def __init__(self):
-            self.jobs = []
-
-        def spawn(self, name, coro):
-            self.jobs.append((name, coro))
-
-        async def drain(self):
-            for _, coro in self.jobs:
-                await coro
-
-    tasks = _Tasks()
     publisher = MagicMock()
     publisher.publish = AsyncMock()
     handler = _handler(
@@ -180,7 +166,6 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
         log_service,
         event_publisher=publisher,
         recalculator=recalculator,
-        task_manager=tasks,
     )
 
     result = await handler.handle(_command())
@@ -188,12 +173,11 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
     assert result.logged_via == "slot"
     assert result.plan_id == "plan-1"
     publisher.publish.assert_awaited_once()
-    await tasks.drain()
     recalculator.recalculate.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_translation_is_deferred_when_language_provided():
+async def test_translation_is_called_when_language_provided():
     translated: list[str] = []
     log_service = AsyncMock()
     log_service.execute = AsyncMock(return_value=_result())
@@ -202,64 +186,37 @@ async def test_translation_is_deferred_when_language_provided():
         async def translate_meal(self, **kwargs):
             translated.append("translate")
 
-    class _Tasks:
-        def __init__(self):
-            self.jobs = []
-
-        def spawn(self, name, coro):
-            self.jobs.append((name, coro))
-
-        async def drain(self):
-            for _, coro in self.jobs:
-                await coro
-
-    tasks = _Tasks()
-
     handler = _handler(
         _Uow(),
         _Browse(),
         log_service,
         translation=_Translation(),
-        task_manager=tasks,
     )
 
     await handler.handle(_command(language="vi"))
-    await tasks.drain()
 
     assert translated == ["translate"]
 
 
 @pytest.mark.asyncio
-async def test_recalculate_is_backgrounded_when_task_manager_present():
+async def test_recalculate_is_called_when_present():
     log_service = AsyncMock()
     log_service.execute = AsyncMock(
         return_value=_result(logged_via="slot", plan_id="plan-1", slot_id="slot-1")
     )
     recalculator = SimpleNamespace(recalculate=AsyncMock())
-    spawned: list[str] = []
-
-    class _Tasks:
-        def spawn(self, name, coro):
-            spawned.append(name)
-            coro.close()
 
     handler = _handler(
         _Uow(),
         _Browse(),
         log_service,
         recalculator=recalculator,
-        task_manager=_Tasks(),
     )
 
     result = await handler.handle(_command())
 
     assert result.meal_id == "meal-1"
-    assert spawned == [
-        "catalog-log-translation:meal-1",
-        "catalog-log-recalc:req-1",
-    ]
-    recalculator.recalculate.assert_called_once()
-    recalculator.recalculate.assert_not_awaited()
+    recalculator.recalculate.assert_awaited_once()
 
 
 @pytest.mark.asyncio

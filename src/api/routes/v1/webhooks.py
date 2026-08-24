@@ -11,7 +11,6 @@ import uuid
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from src.api.dependencies.task_manager import get_optional_task_manager
 from src.api.routes.v1.webhook_lookup_parsing import (
     candidate_revenuecat_ids,
     find_user_for_revenuecat_event,
@@ -179,7 +178,6 @@ async def revenuecat_webhook(
     )
 
     # Resolve shared dependencies for affiliate delivery
-    task_manager = get_optional_task_manager()
     affiliate_handler = _get_affiliate_handler()
     event_publisher = _get_event_publisher()
 
@@ -225,37 +223,37 @@ async def revenuecat_webhook(
         # Handle events — commit/rollback is owned by the AsyncUnitOfWork context manager
         if event_type == "INITIAL_PURCHASE":
             await handle_purchase(
-                uow, user, event, task_manager, affiliate_handler, event_publisher
+                uow, user, event, affiliate_handler, event_publisher
             )
 
         elif event_type == "RENEWAL":
             await handle_renewal(
-                uow, user, event, task_manager, affiliate_handler, event_publisher
+                uow, user, event, affiliate_handler, event_publisher
             )
 
         elif event_type == "CANCELLATION":
             await handle_cancellation(
-                uow, user, event, task_manager, affiliate_handler, event_publisher
+                uow, user, event, affiliate_handler, event_publisher
             )
 
         elif event_type == "EXPIRATION":
             await handle_expiration(
-                uow, user, event, task_manager, affiliate_handler, event_publisher
+                uow, user, event, affiliate_handler, event_publisher
             )
 
         elif event_type == "BILLING_ISSUE":
             await handle_billing_issue(
-                uow, user, event, task_manager, affiliate_handler, event_publisher
+                uow, user, event, affiliate_handler, event_publisher
             )
 
         elif event_type == "PRODUCT_CHANGE":
             await handle_product_change(
-                uow, user, event, task_manager, affiliate_handler, event_publisher
+                uow, user, event, affiliate_handler, event_publisher
             )
 
         elif event_type == "REFUND":
             await handle_refund(
-                uow, user, event, task_manager, affiliate_handler, event_publisher
+                uow, user, event, affiliate_handler, event_publisher
             )
 
     increment_metric(

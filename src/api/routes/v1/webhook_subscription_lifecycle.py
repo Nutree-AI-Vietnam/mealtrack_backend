@@ -1,6 +1,7 @@
 """RevenueCat webhook subscription lifecycle event handlers."""
 
 import logging
+import os
 import uuid
 from typing import Any
 
@@ -19,7 +20,6 @@ from src.api.routes.v1.webhook_referral_funnel import (
 from src.app.events.affiliate.affiliate_events import (
     SubscriptionLifecycleEvent,
 )
-from src.app.services.background_job_scheduler import schedule_background_job
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.adapters.posthog_adapter import PostHogAdapter
 from src.infra.database.models.subscription import Subscription
@@ -47,27 +47,18 @@ async def _publish_subscription_event(
     payload: dict,
     event_id: str | None,
     user_id: str,
-    environment: str = "development",
 ) -> None:
-    """Publish a subscription lifecycle integration event to the queue."""
-    if event_publisher is None:
-        return
-    try:
-        event = SubscriptionLifecycleEvent(
-            environment=environment,
-            aggregate_id=str(user_id),
-            data={
-                "lifecycle_type": event_type,
-                **payload,
-            },
-        )
-        await event_publisher.publish(event.to_payload())
-    except Exception as exc:
-        logger.error("Failed to publish subscription lifecycle event: %s", exc)
+    """Publish a subscription lifecycle event to Cloudflare Queues."""
+    event = SubscriptionLifecycleEvent(
+        event_type=event_type,
+        user_id=user_id,
+        environment=os.getenv("ENVIRONMENT", "development"),
+        data=payload,
+    )
+    await event_publisher.publish(event.to_payload())
 
 
-def _spawn_affiliate_event(
-    task_manager: Any,
+async def _notify_affiliate(
     affiliate_handler: Any,
     event_type: str,
     payload: dict,
@@ -75,36 +66,29 @@ def _spawn_affiliate_event(
     event_publisher: Any = None,
     user_id: str | None = None,
 ) -> None:
-    """Spawn an affiliate webhook delivery or publish to queue."""
+    """Publish subscription event to Cloudflare Queue or send affiliate notification."""
     if event_publisher is not None and user_id is not None:
-        import asyncio
-
         try:
-            asyncio.create_task(
-                _publish_subscription_event(
-                    event_publisher, event_type, payload, event_id, user_id
-                )
+            await _publish_subscription_event(
+                event_publisher, event_type, payload, event_id, user_id
             )
-        except RuntimeError:
-            pass
-    if affiliate_handler is None or task_manager is None:
-        return
-    resolved_event_id = event_id or str(uuid.uuid4())
-    affiliate_payload = {
-        **payload,
-        "event_type": event_type,
-        "event_id": resolved_event_id,
-    }
-    schedule_background_job(
-        task_manager,
-        f"affiliate:{event_type}:{resolved_event_id}",
-        affiliate_handler.send_event(affiliate_payload),
-        logger=logger,
-    )
+        except Exception as exc:
+            logger.warning("Failed to publish subscription event: %s", exc)
+    elif affiliate_handler is not None:
+        resolved_event_id = event_id or str(uuid.uuid4())
+        affiliate_payload = {
+            **payload,
+            "event_type": event_type,
+            "event_id": resolved_event_id,
+        }
+        try:
+            await affiliate_handler.send_event(affiliate_payload)
+        except Exception as exc:
+            logger.warning("Failed to send affiliate event: %s", exc)
 
 
 async def handle_purchase(
-    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+    uow, user, event, affiliate_handler=None, event_publisher=None
 ):
     """Handle initial purchase."""
     logger.info(f"Creating subscription for user {user.id}")
@@ -115,7 +99,7 @@ async def handle_purchase(
     if existing:
         logger.warning(f"Subscription already exists for {user.id}, updating instead")
         await handle_renewal(
-            uow, user, event, task_manager, affiliate_handler, event_publisher
+            uow, user, event, affiliate_handler, event_publisher
         )
         return
 
@@ -138,8 +122,7 @@ async def handle_purchase(
 
     # Credit referrer if this user has a pending referral conversion
     await credit_referral_on_purchase(uow, str(user.id))
-    _spawn_affiliate_event(
-        task_manager,
+    await _notify_affiliate(
         affiliate_handler,
         "subscription_initial_purchase",
         {
@@ -159,7 +142,7 @@ async def handle_purchase(
 
 
 async def handle_renewal(
-    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+    uow, user, event, affiliate_handler=None, event_publisher=None
 ):
     """Handle subscription renewal."""
     subscription = await get_subscription_by_revenuecat_id(
@@ -176,13 +159,12 @@ async def handle_renewal(
     else:
         logger.warning("Subscription not found for renewal, creating new one")
         await handle_purchase(
-            uow, user, event, task_manager, affiliate_handler, event_publisher
+            uow, user, event, affiliate_handler, event_publisher
         )
         return
 
     await capture_subscription_lifecycle_event(user, event, "RENEWAL", subscription)
-    _spawn_affiliate_event(
-        task_manager,
+    await _notify_affiliate(
         affiliate_handler,
         "subscription_renewal",
         {
@@ -218,7 +200,7 @@ async def handle_renewal(
 
 
 async def handle_cancellation(
-    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+    uow, user, event, affiliate_handler=None, event_publisher=None
 ):
     """Handle subscription cancellation."""
     subscription = await get_or_create_subscription(uow, user, event)
@@ -235,8 +217,7 @@ async def handle_cancellation(
     await capture_subscription_lifecycle_event(
         user, event, "CANCELLATION", subscription
     )
-    _spawn_affiliate_event(
-        task_manager,
+    await _notify_affiliate(
         affiliate_handler,
         "subscription_canceled",
         {
@@ -253,7 +234,7 @@ async def handle_cancellation(
 
 
 async def handle_expiration(
-    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+    uow, user, event, affiliate_handler=None, event_publisher=None
 ):
     """Handle subscription expiration."""
     subscription = await get_or_create_subscription(uow, user, event)
@@ -264,8 +245,7 @@ async def handle_expiration(
         logger.info(f"User {user.id} subscription expired")
 
     await capture_subscription_lifecycle_event(user, event, "EXPIRATION", subscription)
-    _spawn_affiliate_event(
-        task_manager,
+    await _notify_affiliate(
         affiliate_handler,
         "subscription_expired",
         {
@@ -282,7 +262,7 @@ async def handle_expiration(
 
 
 async def handle_billing_issue(
-    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+    uow, user, event, affiliate_handler=None, event_publisher=None
 ):
     """Handle billing issues."""
     subscription = await get_or_create_subscription(uow, user, event)
@@ -298,7 +278,7 @@ async def handle_billing_issue(
 
 
 async def handle_product_change(
-    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+    uow, user, event, affiliate_handler=None, event_publisher=None
 ):
     """Handle product change (e.g., monthly to yearly)."""
     subscription = await get_or_create_subscription(uow, user, event)
@@ -316,7 +296,7 @@ async def handle_product_change(
 
 
 async def handle_refund(
-    uow, user, event, task_manager=None, affiliate_handler=None, event_publisher=None
+    uow, user, event, affiliate_handler=None, event_publisher=None
 ):
     """Handle refund — update subscription status and revoke referral credit."""
     subscription = await get_or_create_subscription(uow, user, event)
@@ -326,8 +306,7 @@ async def handle_refund(
         logger.info(f"User {user.id} subscription refunded")
 
     await capture_subscription_lifecycle_event(user, event, "REFUND", subscription)
-    _spawn_affiliate_event(
-        task_manager,
+    await _notify_affiliate(
         affiliate_handler,
         "subscription_refund",
         {

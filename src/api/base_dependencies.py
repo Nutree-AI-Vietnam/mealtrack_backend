@@ -49,9 +49,6 @@ from src.infra.repositories.food_reference_repository_async import (
 )
 
 if TYPE_CHECKING:
-    from src.api.dependencies.task_manager import BackgroundTaskManager
-
-if TYPE_CHECKING:
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
 
 # Note: Old handler imports removed - using event-driven architecture now
@@ -72,9 +69,7 @@ _catalog_meal_snapshot_service: CatalogMealSnapshotService | None = None
 _catalog_meal_browse_service = None
 
 
-async def initialize_cache_layer(
-    task_manager: "BackgroundTaskManager | None" = None,
-) -> None:
+async def initialize_cache_layer() -> None:
     """Initialize Redis for optional caches and the provider budget."""
     global _redis_client, _cache_service
 
@@ -99,7 +94,6 @@ async def initialize_cache_layer(
         default_ttl=settings.CACHE_DEFAULT_TTL,
         monitor=_cache_monitor,
         enabled=settings.CACHE_ENABLED,
-        task_manager=task_manager,
     )
 
 
@@ -373,14 +367,6 @@ def get_async_food_reference_repository():
 get_food_reference_repository = get_async_food_reference_repository
 get_barcode_product_repository = get_food_reference_repository
 
-
-def get_daily_context_precompute_service():
-    """Get daily context precompute service for notification rescheduling."""
-    from src.infra.services.daily_context_precompute_service import (
-        DailyContextPrecomputeService,
-    )
-
-    return DailyContextPrecomputeService()
 
 
 # Phase 06: Meal Suggestion Dependencies

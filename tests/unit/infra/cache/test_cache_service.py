@@ -9,13 +9,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.infra.cache.cache_service import CacheService, _json_serializer
-from src.infra.event_bus.background_task_manager import BackgroundTaskManager
-
-
-class _FailingTaskManager:
-    def spawn(self, name, coro):
-        raise RuntimeError("runner unavailable")
-
 
 # ---------- Serializer ----------
 
@@ -38,14 +31,9 @@ def test_serializer_tz_aware_datetime_no_double_z():
 
 
 @pytest.fixture
-def task_manager():
-    return BackgroundTaskManager()
-
-
-@pytest.fixture
-def service(task_manager):
+def service():
     redis = AsyncMock()
-    return CacheService(redis_client=redis, enabled=True, task_manager=task_manager)
+    return CacheService(redis_client=redis, enabled=True)
 
 
 @pytest.mark.asyncio
@@ -90,11 +78,11 @@ async def test_get_json_returns_none_on_invalid_json(service):
 
 @pytest.mark.asyncio
 async def test_set_json_writes_clean_offset(service):
-    """Background cache writes with tz-aware dt produce no '+00:00Z'."""
+    """Direct cache writes with tz-aware dt produce no '+00:00Z'."""
     service.redis.set = AsyncMock(return_value=True)
     dt = datetime(2026, 4, 13, 10, 12, 43, tzinfo=UTC)
     assert await service.set_json("k", {"updated_at": dt}) is True
-    await service._task_manager.drain()
+    service.redis.set.assert_awaited_once()
     args, _ = service.redis.set.call_args
     payload = args[1]
     assert "+00:00" in payload
@@ -102,43 +90,26 @@ async def test_set_json_writes_clean_offset(service):
 
 
 @pytest.mark.asyncio
-async def test_set_json_without_task_manager_does_not_write_redis():
+async def test_set_json_disabled_does_not_write_redis():
     redis = AsyncMock()
-    service = CacheService(redis_client=redis, enabled=True)
+    service = CacheService(redis_client=redis, enabled=False)
 
     assert await service.set_json("k", {"value": 1}) is False
     redis.set.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_set_json_drops_job_when_runner_rejects_it():
-    redis = AsyncMock()
-    service = CacheService(
-        redis_client=redis,
-        enabled=True,
-        task_manager=_FailingTaskManager(),
-    )
-
-    assert await service.set_json("k", {"value": 1}) is False
-    redis.set.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_invalidate_schedules_delete(service, task_manager):
+async def test_invalidate_deletes_key_and_revision(service):
     service.redis.delete = AsyncMock(return_value=True)
 
     assert await service.invalidate("user:u:daily") is True
-    service.redis.delete.assert_not_awaited()
-
-    await task_manager.drain()
-
     assert service.redis.delete.await_count == 2
     service.redis.delete.assert_any_await("user:u:daily")
     service.redis.delete.assert_any_await("user:u:daily:__revision")
 
 
 @pytest.mark.asyncio
-async def test_revision_write_keeps_newest_payload(service, task_manager):
+async def test_revision_write_keeps_newest_payload(service):
     service.redis.set_if_revision_newer = AsyncMock(return_value=True)
 
     assert (
@@ -149,7 +120,6 @@ async def test_revision_write_keeps_newest_payload(service, task_manager):
         )
         is True
     )
-    await task_manager.drain()
 
     service.redis.set_if_revision_newer.assert_awaited_once()
     args = service.redis.set_if_revision_newer.await_args.args
@@ -158,12 +128,8 @@ async def test_revision_write_keeps_newest_payload(service, task_manager):
 
 
 @pytest.mark.asyncio
-async def test_invalidate_pattern_schedules_delete_pattern(service, task_manager):
+async def test_invalidate_pattern_deletes_pattern(service):
     service.redis.delete_pattern = AsyncMock(return_value=3)
 
-    assert await service.invalidate_pattern("user:u:activities:*") == 0
-    service.redis.delete_pattern.assert_not_awaited()
-
-    await task_manager.drain()
-
+    assert await service.invalidate_pattern("user:u:activities:*") == 3
     service.redis.delete_pattern.assert_awaited_once_with("user:u:activities:*")

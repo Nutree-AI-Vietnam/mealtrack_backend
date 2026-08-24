@@ -9,7 +9,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from src.app.events.integration_event import IntegrationEvent
-from src.app.queries.user import GetUserProfileQuery
 from src.domain.model.meal import Meal
 from src.domain.utils.timezone_utils import utc_now
 
@@ -146,7 +145,7 @@ async def publish_meal_event(
     old_meal_date: date | datetime | None = None,
     source: str = "meal_write",
 ) -> bool:
-    """Publish one committed meal event with all Worker business input."""
+    """Publish one committed meal integration event to the external Queue consumer."""
     if publisher is None:
         return False
 
@@ -155,33 +154,11 @@ async def publish_meal_event(
             "user_id": str(user_id or getattr(meal, "user_id", "")),
             "meal_id": str(meal.meal_id),
             "meal_date": meal_date.isoformat(),
+            "language": language or getattr(meal, "language", "en") or "en",
         }
-        if getattr(meal, "nutrition", None) is not None:
-            try:
-                user_context = await _get_meal_insight_user_context(
-                    event_bus, str(meal.user_id)
-                )
-                snapshot = MealInsightSnapshot.from_meal(
-                    meal,
-                    language=language,
-                    user_context=user_context,
-                )
-                data["insight"] = snapshot.model_dump(
-                    mode="json", exclude_none=True
-                )
-            except Exception as exc:
-                # Preserve the generic cache event while marking this as an
-                # insight invalidation, not an insight-neutral update.
-                data["insight"] = None
-                logger.info(
-                    "Meal insight snapshot unavailable; publishing cache event "
-                    "source=%s meal_id=%s error=%s",
-                    source,
-                    getattr(meal, "meal_id", None),
-                    type(exc).__name__,
-                )
         if old_meal_date is not None and old_meal_date != meal_date:
             data["old_meal_date"] = old_meal_date.isoformat()
+
         event_class = MealCreatedEvent if event_type == "created" else MealUpdatedEvent
         event = event_class(
             environment=environment,
@@ -199,64 +176,3 @@ async def publish_meal_event(
             type(exc).__name__,
         )
         return False
-
-
-async def _get_meal_insight_user_context(
-    event_bus: Any | None,
-    user_id: str,
-) -> dict[str, Any]:
-    """Fetch the bounded profile context used to personalize Worker prompts."""
-    if event_bus is None:
-        return {}
-
-    try:
-        profile_result = await event_bus.send(GetUserProfileQuery(user_id=user_id))
-    except Exception as exc:
-        logger.info(
-            "meal_value_insights.profile_context_unavailable user_id=%s error=%s",
-            user_id,
-            type(exc).__name__,
-        )
-        return {}
-
-    if not isinstance(profile_result, dict):
-        return {}
-    profile = profile_result.get("profile") or {}
-    tdee = profile_result.get("tdee") or {}
-    if not isinstance(profile, dict) or not isinstance(tdee, dict):
-        return {}
-    context = {
-        key: profile[key]
-        for key in (
-            "fitness_goal",
-            "dietary_preferences",
-            "health_conditions",
-            "allergies",
-            "meals_per_day",
-            "snacks_per_day",
-            "training_level",
-        )
-        if profile.get(key) not in (None, "", [])
-    }
-    custom_macros = {
-        key: profile[key]
-        for key in ("custom_protein_g", "custom_carbs_g", "custom_fat_g")
-        if profile.get(key) is not None
-    }
-    if custom_macros:
-        context["custom_macros"] = custom_macros
-    targets = {
-        key: tdee[key]
-        for key in (
-            "tdee",
-            "target_calories",
-            "daily_calories",
-            "protein_g",
-            "carbs_g",
-            "fat_g",
-        )
-        if tdee.get(key) is not None
-    }
-    if targets:
-        context["targets"] = targets
-    return context

@@ -337,8 +337,7 @@ async def test_meal_event_publish_includes_compact_profile_context() -> None:
 
     payload = publisher.publish.await_args.args[0]
     assert payload["event_type"] == "meal.created.v1"
-    assert payload["data"]["insight"]["user_context"] == {
-        "fitness_goal": "weight_loss",
-        "allergies": ["peanuts"],
-        "targets": {"target_calories": 2000},
-    }
+    assert payload["aggregate_id"] == meal.meal_id
+    assert payload["data"]["user_id"] == meal.user_id
+    assert payload["data"]["meal_id"] == meal.meal_id
+    assert payload["data"]["meal_date"] == "2026-08-24"

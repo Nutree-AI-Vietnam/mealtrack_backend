@@ -40,7 +40,6 @@ from src.domain.model.meal_recommendation import (
 from src.domain.services.meal_recommendation.ingredient_affinity_service import (
     IngredientAffinityProfile,
 )
-from src.infra.event_bus.background_task_manager import BackgroundTaskManager
 
 
 class _PlanRepo:
@@ -353,11 +352,9 @@ async def test_log_handler_translates_and_invalidates_cache_for_non_english(capl
         materializer=materializer,
         meal_translation_service=translation_service,
         event_publisher=event_publisher,
-        task_manager=BackgroundTaskManager(),
     )
 
     await handler.handle(_log_command(language="vi"))
-    await handler.task_manager.drain()
 
     translation_service.translate_meal.assert_awaited_once()
     kwargs = translation_service.translate_meal.await_args.kwargs
@@ -401,11 +398,9 @@ async def test_log_handler_does_not_fail_when_translation_raises():
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
         meal_translation_service=translation_service,
-        task_manager=BackgroundTaskManager(),
     )
 
     result = await handler.handle(_log_command(language="vi"))
-    await handler.task_manager.drain()
 
     assert result.plan_id == "plan-1"
     translation_service.translate_meal.assert_awaited_once()

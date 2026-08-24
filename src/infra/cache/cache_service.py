@@ -11,16 +11,13 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from src.domain.ports.cache_port import CachePort
 from src.infra.cache.metrics import CacheMonitor
 from src.infra.cache.redis_client import RedisClient
-
-if TYPE_CHECKING:
-    from src.infra.event_bus.background_task_manager import BackgroundTaskManager
 
 # Strip the trailing 'Z' produced by an older serializer bug that wrote
 # tz-aware datetimes as '...+HH:MMZ' (offset + Z together is invalid ISO8601
@@ -40,17 +37,11 @@ class CacheService(CachePort):
         default_ttl: int = 3600,
         monitor: CacheMonitor | None = None,
         enabled: bool = True,
-        task_manager: BackgroundTaskManager | None = None,
     ):
         self.redis = redis_client
         self.default_ttl = default_ttl
         self.monitor = monitor
         self.enabled = enabled
-        self._task_manager = task_manager
-
-    def set_task_manager(self, task_manager: BackgroundTaskManager) -> None:
-        """Attach the process-wide runner used for non-business cache writes."""
-        self._task_manager = task_manager
 
     async def get(self, key: str) -> Any | None:
         """Implement CachePort.get — delegates to get_json."""
@@ -90,29 +81,10 @@ class CacheService(CachePort):
         *,
         revision_field: str | None = None,
     ) -> bool:
-        """Schedule a cache write without blocking the business request."""
-        if not self.enabled:
-            return False
-
-        if self._task_manager is None:
-            logger.warning(
-                "Skipping cache write without a background task manager: key_hash=%s",
-                self._key_hash(key),
-            )
-            return False
-
-        job = self.set_json_now(key, value, ttl, revision_field=revision_field)
-        try:
-            self._task_manager.spawn(f"cache:set:{self._key_hash(key)}", job)
-        except Exception:
-            job.close()
-            logger.error(
-                "Failed to enqueue cache write: key_hash=%s",
-                self._key_hash(key),
-                exc_info=True,
-            )
-            return False
-        return True
+        """Write a cached value asynchronously."""
+        return await self.set_json_now(
+            key, value, ttl, revision_field=revision_field
+        )
 
     async def set_json_now(
         self,
@@ -165,31 +137,11 @@ class CacheService(CachePort):
         return value
 
     async def invalidate(self, key: str) -> bool:
-        """Schedule removal of a cached value."""
-        if not self.enabled:
-            return False
-        if self._task_manager is None:
-            logger.warning(
-                "Skipping cache invalidation without a background task manager: "
-                "key_hash=%s",
-                self._key_hash(key),
-            )
-            return False
-        job = self.invalidate_now(key)
-        try:
-            self._task_manager.spawn(f"cache:delete:{self._key_hash(key)}", job)
-        except Exception:
-            job.close()
-            logger.error(
-                "Failed to enqueue cache invalidation: key_hash=%s",
-                self._key_hash(key),
-                exc_info=True,
-            )
-            return False
-        return True
+        """Remove a cached value."""
+        return await self.invalidate_now(key)
 
     async def invalidate_now(self, key: str) -> bool:
-        """Remove a cached value from inside a background cache job."""
+        """Remove a cached value directly."""
         if not self.enabled:
             return False
         deleted, _ = await asyncio.gather(
@@ -199,31 +151,8 @@ class CacheService(CachePort):
         return bool(deleted)
 
     async def invalidate_pattern(self, pattern: str) -> int:
-        """Schedule removal of all cache keys matching a glob pattern."""
-        if not self.enabled:
-            return 0
-        if self._task_manager is None:
-            logger.warning(
-                "Skipping cache pattern invalidation without a background "
-                "task manager: "
-                "pattern_hash=%s",
-                self._key_hash(pattern),
-            )
-            return 0
-        job = self.invalidate_pattern_now(pattern)
-        try:
-            self._task_manager.spawn(
-                f"cache:delete-pattern:{self._key_hash(pattern)}", job
-            )
-        except Exception:
-            job.close()
-            logger.error(
-                "Failed to enqueue cache pattern invalidation: pattern_hash=%s",
-                self._key_hash(pattern),
-                exc_info=True,
-            )
-            return 0
-        return 0
+        """Remove all cache keys matching a glob pattern."""
+        return await self.invalidate_pattern_now(pattern)
 
     async def invalidate_pattern_now(self, pattern: str) -> int:
         """Remove matching keys from inside a background cache job."""

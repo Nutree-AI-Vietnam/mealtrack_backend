@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Coroutine
 from datetime import date
 from typing import Any
 
@@ -16,7 +15,6 @@ from src.app.commands.meal_catalog.log_catalog_meal_command import (
 )
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
-from src.app.services.background_job_scheduler import schedule_background_job
 from src.app.services.catalog_meal_log_service import (
     CatalogMealLogService,
     LogCatalogMealResult,
@@ -65,7 +63,6 @@ class LogCatalogMealCommandHandler(
         event_bus: Any | None = None,
         environment: str = "development",
         recalculator: RemainingRecommendationRecalculator | None = None,
-        task_manager=None,
     ) -> None:
         self.uow = uow
         self.browse_service = browse_service
@@ -75,7 +72,6 @@ class LogCatalogMealCommandHandler(
         self.event_bus = event_bus
         self.environment = environment
         self.recalculator = recalculator
-        self.task_manager = task_manager
 
     async def handle(self, command: LogCatalogMealCommand) -> LogCatalogMealResult:
         try:
@@ -101,35 +97,29 @@ class LogCatalogMealCommandHandler(
                 event_bus=self.event_bus,
                 source="catalog_meal_log",
             )
-        await self._defer(
-            f"catalog-log-translation:{result.meal_id}",
-            persist_meal_translation(
+        try:
+            await persist_meal_translation(
                 self.meal_translation_service, result.meal, command.language
-            ),
-        )
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist catalog meal translation: %s", exc)
         if self.recalculator is not None:
-            await self._defer(
-                f"catalog-log-recalc:{command.request_id}",
-                self.recalculator.recalculate(
+            try:
+                await self.recalculator.recalculate(
                     user_id=command.user_id,
                     meal_date=command.meal_date,
                     logged_catalog_meal_id=command.catalog_meal_id,
                     logged_slot_id=result.slot_id,
                     request_id=command.request_id,
-                ),
-            )
+                )
+            except Exception as exc:
+                logger.warning("Failed to recalculate recommendations: %s", exc)
         logger.info(
-            "catalog_log.timing meal_id=%s write_ms=%.0f background=%s",
+            "catalog_log.timing meal_id=%s write_ms=%.0f",
             result.meal_id,
             write_ms,
-            self.task_manager is not None,
         )
         return result
-
-    async def _defer(self, name: str, coro: Coroutine[Any, Any, Any]) -> None:
-        """Run isolated post-log work without blocking the committed meal write."""
-
-        schedule_background_job(self.task_manager, name, coro, logger=logger)
 
     async def _write(self, command, catalog_meal) -> LogCatalogMealResult:
         async with self.uow as uow:

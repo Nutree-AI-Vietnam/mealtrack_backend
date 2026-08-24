@@ -265,21 +265,6 @@ class TestCalorieFormulaParityStaticSource:
         assert "from src.domain.model.nutrition.macros import Macros" in source
         assert "Macros.raw_total_calories(protein, carbs, fat, fiber)" in source
 
-    def test_daily_context_precompute_service_sql(self):
-        """Two SQL sites in this file share the identical formula constant."""
-        path = "src/infra/services/daily_context_precompute_service.py"
-        with open(path) as f:
-            source = f.read()
-        assert (
-            "from src.domain.constants.calorie_sql import CALORIE_FORMULA_SQL_FRAGMENT"
-            in source
-        )
-        occurrences = source.count("{CALORIE_FORMULA_SQL_FRAGMENT}")
-        assert occurrences == 2, (
-            "Expected 2 identical SQL calorie-formula sites in "
-            "daily_context_precompute_service.py; count drifted — re-verify "
-            "parity coverage."
-        )
 
     def test_calorie_formula_sql_fragment_matches_python_sot(self):
         """Locks the shared SQL fragment's literal text (the SQL-side SoT)."""

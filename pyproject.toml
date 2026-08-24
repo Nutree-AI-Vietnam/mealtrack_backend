@@ -70,7 +70,6 @@ omit = [
     "src/infra/services/ai/openai_chat_service.py",
     "src/infra/websocket/connection_manager.py",
     # Operational infrastructure (batch jobs, health checks)
-    "src/infra/services/daily_context_precompute_service.py",
     "src/api/routes/v1/health.py",
     # Standard exclusions
     "*/tests/*",

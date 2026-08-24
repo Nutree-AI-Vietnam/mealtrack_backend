@@ -7,7 +7,6 @@ from src.app.commands.notification import RegisterFcmTokenCommand
 from src.app.handlers.command_handlers.register_fcm_token_command_handler import (
     RegisterFcmTokenCommandHandler,
 )
-from src.infra.event_bus.background_task_manager import BackgroundTaskManager
 
 
 def _mock_uow(current_timezone="UTC"):

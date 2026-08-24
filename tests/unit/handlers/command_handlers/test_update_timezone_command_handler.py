@@ -8,7 +8,6 @@ from src.app.commands.user.update_timezone_command import UpdateTimezoneCommand
 from src.app.handlers.command_handlers.update_timezone_command_handler import (
     UpdateTimezoneCommandHandler,
 )
-from src.infra.event_bus.background_task_manager import BackgroundTaskManager
 
 
 @pytest.mark.asyncio

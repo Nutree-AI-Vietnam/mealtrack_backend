@@ -9,7 +9,6 @@ from src.app.handlers.command_handlers.update_language_command_handler import (
     UpdateLanguageCommandHandler,
 )
 from src.domain.model.notification import NotificationPreferences
-from src.infra.event_bus.background_task_manager import BackgroundTaskManager
 
 
 @pytest.mark.asyncio

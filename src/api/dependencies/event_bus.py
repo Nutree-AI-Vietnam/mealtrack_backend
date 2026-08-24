@@ -395,7 +395,6 @@ def get_configured_event_bus() -> EventBus:
         get_text_translation_service,
         get_vision_service,
     )
-    from src.api.dependencies.task_manager import get_optional_task_manager
 
     image_store = get_image_store()
     vision_service = get_vision_service()
@@ -405,11 +404,6 @@ def get_configured_event_bus() -> EventBus:
     food_mapping_service = get_food_mapping_service()
     fat_secret_service = get_fat_secret_service_instance()
     cache_service = get_cache_service()
-    task_manager = get_optional_task_manager()
-    if cache_service is not None and task_manager is not None:
-        configure_cache_writer = getattr(cache_service, "set_task_manager", None)
-        if configure_cache_writer is not None:
-            configure_cache_writer(task_manager)
     suggestion_service = get_suggestion_orchestration_service()
 
     from src.app.services.food_reference_validation_service import (
@@ -720,7 +714,6 @@ def get_configured_event_bus() -> EventBus:
             event_publisher=queue_publisher,
             event_bus=event_bus,
             environment=settings.ENVIRONMENT,
-            task_manager=task_manager,
         ),
     )
     from src.api.base_dependencies import get_catalog_meal_browse_service
@@ -743,7 +736,6 @@ def get_configured_event_bus() -> EventBus:
                 snapshot_service=recommendation_snapshot,
                 history_projector=recommendation_history,
             ),
-            task_manager=task_manager,
         ),
     )
     event_bus.register_handler(
