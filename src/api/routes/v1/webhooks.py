@@ -91,18 +91,18 @@ def _get_event_publisher():
 
 
 def _get_affiliate_handler():
-    """Return AffiliateWebhookHandler if affiliate integration is enabled, else None."""
+    """Return AffiliateServiceAdapter if affiliate integration is enabled, else None."""
     if os.getenv("AFFILIATE_INTEGRATION_ENABLED", "").lower() not in ("1", "true"):
         return None
     try:
-        from src.infra.services.handlers.affiliate_webhook_handler import (
-            AffiliateWebhookHandler,
+        from src.infra.adapters.affiliate_service_adapter import (
+            AffiliateServiceAdapter,
         )
 
-        return AffiliateWebhookHandler()
+        return AffiliateServiceAdapter()
     except Exception:
         logger.warning(
-            "AffiliateWebhookHandler unavailable — affiliate events will not be dispatched"
+            "AffiliateServiceAdapter unavailable — affiliate events will not be dispatched"
         )
         return None
 

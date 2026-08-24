@@ -45,7 +45,6 @@ class _FakeUow:
     def __init__(self, fake_meal):
         self.meals = _FakeMeals(fake_meal)
         self.users = _FakeUsers()
-        self.outbox = SimpleNamespace(enqueue=AsyncMock())
 
     async def __aenter__(self):
         return self
@@ -71,7 +70,6 @@ class _PreparedV2Uow:
     def __init__(self):
         self.meals = _PreparedV2Meals()
         self.meal_write_operations = _PreparedV2WriteOperations()
-        self.outbox = SimpleNamespace(enqueue=AsyncMock())
 
     async def __aenter__(self):
         return self
@@ -163,8 +161,7 @@ async def test_handler_timing_logs_do_not_wait_for_redis(caplog):
         f"Handler returned in {elapsed * 1000:.0f}ms — cache work is still on the business path."
     )
 
-    assert tasks.spawned == []
-    uow.outbox.enqueue.assert_awaited_once()
+    publisher.publish.assert_awaited_once()
 
     timing_logs = [
         r.message for r in caplog.records if "manual_save handler timing" in r.message

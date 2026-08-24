@@ -9,7 +9,7 @@ from uuid import uuid4
 from src.api.exceptions import ValidationException
 from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.meal.meal_events import MealCreatedEvent
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.graphs.meal_analyze.runtime import MealAnalyzeRuntime
 from src.app.services.food_label_localizer import localize_food_label_display
 from src.app.services.meal_analyze_workflow import MealAnalyzeWorkflow
@@ -23,11 +23,9 @@ from src.domain.parsers.vision_response_parser import (
     VisionResponseParser as GPTResponseParser,
 )
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.ports.cache_port import CachePort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
-from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.meal_analysis.meal_translation_service import (
     MealTranslationService,
@@ -67,9 +65,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         text_translation_service: Any | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
-        meal_value_insight_task_manager: Any | None = None,
-        meal_value_insight_cache: CachePort | None = None,
-        meal_value_insight_ai_manager: MealInsightAIPort | None = None,
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
         download_image_bytes: Any | None = None,
@@ -82,9 +77,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         self.text_translation_service = text_translation_service
         self.event_publisher = event_publisher
         self.environment = environment
-        self.meal_value_insight_task_manager = meal_value_insight_task_manager
-        self.meal_value_insight_cache = meal_value_insight_cache
-        self.meal_value_insight_ai_manager = meal_value_insight_ai_manager
         self.meal_analyze_workflow = meal_analyze_workflow
         self.meal_analyze_graph_enabled = meal_analyze_graph_enabled
         self._download_image_bytes_fn = download_image_bytes
@@ -319,19 +311,16 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     await uow.commit()
 
                 if self.event_publisher is not None and meal_date is not None:
-                    try:
-                        event = MealCreatedEvent(
-                            environment=self.environment,
-                            aggregate_id=saved_meal.meal_id,
-                            data={
-                                "user_id": command.user_id,
-                                "meal_id": saved_meal.meal_id,
-                                "meal_date": meal_date.isoformat(),
-                            },
-                        )
-                        await self.event_publisher.publish(event.to_payload())
-                    except Exception as exc:
-                        logger.error("Failed to publish meal created event: %s", exc)
+                    await publish_meal_event(
+                        self.event_publisher,
+                        saved_meal,
+                        event_type="created",
+                        environment=self.environment,
+                        meal_date=meal_date,
+                        language=command.language,
+                        event_bus=self.event_bus,
+                        source="scan_food_label",
+                    )
 
                 logger.info(
                     "[SCAN-BY-URL-FOOD-LABEL-COMPLETE] meal=%s vision=%.2fs total=%.2fs",
@@ -405,19 +394,16 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 await uow.commit()
 
             if self.event_publisher is not None and meal_date is not None:
-                try:
-                    event = MealCreatedEvent(
-                        environment=self.environment,
-                        aggregate_id=saved_meal.meal_id,
-                        data={
-                            "user_id": command.user_id,
-                            "meal_id": saved_meal.meal_id,
-                            "meal_date": meal_date.isoformat(),
-                        },
-                    )
-                    await self.event_publisher.publish(event.to_payload())
-                except Exception as exc:
-                    logger.error("Failed to publish meal created event: %s", exc)
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="created",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=command.language,
+                    event_bus=self.event_bus,
+                    source="scan_by_url",
+                )
 
             logger.info(
                 "[SCAN-BY-URL-COMPLETE] meal=%s vision=%.2fs total=%.2fs",
@@ -449,9 +435,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     uow=self.uow,
                     event_publisher=self.event_publisher,
                     environment=self.environment,
-                    meal_value_insight_task_manager=self.meal_value_insight_task_manager,
-                    meal_value_insight_cache=self.meal_value_insight_cache,
-                    meal_value_insight_ai_manager=self.meal_value_insight_ai_manager,
                     event_bus=self.event_bus,
                     meal_translation_service=self.meal_translation_service,
                     text_translation_service=self.text_translation_service,

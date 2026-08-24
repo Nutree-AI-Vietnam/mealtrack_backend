@@ -75,9 +75,11 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 await self._soft_delete_related_data(uow, str(user_id))
 
                 # Step 2: Anonymize user data (GDPR compliance)
+                user.email = f"deleted_{user.id}@deleted.local"
                 user.username = f"deleted_user_{user.id}"
                 user.first_name = None
                 user.last_name = None
+                user.phone_number = None
                 user.display_name = None
                 user.photo_url = None
                 user.password_hash = "DELETED"

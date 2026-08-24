@@ -62,7 +62,6 @@ async def test_delete_meal_command_deletes_hydration_entry_alias():
     uow = MagicMock()
     uow.__aenter__ = AsyncMock(return_value=uow)
     uow.__aexit__ = AsyncMock(return_value=False)
-    uow.outbox = None
     uow.meals.find_by_id = AsyncMock(return_value=None)
     uow.hydration_entries.find_by_id_or_legacy_meal_id = AsyncMock(
         return_value=SimpleNamespace(id=entry_id, logged_at=logged_at)
@@ -89,4 +88,3 @@ async def test_delete_meal_command_deletes_hydration_entry_alias():
         "user_id": user_id,
         "log_date": "2026-06-16",
     }
-

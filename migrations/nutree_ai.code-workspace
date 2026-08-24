@@ -8,6 +8,9 @@
         },
         {
             "path": "../../nutreeai_async"
+        },
+        {
+            "path": "../../nutree_web_funnel"
         }
     ]
 }

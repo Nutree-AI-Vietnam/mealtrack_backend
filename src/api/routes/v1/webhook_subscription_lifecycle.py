@@ -20,7 +20,6 @@ from src.app.events.affiliate.affiliate_events import (
     SubscriptionLifecycleEvent,
 )
 from src.app.services.background_job_scheduler import schedule_background_job
-from src.domain.ports.outbox_handler_port import OutboxEventContext
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.adapters.posthog_adapter import PostHogAdapter
 from src.infra.database.models.subscription import Subscription
@@ -91,17 +90,15 @@ def _spawn_affiliate_event(
     if affiliate_handler is None or task_manager is None:
         return
     resolved_event_id = event_id or str(uuid.uuid4())
-    context = OutboxEventContext(
-        outbox_id=resolved_event_id,
-        event_id=resolved_event_id,
-        event_type=event_type,
-        retry_count=0,
-        created_at_iso=utc_now().isoformat(),
-    )
+    affiliate_payload = {
+        **payload,
+        "event_type": event_type,
+        "event_id": resolved_event_id,
+    }
     schedule_background_job(
         task_manager,
         f"affiliate:{event_type}:{resolved_event_id}",
-        affiliate_handler.handle(payload, context),
+        affiliate_handler.send_event(affiliate_payload),
         logger=logger,
     )
 

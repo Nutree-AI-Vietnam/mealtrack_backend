@@ -50,14 +50,12 @@ async def test_attach_meal_photo_updates_owned_meal_image():
     user_id = str(uuid4())
     meal = _ready_meal(user_id)
     uow = _uow_for(meal)
-    cache = MagicMock()
-    cache.enqueue_meal_invalidation = AsyncMock(
-        side_effect=lambda *args: uow.events.append("cache")
-    )
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
     image_id = str(uuid4())
     image_url = f"https://res.cloudinary.com/demo/image/upload/mealtrack/{image_id}.jpg"
 
-    handler = AttachMealPhotoCommandHandler(uow=uow, cache_invalidation=cache)
+    handler = AttachMealPhotoCommandHandler(uow=uow, event_publisher=publisher)
 
     result = await handler.handle(
         AttachMealPhotoCommand(
@@ -78,10 +76,7 @@ async def test_attach_meal_photo_updates_owned_meal_image():
     assert saved_meal.image.url == image_url
     assert saved_meal.nutrition == meal.nutrition
     uow.commit.assert_awaited_once()
-    cache.enqueue_meal_invalidation.assert_awaited_once_with(
-        uow.outbox, user_id, saved_meal.created_at.date()
-    )
-    assert uow.events == ["cache", "commit", "uow_exit"]
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -112,12 +107,10 @@ async def test_delete_meal_photo_detaches_owned_meal_image():
     user_id = str(uuid4())
     meal = _ready_meal(user_id)
     uow = _uow_for(meal)
-    cache = MagicMock()
-    cache.enqueue_meal_invalidation = AsyncMock(
-        side_effect=lambda *args: uow.events.append("cache")
-    )
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
-    handler = DeleteMealPhotoCommandHandler(uow=uow, cache_invalidation=cache)
+    handler = DeleteMealPhotoCommandHandler(uow=uow, event_publisher=publisher)
 
     result = await handler.handle(
         DeleteMealPhotoCommand(meal_id=meal.meal_id, user_id=user_id)
@@ -132,10 +125,7 @@ async def test_delete_meal_photo_detaches_owned_meal_image():
     assert saved_meal.image is None
     assert saved_meal.nutrition == meal.nutrition
     uow.commit.assert_awaited_once()
-    cache.enqueue_meal_invalidation.assert_awaited_once_with(
-        uow.outbox, user_id, saved_meal.created_at.date()
-    )
-    assert uow.events == ["cache", "commit", "uow_exit"]
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,6 @@ if TYPE_CHECKING:
         MealSuggestionRepositoryPort,
     )
     from src.domain.ports.notification_repository_port import NotificationRepositoryPort
-    from src.domain.ports.outbox_repository_port import OutboxRepositoryPort
     from src.domain.ports.saved_suggestion_repository_port import (
         SavedSuggestionRepositoryPort,
     )
@@ -48,7 +47,6 @@ class AsyncUnitOfWorkPort(ABC):
     promo_codes: Any
     referrals: Any
     meal_write_operations: Any
-    outbox: OutboxRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:

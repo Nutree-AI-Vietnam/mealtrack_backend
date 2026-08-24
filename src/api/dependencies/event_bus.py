@@ -381,7 +381,6 @@ def get_configured_event_bus() -> EventBus:
 
     # Get singleton services (these are safe to reuse)
     from src.api.base_dependencies import (
-        get_ai_model_manager,
         get_cache_service,
         get_fat_secret_service_instance,
         get_food_cache_service,
@@ -401,14 +400,6 @@ def get_configured_event_bus() -> EventBus:
     image_store = get_image_store()
     vision_service = get_vision_service()
     gpt_parser = get_gpt_parser()
-    try:
-        ai_manager = get_ai_model_manager()
-    except Exception as exc:
-        logger.info(
-            "meal_value_insights.ai_manager_unavailable_for_graph error=%s",
-            type(exc).__name__,
-        )
-        ai_manager = None
     food_cache_service = get_food_cache_service()
     food_data_service = get_food_data_service()
     food_mapping_service = get_food_mapping_service()
@@ -486,9 +477,6 @@ def get_configured_event_bus() -> EventBus:
             meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
-            meal_value_insight_task_manager=task_manager,
-            meal_value_insight_cache=cache_service,
-            meal_value_insight_ai_manager=ai_manager,
             meal_analyze_workflow=meal_analyze_workflow,
             meal_analyze_graph_enabled=graph_settings["graph_enabled"],
         ),
@@ -513,9 +501,6 @@ def get_configured_event_bus() -> EventBus:
             text_translation_service=text_translation_service,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
-            meal_value_insight_task_manager=task_manager,
-            meal_value_insight_cache=cache_service,
-            meal_value_insight_ai_manager=ai_manager,
             meal_analyze_workflow=meal_analyze_workflow,
             meal_analyze_graph_enabled=graph_settings["graph_enabled"],
             download_image_bytes=_download_image_bytes_pooled,
@@ -529,6 +514,7 @@ def get_configured_event_bus() -> EventBus:
             uow=AsyncUnitOfWork(),
             uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
+            event_bus=event_bus,
             environment=settings.ENVIRONMENT,
             provider=fat_secret_service,
             provider_budget=provider_budget,
@@ -578,6 +564,7 @@ def get_configured_event_bus() -> EventBus:
             uow=AsyncUnitOfWork(),
             uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
+            event_bus=event_bus,
             environment=settings.ENVIRONMENT,
             provider=fat_secret_service,
             provider_budget=provider_budget,
@@ -731,29 +718,15 @@ def get_configured_event_bus() -> EventBus:
             uow=AsyncUnitOfWork(),
             meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
+            event_bus=event_bus,
             environment=settings.ENVIRONMENT,
             task_manager=task_manager,
         ),
     )
     from src.api.base_dependencies import get_catalog_meal_browse_service
-    from src.app.services.meal_value_insight_scheduler import (
-        schedule_value_insight_generation,
-    )
     from src.app.services.remaining_recommendation_recalculator import (
         RemainingRecommendationRecalculator,
     )
-
-    def _schedule_catalog_log_insights(meal, command) -> None:
-        schedule_value_insight_generation(
-            task_manager,
-            meal,
-            language=command.language or "en",
-            cache_service=cache_service,
-            ai_manager=ai_manager,
-            event_bus=event_bus,
-            user_id=command.user_id,
-            source="catalog_log",
-        )
 
     event_bus.register_handler(
         LogCatalogMealCommand,
@@ -762,6 +735,7 @@ def get_configured_event_bus() -> EventBus:
             browse_service=get_catalog_meal_browse_service(),
             meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
+            event_bus=event_bus,
             environment=settings.ENVIRONMENT,
             recalculator=RemainingRecommendationRecalculator(
                 AsyncUnitOfWork,
@@ -769,7 +743,6 @@ def get_configured_event_bus() -> EventBus:
                 snapshot_service=recommendation_snapshot,
                 history_projector=recommendation_history,
             ),
-            insight_scheduler=_schedule_catalog_log_insights,
             task_manager=task_manager,
         ),
     )
@@ -807,6 +780,7 @@ def get_configured_event_bus() -> EventBus:
         SaveMealSuggestionCommandHandler(
             uow=AsyncUnitOfWork(),
             event_publisher=queue_publisher,
+            event_bus=event_bus,
             environment=settings.ENVIRONMENT,
         ),
     )

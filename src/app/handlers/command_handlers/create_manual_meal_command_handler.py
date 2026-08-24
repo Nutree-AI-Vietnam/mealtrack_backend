@@ -11,7 +11,9 @@ from uuid import uuid4
 from src.api.exceptions import ConflictException, ValidationException
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.events.base import EventHandler
-from src.app.events.meal.meal_events import MealCreatedEvent
+from src.app.events.meal.meal_events import (
+    publish_meal_event,
+)
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
@@ -40,6 +42,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         self,
         uow: AsyncUnitOfWorkPort,
         event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
         meal_repository: MealRepositoryPort | None = None,
         nutrition_service: NutritionCalculationService | None = None,
         nutrition_resolver: ManualMealNutritionResolver | None = None,
@@ -51,6 +54,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
     ):
         self.uow = uow
         self.event_publisher = event_publisher
+        self.event_bus = event_bus
         self.environment = environment
         self.meal_repository = meal_repository
         self.uow_factory = uow_factory
@@ -99,23 +103,20 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                         if reservation:
                             await uow.meal_write_operations.release(reservation)
                         raise
-                if cache_event_needed and self.event_publisher is not None:
-                    try:
-                        event = MealCreatedEvent(
-                            environment=self.environment,
-                            aggregate_id=saved_meal.meal_id,
-                            data={
-                                "user_id": event.user_id,
-                                "meal_id": saved_meal.meal_id,
-                                "meal_date": meal_date.isoformat(),
-                            },
-                        )
-                        await self.event_publisher.publish(event.to_payload())
-                    except Exception as exc:
-                        logger.error("Failed to publish meal created event: %s", exc)
+            if cache_event_needed and self.event_publisher is not None:
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="created",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=event.language,
+                    event_bus=self.event_bus,
+                    source="manual_meal_v2",
+                )
             _db_ms = (time.perf_counter() - _t_db_start) * 1000
 
-            # Queue publication is asynchronous; the outbox row committed above.
+            # Queue publication is asynchronous.
             _t_cache_start = time.perf_counter()
             _cache_ms = (time.perf_counter() - _t_cache_start) * 1000
 
@@ -207,20 +208,17 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                     target_meal_id=saved_meal.meal_id,
                     response={"meal_id": saved_meal.meal_id},
                 )
-                if self.event_publisher is not None:
-                    try:
-                        event_payload = MealCreatedEvent(
-                            environment=self.environment,
-                            aggregate_id=saved_meal.meal_id,
-                            data={
-                                "user_id": event.user_id,
-                                "meal_id": saved_meal.meal_id,
-                                "meal_date": meal_date.isoformat(),
-                            },
-                        )
-                        await self.event_publisher.publish(event_payload.to_payload())
-                    except Exception as exc:
-                        logger.error("Failed to publish meal created event: %s", exc)
+            if self.event_publisher is not None:
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="created",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=event.language,
+                    event_bus=self.event_bus,
+                    source="manual_meal",
+                )
 
             return saved_meal
         except ValueError as exc:

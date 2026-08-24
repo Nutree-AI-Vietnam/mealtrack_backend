@@ -4,11 +4,12 @@ SaveMealSuggestionCommandHandler - Handler for saving meal suggestions as regula
 
 import logging
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from src.app.commands.meal_suggestion import IngredientItem, SaveMealSuggestionCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.meal.meal_events import MealCreatedEvent
+from src.app.events.meal.meal_events import publish_meal_event
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
@@ -38,10 +39,12 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
         self,
         uow: AsyncUnitOfWorkPort,
         event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
         environment: str = "development",
     ):
         self.uow = uow
         self.event_publisher = event_publisher
+        self.event_bus = event_bus
         self.environment = environment
 
     async def handle(self, command: SaveMealSuggestionCommand) -> str:
@@ -124,19 +127,16 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
             saved_meal = await uow.meals.save(meal)
 
         if self.event_publisher is not None:
-            try:
-                event = MealCreatedEvent(
-                    environment=self.environment,
-                    aggregate_id=saved_meal.meal_id,
-                    data={
-                        "user_id": command.user_id,
-                        "meal_id": saved_meal.meal_id,
-                        "meal_date": meal_date.isoformat(),
-                    },
-                )
-                await self.event_publisher.publish(event.to_payload())
-            except Exception as exc:
-                logger.error("Failed to publish meal created event: %s", exc)
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                language=command.language or "en",
+                event_bus=self.event_bus,
+                source="saved_meal_suggestion",
+            )
 
         logger.info(
             f"Saved meal suggestion {command.suggestion_id} as meal {saved_meal.meal_id} "

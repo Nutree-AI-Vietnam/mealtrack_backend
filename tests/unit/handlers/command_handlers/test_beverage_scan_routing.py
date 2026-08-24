@@ -60,14 +60,13 @@ async def test_packaged_beverage_scan_creates_standard_meal_not_hydration_entry(
     mock_uow.meals.find_by_id = AsyncMock(
         side_effect=lambda mid, **kw: mock_uow._saved_meals[-1]
     )
-    cache = MagicMock()
-    cache.after_hydration_write = AsyncMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=MagicMock(),
-        cache_invalidation=cache,
+        event_publisher=publisher,
     )
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock(return_value=_CLOUDINARY_URL)
@@ -89,7 +88,7 @@ async def test_packaged_beverage_scan_creates_standard_meal_not_hydration_entry(
                     },
                 }
             ],
-            "confidence": 0.9,
+            "confidence": 0.95,
             "beverage_metadata": None,
         }
     }
@@ -103,8 +102,9 @@ async def test_packaged_beverage_scan_creates_standard_meal_not_hydration_entry(
     assert len(mock_uow._saved_meals) == 1
     assert mock_uow._saved_meals[0].source == "scanner"
     assert mock_uow._saved_meals[0].dish_name == "Coca-Cola"
-    cache.enqueue_meal_invalidation.assert_awaited_once()
-    cache.after_hydration_write.assert_not_called()
+    assert [call.args[0]["event_type"] for call in publisher.publish.await_args_list] == [
+        "meal.created.v1",
+    ]
     assert result.meal_id == mock_uow._saved_meals[0].meal_id
 
 
@@ -115,14 +115,13 @@ async def test_food_scan_unchanged_path():
     mock_uow.meals.find_by_id = AsyncMock(
         side_effect=lambda mid, **kw: mock_uow._saved_meals[-1]
     )
-    cache = MagicMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
-    cache.after_hydration_write = AsyncMock()
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=MagicMock(),
-        cache_invalidation=cache,
+        event_publisher=publisher,
     )
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock(return_value=_CLOUDINARY_URL)
@@ -160,9 +159,8 @@ async def test_food_scan_unchanged_path():
     assert len(mock_uow._saved_meals) >= 1
     assert mock_uow._saved_meals[0].source == "scanner"
 
-    # Meal cache event called, NOT after_hydration_write
-    cache.enqueue_meal_invalidation.assert_awaited_once()
-    cache.after_hydration_write.assert_not_called()
+    # Meal event published
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -172,14 +170,13 @@ async def test_food_scan_with_beverage_metadata_false_follows_food_path():
     mock_uow.meals.find_by_id = AsyncMock(
         side_effect=lambda mid, **kw: mock_uow._saved_meals[-1]
     )
-    cache = MagicMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
-    cache.after_hydration_write = AsyncMock()
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=MagicMock(),
-        cache_invalidation=cache,
+        event_publisher=publisher,
     )
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock(return_value=_CLOUDINARY_URL)
@@ -213,22 +210,20 @@ async def test_food_scan_with_beverage_metadata_false_follows_food_path():
     await handler.handle(_make_command())
 
     mock_uow.hydration_entries.add.assert_not_called()
-    cache.enqueue_meal_invalidation.assert_awaited_once()
-    cache.after_hydration_write.assert_not_called()
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_zero_calorie_drink_does_not_create_hydration_entry_from_meal_scan():
     """Zero-calorie drinks should not be silently routed to hydration from meal scan."""
     mock_uow = _make_uow()
-    cache = MagicMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
-    cache.after_hydration_write = AsyncMock()
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=MagicMock(),
-        cache_invalidation=cache,
+        event_publisher=publisher,
     )
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock(return_value=_CLOUDINARY_URL)
@@ -272,8 +267,7 @@ async def test_zero_calorie_drink_does_not_create_hydration_entry_from_meal_scan
 
     mock_uow.hydration_entries.add.assert_not_called()
     mock_uow.meals.save.assert_not_called()
-    cache.after_hydration_write.assert_not_called()
-    cache.enqueue_meal_invalidation.assert_not_awaited()
+    publisher.publish.assert_not_awaited()
 
 
 @pytest.mark.asyncio

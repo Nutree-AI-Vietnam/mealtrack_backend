@@ -16,7 +16,9 @@ from src.app.commands.meal import EditMealCommand
 from src.app.commands.meal.create_manual_meal_command import ManualMealItem
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal import MealEditedEvent
-from src.app.events.meal.meal_events import MealUpdatedEvent
+from src.app.events.meal.meal_events import (
+    publish_meal_event,
+)
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
@@ -48,6 +50,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
         self,
         uow: AsyncUnitOfWorkPort,
         event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
         nutrition_resolver: ManualMealNutritionResolver | None = None,
         provider=None,
         provider_budget: ProviderBudgetPort | None = None,
@@ -58,6 +61,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
         self.uow = uow
         self.uow_factory = uow_factory
         self.event_publisher = event_publisher
+        self.event_bus = event_bus
         self.environment = environment
         self.nutrition_resolver = nutrition_resolver or ManualMealNutritionResolver(
             provider=provider,
@@ -215,22 +219,17 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 await uow.commit()
 
                 if self.event_publisher is not None:
-                    try:
-                        event = MealUpdatedEvent(
-                            environment=self.environment,
-                            aggregate_id=saved_meal.meal_id,
-                            data={
-                                "user_id": saved_meal.user_id,
-                                "meal_id": saved_meal.meal_id,
-                                "meal_date": meal_date.isoformat(),
-                                "old_meal_date": old_meal_date.isoformat()
-                                if old_meal_date != meal_date
-                                else None,
-                            },
-                        )
-                        await self.event_publisher.publish(event.to_payload())
-                    except Exception as exc:
-                        logger.error("Failed to publish meal updated event: %s", exc)
+                    await publish_meal_event(
+                        self.event_publisher,
+                        saved_meal,
+                        event_type="updated",
+                        environment=self.environment,
+                        meal_date=meal_date,
+                        language=command.language,
+                        event_bus=self.event_bus,
+                        old_meal_date=old_meal_date,
+                        source="edit_meal",
+                    )
 
                 # 6. Calculate nutrition delta for event
                 nutrition_delta = self._calculate_nutrition_delta(
@@ -409,22 +408,17 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 await uow.commit()
 
                 if self.event_publisher is not None:
-                    try:
-                        event = MealUpdatedEvent(
-                            environment=self.environment,
-                            aggregate_id=saved_meal.meal_id,
-                            data={
-                                "user_id": saved_meal.user_id,
-                                "meal_id": saved_meal.meal_id,
-                                "meal_date": meal_date.isoformat(),
-                                "old_meal_date": old_meal_date.isoformat()
-                                if old_meal_date != meal_date
-                                else None,
-                            },
-                        )
-                        await self.event_publisher.publish(event.to_payload())
-                    except Exception as exc:
-                        logger.error("Failed to publish meal updated event: %s", exc)
+                    await publish_meal_event(
+                        self.event_publisher,
+                        saved_meal,
+                        event_type="updated",
+                        environment=self.environment,
+                        meal_date=meal_date,
+                        language=command.language,
+                        event_bus=self.event_bus,
+                        old_meal_date=old_meal_date,
+                        source="edit_meal_v2",
+                    )
 
             replay_response["events"] = [
                 MealEditedEvent(

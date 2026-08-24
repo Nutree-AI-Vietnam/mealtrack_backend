@@ -7,7 +7,7 @@ from typing import Any
 
 from src.app.commands.meal import AddCustomIngredientCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.meal.meal_events import MealUpdatedEvent
+from src.app.events.meal.meal_events import publish_meal_event
 from src.domain.model.meal.food_item_change import FoodItemChange
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
@@ -57,19 +57,15 @@ class AddCustomIngredientCommandHandler(
                 meal_date = (saved_meal.created_at or utc_now()).date()
 
             if self.event_publisher is not None:
-                try:
-                    event = MealUpdatedEvent(
-                        environment=self.environment,
-                        aggregate_id=saved_meal.meal_id,
-                        data={
-                            "user_id": saved_meal.user_id,
-                            "meal_id": saved_meal.meal_id,
-                            "meal_date": meal_date.isoformat(),
-                        },
-                    )
-                    await self.event_publisher.publish(event.to_payload())
-                except Exception as exc:
-                    logger.error("Failed to publish meal updated event: %s", exc)
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="updated",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language="en",
+                    source="add_custom_ingredient",
+                )
 
             return {
                 "success": True,

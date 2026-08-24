@@ -13,7 +13,6 @@ from src.app.graphs.meal_analyze.nodes import (
     parse_nutrition,
     persist_meal,
     prepare_input,
-    schedule_value_insights,
     select_mode,
 )
 from src.app.graphs.meal_analyze.runtime import MealAnalyzeRuntime
@@ -65,16 +64,10 @@ def build_runtime_meal_analyze_graph(runtime: MealAnalyzeRuntime) -> Any:
     ) -> MealAnalyzeGraphState:
         return await invalidate_cache(state, runtime)
 
-    async def schedule_value_insights_node(
-        state: MealAnalyzeGraphState,
-    ) -> MealAnalyzeGraphState:
-        return await schedule_value_insights(state, runtime)
-
     graph = StateGraph(MealAnalyzeGraphState)
     graph.add_node("prepare_input", prepare_input)
     graph.add_node("acquire_image", acquire_image_node)
     graph.add_node("select_mode", select_mode)
-    graph.add_node("schedule_value_insights", schedule_value_insights_node)
     graph.add_node("complete", complete)
     graph.add_edge(START, "prepare_input")
     graph.add_edge("prepare_input", "acquire_image")
@@ -90,10 +83,9 @@ def build_runtime_meal_analyze_graph(runtime: MealAnalyzeRuntime) -> Any:
         graph.add_edge("parse_nutrition", "maybe_validate_reference")
         graph.add_edge("maybe_validate_reference", "persist_meal")
         graph.add_edge("persist_meal", "invalidate_cache")
-        graph.add_edge("invalidate_cache", "schedule_value_insights")
+        graph.add_edge("invalidate_cache", "complete")
     else:
         graph.add_edge("select_mode", "complete")
-    graph.add_edge("schedule_value_insights", "complete")
     graph.add_edge("complete", END)
     return graph.compile()
 

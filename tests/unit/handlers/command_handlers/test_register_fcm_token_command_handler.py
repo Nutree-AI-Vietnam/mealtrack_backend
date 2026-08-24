@@ -30,14 +30,12 @@ def _mock_notification_repo():
 @pytest.mark.asyncio
 async def test_register_fcm_token_reschedules_when_timezone_changes():
     user_id = str(uuid4())
-    precompute = AsyncMock()
-    task_manager = BackgroundTaskManager()
+    publisher = AsyncMock()
     repo = _mock_notification_repo()
     uow = _mock_uow(current_timezone="UTC")
     handler = RegisterFcmTokenCommandHandler(
         notification_repository=repo,
-        precompute_service=precompute,
-        task_manager=task_manager,
+        event_publisher=publisher,
     )
 
     with patch(
@@ -55,19 +53,18 @@ async def test_register_fcm_token_reschedules_when_timezone_changes():
 
     assert result["success"] is True
     uow.users.update_user_timezone.assert_awaited_once_with(user_id, "Asia/Ho_Chi_Minh")
-    await task_manager.drain()
-    precompute.reschedule_user_notifications.assert_awaited_once_with(user_id)
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_register_fcm_token_skips_reschedule_when_timezone_unchanged():
     user_id = str(uuid4())
-    precompute = AsyncMock()
+    publisher = AsyncMock()
     repo = _mock_notification_repo()
     uow = _mock_uow(current_timezone="Asia/Ho_Chi_Minh")
     handler = RegisterFcmTokenCommandHandler(
         notification_repository=repo,
-        precompute_service=precompute,
+        event_publisher=publisher,
     )
 
     with patch(
@@ -78,25 +75,25 @@ async def test_register_fcm_token_skips_reschedule_when_timezone_unchanged():
             RegisterFcmTokenCommand(
                 user_id=user_id,
                 fcm_token="fcm-token-valid-123",
-                device_type="android",
+                device_type="ios",
                 timezone="Asia/Ho_Chi_Minh",
             )
         )
 
     assert result["success"] is True
     uow.users.update_user_timezone.assert_not_called()
-    precompute.reschedule_user_notifications.assert_not_called()
+    publisher.publish.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_register_fcm_token_ignores_invalid_timezone_without_reschedule():
     user_id = str(uuid4())
-    precompute = AsyncMock()
+    publisher = AsyncMock()
     repo = _mock_notification_repo()
     uow = _mock_uow(current_timezone="UTC")
     handler = RegisterFcmTokenCommandHandler(
         notification_repository=repo,
-        precompute_service=precompute,
+        event_publisher=publisher,
     )
 
     with patch(
@@ -114,4 +111,4 @@ async def test_register_fcm_token_ignores_invalid_timezone_without_reschedule():
 
     assert result["success"] is True
     uow.users.update_user_timezone.assert_not_called()
-    precompute.reschedule_user_notifications.assert_not_called()
+    publisher.publish.assert_not_awaited()

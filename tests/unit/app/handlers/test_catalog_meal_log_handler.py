@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -101,7 +101,6 @@ class _Uow:
         self.meal_write_operations = writes or _WriteOps()
         self.meal_recommendation_plans = plans or _Plans()
         self.meals = meals or SimpleNamespace(find_by_id=AsyncMock())
-        self.outbox = SimpleNamespace()
 
     async def __aenter__(self):
         return self
@@ -126,7 +125,7 @@ def _handler(
     uow,
     browse,
     log_service,
-    cache=None,
+    event_publisher=None,
     recalculator=None,
     task_manager=None,
     translation=None,
@@ -136,7 +135,7 @@ def _handler(
         browse_service=browse,
         log_service=log_service,
         meal_translation_service=translation,
-        cache_invalidation=cache,
+        event_publisher=event_publisher,
         recalculator=recalculator,
         task_manager=task_manager,
     )
@@ -159,7 +158,6 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
     log_service.execute = AsyncMock(
         return_value=_result(logged_via="slot", plan_id="plan-1", slot_id="slot-1")
     )
-    cache = SimpleNamespace(enqueue_meal_invalidation=AsyncMock())
     recalculator = SimpleNamespace(recalculate=AsyncMock())
 
     class _Tasks:
@@ -174,11 +172,13 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
                 await coro
 
     tasks = _Tasks()
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
     handler = _handler(
         _Uow(),
         _Browse(),
         log_service,
-        cache=cache,
+        event_publisher=publisher,
         recalculator=recalculator,
         task_manager=tasks,
     )
@@ -187,28 +187,20 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
 
     assert result.logged_via == "slot"
     assert result.plan_id == "plan-1"
-    cache.enqueue_meal_invalidation.assert_awaited_once_with(
-        handler.uow.outbox,
-        "user-1",
-        date(2026, 8, 18),
-    )
+    publisher.publish.assert_awaited_once()
     await tasks.drain()
     recalculator.recalculate.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_translation_runs_after_cache_invalidation_is_enqueued():
-    order: list[str] = []
+async def test_translation_is_deferred_when_language_provided():
+    translated: list[str] = []
     log_service = AsyncMock()
     log_service.execute = AsyncMock(return_value=_result())
 
     class _Translation:
         async def translate_meal(self, **kwargs):
-            order.append("translate")
-
-    class _Cache:
-        async def enqueue_meal_invalidation(self, outbox, user_id, meal_date):
-            order.append("cache")
+            translated.append("translate")
 
     class _Tasks:
         def __init__(self):
@@ -227,7 +219,6 @@ async def test_translation_runs_after_cache_invalidation_is_enqueued():
         _Uow(),
         _Browse(),
         log_service,
-        cache=_Cache(),
         translation=_Translation(),
         task_manager=tasks,
     )
@@ -235,7 +226,7 @@ async def test_translation_runs_after_cache_invalidation_is_enqueued():
     await handler.handle(_command(language="vi"))
     await tasks.drain()
 
-    assert order == ["cache", "translate"]
+    assert translated == ["translate"]
 
 
 @pytest.mark.asyncio

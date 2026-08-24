@@ -11,9 +11,6 @@ from src.domain.ports.meal_suggestion_repository_port import (
     MealSuggestionRepositoryPort,
 )
 from src.infra.database.config_async import AsyncSessionLocal
-from src.infra.repositories.affiliate_event_outbox_repository import (
-    AffiliateEventOutboxRepository,
-)
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
 )
@@ -42,7 +39,6 @@ from src.infra.repositories.movement_repository_async import AsyncMovementReposi
 from src.infra.repositories.notification_repository_async import (
     AsyncNotificationRepository,
 )
-from src.infra.repositories.outbox_repository import AsyncOutboxRepository
 from src.infra.repositories.promo_code_repository import PromoCodeRepository
 from src.infra.repositories.referral_repository import ReferralRepository
 from src.infra.repositories.saved_suggestion_db_repository_async import (
@@ -141,8 +137,6 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.meal_translations = AsyncMealTranslationRepository(session)
         self.promo_codes = PromoCodeRepository(session)
         self.referrals = ReferralRepository(session)
-        self.affiliate_outbox = AffiliateEventOutboxRepository(session)
-        self.outbox = AsyncOutboxRepository(session)
         self.meal_write_operations = AsyncMealWriteOperationRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

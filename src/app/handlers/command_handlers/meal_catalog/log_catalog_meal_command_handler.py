@@ -11,34 +11,39 @@ from datetime import date
 from typing import Any
 
 from src.api.exceptions import ConflictException, ResourceNotFoundException
-from src.app.commands.meal.meal_catalog.log_catalog_meal_command import (
+from src.app.commands.meal_catalog.log_catalog_meal_command import (
     LogCatalogMealCommand,
-    LogCatalogMealResult,
 )
 from src.app.events.base import EventHandler, handles
-from src.app.events.meal.meal_events import MealCreatedEvent
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.services.background_job_scheduler import schedule_background_job
+from src.app.services.catalog_meal_log_service import (
+    CatalogMealLogService,
+    LogCatalogMealResult,
+)
+from src.app.services.meal_translation_persistence import persist_meal_translation
+from src.app.services.remaining_recommendation_recalculator import (
+    RemainingRecommendationRecalculator,
+)
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
-from src.domain.services.meal_catalog.catalog_meal_log_service import (
-    CatalogMealLogService,
-)
-from src.domain.services.meal_catalog.meal_translation_service import (
+from src.domain.services.meal_analysis.meal_translation_service import (
     MealTranslationService,
-    persist_meal_translation,
-)
-from src.domain.services.meal_recommendation.remaining_recommendation_recalculator import (
-    RemainingRecommendationRecalculator,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def catalog_log_fingerprint(catalog_meal_id: str, meal_date: date) -> str:
+def catalog_log_fingerprint(
+    catalog_meal_id: str,
+    meal_date: date,
+    meal_type: str | None = None,
+) -> str:
     payload = {
         "catalog_meal_id": catalog_meal_id,
         "meal_date": meal_date.isoformat(),
+        "meal_type": meal_type,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -57,9 +62,9 @@ class LogCatalogMealCommandHandler(
         log_service: CatalogMealLogService | None = None,
         meal_translation_service: MealTranslationService | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
         environment: str = "development",
         recalculator: RemainingRecommendationRecalculator | None = None,
-        insight_scheduler=None,
         task_manager=None,
     ) -> None:
         self.uow = uow
@@ -67,9 +72,9 @@ class LogCatalogMealCommandHandler(
         self.log_service = log_service or CatalogMealLogService()
         self.meal_translation_service = meal_translation_service
         self.event_publisher = event_publisher
+        self.event_bus = event_bus
         self.environment = environment
         self.recalculator = recalculator
-        self.insight_scheduler = insight_scheduler
         self.task_manager = task_manager
 
     async def handle(self, command: LogCatalogMealCommand) -> LogCatalogMealResult:
@@ -81,6 +86,21 @@ class LogCatalogMealCommandHandler(
         write_started = time.perf_counter()
         result = await self._write(command, catalog_meal)
         write_ms = (time.perf_counter() - write_started) * 1000
+        if (
+            self.event_publisher is not None
+            and not getattr(result.meal, "_is_replay", False)
+        ):
+            await publish_meal_event(
+                self.event_publisher,
+                result.meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=command.meal_date,
+                user_id=command.user_id,
+                language=command.language or "en",
+                event_bus=self.event_bus,
+                source="catalog_meal_log",
+            )
         await self._defer(
             f"catalog-log-translation:{result.meal_id}",
             persist_meal_translation(
@@ -98,8 +118,6 @@ class LogCatalogMealCommandHandler(
                     request_id=command.request_id,
                 ),
             )
-        if self.insight_scheduler is not None:
-            self.insight_scheduler(result.meal, command)
         logger.info(
             "catalog_log.timing meal_id=%s write_ms=%.0f background=%s",
             result.meal_id,
@@ -144,20 +162,6 @@ class LogCatalogMealCommandHandler(
                     target_meal_id=result.meal_id,
                     response=result.to_replay_payload(),
                 )
-                if self.event_publisher is not None:
-                    try:
-                        event = MealCreatedEvent(
-                            environment=self.environment,
-                            aggregate_id=result.meal_id,
-                            data={
-                                "user_id": command.user_id,
-                                "meal_id": result.meal_id,
-                                "meal_date": command.meal_date.isoformat(),
-                            },
-                        )
-                        await self.event_publisher.publish(event.to_payload())
-                    except Exception as exc:
-                        logger.error("Failed to publish meal created event: %s", exc)
                 return result
             except Exception:
                 await uow.meal_write_operations.release(reservation)
@@ -196,6 +200,7 @@ def _result_from_replay(payload: dict | None, catalog_meal) -> LogCatalogMealRes
             "meal_id": payload["meal_id"],
             "dish_name": getattr(catalog_meal, "name", None),
             "nutrition": None,
+            "_is_replay": True,
         },
     )()
     return LogCatalogMealResult(

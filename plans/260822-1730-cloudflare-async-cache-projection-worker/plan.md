@@ -8,6 +8,7 @@ branch: "architecture/optimize-architecture"
 tags: [feature, backend, infra, cloudflare, redis]
 blockedBy:
   - "provider credentials for Redis proof and staging/live deployment access"
+  - "260824-1320-worker-first-meal-cache-and-insight-cutover"
 blocks: []
 created: "2026-08-22"
 createdBy: "ck:plan"

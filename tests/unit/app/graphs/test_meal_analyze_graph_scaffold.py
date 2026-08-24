@@ -1,6 +1,5 @@
 """Tests for the default-off meal analysis graph scaffold."""
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,7 +17,6 @@ from src.app.graphs.meal_analyze.graph import (
 from src.app.graphs.meal_analyze.nodes import (
     acquire_image,
     analyze_vision,
-    schedule_value_insights,
 )
 from src.app.graphs.meal_analyze.runtime import AcquiredImage, MealAnalyzeRuntime
 from src.domain.exceptions.ai_exceptions import MealResponseLocalizationError
@@ -46,7 +44,6 @@ class _FakeGraphUow:
             side_effect=lambda meal_id, **_: self._saved_meals[-1]
         )
         self.commit = AsyncMock()
-        self.outbox = SimpleNamespace()
 
     async def __aenter__(self):
         return self
@@ -161,8 +158,7 @@ async def test_async_graph_runner_persists_ready_meal_and_invalidates_cache():
         }
     )
     uow = _FakeGraphUow()
-    cache = AsyncMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
+    publisher = AsyncMock()
     runtime = MealAnalyzeRuntime(
         command=UploadMealImageImmediatelyCommand(
             user_id="00000000-0000-0000-0000-000000000001",
@@ -173,7 +169,7 @@ async def test_async_graph_runner_persists_ready_meal_and_invalidates_cache():
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         uow=uow,
-        cache_invalidation=cache,
+        event_publisher=publisher,
         image_id_factory=lambda: image_id,
         meal_id_factory=lambda: meal_id,
     )
@@ -192,7 +188,7 @@ async def test_async_graph_runner_persists_ready_meal_and_invalidates_cache():
         language="en",
     )
     uow.meals.save.assert_awaited_once()
-    cache.enqueue_meal_invalidation.assert_awaited_once()
+    assert publisher.publish.await_count == 1
     meal = result["result"]
     assert meal.meal_id == meal_id
     assert meal.status == MealStatus.READY
@@ -204,7 +200,7 @@ async def test_async_graph_runner_persists_ready_meal_and_invalidates_cache():
 
 
 @pytest.mark.asyncio
-async def test_async_graph_runner_schedules_value_insights_after_cache_invalidation():
+async def test_async_graph_runner_publishes_insight_event_after_persist():
     image_id = "1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
     meal_id = "22222222-2222-4222-8222-222222222222"
     image_store = AsyncMock()
@@ -236,17 +232,8 @@ async def test_async_graph_runner_schedules_value_insights_after_cache_invalidat
         }
     )
     uow = _FakeGraphUow()
-    cache = AsyncMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
+    publisher = AsyncMock()
 
-    class TaskManager:
-        def __init__(self):
-            self.spawned = []
-
-        def spawn(self, name, coroutine):
-            self.spawned.append((name, coroutine))
-
-    task_manager = TaskManager()
     runtime = MealAnalyzeRuntime(
         command=UploadMealImageImmediatelyCommand(
             user_id="00000000-0000-0000-0000-000000000001",
@@ -257,11 +244,7 @@ async def test_async_graph_runner_schedules_value_insights_after_cache_invalidat
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         uow=uow,
-        cache_invalidation=cache,
-        meal_value_insight_task_manager=task_manager,
-        meal_value_insight_cache=AsyncMock(),
-        meal_value_insight_ai_manager=AsyncMock(),
-        event_bus=AsyncMock(),
+        event_publisher=publisher,
         image_id_factory=lambda: image_id,
         meal_id_factory=lambda: meal_id,
     )
@@ -275,21 +258,13 @@ async def test_async_graph_runner_schedules_value_insights_after_cache_invalidat
         runtime,
     )
 
-    cache.enqueue_meal_invalidation.assert_awaited_once()
+    assert publisher.publish.await_count == 1
     assert result["cache_invalidated"] is True
-    assert result["meal_value_insight_scheduled"] is True
-    assert result["meal_value_insight_source"] == "meal_analyze_graph"
-    assert task_manager.spawned
-    task_name, coroutine = task_manager.spawned[0]
-    assert task_name == f"meal-value-insights:{meal_id}"
-    coroutine.close()
-    assert "meal_value_insight_task_manager" not in result
-    assert "meal_value_insight_ai_manager" not in result
-    assert "user_context" not in result
+    assert "meal_value_insight_scheduled" not in result
 
 
 @pytest.mark.asyncio
-async def test_graph_ready_response_returns_before_value_insight_ai_completes(caplog):
+async def test_graph_ready_response_does_not_run_value_insight_ai(caplog):
     image_id = "1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
     meal_id = "22222222-2222-4222-8222-222222222222"
     image_store = AsyncMock()
@@ -321,46 +296,8 @@ async def test_graph_ready_response_returns_before_value_insight_ai_completes(ca
         }
     )
 
-    class CapturingTaskManager:
-        def __init__(self):
-            self.spawned = []
-
-        def spawn(self, name, coroutine):
-            self.spawned.append((name, coroutine))
-            return coroutine
-
-    class FakeCache:
-        def __init__(self):
-            self.saved = []
-
-        async def get(self, key):
-            return None
-
-        async def set(self, key, value, ttl):
-            self.saved.append((key, value, ttl))
-            return True
-
-    class FakeEventBus:
-        async def send(self, query):
-            return {"profile": {}, "tdee": {}}
-
-    task_manager = CapturingTaskManager()
-    cache = AsyncMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
-    insight_cache = FakeCache()
+    publisher = AsyncMock()
     ai_manager = AsyncMock()
-    ai_manager.generate = AsyncMock(
-        return_value={
-            "meal_bullets": [
-                {
-                    "text": "Protein supports fullness after this meal.",
-                    "category": "benefit",
-                    "highlights": ["fullness"],
-                }
-            ],
-            "ingredient_insights": [],
-        }
-    )
     runtime = MealAnalyzeRuntime(
         command=UploadMealImageImmediatelyCommand(
             user_id="00000000-0000-0000-0000-000000000001",
@@ -371,11 +308,7 @@ async def test_graph_ready_response_returns_before_value_insight_ai_completes(ca
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         uow=_FakeGraphUow(),
-        cache_invalidation=cache,
-        meal_value_insight_task_manager=task_manager,
-        meal_value_insight_cache=insight_cache,
-        meal_value_insight_ai_manager=ai_manager,
-        event_bus=FakeEventBus(),
+        event_publisher=publisher,
         image_id_factory=lambda: image_id,
         meal_id_factory=lambda: meal_id,
     )
@@ -390,46 +323,8 @@ async def test_graph_ready_response_returns_before_value_insight_ai_completes(ca
     )
 
     assert result["result"].status == MealStatus.READY
-    assert result["meal_value_insight_scheduled"] is True
-    assert task_manager.spawned
+    assert publisher.publish.await_count == 1
     ai_manager.generate.assert_not_awaited()
-
-    with caplog.at_level(
-        "INFO", logger="src.domain.services.meal_value_insight_service"
-    ):
-        await task_manager.spawned[0][1]
-
-    ai_manager.generate.assert_awaited_once()
-    assert insight_cache.saved
-    assert "meal_value_insights.cache_saved" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_schedule_value_insights_returns_ready_state_when_scheduler_fails():
-    runtime = MealAnalyzeRuntime(
-        command=UploadMealImageImmediatelyCommand(
-            user_id="user-1",
-            file_contents=b"upload-bytes",
-            content_type="image/jpeg",
-        ),
-        meal_value_insight_task_manager=object(),
-        meal_value_insight_cache=object(),
-        meal_value_insight_ai_manager=AsyncMock(),
-        event_bus=AsyncMock(),
-    )
-    runtime.saved_meal = type("Meal", (), {"meal_id": "meal-1"})()
-
-    def failing_scheduler(*args, **kwargs):
-        raise RuntimeError("scheduler unavailable")
-
-    runtime.meal_value_insight_scheduler = failing_scheduler
-
-    state_update = await schedule_value_insights({"meal_id": "meal-1"}, runtime)
-
-    assert state_update == {
-        "meal_value_insight_scheduled": False,
-        "meal_value_insight_source": "meal_analyze_graph",
-    }
 
 
 @pytest.mark.asyncio
@@ -574,8 +469,6 @@ async def test_async_graph_returns_same_call_locale_without_translation_reload()
             }
         }
     )
-    cache = AsyncMock()
-    cache.enqueue_meal_invalidation = AsyncMock()
     uow = _FakeGraphUow()
     runtime = MealAnalyzeRuntime(
         command=UploadMealImageImmediatelyCommand(
@@ -588,7 +481,6 @@ async def test_async_graph_returns_same_call_locale_without_translation_reload()
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         uow=uow,
-        cache_invalidation=cache,
         image_id_factory=lambda: image_id,
         meal_id_factory=lambda: "22222222-2222-4222-8222-222222222222",
     )
@@ -611,7 +503,6 @@ async def test_async_graph_returns_same_call_locale_without_translation_reload()
         language="vi",
     )
     assert uow.meals.find_by_id.await_count == 0
-    cache.enqueue_meal_invalidation.assert_awaited_once()
     assert result["result"].meal_id == "22222222-2222-4222-8222-222222222222"
     assert result["result"].dish_name == "Cơm gà"
     assert result["result"].nutrition.food_items[0].name == "Cơm gà"

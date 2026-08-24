@@ -7,7 +7,7 @@ from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.commands.meal.upload_meal_image_immediately_command import (
     UploadMealImageImmediatelyCommand,
 )
-from src.app.events.meal.meal_events import MealCreatedEvent
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.graphs.meal_analyze.quality_gate import (
     DEFAULT_GRAPH_VERSION,
     normalize_scan_mode,
@@ -147,45 +147,6 @@ async def _acquire_scan_by_url_image(
         "image_id": image_id,
         "content_kind": content_kind,
         "image_size_bytes": len(raw_bytes),
-    }
-
-
-async def schedule_value_insights(
-    state: MealAnalyzeGraphState,
-    runtime: MealAnalyzeRuntime,
-) -> MealAnalyzeGraphState:
-    """Schedule profile-aware meal insight generation as a post-persist step."""
-    source = "meal_analyze_graph"
-    if runtime.saved_meal is None:
-        return {
-            "meal_value_insight_scheduled": False,
-            "meal_value_insight_source": source,
-        }
-
-    try:
-        scheduled = runtime.meal_value_insight_scheduler(
-            runtime.meal_value_insight_task_manager,
-            runtime.saved_meal,
-            language=runtime.command.language,
-            cache_service=runtime.meal_value_insight_cache,
-            ai_manager=runtime.meal_value_insight_ai_manager,
-            event_bus=runtime.event_bus,
-            user_id=runtime.command.user_id,
-            source=source,
-        )
-    except Exception as exc:
-        logger.info(
-            "meal_value_insights.graph_schedule_failed meal_id=%s user_id=%s error=%s",
-            runtime.saved_meal.meal_id,
-            runtime.command.user_id,
-            type(exc).__name__,
-        )
-        scheduled = False
-
-    runtime.saved_meal._meal_value_insight_scheduled = scheduled
-    return {
-        "meal_value_insight_scheduled": scheduled,
-        "meal_value_insight_source": source,
     }
 
 
@@ -427,21 +388,16 @@ async def persist_meal(
         await uow.commit()
 
     if runtime.event_publisher is not None and runtime.meal_date is not None:
-        try:
-            event = MealCreatedEvent(
-                environment=runtime.environment,
-                aggregate_id=saved_meal.meal_id,
-                data={
-                    "user_id": runtime.command.user_id,
-                    "meal_id": saved_meal.meal_id,
-                    "meal_date": runtime.meal_date.isoformat(),
-                },
-            )
-            await runtime.event_publisher.publish(event.to_payload())
-        except Exception as exc:
-            logging.getLogger(__name__).error(
-                "Failed to publish meal created event: %s", exc
-            )
+        await publish_meal_event(
+            runtime.event_publisher,
+            saved_meal,
+            event_type="created",
+            environment=runtime.environment,
+            meal_date=runtime.meal_date,
+            language=runtime.command.language,
+            event_bus=runtime.event_bus,
+            source="meal_analyze_graph",
+        )
 
     runtime.saved_meal = saved_meal
     return {

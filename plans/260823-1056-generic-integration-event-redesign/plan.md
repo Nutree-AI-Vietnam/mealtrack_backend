@@ -6,7 +6,7 @@ priority: P2
 branch: "architecture/optimize-architecture"
 tags: [architecture, integration-events, hydration, cloudflare-queues]
 blockedBy: [260823-1754-simplify-hydration-direct-queue-delivery]
-blocks: []
+blocks: [260824-1320-worker-first-meal-cache-and-insight-cutover]
 created: "2026-08-23T03:57:04.151Z"
 createdBy: ck:plan
 source: skill

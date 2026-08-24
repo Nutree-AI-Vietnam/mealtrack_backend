@@ -115,14 +115,14 @@ class TestHandlerStubs:
         stub_uow.meals = Mock()
         stub_uow.meals.save.return_value = None
 
-        stub_cache_invalidation = Mock()
+        stub_event_publisher = Mock()
 
         # Create handler with stubs
         handler = EditMealCommandHandler(
             uow=stub_uow,
-            cache_invalidation=stub_cache_invalidation,
+            event_publisher=stub_event_publisher,
         )
 
         # Verify handler is created with stubs
         assert handler.uow == stub_uow
-        assert handler.cache_invalidation == stub_cache_invalidation
+        assert handler.event_publisher == stub_event_publisher

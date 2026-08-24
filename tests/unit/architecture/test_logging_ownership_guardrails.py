@@ -117,11 +117,6 @@ class TestSensitiveLogSubstrings:
 
 _ENTRYPOINTS = {
     SRC / "api" / "main.py",
-    SRC / "cron" / "email.py",
-    SRC / "cron" / "push.py",
-    SRC / "cron" / "affiliate_outbox.py",
-    SRC / "cron" / "maintenance.py",
-    SRC / "cron" / "outbox_worker.py",
 }
 
 

@@ -29,6 +29,7 @@ class EditMealCommand(Command):
     override_intent: Optional[str] = None
     idempotency_key: Optional[str] = None
     request_fingerprint: Optional[str] = None
+    language: str = "en"
 
 
 @dataclass

@@ -3,7 +3,6 @@ from tests.fixtures.fakes.fake_meal_suggestion_repository import (
     FakeMealSuggestionRepository,
 )
 from tests.fixtures.fakes.fake_notification_repository import FakeNotificationRepository
-from tests.fixtures.fakes.fake_outbox_repository import FakeOutboxRepository
 from tests.fixtures.fakes.fake_subscription_repository import FakeSubscriptionRepository
 from tests.fixtures.fakes.fake_user_repository import FakeUserRepository
 
@@ -19,7 +18,6 @@ class FakeUnitOfWork(AsyncUnitOfWorkPort):
         self.subscriptions = FakeSubscriptionRepository()
         self.meals = FakeMealRepository()
         self.meal_suggestions = FakeMealSuggestionRepository()
-        self.outbox = FakeOutboxRepository()
         self.committed = False
         self.rolled_back = False
 

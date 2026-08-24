@@ -6,7 +6,7 @@ from typing import Any
 
 from src.app.commands.meal_recommendation import LogRecommendedMealCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.meal.meal_events import MealCreatedEvent
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.services.background_job_scheduler import schedule_background_job
 from src.app.services.meal_translation_persistence import persist_meal_translation
 from src.app.services.recommended_meal_materialization_service import (
@@ -39,6 +39,7 @@ class LogRecommendedMealCommandHandler(
         materializer: RecommendedMealMaterializationService | None = None,
         meal_translation_service: MealTranslationService | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
         environment: str = "development",
         task_manager=None,
     ):
@@ -46,6 +47,7 @@ class LogRecommendedMealCommandHandler(
         self.materializer = materializer or RecommendedMealMaterializationService()
         self.meal_translation_service = meal_translation_service
         self.event_publisher = event_publisher
+        self.event_bus = event_bus
         self.environment = environment
         self.task_manager = task_manager
 
@@ -85,19 +87,17 @@ class LogRecommendedMealCommandHandler(
             and self.event_publisher is not None
             and meal_date is not None
         ):
-            try:
-                event = MealCreatedEvent(
-                    environment=self.environment,
-                    aggregate_id=saved_meal.meal_id,
-                    data={
-                        "user_id": command.user_id,
-                        "meal_id": saved_meal.meal_id,
-                        "meal_date": meal_date.isoformat(),
-                    },
-                )
-                await self.event_publisher.publish(event.to_payload())
-            except Exception as exc:
-                logger.error("Failed to publish meal created event: %s", exc)
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                user_id=command.user_id,
+                language=command.language,
+                event_bus=self.event_bus,
+                source="recommended_meal_log",
+            )
 
         # meal_translation uses its own DB session; parent meal must be committed first.
         if saved_meal is not None:

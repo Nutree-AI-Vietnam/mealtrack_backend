@@ -32,7 +32,6 @@ def _make_uow(*, ref_code=None, ref_existing=None):
     uow.referrals.get_code_by_code = AsyncMock(return_value=ref_code)
     uow.referrals.get_conversion_by_referred_user = AsyncMock(return_value=ref_existing)
     uow.referrals.create_conversion = AsyncMock(return_value=MagicMock())
-    uow.affiliate_outbox = AsyncMock()
     return uow
 
 

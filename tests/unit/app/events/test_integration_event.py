@@ -1,3 +1,7 @@
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 from pydantic import ValidationError
 
@@ -9,6 +13,12 @@ from src.app.events.hydration import (
     HydrationDeletedEvent,
 )
 from src.app.events.integration_event import IntegrationEvent
+from src.app.events.meal.meal_events import (
+    MealCreatedEvent,
+    MealInsightSnapshot,
+    publish_meal_event,
+)
+from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 
 EVENT_ID = "00000000-0000-4000-8000-000000000001"
 
@@ -237,3 +247,98 @@ def test_generic_event_rejects_oversized_payload() -> None:
             aggregate_id="test-1",
             data={"value": "x" * 40_000},
         )
+
+
+def test_meal_created_event_embeds_bounded_insight_snapshot() -> None:
+    meal = SimpleNamespace(
+        meal_id="00000000-0000-4000-8000-000000000002",
+        user_id="00000000-0000-4000-8000-000000000003",
+        dish_name="Chicken rice",
+        created_at=datetime(2026, 8, 24, 10, 0, tzinfo=UTC),
+        ready_at=None,
+        updated_at=datetime(2026, 8, 24, 11, 0, tzinfo=UTC),
+        nutrition=Nutrition(
+            macros=Macros(protein=28, carbs=52, fat=8, fiber=2, sugar=1),
+            food_items=[
+                FoodItem(
+                    id="food-1",
+                    name="Chicken",
+                    quantity=150,
+                    unit="g",
+                    macros=Macros(protein=24, carbs=0, fat=5, fiber=0, sugar=0),
+                    confidence=0.9,
+                )
+            ],
+        ),
+    )
+
+    snapshot = MealInsightSnapshot.from_meal(
+        meal,
+        language="vi-VN",
+    ).model_dump(mode="json", exclude_none=True)
+    payload = MealCreatedEvent(
+        environment="staging",
+        aggregate_id=meal.meal_id,
+        occurred_at=meal.updated_at,
+        data={
+            "user_id": meal.user_id,
+            "meal_id": meal.meal_id,
+            "meal_date": "2026-08-24",
+            "insight": snapshot,
+        },
+    ).to_payload()
+
+    assert payload["version"] == 1
+    assert payload["event_type"] == "meal.created.v1"
+    assert payload["data"]["user_id"] == meal.user_id
+    assert payload["data"]["meal_id"] == meal.meal_id
+    assert payload["data"]["insight"]["language"] == "vi"
+    assert payload["occurred_at"] == "2026-08-24T11:00:00Z"
+    assert payload["data"]["insight"]["nutrition"]["protein_g"] == 28
+    assert payload["data"]["insight"]["ingredients"][0]["name"] == "Chicken"
+
+
+@pytest.mark.asyncio
+async def test_meal_event_publish_includes_compact_profile_context() -> None:
+    meal = SimpleNamespace(
+        user_id="00000000-0000-4000-8000-000000000003",
+        meal_id="00000000-0000-4000-8000-000000000004",
+        dish_name="Chicken rice",
+        created_at=datetime(2026, 8, 24, 10, 0, tzinfo=UTC),
+        ready_at=None,
+        updated_at=None,
+        nutrition=Nutrition(
+            macros=Macros(protein=28, carbs=52, fat=8, fiber=2, sugar=1),
+            food_items=[],
+        ),
+    )
+    publisher = SimpleNamespace(publish=AsyncMock())
+    event_bus = SimpleNamespace(
+        send=AsyncMock(
+            return_value={
+                "profile": {
+                    "fitness_goal": "weight_loss",
+                    "allergies": ["peanuts"],
+                    "unused_field": "not forwarded",
+                },
+                "tdee": {"target_calories": 2000},
+            }
+        )
+    )
+
+    assert await publish_meal_event(
+        publisher,
+        meal,
+        event_type="created",
+        environment="staging",
+        meal_date=datetime(2026, 8, 24, tzinfo=UTC).date(),
+        event_bus=event_bus,
+    )
+
+    payload = publisher.publish.await_args.args[0]
+    assert payload["event_type"] == "meal.created.v1"
+    assert payload["data"]["insight"]["user_context"] == {
+        "fitness_goal": "weight_loss",
+        "allergies": ["peanuts"],
+        "targets": {"target_calories": 2000},
+    }

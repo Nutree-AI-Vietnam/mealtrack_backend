@@ -81,8 +81,6 @@ from .weekly.weekly_macro_budget import WeeklyMacroBudgetORM
 BarcodeProductModel = FoodReferenceModel
 
 # AI Handshake guest trial quota
-# Affiliate outbox
-from .affiliate_event_outbox import AffiliateEventOutbox
 from .ai_handshake_guest_trial_quota import AiHandshakeGuestTrialQuota
 
 # Durable mutation replay
@@ -187,8 +185,6 @@ __all__ = [
     # Promo codes
     "PromoCode",
     "PromoCodeRedemption",
-    # Affiliate outbox
-    "AffiliateEventOutbox",
     # AI Handshake guest trial quota
     "AiHandshakeGuestTrialQuota",
     "WebFunnelLead",

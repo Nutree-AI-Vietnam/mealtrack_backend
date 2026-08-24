@@ -13,14 +13,11 @@ from fastapi import (
 )
 
 from src.api.base_dependencies import (
-    get_ai_model_manager,
     get_async_food_reference_repository,
-    get_cache_service,
     get_image_store,
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.api.dependencies.task_manager import get_optional_task_manager
 from src.api.exceptions import ValidationException, handle_exception
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
@@ -33,14 +30,9 @@ from src.api.schemas.response import DetailedMealResponse
 from src.app.commands.meal.upload_meal_image_immediately_command import (
     UploadMealImageImmediatelyCommand,
 )
-from src.app.services.meal_value_insight_scheduler import (
-    schedule_value_insight_generation,
-)
 from src.domain.exceptions.ai_exceptions import MealResponseLocalizationError
-from src.domain.ports.cache_port import CachePort
-from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
 from src.domain.services.prompts.input_sanitizer import sanitize_user_description
-from src.infra.event_bus import BackgroundTaskManager, EventBus
+from src.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -59,9 +51,6 @@ async def _analyze_uploaded_image(
     scan_mode: str,
     event_bus: EventBus,
     image_store,
-    cache_service: CachePort | None,
-    task_manager: BackgroundTaskManager | None,
-    ai_manager: MealInsightAIPort,
     food_reference_repository=None,
 ) -> DetailedMealResponse:
     if file.content_type not in ALLOWED_CONTENT_TYPES:
@@ -124,16 +113,6 @@ async def _analyze_uploaded_image(
     if meal.image:
         image_url = meal.image.url or image_store.get_url(meal.image.image_id)
 
-    schedule_value_insight_generation(
-        task_manager,
-        meal,
-        language=language,
-        cache_service=cache_service,
-        ai_manager=ai_manager,
-        event_bus=event_bus,
-        user_id=user_id,
-    )
-
     display_projections = await load_food_reference_display_projections(
         meal, food_reference_repository, language=language
     )
@@ -168,9 +147,6 @@ async def analyze_meal_image_immediate(
     ),
     event_bus: EventBus = Depends(get_configured_event_bus),
     image_store=Depends(get_image_store),
-    cache_service: CachePort | None = Depends(get_cache_service),
-    task_manager: BackgroundTaskManager | None = Depends(get_optional_task_manager),
-    ai_manager: MealInsightAIPort = Depends(get_ai_model_manager),
     food_reference_repository=Depends(get_async_food_reference_repository),
 ):
     """
@@ -199,9 +175,6 @@ async def analyze_meal_image_immediate(
             scan_mode="scanner",
             event_bus=event_bus,
             image_store=image_store,
-            cache_service=cache_service,
-            task_manager=task_manager,
-            ai_manager=ai_manager,
             food_reference_repository=food_reference_repository,
         )
 

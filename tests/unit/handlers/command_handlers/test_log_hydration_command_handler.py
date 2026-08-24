@@ -2,7 +2,6 @@ from datetime import date
 from unittest.mock import AsyncMock
 
 import pytest
-from tests.fixtures.fakes.fake_outbox_repository import FakeOutboxRepository
 
 from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
 from src.app.handlers.command_handlers.log_hydration_command_handler import (
@@ -24,7 +23,6 @@ class _Uow:
     def __init__(self) -> None:
         self.meals = _Meals()
         self.hydration_entries = _HydrationEntries()
-        self.outbox = FakeOutboxRepository()
 
     async def __aenter__(self):
         return self
@@ -46,7 +44,6 @@ async def test_hydration_write_publishes_generic_event_after_uow() -> None:
         )
     )
 
-    assert uow.outbox.enqueue_calls == []
     event_publisher.publish.assert_awaited_once()
     event_payload = event_publisher.publish.await_args.args[0]
     assert event_payload["event_type"] == "hydration.created.v1"
