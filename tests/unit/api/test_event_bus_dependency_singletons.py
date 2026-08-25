@@ -80,12 +80,15 @@ def test_get_food_search_event_bus_is_singleton(monkeypatch):
     monkeypatch.setattr(mod, "SearchFoodsQueryHandler", lambda *a, **k: object())
     monkeypatch.setattr(mod, "GetPopularStaplesQueryHandler", lambda *a, **k: object())
     monkeypatch.setattr(mod, "GetFoodDetailsQueryHandler", lambda *a, **k: object())
+    monkeypatch.setattr(
+        mod, "GetProviderFoodDetailsQueryHandler", lambda *a, **k: object()
+    )
     monkeypatch.setattr(mod, "LookupBarcodeQueryHandler", lambda *a, **k: object())
 
     bus1 = mod.get_food_search_event_bus()
     bus2 = mod.get_food_search_event_bus()
     assert bus1 is bus2
-    assert len(bus1.registered) == 4
+    assert len(bus1.registered) == 5
 
 
 def test_get_configured_event_bus_is_singleton(monkeypatch):

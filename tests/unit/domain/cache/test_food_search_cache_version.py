@@ -17,5 +17,5 @@ def test_food_search_cache_namespace_includes_generation_after_integrity_transit
 
     assert (
         key
-        == "food:search:v3:catalog_adopt_v1:nutrition_integrity_v1:generation:12:rice"
+        == "food:search:v3:catalog_adopt_v2:nutrition_integrity_v1:generation:12:rice"
     )
