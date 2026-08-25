@@ -33,7 +33,6 @@ class ManualMealItem:
     allowed_units: Optional[List[dict[str, Any]]] = None
     origin: Optional[str] = None
     food_reference_id: Optional[int] = None
-    client_item_id: Optional[str] = None
     source_namespace: Optional[str] = None
     source_food_id: Optional[str] = None
     source_kind: Optional[str] = None

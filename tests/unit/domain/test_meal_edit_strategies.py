@@ -575,60 +575,6 @@ class TestAddFoodItemStrategy:
         assert added_item.is_custom is True
 
     @pytest.mark.asyncio
-    async def test_add_preserves_requested_instance_id(self):
-        strategy = AddFoodItemStrategy(Mock(), food_service=None)
-        requested_id = "550e8400-e29b-41d4-a716-446655440001"
-        change = FoodItemChange(
-            action="add",
-            id=requested_id,
-            name="Custom Food",
-            quantity=100.0,
-            unit="g",
-            custom_nutrition=CustomNutritionData(
-                calories_per_100g=250.0,
-                protein_per_100g=20.0,
-                carbs_per_100g=30.0,
-                fat_per_100g=10.0,
-            ),
-        )
-        food_items_dict = {}
-
-        await strategy.apply(food_items_dict, change)
-
-        assert list(food_items_dict) == [requested_id]
-
-    @pytest.mark.asyncio
-    async def test_add_rejects_existing_requested_instance_id(self):
-        strategy = AddFoodItemStrategy(Mock(), food_service=None)
-        requested_id = "550e8400-e29b-41d4-a716-446655440001"
-        existing = FoodItem(
-            id=requested_id,
-            name="Existing",
-            quantity=100,
-            unit="g",
-            macros=Macros(protein=1, carbs=2, fat=3),
-        )
-        change = FoodItemChange(
-            action="add",
-            id=requested_id,
-            name="Duplicate",
-            quantity=100,
-            unit="g",
-            custom_nutrition=CustomNutritionData(
-                calories_per_100g=100,
-                protein_per_100g=10,
-                carbs_per_100g=10,
-                fat_per_100g=1,
-            ),
-        )
-        food_items_dict = {requested_id: existing}
-
-        with pytest.raises(ValueError, match="already exists"):
-            await strategy.apply(food_items_dict, change)
-
-        assert food_items_dict[requested_id] is existing
-
-    @pytest.mark.asyncio
     async def test_add_with_nutrition_service(self):
         """Test adding food item using nutrition service."""
         # Arrange

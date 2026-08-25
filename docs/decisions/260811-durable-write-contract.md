@@ -30,12 +30,6 @@ create and weight sync still lack operation identity.
 9. **Backward compatibility:** omitting the header keeps legacy single-shot
    behavior (no store write).
 
-The same capability document now carries the meal-item identity rollout:
-`client_item_id` on v2 create, preserved `id` on v2 add, and
-`MEAL_ITEM_IDENTITY_ENABLED` as the safe rollback switch. Disabling the flag
-only changes discovery; it does not change meal ownership, item-membership
-checks, or the legacy mutation path.
-
 ### Actions in this wave
 
 | Action | Supported | Notes |
@@ -53,6 +47,3 @@ rollout enables it per capability.
 - Weight durable path remains unsupported until mapping ships.
 - Edit / suggestion / scan actions reuse this store later behind the same
   capability document.
-- Meal-item instance UUIDs can roll out independently of the older durable
-  write replay behavior, with a fast disable path that leaves legacy clients
-  unchanged.

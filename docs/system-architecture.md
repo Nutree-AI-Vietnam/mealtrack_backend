@@ -166,23 +166,6 @@ make retries replayable and fence stale workers before a meal mutation commits.
 The additive contract is advertised only through
 `/v1/capabilities/durable-writes` after the persistence migration is available.
 
-The meal-item identity contract is stable at the item-instance level. V2 create
-accepts a client-assigned `client_item_id`, v2 add preserves the incoming `id`,
-and backend authorization still owns meal membership checks server-side. The
-capability flag `MEAL_ITEM_IDENTITY_ENABLED` only controls whether
-`/v1/capabilities/durable-writes` advertises the rollout as supported; turning
-it off is a safe rollback because legacy single-shot behavior remains available
-and no identity rewrite or database migration is required.
-
-Dependent edits are durably queued behind an in-flight parent create. The
-mobile side coalesces pending child writes until the parent meal has a server
-ID, then flushes them against canonical server identity so the local projection
-converges to the authoritative meal state. If a child write fails, retry must
-target the canonical parent/item identity again rather than a local row id,
-name, or other display fallback. Local tests and analyzer output verify the
-contract wiring, but they do not prove staging, deployment, telemetry, or
-physical-device release readiness.
-
 ### Observability Connector
 Observability uses a provider-neutral facade at `src.observability` so API middleware does not import infrastructure directly. Startup composition wires it through `src.bootstrap.observability`. The compatibility export at `src.infra.monitoring` remains for cron and infrastructure services. Direct `sentry_sdk` imports are isolated to `src/infra/monitoring/sentry.py`.
 

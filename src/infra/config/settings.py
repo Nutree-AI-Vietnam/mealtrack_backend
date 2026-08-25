@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     FAIL_ON_MIGRATION_ERROR: bool = Field(default=False)
     FAIL_ON_CACHE_ERROR: bool = Field(default=False)
     AUTO_MIGRATE: bool = Field(default=True)
-    MEAL_ITEM_IDENTITY_ENABLED: bool = Field(default=True)
     MIGRATION_TIMEOUT: int = Field(default=60)
     MIGRATION_RETRY_ATTEMPTS: int = Field(default=3)
     MIGRATION_RETRY_DELAY: float = Field(default=2.0)

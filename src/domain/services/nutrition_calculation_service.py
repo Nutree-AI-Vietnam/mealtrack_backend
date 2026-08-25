@@ -648,7 +648,7 @@ class NutritionCalculationService:
             total_sugar += sugar
             food_items.append(
                 FoodItem(
-                    id=str(getattr(item, "client_item_id", None) or uuid4()),
+                    id=uuid4(),
                     name=item_name,
                     quantity=item.quantity,
                     unit=item.unit,
