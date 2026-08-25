@@ -8,7 +8,17 @@ import logging
 import re
 from typing import Any
 
+from src.domain.services.fatsecret_description_nutrition import (
+    parse_fatsecret_nutrition,
+)
+
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "extract_json_from_response",
+    "extract_usda_nutrition",
+    "parse_fatsecret_nutrition",
+]
 
 
 def extract_json_from_response(content: str) -> list[dict[str, Any]]:
@@ -88,37 +98,3 @@ def extract_usda_nutrition(nutrients: list[dict[str, Any]]) -> dict[str, float]:
         elif nutrient_id in (204, 1004):  # Fat
             result["fat"] = float(value)
     return result
-
-
-def parse_fatsecret_nutrition(food: dict[str, Any]) -> dict[str, float]:
-    """Parse per-100g nutrition from fatsecret food_description field.
-
-    fatsecret format: 'Per 100g - Calories: 155kcal | Fat: 11g | Carbs: 1.1g | Protein: 13g'
-    """
-    desc = food.get("food_description", "")
-    if not desc:
-        return {}
-    result: dict[str, float] = {}
-    try:
-        for part in desc.split("|"):
-            part = part.strip().lower()
-            if "calories" in part or "cal" in part:
-                val = re.search(r"([\d.]+)", part)
-                if val:
-                    result["calories"] = float(val.group(1))
-            elif "fat" in part:
-                val = re.search(r"([\d.]+)", part)
-                if val:
-                    result["fat"] = float(val.group(1))
-            elif "carb" in part:
-                val = re.search(r"([\d.]+)", part)
-                if val:
-                    result["carbs"] = float(val.group(1))
-            elif "protein" in part:
-                val = re.search(r"([\d.]+)", part)
-                if val:
-                    result["protein"] = float(val.group(1))
-    except Exception as e:
-        logger.debug(f"Could not parse fatsecret nutrition: {e}")
-        return {}
-    return result if result else {}

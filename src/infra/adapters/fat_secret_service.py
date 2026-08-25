@@ -13,6 +13,9 @@ from typing import Any
 
 import httpx
 
+from src.domain.services.fatsecret_description_nutrition import (
+    description_macros_as_100g,
+)
 from src.domain.services.nutrition_integrity_policy import (
     NutritionIntegrityPolicy,
     normalize_serving_options,
@@ -553,6 +556,10 @@ class FatSecretService:
         }
         if food.get("servings"):
             mapped.update(self._extract_nutrition_from_details(food))
+        elif not _has_search_macros(mapped):
+            # List-quality macros from search description only (no food.get.v5).
+            # Does not set metric_serving_amount — search adoption stays gated.
+            mapped.update(description_macros_as_100g(food))
         return mapped
 
     def _safe_float(self, value: Any) -> float | None:

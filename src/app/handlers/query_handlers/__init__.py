@@ -17,6 +17,9 @@ from .get_daily_macros_query_handler import GetDailyMacrosQueryHandler
 from .get_daily_movement_query_handler import GetDailyMovementQueryHandler
 from .get_drink_catalog_query_handler import GetDrinkCatalogQueryHandler
 from .get_food_details_query_handler import GetFoodDetailsQueryHandler
+from .get_provider_food_details_query_handler import (
+    GetProviderFoodDetailsQueryHandler,
+)
 from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
 from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
 
@@ -59,6 +62,7 @@ __all__ = [
     "SearchFoodsQueryHandler",
     "GetPopularStaplesQueryHandler",
     "GetFoodDetailsQueryHandler",
+    "GetProviderFoodDetailsQueryHandler",
     "LookupBarcodeQueryHandler",
     # Meal
     "GetMealByIdQueryHandler",
