@@ -12,7 +12,7 @@ router = APIRouter(prefix="/v1/capabilities", tags=["capabilities"])
 
 @router.get("/durable-writes")
 async def durable_write_capabilities() -> dict[str, object]:
-    """Advertise v2 writes only when their durable storage is migrated."""
+    """Advertise durable writes while keeping meal edits on the V1 contract."""
     try:
         if not await durable_write_schema_is_ready():
             raise RuntimeError("durable write schema is incomplete")
@@ -28,7 +28,7 @@ async def durable_write_capabilities() -> dict[str, object]:
     return {
         "durable_writes": True,
         "nutrition_contract_version": 2,
-        "operations": ["create_manual_meal", "edit_meal"],
+        "operations": ["create_manual_meal"],
         # Keep the legacy capability shape for clients that still use the
         # claim-before-create replay store while v2 clients use the fields
         # above and the meal_write_operation table.
@@ -45,9 +45,11 @@ async def durable_write_capabilities() -> dict[str, object]:
                 "exact_replay": True,
             },
             "meal_edit": {
-                "supported": True,
-                "header": "Idempotency-Key",
-                "exact_replay": True,
+                # Existing meal ingredient updates/removals intentionally stay
+                # on the compatible V1 path until a stable item-identity
+                # contract is needed and rolled out end to end.
+                "supported": False,
+                "reason": "legacy_v1_edit_path",
             },
             "weight_sync": {
                 "supported": False,

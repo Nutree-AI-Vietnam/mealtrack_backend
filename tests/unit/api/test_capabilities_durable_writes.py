@@ -8,7 +8,7 @@ from src.api.routes.v1.capabilities import durable_write_capabilities
 
 
 @pytest.mark.asyncio
-async def test_durable_write_capabilities_advertise_legacy_and_v2_contracts():
+async def test_durable_write_capabilities_keep_meal_edit_on_legacy_contract():
     with patch(
         "src.api.routes.v1.capabilities.durable_write_schema_is_ready",
         new=AsyncMock(return_value=True),
@@ -25,4 +25,6 @@ async def test_durable_write_capabilities_advertise_legacy_and_v2_contracts():
     assert body["actions"]["weight_sync"]["reason"] == "client_entry_id_mapping_pending"
     assert body["durable_writes"] is True
     assert body["nutrition_contract_version"] == 2
-    assert body["operations"] == ["create_manual_meal", "edit_meal"]
+    assert body["operations"] == ["create_manual_meal"]
+    assert body["actions"]["meal_edit"]["supported"] is False
+    assert body["actions"]["meal_edit"]["reason"] == "legacy_v1_edit_path"

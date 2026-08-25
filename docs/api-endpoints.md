@@ -160,6 +160,9 @@ handler/schema when implementing; the bullets below are the durable WHY.
   remain rejected because an add does not target an owned item.
 - `custom_nutrition` on non-USDA ingredients is per-100g macros; calories stay
   macro-derived (fiber-aware), which is distinct from absolute overrides.
+- Capability discovery intentionally reports `actions.meal_edit.supported=false`.
+  Existing meal ingredient updates and removals therefore use the compatible
+  V1 edit contract; they do not require the stricter V2 item-identity fields.
 - Manual meal v2 save failures now split between validation and provider trust
   boundaries: `NUTRITION_UNIT_INVALID` returns 422 when the requested serving
   unit is not allowed by the authoritative snapshot, `NUTRITION_PROVIDER_UNAVAILABLE`

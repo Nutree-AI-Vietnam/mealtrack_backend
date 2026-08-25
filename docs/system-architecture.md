@@ -152,8 +152,10 @@ serving labels are normalized through the same policy. Versioned cache keys
 include the active policy version to prevent stale serving contracts.
 
 ### Authoritative manual meal writes
-V2 manual create and edit requests carry an explicit nutrition contract, source
-identity, and idempotency key. `ManualMealNutritionResolver` resolves local,
+V2 manual create requests carry an explicit nutrition contract, source identity,
+and idempotency key. Existing meal ingredient edits remain on the compatible V1
+contract while the stricter V2 item-identity flow is not advertised.
+`ManualMealNutritionResolver` resolves local,
 USDA, provider, and custom items server-side; client macros, gram weights, and
 serving lists do not replace reference nutrition. Each successful v2 item stores
 an immutable source snapshot on `food_item`, and meal detail reads use that
