@@ -8,6 +8,7 @@ from src.app.commands.meal import FoodItemChange
 from src.app.commands.meal.edit_meal_command import EditMealCommand
 from src.app.handlers.command_handlers.edit_meal_command_handler import (
     EditMealCommandHandler,
+    _MealItemIdentityError,
 )
 from src.domain.model.meal.food_item_change import (
     CustomNutritionData,
@@ -42,7 +43,7 @@ class _PassthroughResolver:
 
 
 @pytest.mark.asyncio
-async def test_v2_add_allows_client_generated_id_not_owned_by_meal():
+async def test_v2_add_preserves_client_generated_id_not_owned_by_meal():
     current = FoodItem(
         id="item-1",
         name="Rice",
@@ -52,7 +53,7 @@ async def test_v2_add_allows_client_generated_id_not_owned_by_meal():
     )
     change = FoodItemChange(
         action="add",
-        id="client-generated-id",
+        id="33333333-3333-4333-8333-333333333333",
         name="Rau Xao",
         quantity=100,
         unit="g",
@@ -76,10 +77,10 @@ async def test_v2_add_allows_client_generated_id_not_owned_by_meal():
     )
     updated = await handler._apply_food_item_changes([current], prepared)
 
-    assert prepared[0].id == "client-generated-id"
+    assert prepared[0].id == "33333333-3333-4333-8333-333333333333"
     assert len(updated) == 2
     added = next(item for item in updated if item.name == "Rau Xao")
-    assert added.id != change.id
+    assert added.id == change.id
     uuid.UUID(added.id)
     assert added.source_kind == "custom"
     assert added.macros.protein == pytest.approx(2)
@@ -110,6 +111,50 @@ async def test_v2_add_without_origin_is_rejected_before_id_lookup():
         await handler._prepare_v2_changes(
             [current], [change], SimpleNamespace(food_references=object())
         )
+
+
+@pytest.mark.asyncio
+async def test_v2_duplicate_add_ids_in_one_request_use_identity_conflict():
+    item_id = "44444444-4444-4444-8444-444444444444"
+    custom_nutrition = CustomNutritionData(
+        calories_per_100g=51,
+        protein_per_100g=2,
+        carbs_per_100g=8,
+        fat_per_100g=1,
+        fiber_per_100g=2,
+        sugar_per_100g=1,
+    )
+    changes = [
+        FoodItemChange(
+            action="add",
+            id=item_id,
+            name="Rau Xao",
+            quantity=100,
+            unit="g",
+            origin="custom",
+            custom_nutrition=custom_nutrition,
+        ),
+        FoodItemChange(
+            action="add",
+            id=item_id,
+            name="Rau Xao duplicate",
+            quantity=100,
+            unit="g",
+            origin="custom",
+            custom_nutrition=custom_nutrition,
+        ),
+    ]
+    handler = EditMealCommandHandler(
+        uow=None,
+        nutrition_resolver=_PassthroughResolver(),
+    )
+
+    with pytest.raises(_MealItemIdentityError) as error:
+        await handler._prepare_v2_changes(
+            [], changes, SimpleNamespace(food_references=object())
+        )
+
+    assert error.value.error_code == "MEAL_ITEM_ID_CONFLICT"
 
 
 @pytest.mark.asyncio

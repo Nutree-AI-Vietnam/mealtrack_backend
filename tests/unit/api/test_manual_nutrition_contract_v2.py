@@ -354,7 +354,7 @@ def test_v2_add_accepts_item_override_actions(override_fields):
         food_item_changes=[
             {
                 "action": "add",
-                "id": "client-generated-id",
+                "id": "22222222-2222-4222-8222-222222222222",
                 "origin": "custom",
                 "name": "Rau xao",
                 "quantity": 100,
@@ -370,7 +370,7 @@ def test_v2_add_accepts_item_override_actions(override_fields):
     )
 
     change = request.food_item_changes[0]
-    assert change.id == "client-generated-id"
+    assert change.id == "22222222-2222-4222-8222-222222222222"
     assert change.override_intent == "user_entered"
 
 

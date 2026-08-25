@@ -26,3 +26,23 @@ async def test_durable_write_capabilities_advertise_legacy_and_v2_contracts():
     assert body["durable_writes"] is True
     assert body["nutrition_contract_version"] == 2
     assert body["operations"] == ["create_manual_meal", "edit_meal"]
+    assert body["meal_item_identity"]["supported"] is True
+    assert body["meal_item_identity"]["create_field"] == "client_item_id"
+    assert body["meal_item_identity"]["add_id_field"] == "id"
+
+
+@pytest.mark.asyncio
+async def test_durable_write_capabilities_can_disable_item_identity_rollout():
+    with (
+        patch(
+            "src.api.routes.v1.capabilities.durable_write_schema_is_ready",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "src.api.routes.v1.capabilities.get_meal_item_identity_enabled",
+            return_value=False,
+        ),
+    ):
+        body = await durable_write_capabilities()
+
+    assert body["meal_item_identity"]["supported"] is False

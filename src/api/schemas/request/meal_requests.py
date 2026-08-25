@@ -5,6 +5,7 @@ Meal-related request DTOs.
 import warnings
 from datetime import datetime
 from typing import Any, Literal, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -218,6 +219,12 @@ class ManualMealItemRequest(BaseModel):
     food_reference_id: Optional[int] = Field(
         None, description="Canonical local food-reference ID"
     )
+    client_item_id: UUID | None = Field(
+        None,
+        description=(
+            "Stable meal-scoped ingredient instance UUID assigned by the client"
+        ),
+    )
     source_namespace: Optional[str] = Field(
         None, min_length=1, max_length=64, description="Provider namespace"
     )
@@ -295,6 +302,14 @@ class CreateManualMealFromFoodsRequest(BaseModel):
         return self
 
     def _validate_origin_contract(self) -> None:
+        client_item_ids = [
+            item.client_item_id
+            for item in self.items
+            if item.client_item_id is not None
+        ]
+        if len(client_item_ids) != len(set(client_item_ids)):
+            raise ValueError("duplicate client item id")
+
         has_v2_fields = any(
             item.origin is not None
             or item.food_reference_id is not None
@@ -543,6 +558,15 @@ class EditMealIngredientsRequest(BaseModel):
             if change.action == "add":
                 if change.origin is None:
                     raise ValueError("v2 add requires origin")
+                if change.id is not None:
+                    try:
+                        parsed_id = UUID(change.id)
+                    except ValueError as exc:
+                        raise ValueError(
+                            "v2 add requires a valid UUID item id"
+                        ) from exc
+                    if str(parsed_id) != change.id:
+                        raise ValueError("v2 add requires a canonical UUID item id")
                 _validate_change_origin(change)
                 continue
 

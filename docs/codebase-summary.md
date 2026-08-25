@@ -83,6 +83,12 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   persistence.
 - Event bus: singleton PyMediator from `src/api/dependencies/event_bus.py`.
 - Migrations: `migrations/versions/` via Alembic / `migrations/run.py`.
+- Meal-item identity capability: `src/api/routes/v1/capabilities.py`
+  advertises `meal_item_identity` with `client_item_id` on v2 create and `id`
+  on v2 add, gated by `src/infra/config/settings.py::MEAL_ITEM_IDENTITY_ENABLED`.
+- Manual-meal durable replay: `src/api/routes/v1/meals_manual_text.py` and
+  `src/infra/services/durable_write_service.py` own claim-before-create,
+  replay, and abandon semantics for the v2 meal write flow.
 - Meal catalog browse: authenticated list/detail live in
   `src/api/routes/v1/meal_catalog.py`; the browse contract is documented in
   `api-endpoints.md` and the import manifest contract in

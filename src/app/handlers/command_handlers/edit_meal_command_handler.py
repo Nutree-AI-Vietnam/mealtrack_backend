@@ -38,6 +38,14 @@ from src.domain.utils.timezone_utils import utc_now
 logger = logging.getLogger(__name__)
 
 
+class _MealItemIdentityError(ValueError):
+    """Validation failure for a meal-scoped item mutation target."""
+
+    def __init__(self, message: str, error_code: str):
+        super().__init__(message)
+        self.error_code = error_code
+
+
 @handles(EditMealCommand)
 class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
     """Handler for editing meal ingredients."""
@@ -417,7 +425,9 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
         except ValueError as exc:
             await self._release_v2_write(reservation)
             logger.warning("Validation error editing meal: %s", str(exc))
-            raise ValidationException(str(exc)) from None
+            raise ValidationException(
+                str(exc), error_code=getattr(exc, "error_code", None)
+            ) from None
         except Exception:
             await self._release_v2_write(reservation)
             raise
@@ -488,22 +498,36 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
     ):
         """Resolve source changes from backend references before strategies run."""
         current_by_id = {item.id: item for item in current_food_items}
+        seen_add_ids = set()
         prepared = []
         resolved_items = []
         for change in changes:
             if change.action == "remove":
                 if change.id not in current_by_id:
-                    raise ValueError("v2 remove requires an owned food item id")
+                    raise _MealItemIdentityError(
+                        "v2 remove requires an owned food item id",
+                        "MEAL_ITEM_NOT_MEMBER",
+                    )
                 prepared.append(change)
                 continue
 
             if change.action == "update" and (
                 not change.id or change.id not in current_by_id
             ):
-                raise ValueError("v2 update requires an owned food item id")
+                raise _MealItemIdentityError(
+                    "v2 update requires an owned food item id",
+                    "MEAL_ITEM_NOT_MEMBER",
+                )
 
             if change.action == "add" and change.origin is None:
                 raise ValueError("v2 add requires origin")
+            if change.action == "add" and change.id:
+                if change.id in current_by_id or change.id in seen_add_ids:
+                    raise _MealItemIdentityError(
+                        "v2 add item id already exists",
+                        "MEAL_ITEM_ID_CONFLICT",
+                    )
+                seen_add_ids.add(change.id)
 
             if change.origin is not None:
                 existing = current_by_id.get(change.id)
@@ -603,7 +627,9 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 return replace(change, unit=existing_unit)
             return change
         snapshot = existing_item.source_snapshot or {}
-        allowed_units = snapshot.get("allowed_units") or existing_item.allowed_units or []
+        allowed_units = (
+            snapshot.get("allowed_units") or existing_item.allowed_units or []
+        )
         if not allowed_units:
             raise ValueError("v2 quantity updates require an immutable source snapshot")
         quantity = (

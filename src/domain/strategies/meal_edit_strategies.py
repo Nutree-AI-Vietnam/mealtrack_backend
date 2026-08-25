@@ -395,7 +395,9 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
         self, food_items_dict: dict[str, FoodItem], change: FoodItemChange
     ) -> None:
         """Add new food item to dictionary."""
-        new_item_id = str(uuid.uuid4())
+        new_item_id = change.id or str(uuid.uuid4())
+        if new_item_id in food_items_dict:
+            raise ValueError("food item id already exists")
 
         # Try to get nutrition from various sources
         quantity = change.quantity or 100

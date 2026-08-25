@@ -166,6 +166,28 @@ handler/schema when implementing; the bullets below are the durable WHY.
   returns 503 for temporary provider capacity loss, and other integrity rejects
   return 422 `NUTRITION_INTEGRITY_REJECTED`.
 
+### Meal item identity and durable dependent writes
+
+- `POST /v1/meals/manual` v2 create accepts a stable `client_item_id` per item
+  and preserves that UUID end-to-end for the meal-scoped ingredient instance.
+- V2 add preserves the incoming `id` for the new item. Authorization and
+  membership checks still happen on the server; the client ID is only the
+  instance identity, not a permission grant.
+- Legacy payloads without v2 identity fields keep their old single-shot
+  behavior. Do not infer that the new identity contract changed meal ownership
+  or the existing item-membership rules.
+- `GET /v1/capabilities/durable-writes` advertises the rollout via
+  `meal_item_identity.supported`, `create_field=client_item_id`, and
+  `add_id_field=id`. When `MEAL_ITEM_IDENTITY_ENABLED=false`, the capability
+  simply reports unsupported and clients should fall back to the legacy path.
+- Dependent edits behind an in-flight parent create must be held, coalesced,
+  and retried only after the parent has a canonical server ID. Failed child
+  writes should retry against the canonical item identity, not a local row id,
+  display name, or other fallback.
+- Local backend tests and analyzer output prove the contract wiring, but they
+  do not prove staging, deployment, telemetry, or physical-device release
+  readiness.
+
 ### Meal recommendations (catalog)
 
 - Catalog recommendations are separate from `/v1/meal-suggestions` (AI session

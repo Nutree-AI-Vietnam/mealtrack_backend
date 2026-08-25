@@ -13,6 +13,7 @@ from src.api.schemas.request.meal_requests import (
     CustomNutritionRequest,
     EditMealIngredientsRequest,
     FoodItemChangeRequest,
+    ManualMealItemRequest,
     NutritionOverrideRequest,
 )
 
@@ -183,6 +184,75 @@ class TestFoodItemChangeRequest:
                 quantity=100.0,
                 unit="a" * 121,  # Over 120 character limit
             )
+
+
+def test_manual_meal_item_accepts_uuid_client_identity():
+    item = ManualMealItemRequest(
+        name="Rice",
+        quantity=100,
+        client_item_id="550e8400-e29b-41d4-a716-446655440001",
+    )
+
+    assert str(item.client_item_id) == "550e8400-e29b-41d4-a716-446655440001"
+
+
+def test_manual_meal_item_rejects_malformed_client_identity():
+    with pytest.raises(ValidationError):
+        ManualMealItemRequest(
+            name="Rice",
+            quantity=100,
+            client_item_id="local-row-42",
+        )
+
+
+def test_v2_manual_meal_rejects_duplicate_client_identities():
+    shared_id = "550e8400-e29b-41d4-a716-446655440001"
+    item_kwargs = {
+        "origin": "custom",
+        "quantity": 100,
+        "name": "Rice",
+        "custom_nutrition": {
+            "protein_per_100g": 2.7,
+            "carbs_per_100g": 28,
+            "fat_per_100g": 0.3,
+        },
+        "client_item_id": shared_id,
+    }
+
+    with pytest.raises(ValidationError, match="duplicate client item id"):
+        CreateManualMealFromFoodsRequest(
+            dish_name="Rice Bowl",
+            nutrition_contract_version=2,
+            items=[item_kwargs, {**item_kwargs, "name": "Rice 2"}],
+        )
+
+
+def test_v2_add_rejects_noncanonical_uuid_spelling():
+    with pytest.raises(ValidationError, match="canonical UUID"):
+        EditMealIngredientsRequest(
+            nutrition_contract_version=2,
+            food_item_changes=[
+                {
+                    "action": "add",
+                    "id": "{33333333-3333-4333-8333-333333333333}",
+                    "origin": "custom",
+                }
+            ],
+        )
+
+
+def test_v2_add_rejects_empty_supplied_uuid():
+    with pytest.raises(ValidationError, match="valid UUID"):
+        EditMealIngredientsRequest(
+            nutrition_contract_version=2,
+            food_item_changes=[
+                {
+                    "action": "add",
+                    "id": "",
+                    "origin": "custom",
+                }
+            ],
+        )
 
 
 @pytest.mark.unit

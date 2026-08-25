@@ -339,6 +339,11 @@ def get_parse_text_settings() -> dict[str, bool]:
     }
 
 
+def get_meal_item_identity_enabled() -> bool:
+    """Return whether stable meal-item identity is enabled for API clients."""
+    return bool(settings.MEAL_ITEM_IDENTITY_ENABLED)
+
+
 def get_meal_recommendation_analytics_service() -> MealRecommendationAnalyticsService:
     """Return privacy-safe recommendation analytics."""
     posthog_module = import_module("src.infra.adapters.posthog_adapter")

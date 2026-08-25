@@ -54,6 +54,29 @@ def test_manual_custom_nutrition_uses_unit_grams_for_large_eggs():
     assert food_items[0].calories == pytest.approx(138.7)
 
 
+def test_manual_item_client_identity_is_preserved_as_food_item_id():
+    service = NutritionCalculationService()
+
+    _, food_items = service.aggregate_from_command_items(
+        [
+            ManualMealItem(
+                name="Rice",
+                quantity=100.0,
+                unit="g",
+                client_item_id="550e8400-e29b-41d4-a716-446655440001",
+                custom_nutrition=CustomNutrition(
+                    calories_per_100g=130.0,
+                    protein_per_100g=2.7,
+                    carbs_per_100g=28.0,
+                    fat_per_100g=0.3,
+                ),
+            )
+        ]
+    )
+
+    assert food_items[0].id == "550e8400-e29b-41d4-a716-446655440001"
+
+
 def test_manual_custom_nutrition_uses_density_for_oil_ml():
     service = NutritionCalculationService()
 
@@ -261,12 +284,18 @@ def test_allowed_unit_logs_do_not_expose_unit_or_description(caplog):
 def test_herb_sprig_units_use_countable_serving_grams():
     assert convert_quantity_to_grams(1, "nhánh", "Cilantro") == 100
     assert convert_quantity_to_grams(1, "sprig", "Cilantro") == 100
-    assert quantity_to_grams(
-        1,
-        "nhánh",
-        "Cilantro",
-        [{"unit": "g", "gram_weight": 1.0}, {"unit": "nhánh", "gram_weight": 4.0}],
-    ) == 4
+    assert (
+        quantity_to_grams(
+            1,
+            "nhánh",
+            "Cilantro",
+            [
+                {"unit": "g", "gram_weight": 1.0},
+                {"unit": "nhánh", "gram_weight": 4.0},
+            ],
+        )
+        == 4
+    )
 
 
 def test_qualitative_garnish_units_use_countable_serving_grams():

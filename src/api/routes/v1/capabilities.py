@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, status
 
+from src.api.base_dependencies import get_meal_item_identity_enabled
 from src.infra.services.durable_write_service import (
     RETENTION_DAYS,
     durable_write_schema_is_ready,
@@ -29,6 +30,11 @@ async def durable_write_capabilities() -> dict[str, object]:
         "durable_writes": True,
         "nutrition_contract_version": 2,
         "operations": ["create_manual_meal", "edit_meal"],
+        "meal_item_identity": {
+            "supported": get_meal_item_identity_enabled(),
+            "create_field": "client_item_id",
+            "add_id_field": "id",
+        },
         # Keep the legacy capability shape for clients that still use the
         # claim-before-create replay store while v2 clients use the fields
         # above and the meal_write_operation table.
