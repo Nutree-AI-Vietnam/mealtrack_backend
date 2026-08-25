@@ -11,8 +11,8 @@ from src.app.queries.food.get_provider_food_details_query import (
     GetProviderFoodDetailsQuery,
 )
 from src.domain.cache.cache_keys import CacheKeys
+from src.domain.constants.fatsecret_locale import LANGUAGE_TO_REGION
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityError
-from src.infra.adapters.fat_secret_service import LANGUAGE_TO_REGION
 from src.observability import distribution_metric, increment_metric
 
 logger = logging.getLogger(__name__)

@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from src.domain.constants.fatsecret_locale import LANGUAGE_TO_REGION
 from src.domain.services.fatsecret_description_nutrition import (
     description_macros_as_100g,
 )
@@ -30,17 +31,6 @@ FATSECRET_API_BASE = "https://platform.fatsecret.com/rest/server.api"
 
 # Barcode validation pattern (8-14 digits)
 BARCODE_PATTERN = re.compile(r"^\d{8,14}$")
-
-# Map language code to fatsecret region for localized search
-LANGUAGE_TO_REGION = {
-    "vi": "VN",
-    "en": "US",
-    "es": "ES",
-    "fr": "FR",
-    "de": "DE",
-    "ja": "JP",
-    "zh": "CN",
-}
 
 
 def _has_search_macros(food: dict[str, Any]) -> bool:
