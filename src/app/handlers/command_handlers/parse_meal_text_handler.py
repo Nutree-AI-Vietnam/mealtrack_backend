@@ -282,6 +282,7 @@ class ParseMealTextHandler(
                 fat=item.get("fat", 0),
                 fiber=item.get("fiber", 0),
                 sugar=item.get("sugar", 0),
+                calories=item.get("calories"),
                 data_source=item.get("data_source"),
                 fdc_id=item.get("fdc_id"),
                 allowed_units=item.get("allowed_units")

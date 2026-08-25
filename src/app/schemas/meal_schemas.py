@@ -19,6 +19,7 @@ class ParsedFoodItemDto:
     fat: float
     fiber: float = 0.0
     sugar: float = 0.0
+    calories: float | None = None
     data_source: str | None = None
     fdc_id: int | None = None
     allowed_units: list[dict[str, Any]] | None = None

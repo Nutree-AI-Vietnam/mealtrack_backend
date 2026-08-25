@@ -71,7 +71,7 @@ def parsed_food_item_to_response(item) -> ParsedFoodItem:
         name=item.name,
         quantity=item.quantity,
         unit=item.unit,
-        calories=MacrosModel(
+        calories=item.calories if getattr(item, "calories", None) is not None else MacrosModel(
             protein=item.protein,
             carbs=item.carbs,
             fat=item.fat,
