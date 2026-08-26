@@ -92,6 +92,9 @@ class InMemoryMealRepository:
         self._store[meal.meal_id] = meal
         return meal
 
+    async def insert(self, meal):
+        return await self.save(meal)
+
     async def find_by_id(self, meal_id: str):
         return self._store.get(meal_id)
 
