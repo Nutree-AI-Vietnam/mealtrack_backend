@@ -63,6 +63,7 @@ async def test_manual_meal_created_with_target_date():
         return meal
 
     mock_meal_repo.save = save_meal
+    mock_meal_repo.insert = save_meal
 
     # Create handler
     handler = CreateManualMealCommandHandler(
@@ -190,6 +191,7 @@ async def test_manual_meal_without_target_date_uses_current_date():
         return meal
 
     mock_meal_repo.save = save_meal
+    mock_meal_repo.insert = save_meal
 
     handler = CreateManualMealCommandHandler(
         meal_repository=mock_meal_repo,

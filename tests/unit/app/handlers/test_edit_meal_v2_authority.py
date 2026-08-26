@@ -16,6 +16,8 @@ from src.domain.model.meal.food_item_change import (
 from src.domain.model.meal.meal import MealStatus
 from src.domain.model.nutrition import FoodItem, Macros
 
+_CLIENT_ADD_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
 
 class _References:
     async def get_nutrition_projection(self, food_reference_id):
@@ -52,7 +54,7 @@ async def test_v2_add_allows_client_generated_id_not_owned_by_meal():
     )
     change = FoodItemChange(
         action="add",
-        id="client-generated-id",
+        id=_CLIENT_ADD_ID,
         name="Rau Xao",
         quantity=100,
         unit="g",
@@ -76,10 +78,10 @@ async def test_v2_add_allows_client_generated_id_not_owned_by_meal():
     )
     updated = await handler._apply_food_item_changes([current], prepared)
 
-    assert prepared[0].id == "client-generated-id"
+    assert prepared[0].id == _CLIENT_ADD_ID
     assert len(updated) == 2
     added = next(item for item in updated if item.name == "Rau Xao")
-    assert added.id != change.id
+    assert added.id == change.id
     uuid.UUID(added.id)
     assert added.source_kind == "custom"
     assert added.macros.protein == pytest.approx(2)
@@ -96,7 +98,7 @@ async def test_v2_add_without_origin_is_rejected_before_id_lookup():
     )
     change = FoodItemChange(
         action="add",
-        id="client-generated-id",
+        id=_CLIENT_ADD_ID,
         name="Rau Xao",
         quantity=100,
         unit="g",
@@ -309,7 +311,7 @@ async def test_v2_item_override_allows_add_action_in_handler(clear_override):
     )
     change = FoodItemChange(
         action="add",
-        id="client-generated-id",
+        id=_CLIENT_ADD_ID,
         name="Rau xao",
         quantity=100,
         unit="g",
@@ -475,7 +477,7 @@ async def test_v2_add_by_fatsecret_id_adopts_once_not_search():
     )
     change = FoodItemChange(
         action="add",
-        id="client-generated-id",
+        id=_CLIENT_ADD_ID,
         name="Thịt bò",
         quantity=60,
         unit="g",
@@ -543,7 +545,7 @@ async def test_v2_add_by_food_reference_id_never_calls_provider():
     )
     change = FoodItemChange(
         action="add",
-        id="client-generated-id",
+        id=_CLIENT_ADD_ID,
         origin="local",
         food_reference_id=42,
         quantity=100,

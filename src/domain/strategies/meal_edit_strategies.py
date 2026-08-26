@@ -382,6 +382,15 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
         )
 
 
+def _resolve_add_item_id(change: FoodItemChange) -> str:
+    if not change.id:
+        return str(uuid.uuid4())
+    try:
+        return str(uuid.UUID(change.id))
+    except ValueError as exc:
+        raise ValueError("item id must be a valid UUID") from exc
+
+
 class AddFoodItemStrategy(FoodItemChangeStrategy):
     """Strategy for adding a new food item."""
 
@@ -395,7 +404,7 @@ class AddFoodItemStrategy(FoodItemChangeStrategy):
         self, food_items_dict: dict[str, FoodItem], change: FoodItemChange
     ) -> None:
         """Add new food item to dictionary."""
-        new_item_id = str(uuid.uuid4())
+        new_item_id = _resolve_add_item_id(change)
 
         # Try to get nutrition from various sources
         quantity = change.quantity or 100
