@@ -162,6 +162,7 @@ async def create_manual_meal(
                 )
             items.append(
                 ManualMealItem(
+                    id=i.id,
                     fdc_id=i.fdc_id,
                     name=i.name,
                     quantity=i.quantity,
@@ -197,6 +198,7 @@ async def create_manual_meal(
             user_id=user_id,
             items=items,
             dish_name=payload.dish_name,
+            meal_id=payload.meal_id,
             meal_type=payload.meal_type,
             target_date=target_date,
             source=payload.source,

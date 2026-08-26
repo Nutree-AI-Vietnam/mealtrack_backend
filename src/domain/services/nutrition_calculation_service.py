@@ -605,7 +605,7 @@ class NutritionCalculationService:
         Aggregate nutrition from command items with custom_nutrition.
         Returns (Nutrition, list[FoodItem]). Items without custom_nutrition are skipped.
         """
-        from uuid import uuid4
+        from uuid import UUID, uuid4
 
         food_items = []
         total_protein = total_carbs = total_fat = 0.0
@@ -646,9 +646,17 @@ class NutritionCalculationService:
             total_fat += fat
             total_fiber += fiber
             total_sugar += sugar
+            raw_item_id = getattr(item, "id", None)
+            if raw_item_id:
+                try:
+                    food_item_id = str(UUID(str(raw_item_id)))
+                except ValueError as exc:
+                    raise ValueError("item id must be a valid UUID") from exc
+            else:
+                food_item_id = str(uuid4())
             food_items.append(
                 FoodItem(
-                    id=uuid4(),
+                    id=food_item_id,
                     name=item_name,
                     quantity=item.quantity,
                     unit=item.unit,

@@ -9,9 +9,15 @@ from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
+
 from src.api.exceptions import ConflictException, ValidationException
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.events.base import EventHandler
+from src.app.handlers.command_handlers.client_resource_id import (
+    assert_unique_command_item_ids,
+    resolve_client_meal_id,
+)
 from src.app.services.cache_invalidation_service import CacheInvalidationService
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
@@ -145,9 +151,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
 
         try:
             items_needing_resolution = [
-                item
-                for item in event.items
-                if not self._is_prepared_nutrition(item)
+                item for item in event.items if not self._is_prepared_nutrition(item)
             ]
             if items_needing_resolution:
                 async with self.uow_factory() as resolve_uow:
@@ -261,6 +265,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         revalidate_local=True,
     ):
         items = resolved_items or event.items
+        assert_unique_command_item_ids(items)
         if event.nutrition_contract_version == 2 and resolved_items is None:
             if uow is None or not getattr(uow, "food_references", None):
                 raise ValueError(
@@ -302,8 +307,14 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             else:
                 source = "manual"
 
+        meal_id = await resolve_client_meal_id(
+            requested_meal_id=event.meal_id,
+            user_id=event.user_id,
+            meal_repo=meal_repo,
+        )
+
         meal = Meal(
-            meal_id=str(uuid4()),
+            meal_id=meal_id,
             user_id=event.user_id,
             status=MealStatus.READY,
             created_at=meal_datetime,
@@ -321,7 +332,13 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             source=source,
         )
 
-        saved_meal = await meal_repo.save(meal)
+        try:
+            saved_meal = await meal_repo.save(meal)
+        except IntegrityError as exc:
+            raise ConflictException(
+                "A client-supplied id is already in use",
+                error_code="CLIENT_RESOURCE_ID_CONFLICT",
+            ) from exc
         if uow is None:
             # injected meal_repository path: invalidate here as there is no outer UoW block
             if self.cache_invalidation:
