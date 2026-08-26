@@ -407,3 +407,38 @@ async def test_fatsecret_barcode_lookup_uses_method_based_endpoint():
         "gram_weight": 1.0,
         "description": "1 g",
     }
+
+
+@pytest.mark.unit
+def test_map_search_result_parses_per_100g_description():
+    service = FatSecretService("client", "secret")
+    mapped = service._map_search_result(
+        {
+            "food_id": "1",
+            "food_name": "Egg",
+            "food_description": (
+                "Per 100g - Calories: 155kcal | Fat: 11g | Carbs: 1.1g | Protein: 13g"
+            ),
+        }
+    )
+    assert mapped["protein_100g"] == 13.0
+    assert mapped["carbs_100g"] == 1.1
+    assert mapped["fat_100g"] == 11.0
+    assert mapped["calories_100g"] == 155.0
+    assert mapped.get("metric_serving_amount") is None
+
+
+@pytest.mark.unit
+def test_map_search_result_ignores_per_serving_description_as_100g():
+    service = FatSecretService("client", "secret")
+    mapped = service._map_search_result(
+        {
+            "food_id": "1",
+            "food_name": "Bar",
+            "food_description": (
+                "Per Serving - Calories: 200kcal | Fat: 8g | Carbs: 20g | Protein: 10g"
+            ),
+        }
+    )
+    assert mapped.get("protein_100g") is None
+    assert mapped.get("calories_100g") is None

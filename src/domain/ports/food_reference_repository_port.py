@@ -105,6 +105,12 @@ class FoodReferenceRepositoryPort(Protocol):
     ) -> dict[str, Any] | None:
         """Return the food-reference row already tagged with this provider id."""
 
+    async def get_by_source_identities(
+        self,
+        identities: list[tuple[str, str]],
+    ) -> list[dict[str, Any]]:
+        """Load verified public references by (namespace, source_food_id)."""
+
     async def adopt_provider_food(
         self,
         namespace: str,

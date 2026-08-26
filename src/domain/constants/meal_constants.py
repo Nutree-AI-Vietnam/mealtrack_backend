@@ -118,25 +118,24 @@ class TDEEConstants:
     # MAINTENANCE_ADJUSTMENT removed - use RECOMP_ADJUSTMENT instead
     RECOMP_ADJUSTMENT = 0  # No calorie adjustment for recomposition
 
-    # Evidence-based protein targets (g per kg body weight)
-    # Cut: Helms 2014 — higher protein preserves lean mass in deficit
-    # Recomp: Morton 2018 — middle of 1.6-2.2 optimal range
-    # Bulk: Schoenfeld 2018 — 2.0 g/kg optimal with surplus
+    # Protein targets (g per kg body weight), goal-scoped.
+    # Cut is highest to bias lean-mass retention in a deficit; bulk is lowest
+    # because surplus calories already support muscle gain.
     PROTEIN_PER_KG = {
-        "cut": 2.2,
-        "recomp": 2.0,
-        "bulk": 2.0,
+        "cut": 1.8,
+        "recomp": 1.7,
+        "bulk": 1.6,
     }
 
-    # Training-level-aware protein targets (g per kg body weight)
-    # Adjusts based on training experience (more muscle = higher protein needs)
+    # Training-level table kept for API compatibility; rates match PROTEIN_PER_KG
+    # (no progressive bump by experience).
     # Beginner: <1 year consistent training
     # Intermediate: 1-3 years consistent training
     # Advanced: 3+ years consistent training
     PROTEIN_PER_KG_BY_TRAINING = {
-        "cut": {"beginner": 2.2, "intermediate": 2.2, "advanced": 2.2},
-        "recomp": {"beginner": 1.8, "intermediate": 2.0, "advanced": 2.2},
-        "bulk": {"beginner": 1.8, "intermediate": 2.0, "advanced": 2.2},
+        "cut": {"beginner": 1.8, "intermediate": 1.8, "advanced": 1.8},
+        "recomp": {"beginner": 1.7, "intermediate": 1.7, "advanced": 1.7},
+        "bulk": {"beginner": 1.6, "intermediate": 1.6, "advanced": 1.6},
     }
 
     # Fat intake: 0.5-1.5 g/kg for hormone production

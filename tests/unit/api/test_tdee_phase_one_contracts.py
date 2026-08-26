@@ -135,29 +135,35 @@ def test_preview_rejects_partial_or_conflicting_macro_overrides():
         )
 
 
-def test_keto_macros_are_rounded_then_calorie_derived():
-    result = TdeeCalculationService().calculate_tdee(
-        TdeeRequest(
-            age=30,
-            sex=Sex.MALE,
-            height=180,
-            weight=80,
-            body_fat_pct=None,
-            job_type=JobType.DESK,
-            training_days_per_week=0,
-            training_minutes_per_session=0,
-            goal=Goal.RECOMP,
-            macro_preset=MacroPreset.KETO,
-        )
+def test_keto_preset_keeps_weight_based_base_macros():
+    """Selecting keto must not rewrite base daily macros."""
+    service = TdeeCalculationService()
+    request_kwargs = dict(
+        age=30,
+        sex=Sex.MALE,
+        height=180,
+        weight=80,
+        body_fat_pct=None,
+        job_type=JobType.DESK,
+        training_days_per_week=0,
+        training_minutes_per_session=0,
+        goal=Goal.RECOMP,
     )
-    assert result.macro_preset is MacroPreset.KETO
+    standard = service.calculate_tdee(
+        TdeeRequest(**request_kwargs, macro_preset=MacroPreset.STANDARD)
+    )
+    keto = service.calculate_tdee(
+        TdeeRequest(**request_kwargs, macro_preset=MacroPreset.KETO)
+    )
+    assert keto.macro_preset is MacroPreset.KETO
+    assert keto.macros == standard.macros
     assert (
-        result.macros.calories
-        == result.macros.protein * 4 + result.macros.carbs * 4 + result.macros.fat * 9
+        keto.macros.calories
+        == keto.macros.protein * 4 + keto.macros.carbs * 4 + keto.macros.fat * 9
     )
 
 
-def test_adjusted_keto_policy_reallocates_after_weekly_redistribution():
+def test_adjusted_keto_policy_preserves_redistributed_macros():
     result_macros = (
         TdeeCalculationService()
         .calculate_tdee(
@@ -181,12 +187,7 @@ def test_adjusted_keto_policy_reallocates_after_weekly_redistribution():
         MacroPreset.KETO,
         False,
     )
-    assert (
-        adjusted.calories
-        == adjusted.protein * 4 + adjusted.carbs * 4 + adjusted.fat * 9
-    )
-    assert adjusted.carbs == 23.8
-    assert result_macros.carbs != adjusted.carbs
+    assert adjusted is result_macros
 
 
 def test_custom_adjusted_policy_preserves_existing_macro_targets():

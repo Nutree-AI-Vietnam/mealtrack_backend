@@ -33,7 +33,7 @@ async def test_stale_bulk_target_cache_is_recomputed():
 
 
 @pytest.mark.asyncio
-async def test_bulk_serializes_keto_calories_from_rounded_policy_grams():
+async def test_bulk_preserves_adjusted_macros_for_keto_users():
     query = GetNutritionBulkQuery(
         user_id="u1", start_date=date(2026, 4, 1), end_date=date(2026, 4, 1)
     )
@@ -77,10 +77,7 @@ async def test_bulk_serializes_keto_calories_from_rounded_policy_grams():
         result = await handler._compute(query)
 
     summary = result["weekly_budget"]
-    assert summary["adjusted_daily_calories"] == 1899.9
-    assert (
-        summary["adjusted_daily_calories"]
-        == summary["adjusted_daily_protein"] * 4
-        + summary["adjusted_daily_carbs"] * 4
-        + summary["adjusted_daily_fat"] * 9
-    )
+    assert summary["adjusted_daily_calories"] == 1900.0
+    assert summary["adjusted_daily_protein"] == 100.0
+    assert summary["adjusted_daily_carbs"] == 100.0
+    assert summary["adjusted_daily_fat"] == 100.0

@@ -5,8 +5,7 @@ import uuid
 from datetime import date
 
 from fastapi import HTTPException
-from sqlalchemy import and_, cast, func, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.auth import AuthProvider
@@ -123,37 +122,30 @@ async def finalize_redemption(
     uid: str,
     email: str | None,
     original_app_user_id: str,
+    redemption_link_hash: str,
     idempotency_key: str,
     environment: str,
     auth_provider: str | None = None,
+    expires_at=None,
 ) -> dict:
-    """Restore one paid lead once; the provider-derived original ID selects the lead."""
+    """Restore one paid lead once; hash + preflight UID select the exact row."""
     binding = await db.scalar(
         select(WebFunnelRedemption)
         .where(
             WebFunnelRedemption.environment == environment,
-            or_(
-                WebFunnelRedemption.original_app_user_id == original_app_user_id,
-                and_(
-                    WebFunnelRedemption.redeemer_uid == uid,
-                    WebFunnelRedemption.redeemer_uid.is_not(None),
-                ),
-                cast(WebFunnelRedemption.provider_app_user_ids, JSONB).contains(
-                    [original_app_user_id]
-                ),
-            ),
+            WebFunnelRedemption.redemption_link_hash == redemption_link_hash,
+            WebFunnelRedemption.preflight_uid == uid,
         )
-        .order_by(WebFunnelRedemption.verified_at.desc())
         .with_for_update()
     )
     if not binding:
         raise claim_not_found()
-    # New redemption-link claims must be explicitly bound to this Firebase UID
-    # before RevenueCat consumption. Legacy rows without a link hash keep their
-    # historical lookup behavior and are handled by the gated legacy endpoints.
-    if binding.preflight_uid and binding.preflight_uid != uid:
-        raise claim_not_found()
-    if binding.redemption_link_hash and not binding.preflight_uid:
+    aliases = set(binding.provider_app_user_ids or [])
+    if (
+        binding.original_app_user_id != original_app_user_id
+        and original_app_user_id not in aliases
+        and binding.verified_app_user_id != original_app_user_id
+    ):
         raise claim_not_found()
     if binding.redeemer_uid and binding.redeemer_uid != uid:
         raise claim_not_found()
@@ -171,6 +163,8 @@ async def finalize_redemption(
         raise claim_not_found()
     if email is None or _normalize_email(email) != _normalize_email(lead.email):
         raise claim_conflict()
+    if expires_at is not None and expires_at <= utcnow():
+        raise claim_not_found()
     user = await db.scalar(
         select(User).where(User.firebase_uid == uid).with_for_update()
     )
@@ -277,11 +271,13 @@ async def finalize_redemption(
                 platform="web",
                 status="active",
                 purchased_at=utcnow(),
+                expires_at=expires_at,
                 is_sandbox=binding.environment.upper() == "SANDBOX",
             )
         )
     else:
         subscription.status = "active"
+        subscription.expires_at = expires_at
     binding.finalized_uid, binding.finalized_at = uid, utcnow()
     binding.finalization_key_hash, binding.result = key_hash, result
     lead.claimed_uid, lead.claimed_at, lead.status, lead.access_sync_status = (

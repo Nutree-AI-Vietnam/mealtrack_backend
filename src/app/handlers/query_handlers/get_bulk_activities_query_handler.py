@@ -137,22 +137,40 @@ class GetBulkActivitiesQueryHandler(
         }
 
         for meal in meals:
-            if meal.status not in _ACTIVE_STATUSES:
-                continue
-            local_date = meal.created_at.astimezone(tz).date().isoformat()
-            if local_date not in result:
-                result[local_date] = []
-            if meal.meal_type == "hydration":
-                if meal.meal_id in covered_meal_ids:
+            try:
+                if meal.status not in _ACTIVE_STATUSES:
                     continue
-                result[local_date].append(_build_hydration_activity(meal, language))
-            else:
-                result[local_date].append(_build_meal_activity(meal, language))
+                if not meal.created_at:
+                    continue
+                local_date = meal.created_at.astimezone(tz).date().isoformat()
+                if local_date not in result:
+                    result[local_date] = []
+                if meal.meal_type == "hydration":
+                    if meal.meal_id in covered_meal_ids:
+                        continue
+                    result[local_date].append(_build_hydration_activity(meal, language))
+                else:
+                    result[local_date].append(_build_meal_activity(meal, language))
+            except Exception:
+                logger.exception(
+                    "Skipping bulk meal activity for meal_id=%s",
+                    getattr(meal, "meal_id", None),
+                )
 
         for entry in hydration_entries:
-            local_date = entry.logged_at.astimezone(tz).date().isoformat()
-            if local_date not in result:
-                result[local_date] = []
-            result[local_date].append(_build_hydration_entry_activity(entry, language))
+            try:
+                if not entry.logged_at:
+                    continue
+                local_date = entry.logged_at.astimezone(tz).date().isoformat()
+                if local_date not in result:
+                    result[local_date] = []
+                result[local_date].append(
+                    _build_hydration_entry_activity(entry, language)
+                )
+            except Exception:
+                logger.exception(
+                    "Skipping bulk hydration entry activity for entry_id=%s",
+                    getattr(entry, "id", None),
+                )
 
         return result

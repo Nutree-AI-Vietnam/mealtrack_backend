@@ -170,49 +170,55 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
 
             weekly_summary = None
             if weekly_budget and weekly_budget.target_revision == target_revision:
-                base_daily = target_calories or (weekly_budget.target_calories / 7)
-                effective = (
-                    await WeeklyBudgetService.get_effective_adjusted_daily_async(
-                        uow=uow,
-                        user_id=query.user_id,
-                        week_start=week_start,
-                        target_date=today,
-                        weekly_budget=weekly_budget,
-                        base_daily_cal=base_daily,
-                        base_daily_protein=(target_macros or {}).get("protein", 70),
-                        base_daily_carbs=(target_macros or {}).get("carbs", 200),
-                        base_daily_fat=(target_macros or {}).get("fat", 70),
-                        bmr=bmr,
-                        user_timezone=user_tz_str,
+                try:
+                    base_daily = target_calories or (weekly_budget.target_calories / 7)
+                    effective = (
+                        await WeeklyBudgetService.get_effective_adjusted_daily_async(
+                            uow=uow,
+                            user_id=query.user_id,
+                            week_start=week_start,
+                            target_date=today,
+                            weekly_budget=weekly_budget,
+                            base_daily_cal=base_daily,
+                            base_daily_protein=(target_macros or {}).get("protein", 70),
+                            base_daily_carbs=(target_macros or {}).get("carbs", 200),
+                            base_daily_fat=(target_macros or {}).get("fat", 70),
+                            bmr=bmr,
+                            user_timezone=user_tz_str,
+                        )
                     )
-                )
-                adjusted = effective.adjusted
-                adjusted_macros = TdeeCalculationService.apply_adjusted_macro_policy(
-                    adjusted.calories,
-                    MacroTargets(
-                        calories=adjusted.calories,
-                        protein=adjusted.protein,
-                        carbs=adjusted.carbs,
-                        fat=adjusted.fat,
-                    ),
-                    macro_preset,
-                    is_custom,
-                )
-                consumed = effective.consumed_total
-                weekly_summary = {
-                    "week_start_date": week_start.isoformat(),
-                    "target_calories": weekly_budget.target_calories,
-                    "consumed_calories": round(consumed["calories"], 1),
-                    "remaining_calories": round(
-                        weekly_budget.target_calories - consumed["calories"], 1
-                    ),
-                    "adjusted_daily_calories": adjusted_macros.calories,
-                    "adjusted_daily_protein": adjusted_macros.protein,
-                    "adjusted_daily_carbs": adjusted_macros.carbs,
-                    "adjusted_daily_fat": adjusted_macros.fat,
-                    "remaining_days": adjusted.remaining_days,
-                    "target_revision": weekly_budget.target_revision,
-                }
+                    adjusted = effective.adjusted
+                    adjusted_macros = TdeeCalculationService.apply_adjusted_macro_policy(
+                        adjusted.calories,
+                        MacroTargets(
+                            calories=adjusted.calories,
+                            protein=adjusted.protein,
+                            carbs=adjusted.carbs,
+                            fat=adjusted.fat,
+                        ),
+                        macro_preset,
+                        is_custom,
+                    )
+                    consumed = effective.consumed_total
+                    weekly_summary = {
+                        "week_start_date": week_start.isoformat(),
+                        "target_calories": weekly_budget.target_calories,
+                        "consumed_calories": round(consumed["calories"], 1),
+                        "remaining_calories": round(
+                            weekly_budget.target_calories - consumed["calories"], 1
+                        ),
+                        "adjusted_daily_calories": adjusted_macros.calories,
+                        "adjusted_daily_protein": adjusted_macros.protein,
+                        "adjusted_daily_carbs": adjusted_macros.carbs,
+                        "adjusted_daily_fat": adjusted_macros.fat,
+                        "remaining_days": adjusted.remaining_days,
+                        "target_revision": weekly_budget.target_revision,
+                    }
+                except Exception:
+                    logger.exception(
+                        "Weekly budget summary failed for user %s; continuing without it",
+                        query.user_id,
+                    )
             elif weekly_budget:
                 logger.warning(
                     "Refusing stale weekly target row for user %s", query.user_id

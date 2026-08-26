@@ -131,6 +131,8 @@ from src.app.handlers.query_handlers import (
     GetDailyMacrosQueryHandler,
     GetDailyMovementQueryHandler,
     GetFoodDetailsQueryHandler,
+    GetProviderFoodDetailsQueryHandler,
+    GetPopularStaplesQueryHandler,
     GetJourneyProgressQueryHandler,
     GetMealByIdQueryHandler,
     GetMealsByDateQueryHandler,
@@ -173,6 +175,10 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 from src.app.queries.activity import GetBulkActivitiesQuery, GetDailyActivitiesQuery
 from src.app.queries.cheat_day import GetCheatDaysQuery
 from src.app.queries.food.get_food_details_query import GetFoodDetailsQuery
+from src.app.queries.food.get_provider_food_details_query import (
+    GetProviderFoodDetailsQuery,
+)
+from src.app.queries.food.get_popular_staples_query import GetPopularStaplesQuery
 from src.app.queries.food.lookup_barcode_query import LookupBarcodeQuery
 from src.app.queries.food.search_foods_query import SearchFoodsQuery
 from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
@@ -260,6 +266,13 @@ async def _search_local_food_references(
         return await uow.food_references.search_local(query, region, limit)
 
 
+async def _load_popular_staple_food_references(
+    identities: list[tuple[str, str]],
+) -> list[dict]:
+    async with AsyncUnitOfWork() as uow:
+        return await uow.food_references.get_by_source_identities(identities)
+
+
 async def _food_integrity_cache_context() -> dict[str, int | str]:
     """Read DB-owned cache namespace before any food-search cache access."""
     async with AsyncUnitOfWork() as uow:
@@ -334,9 +347,25 @@ def get_food_search_event_bus() -> EventBus:
         ),
     )
     event_bus.register_handler(
+        GetPopularStaplesQuery,
+        GetPopularStaplesQueryHandler(
+            food_mapping_service,
+            _load_popular_staple_food_references,
+        ),
+    )
+    event_bus.register_handler(
         GetFoodDetailsQuery,
         GetFoodDetailsQueryHandler(
             food_data_service, food_cache_service, food_mapping_service
+        ),
+    )
+    event_bus.register_handler(
+        GetProviderFoodDetailsQuery,
+        GetProviderFoodDetailsQueryHandler(
+            food_mapping_service,
+            fat_secret_service=fat_secret_service,
+            uow_factory=AsyncUnitOfWork,
+            cache_service=food_cache_service,
         ),
     )
     event_bus.register_handler(
@@ -591,9 +620,25 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
     event_bus.register_handler(
+        GetPopularStaplesQuery,
+        GetPopularStaplesQueryHandler(
+            food_mapping_service,
+            _load_popular_staple_food_references,
+        ),
+    )
+    event_bus.register_handler(
         GetFoodDetailsQuery,
         GetFoodDetailsQueryHandler(
             food_data_service, food_cache_service, food_mapping_service
+        ),
+    )
+    event_bus.register_handler(
+        GetProviderFoodDetailsQuery,
+        GetProviderFoodDetailsQueryHandler(
+            food_mapping_service,
+            fat_secret_service=fat_secret_service,
+            uow_factory=AsyncUnitOfWork,
+            cache_service=food_cache_service,
         ),
     )
 

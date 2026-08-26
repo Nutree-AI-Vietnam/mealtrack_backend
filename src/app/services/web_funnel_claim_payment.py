@@ -64,9 +64,10 @@ async def reconcile_revenuecat_event(db: AsyncSession, event: dict, subscriber: 
             claim.revoked_at = utcnow()
     elif lead.status not in {"claimed", "refunded"}:
         lead.status, lead.payment_verified_at = "payment_verified", utcnow()
-        generation = await next_claim_generation(db, lead.id)
-        db.add(WebFunnelOutbox(idempotency_key=f"claim-email:{lead.id}:{generation}", job_type="claim_email", payload={"lead_id": lead.id, "generation": generation}, status="pending", attempts=0, next_attempt_at=utcnow()))
-        lead.status = "email_queued"
+        if settings.WEB_FUNNEL_LEGACY_CLAIM_ENABLED:
+            generation = await next_claim_generation(db, lead.id)
+            db.add(WebFunnelOutbox(idempotency_key=f"claim-email:{lead.id}:{generation}", job_type="claim_email", payload={"lead_id": lead.id, "generation": generation}, status="pending", attempts=0, next_attempt_at=utcnow()))
+            lead.status = "email_queued"
     await db.commit()
     return True
 
@@ -114,9 +115,17 @@ async def process_revenuecat_reconcile(
         outbox.next_attempt_at = utcnow() + timedelta(minutes=min(60, 2 ** int(outbox.attempts)))
         await db.commit()
         return False
-    generation = await next_claim_generation(db, lead.id)
-    db.add(WebFunnelOutbox(idempotency_key=f"claim-email:{lead.id}:{generation}", job_type="claim_email", payload={"lead_id": lead.id, "generation": generation}, status="pending", attempts=0, next_attempt_at=utcnow()))
-    lead.status, lead.payment_verified_at, event.processed_at, outbox.status, outbox.completed_at = "email_queued", utcnow(), utcnow(), "completed", utcnow()
+    lead.status, lead.payment_verified_at, event.processed_at, outbox.status, outbox.completed_at = (
+        "payment_verified",
+        utcnow(),
+        utcnow(),
+        "completed",
+        utcnow(),
+    )
+    if settings.WEB_FUNNEL_LEGACY_CLAIM_ENABLED:
+        generation = await next_claim_generation(db, lead.id)
+        db.add(WebFunnelOutbox(idempotency_key=f"claim-email:{lead.id}:{generation}", job_type="claim_email", payload={"lead_id": lead.id, "generation": generation}, status="pending", attempts=0, next_attempt_at=utcnow()))
+        lead.status = "email_queued"
     await db.commit()
     return True
 

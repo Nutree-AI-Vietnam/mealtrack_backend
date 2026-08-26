@@ -24,10 +24,11 @@ class Goal(Enum):
 class TrainingLevel(Enum):
     """Training experience level based on consistent resistance training history.
 
-    Used to adjust protein recommendations:
-    - BEGINNER: <1 year consistent training (can tolerate less protein)
-    - INTERMEDIATE: 1-3 years consistent training (moderate protein needs)
-    - ADVANCED: 3+ years consistent training (higher protein for muscle retention)
+    Stored for profile/UX context. Protein g/kg is currently goal-scoped only
+    (same rate at every training level):
+    - BEGINNER: <1 year consistent training
+    - INTERMEDIATE: 1-3 years consistent training
+    - ADVANCED: 3+ years consistent training
     """
 
     BEGINNER = "beginner"

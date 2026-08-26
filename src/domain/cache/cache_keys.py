@@ -17,7 +17,8 @@ class CacheKeys:
     # Bumped when search-time catalog adoption changes what a cached search
     # result contains (e.g. adding food_reference_id to provider hits), so
     # stale pre-adoption entries expire instead of serving thin ids forever.
-    CATALOG_ADOPT_CACHE_VERSION = "catalog_adopt_v1"
+    # v2: candidate-only FatSecret search (no N× food.get.v5 enrichment).
+    CATALOG_ADOPT_CACHE_VERSION = "catalog_adopt_v2"
 
     TTL_10_MIN = 600
     TTL_5_MIN = 300

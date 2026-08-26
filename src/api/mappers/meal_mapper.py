@@ -880,10 +880,13 @@ class MealMapper:
                 },
             )
 
+        target_macros_data = daily_macros_data.get("target_macros") or {}
+        if not isinstance(target_macros_data, dict):
+            target_macros_data = {}
         target_macros = MacrosResponse(
-            protein=daily_macros_data.get("target_macros").get("protein") or 0.0,
-            carbs=daily_macros_data.get("target_macros").get("carbs") or 0.0,
-            fat=daily_macros_data.get("target_macros").get("fat") or 0.0,
+            protein=target_macros_data.get("protein") or 0.0,
+            carbs=target_macros_data.get("carbs") or 0.0,
+            fat=target_macros_data.get("fat") or 0.0,
         )
 
         consumed_macros = MacrosResponse(

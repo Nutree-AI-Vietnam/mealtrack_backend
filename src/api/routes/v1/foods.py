@@ -13,6 +13,9 @@ from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
 from src.api.schemas.response.barcode_product_response import BarcodeProductResponse
 from src.app.queries.food.get_food_details_query import GetFoodDetailsQuery
+from src.app.queries.food.get_provider_food_details_query import (
+    GetProviderFoodDetailsQuery,
+)
 from src.app.queries.food.lookup_barcode_query import LookupBarcodeQuery
 from src.app.queries.food.search_foods_query import SearchFoodsQuery
 from src.domain.exceptions.barcode_exceptions import InvalidBarcodeError
@@ -23,7 +26,23 @@ router = APIRouter(prefix="/v1/foods", tags=["Foods"])
 FOOD_SEARCH_LIMIT = "30/minute"
 FOOD_AUTOCOMPLETE_LIMIT = "60/minute"
 FOOD_DETAILS_LIMIT = "30/minute"
+FOOD_PROVIDER_DETAILS_LIMIT = "60/minute"
 FOOD_BARCODE_LIMIT = "20/minute"
+FOOD_POPULAR_STAPLES_LIMIT = "60/minute"
+
+
+@router.get("/popular-staples")
+@limiter.limit(FOOD_POPULAR_STAPLES_LIMIT)
+async def get_popular_staples(
+    request: Request,
+    _: str = Depends(get_current_user_id),
+):
+    """Curated staple foods from food_reference (no live FatSecret search)."""
+    from src.app.queries.food.get_popular_staples_query import GetPopularStaplesQuery
+
+    event_bus = get_food_search_event_bus()
+    language = get_request_language(request)
+    return await event_bus.send(GetPopularStaplesQuery(language=language))
 
 
 @router.get("/search")
@@ -59,6 +78,31 @@ async def autocomplete_foods(
         autocomplete=True,
     )
     return await event_bus.send(query)
+
+
+@router.get("/provider/{namespace}/{source_food_id}/details")
+@limiter.limit(FOOD_PROVIDER_DETAILS_LIMIT)
+async def get_provider_food_details(
+    request: Request,
+    namespace: str,
+    source_food_id: str,
+    _: str = Depends(get_current_user_id),
+):
+    """Resolve one provider food (FatSecret) after search select — single food.get."""
+    event_bus = get_food_search_event_bus()
+    language = get_request_language(request)
+    try:
+        return await event_bus.send(
+            GetProviderFoodDetailsQuery(
+                source_namespace=namespace,
+                source_food_id=source_food_id,
+                language=language,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{fdc_id}/details")
