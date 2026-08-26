@@ -220,38 +220,64 @@ async def test_webhook_preserves_existing_firebase_binding_and_unions_aliases():
 
 
 @pytest.mark.asyncio
-async def test_finalization_uses_jsonb_containment_for_provider_aliases():
+async def test_finalization_selects_by_redemption_link_hash_and_preflight_uid():
+    """Ship-first: exact row via hash+UID — never latest alias/verified_at."""
     session = StatementCaptureSession()
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(HTTPException):
         await finalize_redemption(
             session,
             uid="firebase-uid",
             email="buyer@example.com",
             original_app_user_id="$RCAnonymousID:web",
-            idempotency_key="request-1",
+            redemption_link_hash=_link_hash(),
+            idempotency_key="request-hash-select",
             environment="SANDBOX",
         )
 
-    assert error.value.status_code == 404
     sql = str(session.statement.compile(dialect=postgresql.dialect()))
-    assert "CAST(web_funnel_redemptions.provider_app_user_ids AS JSONB) @>" in sql
-    assert "provider_app_user_ids LIKE" not in sql
+    assert "redemption_link_hash" in sql
+    assert "preflight_uid" in sql
+    assert "ORDER BY" not in sql.upper()
 
 
 @pytest.mark.asyncio
-async def test_finalization_rejects_user_different_from_legacy_preflight_binding():
+async def test_finalization_rejects_expired_provider_entitlement():
     binding = _binding(
         original_app_user_id="$RCAnonymousID:web",
-        preflight_uid="verified-user",
+        redemption_link_hash=_link_hash(),
+        preflight_uid="firebase-uid",
+        environment="SANDBOX",
+        product_id="web_monthly",
+        verified_app_user_id="$RCAnonymousID:web",
     )
+    from datetime import UTC, datetime, timedelta
 
     with pytest.raises(HTTPException) as error:
         await finalize_redemption(
             FinalizationSession(binding, _lead(), None, None),
+            uid="firebase-uid",
+            email="buyer@example.com",
+            original_app_user_id="$RCAnonymousID:web",
+            redemption_link_hash=_link_hash(),
+            idempotency_key="request-expired",
+            environment="SANDBOX",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+
+    assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_finalization_rejects_user_different_from_legacy_preflight_binding():
+    # Hash+UID WHERE clause excludes mismatched preflight_uid (mock returns None).
+    with pytest.raises(HTTPException) as error:
+        await finalize_redemption(
+            StatementCaptureSession(),
             uid="different-user",
             email="buyer@example.com",
             original_app_user_id="$RCAnonymousID:web",
+            redemption_link_hash=_link_hash(),
             idempotency_key="request-preflight-binding",
             environment="SANDBOX",
         )
@@ -261,17 +287,13 @@ async def test_finalization_rejects_user_different_from_legacy_preflight_binding
 
 @pytest.mark.asyncio
 async def test_finalization_rejects_new_link_without_preflight_binding():
-    binding = _binding(
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
-    )
-
     with pytest.raises(HTTPException) as error:
         await finalize_redemption(
-            FinalizationSession(binding, _lead(), None, None),
+            StatementCaptureSession(),
             uid="firebase-user",
             email="buyer@example.com",
             original_app_user_id="$RCAnonymousID:web",
+            redemption_link_hash=_link_hash(),
             idempotency_key="request-missing-preflight",
             environment="SANDBOX",
         )
@@ -281,7 +303,13 @@ async def test_finalization_rejects_new_link_without_preflight_binding():
 
 @pytest.mark.asyncio
 async def test_finalization_identifies_existing_account_recovery():
-    binding = _binding(original_app_user_id="$RCAnonymousID:web")
+    binding = _binding(
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        preflight_uid="anonymous-user",
+        verified_app_user_id="$RCAnonymousID:web",
+        environment="SANDBOX",
+    )
     owner = User(
         firebase_uid="existing-user",
         email="buyer@example.com",
@@ -294,6 +322,7 @@ async def test_finalization_identifies_existing_account_recovery():
             uid="anonymous-user",
             email="buyer@example.com",
             original_app_user_id="$RCAnonymousID:web",
+            redemption_link_hash=_link_hash(),
             idempotency_key="request-existing-account",
             environment="SANDBOX",
         )
@@ -359,15 +388,20 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
         async def commit(self):
             return None
 
+    from datetime import UTC, datetime, timedelta
+
+    expires = datetime.now(UTC) + timedelta(days=30)
     session = Session()
     result = await finalize_redemption(
         session,
         uid="google-user",
         email="BUYER@example.com",
         original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
         idempotency_key="request-google-user",
         environment="SANDBOX",
         auth_provider="google.com",
+        expires_at=expires,
     )
 
     user = next(item for item in session.added if isinstance(item, User))
@@ -377,6 +411,7 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
         item for item in session.added if isinstance(item, Subscription)
     )
     assert subscription.platform == "web"
+    assert subscription.expires_at == expires
     assert result["access_status"] == "active"
     macros = result["macros"]
     assert macros["calories"] == pytest.approx(
