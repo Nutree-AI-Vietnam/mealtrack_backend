@@ -126,7 +126,7 @@ async def test_async_graph_runner_executes_runtime_bound_acquisition():
 
 
 @pytest.mark.asyncio
-async def test_async_graph_runner_persists_ready_meal_and_invalidates_cache():
+async def test_async_graph_runner_persists_ready_meal_and_publishes_event():
     image_id = "1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
     meal_id = "22222222-2222-4222-8222-222222222222"
     image_store = AsyncMock()
@@ -259,8 +259,8 @@ async def test_async_graph_runner_publishes_insight_event_after_persist():
     )
 
     assert publisher.publish.await_count == 1
-    assert result["cache_invalidated"] is True
     assert "meal_value_insight_scheduled" not in result
+    assert "cache_invalidated" not in result
 
 
 @pytest.mark.asyncio

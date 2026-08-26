@@ -403,18 +403,7 @@ async def persist_meal(
     return {
         "meal_id": saved_meal.meal_id,
         "result": saved_meal,
-        "cache_invalidated": True,
     }
-
-
-async def invalidate_cache(
-    state: MealAnalyzeGraphState,
-    runtime: MealAnalyzeRuntime,
-) -> MealAnalyzeGraphState:
-    """Confirm the transactional event created by ``persist_meal``."""
-    if state.get("cache_invalidated"):
-        return {"cache_invalidated": True}
-    return {"cache_invalidated": True}
 
 
 async def _resolve_meal_datetime(runtime: MealAnalyzeRuntime):
