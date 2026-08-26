@@ -303,7 +303,10 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
     }
     response = await web_funnel.finalize_revenuecat_redemption(
         _request(),
-        web_funnel.WebFunnelRedemptionFinalizeRequest(confirm_apply_purchase=True),
+        web_funnel.WebFunnelRedemptionFinalizeRequest(
+            confirm_apply_purchase=True,
+            redemption_link_hash="a" * 64,
+        ),
         Response(),
         "x" * 16,
         token,
@@ -315,9 +318,11 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
         "uid": "firebase-uid",
         "email": "buyer@example.com",
         "original_app_user_id": "$RCAnonymousID:customer",
+        "redemption_link_hash": "a" * 64,
         "idempotency_key": "x" * 16,
         "environment": "sandbox",
         "auth_provider": "google.com",
+        "expires_at": None,
     }
 
 
@@ -347,7 +352,10 @@ async def test_redemption_finalization_rejects_anonymous_identity(monkeypatch):
     with pytest.raises(HTTPException) as error:
         await web_funnel.finalize_revenuecat_redemption(
             _request("127.0.0.2"),
-            web_funnel.WebFunnelRedemptionFinalizeRequest(confirm_apply_purchase=True),
+            web_funnel.WebFunnelRedemptionFinalizeRequest(
+                confirm_apply_purchase=True,
+                redemption_link_hash="a" * 64,
+            ),
             Response(),
             "x" * 16,
             token,
@@ -388,7 +396,10 @@ async def test_redemption_finalization_accepts_passwordless_email_identity(
 
     response = await web_funnel.finalize_revenuecat_redemption(
         _request("127.0.0.3"),
-        web_funnel.WebFunnelRedemptionFinalizeRequest(confirm_apply_purchase=True),
+        web_funnel.WebFunnelRedemptionFinalizeRequest(
+            confirm_apply_purchase=True,
+            redemption_link_hash="a" * 64,
+        ),
         Response(),
         "x" * 16,
         token,
@@ -487,6 +498,38 @@ async def test_correlation_hides_unverified_customer_as_not_found(monkeypatch):
     session = CorrelationSession(_lead())
     payload = web_funnel.WebFunnelRevenueCatCorrelationRequest(
         app_user_id="$RCAnonymousID:other",
+        redemption_link_hash=web_funnel._hash("rc-example://redeem?token=opaque"),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await web_funnel.correlate_revenuecat_customer(
+            _request(),
+            "lead-1",
+            payload,
+            "a" * 32,
+            "https://web.example",
+            "bff-secret",
+            session,
+        )
+
+    assert error.value.status_code == 404
+    assert not session.added
+
+
+@pytest.mark.asyncio
+async def test_correlation_blocks_new_checkout_when_admission_disabled(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED", False)
+    monkeypatch.setattr(
+        web_funnel,
+        "_get_web_funnel_subscription_service",
+        lambda: VerifiedSubscriberService(),
+    )
+    session = CorrelationSession(_lead())
+    payload = web_funnel.WebFunnelRevenueCatCorrelationRequest(
+        app_user_id="$RCAnonymousID:customer",
         redemption_link_hash=web_funnel._hash("rc-example://redeem?token=opaque"),
     )
 

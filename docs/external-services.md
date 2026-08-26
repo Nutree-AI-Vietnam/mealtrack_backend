@@ -153,9 +153,20 @@ optional caches.
 ### RevenueCat and web redemption
 
 - Webhooks update local `subscriptions`; signature verification is constant-time.
-- Web checkout handoff is `/v1/web-funnel/*` (hash-only redemption link, Firebase
-  passwordless, preflight/finalize). Contracts: `api-endpoints.md`.
-- Billing ownership is RevenueCat Web; legacy direct Paddle fulfillment is gone.
+- Canonical handoff (`/v1/web-funnel/*`):
+  - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
+    link digest (never raw URL).
+  - **Eligibility** (`POST /redemptions/preflight`): verified Firebase email must
+    match lead; bind UID to that row before redeem-once.
+  - **Finalize** (`POST /redemptions/finalize`): atomic MealTrack grant;
+    idempotent; must select the exact row (hash + preflight UID), not “latest”
+    alias match. Opaque preflight receipts / lease-CAS are deferred.
+  - Flags: `WEB_FUNNEL_REDEMPTION_ENABLED` (paid recovery: preflight/finalize),
+    `WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED` (new correlation rows; default true),
+    `WEB_FUNNEL_LEGACY_CLAIM_ENABLED` (compatibility only; when false, lead-UUID
+    webhook reconcile does not enqueue `claim_email`, and claim routes/dispatch
+    stay off). Checkout admission rolls back independently of paid recovery.
+- Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
 - Premium feature gates are planned, not enforced on routes.
 
 ### Sentry ownership

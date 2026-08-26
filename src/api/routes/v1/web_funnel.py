@@ -27,6 +27,7 @@ from src.app.services.web_funnel_claim_common import (
     RESEND_COOLDOWN,
     claim_conflict,
     claim_not_found,
+    standard_expires_at,
     utcnow,
 )
 from src.app.services.web_funnel_claim_completion import complete_claim, recover_claim
@@ -264,6 +265,9 @@ async def correlate_revenuecat_customer(
         .where(WebFunnelRedemption.lead_id == lead.id)
         .with_for_update()
     )
+    if existing is None and not settings.WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED:
+        # New checkout admission off: paid recovery for existing rows still works.
+        raise claim_not_found()
     if existing:
         if (
             existing.original_app_user_id != payload.app_user_id
@@ -391,9 +395,11 @@ async def finalize_revenuecat_redemption(
         uid=uid,
         email=email,
         original_app_user_id=original_app_user_id,
+        redemption_link_hash=payload.redemption_link_hash,
         idempotency_key=idempotency_key,
         environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
         auth_provider=provider,
+        expires_at=standard_expires_at(subscriber),
     )
 
 
