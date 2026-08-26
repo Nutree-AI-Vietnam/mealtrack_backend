@@ -54,3 +54,18 @@ def is_active_standard(subscriber: dict | None) -> bool:
         return datetime.fromisoformat(str(expires).replace("Z", "+00:00")) > utcnow()
     except ValueError:
         return False
+
+
+def standard_expires_at(subscriber: dict | None) -> datetime | None:
+    """Parse RevenueCat standard entitlement expiry; None means lifetime."""
+    entitlements = (subscriber or {}).get("subscriber", {}).get("entitlements", {})
+    standard = entitlements.get("standard")
+    if not isinstance(standard, dict):
+        return None
+    expires = standard.get("expires_date")
+    if expires is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
+    except ValueError:
+        return None

@@ -90,3 +90,4 @@ profile*.svg
 # docs/superpowers/ specs and plans are now tracked
 # Git worktrees
 .worktrees/
+.agents/

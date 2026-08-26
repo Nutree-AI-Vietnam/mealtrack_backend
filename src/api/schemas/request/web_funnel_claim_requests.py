@@ -82,6 +82,9 @@ class WebFunnelRedemptionFinalizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     confirm_apply_purchase: bool
+    redemption_link_hash: str = Field(
+        min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$"
+    )
 
 
 class WebFunnelRedemptionPreflightRequest(BaseModel):

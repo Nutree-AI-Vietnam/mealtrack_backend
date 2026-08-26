@@ -60,7 +60,34 @@ async def test_unknown_or_non_uuid_revenuecat_id_stays_on_native_path():
 
 
 @pytest.mark.asyncio
-async def test_authoritative_standard_enqueues_one_claim_email():
+async def test_authoritative_standard_skips_claim_email_when_legacy_disabled(
+    monkeypatch,
+):
+    monkeypatch.setattr(payment.settings, "WEB_FUNNEL_LEGACY_CLAIM_ENABLED", False)
+    session = FakePaymentSession(_lead())
+    active = {"subscriber": {"entitlements": {"standard": {"expires_date": None}}}}
+    handled = await reconcile_revenuecat_event(
+        session,
+        {
+            "id": "event-1",
+            "type": "INITIAL_PURCHASE",
+            "app_user_id": session.lead.id,
+            "product_id": "web_monthly",
+            "environment": "PRODUCTION",
+        },
+        active,
+    )
+    assert handled
+    assert session.lead.status == "payment_verified"
+    assert "claim_email" not in {getattr(row, "job_type", None) for row in session.added}
+    assert session.committed
+
+
+@pytest.mark.asyncio
+async def test_authoritative_standard_enqueues_one_claim_email_when_legacy_enabled(
+    monkeypatch,
+):
+    monkeypatch.setattr(payment.settings, "WEB_FUNNEL_LEGACY_CLAIM_ENABLED", True)
     session = FakePaymentSession(_lead())
     active = {"subscriber": {"entitlements": {"standard": {"expires_date": None}}}}
     handled = await reconcile_revenuecat_event(session, {"id": "event-1", "type": "INITIAL_PURCHASE", "app_user_id": session.lead.id, "product_id": "web_monthly", "environment": "PRODUCTION"}, active)
@@ -119,7 +146,37 @@ class ActiveSubscriber:
 
 
 @pytest.mark.asyncio
-async def test_deferred_reconcile_uses_provider_event_id_and_queues_email():
+async def test_deferred_reconcile_skips_claim_email_when_legacy_disabled(monkeypatch):
+    monkeypatch.setattr(payment.settings, "WEB_FUNNEL_LEGACY_CLAIM_ENABLED", False)
+    lead = _lead()
+    event = WebFunnelProviderEvent(
+        id="inbox-1",
+        provider_event_id="provider-event-1",
+        event_type="INITIAL_PURCHASE",
+        lead_id=lead.id,
+        payload={"product_id": "web_monthly", "environment": "PRODUCTION"},
+    )
+    outbox = WebFunnelOutbox(
+        id="outbox-1",
+        idempotency_key="revenuecat-reconcile:provider-event-1",
+        job_type="revenuecat_reconcile",
+        payload={"provider_event_id": "provider-event-1", "lead_id": lead.id},
+        status="pending",
+        attempts=0,
+        next_attempt_at=utcnow(),
+    )
+    session = FakeReconcileSession(lead, event)
+    assert await process_revenuecat_reconcile(session, outbox, ActiveSubscriber())
+    assert outbox.status == "completed"
+    assert lead.status == "payment_verified"
+    assert not any(row.job_type == "claim_email" for row in session.added)
+
+
+@pytest.mark.asyncio
+async def test_deferred_reconcile_uses_provider_event_id_and_queues_email_when_legacy_enabled(
+    monkeypatch,
+):
+    monkeypatch.setattr(payment.settings, "WEB_FUNNEL_LEGACY_CLAIM_ENABLED", True)
     lead = _lead()
     event = WebFunnelProviderEvent(
         id="inbox-1",

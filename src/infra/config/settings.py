@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     REVENUECAT_WEBHOOK_SECRET: str | None = Field(default=None)
     WEB_FUNNEL_REVENUECAT_ENVIRONMENT: str = Field(default="")
     WEB_FUNNEL_REDEMPTION_ENABLED: bool = Field(default=False)
+    WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED: bool = Field(default=True)
     WEB_FUNNEL_LEGACY_CLAIM_ENABLED: bool = Field(default=False)
     WEB_FUNNEL_CLAIM_LINK_BASE_URL: str = Field(default="")
     WEB_FUNNEL_BFF_ORIGIN: str = Field(default="")

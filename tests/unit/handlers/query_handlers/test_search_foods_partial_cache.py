@@ -222,7 +222,7 @@ async def test_non_english_search_translates_query_and_only_full_results_are_cac
     ]
     fat_secret.search_foods.assert_awaited_once_with("rice", max_results=20)
     cache.cache_search.assert_awaited_once()
-    assert cache.cache_search.call_args.args[0].startswith("food-search:v2:vi:")
+    assert cache.cache_search.call_args.args[0].startswith("food-search:v3:vi:")
 
 
 @pytest.mark.asyncio
@@ -448,6 +448,7 @@ async def test_detailed_fatsecret_hit_is_adopted_and_mapped_with_food_reference_
                 "fat_100g": 3.6,
                 "fiber_100g": 0.0,
                 "sugar_100g": 0.0,
+                "metric_serving_amount": 100.0,
                 "allowed_units": [
                     {"unit": "g", "gram_weight": 100.0, "description": "100 g"}
                 ],
@@ -528,6 +529,84 @@ async def test_autocomplete_search_never_adopts():
 
 
 @pytest.mark.asyncio
+async def test_search_description_macros_without_metric_are_not_adopted():
+    """List-quality description macros must not adopt into the catalog."""
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_food_candidates = AsyncMock(
+        return_value=[
+            {
+                "description": "Chicken Breast",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "55",
+                "food_id": "55",
+                "protein_100g": 31.0,
+                "carbs_100g": 0.0,
+                "fat_100g": 3.6,
+            }
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    repo = _FakeFoodReferenceRepo()
+    uow_factory = _FakeUowFactory(repo)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    result = await handler.handle(
+        SearchFoodsQuery(query="chicken", language="en", limit=5)
+    )
+
+    assert repo.calls == []
+    assert "food_reference_id" not in result["results"][0]
+    fat_secret.search_food_candidates.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_prefers_candidates_over_enriched_search_foods():
+    """Search UI path must call candidates (no N× food.get fan-out)."""
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_food_candidates = AsyncMock(
+        return_value=[
+            {
+                "description": "Rice",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "1",
+                "food_id": "1",
+            }
+        ]
+    )
+    fat_secret.search_foods = AsyncMock(return_value=[])
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+    )
+
+    await handler.handle(SearchFoodsQuery(query="rice", language="en", limit=5))
+
+    fat_secret.search_food_candidates.assert_awaited_once_with("rice", max_results=5)
+    fat_secret.search_foods.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_thin_provider_hit_without_macros_is_not_adopted():
     """A candidate with no durable macros must not trigger an adopt write."""
     cache = MagicMock()
@@ -585,6 +664,7 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
                 "protein_100g": 6.0,
                 "carbs_100g": 10.0,
                 "fat_100g": 2.0,
+                "metric_serving_amount": 100.0,
             }
         ]
     )

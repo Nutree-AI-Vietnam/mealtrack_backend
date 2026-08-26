@@ -2,6 +2,7 @@
 Meal-related request DTOs.
 """
 
+import uuid
 import warnings
 from datetime import datetime
 from typing import Any, Literal, Optional
@@ -203,12 +204,29 @@ class ServingUnitRequest(BaseModel):
     description: str = Field("", max_length=200)
 
 
+def _validate_optional_client_uuid(value: str | None, *, field: str) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    try:
+        return str(uuid.UUID(trimmed))
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a valid UUID") from exc
+
+
 class ManualMealItemRequest(BaseModel):
     """Single selected food item with portion to create a manual meal.
 
     Supports both USDA foods (via fdc_id) and custom foods (via name + custom_nutrition).
     """
 
+    id: Optional[str] = Field(
+        None,
+        max_length=36,
+        description="Client-assigned food item UUID; server mints when omitted",
+    )
     fdc_id: Optional[int] = Field(
         None, description="USDA FDC ID (required for USDA foods)"
     )
@@ -252,11 +270,21 @@ class ManualMealItemRequest(BaseModel):
         description="Custom nutrition data for non-USDA foods",
     )
 
+    @field_validator("id")
+    @classmethod
+    def validate_item_id_uuid(cls, value: str | None) -> str | None:
+        return _validate_optional_client_uuid(value, field="item id")
+
 
 class CreateManualMealFromFoodsRequest(BaseModel):
     """Create a manual meal from selected USDA foods with portions."""
 
     dish_name: str = Field(..., min_length=1, max_length=200)
+    meal_id: Optional[str] = Field(
+        None,
+        max_length=36,
+        description="Client-assigned meal UUID; server mints when omitted",
+    )
     items: list[ManualMealItemRequest] = Field(..., min_items=1, max_length=50)
     nutrition_contract_version: Optional[int] = Field(
         None, description="Versioned authoritative nutrition save contract"
@@ -271,6 +299,21 @@ class CreateManualMealFromFoodsRequest(BaseModel):
         None, description="Meal source: scanner, prompt, food_search, manual"
     )
     emoji: Optional[str] = Field(None, description="AI-assigned dish emoji")
+
+    @field_validator("meal_id")
+    @classmethod
+    def validate_meal_id_uuid(cls, value: str | None) -> str | None:
+        return _validate_optional_client_uuid(value, field="meal_id")
+
+    @model_validator(mode="after")
+    def validate_unique_item_ids(self) -> "CreateManualMealFromFoodsRequest":
+        seen: set[str] = set()
+        for item in self.items:
+            if item.id and item.id in seen:
+                raise ValueError("duplicate item ids in request")
+            if item.id:
+                seen.add(item.id)
+        return self
 
     @model_validator(mode="after")
     def validate_custom_nutrition_bounds(self):

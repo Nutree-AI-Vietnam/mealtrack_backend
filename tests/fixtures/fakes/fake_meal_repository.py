@@ -3,6 +3,8 @@
 from datetime import date
 from typing import Any, List, Optional
 
+from sqlalchemy.exc import IntegrityError
+
 from src.domain.model.meal import Meal, MealStatus
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 
@@ -17,6 +19,11 @@ class FakeMealRepository(MealRepositoryPort):
         """Save a meal to in-memory storage."""
         self._meals[meal.meal_id] = meal
         return meal
+
+    async def insert(self, meal: Meal) -> Meal:
+        if meal.meal_id in self._meals:
+            raise IntegrityError("insert", {}, Exception("duplicate meal_id"))
+        return await self.save(meal)
 
     async def find_by_id(self, meal_id: str, projection: Any = None) -> Optional[Meal]:
         """Find a meal by ID."""
