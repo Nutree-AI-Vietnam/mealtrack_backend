@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from src.api.exceptions import ConflictException, ValidationException
 from src.app.commands.meal.create_manual_meal_command import (
@@ -39,6 +40,9 @@ class _FakeMeals:
         self.saved_meals.append(meal)
         return meal
 
+    async def insert(self, meal):
+        return await self.save(meal)
+
     async def find_by_id(self, meal_id):
         return self._existing_by_id.get(meal_id)
 
@@ -62,6 +66,9 @@ class _FakeUow:
 
 class _PreparedV2Meals:
     async def save(self, meal):
+        return meal
+
+    async def insert(self, meal):
         return meal
 
 
@@ -259,6 +266,28 @@ async def test_create_rejects_existing_same_user_meal_id_without_replay():
 
     with pytest.raises(ConflictException, match="already exists"):
         await handler.handle(cmd)
+
+
+@pytest.mark.asyncio
+async def test_create_insert_integrity_error_maps_to_conflict():
+    uow = _FakeUow(_make_meal())
+
+    async def _insert(_meal):
+        raise IntegrityError("INSERT", {}, Exception("duplicate meal_id"))
+
+    uow.meals.insert = _insert
+    handler = CreateManualMealCommandHandler(uow=uow)
+    cmd = CreateManualMealCommand(
+        user_id=_UUID_1,
+        meal_id=_CLIENT_MEAL_ID,
+        items=_make_command().items,
+        dish_name="Rice Bowl",
+        source="manual",
+    )
+
+    with pytest.raises(ConflictException, match="already in use") as exc_info:
+        await handler.handle(cmd)
+    assert exc_info.value.error_code == "CLIENT_RESOURCE_ID_CONFLICT"
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,10 @@ class MealRepositoryPort(ABC):
         """
         pass
 
+    async def insert(self, meal: Meal) -> Meal:
+        """Insert a new meal row. Must not UPDATE an existing primary key."""
+        return await self.save(meal)
+
     @abstractmethod
     async def find_by_id(self, meal_id: str, projection: Any = None) -> Meal | None:
         """

@@ -333,7 +333,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         )
 
         try:
-            saved_meal = await meal_repo.save(meal)
+            saved_meal = await meal_repo.insert(meal)
         except IntegrityError as exc:
             raise ConflictException(
                 "A client-supplied id is already in use",

@@ -143,18 +143,20 @@ class AsyncMealRepository(MealRepositoryPort):
             return await self._reload_meal_domain(
                 meal.meal_id, fallback_image=meal.image
             )
-        else:
-            db_meal = meal_domain_to_orm(meal)
-            if meal.image:
-                db_image = await self._upsert_meal_image(meal.image)
-                db_meal.image_id = str(meal.image.image_id)
-                db_meal.image = db_image
+        return await self.insert(meal)
 
-            self.session.add(db_meal)
-            await self.session.flush()
-            return await self._reload_meal_domain(
-                db_meal.meal_id, fallback_image=meal.image
-            )
+    async def insert(self, meal: Meal) -> Meal:
+        db_meal = meal_domain_to_orm(meal)
+        if meal.image:
+            db_image = await self._upsert_meal_image(meal.image)
+            db_meal.image_id = str(meal.image.image_id)
+            db_meal.image = db_image
+
+        self.session.add(db_meal)
+        await self.session.flush()
+        return await self._reload_meal_domain(
+            db_meal.meal_id, fallback_image=meal.image
+        )
 
     async def find_by_id(
         self, meal_id: str, projection: MealProjection = MealProjection.FULL
