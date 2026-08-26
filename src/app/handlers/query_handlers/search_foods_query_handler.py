@@ -146,8 +146,11 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                 )
             else:
                 try:
-                    fs_results = await self.fat_secret_service.search_foods(
-                        event.query, max_results=remaining_limit
+                    # Candidates only — never fan out food.get.v5 per hit.
+                    # Detail enrichment happens on provider details / select.
+                    fs_results = await self._search_provider_candidates(
+                        event.query,
+                        remaining_limit,
                     )
                     if not event.autocomplete:
                         await self._adopt_provider_hits(fs_results, locale="en")
@@ -263,6 +266,10 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
             return False
         if not (item.get("source_food_id") or item.get("food_id")):
             return False
+        # Search-description macros lack metric_serving_amount; only adopt
+        # fully resolved food.get.v5 (or servings-embedded) hits.
+        if item.get("metric_serving_amount") is None:
+            return False
         return all(
             item.get(field) is not None
             for field in ("protein_100g", "carbs_100g", "fat_100g")
@@ -276,9 +283,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
     ) -> list[dict[str, Any]]:
         """Acquire canonical provider data for later locale presentation."""
         try:
-            results = await self.fat_secret_service.search_foods(
-                query, max_results=limit
-            )
+            results = await self._search_provider_candidates(query, limit)
             if results:
                 for item in results:
                     english = str(item.get("description") or item.get("name") or "")
@@ -290,6 +295,27 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         except Exception:
             logger.warning("fatsecret canonical search failed", exc_info=True)
         return local_raw
+
+    async def _search_provider_candidates(
+        self, query: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """FatSecret search without per-hit detail fetches."""
+        from inspect import isawaitable
+
+        service = self.fat_secret_service
+        if service is None:
+            return []
+        search_candidates = getattr(service, "search_food_candidates", None)
+        if callable(search_candidates):
+            result = search_candidates(query, max_results=limit)
+            if isawaitable(result):
+                resolved = await result
+                if isinstance(resolved, list):
+                    return resolved
+            elif isinstance(result, list):
+                return result
+        # Test doubles / older adapters may only expose search_foods.
+        return await service.search_foods(query, max_results=limit)
 
     async def _canonical_query(self, query: str, language: str) -> str:
         if language == "en" or self.translation_service is None:
@@ -459,7 +485,8 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
     def _cache_key(query: str, language: str) -> str:
         normalized = re.sub(r"\s+", " ", query.strip().lower())
         digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-        return f"food-search:v2:{language}:{digest}"
+        # v3: candidate-only FatSecret payloads (no per-hit food.get.v5).
+        return f"food-search:v3:{language}:{digest}"
 
     def _source_label(self, local_count: int, result_count: int) -> str:
         if local_count and result_count > local_count:
