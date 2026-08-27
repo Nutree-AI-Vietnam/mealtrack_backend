@@ -53,11 +53,15 @@ class CloudflareQueuePublisher:
 
         settings = get_settings()
         return cls(
-            account_id=settings.CLOUDFLARE_QUEUE_ACCOUNT_ID,
+            account_id=(
+                settings.CLOUDFLARE_QUEUE_ACCOUNT_ID or settings.CLOUDFLARE_ACCOUNT_ID
+            ),
             queue_name=(
                 settings.CLOUDFLARE_QUEUE_NAME if queue_name is None else queue_name
             ),
-            api_token=settings.CLOUDFLARE_QUEUE_API_TOKEN,
+            api_token=(
+                settings.CLOUDFLARE_QUEUE_API_TOKEN or settings.CLOUDFLARE_API_TOKEN
+            ),
             timeout_seconds=settings.CLOUDFLARE_QUEUE_TIMEOUT_SECONDS,
         )
 

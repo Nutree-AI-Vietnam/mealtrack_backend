@@ -20,7 +20,10 @@ out of scope for this slice.
   queue used by both generic and compatibility events.
 - Queue, DLQ, Worker, and Upstash Redis REST credentials are present in the
   deployment environment.
-- The backend has valid Queue account and API-token configuration.
+- The backend has `CLOUDFLARE_QUEUE_NAME` plus valid Cloudflare credentials. Set
+  Queue-specific account/token variables for a dedicated credential, or leave
+  them blank to reuse `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. A
+  reused token must have both Queue and Workers AI permissions.
 
 ## Verify the path
 

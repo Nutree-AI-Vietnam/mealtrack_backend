@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -18,6 +19,78 @@ def _publisher(client: AsyncMock) -> CloudflareQueuePublisher:
         api_token="queue-token",
         client=client,
     )
+
+
+def test_from_settings_reuses_generic_cloudflare_credentials(monkeypatch) -> None:
+    import src.infra.config.settings as settings_mod
+
+    monkeypatch.setattr(
+        settings_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            CLOUDFLARE_QUEUE_ACCOUNT_ID="",
+            CLOUDFLARE_QUEUE_NAME="cache-events",
+            CLOUDFLARE_QUEUE_API_TOKEN="",
+            CLOUDFLARE_QUEUE_TIMEOUT_SECONDS=10.0,
+            CLOUDFLARE_ACCOUNT_ID="generic-account",
+            CLOUDFLARE_API_TOKEN="generic-token",
+        ),
+    )
+
+    publisher = CloudflareQueuePublisher.from_settings()
+
+    assert publisher.endpoint == (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        "generic-account/queues/cache-events/messages"
+    )
+    assert publisher._api_token == "generic-token"
+
+
+def test_from_settings_prefers_queue_specific_credentials(monkeypatch) -> None:
+    import src.infra.config.settings as settings_mod
+
+    monkeypatch.setattr(
+        settings_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            CLOUDFLARE_QUEUE_ACCOUNT_ID="queue-account",
+            CLOUDFLARE_QUEUE_NAME="cache-events",
+            CLOUDFLARE_QUEUE_API_TOKEN="queue-token",
+            CLOUDFLARE_QUEUE_TIMEOUT_SECONDS=10.0,
+            CLOUDFLARE_ACCOUNT_ID="generic-account",
+            CLOUDFLARE_API_TOKEN="generic-token",
+        ),
+    )
+
+    publisher = CloudflareQueuePublisher.from_settings()
+
+    assert publisher.endpoint == (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        "queue-account/queues/cache-events/messages"
+    )
+    assert publisher._api_token == "queue-token"
+
+
+def test_from_settings_keeps_queue_name_required(monkeypatch) -> None:
+    import src.infra.config.settings as settings_mod
+
+    monkeypatch.setattr(
+        settings_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            CLOUDFLARE_QUEUE_ACCOUNT_ID="",
+            CLOUDFLARE_QUEUE_NAME="",
+            CLOUDFLARE_QUEUE_API_TOKEN="",
+            CLOUDFLARE_QUEUE_TIMEOUT_SECONDS=10.0,
+            CLOUDFLARE_ACCOUNT_ID="generic-account",
+            CLOUDFLARE_API_TOKEN="generic-token",
+        ),
+    )
+
+    publisher = CloudflareQueuePublisher.from_settings()
+
+    with pytest.raises(CloudflareQueueConfigurationError):
+        publisher._validate_configuration()
 
 
 @pytest.mark.asyncio

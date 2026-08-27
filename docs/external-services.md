@@ -158,10 +158,14 @@ optional caches.
 - Hydration creation publishes `hydration.created.v1` directly to Cloudflare
   Queue after its database transaction commits. The Worker orchestrator owns
   its cache translation and invokes the same delete handler.
-- `CloudflareQueuePublisher.from_settings()` reads the account, queue name,
-  token, and timeout settings. Publication is always attempted; when
-  misconfigured, the request fails after the database commit. The MVP accepts
-  that post-commit failure window for hydration.
+- `CloudflareQueuePublisher.from_settings()` reads the Queue account, queue
+  name, token, and timeout settings. Blank Queue account/token fields fall back
+  to `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`; Queue-specific values
+  override the generic values. `CLOUDFLARE_QUEUE_NAME` remains required. If
+  the fallback is used, the shared token must have both Queue and Workers AI
+  permissions. Publication is always attempted; when misconfigured, the
+  request fails after the database commit. The MVP accepts that post-commit
+  failure window for hydration.
 - The Worker validates the event envelope and deletes exact keys or bounded
   patterns through Upstash Redis REST. Queue ACK/retry/DLQ semantics own the
   delivery lifecycle.
