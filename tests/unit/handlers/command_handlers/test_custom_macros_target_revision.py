@@ -59,9 +59,8 @@ async def test_identical_custom_macro_reset_is_a_revision_noop():
         "src.app.handlers.command_handlers.update_custom_macros_command_handler.AsyncUnitOfWork",
         return_value=_uow_for(profile),
     ):
-        await UpdateCustomMacrosCommandHandler().handle(
-            UpdateCustomMacrosCommand(user_id="u1")
-        )
+        await UpdateCustomMacrosCommandHandler(
+            event_publisher=MagicMock(publish=AsyncMock())
+        ).handle(UpdateCustomMacrosCommand(user_id="u1"))
 
     assert profile.profile_target_revision == 1
-

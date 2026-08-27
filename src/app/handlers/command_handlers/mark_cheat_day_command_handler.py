@@ -12,6 +12,7 @@ from src.domain.model.cheat_day import CheatDay
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.utils.timezone_utils import (
     resolve_user_timezone_async,
@@ -80,29 +81,20 @@ class MarkCheatDayCommandHandler(EventHandler[MarkCheatDayCommand, dict[str, Any
                 await uow.rollback()
                 raise
 
-        if self.event_publisher is not None:
-            event = CheatDayMarkedEvent(
-                environment=self.environment,
-                aggregate_id=cheat_day.cheat_day_id,
-                data={
-                    "user_id": command.user_id,
-                    "date": target_date.isoformat(),
-                },
-            )
-            try:
-                await self.event_publisher.publish(event.to_payload())
-                logger.info(
-                    "Published cheat day marked event event_id=%s user_id=%s date=%s",
-                    event.event_id,
-                    command.user_id,
-                    target_date.isoformat(),
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish cheat day marked event event_id=%s error=%s",
-                    event.event_id,
-                    exc,
-                )
+        event = CheatDayMarkedEvent(
+            environment=self.environment,
+            aggregate_id=cheat_day.cheat_day_id,
+            data={
+                "user_id": command.user_id,
+                "date": target_date.isoformat(),
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published cheat day marked event event_id=%s user_id=%s date=%s",
+            event.event_id,
+            command.user_id,
+            target_date.isoformat(),
+        )
 
         return result
-

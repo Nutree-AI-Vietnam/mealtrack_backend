@@ -10,6 +10,7 @@ from src.app.events.movement.movement_created_event import MovementCreatedEvent
 from src.domain.model.movement import MovementEntry, MovementIntensity
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.services.movement_catalog_service import get_activity, get_met
 from src.domain.utils.timezone_utils import (
@@ -118,20 +119,13 @@ class LogMovementCommandHandler(EventHandler[LogMovementCommand, dict]):
                 },
             )
 
-        if self.event_publisher is not None:
-            try:
-                await self.event_publisher.publish(integration_event.to_payload())
-                logger.info(
-                    "Published movement created integration event event_id=%s aggregate_id=%s",
-                    integration_event.event_id,
-                    integration_event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish movement created event event_id=%s error=%s",
-                    integration_event.event_id,
-                    exc,
-                )
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published movement created integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         return _movement_response(saved)
-

@@ -17,12 +17,12 @@ from src.app.handlers.command_handlers.log_movement_command_handler import (
 from src.domain.model.movement import MovementIntensity
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.utils.timezone_utils import get_zone_info, resolve_user_timezone_async
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
-
 
 
 @handles(UpdateMovementEntryCommand)
@@ -91,20 +91,13 @@ class UpdateMovementEntryCommandHandler(
                 },
             )
 
-        if self.event_publisher is not None:
-            try:
-                await self.event_publisher.publish(integration_event.to_payload())
-                logger.info(
-                    "Published movement updated integration event event_id=%s aggregate_id=%s",
-                    integration_event.event_id,
-                    integration_event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish movement updated event event_id=%s error=%s",
-                    integration_event.event_id,
-                    exc,
-                )
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published movement updated integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         return _movement_response(updated)
-

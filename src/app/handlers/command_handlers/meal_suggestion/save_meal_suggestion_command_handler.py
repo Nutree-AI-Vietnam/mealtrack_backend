@@ -126,17 +126,16 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
         async with self.uow as uow:
             saved_meal = await uow.meals.save(meal)
 
-        if self.event_publisher is not None:
-            await publish_meal_event(
-                self.event_publisher,
-                saved_meal,
-                event_type="created",
-                environment=self.environment,
-                meal_date=meal_date,
-                language=command.language or "en",
-                event_bus=self.event_bus,
-                source="saved_meal_suggestion",
-            )
+        await publish_meal_event(
+            self.event_publisher,
+            saved_meal,
+            event_type="created",
+            environment=self.environment,
+            meal_date=meal_date,
+            language=command.language or "en",
+            event_bus=self.event_bus,
+            source="saved_meal_suggestion",
+        )
 
         logger.info(
             f"Saved meal suggestion {command.suggestion_id} as meal {saved_meal.meal_id} "

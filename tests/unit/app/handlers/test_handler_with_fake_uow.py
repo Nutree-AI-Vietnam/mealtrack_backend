@@ -3,17 +3,17 @@ Unit tests demonstrating FakeUoW pattern for handler testing.
 These tests show how handlers can be tested without a database.
 """
 
-import pytest
-from unittest.mock import AsyncMock, Mock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
+import pytest
+from tests.fixtures.fakes.fake_uow import FakeUnitOfWork
 
 from src.app.commands.meal import DeleteMealCommand
 from src.app.handlers.command_handlers.delete_meal_command_handler import (
     DeleteMealCommandHandler,
 )
-from src.domain.model.meal import Meal, MealStatus, MealImage
-from src.domain.utils.timezone_utils import utc_now
-from tests.fixtures.fakes.fake_uow import FakeUnitOfWork
+from src.domain.model.meal import Meal, MealImage
 
 
 class TestDeleteMealWithFakeUoW:
@@ -34,7 +34,7 @@ class TestDeleteMealWithFakeUoW:
                 url="https://example.com/image.jpg",
             ),
         )
-        from src.domain.model.nutrition import Nutrition, Macros
+        from src.domain.model.nutrition import Macros, Nutrition
 
         meal = meal.mark_ready(
             nutrition=Nutrition(
@@ -53,7 +53,9 @@ class TestDeleteMealWithFakeUoW:
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
 
-        handler = DeleteMealCommandHandler(uow=mock_uow)
+        handler = DeleteMealCommandHandler(
+            uow=mock_uow, event_publisher=MagicMock(publish=AsyncMock())
+        )
 
         # Act
         command = DeleteMealCommand(meal_id=meal.meal_id, user_id=user_id)
@@ -66,7 +68,6 @@ class TestDeleteMealWithFakeUoW:
             meal_id=meal.meal_id
         )
         mock_uow.meals.delete.assert_called_once_with(meal.meal_id)
-
 
     @pytest.mark.asyncio
     async def test_delete_meal_clears_recommendation_links_before_delete(self):
@@ -81,7 +82,7 @@ class TestDeleteMealWithFakeUoW:
                 url="https://example.com/image.jpg",
             ),
         )
-        from src.domain.model.nutrition import Nutrition, Macros
+        from src.domain.model.nutrition import Macros, Nutrition
 
         meal = meal.mark_ready(
             nutrition=Nutrition(
@@ -89,9 +90,7 @@ class TestDeleteMealWithFakeUoW:
             ),
             dish_name="Recommended meal",
         )
-        meal = meal.__class__(
-            **{**meal.__dict__, "source": "meal_recommendation"}
-        )
+        meal = meal.__class__(**{**meal.__dict__, "source": "meal_recommendation"})
 
         call_order: list[str] = []
 
@@ -110,7 +109,9 @@ class TestDeleteMealWithFakeUoW:
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
 
-        handler = DeleteMealCommandHandler(uow=mock_uow)
+        handler = DeleteMealCommandHandler(
+            uow=mock_uow, event_publisher=MagicMock(publish=AsyncMock())
+        )
         await handler.handle(DeleteMealCommand(meal_id=meal.meal_id, user_id=user_id))
 
         assert call_order == [f"clear:{meal.meal_id}", f"delete:{meal.meal_id}"]

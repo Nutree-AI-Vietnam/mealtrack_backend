@@ -78,11 +78,7 @@ class LogRecommendedMealCommandHandler(
                 saved_meal = meal
                 meal_date = slot.slot_date
 
-        if (
-            saved_meal is not None
-            and self.event_publisher is not None
-            and meal_date is not None
-        ):
+        if saved_meal is not None and meal_date is not None:
             await publish_meal_event(
                 self.event_publisher,
                 saved_meal,
@@ -102,6 +98,8 @@ class LogRecommendedMealCommandHandler(
                     self.meal_translation_service, saved_meal, command.language
                 )
             except Exception as exc:
-                logger.warning("Failed to persist recommended meal translation: %s", exc)
+                logger.warning(
+                    "Failed to persist recommended meal translation: %s", exc
+                )
 
         return result

@@ -15,6 +15,7 @@ from src.app.events.user.user_onboarding_completed_event import (
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -39,7 +40,6 @@ class CompleteOnboardingCommandHandler(
         self.environment = environment
 
     async def handle(self, command: CompleteOnboardingCommand) -> dict[str, Any]:
-
         """Mark user onboarding as completed if not already completed."""
         uow = self.uow or AsyncUnitOfWork()
         async with uow:
@@ -66,25 +66,17 @@ class CompleteOnboardingCommandHandler(
 
             await uow.users.save(user)
 
-        if self.event_publisher is not None:
-            try:
-                event = UserOnboardingCompletedEvent(
-                    environment=self.environment,
-                    aggregate_id=str(user.id),
-                    data={"user_id": str(user.id)},
-                )
-                await self.event_publisher.publish(event.to_payload())
-                logger.info(
-                    "Published user onboarding completed integration event event_id=%s aggregate_id=%s",
-                    event.event_id,
-                    event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish user onboarding completed event user_id=%s error=%s",
-                    user.id,
-                    exc,
-                )
+        event = UserOnboardingCompletedEvent(
+            environment=self.environment,
+            aggregate_id=str(user.id),
+            data={"user_id": str(user.id)},
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published user onboarding completed integration event event_id=%s aggregate_id=%s",
+            event.event_id,
+            event.aggregate_id,
+        )
 
         return {
             "firebase_uid": command.firebase_uid,
@@ -92,4 +84,3 @@ class CompleteOnboardingCommandHandler(
             "updated": True,
             "message": "Onboarding marked as completed",
         }
-

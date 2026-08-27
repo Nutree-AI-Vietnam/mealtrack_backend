@@ -11,6 +11,7 @@ from src.app.events.user.user_custom_macros_updated_event import (
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -74,23 +75,14 @@ class UpdateCustomMacrosCommandHandler(EventHandler[UpdateCustomMacrosCommand, N
             action = "cleared" if non_null_count == 0 else "set"
             logger.info(f"Custom macros {action} for user {command.user_id}")
 
-        if self.event_publisher is not None:
-            try:
-                event = UserCustomMacrosUpdatedEvent(
-                    environment=self.environment,
-                    aggregate_id=str(command.user_id),
-                    data={"user_id": str(command.user_id)},
-                )
-                await self.event_publisher.publish(event.to_payload())
-                logger.info(
-                    "Published custom macros updated integration event event_id=%s aggregate_id=%s",
-                    event.event_id,
-                    event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish custom macros updated event user_id=%s error=%s",
-                    command.user_id,
-                    exc,
-                )
-
+        event = UserCustomMacrosUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={"user_id": str(command.user_id)},
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published custom macros updated integration event event_id=%s aggregate_id=%s",
+            event.event_id,
+            event.aggregate_id,
+        )

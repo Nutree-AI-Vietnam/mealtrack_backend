@@ -13,6 +13,9 @@ from src.app.events.meal.meal_events import (
 from src.domain.model.meal.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.nutrition import FoodItem, Nutrition
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherRequiredError,
+)
 
 
 @pytest.fixture
@@ -41,7 +44,12 @@ def sample_meal():
         dish_name="Chicken Dish",
         status=MealStatus.READY,
         nutrition=nutrition,
-        image=MealImage(image_id=image_id, url="https://example.com/img.jpg", format="jpeg", size_bytes=1024),
+        image=MealImage(
+            image_id=image_id,
+            url="https://example.com/img.jpg",
+            format="jpeg",
+            size_bytes=1024,
+        ),
         created_at=now,
         ready_at=now,
     )
@@ -92,12 +100,27 @@ async def test_publish_meal_event_success(sample_meal):
 
 
 @pytest.mark.asyncio
-async def test_publish_meal_event_none_publisher_returns_false(sample_meal):
-    published = await publish_meal_event(
-        None,
-        sample_meal,
-        event_type="created",
-        environment="production",
-        meal_date=date(2026, 8, 24),
-    )
-    assert published is False
+async def test_publish_meal_event_requires_publisher(sample_meal):
+    with pytest.raises(IntegrationEventPublisherRequiredError):
+        await publish_meal_event(
+            None,
+            sample_meal,
+            event_type="created",
+            environment="production",
+            meal_date=date(2026, 8, 24),
+        )
+
+
+@pytest.mark.asyncio
+async def test_publish_meal_event_propagates_publish_failure(sample_meal):
+    publisher = AsyncMock()
+    publisher.publish.side_effect = RuntimeError("queue unavailable")
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        await publish_meal_event(
+            publisher,
+            sample_meal,
+            event_type="created",
+            environment="production",
+            meal_date=date(2026, 8, 24),
+        )

@@ -34,6 +34,7 @@ async def test_upload_failure_does_not_create_db_record():
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=mock_event_bus,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     # Cloudinary upload fails
@@ -173,6 +174,7 @@ async def test_successful_upload_creates_meal_with_verified_url():
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=mock_event_bus,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     # Cloudinary returns valid URL
@@ -291,7 +293,9 @@ async def test_successful_upload_keeps_ready_scanner_contract_with_backend_calor
     assert saved_meal.image.size_bytes == len(command.file_contents)
     assert saved_meal.nutrition.calories == pytest.approx(302.0)
     mock_uow.meals.save.assert_awaited_once()
-    assert [call.args[0]["event_type"] for call in publisher.publish.await_args_list] == [
+    assert [
+        call.args[0]["event_type"] for call in publisher.publish.await_args_list
+    ] == [
         "meal.created.v1",
     ]
 

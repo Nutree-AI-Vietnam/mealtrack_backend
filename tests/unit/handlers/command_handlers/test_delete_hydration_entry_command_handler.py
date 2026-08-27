@@ -138,7 +138,7 @@ async def test_delete_caloric_drink_publishes_hydration_caloric_deleted_event():
 
 
 @pytest.mark.asyncio
-async def test_delete_hydration_entry_publisher_exception_does_not_fail_request():
+async def test_delete_hydration_entry_publisher_exception_is_reported_after_commit():
 
     uow = _Uow()
     uow.hydration_entries.entry_to_find = HydrationEntry(
@@ -163,8 +163,8 @@ async def test_delete_hydration_entry_publisher_exception_does_not_fail_request(
         uow=uow, event_publisher=event_publisher, environment="staging"
     )
 
-    result = await handler.handle(
-        DeleteHydrationEntryCommand(user_id="user-1", entry_id="hydr_test123")
-    )
-
-    assert result == {"success": True}
+    with pytest.raises(RuntimeError, match="Queue offline"):
+        await handler.handle(
+            DeleteHydrationEntryCommand(user_id="user-1", entry_id="hydr_test123")
+        )
+    assert uow.hydration_entries.deleted is True

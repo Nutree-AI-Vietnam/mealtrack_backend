@@ -11,6 +11,7 @@ from src.app.events.saved_suggestion.saved_suggestion_created_event import (
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -54,7 +55,7 @@ class SaveSuggestionCommandHandler(EventHandler[SaveSuggestionCommand, dict[str,
                 f"Saved suggestion {command.suggestion_id} for user {command.user_id}"
             )
 
-        if published_needed and self.event_publisher is not None:
+        if published_needed:
             event = SavedSuggestionCreatedEvent(
                 environment=self.environment,
                 aggregate_id=command.suggestion_id,
@@ -62,20 +63,14 @@ class SaveSuggestionCommandHandler(EventHandler[SaveSuggestionCommand, dict[str,
                     "user_id": command.user_id,
                 },
             )
-            try:
-                await self.event_publisher.publish(event.to_payload())
-                logger.info(
-                    "Published saved suggestion created event event_id=%s user_id=%s suggestion_id=%s",
-                    event.event_id,
-                    command.user_id,
-                    command.suggestion_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish saved suggestion created event event_id=%s error=%s",
-                    event.event_id,
-                    exc,
-                )
+            await require_event_publisher(self.event_publisher).publish(
+                event.to_payload()
+            )
+            logger.info(
+                "Published saved suggestion created event event_id=%s user_id=%s suggestion_id=%s",
+                event.event_id,
+                command.user_id,
+                command.suggestion_id,
+            )
 
         return result
-

@@ -598,7 +598,9 @@ class TestWebhookHandler:
                 new_callable=AsyncMock,
             ),
         ):
-            await handle_purchase(mock_uow, user, event)
+            await handle_purchase(
+                mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
+            )
 
         # Verify subscription was added
         mock_uow.session.add.assert_called_once()
@@ -619,7 +621,9 @@ class TestWebhookHandler:
             new_callable=AsyncMock,
             return_value=subscription,
         ):
-            await handle_renewal(mock_uow, user, event)
+            await handle_renewal(
+                mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
+            )
 
         assert subscription.status == "active"
         assert subscription.expires_at is not None
@@ -636,7 +640,9 @@ class TestWebhookHandler:
             new_callable=AsyncMock,
             return_value=subscription,
         ):
-            await handle_cancellation(mock_uow, user, event)
+            await handle_cancellation(
+                mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
+            )
 
         assert subscription.status == "cancelled"
         assert subscription.cancelled_at is not None
@@ -653,7 +659,9 @@ class TestWebhookHandler:
             new_callable=AsyncMock,
             return_value=subscription,
         ):
-            await handle_expiration(mock_uow, user, event)
+            await handle_expiration(
+                mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
+            )
 
         assert subscription.status == "expired"
 
@@ -662,6 +670,7 @@ class TestWebhookHandler:
         user = MagicMock(id="user_123")
         subscription = MagicMock()
         event = {"app_user_id": "user_123"}
+        publisher = MagicMock(publish=AsyncMock())
 
         # Mock existing subscription (async)
         with patch(
@@ -669,9 +678,11 @@ class TestWebhookHandler:
             new_callable=AsyncMock,
             return_value=subscription,
         ):
-            await handle_billing_issue(mock_uow, user, event)
+            await handle_billing_issue(mock_uow, user, event, event_publisher=publisher)
 
         assert subscription.status == "billing_issue"
+        payload = publisher.publish.await_args.args[0]
+        assert payload["data"]["lifecycle_type"] == "subscription_billing_issue"
 
     async def test_handle_transfer_updates_known_subscription(self, mock_uow):
         """Test transfer remaps existing subscription to the canonical subscriber ID."""
@@ -695,17 +706,22 @@ class TestWebhookHandler:
         user = MagicMock(id="user_123")
         subscription = MagicMock()
         event = {"app_user_id": "user_123", "product_id": "premium_yearly"}
+        publisher = MagicMock(publish=AsyncMock())
 
         with patch(
             "src.api.routes.v1.webhook_subscription_lifecycle.get_or_create_subscription",
             new_callable=AsyncMock,
             return_value=subscription,
         ):
-            await handle_product_change(mock_uow, user, event)
+            await handle_product_change(
+                mock_uow, user, event, event_publisher=publisher
+            )
 
         assert subscription.product_id == "premium_yearly"
         assert subscription.status == "active"
         assert subscription.updated_at is not None
+        payload = publisher.publish.await_args.args[0]
+        assert payload["data"]["lifecycle_type"] == "subscription_product_changed"
 
     async def test_handle_refund(self, mock_uow):
         """Test handling refund event: marks subscription refunded and revokes referral."""
@@ -724,7 +740,9 @@ class TestWebhookHandler:
                 new_callable=AsyncMock,
             ) as revoke_mock,
         ):
-            await handle_refund(mock_uow, user, event)
+            await handle_refund(
+                mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
+            )
 
         assert subscription.status == "refunded"
         assert subscription.updated_at is not None
@@ -866,7 +884,7 @@ class TestWebhookHandler:
         assert repo.wallet.balance == 0
 
     async def test_webhook_product_change_end_to_end_returns_success(
-        self, mock_request
+        self, mock_request, mock_event_publisher
     ):
         """Full webhook path for PRODUCT_CHANGE: documents current 200/success semantics."""
         mock_request.json.return_value = {
@@ -882,7 +900,13 @@ class TestWebhookHandler:
         subscription = MagicMock()
 
         with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
-            with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
+            with (
+                patch(
+                    "src.api.routes.v1.webhooks._get_event_publisher",
+                    return_value=mock_event_publisher,
+                ),
+                patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class,
+            ):
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
                 mock_uow.__aexit__ = AsyncMock(return_value=False)

@@ -246,10 +246,10 @@ class TestDeleteUserCommandHandler:
                 await delete_handler.handle(command)
 
     @pytest.mark.asyncio
-    async def test_publisher_failure_does_not_rollback_db(
+    async def test_publisher_failure_is_reported_after_db_commit(
         self, active_user, db_session
     ):
-        """Test that event publisher failure does not rollback committed database changes."""
+        """Queue failures are visible while the committed DB mutation remains intact."""
         failing_publisher = MagicMock()
         failing_publisher.publish = AsyncMock(side_effect=Exception("Queue down"))
         handler = DeleteUserCommandHandler(event_publisher=failing_publisher)
@@ -261,9 +261,9 @@ class TestDeleteUserCommandHandler:
             "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
             MagicMock(return_value=DummyUnitOfWork(db_session)),
         ):
-            result = await handler.handle(command)
+            with pytest.raises(Exception, match="Queue down"):
+                await handler.handle(command)
 
-            assert result["deleted"] is True
             deleted_user = db_session.query(User).filter(User.id == user_id).first()
             assert deleted_user.is_active is False
             assert deleted_user.email == f"deleted_{user_id}@deleted.local"
@@ -375,7 +375,9 @@ class TestDeleteUserCommandHandlerIntegration:
         db_session.add_all([user1, user2])
         db_session.commit()
 
-        handler = DeleteUserCommandHandler()
+        handler = DeleteUserCommandHandler(
+            event_publisher=MagicMock(publish=AsyncMock())
+        )
 
         with patch(
             "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
@@ -409,7 +411,9 @@ class TestDeleteUserCommandHandlerIntegration:
         original_created = user.created_at
         original_id = user.id
 
-        handler = DeleteUserCommandHandler()
+        handler = DeleteUserCommandHandler(
+            event_publisher=MagicMock(publish=AsyncMock())
+        )
 
         with patch(
             "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
@@ -438,7 +442,9 @@ class TestDeleteUserCommandHandlerIntegration:
 
         assert user.deleted_at is None
 
-        handler = DeleteUserCommandHandler()
+        handler = DeleteUserCommandHandler(
+            event_publisher=MagicMock(publish=AsyncMock())
+        )
 
         with patch(
             "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",

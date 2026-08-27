@@ -387,7 +387,7 @@ async def persist_meal(
         saved_meal = await uow.meals.save(meal)
         await uow.commit()
 
-    if runtime.event_publisher is not None and runtime.meal_date is not None:
+    if runtime.meal_date is not None:
         await publish_meal_event(
             runtime.event_publisher,
             saved_meal,

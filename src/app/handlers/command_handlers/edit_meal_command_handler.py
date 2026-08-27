@@ -218,18 +218,17 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 meal_date = (saved_meal.created_at or utc_now()).date()
                 await uow.commit()
 
-                if self.event_publisher is not None:
-                    await publish_meal_event(
-                        self.event_publisher,
-                        saved_meal,
-                        event_type="updated",
-                        environment=self.environment,
-                        meal_date=meal_date,
-                        language=command.language,
-                        event_bus=self.event_bus,
-                        old_meal_date=old_meal_date,
-                        source="edit_meal",
-                    )
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="updated",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=command.language,
+                    event_bus=self.event_bus,
+                    old_meal_date=old_meal_date,
+                    source="edit_meal",
+                )
 
                 # 6. Calculate nutrition delta for event
                 nutrition_delta = self._calculate_nutrition_delta(
@@ -407,18 +406,17 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 meal_date = (saved_meal.created_at or utc_now()).date()
                 await uow.commit()
 
-                if self.event_publisher is not None:
-                    await publish_meal_event(
-                        self.event_publisher,
-                        saved_meal,
-                        event_type="updated",
-                        environment=self.environment,
-                        meal_date=meal_date,
-                        language=command.language,
-                        event_bus=self.event_bus,
-                        old_meal_date=old_meal_date,
-                        source="edit_meal_v2",
-                    )
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="updated",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=command.language,
+                    event_bus=self.event_bus,
+                    old_meal_date=old_meal_date,
+                    source="edit_meal_v2",
+                )
 
             replay_response["events"] = [
                 MealEditedEvent(

@@ -10,3 +10,18 @@ class IntegrationEventPublisherPort(Protocol):
 
     async def publish(self, payload: dict[str, Any]) -> None:
         """Publish a payload to the configured integration-event transport."""
+
+
+class IntegrationEventPublisherRequiredError(RuntimeError):
+    """Raised when a Queue-backed event path has no configured publisher."""
+
+
+def require_event_publisher(
+    publisher: IntegrationEventPublisherPort | None,
+) -> IntegrationEventPublisherPort:
+    """Return the configured publisher or fail instead of dropping an event."""
+    if publisher is None:
+        raise IntegrationEventPublisherRequiredError(
+            "Integration event publisher is required"
+        )
+    return publisher

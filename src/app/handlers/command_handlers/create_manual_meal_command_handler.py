@@ -73,9 +73,22 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
     async def handle(self, event: CreateManualMealCommand):
         if event.nutrition_contract_version == 2 and self.uow_factory is not None:
             return await self._handle_v2(event)
-        # Use provided meal_repository or create UnitOfWork with context manager
+        # Use provided meal_repository for legacy callers while preserving the
+        # same committed-write publication contract as the UoW path.
         if self.meal_repository:
-            return await self._process_meal(event, self.meal_repository, uow=None)
+            saved_meal = await self._process_meal(event, self.meal_repository, uow=None)
+            meal_date = (saved_meal.created_at or utc_now()).date()
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                language=event.language,
+                event_bus=self.event_bus,
+                source="manual_meal_legacy_repository",
+            )
+            return saved_meal
         else:
             _t_start = time.perf_counter()
 
@@ -107,7 +120,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                         if reservation:
                             await uow.meal_write_operations.release(reservation)
                         raise
-            if cache_event_needed and self.event_publisher is not None:
+            if cache_event_needed:
                 await publish_meal_event(
                     self.event_publisher,
                     saved_meal,
@@ -120,7 +133,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                 )
             _db_ms = (time.perf_counter() - _t_db_start) * 1000
 
-            # Queue publication is asynchronous.
+            # Queue consumer work remains asynchronous after publication succeeds.
             _t_cache_start = time.perf_counter()
             _cache_ms = (time.perf_counter() - _t_cache_start) * 1000
 
@@ -212,17 +225,16 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                     target_meal_id=saved_meal.meal_id,
                     response={"meal_id": saved_meal.meal_id},
                 )
-            if self.event_publisher is not None:
-                await publish_meal_event(
-                    self.event_publisher,
-                    saved_meal,
-                    event_type="created",
-                    environment=self.environment,
-                    meal_date=meal_date,
-                    language=event.language,
-                    event_bus=self.event_bus,
-                    source="manual_meal",
-                )
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                language=event.language,
+                event_bus=self.event_bus,
+                source="manual_meal",
+            )
 
             return saved_meal
         except ValueError as exc:

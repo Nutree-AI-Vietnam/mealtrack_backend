@@ -12,6 +12,7 @@ from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.nutrition import Nutrition
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.services.hydration_catalog_service import find_by_id, localized_name
 from src.domain.utils.timezone_utils import (
@@ -126,13 +127,14 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                 aggregate_id=hydration_entry.id,
             )
 
-        if self.event_publisher is not None:
-            await self.event_publisher.publish(integration_event.to_payload())
-            logger.info(
-                "Published hydration integration event event_id=%s aggregate_id=%s",
-                integration_event.event_id,
-                integration_event.aggregate_id,
-            )
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published hydration integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         kcal = round(saved.nutrition.calories if saved.nutrition else 0.0, 1)
         return {

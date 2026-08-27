@@ -12,6 +12,7 @@ from src.app.events.affiliate.affiliate_events import (
 )
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.infra.adapters.affiliate_service_adapter import AffiliateServiceAdapter
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -78,22 +79,18 @@ class ApplyReferralCodeCommandHandler:
             if os.getenv("AFFILIATE_INTEGRATION_ENABLED", "").lower() in ("1", "true"):
                 aff_result = await AffiliateServiceAdapter().validate_code(command.code)
                 if aff_result.active and aff_result.affiliate_id:
-                    if self.event_publisher is not None:
-                        try:
-                            event = AffiliateAttributionCreatedEvent(
-                                environment=self.environment,
-                                aggregate_id=str(command.user_id),
-                                data={
-                                    "mealtrack_user_id": command.user_id,
-                                    "affiliate_id": aff_result.affiliate_id,
-                                    "affiliate_code": command.code,
-                                },
-                            )
-                            await self.event_publisher.publish(event.to_payload())
-                        except Exception as exc:
-                            logger.error(
-                                "Failed to publish affiliate attribution event: %s", exc
-                            )
+                    event = AffiliateAttributionCreatedEvent(
+                        environment=self.environment,
+                        aggregate_id=str(command.user_id),
+                        data={
+                            "mealtrack_user_id": command.user_id,
+                            "affiliate_id": aff_result.affiliate_id,
+                            "affiliate_code": command.code,
+                        },
+                    )
+                    await require_event_publisher(self.event_publisher).publish(
+                        event.to_payload()
+                    )
                     return
 
             raise ValueError("invalid_code")

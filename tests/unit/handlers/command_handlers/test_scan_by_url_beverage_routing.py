@@ -121,7 +121,9 @@ async def test_scan_by_url_packaged_beverage_creates_standard_meal(monkeypatch):
 
     uow.hydration_entries.add.assert_not_called()
     uow.meals.save.assert_awaited_once()
-    assert [call.args[0]["event_type"] for call in publisher.publish.await_args_list] == [
+    assert [
+        call.args[0]["event_type"] for call in publisher.publish.await_args_list
+    ] == [
         "meal.created.v1",
     ]
 
@@ -172,6 +174,7 @@ async def test_scan_by_url_food_label_uses_crop_image_ai_without_ocr(
         event_bus=MagicMock(),
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(
@@ -248,6 +251,7 @@ async def test_scan_by_url_food_label_localizes_english_product_name(monkeypatch
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         text_translation_service=translator,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(
@@ -301,6 +305,7 @@ async def test_scan_by_url_food_label_uses_full_image_when_crop_missing(monkeypa
         event_bus=MagicMock(),
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(

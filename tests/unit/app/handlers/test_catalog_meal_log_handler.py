@@ -129,6 +129,7 @@ def _handler(
     recalculator=None,
     translation=None,
 ):
+    event_publisher = event_publisher or MagicMock(publish=AsyncMock())
     return LogCatalogMealCommandHandler(
         uow=uow,
         browse_service=browse,

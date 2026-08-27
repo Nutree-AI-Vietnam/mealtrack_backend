@@ -11,6 +11,7 @@ from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.nutrition.macros import Macros
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.services.hydration_catalog_service import find_by_id, localized_name
 from src.domain.utils.timezone_utils import (
@@ -36,7 +37,6 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
         self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
-
 
     async def handle(self, cmd: LogCaloricDrinkCommand) -> dict:
         drink = find_by_id(cmd.drink_id)
@@ -97,23 +97,16 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
                 },
             )
 
-        if self.event_publisher is not None:
-            try:
-                await self.event_publisher.publish(integration_event.to_payload())
-                logger.info(
-                    "Published hydration caloric created integration event event_id=%s aggregate_id=%s",
-                    integration_event.event_id,
-                    integration_event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish hydration caloric created event event_id=%s error=%s",
-                    integration_event.event_id,
-                    exc,
-                )
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published hydration caloric created integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         kcal = round(
-
             Macros(
                 protein=0.0, carbs=carbs, fat=fat, fiber=0.0, sugar=sugar
             ).total_calories,

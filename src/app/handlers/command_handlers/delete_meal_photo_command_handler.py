@@ -11,6 +11,7 @@ from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.utils.timezone_utils import utc_now
 
@@ -59,19 +60,15 @@ class DeleteMealPhotoCommandHandler(
                 await uow.rollback()
                 raise
 
-        if self.event_publisher is not None:
-            try:
-                event = MealUpdatedEvent(
-                    environment=self.environment,
-                    aggregate_id=saved_meal.meal_id,
-                    data={
-                        "user_id": saved_meal.user_id,
-                        "meal_id": saved_meal.meal_id,
-                        "meal_date": meal_date.isoformat(),
-                    },
-                )
-                await self.event_publisher.publish(event.to_payload())
-            except Exception as exc:
-                logger.error("Failed to publish meal updated event: %s", exc)
+        event = MealUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=saved_meal.meal_id,
+            data={
+                "user_id": saved_meal.user_id,
+                "meal_id": saved_meal.meal_id,
+                "meal_date": meal_date.isoformat(),
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
 
         return response

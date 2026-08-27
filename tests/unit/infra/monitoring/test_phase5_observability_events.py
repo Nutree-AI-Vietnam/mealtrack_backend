@@ -7,8 +7,9 @@ facade, with safe low-cardinality attributes and no user/meal/resource IDs.
 from __future__ import annotations
 
 from contextlib import nullcontext
+from datetime import date
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -79,9 +80,11 @@ async def test_manual_meal_save_emits_db_and_cache_latency_metrics():
     mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
     mock_uow.__aexit__ = AsyncMock(return_value=False)
 
-    handler = CreateManualMealCommandHandler(uow=mock_uow)
+    handler = CreateManualMealCommandHandler(
+        uow=mock_uow, event_publisher=MagicMock(publish=AsyncMock())
+    )
     # Patch _process_meal so we don't need a real DB / domain object
-    handler._process_meal = AsyncMock(return_value=(MagicMock(), "2026-06-13"))
+    handler._process_meal = AsyncMock(return_value=(MagicMock(), date(2026, 6, 13)))
 
     # Minimal command — exact fields don't matter since _process_meal is mocked
     command = MagicMock()

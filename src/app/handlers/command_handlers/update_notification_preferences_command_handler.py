@@ -11,6 +11,7 @@ from src.app.events.user.user_profile_updated_event import (
 from src.domain.model.notification import NotificationPreferences
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -83,18 +84,14 @@ class UpdateNotificationPreferencesCommandHandler(
         except Exception as e:
             raise e
 
-        if self.event_publisher is not None:
-            try:
-                event = UserProfileUpdatedEvent(
-                    environment=self.environment,
-                    aggregate_id=str(command.user_id),
-                    data={
-                        "user_id": str(command.user_id),
-                        "notification_preferences": final_prefs.to_dict(),
-                    },
-                )
-                await self.event_publisher.publish(event.to_payload())
-            except Exception as exc:
-                logger.error("Failed to publish user profile updated event: %s", exc)
+        event = UserProfileUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={
+                "user_id": str(command.user_id),
+                "notification_preferences": final_prefs.to_dict(),
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
 
         return result

@@ -23,6 +23,7 @@ from src.domain.model.hydration import DrinkCategory
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.services.hydration_catalog_service import find_by_id
 from src.domain.utils.timezone_utils import utc_now
@@ -123,42 +124,24 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                         "message": "Meal already deleted",
                     }
 
-        if (
-            deleted_kind == "hydration"
-            and self.event_publisher is not None
-            and hydration_delete_event is not None
-        ):
-            try:
-                await self.event_publisher.publish(hydration_delete_event.to_payload())
-                logger.info(
-                    "Published hydration deleted integration event event_id=%s aggregate_id=%s",
-                    hydration_delete_event.event_id,
-                    hydration_delete_event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish hydration deleted event event_id=%s error=%s",
-                    hydration_delete_event.event_id,
-                    exc,
-                )
-        elif (
-            deleted_kind == "meal"
-            and self.event_publisher is not None
-            and meal_delete_event is not None
-        ):
-            try:
-                await self.event_publisher.publish(meal_delete_event.to_payload())
-                logger.info(
-                    "Published meal deleted integration event event_id=%s aggregate_id=%s",
-                    meal_delete_event.event_id,
-                    meal_delete_event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish meal deleted event event_id=%s error=%s",
-                    meal_delete_event.event_id,
-                    exc,
-                )
+        if deleted_kind == "hydration" and hydration_delete_event is not None:
+            await require_event_publisher(self.event_publisher).publish(
+                hydration_delete_event.to_payload()
+            )
+            logger.info(
+                "Published hydration deleted integration event event_id=%s aggregate_id=%s",
+                hydration_delete_event.event_id,
+                hydration_delete_event.aggregate_id,
+            )
+        elif deleted_kind == "meal" and meal_delete_event is not None:
+            await require_event_publisher(self.event_publisher).publish(
+                meal_delete_event.to_payload()
+            )
+            logger.info(
+                "Published meal deleted integration event event_id=%s aggregate_id=%s",
+                meal_delete_event.event_id,
+                meal_delete_event.aggregate_id,
+            )
 
         return {
             "meal_id": command.meal_id,

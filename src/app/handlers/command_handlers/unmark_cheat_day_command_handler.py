@@ -12,6 +12,7 @@ from src.app.events.cheat_day.cheat_day_unmarked_event import (
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -58,29 +59,20 @@ class UnmarkCheatDayCommandHandler(EventHandler[UnmarkCheatDayCommand, dict[str,
                 await uow.rollback()
                 raise
 
-        if self.event_publisher is not None:
-            event = CheatDayUnmarkedEvent(
-                environment=self.environment,
-                aggregate_id=cheat_day_id,
-                data={
-                    "user_id": command.user_id,
-                    "date": command.date.isoformat(),
-                },
-            )
-            try:
-                await self.event_publisher.publish(event.to_payload())
-                logger.info(
-                    "Published cheat day unmarked event event_id=%s user_id=%s date=%s",
-                    event.event_id,
-                    command.user_id,
-                    command.date.isoformat(),
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish cheat day unmarked event event_id=%s error=%s",
-                    event.event_id,
-                    exc,
-                )
+        event = CheatDayUnmarkedEvent(
+            environment=self.environment,
+            aggregate_id=cheat_day_id,
+            data={
+                "user_id": command.user_id,
+                "date": command.date.isoformat(),
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published cheat day unmarked event event_id=%s user_id=%s date=%s",
+            event.event_id,
+            command.user_id,
+            command.date.isoformat(),
+        )
 
         return result
-

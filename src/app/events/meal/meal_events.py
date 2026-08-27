@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from src.app.events.integration_event import IntegrationEvent
 from src.domain.model.meal import Meal
+from src.domain.ports.integration_event_publisher_port import require_event_publisher
 from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -146,33 +147,22 @@ async def publish_meal_event(
     source: str = "meal_write",
 ) -> bool:
     """Publish one committed meal integration event to the external Queue consumer."""
-    if publisher is None:
-        return False
+    publisher = require_event_publisher(publisher)
+    data: dict[str, Any] = {
+        "user_id": str(user_id or getattr(meal, "user_id", "")),
+        "meal_id": str(meal.meal_id),
+        "meal_date": meal_date.isoformat(),
+        "language": language or getattr(meal, "language", "en") or "en",
+    }
+    if old_meal_date is not None and old_meal_date != meal_date:
+        data["old_meal_date"] = old_meal_date.isoformat()
 
-    try:
-        data: dict[str, Any] = {
-            "user_id": str(user_id or getattr(meal, "user_id", "")),
-            "meal_id": str(meal.meal_id),
-            "meal_date": meal_date.isoformat(),
-            "language": language or getattr(meal, "language", "en") or "en",
-        }
-        if old_meal_date is not None and old_meal_date != meal_date:
-            data["old_meal_date"] = old_meal_date.isoformat()
-
-        event_class = MealCreatedEvent if event_type == "created" else MealUpdatedEvent
-        event = event_class(
-            environment=environment,
-            aggregate_id=str(meal.meal_id),
-            occurred_at=meal_insight_occurred_at(meal),
-            data=data,
-        )
-        await publisher.publish(event.to_payload())
-        return True
-    except Exception as exc:
-        logger.error(
-            "Failed to publish meal event source=%s meal_id=%s error=%s",
-            source,
-            getattr(meal, "meal_id", None),
-            type(exc).__name__,
-        )
-        return False
+    event_class = MealCreatedEvent if event_type == "created" else MealUpdatedEvent
+    event = event_class(
+        environment=environment,
+        aggregate_id=str(meal.meal_id),
+        occurred_at=meal_insight_occurred_at(meal),
+        data=data,
+    )
+    await publisher.publish(event.to_payload())
+    return True

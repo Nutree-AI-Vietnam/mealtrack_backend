@@ -13,6 +13,7 @@ from src.app.events.user.user_profile_updated_event import (
 )
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -54,19 +55,15 @@ class UpdateLanguageCommandHandler(EventHandler[UpdateLanguageCommand, dict[str,
             )
             await uow.commit()
 
-        if self.event_publisher is not None:
-            try:
-                event = UserProfileUpdatedEvent(
-                    environment=self.environment,
-                    aggregate_id=str(command.user_id),
-                    data={
-                        "user_id": str(command.user_id),
-                        "language": language,
-                    },
-                )
-                await self.event_publisher.publish(event.to_payload())
-            except Exception as exc:
-                logger.error("Failed to publish user profile updated event: %s", exc)
+        event = UserProfileUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={
+                "user_id": str(command.user_id),
+                "language": language,
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
 
         logger.info(f"Updated language for user {command.user_id}: {language}")
         return {"success": True, "language_code": language}

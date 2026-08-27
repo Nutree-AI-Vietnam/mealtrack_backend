@@ -35,6 +35,7 @@ def _make_handler(mock_uow, mock_event_bus=None):
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=mock_event_bus,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock(

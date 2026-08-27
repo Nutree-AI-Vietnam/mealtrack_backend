@@ -82,10 +82,7 @@ class LogCatalogMealCommandHandler(
         write_started = time.perf_counter()
         result = await self._write(command, catalog_meal)
         write_ms = (time.perf_counter() - write_started) * 1000
-        if (
-            self.event_publisher is not None
-            and not getattr(result.meal, "_is_replay", False)
-        ):
+        if not getattr(result.meal, "_is_replay", False):
             await publish_meal_event(
                 self.event_publisher,
                 result.meal,

@@ -414,6 +414,7 @@ async def test_async_graph_food_label_crop_persists_original_image_reference():
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         uow=uow,
+        event_publisher=AsyncMock(),
         meal_id_factory=lambda: "22222222-2222-4222-8222-222222222222",
     )
 
@@ -481,6 +482,7 @@ async def test_async_graph_returns_same_call_locale_without_translation_reload()
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         uow=uow,
+        event_publisher=AsyncMock(),
         image_id_factory=lambda: image_id,
         meal_id_factory=lambda: "22222222-2222-4222-8222-222222222222",
     )
@@ -632,6 +634,7 @@ async def test_async_graph_upload_vision_retries_transient_failure():
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         uow=uow,
+        event_publisher=AsyncMock(),
         image_id_factory=lambda: image_id,
         meal_id_factory=lambda: "22222222-2222-4222-8222-222222222222",
         max_vision_attempts=2,

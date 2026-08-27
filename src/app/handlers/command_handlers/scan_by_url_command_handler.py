@@ -310,7 +310,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     saved_meal = await uow.meals.save(meal)
                     await uow.commit()
 
-                if self.event_publisher is not None and meal_date is not None:
+                if meal_date is not None:
                     await publish_meal_event(
                         self.event_publisher,
                         saved_meal,
@@ -393,7 +393,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 saved_meal = await uow.meals.save(meal)
                 await uow.commit()
 
-            if self.event_publisher is not None and meal_date is not None:
+            if meal_date is not None:
                 await publish_meal_event(
                     self.event_publisher,
                     saved_meal,

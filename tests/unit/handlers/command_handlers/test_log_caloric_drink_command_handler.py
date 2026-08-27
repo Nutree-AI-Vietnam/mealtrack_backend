@@ -1,5 +1,5 @@
 from datetime import date
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -47,7 +47,9 @@ class _Uow:
 
 @pytest.mark.asyncio
 async def test_log_caloric_drink_response_exposes_calories_alias():
-    handler = LogCaloricDrinkCommandHandler(uow=_Uow())
+    handler = LogCaloricDrinkCommandHandler(
+        uow=_Uow(), event_publisher=MagicMock(publish=AsyncMock())
+    )
 
     result = await handler.handle(
         LogCaloricDrinkCommand(
@@ -68,7 +70,9 @@ async def test_log_caloric_drink_response_exposes_calories_alias():
 @pytest.mark.asyncio
 async def test_log_caloric_drink_credits_hydration_weight_and_localizes_name():
     uow = _Uow()
-    handler = LogCaloricDrinkCommandHandler(uow=uow)
+    handler = LogCaloricDrinkCommandHandler(
+        uow=uow, event_publisher=MagicMock(publish=AsyncMock())
+    )
 
     result = await handler.handle(
         LogCaloricDrinkCommand(

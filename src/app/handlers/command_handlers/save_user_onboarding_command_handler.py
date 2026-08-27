@@ -16,6 +16,7 @@ from src.domain.model.user import UserProfileDomainModel
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -185,22 +186,14 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                 await uow.rollback()
                 raise
 
-        if self.event_publisher is not None:
-            try:
-                event = UserProfileUpdatedEvent(
-                    environment=self.environment,
-                    aggregate_id=str(command.user_id),
-                    data={"user_id": str(command.user_id)},
-                )
-                await self.event_publisher.publish(event.to_payload())
-                logger.info(
-                    "Published user profile updated integration event event_id=%s aggregate_id=%s",
-                    event.event_id,
-                    event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish user profile updated event user_id=%s error=%s",
-                    command.user_id,
-                    exc,
-                )
+        event = UserProfileUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={"user_id": str(command.user_id)},
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published user profile updated integration event event_id=%s aggregate_id=%s",
+            event.event_id,
+            event.aggregate_id,
+        )

@@ -56,16 +56,15 @@ class AddCustomIngredientCommandHandler(
                 saved_meal = await uow.meals.save(updated_meal)
                 meal_date = (saved_meal.created_at or utc_now()).date()
 
-            if self.event_publisher is not None:
-                await publish_meal_event(
-                    self.event_publisher,
-                    saved_meal,
-                    event_type="updated",
-                    environment=self.environment,
-                    meal_date=meal_date,
-                    language="en",
-                    source="add_custom_ingredient",
-                )
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="updated",
+                environment=self.environment,
+                meal_date=meal_date,
+                language="en",
+                source="add_custom_ingredient",
+            )
 
             return {
                 "success": True,

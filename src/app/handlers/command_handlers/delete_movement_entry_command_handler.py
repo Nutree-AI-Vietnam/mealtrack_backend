@@ -6,6 +6,7 @@ from src.app.events.base import EventHandler, handles
 from src.app.events.movement.movement_deleted_event import MovementDeletedEvent
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.utils.timezone_utils import get_zone_info, resolve_user_timezone_async
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -53,20 +54,13 @@ class DeleteMovementEntryCommandHandler(EventHandler[DeleteMovementEntryCommand,
                 },
             )
 
-        if self.event_publisher is not None:
-            try:
-                await self.event_publisher.publish(integration_event.to_payload())
-                logger.info(
-                    "Published movement deleted integration event event_id=%s aggregate_id=%s",
-                    integration_event.event_id,
-                    integration_event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish movement deleted event event_id=%s error=%s",
-                    integration_event.event_id,
-                    exc,
-                )
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published movement deleted integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         return {}
-

@@ -20,6 +20,7 @@ from src.api.routes.v1.webhook_referral_funnel import (
 from src.app.events.affiliate.affiliate_events import (
     SubscriptionLifecycleEvent,
 )
+from src.domain.ports.integration_event_publisher_port import require_event_publisher
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.adapters.posthog_adapter import PostHogAdapter
 from src.infra.database.models.subscription import Subscription
@@ -77,9 +78,13 @@ async def _notify_affiliate(
     user_id: str | None = None,
 ) -> None:
     """Publish subscription event to Cloudflare Queue or send affiliate notification."""
-    if event_publisher is not None and user_id is not None:
+    if user_id is not None:
         await _publish_subscription_event(
-            event_publisher, event_type, payload, event_id, user_id
+            require_event_publisher(event_publisher),
+            event_type,
+            payload,
+            event_id,
+            user_id,
         )
     elif affiliate_handler is not None:
         resolved_event_id = event_id or str(uuid.uuid4())
@@ -105,9 +110,7 @@ async def handle_purchase(
 
     if existing:
         logger.warning(f"Subscription already exists for {user.id}, updating instead")
-        await handle_renewal(
-            uow, user, event, affiliate_handler, event_publisher
-        )
+        await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
         return
 
     # Create new subscription record
@@ -165,9 +168,7 @@ async def handle_renewal(
         )
     else:
         logger.warning("Subscription not found for renewal, creating new one")
-        await handle_purchase(
-            uow, user, event, affiliate_handler, event_publisher
-        )
+        await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
         return
 
     await capture_subscription_lifecycle_event(user, event, "RENEWAL", subscription)
@@ -282,6 +283,21 @@ async def handle_billing_issue(
     await capture_subscription_lifecycle_event(
         user, event, "BILLING_ISSUE", subscription
     )
+    await _notify_affiliate(
+        affiliate_handler,
+        "subscription_billing_issue",
+        {
+            "mealtrack_user_id": str(user.id),
+            "product_id": event.get("product_id")
+            or getattr(subscription, "product_id", None),
+            "subscription_id": event.get("transaction_id")
+            or event.get("original_transaction_id"),
+            "occurred_at": utc_now().isoformat(),
+        },
+        event.get("id"),
+        event_publisher=event_publisher,
+        user_id=str(user.id),
+    )
 
 
 async def handle_product_change(
@@ -300,11 +316,23 @@ async def handle_product_change(
     await capture_subscription_lifecycle_event(
         user, event, "PRODUCT_CHANGE", subscription
     )
+    await _notify_affiliate(
+        affiliate_handler,
+        "subscription_product_changed",
+        {
+            "mealtrack_user_id": str(user.id),
+            "product_id": event.get("product_id"),
+            "subscription_id": event.get("transaction_id")
+            or event.get("original_transaction_id"),
+            "occurred_at": utc_now().isoformat(),
+        },
+        event.get("id"),
+        event_publisher=event_publisher,
+        user_id=str(user.id),
+    )
 
 
-async def handle_refund(
-    uow, user, event, affiliate_handler=None, event_publisher=None
-):
+async def handle_refund(uow, user, event, affiliate_handler=None, event_publisher=None):
     """Handle refund — update subscription status and revoke referral credit."""
     subscription = await get_or_create_subscription(uow, user, event)
     if subscription:

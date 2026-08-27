@@ -4,7 +4,6 @@ Verifies that cache maintenance is queued after the business write and that
 timing log messages are emitted.
 """
 
-import asyncio
 import logging
 import time
 from types import SimpleNamespace
@@ -106,6 +105,10 @@ def _make_meal():
     return m
 
 
+def _publisher():
+    return MagicMock(publish=AsyncMock())
+
+
 _UUID_1 = "550e8400-e29b-41d4-a716-446655440001"
 _UUID_2 = "550e8400-e29b-41d4-a716-446655440002"
 _CLIENT_MEAL_ID = "550e8400-e29b-41d4-a716-446655440010"
@@ -185,7 +188,7 @@ async def test_handler_timing_logs_do_not_wait_for_redis(caplog):
 @pytest.mark.asyncio
 async def test_create_persists_client_meal_and_item_ids():
     uow = _FakeUow(_make_meal())
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -216,7 +219,7 @@ async def test_create_persists_client_meal_and_item_ids():
 @pytest.mark.asyncio
 async def test_create_without_client_ids_mints_valid_uuids():
     uow = _FakeUow(_make_meal())
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = _make_command()
 
     meal = await handler.handle(cmd)
@@ -233,7 +236,7 @@ async def test_create_rejects_other_users_meal_id():
     existing.user_id = _OTHER_USER_ID
     uow = _FakeUow(_make_meal())
     uow.meals._existing_by_id[_CLIENT_MEAL_ID] = existing
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -252,7 +255,7 @@ async def test_create_rejects_existing_same_user_meal_id_without_replay():
     existing.user_id = _UUID_1
     uow = _FakeUow(_make_meal())
     uow.meals._existing_by_id[_CLIENT_MEAL_ID] = existing
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -273,7 +276,7 @@ async def test_create_insert_integrity_error_maps_to_conflict():
         raise IntegrityError("INSERT", {}, Exception("duplicate meal_id"))
 
     uow.meals.insert = _insert
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -289,7 +292,9 @@ async def test_create_insert_integrity_error_maps_to_conflict():
 
 @pytest.mark.asyncio
 async def test_create_rejects_duplicate_item_ids_in_command():
-    handler = CreateManualMealCommandHandler(uow=_FakeUow(_make_meal()))
+    handler = CreateManualMealCommandHandler(
+        uow=_FakeUow(_make_meal()), event_publisher=_publisher()
+    )
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         items=[
@@ -337,6 +342,7 @@ async def test_v2_idempotent_replay_returns_existing_meal_without_conflict():
         uow=_PreparedV2Uow(),
         uow_factory=lambda: replay_uow,
         nutrition_resolver=MagicMock(),
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(
@@ -392,6 +398,7 @@ async def test_v2_prepared_custom_nutrition_is_saved_without_resolution():
         uow=uow,
         uow_factory=object(),
         nutrition_resolver=resolver,
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")
@@ -448,6 +455,7 @@ async def test_v2_prepared_nutrition_uses_confirmed_food_specific_unit():
         uow=uow,
         uow_factory=object(),
         nutrition_resolver=resolver,
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")
@@ -523,6 +531,7 @@ async def test_v2_prepared_mixed_sources_keep_confirmed_display_names():
         uow=uow,
         uow_factory=object(),
         nutrition_resolver=resolver,
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")

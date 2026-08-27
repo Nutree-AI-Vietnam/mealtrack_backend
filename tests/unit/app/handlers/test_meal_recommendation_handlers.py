@@ -302,6 +302,7 @@ async def test_log_handler_replays_without_materializing_duplicate_meal():
     handler = LogRecommendedMealCommandHandler(
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(_log_command())
@@ -319,6 +320,7 @@ async def test_log_handler_claims_materializes_then_finalizes():
     handler = LogRecommendedMealCommandHandler(
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(_log_command())
@@ -378,6 +380,7 @@ async def test_log_handler_skips_translation_for_english():
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
         meal_translation_service=translation_service,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     await handler.handle(_log_command(language="en"))
@@ -398,6 +401,7 @@ async def test_log_handler_does_not_fail_when_translation_raises():
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
         meal_translation_service=translation_service,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(_log_command(language="vi"))

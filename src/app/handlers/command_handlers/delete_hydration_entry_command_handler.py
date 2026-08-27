@@ -17,6 +17,7 @@ from src.domain.model.hydration import DrinkCategory
 from src.domain.model.meal import MealStatus
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.services.hydration_catalog_service import find_by_id
 from src.domain.utils.timezone_utils import (
@@ -41,7 +42,6 @@ class DeleteHydrationEntryCommandHandler(
         self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
-
 
     async def handle(self, cmd: DeleteHydrationEntryCommand) -> dict:
         async with self.uow as uow:
@@ -110,20 +110,13 @@ class DeleteHydrationEntryCommandHandler(
                     },
                 )
 
-        if self.event_publisher is not None:
-            try:
-                await self.event_publisher.publish(integration_event.to_payload())
-                logger.info(
-                    "Published hydration deleted integration event event_id=%s aggregate_id=%s",
-                    integration_event.event_id,
-                    integration_event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish hydration deleted event event_id=%s error=%s",
-                    integration_event.event_id,
-                    exc,
-                )
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published hydration deleted integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         return {"success": True}
-

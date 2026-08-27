@@ -15,6 +15,7 @@ from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.cache_port import CachePort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.enums import MealStatusEnum
@@ -101,35 +102,27 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
         await invalidate_cached_user_id(self.cache_service, command.firebase_uid)
 
         # Step 4: Emit UserDeletedEvent to async queue for nutreeai_async to perform Firebase cleanup
-        if self.event_publisher is not None:
-            try:
-                event = UserDeletedEvent(
-                    environment=self.environment,
-                    aggregate_id=str(user_id),
-                    data={
-                        "user_id": str(user_id),
-                        "firebase_uid": command.firebase_uid,
-                    },
-                )
-                await self.event_publisher.publish(event.to_payload())
-                logger.info(
-                    "Published user deleted integration event event_id=%s aggregate_id=%s",
-                    event.event_id,
-                    event.aggregate_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to publish user deleted event user_id=%s error=%s",
-                    user_id,
-                    exc,
-                )
+        event = UserDeletedEvent(
+            environment=self.environment,
+            aggregate_id=str(user_id),
+            data={
+                "user_id": str(user_id),
+                "firebase_uid": command.firebase_uid,
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published user deleted integration event event_id=%s aggregate_id=%s",
+            event.event_id,
+            event.aggregate_id,
+        )
 
         return {
             "firebase_uid": command.firebase_uid,
             "deleted": True,
             "firebase_deleted": False,
             "tokens_revoked": False,
-            "firebase_cleanup_queued": self.event_publisher is not None,
+            "firebase_cleanup_queued": True,
             "message": "Account successfully deleted; Firebase cleanup queued",
         }
 

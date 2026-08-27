@@ -107,8 +107,8 @@ async def test_affiliate_path_enqueues_attribution_no_local_state():
 
 
 @pytest.mark.asyncio
-async def test_affiliate_duplicate_attribution_does_not_raise():
-    """Publisher failure is non-fatal."""
+async def test_affiliate_attribution_publisher_failure_is_reported():
+    """Enabled affiliate attribution must report Queue publication failures."""
     mock_uow = _make_uow()
     aff_result = AffiliateCodeValidationResult(
         active=True,
@@ -127,7 +127,8 @@ async def test_affiliate_duplicate_attribution_does_not_raise():
     ):
         mock_svc_cls.return_value.validate_code = AsyncMock(return_value=aff_result)
         handler = ApplyReferralCodeCommandHandler(event_publisher=publisher)
-        await handler.handle(CMD)  # must not raise
+        with pytest.raises(RuntimeError, match="queue error"):
+            await handler.handle(CMD)
 
 
 @pytest.mark.asyncio
