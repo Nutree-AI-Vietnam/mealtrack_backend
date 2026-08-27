@@ -89,8 +89,9 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   `meal-catalog-import-schema.md`.
 - Parse-text eval harness:
   `scripts/development/evaluate_parse_text_nutrition.py` with fixtures in
-  `tests/fixtures/parse_text_nutrition_golden_cases.json`. Unmatched foods are
-  dropped (no AI-fallback goldens); offline gates cover reference resolution only.
+  `tests/fixtures/parse_text_nutrition_golden_cases.json`. Catalog/provider
+  misses that pass density checks are custom g/kg rows; density failures are
+  omitted. Offline gates cover reference resolution and custom-estimate cases.
 - Adopted FatSecret catalog names and GET display rules:
   `api-endpoints.md` (parse-text, GET names, edit-replace snapshot refresh).
 

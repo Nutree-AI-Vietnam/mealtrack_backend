@@ -142,8 +142,10 @@ optional caches.
   enrichment behind `PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED` (default `false`).
 - The handler derives calories from final macros. Provider detail calls are
   bounded to one selected candidate per item, with a request-wide deadline and
-  call budget; invalid or ambiguous provider data falls back only when the AI
-  estimate passes density checks.
+  call budget. Catalog and FatSecret misses that pass density checks are kept
+  as custom g/kg rows (`origin=custom`); density failures are omitted.
+  Omitted phrases are not listed in `unmatched_terms`. Owner:
+  `src/app/services/parse_text_custom_estimate.py`.
 - Run `python scripts/development/evaluate_parse_text_nutrition.py --mode offline`
   for the hermetic golden corpus. Live evaluation is staging-only, opt-in via
   `ENVIRONMENT=staging` and `PARSE_TEXT_LIVE_EVAL_ENABLED=true`, and requires

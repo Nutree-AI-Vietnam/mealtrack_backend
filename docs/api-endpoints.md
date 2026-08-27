@@ -87,6 +87,8 @@ print(TestClient(app).get('/openapi.json').json().keys())
 | | TDEE preview body size / IP quota / `onboarding_preview_v2` policy |
 | | Web-funnel fail-closed and hash-only redemption rules |
 | | Meal scan must not create hydration entries (`system-architecture.md`) |
+| | Client-stable meal/item PKs on manual create (INSERT-only; 409/400) |
+| | Durable-write `Idempotency-Key` vs body `meal_id` (independent identities) |
 
 **OpenAPI does not cover** the durable contracts in
 [Non-derivable HTTP contracts](#non-derivable-http-contracts). Treat schema as
@@ -218,15 +220,34 @@ handler/schema when implementing; the bullets below are the durable WHY.
 
 ### Parse text (`POST /v1/meals/parse-text`)
 
-- Foods that miss both the local catalog and a valid FatSecret structured match
-  are **dropped**; the handler does not emit `ai_estimate` fallback items.
-  Responses may include `unmatched_terms[]` with the original phrases.
+- Resolve local catalog, then FatSecret. A miss that passes density validation
+  is kept as a custom g/kg row (`origin=custom`); it is not an `ai_estimate`
+  catalog identity. A miss that fails density is omitted and must not contribute
+  kcal. Omitted phrases are not listed in `unmatched_terms`; the field stays on
+  the response shape for compatibility. Owner:
+  `src/app/services/parse_text_custom_estimate.py`.
 - Authenticated parses adopt provider hits into verified `food_reference` rows.
   Provider identity is namespaced (`source_namespace` + `source_food_id`); the
   opaque client id is `fatsecret:{provider_food_id}`. Seed/import catalog keys
   remain distinct and must not collide with adopted provider identities.
 - Staged candidate resolution is gated by
   `PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED` (default off outside staged eval).
+
+### Client-stable meal and item IDs
+
+- Optional `meal_id` and per-item `id` on `POST /v1/meals/manual` are
+  **INSERT-only** primary keys when they are valid UUIDs. Omit or blank →
+  server mint. Never attach or upsert an existing row.
+- Same-user or other-user PK collision → `409` `CLIENT_MEAL_ID_CONFLICT`.
+  Duplicate item ids in one payload → `400` `DUPLICATE_CLIENT_ITEM_ID`.
+  Non-UUID ids → `400` `INVALID_CLIENT_RESOURCE_ID`.
+- `Idempotency-Key` is operation identity; body `meal_id` is the resource PK.
+  Create may send the same UUID in both places; the server evaluates them
+  independently (replay claim vs PK reservation).
+- Photo, scan, and hydration create paths do not accept client PKs.
+
+Owner: `docs/decisions/260826-client-stable-meal-and-item-ids.md` and
+`docs/decisions/260811-durable-write-contract.md`.
 
 ### GET meal food item display names
 

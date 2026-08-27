@@ -55,8 +55,8 @@ does not authorize production data mutation.
   environment before enabling staged parse resolution.
 - Enable `PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED` in SIT/staging only after
   offline eval passes: `python scripts/development/evaluate_parse_text_nutrition.py
-  --mode offline`. Expect a non-zero drop rate for unmatched terms; dropped
-  items must not contribute kcal.
+  --mode offline`. Catalog/provider misses that fail density checks are omitted
+  and must not contribute kcal; passing misses stay as custom g/kg rows.
 - Smoke one authenticated adopt row: parse a known FatSecret food, verify
   `fatsecret:{id}` identity, save, then `GET` the meal in `en` and `vi`.
   English shows `food_reference.name`; Vietnamese shows translation or

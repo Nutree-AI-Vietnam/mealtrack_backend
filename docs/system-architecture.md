@@ -165,6 +165,9 @@ User-scoped write-operation leases
 make retries replayable and fence stale workers before a meal mutation commits.
 The additive contract is advertised only through
 `/v1/capabilities/durable-writes` after the persistence migration is available.
+Optional client `meal_id` / item `id` on manual create are INSERT-only PKs
+(omit → mint; never upsert). Conflict codes:
+`docs/decisions/260826-client-stable-meal-and-item-ids.md`.
 
 ### Observability Connector
 Observability uses a provider-neutral facade at `src.observability` so API middleware does not import infrastructure directly. Startup composition wires it through `src.bootstrap.observability`. The compatibility export at `src.infra.monitoring` remains for cron and infrastructure services. Direct `sentry_sdk` imports are isolated to `src/infra/monitoring/sentry.py`.
