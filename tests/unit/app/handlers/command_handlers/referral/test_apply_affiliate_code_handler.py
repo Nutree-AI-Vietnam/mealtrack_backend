@@ -3,7 +3,7 @@
 MealTrack stores no attribution state — sends event to nutree-affiliate directly.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -14,8 +14,6 @@ from src.app.handlers.command_handlers.referral.apply_referral_code_handler impo
     ApplyReferralCodeCommandHandler,
 )
 from src.domain.ports.affiliate_service_port import AffiliateCodeValidationResult
-
-MODULE = "src.app.handlers.command_handlers.referral.apply_referral_code_handler"
 
 CMD = ApplyReferralCodeCommand(
     user_id="user-1",
@@ -42,8 +40,7 @@ async def test_user_referral_path_creates_conversion_unchanged():
     ref.user_id = "referrer-user"
     mock_uow = _make_uow(ref_code=ref)
 
-    with patch(f"{MODULE}.AsyncUnitOfWork", return_value=mock_uow):
-        await ApplyReferralCodeCommandHandler().handle(CMD)
+    await ApplyReferralCodeCommandHandler(uow=mock_uow).handle(CMD)
 
     mock_uow.referrals.create_conversion.assert_called_once_with(
         referrer_user_id="referrer-user",
@@ -60,9 +57,8 @@ async def test_referral_self_referral_still_raises():
     ref.user_id = "user-1"
     mock_uow = _make_uow(ref_code=ref)
 
-    with patch(f"{MODULE}.AsyncUnitOfWork", return_value=mock_uow):
-        with pytest.raises(ValueError, match="self_referral"):
-            await ApplyReferralCodeCommandHandler().handle(CMD)
+    with pytest.raises(ValueError, match="self_referral"):
+        await ApplyReferralCodeCommandHandler(uow=mock_uow).handle(CMD)
 
 
 @pytest.mark.asyncio
@@ -71,9 +67,8 @@ async def test_referral_already_referred_raises():
     ref.user_id = "referrer-user"
     mock_uow = _make_uow(ref_code=ref, ref_existing=MagicMock())
 
-    with patch(f"{MODULE}.AsyncUnitOfWork", return_value=mock_uow):
-        with pytest.raises(ValueError, match="already_referred"):
-            await ApplyReferralCodeCommandHandler().handle(CMD)
+    with pytest.raises(ValueError, match="already_referred"):
+        await ApplyReferralCodeCommandHandler(uow=mock_uow).handle(CMD)
 
 
 @pytest.mark.asyncio
@@ -90,14 +85,15 @@ async def test_affiliate_path_enqueues_attribution_no_local_state():
     publisher = MagicMock()
     publisher.publish = AsyncMock()
 
-    with (
-        patch.dict("os.environ", {"AFFILIATE_INTEGRATION_ENABLED": "true"}),
-        patch(f"{MODULE}.AsyncUnitOfWork", return_value=mock_uow),
-        patch(f"{MODULE}.AffiliateServiceAdapter") as mock_svc_cls,
-    ):
-        mock_svc_cls.return_value.validate_code = AsyncMock(return_value=aff_result)
-        handler = ApplyReferralCodeCommandHandler(event_publisher=publisher)
-        await handler.handle(CMD)
+    affiliate_service = MagicMock()
+    affiliate_service.validate_code = AsyncMock(return_value=aff_result)
+    handler = ApplyReferralCodeCommandHandler(
+        uow=mock_uow,
+        event_publisher=publisher,
+        affiliate_service=affiliate_service,
+        affiliate_enabled=True,
+    )
+    await handler.handle(CMD)
 
     publisher.publish.assert_called_once()
     payload = publisher.publish.call_args[0][0]
@@ -120,27 +116,24 @@ async def test_affiliate_attribution_publisher_failure_is_reported():
     publisher = MagicMock()
     publisher.publish = AsyncMock(side_effect=RuntimeError("queue error"))
 
-    with (
-        patch.dict("os.environ", {"AFFILIATE_INTEGRATION_ENABLED": "true"}),
-        patch(f"{MODULE}.AsyncUnitOfWork", return_value=mock_uow),
-        patch(f"{MODULE}.AffiliateServiceAdapter") as mock_svc_cls,
-    ):
-        mock_svc_cls.return_value.validate_code = AsyncMock(return_value=aff_result)
-        handler = ApplyReferralCodeCommandHandler(event_publisher=publisher)
-        with pytest.raises(RuntimeError, match="queue error"):
-            await handler.handle(CMD)
+    affiliate_service = MagicMock()
+    affiliate_service.validate_code = AsyncMock(return_value=aff_result)
+    handler = ApplyReferralCodeCommandHandler(
+        uow=mock_uow,
+        event_publisher=publisher,
+        affiliate_service=affiliate_service,
+        affiliate_enabled=True,
+    )
+    with pytest.raises(RuntimeError, match="queue error"):
+        await handler.handle(CMD)
 
 
 @pytest.mark.asyncio
 async def test_invalid_code_with_integration_disabled_raises():
     mock_uow = _make_uow()
 
-    with (
-        patch.dict("os.environ", {"AFFILIATE_INTEGRATION_ENABLED": "false"}),
-        patch(f"{MODULE}.AsyncUnitOfWork", return_value=mock_uow),
-    ):
-        with pytest.raises(ValueError, match="invalid_code"):
-            await ApplyReferralCodeCommandHandler().handle(CMD)
+    with pytest.raises(ValueError, match="invalid_code"):
+        await ApplyReferralCodeCommandHandler(uow=mock_uow).handle(CMD)
 
 
 @pytest.mark.asyncio
@@ -150,16 +143,17 @@ async def test_affiliate_api_inactive_raises_invalid_code():
     publisher = MagicMock()
     publisher.publish = AsyncMock()
 
-    with (
-        patch.dict("os.environ", {"AFFILIATE_INTEGRATION_ENABLED": "true"}),
-        patch(f"{MODULE}.AsyncUnitOfWork", return_value=mock_uow),
-        patch(f"{MODULE}.AffiliateServiceAdapter") as mock_svc_cls,
-    ):
-        mock_svc_cls.return_value.validate_code = AsyncMock(
-            return_value=AffiliateCodeValidationResult(active=False)
+    affiliate_service = MagicMock()
+    affiliate_service.validate_code = AsyncMock(
+        return_value=AffiliateCodeValidationResult(active=False)
+    )
+    with pytest.raises(ValueError, match="invalid_code"):
+        handler = ApplyReferralCodeCommandHandler(
+            uow=mock_uow,
+            event_publisher=publisher,
+            affiliate_service=affiliate_service,
+            affiliate_enabled=True,
         )
-        with pytest.raises(ValueError, match="invalid_code"):
-            handler = ApplyReferralCodeCommandHandler(event_publisher=publisher)
-            await handler.handle(CMD)
+        await handler.handle(CMD)
 
     publisher.publish.assert_not_called()

@@ -36,6 +36,10 @@ from src.api.routes.v1.webhook_subscription_lifecycle import (
     handle_renewal,
 )
 from src.app.services.web_funnel_claim_payment import reconcile_revenuecat_event
+from src.bootstrap.integration_services import (
+    get_affiliate_service,
+    get_integration_event_publisher,
+)
 from src.bootstrap.web_funnel_claim_dispatcher import get_web_funnel_outbox_dispatcher
 from src.infra.database.uow_async import AsyncUnitOfWork
 from src.observability import increment_metric
@@ -79,9 +83,7 @@ __all__ = [
 
 def _get_event_publisher():
     """Return the required Cloudflare Queue publisher."""
-    from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
-
-    return CloudflareQueuePublisher.from_settings()
+    return get_integration_event_publisher()
 
 
 def _get_affiliate_handler():
@@ -89,11 +91,7 @@ def _get_affiliate_handler():
     if os.getenv("AFFILIATE_INTEGRATION_ENABLED", "").lower() not in ("1", "true"):
         return None
     try:
-        from src.infra.adapters.affiliate_service_adapter import (
-            AffiliateServiceAdapter,
-        )
-
-        return AffiliateServiceAdapter()
+        return get_affiliate_service(enabled=True)
     except Exception:
         logger.warning(
             "AffiliateServiceAdapter unavailable — affiliate events will not be dispatched"
@@ -217,14 +215,10 @@ async def revenuecat_webhook(
 
         # Handle events — commit/rollback is owned by the AsyncUnitOfWork context manager
         if event_type == "INITIAL_PURCHASE":
-            await handle_purchase(
-                uow, user, event, affiliate_handler, event_publisher
-            )
+            await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
 
         elif event_type == "RENEWAL":
-            await handle_renewal(
-                uow, user, event, affiliate_handler, event_publisher
-            )
+            await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
 
         elif event_type == "CANCELLATION":
             await handle_cancellation(
@@ -247,9 +241,7 @@ async def revenuecat_webhook(
             )
 
         elif event_type == "REFUND":
-            await handle_refund(
-                uow, user, event, affiliate_handler, event_publisher
-            )
+            await handle_refund(uow, user, event, affiliate_handler, event_publisher)
 
     increment_metric(
         "webhook.revenuecat.processed",

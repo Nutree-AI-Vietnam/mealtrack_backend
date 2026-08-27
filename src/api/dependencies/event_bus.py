@@ -218,6 +218,7 @@ from src.app.queries.weight import GetWeightEntriesQuery
 from src.app.services.meal_recommendation_history_projector import (
     MealRecommendationHistoryProjector,
 )
+from src.bootstrap.integration_services import get_integration_event_publisher
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
@@ -438,10 +439,9 @@ def get_configured_event_bus() -> EventBus:
     from src.domain.services.meal_recommendation.three_day_plan_optimizer import (
         ThreeDayPlanOptimizer,
     )
-    from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
     from src.infra.database.uow_async import AsyncUnitOfWork
 
-    queue_publisher = CloudflareQueuePublisher.from_settings()
+    queue_publisher = get_integration_event_publisher()
     provider_budget = _build_provider_budget(cache_service)
     nutrition_integrity_policy = NutritionIntegrityPolicy()
 
@@ -1008,6 +1008,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveSuggestionCommand,
         SaveSuggestionCommandHandler(
+            uow=AsyncUnitOfWork(),
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
