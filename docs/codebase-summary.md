@@ -94,6 +94,8 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   omitted. Offline gates cover reference resolution and custom-estimate cases.
 - Adopted FatSecret catalog names and GET display rules:
   `api-endpoints.md` (parse-text, GET names, edit-replace snapshot refresh).
+- Food search candidates vs select details, popular-staple source identities,
+  and web-funnel repeat-purchase uniqueness: `api-endpoints.md`.
 
 Non-derivable calorie and weekly-budget rules: `AGENTS.md` / `CLAUDE.md`
 MUST-Follow. Meal scan vs hydration and other system rules:

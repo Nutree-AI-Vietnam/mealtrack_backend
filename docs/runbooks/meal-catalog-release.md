@@ -81,7 +81,7 @@ eligible request success >=99.95%.
 - `GET /v1/meal-catalog?feed=popular&limit=5`
 - `GET /v1/meal-catalog?feed=for_you&limit=5`
 - `GET /v1/meal-catalog/{catalog_id}`
-- `GET /v1/foods/search?query=rice&limit=5&language=en`
+- `GET /v1/foods/search?q=rice&limit=5` (locale via `Accept-Language`)
 - `POST /v1/meal-recommendations/three-day` with `Idempotency-Key`
 - `GET /v1/meal-recommendations/{plan_id}`
 - `GET /v1/meal-recommendations/{plan_id}/slots/{slot_id}`

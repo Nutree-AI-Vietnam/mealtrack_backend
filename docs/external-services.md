@@ -122,6 +122,12 @@ Invalid GTIN → 400 before external calls. Exact provider hits may be cached as
 verified data. Brave-only / name-only / AI estimates return `is_estimate=true`
 and must not enter the global catalog. Logs must not include full raw barcodes.
 
+### FatSecret search vs details
+
+Search and autocomplete must not issue `food.get.v5` per hit (quota). List
+macros from `food_description` are display-quality. One `food.get.v5` runs on
+select via provider details. HTTP WHY: `api-endpoints.md`.
+
 ### Redis cache posture
 
 | Data | Policy |
@@ -162,7 +168,9 @@ optional caches.
     match lead; bind UID to that row before redeem-once.
   - **Finalize** (`POST /redemptions/finalize`): atomic MealTrack grant;
     idempotent; must select the exact row (hash + preflight UID), not “latest”
-    alias match. Opaque preflight receipts / lease-CAS are deferred.
+    alias match. One UID may redeem multiple distinct purchases over time
+    (unique constraint is the link hash, not the UID). Opaque preflight
+    receipts / lease-CAS are deferred.
   - Flags: `WEB_FUNNEL_REDEMPTION_ENABLED` (paid recovery: preflight/finalize),
     `WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED` (new correlation rows; default true),
     `WEB_FUNNEL_LEGACY_CLAIM_ENABLED` (compatibility only; when false, lead-UUID

@@ -101,10 +101,12 @@ personalized result reports `ranking_source=personalized`. `allergy_evaluated`
 remains false until canonical allergen evaluation is implemented.
 
 ### Local-First Food Search
-Manual food search reads Redis cache when available, then searches verified
-`food_reference` rows locally before provider fill. Cache, provider, and
-translation failures degrade to bounded local results when possible. Local
+Manual food search reads Redis cache when available, then verified
+`food_reference` rows, then FatSecret **candidates** (no per-hit `food.get.v5`).
+Authoritative servings resolve on select via provider details. Cache, provider,
+and translation failures degrade to bounded local results when possible. Local
 result calories are always derived from stored macros using the backend formula.
+HTTP WHY: `api-endpoints.md` (Food search).
 
 ### Translation boundary
 

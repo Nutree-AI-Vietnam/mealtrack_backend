@@ -20,7 +20,7 @@ settings.
 | Dependency | Expected behavior |
 |---|---|
 | Redis optional cache | Local-first food search treats cache errors as misses and continues. Required Redis-backed state, such as legacy meal suggestion sessions, may fail fast. |
-| FatSecret search | `/v1/foods/search` returns verified local `food_reference` results when available. Provider enrichment may be absent. |
+| FatSecret search | `/v1/foods/search` returns verified local `food_reference` and candidate provider hits when available. Full `food.get.v5` details on select may be absent. |
 | USDA barcode/details | Barcode cascade skips unavailable providers and continues to the next configured source or editable estimate when safe. |
 | OpenAI translation | Non-English search falls back to canonical local/provider results without translated names. |
 | Cloudflare Workers AI | AI manager uses configured fallback chain when available; catalog image generation can be paused. |
@@ -51,8 +51,9 @@ If a rollback is required:
 2. Confirm local-first search still returns bounded results:
 
 ```bash
-curl -fsS "$HOST/v1/foods/search?query=rice&limit=5&language=en" \
-  -H "Authorization: Bearer $TOKEN"
+curl -fsS "$HOST/v1/foods/search?q=rice&limit=5" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept-Language: en"
 ```
 
 3. If recommendations fail because catalog snapshot cannot load, stop exposing

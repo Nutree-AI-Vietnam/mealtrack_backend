@@ -83,12 +83,14 @@ print(TestClient(app).get('/openapi.json').json().keys())
 | `response_model` field lists | Catalog recommendations ≠ meal-suggestions product rule |
 | Tag grouping (as declared on routers) | Recommendation idempotency / backend-owned outcome timestamps |
 | Bearer security scheme presence | Barcode cascade order, estimate-vs-catalog rules |
-| Declared status codes when annotated | Food-search degrade order (cache → local → provider) |
+| Declared status codes when annotated | Food-search degrade order (cache → local → FatSecret candidates) |
 | | TDEE preview body size / IP quota / `onboarding_preview_v2` policy |
 | | Web-funnel fail-closed and hash-only redemption rules |
 | | Meal scan must not create hydration entries (`system-architecture.md`) |
 | | Client-stable meal/item PKs on manual create (INSERT-only; 409/400) |
 | | Durable-write `Idempotency-Key` vs body `meal_id` (independent identities) |
+| | Food search is candidate-only (no per-hit `food.get.v5`); details on select |
+| | Web-funnel: one UID may redeem multiple purchases; uniqueness is link hash |
 
 **OpenAPI does not cover** the durable contracts in
 [Non-derivable HTTP contracts](#non-derivable-http-contracts). Treat schema as
@@ -206,8 +208,17 @@ handler/schema when implementing; the bullets below are the durable WHY.
 
 ### Food search and barcode
 
-- Search order: optional Redis cache → local `food_reference` → provider fill.
-  Local results first; optional cache failures are misses.
+- Search order: optional Redis cache → local `food_reference` → FatSecret
+  **candidates**. Local results first; optional cache failures are misses.
+  Provider hits must not fan out `food.get.v5` per result. List macros parsed
+  from search `food_description` are display-quality only.
+- Authoritative per-100g density and servings come from
+  `GET /v1/foods/provider/{namespace}/{source_food_id}/details` on select
+  (one `food.get.v5`). Local `food_reference` hits are already resolved.
+- Popular staples (`GET /v1/foods/popular-staples`) are curated
+  `food_reference` rows keyed by FatSecret source identities — not live search
+  and not auto-increment PKs (those diverge across environments). Owner:
+  `get_popular_staples_query.py`.
 - Barcode accepts valid GTIN check digits; malformed → 400 before external
   calls; valid miss → 404. Verified hits return a durable logging identity:
   cached/provider results use the local `food_reference_id` when the verified
@@ -281,6 +292,9 @@ Owner: `docs/decisions/260826-client-stable-meal-and-item-ids.md` and
 - Active path: RevenueCat redemption link → Firebase passwordless email-link
   auth → hash-only preflight (SHA-256 of the link; raw link never stored) →
   provider-alias correlation → backend RevenueCat verification before attach.
+- One Firebase UID may finalize **multiple distinct** purchases. Uniqueness is
+  the redemption link hash (finalize selects hash + preflight UID), not
+  `finalized_uid` / `claimed_uid`.
 - Legacy magic-claim routes remain gated by `WEB_FUNNEL_LEGACY_CLAIM_ENABLED`
   and are not the active flow.
 
