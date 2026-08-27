@@ -25,6 +25,7 @@ class CustomNutrition:
 class ManualMealItem:
     """Manual meal item - either USDA (fdc_id) or custom (name + nutrition)."""
 
+    id: Optional[str] = None
     fdc_id: Optional[int] = None
     name: Optional[str] = None
     quantity: float = 1.0  # in grams or unit-specified grams base
@@ -45,6 +46,7 @@ class CreateManualMealCommand(Command):
     user_id: str
     items: List[ManualMealItem]
     dish_name: str
+    meal_id: Optional[str] = None
     meal_type: Optional[str] = None
     target_date: Optional[date] = None
     source: Optional[str] = None  # scanner, prompt, food_search, manual

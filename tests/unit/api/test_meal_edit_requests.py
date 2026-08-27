@@ -368,6 +368,99 @@ class TestCreateManualMealFromFoodsRequest:
                 ],
             )
 
+    def test_accepts_client_meal_and_item_ids(self):
+        meal_id = "550e8400-e29b-41d4-a716-446655440010"
+        item_id = "550e8400-e29b-41d4-a716-446655440011"
+        request = CreateManualMealFromFoodsRequest(
+            dish_name="Client ids",
+            meal_id=meal_id,
+            items=[
+                {
+                    "id": item_id,
+                    "name": "Rice",
+                    "quantity": 100.0,
+                    "unit": "g",
+                    "custom_nutrition": {
+                        "protein_per_100g": 2.7,
+                        "carbs_per_100g": 28.0,
+                        "fat_per_100g": 0.3,
+                    },
+                }
+            ],
+        )
+
+        assert request.meal_id == meal_id
+        assert request.items[0].id == item_id
+
+    def test_rejects_invalid_meal_id(self):
+        with pytest.raises(ValidationError, match="meal_id must be a valid UUID"):
+            CreateManualMealFromFoodsRequest(
+                dish_name="Bad meal id",
+                meal_id="not-a-uuid",
+                items=[
+                    {
+                        "name": "Rice",
+                        "quantity": 100.0,
+                        "unit": "g",
+                        "custom_nutrition": {
+                            "protein_per_100g": 2.7,
+                            "carbs_per_100g": 28.0,
+                            "fat_per_100g": 0.3,
+                        },
+                    }
+                ],
+            )
+
+    def test_rejects_invalid_item_id(self):
+        with pytest.raises(ValidationError, match="item id must be a valid UUID"):
+            CreateManualMealFromFoodsRequest(
+                dish_name="Bad item id",
+                items=[
+                    {
+                        "id": "not-a-uuid",
+                        "name": "Rice",
+                        "quantity": 100.0,
+                        "unit": "g",
+                        "custom_nutrition": {
+                            "protein_per_100g": 2.7,
+                            "carbs_per_100g": 28.0,
+                            "fat_per_100g": 0.3,
+                        },
+                    }
+                ],
+            )
+
+    def test_rejects_duplicate_item_ids(self):
+        item_id = "550e8400-e29b-41d4-a716-446655440012"
+        with pytest.raises(ValidationError, match="duplicate item ids"):
+            CreateManualMealFromFoodsRequest(
+                dish_name="Duplicate ids",
+                items=[
+                    {
+                        "id": item_id,
+                        "name": "Rice",
+                        "quantity": 100.0,
+                        "unit": "g",
+                        "custom_nutrition": {
+                            "protein_per_100g": 2.7,
+                            "carbs_per_100g": 28.0,
+                            "fat_per_100g": 0.3,
+                        },
+                    },
+                    {
+                        "id": item_id,
+                        "name": "Chicken",
+                        "quantity": 100.0,
+                        "unit": "g",
+                        "custom_nutrition": {
+                            "protein_per_100g": 31.0,
+                            "carbs_per_100g": 0.0,
+                            "fat_per_100g": 3.6,
+                        },
+                    },
+                ],
+            )
+
 
 @pytest.mark.unit
 class TestEditMealIngredientsRequest:

@@ -541,6 +541,9 @@ class AsyncTestMealRepository:
     async def save(self, *args, **kwargs):
         return self._repo.save(*args, **kwargs)
 
+    async def insert(self, *args, **kwargs):
+        return self._repo.save(*args, **kwargs)
+
     async def delete(self, *args, **kwargs):
         return self._repo.delete(*args, **kwargs)
 

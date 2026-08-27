@@ -535,6 +535,89 @@ class TestAddFoodItemStrategy:
     """Tests for AddFoodItemStrategy."""
 
     @pytest.mark.asyncio
+    async def test_add_keeps_client_item_id(self):
+        mock_nutrition_service = Mock()
+        strategy = AddFoodItemStrategy(mock_nutrition_service, food_service=None)
+        client_item_id = "550e8400-e29b-41d4-a716-446655440020"
+
+        change = FoodItemChange(
+            action="add",
+            id=client_item_id,
+            name="Custom Food",
+            quantity=150.0,
+            unit="g",
+            custom_nutrition=CustomNutritionData(
+                calories_per_100g=250.0,
+                protein_per_100g=20.0,
+                carbs_per_100g=30.0,
+                fat_per_100g=10.0,
+            ),
+        )
+
+        food_items_dict = {}
+        await strategy.apply(food_items_dict, change)
+
+        assert client_item_id in food_items_dict
+        assert food_items_dict[client_item_id].id == client_item_id
+
+    @pytest.mark.asyncio
+    async def test_add_rejects_invalid_client_item_id(self):
+        strategy = AddFoodItemStrategy(Mock(), food_service=None)
+        change = FoodItemChange(
+            action="add",
+            id="not-a-uuid",
+            name="Custom Food",
+            quantity=100.0,
+            unit="g",
+            custom_nutrition=CustomNutritionData(
+                calories_per_100g=100.0,
+                protein_per_100g=10.0,
+                carbs_per_100g=10.0,
+                fat_per_100g=5.0,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="item id must be a valid UUID"):
+            await strategy.apply({}, change)
+
+    @pytest.mark.asyncio
+    async def test_add_with_existing_same_meal_id_is_idempotent(self):
+        mock_nutrition_service = Mock()
+        strategy = AddFoodItemStrategy(mock_nutrition_service, food_service=None)
+        client_item_id = "550e8400-e29b-41d4-a716-446655440021"
+        food_items_dict = {
+            client_item_id: FoodItem(
+                id=client_item_id,
+                name="Old Name",
+                quantity=100.0,
+                unit="g",
+                macros=Macros(protein=10.0, carbs=10.0, fat=5.0),
+            )
+        }
+
+        change = FoodItemChange(
+            action="add",
+            id=client_item_id,
+            name="Updated Name",
+            quantity=150.0,
+            unit="g",
+            custom_nutrition=CustomNutritionData(
+                calories_per_100g=200.0,
+                protein_per_100g=20.0,
+                carbs_per_100g=20.0,
+                fat_per_100g=10.0,
+            ),
+        )
+
+        await strategy.apply(food_items_dict, change)
+
+        assert len(food_items_dict) == 1
+        updated = food_items_dict[client_item_id]
+        assert updated.id == client_item_id
+        assert updated.name == "Updated Name"
+        assert updated.quantity == 150.0
+
+    @pytest.mark.asyncio
     async def test_add_with_custom_nutrition(self):
         """Test adding food item with custom nutrition data."""
         # Arrange
