@@ -100,6 +100,9 @@ class Settings(BaseSettings):
 
     # Cloudflare Queue integration is required for asynchronous side effects.
     CLOUDFLARE_QUEUE_ACCOUNT_ID: str = Field(default="")
+    CLOUDFLARE_QUEUE_ID: str = Field(default="")
+    # Worker/Wrangler configuration uses the human-readable queue name. The
+    # backend REST publisher uses CLOUDFLARE_QUEUE_ID instead.
     CLOUDFLARE_QUEUE_NAME: str = Field(default="")
     CLOUDFLARE_QUEUE_API_TOKEN: str = Field(default="")
     CLOUDFLARE_QUEUE_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)

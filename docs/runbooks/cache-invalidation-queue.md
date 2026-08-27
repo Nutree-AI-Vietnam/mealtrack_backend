@@ -16,11 +16,12 @@ out of scope for this slice.
 
 ## Preconditions
 
-- `CLOUDFLARE_QUEUE_NAME` points to the environment-specific Worker ingress
-  queue used by both generic and compatibility events.
+- `CLOUDFLARE_QUEUE_ID` identifies the environment-specific Queue resource used
+  by both generic and compatibility events. The Worker queue name remains in
+  `nutreeai_async/wrangler.jsonc`.
 - Queue, DLQ, Worker, and Upstash Redis REST credentials are present in the
   deployment environment.
-- The backend has `CLOUDFLARE_QUEUE_NAME` plus valid Cloudflare credentials. Set
+- The backend has `CLOUDFLARE_QUEUE_ID` plus valid Cloudflare credentials. Set
   Queue-specific account/token variables for a dedicated credential, or leave
   them blank to reuse `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. A
   reused token must have both Queue and Workers AI permissions.

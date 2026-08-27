@@ -106,8 +106,10 @@ rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|Integ
 1. For hydration, confirm the business row committed, then check the API log for
    the direct Queue publish result. Hydration no longer waits for the outbox
    worker.
-2. Verify the environment-specific queue name, account ID, and valid Queue
-   credentials. Publication is required; there is no disabled fallback.
+2. Verify the environment-specific Queue ID, account ID, and valid Queue
+   credentials. The REST publisher must use the alphanumeric Queue ID, not the
+   Worker/Wrangler queue name. Publication is required; there is no disabled
+   fallback.
 3. Check the Worker logs for `integration_event_ack`,
    `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching
    `event_id`.

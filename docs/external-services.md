@@ -158,10 +158,12 @@ optional caches.
 - Hydration creation publishes `hydration.created.v1` directly to Cloudflare
   Queue after its database transaction commits. The Worker orchestrator owns
   its cache translation and invokes the same delete handler.
-- `CloudflareQueuePublisher.from_settings()` reads the Queue account, queue
-  name, token, and timeout settings. Blank Queue account/token fields fall back
-  to `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`; Queue-specific values
-  override the generic values. `CLOUDFLARE_QUEUE_NAME` remains required. If
+- `CloudflareQueuePublisher.from_settings()` reads the Queue account, Queue ID,
+  token, and timeout settings. The REST API requires the Queue ID; the
+  human-readable Worker queue name is not a valid substitute. Blank Queue
+  account/token fields fall back to `CLOUDFLARE_ACCOUNT_ID` and
+  `CLOUDFLARE_API_TOKEN`; Queue-specific values override the generic values.
+  `CLOUDFLARE_QUEUE_ID` remains required. If
   the fallback is used, the shared token must have both Queue and Workers AI
   permissions. Publication is always attempted; when misconfigured, the
   request fails after the database commit. The MVP accepts that post-commit
@@ -187,9 +189,10 @@ optional caches.
 - Staging and production use separate ingress queues and matching
   `environment` values. The MVP does not use D1 or a dynamic subscription
   catalog.
-- Configure one environment-specific `CLOUDFLARE_QUEUE_NAME` for the Worker
-  ingress queue. Generic integration events and compatibility payloads share
-  this queue during the migration.
+- Configure one environment-specific Worker ingress queue name in
+  `nutreeai_async/wrangler.jsonc` and its matching Cloudflare Queue ID as
+  `CLOUDFLARE_QUEUE_ID` in the backend. Generic integration events and
+  compatibility payloads share this queue during the migration.
 - Hydration creation currently registers cache invalidation. Notification and
   email handlers remain follow-up work until their payload and idempotency
   contracts are explicit.

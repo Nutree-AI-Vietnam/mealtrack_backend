@@ -244,7 +244,7 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS = 7.0
         AI_MEAL_ANALYZE_GRAPH_VERSION = "test-v2"
         CLOUDFLARE_QUEUE_ACCOUNT_ID = "test-account"
-        CLOUDFLARE_QUEUE_NAME = "test-queue"
+        CLOUDFLARE_QUEUE_ID = "testqueue"
         CLOUDFLARE_QUEUE_API_TOKEN = "test-token"
         CLOUDFLARE_QUEUE_TIMEOUT_SECONDS = 10.0
 

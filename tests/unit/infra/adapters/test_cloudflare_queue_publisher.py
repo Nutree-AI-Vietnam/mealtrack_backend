@@ -15,7 +15,7 @@ from src.infra.adapters.cloudflare_queue_publisher import (
 def _publisher(client: AsyncMock) -> CloudflareQueuePublisher:
     return CloudflareQueuePublisher(
         account_id="account",
-        queue_name="cache-events",
+        queue_id="abc123",
         api_token="queue-token",
         client=client,
     )
@@ -29,7 +29,7 @@ def test_from_settings_reuses_generic_cloudflare_credentials(monkeypatch) -> Non
         "get_settings",
         lambda: SimpleNamespace(
             CLOUDFLARE_QUEUE_ACCOUNT_ID="",
-            CLOUDFLARE_QUEUE_NAME="cache-events",
+            CLOUDFLARE_QUEUE_ID="abc123",
             CLOUDFLARE_QUEUE_API_TOKEN="",
             CLOUDFLARE_QUEUE_TIMEOUT_SECONDS=10.0,
             CLOUDFLARE_ACCOUNT_ID="generic-account",
@@ -41,7 +41,7 @@ def test_from_settings_reuses_generic_cloudflare_credentials(monkeypatch) -> Non
 
     assert publisher.endpoint == (
         "https://api.cloudflare.com/client/v4/accounts/"
-        "generic-account/queues/cache-events/messages"
+        "generic-account/queues/abc123/messages"
     )
     assert publisher._api_token == "generic-token"
 
@@ -54,7 +54,7 @@ def test_from_settings_prefers_queue_specific_credentials(monkeypatch) -> None:
         "get_settings",
         lambda: SimpleNamespace(
             CLOUDFLARE_QUEUE_ACCOUNT_ID="queue-account",
-            CLOUDFLARE_QUEUE_NAME="cache-events",
+            CLOUDFLARE_QUEUE_ID="queue123",
             CLOUDFLARE_QUEUE_API_TOKEN="queue-token",
             CLOUDFLARE_QUEUE_TIMEOUT_SECONDS=10.0,
             CLOUDFLARE_ACCOUNT_ID="generic-account",
@@ -66,12 +66,12 @@ def test_from_settings_prefers_queue_specific_credentials(monkeypatch) -> None:
 
     assert publisher.endpoint == (
         "https://api.cloudflare.com/client/v4/accounts/"
-        "queue-account/queues/cache-events/messages"
+        "queue-account/queues/queue123/messages"
     )
     assert publisher._api_token == "queue-token"
 
 
-def test_from_settings_keeps_queue_name_required(monkeypatch) -> None:
+def test_from_settings_keeps_queue_id_required(monkeypatch) -> None:
     import src.infra.config.settings as settings_mod
 
     monkeypatch.setattr(
@@ -79,7 +79,7 @@ def test_from_settings_keeps_queue_name_required(monkeypatch) -> None:
         "get_settings",
         lambda: SimpleNamespace(
             CLOUDFLARE_QUEUE_ACCOUNT_ID="",
-            CLOUDFLARE_QUEUE_NAME="",
+            CLOUDFLARE_QUEUE_ID="",
             CLOUDFLARE_QUEUE_API_TOKEN="",
             CLOUDFLARE_QUEUE_TIMEOUT_SECONDS=10.0,
             CLOUDFLARE_ACCOUNT_ID="generic-account",
@@ -90,6 +90,20 @@ def test_from_settings_keeps_queue_name_required(monkeypatch) -> None:
     publisher = CloudflareQueuePublisher.from_settings()
 
     with pytest.raises(CloudflareQueueConfigurationError):
+        publisher._validate_configuration()
+
+
+def test_validate_configuration_rejects_queue_name_in_id_field() -> None:
+    publisher = CloudflareQueuePublisher(
+        account_id="account",
+        queue_id="mealtrack-events-staging",
+        api_token="queue-token",
+    )
+
+    with pytest.raises(
+        CloudflareQueueConfigurationError,
+        match="only alphanumeric",
+    ):
         publisher._validate_configuration()
 
 
@@ -149,3 +163,26 @@ async def test_publish_rejects_success_without_confirmation() -> None:
 
     with pytest.raises(CloudflareQueuePermanentError):
         await _publisher(client).publish({"event_id": "event-1"})
+
+
+@pytest.mark.asyncio
+async def test_publish_preserves_cloudflare_error_code_without_payload() -> None:
+    client = AsyncMock()
+    client.post.return_value = httpx.Response(
+        400,
+        json={
+            "success": False,
+            "errors": [
+                {
+                    "code": 10107,
+                    "message": "The queue ID is malformed",
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(
+        CloudflareQueuePermanentError,
+        match="10107: The queue ID is malformed",
+    ):
+        await _publisher(client).publish({"secret": "must-not-be-logged"})

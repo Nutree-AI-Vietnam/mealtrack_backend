@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -25,6 +26,32 @@ class CloudflareQueuePermanentError(CloudflareQueueError):
     """Raised for a rejected or malformed Queue request."""
 
 
+def _cloudflare_error_detail(response: httpx.Response) -> str:
+    """Return bounded provider error details without exposing request payloads."""
+    try:
+        result = response.json()
+    except ValueError:
+        return ""
+
+    if not isinstance(result, Mapping) or not isinstance(result.get("errors"), list):
+        return ""
+
+    details: list[str] = []
+    for error in result["errors"][:3]:
+        if not isinstance(error, Mapping):
+            continue
+        code = error.get("code")
+        message = error.get("message")
+        if isinstance(code, (int, str)) and isinstance(message, str):
+            details.append(f"{code}: {message[:160]}")
+    return "; ".join(details)
+
+
+def _status_message(response: httpx.Response, prefix: str) -> str:
+    detail = _cloudflare_error_detail(response)
+    return f"{prefix}: {detail}" if detail else prefix
+
+
 class CloudflareQueuePublisher:
     """Publish one JSON event to the Cloudflare Queue HTTP API."""
 
@@ -32,13 +59,13 @@ class CloudflareQueuePublisher:
         self,
         *,
         account_id: str,
-        queue_name: str,
+        queue_id: str,
         api_token: str,
         timeout_seconds: float = 10.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._account_id = account_id
-        self._queue_name = queue_name
+        self._queue_id = queue_id
         self._api_token = api_token
         self._timeout_seconds = timeout_seconds
         self._client = client
@@ -47,7 +74,7 @@ class CloudflareQueuePublisher:
     def from_settings(
         cls,
         *,
-        queue_name: str | None = None,
+        queue_id: str | None = None,
     ) -> CloudflareQueuePublisher:
         from src.infra.config.settings import get_settings
 
@@ -56,9 +83,7 @@ class CloudflareQueuePublisher:
             account_id=(
                 settings.CLOUDFLARE_QUEUE_ACCOUNT_ID or settings.CLOUDFLARE_ACCOUNT_ID
             ),
-            queue_name=(
-                settings.CLOUDFLARE_QUEUE_NAME if queue_name is None else queue_name
-            ),
+            queue_id=(settings.CLOUDFLARE_QUEUE_ID if queue_id is None else queue_id),
             api_token=(
                 settings.CLOUDFLARE_QUEUE_API_TOKEN or settings.CLOUDFLARE_API_TOKEN
             ),
@@ -66,21 +91,25 @@ class CloudflareQueuePublisher:
         )
 
     @property
-    def queue_name(self) -> str:
-        """Configured destination name for observability and routing checks."""
-        return self._queue_name
+    def queue_id(self) -> str:
+        """Configured Cloudflare Queue resource identifier."""
+        return self._queue_id
 
     @property
     def endpoint(self) -> str:
         return (
             "https://api.cloudflare.com/client/v4/accounts/"
-            f"{self._account_id}/queues/{self._queue_name}/messages"
+            f"{self._account_id}/queues/{self._queue_id}/messages"
         )
 
     def _validate_configuration(self) -> None:
-        if not self._account_id or not self._queue_name or not self._api_token:
+        if not self._account_id or not self._queue_id or not self._api_token:
             raise CloudflareQueueConfigurationError(
-                "Cloudflare Queue account, name, and token are required"
+                "Cloudflare Queue account, ID, and token are required"
+            )
+        if not (self._queue_id.isascii() and self._queue_id.isalnum()):
+            raise CloudflareQueueConfigurationError(
+                "Cloudflare Queue ID must contain only alphanumeric characters"
             )
 
     async def publish(self, payload: dict[str, Any]) -> None:
@@ -111,15 +140,24 @@ class CloudflareQueuePublisher:
             or response.status_code >= 500
         ):
             raise CloudflareQueueTransientError(
-                f"Queue returned retryable status {response.status_code}"
+                _status_message(
+                    response,
+                    f"Queue returned retryable status {response.status_code}",
+                )
             )
         if response.status_code in {401, 403}:
             raise CloudflareQueueConfigurationError(
-                f"Queue credentials rejected with status {response.status_code}"
+                _status_message(
+                    response,
+                    f"Queue credentials rejected with status {response.status_code}",
+                )
             )
         if response.status_code < 200 or response.status_code >= 300:
             raise CloudflareQueuePermanentError(
-                f"Queue rejected request with status {response.status_code}"
+                _status_message(
+                    response,
+                    f"Queue rejected request with status {response.status_code}",
+                )
             )
 
         try:
@@ -127,4 +165,8 @@ class CloudflareQueuePublisher:
         except ValueError as exc:
             raise CloudflareQueuePermanentError("Queue returned invalid JSON") from exc
         if not isinstance(result, dict) or result.get("success") is not True:
-            raise CloudflareQueuePermanentError("Queue did not confirm acceptance")
+            detail = _cloudflare_error_detail(response)
+            message = "Queue did not confirm acceptance"
+            raise CloudflareQueuePermanentError(
+                f"{message}: {detail}" if detail else message
+            )
