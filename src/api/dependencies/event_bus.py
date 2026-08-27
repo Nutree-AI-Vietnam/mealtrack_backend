@@ -131,13 +131,13 @@ from src.app.handlers.query_handlers import (
     GetDailyMacrosQueryHandler,
     GetDailyMovementQueryHandler,
     GetFoodDetailsQueryHandler,
-    GetProviderFoodDetailsQueryHandler,
-    GetPopularStaplesQueryHandler,
     GetJourneyProgressQueryHandler,
     GetMealByIdQueryHandler,
     GetMealsByDateQueryHandler,
     GetMovementCatalogQueryHandler,
     GetNotificationPreferencesQueryHandler,
+    GetPopularStaplesQueryHandler,
+    GetProviderFoodDetailsQueryHandler,
     GetSavedSuggestionsQueryHandler,
     GetStreakQueryHandler,
     GetUserByFirebaseUidQueryHandler,
@@ -175,10 +175,10 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 from src.app.queries.activity import GetBulkActivitiesQuery, GetDailyActivitiesQuery
 from src.app.queries.cheat_day import GetCheatDaysQuery
 from src.app.queries.food.get_food_details_query import GetFoodDetailsQuery
+from src.app.queries.food.get_popular_staples_query import GetPopularStaplesQuery
 from src.app.queries.food.get_provider_food_details_query import (
     GetProviderFoodDetailsQuery,
 )
-from src.app.queries.food.get_popular_staples_query import GetPopularStaplesQuery
 from src.app.queries.food.lookup_barcode_query import LookupBarcodeQuery
 from src.app.queries.food.search_foods_query import SearchFoodsQuery
 from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
@@ -441,11 +441,7 @@ def get_configured_event_bus() -> EventBus:
     from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
     from src.infra.database.uow_async import AsyncUnitOfWork
 
-    queue_publisher = (
-        CloudflareQueuePublisher.from_settings()
-        if settings.CLOUDFLARE_QUEUE_ENABLED
-        else None
-    )
+    queue_publisher = CloudflareQueuePublisher.from_settings()
     provider_budget = _build_provider_budget(cache_service)
     nutrition_integrity_policy = NutritionIntegrityPolicy()
 
@@ -696,11 +692,7 @@ def get_configured_event_bus() -> EventBus:
         LogMovementCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
@@ -708,11 +700,7 @@ def get_configured_event_bus() -> EventBus:
         DeleteMovementEntryCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
@@ -720,11 +708,7 @@ def get_configured_event_bus() -> EventBus:
         UpdateMovementEntryCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
 
@@ -933,22 +917,14 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         MarkCheatDayCommand,
         MarkCheatDayCommandHandler(
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(
         UnmarkCheatDayCommand,
         UnmarkCheatDayCommandHandler(
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
     )
@@ -998,11 +974,7 @@ def get_configured_event_bus() -> EventBus:
         LogHydrationCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
@@ -1010,11 +982,7 @@ def get_configured_event_bus() -> EventBus:
         LogCaloricDrinkCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
@@ -1022,11 +990,7 @@ def get_configured_event_bus() -> EventBus:
         DeleteHydrationEntryCommandHandler(
             uow=AsyncUnitOfWork(),
             environment=settings.ENVIRONMENT,
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
@@ -1044,22 +1008,14 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveSuggestionCommand,
         SaveSuggestionCommandHandler(
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
     )
     event_bus.register_handler(
         DeleteSavedSuggestionCommand,
         DeleteSavedSuggestionCommandHandler(
-            event_publisher=(
-                CloudflareQueuePublisher.from_settings()
-                if settings.CLOUDFLARE_QUEUE_ENABLED
-                else None
-            ),
+            event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
     )

@@ -50,12 +50,22 @@ async def _publish_subscription_event(
 ) -> None:
     """Publish a subscription lifecycle event to Cloudflare Queues."""
     event = SubscriptionLifecycleEvent(
-        event_type=event_type,
-        user_id=user_id,
+        event_id=_subscription_event_id(event_id),
         environment=os.getenv("ENVIRONMENT", "development"),
-        data=payload,
+        aggregate_id=user_id,
+        data={"lifecycle_type": event_type, **payload},
     )
     await event_publisher.publish(event.to_payload())
+
+
+def _subscription_event_id(event_id: str | None) -> str:
+    """Map the provider event identifier to the UUID required on the wire."""
+    if not event_id:
+        return str(uuid.uuid4())
+    try:
+        return str(uuid.UUID(event_id))
+    except ValueError:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"revenuecat:{event_id}"))
 
 
 async def _notify_affiliate(
@@ -68,12 +78,9 @@ async def _notify_affiliate(
 ) -> None:
     """Publish subscription event to Cloudflare Queue or send affiliate notification."""
     if event_publisher is not None and user_id is not None:
-        try:
-            await _publish_subscription_event(
-                event_publisher, event_type, payload, event_id, user_id
-            )
-        except Exception as exc:
-            logger.warning("Failed to publish subscription event: %s", exc)
+        await _publish_subscription_event(
+            event_publisher, event_type, payload, event_id, user_id
+        )
     elif affiliate_handler is not None:
         resolved_event_id = event_id or str(uuid.uuid4())
         affiliate_payload = {

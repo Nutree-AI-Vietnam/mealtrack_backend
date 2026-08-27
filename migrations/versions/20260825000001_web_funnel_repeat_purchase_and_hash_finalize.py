@@ -1,7 +1,7 @@
 """Allow repeat purchases per UID; index hash+preflight finalize path.
 
 Revision ID: 20260825000001
-Revises: 20260823000003
+Revises: 20260823000002
 """
 
 from collections.abc import Sequence
@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "20260825000001"
-down_revision: str | None = "20260823000003"
+down_revision: str | None = "20260823000002"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

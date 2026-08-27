@@ -23,7 +23,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
-| Cloudflare Queue cache invalidation | **Required when `CLOUDFLARE_QUEUE_ENABLED=true`** | Outbox publish retries until the Queue accepts the event |
+| Cloudflare Queue integration | **Required** | Direct post-commit publication; Queue errors are surfaced to the caller or webhook retry path |
 | Upstash Redis REST for Worker deletes | **Required for the Queue consumer** | Worker retries, then DLQ, on Redis/network/delete failures |
 | OpenAI translation | **Optional read-path localization** | Return canonical local/provider results without translated names; do not block startup or writes |
 | OpenAI, FatSecret, USDA, OFF, Brave, image stock APIs | **Optional enrichment** | Degrade to local/prior results when safe |
@@ -45,18 +45,15 @@ images, emails, auth tokens, full barcodes, or secrets. Prefer operation name,
 internal IDs, status codes, and error class.
 
 **Cloudflare async integration rule:** hydration is the current direct-publish
-exception. The backend commits the hydration row first, then publishes
-`hydration.created.v1` directly to the environment ingress Queue when
-`CLOUDFLARE_QUEUE_ENABLED=true`. In local or disabled mode, the hydration
-handler skips publication entirely because no Queue publisher is injected. The
+path. The backend commits the hydration row first, then publishes
+`hydration.created.v1` directly to the required environment ingress Queue. The
 Worker orchestrator invokes registered handlers in order and ACKs only after
 all handlers succeed. A failure retries the whole ingress message and
 eventually reaches the ingress DLQ. There is no HMAC, no local-vs-Cloudflare
 dual routing, no percentage canary, no D1 delivery ledger, and no cache-value
 write path in this slice. The accepted MVP trade-off is that a post-commit
 Queue failure can lose the hydration event; only the committed database row is
-durable. Other durable background flows still use the PostgreSQL transactional
-outbox.
+durable.
 
 ---
 
@@ -72,7 +69,7 @@ outbox.
 | OpenAI prompt-cache policy | `src/infra/services/ai/openai_prompt_cache_policy.py` |
 | Food providers (USDA, FatSecret, OFF, Brave) | `src/infra/adapters/food_data_service.py`, `fat_secret_service.py`, `open_food_facts_service.py`, `brave_search_nutrition_service.py` |
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
-| Cloudflare cache invalidation relay | `src/infra/adapters/cloudflare_queue_publisher.py`, `src/infra/services/handlers/cache_invalidation_queue_handler.py` (dispatch trigger removed — see `docs/decisions/ADR-cron-jobs-removal.md`) |
+| Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
@@ -155,18 +152,16 @@ optional caches.
 
 ### Cloudflare async cache invalidation
 
-- Non-hydration mutation paths may publish `cache_invalidation.v1` through the
-  transactional outbox. The `CacheInvalidationQueueHandler` only forwards
-  validated payloads to Cloudflare Queue; it does not write Redis values.
+- Non-hydration mutation paths publish versioned integration events directly to
+  Cloudflare Queue after the database transaction commits. There is no active
+  backend outbox relay for this path.
 - Hydration creation publishes `hydration.created.v1` directly to Cloudflare
   Queue after its database transaction commits. The Worker orchestrator owns
   its cache translation and invokes the same delete handler.
-- `CloudflareQueuePublisher.from_settings()` reads the single global
-  `CLOUDFLARE_QUEUE_ENABLED` switch plus the account, queue name, token, and
-  timeout settings. When disabled, local hydration writes skip integration
-  publication entirely; when enabled but misconfigured, the request fails
-  after the database commit and the publish error is logged by the API. The
-  MVP accepts that post-commit failure window for hydration.
+- `CloudflareQueuePublisher.from_settings()` reads the account, queue name,
+  token, and timeout settings. Publication is always attempted; when
+  misconfigured, the request fails after the database commit. The MVP accepts
+  that post-commit failure window for hydration.
 - The Worker validates the event envelope and deletes exact keys or bounded
   patterns through Upstash Redis REST. Queue ACK/retry/DLQ semantics own the
   delivery lifecycle.
@@ -177,9 +172,9 @@ optional caches.
 ### Cloudflare integration event orchestration
 
 - The integration-event redesign uses one versioned `IntegrationEvent` as the
-  ingress payload. Hydration publishes `hydration.created.v1` directly after
-  commit when Queue delivery is enabled; other integration paths may still use
-  the transactional outbox.
+  ingress payload. Generic integration paths publish directly to the required
+  Queue after commit. Web-funnel claim and reconciliation jobs retain their
+  separate transactional outbox workflow.
 - Hydration events carry the hydration aggregate ID rather than a snapshot.
   The hydration cache handler queries Neon for the hydration owner and local log
   date, so adding another event does not require another Worker parser.

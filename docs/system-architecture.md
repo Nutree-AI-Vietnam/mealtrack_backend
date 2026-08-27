@@ -67,14 +67,14 @@ await event_bus.publish(MealCreatedEvent(...))           # fire-and-forget
 
 Background subscriber tasks are owned by `BackgroundTaskManager` (`src/infra/event_bus/background_task_manager.py`), which replaces bare `asyncio.create_task` in the event bus and routes; it exposes `spawn`, `drain`, and `shutdown` so subscriber failures are observable and app shutdown can cancel outstanding tasks cleanly.
 
-Process-local cron jobs have been completely eliminated (see `docs/decisions/ADR-cron-jobs-removal.md`). All side effects that must survive API-process restarts (cache invalidation, Firebase account cleanup, affiliate attribution webhooks, and subscription lifecycle dispatch) are modeled as versioned `IntegrationEvent` payloads published to Cloudflare Queue and processed asynchronously by `nutreeai_async`.
+Process-local cron jobs have been completely eliminated (see `docs/decisions/ADR-cron-jobs-removal.md`). Cache invalidation, Firebase account cleanup, and subscription lifecycle dispatch are modeled as versioned `IntegrationEvent` payloads published to Cloudflare Queue and processed asynchronously by `nutreeai_async`. Affiliate attribution remains a separate optional integration.
 
 ### Durable Integration Events
 
 Mutations (Meal, Hydration, Movement, User Profile/Settings, Cheat Day, Saved Suggestions, Affiliate) use direct asynchronous event dispatch:
 
-1. Handlers commit their authoritative database transaction, and then publish one versioned `IntegrationEvent` envelope directly to the environment-specific Cloudflare Queue when Queue delivery is enabled.
-2. When `CLOUDFLARE_QUEUE_ENABLED=false`, local mutations skip integration publication entirely because no Queue publisher is injected.
+1. Handlers commit their authoritative database transaction, and then publish one versioned `IntegrationEvent` envelope directly to the required environment-specific Cloudflare Queue.
+2. The backend always injects a Queue publisher. Missing account, queue-name, or token configuration is an integration error; mutations do not silently skip publication.
 3. The Cloudflare Worker (`nutreeai_async`) validates the common envelope and its in-process router invokes every registered handler for that event type (e.g. cache invalidation, external API calls).
 4. The Worker ACKs only after all handlers succeed. A failure retries the message with backoff and eventually routes it to the DLQ.
 
@@ -88,9 +88,9 @@ local-vs-Cloudflare dual routing, percentage canaries, cache-value writes, D1
 delivery state, or dynamic subscriptions. Separate staging and production
 deployments use separate ingress queues and environment values.
 
-The MVP has a hydration cache-invalidation handler. Notification and email
-handlers can be added to the same registry after their payload and idempotency
-contracts are defined. Live staging proof remains pending.
+The Worker has cache-invalidation, insight, recommendation, Firebase cleanup,
+and subscription-receipt handlers. Notification and email handlers are
+intentionally out of scope. Live staging proof remains pending.
 
 Queries may still read Redis as an optimization on the read path. Existing
 cache-aside population behavior is unchanged; the Worker owns deletes for the

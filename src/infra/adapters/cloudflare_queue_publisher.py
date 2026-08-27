@@ -21,10 +21,6 @@ class CloudflareQueueTransientError(CloudflareQueueError):
     """Raised for Queue failures that should be retried."""
 
 
-class CloudflareQueueDisabledError(CloudflareQueueTransientError):
-    """Raised when Queue publication is intentionally paused by configuration."""
-
-
 class CloudflareQueuePermanentError(CloudflareQueueError):
     """Raised for a rejected or malformed Queue request."""
 
@@ -35,14 +31,12 @@ class CloudflareQueuePublisher:
     def __init__(
         self,
         *,
-        enabled: bool = True,
         account_id: str,
         queue_name: str,
         api_token: str,
         timeout_seconds: float = 10.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._enabled = enabled
         self._account_id = account_id
         self._queue_name = queue_name
         self._api_token = api_token
@@ -59,7 +53,6 @@ class CloudflareQueuePublisher:
 
         settings = get_settings()
         return cls(
-            enabled=settings.CLOUDFLARE_QUEUE_ENABLED,
             account_id=settings.CLOUDFLARE_QUEUE_ACCOUNT_ID,
             queue_name=(
                 settings.CLOUDFLARE_QUEUE_NAME if queue_name is None else queue_name
@@ -81,10 +74,6 @@ class CloudflareQueuePublisher:
         )
 
     def _validate_configuration(self) -> None:
-        if not self._enabled:
-            raise CloudflareQueueDisabledError(
-                "Cloudflare Queue publication is disabled"
-            )
         if not self._account_id or not self._queue_name or not self._api_token:
             raise CloudflareQueueConfigurationError(
                 "Cloudflare Queue account, name, and token are required"

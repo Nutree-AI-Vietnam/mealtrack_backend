@@ -8,6 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from src.api.routes.v1.webhook_subscription_lifecycle import (
+    _notify_affiliate,
+    _publish_subscription_event,
+)
 from src.api.routes.v1.webhooks import (
     _credit_referral_on_purchase,
     _revoke_referral_on_refund,
@@ -64,6 +68,7 @@ class _FakeReferralRepo:
         return self.wallet
 
 
+@pytest.mark.asyncio
 class TestWebhookHelpers:
     """Test webhook helper functions."""
 
@@ -89,6 +94,38 @@ class TestWebhookHelpers:
         # None timestamp
         assert parse_timestamp(None) is None
 
+    async def test_subscription_event_uses_versioned_envelope(self):
+        publisher = MagicMock()
+        publisher.publish = AsyncMock()
+
+        await _publish_subscription_event(
+            publisher,
+            "subscription_renewal",
+            {"mealtrack_user_id": "user_123"},
+            "revenuecat-event-1",
+            "user_123",
+        )
+
+        payload = publisher.publish.await_args.args[0]
+        assert payload["event_type"] == "subscription.lifecycle.v1"
+        assert payload["aggregate_type"] == "subscription"
+        assert payload["aggregate_id"] == "user_123"
+        assert payload["data"]["lifecycle_type"] == "subscription_renewal"
+
+    async def test_subscription_queue_failure_propagates_for_provider_retry(self):
+        publisher = MagicMock()
+        publisher.publish = AsyncMock(side_effect=RuntimeError("Queue unavailable"))
+
+        with pytest.raises(RuntimeError, match="Queue unavailable"):
+            await _notify_affiliate(
+                None,
+                "subscription_renewal",
+                {},
+                "revenuecat-event-1",
+                event_publisher=publisher,
+                user_id="user_123",
+            )
+
         # Zero timestamp
         assert parse_timestamp(0) is not None
 
@@ -108,6 +145,13 @@ class TestWebhookHandler:
         request = MagicMock()
         request.json = AsyncMock()
         return request
+
+    @pytest.fixture
+    def mock_event_publisher(self):
+        """Provide a configured Queue publisher for webhook tests."""
+        publisher = MagicMock()
+        publisher.publish = AsyncMock()
+        return publisher
 
     @pytest.fixture
     def mock_uow(self):
@@ -135,13 +179,21 @@ class TestWebhookHandler:
             }
         }
 
-    async def test_webhook_success(self, mock_request, webhook_event):
+    async def test_webhook_success(
+        self, mock_request, webhook_event, mock_event_publisher
+    ):
         """Test successful webhook processing."""
         mock_request.json.return_value = webhook_event
 
         # Set a valid webhook secret for the test
         with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
-            with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
+            with (
+                patch(
+                    "src.api.routes.v1.webhooks._get_event_publisher",
+                    return_value=mock_event_publisher,
+                ),
+                patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class,
+            ):
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
                 mock_uow.__aexit__ = AsyncMock(return_value=False)
@@ -851,7 +903,9 @@ class TestWebhookHandler:
         assert result == {"status": "success"}
         assert subscription.product_id == "premium_yearly"
 
-    async def test_webhook_refund_end_to_end_returns_success(self, mock_request):
+    async def test_webhook_refund_end_to_end_returns_success(
+        self, mock_request, mock_event_publisher
+    ):
         """Full webhook path for REFUND: documents current 200/success semantics
         and confirms referral revocation runs inside the same webhook flow.
         """
@@ -867,7 +921,13 @@ class TestWebhookHandler:
         subscription = MagicMock()
 
         with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
-            with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
+            with (
+                patch(
+                    "src.api.routes.v1.webhooks._get_event_publisher",
+                    return_value=mock_event_publisher,
+                ),
+                patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class,
+            ):
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
                 mock_uow.__aexit__ = AsyncMock(return_value=False)

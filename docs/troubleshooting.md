@@ -99,26 +99,23 @@ Cloudflare Queue or the Worker.
 
 **Diagnosis:**
 ```bash
-echo $CLOUDFLARE_QUEUE_ENABLED
-rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|IntegrationEventQueueHandler|CacheInvalidationQueueHandler" src workers
+rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|IntegrationEventRouter" src workers
 ```
 
 **Solutions:**
 1. For hydration, confirm the business row committed, then check the API log for
    the direct Queue publish result. Hydration no longer waits for the outbox
    worker.
-2. If `CLOUDFLARE_QUEUE_ENABLED=false`, no hydration Queue publish is expected
-   in local or disabled mode. That is the intended behavior, not a fallback.
-3. Verify `CLOUDFLARE_QUEUE_ENABLED=true`, the environment-specific queue name,
-   and valid Queue credentials for environments that should publish.
-4. Check the Worker logs for `integration_event_ack`,
+2. Verify the environment-specific queue name, account ID, and valid Queue
+   credentials. Publication is required; there is no disabled fallback.
+3. Check the Worker logs for `integration_event_ack`,
    `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching
    `event_id`.
-5. For hydration, verify the Worker has valid Upstash Redis REST access,
+4. For hydration, verify the Worker has valid Upstash Redis REST access,
    `NEON_DATABASE_URL` (or `DATABASE_URL`), and the environment ingress queue.
    A handler failure or database lookup failure retries the whole ingress event.
-6. Other mutation paths may still have pending `cache_invalidation.v1` rows;
-   those continue to use the outbox worker.
+5. Other mutation paths publish directly through the same Queue publisher;
+   inspect the API publication result and the Worker event ID.
 
 **MVP risk note:** if the SQL transaction commits and the direct Queue publish
 fails afterward, the hydration row is still durable but the event can be lost.

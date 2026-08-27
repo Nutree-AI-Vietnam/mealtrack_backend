@@ -34,9 +34,8 @@ class ApplyReferralCodeCommandHandler:
                 from src.infra.config.settings import get_settings
 
                 settings = get_settings()
-                if getattr(settings, "CLOUDFLARE_QUEUE_ENABLED", False):
-                    event_publisher = CloudflareQueuePublisher.from_settings()
-                    environment = getattr(settings, "ENVIRONMENT", "development")
+                event_publisher = CloudflareQueuePublisher.from_settings()
+                environment = getattr(settings, "ENVIRONMENT", "development")
             except Exception:
                 pass
         self.event_publisher = event_publisher

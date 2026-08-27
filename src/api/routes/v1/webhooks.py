@@ -78,15 +78,10 @@ __all__ = [
 
 
 def _get_event_publisher():
-    """Return CloudflareQueuePublisher if configured, else None."""
-    try:
-        from src.infra.adapters.cloudflare_queue_publisher import (
-            CloudflareQueuePublisher,
-        )
+    """Return the required Cloudflare Queue publisher."""
+    from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 
-        return CloudflareQueuePublisher.from_settings()
-    except Exception:
-        return None
+    return CloudflareQueuePublisher.from_settings()
 
 
 def _get_affiliate_handler():

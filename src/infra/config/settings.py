@@ -98,8 +98,7 @@ class Settings(BaseSettings):
     CACHE_ENABLED: bool = Field(default=True)
     CACHE_DEFAULT_TTL: int = Field(default=3600)  # 1 hour
 
-    # Cloudflare Queue cache invalidation
-    CLOUDFLARE_QUEUE_ENABLED: bool = Field(default=False)
+    # Cloudflare Queue integration is required for asynchronous side effects.
     CLOUDFLARE_QUEUE_ACCOUNT_ID: str = Field(default="")
     CLOUDFLARE_QUEUE_NAME: str = Field(default="")
     CLOUDFLARE_QUEUE_API_TOKEN: str = Field(default="")
