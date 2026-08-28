@@ -9,6 +9,9 @@ LOCAL_SCRIPT = Path("scripts/development/local.sh")
 USER_ENHANCEMENT_MIGRATION = Path(
     "migrations/versions/002_add_seasonings_and_user_enhancements.py"
 )
+USER_PROVIDER_MIGRATION = Path(
+    "migrations/versions/20260828000001_widen_user_auth_provider.py"
+)
 FOOD_ITEM_UUID_MIGRATION = Path(
     "migrations/versions/006_convert_food_item_id_to_uuid.py"
 )
@@ -79,6 +82,17 @@ def test_user_provider_enum_is_created_before_column_uses_it() -> None:
     add_column_index = text.index("sa.Column('provider', provider_enum")
     assert create_index < add_column_index
     assert "checkfirst=True" in text
+
+
+def test_user_provider_migration_widens_legacy_column_for_email_link_auth() -> None:
+    text = USER_PROVIDER_MIGRATION.read_text()
+    from src.infra.database.models.user.user import User
+
+    assert '"users"' in text
+    assert '"provider"' in text
+    assert "existing_type=sa.String(length=6)" in text
+    assert "type_=sa.String(length=32)" in text
+    assert User.__table__.c.provider.type.length == 32
 
 
 def test_food_item_uuid_migration_uses_postgres_ddl() -> None:

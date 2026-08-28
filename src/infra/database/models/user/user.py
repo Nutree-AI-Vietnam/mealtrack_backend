@@ -32,7 +32,10 @@ class User(Base, BaseMixin):
     display_name = Column(String(100), nullable=True)
     photo_url = Column(Text, nullable=True)
     provider = Column(
-        Enum(AuthProviderEnum, native_enum=False),
+        # Keep room for all Firebase providers, including ``email_link`` and
+        # future provider identifiers.  The database column is widened by the
+        # corresponding migration so ORM metadata and deployed schema agree.
+        Enum(AuthProviderEnum, native_enum=False, length=32),
         nullable=False,
         default=AuthProviderEnum.GOOGLE,
     )  # phone, google
