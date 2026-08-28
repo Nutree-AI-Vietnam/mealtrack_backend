@@ -36,6 +36,13 @@ def test_saved_suggestions_user_id_uses_canonical_user_id_width() -> None:
     assert user_id.type.length == 36
 
 
+def test_users_provider_column_fits_email_link() -> None:
+    provider = Base.metadata.tables["users"].c.provider
+    length = getattr(provider.type, "length", None)
+    assert length is not None
+    assert length >= len("EMAIL_LINK")
+
+
 def test_migration_repairs_orphans_before_adding_constraints() -> None:
     migration_text = MIGRATION_PATH.read_text()
 

@@ -32,10 +32,10 @@ class User(Base, BaseMixin):
     display_name = Column(String(100), nullable=True)
     photo_url = Column(Text, nullable=True)
     provider = Column(
-        Enum(AuthProviderEnum, native_enum=False),
+        Enum(AuthProviderEnum, native_enum=False, length=32),
         nullable=False,
         default=AuthProviderEnum.GOOGLE,
-    )  # phone, google
+    )  # google, apple, email_link, anonymous — VARCHAR must fit EMAIL_LINK
 
     # Status & Activity
     is_active = Column(Boolean, default=True, nullable=False)
