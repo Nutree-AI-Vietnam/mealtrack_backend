@@ -14,9 +14,13 @@ from src.app.commands.meal import (
     DeleteMealCommand,
     DeleteMealPhotoCommand,
     EditMealCommand,
+    FavoriteMealCommand,
+    RepeatMealCommand,
     ScanByUrlCommand,
+    UnfavoriteMealCommand,
     UploadMealImageImmediatelyCommand,
 )
+
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.commands.meal_catalog import LogCatalogMealCommand
@@ -79,17 +83,21 @@ from src.app.handlers.command_handlers import (
     DeleteUserCommandHandler,
     DiscoverMealsCommandHandler,
     EditMealCommandHandler,
+    FavoriteMealCommandHandler,
     GenerateMealRecipesCommandHandler,
     LogMovementCommandHandler,
     ParseMealTextHandler,
     RecognizeIngredientCommandHandler,
+    RepeatMealCommandHandler,
     SaveBodyFatVisualProfileCommandHandler,
     SaveMealSuggestionCommandHandler,
     SaveSuggestionCommandHandler,
     SaveUserOnboardingCommandHandler,
     ScanByUrlCommandHandler,
     SyncUserCommandHandler,
+    UnfavoriteMealCommandHandler,
     UpdateCustomMacrosCommandHandler,
+
     UpdateLanguageCommandHandler,
     UpdateMovementEntryCommandHandler,
     UpdateNotificationPreferencesCommandHandler,
@@ -132,6 +140,7 @@ from src.app.handlers.query_handlers import (
     GetDailyBreakdownQueryHandler,
     GetDailyMacrosQueryHandler,
     GetDailyMovementQueryHandler,
+    GetFavoriteMealsQueryHandler,
     GetFoodDetailsQueryHandler,
     GetJourneyProgressQueryHandler,
     GetMealByIdQueryHandler,
@@ -140,7 +149,9 @@ from src.app.handlers.query_handlers import (
     GetNotificationPreferencesQueryHandler,
     GetPopularStaplesQueryHandler,
     GetProviderFoodDetailsQueryHandler,
+    GetRecentMealsQueryHandler,
     GetSavedSuggestionsQueryHandler,
+
     GetStreakQueryHandler,
     GetUserByFirebaseUidQueryHandler,
     GetUserMetricsQueryHandler,
@@ -190,10 +201,13 @@ from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 from src.app.queries.meal import (
     GetDailyBreakdownQuery,
     GetDailyMacrosQuery,
+    GetFavoriteMealsQuery,
     GetMealByIdQuery,
     GetMealsByDateQuery,
+    GetRecentMealsQuery,
     GetStreakQuery,
 )
+
 from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_recommendation import (
     GetMealRecommendationPlanQuery,
@@ -577,6 +591,38 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
 
+    from src.infra.cache.meal_list_cache_service import MealListCacheService
+
+    meal_list_cache = MealListCacheService(
+        redis_client=getattr(cache_service, "redis", None),
+        enabled=(getattr(cache_service, "redis", None) is not None),
+    )
+
+    event_bus.register_handler(
+        FavoriteMealCommand,
+        FavoriteMealCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            cache_service=meal_list_cache,
+        ),
+    )
+    event_bus.register_handler(
+        UnfavoriteMealCommand,
+        UnfavoriteMealCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            cache_service=meal_list_cache,
+        ),
+    )
+    event_bus.register_handler(
+        RepeatMealCommand,
+        RepeatMealCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            event_publisher=queue_publisher,
+            event_bus=event_bus,
+            cache_service=meal_list_cache,
+            environment=settings.ENVIRONMENT,
+        ),
+    )
+
     event_bus.register_handler(
         CreateManualMealCommand,
         CreateManualMealCommandHandler(
@@ -590,6 +636,7 @@ def get_configured_event_bus() -> EventBus:
             provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
         ),
     )
+
 
     # Register meal text parsing command handler
     event_bus.register_handler(
@@ -646,11 +693,26 @@ def get_configured_event_bus() -> EventBus:
     # These handlers now use UnitOfWork internally for fresh sessions
     event_bus.register_handler(GetMealByIdQuery, GetMealByIdQueryHandler())
     event_bus.register_handler(
+        GetRecentMealsQuery,
+        GetRecentMealsQueryHandler(
+            uow_factory=AsyncUnitOfWork,
+            cache_service=meal_list_cache,
+        ),
+    )
+    event_bus.register_handler(
+        GetFavoriteMealsQuery,
+        GetFavoriteMealsQueryHandler(
+            uow_factory=AsyncUnitOfWork,
+            cache_service=meal_list_cache,
+        ),
+    )
+    event_bus.register_handler(
         GetDailyMacrosQuery,
         GetDailyMacrosQueryHandler(
             cache_service=cache_service,
         ),
     )
+
     event_bus.register_handler(
         GetWeeklyBudgetQuery,
         GetWeeklyBudgetQueryHandler(cache_service=cache_service),

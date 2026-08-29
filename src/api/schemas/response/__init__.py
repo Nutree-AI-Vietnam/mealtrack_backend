@@ -25,6 +25,8 @@ from .ingredient_recognition_responses import (
 # Meal responses
 from .meal_responses import (
     DetailedMealResponse,
+    FavoriteMealActionResponse,
+    FavoriteMealsListResponse,
     FoodItemResponse,
     FoodLabelMetadataResponse,
     FoodLabelServingSizeResponse,
@@ -37,8 +39,10 @@ from .meal_responses import (
     MealValueInsightsStatusResponse,
     NutritionResponse,
     NutritionSummaryResponse,
+    RecentMealsListResponse,
     SimpleMealResponse,
 )
+
 from .meal_suggestion_responses import (
     MacrosSchema as MealSuggestionMacrosSchema,
 )
@@ -82,8 +86,12 @@ __all__ = [
     "SimpleMealResponse",
     "DetailedMealResponse",
     "MealListResponse",
+    "RecentMealsListResponse",
+    "FavoriteMealsListResponse",
+    "FavoriteMealActionResponse",
     "MealPhotoAnalysisResponse",
     "MealSearchResponse",
+
     "NutritionSummaryResponse",
     "MacrosResponse",
     "NutritionResponse",

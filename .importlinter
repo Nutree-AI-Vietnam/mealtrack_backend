@@ -199,7 +199,9 @@ ignore_imports =
     src.api.dependencies.event_bus -> src.infra.adapters.brave_search_nutrition_service
     src.api.dependencies.event_bus -> src.infra.adapters.meal_generation_service
     src.api.dependencies.event_bus -> src.infra.adapters.nutritionix_service
+    src.api.dependencies.event_bus -> src.infra.cache.meal_list_cache_service
     src.api.dependencies.event_bus -> src.infra.cache.provider_budget
+
     src.api.dependencies.event_bus -> src.infra.config.settings
     src.api.dependencies.event_bus -> src.infra.database.uow_async
     src.api.dependencies.event_bus -> src.infra.event_bus

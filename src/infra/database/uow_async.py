@@ -18,6 +18,9 @@ from src.infra.repositories.catalog_recipe_repository_async import (
     AsyncCatalogMealRepository,
 )
 from src.infra.repositories.cheat_day_repository_async import AsyncCheatDayRepository
+from src.infra.repositories.favorite_meal_repository_async import (
+    AsyncFavoriteMealRepository,
+)
 from src.infra.repositories.food_reference_integrity_repository import (
     FoodReferenceIntegrityRepository,
 )
@@ -116,6 +119,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
     def _init_repositories(self):
         session = self._require_session()
         self.meals = AsyncMealRepository(session)
+        self.favorite_meals = AsyncFavoriteMealRepository(session)
         self.meal_recommendation_plans = AsyncMealRecommendationPlanRepository(session)
         self.meal_suggestions = UnavailableMealSuggestionSessionStore()
         self.body_fat_visual_profiles = AsyncBodyFatVisualProfileRepository(session)
