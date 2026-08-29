@@ -25,6 +25,11 @@ def test_meal_text_parsing_prompt_requires_localized_display_names():
     prompt = SystemPrompts.get_meal_text_parsing_prompt("vi")
 
     assert "Vietnamese (vi)" in prompt
-    assert "`lookup_name`: Canonical English food name" in prompt
-    assert 'mode is "dish"' in prompt
-    assert 'mode is "ingredient_list"' in prompt
+    assert "`lookup_name`: concise canonical English food identity" in prompt
+    assert "dish: return diner-visible components of one serving" in prompt
+    assert "ingredient_list: return the listed foods one-for-one" in prompt
+    assert "single_food: return one item" in prompt
+    assert "The user message includes an advisory mode" in prompt
+    assert "Fallback shape for providers without native schema generation" in prompt
+    assert "english_unit" in prompt
+    assert "fiber_g" in prompt

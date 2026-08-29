@@ -13,6 +13,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import src.api.dependencies.event_bus as eb_module
+from src.domain.model.nutrition.macros import Macros
 from src.domain.ports.meal_generation_service_port import MealGenerationServicePort
 
 
@@ -43,10 +44,10 @@ class _MeasurementMealGenerationService(MealGenerationServicePort):
                 "model_purpose": model_purpose,
             }
         )
-        # Find matching scenario by keyword in prompt
-        for key, payload in self.scenarios.items():
+        # Find matching scenario by keyword in prompt (longest match first)
+        for key in sorted(self.scenarios.keys(), key=len, reverse=True):
             if key.lower() in prompt.lower():
-                return payload
+                return self.scenarios[key]
 
         # Default fallback payload
         return {
@@ -162,6 +163,28 @@ def test_parse_text_e2e_api_measurement_suite(authenticated_client: TestClient):
                 },
             ]
         },
+        "add 200g ức gà": {
+            "items": [
+                {
+                    "name": "Cơm trắng",
+                    "lookup_name": "White rice",
+                    "quantity": 150,
+                    "unit": "g",
+                    "protein": 4.0,
+                    "carbs": 42.0,
+                    "fat": 0.5,
+                },
+                {
+                    "name": "Ức gà luộc",
+                    "lookup_name": "Boiled chicken breast",
+                    "quantity": 200,
+                    "unit": "g",
+                    "protein": 62.0,
+                    "carbs": 0.0,
+                    "fat": 7.2,
+                },
+            ]
+        },
     }
 
     gen_service = _MeasurementMealGenerationService(scenarios=scenarios)
@@ -188,7 +211,7 @@ def test_parse_text_e2e_api_measurement_suite(authenticated_client: TestClient):
             "expected_items": 2,
         },
         {
-            "name": "Refinement request",
+            "name": "Refinement request (Complete List)",
             "payload": {
                 "text": "add 200g ức gà",
                 "language": "vi",
@@ -203,7 +226,7 @@ def test_parse_text_e2e_api_measurement_suite(authenticated_client: TestClient):
                     }
                 ],
             },
-            "expected_items": 1,
+            "expected_items": 2,
         },
     ]
 
@@ -240,11 +263,17 @@ def test_parse_text_e2e_api_measurement_suite(authenticated_client: TestClient):
             assert "emoji" in data
             assert "unmatched_terms" in data
 
-            # Derived backend calorie verification (4*P + 4*C + 9*F)
+            # Canonical backend calorie verification (Atwater formula with fiber)
             expected_kcal = round(
-                data["total_protein"] * 4.0
-                + data["total_carbs"] * 4.0
-                + data["total_fat"] * 9.0,
+                sum(
+                    Macros(
+                        protein=item["protein"],
+                        carbs=item["carbs"],
+                        fat=item["fat"],
+                        fiber=item.get("fiber", 0.0) or 0.0,
+                    ).total_calories
+                    for item in data["items"]
+                ),
                 1,
             )
             assert abs(data["total_calories"] - expected_kcal) <= 1.0

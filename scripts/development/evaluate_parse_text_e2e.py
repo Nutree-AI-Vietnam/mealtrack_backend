@@ -25,6 +25,7 @@ from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.handlers.command_handlers.parse_meal_text_handler import (
     ParseMealTextHandler,
 )
+from src.domain.model.nutrition.macros import Macros
 from src.domain.ports.meal_generation_service_port import MealGenerationServicePort
 
 
@@ -118,10 +119,10 @@ EVAL_CORPUS: list[TextEvalTestCase] = [
         text="thêm 1 quả trứng ốp la",
         language="vi",
         category="refinement",
-        expected_items_min=1,
-        expected_items_max=1,
-        expected_calorie_range=(70.0, 130.0),
-        expected_name_keywords=("trứng", "trứng ốp la"),
+        expected_items_min=2,
+        expected_items_max=2,
+        expected_calorie_range=(270.0, 390.0),
+        expected_name_keywords=("bánh mì", "trứng"),
         current_items=[
             {
                 "name": "Bánh mì",
@@ -241,6 +242,27 @@ class _PromptSimulatedAI(MealGenerationServicePort):
                 ]
             }
         elif "trứng" in p_lower or "egg" in p_lower:
+            if "bánh mì" in p_lower:
+                return {
+                    "items": [
+                        {
+                            "name": "Bánh mì",
+                            "lookup_name": "Vietnamese baguette",
+                            "quantity": 1,
+                            "quantity_g": 80,
+                            "unit": "ổ",
+                            "macros": {"protein_g": 8.0, "carbs_g": 45.0, "fat_g": 2.0},
+                        },
+                        {
+                            "name": "Trứng ốp la",
+                            "lookup_name": "Fried egg",
+                            "quantity": 1,
+                            "quantity_g": 50,
+                            "unit": "quả",
+                            "macros": {"protein_g": 6.3, "carbs_g": 0.4, "fat_g": 7.0},
+                        },
+                    ]
+                }
             if "toast" in p_lower:
                 return {
                     "items": [
@@ -409,11 +431,17 @@ async def evaluate_text_case(
             f"Item count {len(items)} not in [{case.expected_items_min}, {case.expected_items_max}]"
         )
 
-    # 3. Evaluate calorie & macro formula parity (4P + 4C + 9F)
+    # 3. Evaluate calorie & macro formula parity (canonical Atwater formula)
     derived_kcal = round(
-        response_dto.total_protein * 4.0
-        + response_dto.total_carbs * 4.0
-        + response_dto.total_fat * 9.0,
+        sum(
+            Macros.raw_total_calories(
+                protein=item.protein,
+                carbs=item.carbs,
+                fat=item.fat,
+                fiber=getattr(item, "fiber", 0.0) or 0.0,
+            )
+            for item in response_dto.items
+        ),
         1,
     )
     reported_kcal = round(total_calories, 1)

@@ -14,6 +14,7 @@ def _mock_settings(*, cf_enabled: bool = False, cf_purposes: str = "parse_text,r
     s.AI_FALLBACK_PROVIDER = "cloudflare-workers-ai"
     s.OPENAI_API_KEY = "test-openai-key"
     s.OPENAI_TEXT_MODEL = "gpt-5.4-mini-2026-03-17"
+    s.OPENAI_PARSE_TEXT_MODEL = "gpt-5.6-luna-2026-06-01"
     s.OPENAI_VISION_MODEL = "gpt-5.4-vision-2026-03-17"
     s.OPENAI_REQUEST_TIMEOUT_SECONDS = 20
     s.OPENAI_MAX_RETRIES = 1
@@ -42,7 +43,7 @@ def test_parse_text_routing_openai_only():
     with patch("src.infra.services.ai.ai_model_manager.OpenAIProvider"):
         manager = AIModelManager(settings)
         chain = manager.get_fallback_chain(ModelPurpose.PARSE_TEXT)
-        assert chain == ["gpt-5.4-mini-2026-03-17"]
+        assert chain == ["gpt-5.6-luna-2026-06-01"]
 
 
 def test_parse_text_routing_luna_primary_cf_fallback():
@@ -54,7 +55,7 @@ def test_parse_text_routing_luna_primary_cf_fallback():
         manager = AIModelManager(settings)
         parse_chain = manager.get_fallback_chain(ModelPurpose.PARSE_TEXT)
         assert parse_chain == [
-            "gpt-5.4-mini-2026-03-17",
+            "gpt-5.6-luna-2026-06-01",
             "@cf/meta/llama-3.1-8b-instruct",
         ]
 

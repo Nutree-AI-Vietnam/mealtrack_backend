@@ -22,23 +22,28 @@ class SystemPrompts:
     """
 
     # Meal Text Parsing Prompt
-    MEAL_TEXT_PARSING = """You are a nutrition parser. Parse natural language meal descriptions into structured items matching the requested schema.
+    MEAL_TEXT_PARSING = """You parse a meal description into MealTextNutritionResponse.
 
-Instructions:
-- Extract every food item mentioned.
-- `name`: Display name in {language_name} ({language_code}).
-- `lookup_name`: Canonical English food name for catalog and nutrition lookup.
-- `preparation`: One of raw, boiled, baked, fried, mashed, or unknown. Use unknown when not stated.
-- `quantity`: Amount (number).
-- `unit`: Serving unit in {language_name} (e.g., "g", "ml", "quả", "miếng", "lát", "chén", "bát", "tô", "đĩa", "cuốn", "hộp", "ly").
-- `quantity_g`: Total estimated edible weight in grams or milliliters (number).
-- `macros`: Estimated macronutrients per item with `protein_g`, `carbs_g`, and `fat_g` (numbers in grams).
-- `emoji`: Single emoji representing the overall meal.
+For every item:
+- `name`: natural display name in {language_name} ({language_code}). Use one language only. Do not add translations, alternatives, or uncertainty notes.
+- `lookup_name`: concise canonical English food identity for reference lookup. Keep preparation out unless it is part of the food's identity.
+- `preparation`: raw, boiled, baked, fried, mashed, or unknown. Use a stated preparation only; otherwise use unknown.
+- `quantity` and `unit`: preserve the described portion. `unit` is in the requested language; `english_unit` is the equivalent English unit.
+- `quantity_g`: total estimated edible mass in grams (number), or null. Do not use milliliters or volume; convert liquids to mass in grams using density (e.g. oil=0.92g/ml, milk=1.03g/ml, honey=1.42g/ml).
+- `macros`: absolute grams for the described portion with `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, and `sugar_g`.
 
-Composition rules:
-- If mode is "dish", return the realistic edible components of one standard serving (e.g., protein, starch, broth, garnishes). Do not return the dish as a single opaque item.
-- If mode is "ingredient_list" or "single_food", keep the distinct items described without inventing extra dishes.
-- Maintain accurate nutritional density for the estimated weight and preparation state."""
+Do not return calories. The backend derives them from macros. If no portion is given, estimate one common serving. Include nutritionally meaningful beverages, oils, and sauces.
+
+Composition modes:
+- dish: return diner-visible components of one serving. Do not recurse into recipes, dough, unnamed spices, or hidden sub-ingredients.
+- ingredient_list: return the listed foods one-for-one.
+- single_food: return one item.
+
+The user message includes an advisory mode. Follow it when consistent with the meal description; prefer the description when the hint is clearly wrong.
+Return ONLY valid JSON (no markdown, no code blocks, no prose) matching the required schema.
+
+Fallback shape for providers without native schema generation:
+{{"emoji":"🍽️","items":[{{"name":"...","lookup_name":"...","preparation":"unknown","quantity":1,"unit":"...","english_unit":"...","quantity_g":null,"macros":{{"protein_g":0,"carbs_g":0,"fat_g":0,"fiber_g":0,"sugar_g":0}}}}]}}"""
 
     RECIPE_GENERATION = """You are a professional chef and nutritionist. Generate complete, accurate recipes as JSON only. No markdown, no prose, no commentary. JSON keys in English only.
 

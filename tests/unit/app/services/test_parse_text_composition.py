@@ -9,17 +9,28 @@ def test_named_dish_is_classified_for_composition():
     assert classify_parse_text_input("1 bánh mì thịt") == "dish"
     assert classify_parse_text_input("1 bowl pho") == "dish"
     assert classify_parse_text_input("cơm tấm") == "dish"
+    assert classify_parse_text_input("1 beef wellington") == "dish"
+    assert classify_parse_text_input("beef wellington") == "dish"
+    assert classify_parse_text_input("1 tô phở bò tái nạm") == "dish"
+    assert classify_parse_text_input("1 đĩa cơm tấm sườn bì chả") == "dish"
 
 
 def test_listed_or_measured_foods_are_not_dishes():
+    assert classify_parse_text_input("trứng, sữa, bánh mì") == "ingredient_list"
     assert (
-        classify_parse_text_input("trứng, sữa, bánh mì") == "ingredient_list"
+        classify_parse_text_input(
+            "1 chén cơm trắng, 150g ức gà luộc, 1 đĩa rau muống xào tỏi"
+        )
+        == "ingredient_list"
     )
     assert classify_parse_text_input("100g chicken breast") == "single_food"
     assert classify_parse_text_input("1 banana") == "single_food"
     assert classify_parse_text_input("thịt nướng") == "single_food"
     assert classify_parse_text_input("1 miếng sườn nướng") == "single_food"
     assert classify_parse_text_input("bánh flan") == "single_food"
+    assert classify_parse_text_input("low fat yogurt") == "single_food"
+    assert classify_parse_text_input("thêm 1 quả trứng ốp la") == "single_food"
+    assert classify_parse_text_input("200g ức gà áp chảo") == "single_food"
 
 
 def test_retry_feedback_only_when_a_dish_comes_back_as_one_row():

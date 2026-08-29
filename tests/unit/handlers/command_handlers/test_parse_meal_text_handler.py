@@ -1706,3 +1706,59 @@ def test_canonicalize_reference_quantity_maps_gram_alias_to_g():
     assert grams == pytest.approx(100)
     assert item["unit"] == "g"
     assert item["english_unit"] == "g"
+
+
+def test_quantity_in_grams_converts_volume_using_food_density():
+    handler = ParseMealTextHandler(
+        meal_generation_service=_FakeMealGenerationService([]),
+        fat_secret_service=_FakeFatSecretService(),
+    )
+    # Olive oil density is ~0.92 g/ml, so 200 ml != 200 g
+    oil_item = {"quantity": 200, "unit": "ml", "quantity_g": 200}
+    grams = handler._quantity_in_grams(oil_item, "olive oil")
+    assert grams == pytest.approx(184.0, abs=1.0)
+
+
+@pytest.mark.asyncio
+async def test_parse_text_adopt_never_writes_generic_sentinel_to_catalog():
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[
+            {
+                "items": [
+                    {
+                        "name": "Unknown exotic potato",
+                        "lookup_name": "potato",
+                        "quantity": 100,
+                        "unit": "g",
+                        "macros": {
+                            "protein_g": 2.0,
+                            "carbs_g": 17.0,
+                            "fat_g": 0.1,
+                            "fiber_g": 2.2,
+                            "sugar_g": 0.7,
+                        },
+                    }
+                ]
+            }
+        ]
+    )
+    food_references = _FakeFoodReferenceAdoptRepository(adopt_return={"id": 999})
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_StructuredFatSecretService(),
+        uow_factory=_FakeUowFactory(food_references),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(
+            text="unknown exotic berry", user_id="user-1", language="vi"
+        )
+    )
+
+    # In response, fail-closed localization applies "Nguyên liệu" for user display
+    assert response.items[0].name == "Nguyên liệu"
+    # But in adopt_calls, locale_name must NOT be "Nguyên liệu" (must be empty/None)
+    assert len(food_references.adopt_calls) == 1
+    adopt_call = food_references.adopt_calls[0]
+    assert adopt_call.get("locale_name") != "Nguyên liệu"
+    assert adopt_call.get("locale_name") in ("", None)

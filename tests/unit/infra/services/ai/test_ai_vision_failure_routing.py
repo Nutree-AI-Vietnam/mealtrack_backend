@@ -25,6 +25,7 @@ def _fake_settings(cf_enabled=False):
     s.AI_FALLBACK_PROVIDER = "cloudflare-workers-ai"
     s.OPENAI_API_KEY = "test-openai-key"
     s.OPENAI_TEXT_MODEL = "openai-text-model"
+    s.OPENAI_PARSE_TEXT_MODEL = "openai-luna-model"
     s.OPENAI_VISION_MODEL = "openai-vision-model"
     s.OPENAI_REQUEST_TIMEOUT_SECONDS = 20
     s.OPENAI_MAX_RETRIES = 1
@@ -107,7 +108,7 @@ def test_text_purposes_prefer_cf_and_fallback_to_openai(mock_circuit_breaker):
             "openai-text-model",
         ]
     assert manager.get_fallback_chain(ModelPurpose.PARSE_TEXT)[:2] == [
-        "openai-text-model",
+        "openai-luna-model",
         "cf-text-model",
     ]
 

@@ -20,52 +20,80 @@ _QUANTITY_UNIT = re.compile(
     r"\b\d+(?:[.,]\d+)?\s*[A-Za-zÀ-ỹ%]+\b",
     re.IGNORECASE,
 )
+_REFINEMENT_PREFIX = re.compile(
+    r"^(?:thêm|them|bớt|bot|add|remove|extra|plus|minus|with no|no)\s+",
+    re.IGNORECASE,
+)
 _DISH_MARKERS = frozenset(
     {
+        "biryani",
         "bowl",
         "bun",
         "bún",
         "burger",
+        "burrito",
+        "casserole",
         "com",
         "cơm",
         "curry",
         "dish",
+        "gỏi cuốn",
+        "goi cuon",
+        "hotpot",
+        "hủ tiếu",
+        "hu tieu",
+        "lasagna",
+        "lẩu",
+        "lau",
         "meal",
         "mi",
         "mì",
         "noodle",
+        "paella",
+        "pad thai",
+        "padthai",
         "pasta",
         "pho",
         "phở",
         "pizza",
         "platter",
         "ramen",
+        "risotto",
         "salad",
         "sandwich",
         "soup",
+        "steak",
         "stew",
         "taco",
+        "wellington",
         "wrap",
     }
 )
 _DISH_UNITS = frozenset({"bát", "bowl", "ổ", "plate", "tô", "đĩa"})
-_STOP_TOKENS = frozenset(
+_SINGLE_FOOD_MARKERS = frozenset(
     {
-        "a",
-        "an",
-        "of",
-        "one",
-        "the",
-        "1",
-        "2",
-        "3",
-        "4",
-        "5",
-        "6",
-        "7",
-        "8",
-        "9",
-        "10",
+        "apple",
+        "banana",
+        "butter",
+        "cheese",
+        "chuối",
+        "chuoi",
+        "dầu",
+        "dau",
+        "egg",
+        "honey",
+        "juice",
+        "milk",
+        "oil",
+        "sữa",
+        "sua",
+        "sữa chua",
+        "sua chua",
+        "táo",
+        "tao",
+        "trứng",
+        "trung",
+        "yogurt",
     }
 )
 
@@ -75,21 +103,25 @@ def classify_parse_text_input(text: str) -> ParseTextInputKind:
     compact = " ".join(text.strip().split())
     if not compact:
         return "single_food"
-    parts = [part for part in _LIST_SPLIT.split(compact) if part.strip()]
+
+    # Strip refinement prefix for classification
+    clean_text = _REFINEMENT_PREFIX.sub("", compact).strip()
+    if not clean_text:
+        clean_text = compact
+
+    parts = [part for part in _LIST_SPLIT.split(clean_text) if part.strip()]
     if len(parts) >= 2:
         return "ingredient_list"
-    if len(_QUANTITY_UNIT.findall(compact)) >= 2:
+    if len(_QUANTITY_UNIT.findall(clean_text)) >= 2:
         return "ingredient_list"
-    if _MASS_VOLUME.search(compact):
+    if _MASS_VOLUME.search(clean_text):
         return "single_food"
-    if _looks_like_named_dish(compact):
+    if _looks_like_named_dish(clean_text):
         return "dish"
     return "single_food"
 
 
-def composition_retry_feedback(
-    text: str, items: list[dict[str, Any]]
-) -> str | None:
+def composition_retry_feedback(text: str, items: list[dict[str, Any]]) -> str | None:
     """Ask the model to expand a named dish returned as a single row."""
     if classify_parse_text_input(text) != "dish":
         return None
@@ -102,12 +134,32 @@ def composition_retry_feedback(
 
 
 def _looks_like_named_dish(text: str) -> bool:
+    normalized = _normalize_for_search(text)
+    # Check if text contains single food markers (like yogurt, apple, egg) without composite dish markers
     tokens = _tokens(text)
-    if tokens & _DISH_MARKERS or tokens & _DISH_UNITS:
+    if tokens & _SINGLE_FOOD_MARKERS:
+        # If it contains single food (like yogurt/egg) without explicit dish units (tô/đĩa/bowl/plate), it's single food
+        if not (tokens & _DISH_UNITS) and not any(
+            marker in normalized
+            for marker in ("wellington", "casserole", "lasagna", "curry", "stew")
+        ):
+            return False
+
+    for marker in _DISH_MARKERS:
+        if re.search(rf"\b{re.escape(marker)}\b", normalized):
+            return True
+    if tokens & _DISH_UNITS:
         return True
-    if re.match(r"^\d", text.strip()):
-        return False
-    return len(tokens - _STOP_TOKENS) >= 3
+    return False
+
+
+def _normalize_for_search(text: str) -> str:
+    folded = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", text.lower())
+        if not unicodedata.combining(char)
+    )
+    return " ".join(re.findall(r"[a-z0-9]+", folded))
 
 
 def _tokens(text: str) -> set[str]:

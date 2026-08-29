@@ -412,6 +412,27 @@ class _VietnameseSimulationMealGenService(MealGenerationServicePort):
                     }
                 ]
             }
+        elif "trứng ốp la" in p and "bánh mì" in p:
+            return {
+                "items": [
+                    {
+                        "name": "Bánh mì",
+                        "lookup_name": "Baguette",
+                        "quantity": 1,
+                        "quantity_g": 80,
+                        "unit": "ổ",
+                        "macros": {"protein_g": 7.5, "carbs_g": 45.0, "fat_g": 1.5},
+                    },
+                    {
+                        "name": "Trứng ốp la",
+                        "lookup_name": "Fried egg",
+                        "quantity": 1,
+                        "quantity_g": 50,
+                        "unit": "quả",
+                        "macros": {"protein_g": 6.3, "carbs_g": 0.4, "fat_g": 7.0},
+                    },
+                ]
+            }
         elif "trứng ốp la" in p:
             return {
                 "items": [
@@ -572,9 +593,9 @@ def test_parse_text_vietnamese_comprehensive_suite(authenticated_client: TestCli
             "group": "Chỉnh sửa món",
             "name": "Thêm trứng ốp la",
             "text": "thêm 1 quả trứng ốp la",
-            "expected_items": 1,
-            "min_kcal": 60,
-            "max_kcal": 120,
+            "expected_items": 2,
+            "min_kcal": 250,
+            "max_kcal": 400,
             "current_items": [
                 {
                     "name": "Bánh mì",
@@ -635,11 +656,19 @@ def test_parse_text_vietnamese_comprehensive_suite(authenticated_client: TestCli
             assert "language: vi" in last_prompt
             assert tc["text"] in last_prompt
 
-            # Formula parity (4P + 4C + 9F)
+            # Canonical backend calorie verification (Atwater formula with fiber)
+            from src.domain.model.nutrition.macros import Macros as MacrosModel
+
             expected_kcal = round(
-                data["total_protein"] * 4.0
-                + data["total_carbs"] * 4.0
-                + data["total_fat"] * 9.0,
+                sum(
+                    MacrosModel(
+                        protein=item["protein"],
+                        carbs=item["carbs"],
+                        fat=item["fat"],
+                        fiber=item.get("fiber", 0.0) or 0.0,
+                    ).total_calories
+                    for item in data["items"]
+                ),
                 1,
             )
             assert abs(data["total_calories"] - expected_kcal) <= 1.0
@@ -649,12 +678,13 @@ def test_parse_text_vietnamese_comprehensive_suite(authenticated_client: TestCli
                 f"{tc['name']}: Calories {data['total_calories']} outside [{tc['min_kcal']}, {tc['max_kcal']}]"
             )
 
-            # Verification that item names are in Vietnamese (not English)
+            # Verification that item names are in genuine Vietnamese (not English)
+            from src.app.services.food_display_name import needs_display_localization
+
             for item in data["items"]:
-                assert any(
-                    c in item["name"].lower()
-                    for c in "aăâeêioôơuưyàằầèềìòồờùừỳáắấéếíóốớúứýảẳẩẻểỉỏổởủửỷãẵẫẽễĩõỗỡũữỹạặậẹệịọộợụựỵđ"
-                ), f"Item name '{item['name']}' does not look localized into Vietnamese"
+                assert not needs_display_localization(item["name"], "vi"), (
+                    f"Item name '{item['name']}' contains untranslated English"
+                )
 
             measurement_results.append(
                 {

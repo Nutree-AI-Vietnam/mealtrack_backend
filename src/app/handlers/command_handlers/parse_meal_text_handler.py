@@ -521,6 +521,7 @@ class ParseMealTextHandler(
             macros = item.get("macros", {})
             flat_item = {
                 "name": item.get("name"),
+                "model_display_name": item.get("name"),
                 "lookup_name": item.get("lookup_name")
                 or self._extract_english_name(item.get("name", "")),
                 "preparation": item.get("preparation", "unknown"),
@@ -849,13 +850,16 @@ class ParseMealTextHandler(
                 return None
 
     def _quantity_in_grams(self, item: dict[str, Any], food_name: str) -> float:
+        unit = _preferred_parse_unit(item)
+        normalized_unit = normalize_unit_for_manual_save(unit)
+        # Volume units must convert with food density, never assumed 1g = 1ml
+        if normalized_unit in {"ml", "l", "cup", "tbsp", "tsp", "floz"}:
+            quantity = float(item.get("quantity") or 1)
+            return convert_quantity_to_grams(quantity, normalized_unit, food_name)
         if item.get("quantity_g") is not None:
             return float(item["quantity_g"])
         quantity = float(item.get("quantity") or 1)
-        unit = _preferred_parse_unit(item)
-        return convert_quantity_to_grams(
-            quantity, normalize_unit_for_manual_save(unit), food_name
-        )
+        return convert_quantity_to_grams(quantity, normalized_unit, food_name)
 
     def _local_reference_is_usable(
         self, reference: dict[str, Any], lookup_name: str, preparation: str
@@ -890,6 +894,20 @@ class ParseMealTextHandler(
         """
         if command.user_id is None or self._uow_factory is None:
             return
+        generic_sentinels = frozenset(
+            {
+                "nguyên liệu",
+                "ingrediente",
+                "ingrédient",
+                "zutat",
+                "食材",
+                "ingredient",
+                "unknown",
+                "food",
+                "thực phẩm",
+                "món ăn",
+            }
+        )
         for item in items:
             if item.get("origin") != "provider":
                 continue
@@ -905,7 +923,22 @@ class ParseMealTextHandler(
             ).strip()
             if not english_name:
                 continue
-            locale_name = str(item.get("name") or item.get("lookup_name") or "").strip()
+
+            raw_locale = str(
+                item.get("model_display_name") or item.get("name") or ""
+            ).strip()
+            if not raw_locale or raw_locale.lower() in generic_sentinels:
+                locale_name = ""
+            elif (
+                command.language
+                and command.language != "en"
+                and needs_display_localization(raw_locale, command.language)
+            ):
+                # Don't persist an English name as Vietnamese translation
+                locale_name = ""
+            else:
+                locale_name = raw_locale
+
             per_100g = {
                 "protein_100g": item.get("protein_per_100g") or 0.0,
                 "carbs_100g": item.get("carbs_per_100g") or 0.0,

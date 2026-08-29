@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = Field(default=None)
     OPENAI_VISION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TEXT_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
+    OPENAI_PARSE_TEXT_MODEL: str = Field(
+        default="gpt-5.6-luna-2026-06-01",
+        description="Primary OpenAI Luna model for parse-text.",
+    )
     OPENAI_TRANSLATION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
     OPENAI_REQUEST_TIMEOUT_SECONDS: int = Field(default=20)

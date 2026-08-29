@@ -21,6 +21,7 @@ from src.observability import increment_metric, log_event
 logger = logging.getLogger(__name__)
 
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini-2026-03-17"
+DEFAULT_PARSE_TEXT_MODEL = "gpt-5.6-luna-2026-06-01"
 TEXT_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.PARSE_TEXT,
     ModelPurpose.BARCODE,
@@ -49,10 +50,10 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
         DEFAULT_OPENAI_MODEL,
     ],
     # ==========================================================================
-    # SHORT STRUCTURED TEXT: OpenAI fallback when CF text is configured
+    # SHORT STRUCTURED TEXT: Luna primary for parse_text, CF fallback
     # ==========================================================================
     ModelPurpose.PARSE_TEXT: [
-        DEFAULT_OPENAI_MODEL,
+        DEFAULT_PARSE_TEXT_MODEL,
     ],
     ModelPurpose.BARCODE: [DEFAULT_OPENAI_MODEL],
     ModelPurpose.MEAL_NAMES: [
@@ -128,9 +129,15 @@ class AIModelManager:
             prompt_cache_retention=settings.OPENAI_PROMPT_CACHE_RETENTION or None,
             prompt_cache_key_prefix=settings.OPENAI_PROMPT_CACHE_KEY_PREFIX,
         )
+        parse_text_model = (
+            getattr(settings, "OPENAI_PARSE_TEXT_MODEL", None)
+            or getattr(settings, "OPENAI_TEXT_MODEL", None)
+            or DEFAULT_PARSE_TEXT_MODEL
+        )
         self._providers["openai"] = openai
         self._model_provider_overrides[settings.OPENAI_TEXT_MODEL] = "openai"
         self._model_provider_overrides[settings.OPENAI_VISION_MODEL] = "openai"
+        self._model_provider_overrides[parse_text_model] = "openai"
 
         self._append_model_for_purposes(
             settings.OPENAI_TEXT_MODEL,
@@ -138,9 +145,13 @@ class AIModelManager:
             remove_models={DEFAULT_OPENAI_MODEL, settings.OPENAI_TEXT_MODEL},
         )
         self._prepend_model_for_purposes(
-            settings.OPENAI_TEXT_MODEL,
+            parse_text_model,
             {ModelPurpose.PARSE_TEXT},
-            remove_models={DEFAULT_OPENAI_MODEL, settings.OPENAI_TEXT_MODEL},
+            remove_models={
+                DEFAULT_PARSE_TEXT_MODEL,
+                DEFAULT_OPENAI_MODEL,
+                parse_text_model,
+            },
         )
         self._prepend_model_for_purposes(
             settings.OPENAI_VISION_MODEL,
