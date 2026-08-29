@@ -5,7 +5,14 @@ import logging
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user.update_custom_macros_command import UpdateCustomMacrosCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.user.user_custom_macros_updated_event import (
+    UserCustomMacrosUpdatedEvent,
+)
+from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -16,11 +23,19 @@ logger = logging.getLogger(__name__)
 class UpdateCustomMacrosCommandHandler(EventHandler[UpdateCustomMacrosCommand, None]):
     """Set or clear custom macro overrides on user profile."""
 
-    def __init__(self, cache_invalidation: CacheInvalidationService | None = None):
-        self.cache_invalidation = cache_invalidation
+    def __init__(
+        self,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
+    ):
+        self.uow = uow
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: UpdateCustomMacrosCommand) -> None:
-        async with AsyncUnitOfWork() as uow:
+        uow = self.uow or AsyncUnitOfWork()
+        async with uow:
             from sqlalchemy import select
 
             result = await uow.session.execute(
@@ -60,6 +75,14 @@ class UpdateCustomMacrosCommandHandler(EventHandler[UpdateCustomMacrosCommand, N
             action = "cleared" if non_null_count == 0 else "set"
             logger.info(f"Custom macros {action} for user {command.user_id}")
 
-        # Synchronous invalidation guarantees Redis is cleared before the response returns
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_custom_macros_update(command.user_id)
+        event = UserCustomMacrosUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={"user_id": str(command.user_id)},
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published custom macros updated integration event event_id=%s aggregate_id=%s",
+            event.event_id,
+            event.aggregate_id,
+        )

@@ -288,7 +288,12 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 }
 
                 if self.cache_service:
-                    await self.cache_service.set_json(cache_key, result, ttl)
+                    await self.cache_service.set_json(
+                        cache_key,
+                        result,
+                        ttl,
+                        revision_field="profile_target_revision",
+                    )
 
                 return result
 

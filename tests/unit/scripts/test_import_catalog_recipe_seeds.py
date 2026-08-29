@@ -12,7 +12,9 @@ from src.domain.services.meal_recommendation.catalog_recipe_seed_validator impor
 _SCRIPT_PATH = (
     Path(__file__).resolve().parents[3] / "scripts" / "import_catalog_recipe_seeds.py"
 )
-_SPEC = importlib.util.spec_from_file_location("import_catalog_recipe_seeds", _SCRIPT_PATH)
+_SPEC = importlib.util.spec_from_file_location(
+    "import_catalog_recipe_seeds", _SCRIPT_PATH
+)
 assert _SPEC is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None

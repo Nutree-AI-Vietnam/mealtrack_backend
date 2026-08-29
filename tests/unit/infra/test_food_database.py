@@ -175,6 +175,7 @@ async def test_create_manual_meal_command_handler_aggregates_items(monkeypatch):
     handler = CreateManualMealCommandHandler(
         uow=mock_uow,
         meal_repository=InMemoryMealRepository(),
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     # Chicken breast per 100g: 165 cal, 31g protein, 0g carbs, 3.6g fat

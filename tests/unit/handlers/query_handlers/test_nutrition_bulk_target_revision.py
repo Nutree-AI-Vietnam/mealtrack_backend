@@ -28,7 +28,7 @@ async def test_stale_bulk_target_cache_is_recomputed():
     handler._compute = AsyncMock(return_value=fresh)
 
     assert await handler.handle(query) == fresh
-    handler._compute.assert_awaited_once_with(query)
+    handler._compute.assert_awaited_once()
     cache.set_json.assert_awaited_once()
 
 

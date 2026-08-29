@@ -9,14 +9,11 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from src.api.base_dependencies import (
-    get_ai_model_manager,
     get_async_food_reference_repository,
-    get_cache_service,
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.dependencies.guest_quota import get_guest_quota_service
-from src.api.dependencies.task_manager import get_optional_task_manager
 from src.api.exceptions import ValidationException, handle_exception
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
@@ -45,13 +42,8 @@ from src.app.commands.meal.create_manual_meal_command import (
     ManualMealItem,
 )
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
-from src.app.services.meal_value_insight_scheduler import (
-    schedule_value_insight_generation,
-)
-from src.domain.ports.cache_port import CachePort
-from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
 from src.domain.services.prompts.input_sanitizer import sanitize_user_description
-from src.infra.event_bus import BackgroundTaskManager, EventBus
+from src.infra.event_bus import EventBus
 from src.infra.services.durable_write_service import (
     MANUAL_MEAL_CREATE_ACTION,
     DurableWriteConflictError,
@@ -73,9 +65,6 @@ async def create_manual_meal(
     payload: CreateManualMealFromFoodsRequest,
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
-    cache_service: CachePort | None = Depends(get_cache_service),
-    task_manager: BackgroundTaskManager | None = Depends(get_optional_task_manager),
-    ai_manager: MealInsightAIPort = Depends(get_ai_model_manager),
     food_reference_repository=Depends(get_async_food_reference_repository),
     x_nutrition_contract_version: int | None = Header(
         default=None, alias="X-Nutrition-Contract-Version"
@@ -206,6 +195,7 @@ async def create_manual_meal(
             nutrition_contract_version=payload.nutrition_contract_version,
             idempotency_key=idempotency_key,
             request_fingerprint=_manual_request_fingerprint(payload),
+            language=get_request_language(request),
         )
         _t0 = time.perf_counter()
         meal = await event_bus.send(cmd)
@@ -216,16 +206,6 @@ async def create_manual_meal(
             user_id,
             _elapsed_ms,
         )
-        schedule_value_insight_generation(
-            task_manager,
-            meal,
-            language=get_request_language(request),
-            cache_service=cache_service,
-            ai_manager=ai_manager,
-            event_bus=event_bus,
-            user_id=user_id,
-        )
-
         response = ManualMealCreationResponse(
             meal_id=meal.meal_id,
             status="success",

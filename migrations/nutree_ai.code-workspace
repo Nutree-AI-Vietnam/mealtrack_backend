@@ -5,6 +5,15 @@
         },
         {
             "path": "../../nutree/nutree_ai"
+        },
+        {
+            "path": "../../nutreeai_async"
+        },
+        {
+            "path": "../../nutree_web_funnel"
+        },
+        {
+            "path": "../../nutree-web"
         }
     ]
 }

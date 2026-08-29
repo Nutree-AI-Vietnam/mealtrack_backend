@@ -10,20 +10,15 @@ from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.commands.meal.upload_meal_image_immediately_command import (
     UploadMealImageImmediatelyCommand,
 )
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 from src.app.services.food_reference_validation_service import (
     FoodReferenceValidationService,
 )
-from src.app.services.meal_value_insight_scheduler import (
-    MealInsightEventBus,
-    MealInsightTaskScheduler,
-    schedule_value_insight_generation,
-)
 from src.domain.model.meal import Meal
 from src.domain.model.meal.meal_response_localization import MealResponseLocalization
-from src.domain.ports.cache_port import CachePort
 from src.domain.ports.image_store_port import ImageStorePort
-from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.meal_analysis.meal_translation_service import (
     MealTranslationService,
@@ -62,14 +57,9 @@ class MealAnalyzeRuntime:
     vision_service: VisionAIServicePort | None = None
     gpt_parser: Any | None = None
     uow: Any | None = None
-    cache_invalidation: CacheInvalidationService | None = None
-    meal_value_insight_task_manager: MealInsightTaskScheduler | None = None
-    meal_value_insight_cache: CachePort | None = None
-    meal_value_insight_ai_manager: MealInsightAIPort | None = None
-    event_bus: MealInsightEventBus | None = None
-    meal_value_insight_scheduler: Callable[..., bool] = (
-        schedule_value_insight_generation
-    )
+    event_publisher: IntegrationEventPublisherPort | None = None
+    event_bus: Any | None = None
+    environment: str = "development"
     meal_translation_service: MealTranslationService | None = None
     text_translation_service: Any | None = None
     food_reference_validation_service: FoodReferenceValidationService | None = None

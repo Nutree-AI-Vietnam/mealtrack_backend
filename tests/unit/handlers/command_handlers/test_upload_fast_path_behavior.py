@@ -159,6 +159,7 @@ async def test_non_english_image_response_skips_translation_persistence(caplog):
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=mock_event_bus,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock(
@@ -241,6 +242,7 @@ def parallel_mode_harness():
     handler = UploadMealImageImmediatelyHandler(
         uow=mock_uow,
         event_bus=mock_event_bus,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock()

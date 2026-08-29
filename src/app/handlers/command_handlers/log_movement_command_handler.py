@@ -1,14 +1,17 @@
 """Command handler for logging a movement entry."""
 
 import logging
-from datetime import date, timedelta
-from typing import Optional
+from datetime import timedelta
 
 from src.api.exceptions import ValidationException
 from src.app.commands.movement import LogMovementCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.movement.movement_created_event import MovementCreatedEvent
 from src.domain.model.movement import MovementEntry, MovementIntensity
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.services.movement_catalog_service import get_activity, get_met
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
@@ -44,9 +47,7 @@ def _validate_log_movement(cmd: LogMovementCommand) -> None:
             "Duration must be between 1 and 600 minutes", "INVALID_DURATION"
         )
     if cmd.kcal_burned < 0:
-        raise ValidationException(
-            "Calories burned cannot be negative", "INVALID_KCAL"
-        )
+        raise ValidationException("Calories burned cannot be negative", "INVALID_KCAL")
     if cmd.kcal_burned > 5000:
         raise ValidationException(
             "kcal_burned exceeds maximum allowed (5000)", "INVALID_KCAL"
@@ -72,10 +73,12 @@ class LogMovementCommandHandler(EventHandler[LogMovementCommand, dict]):
     def __init__(
         self,
         uow: AsyncUnitOfWork,
-        cache_invalidation: Optional[CacheInvalidationService] = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, cmd: LogMovementCommand) -> dict:
         _validate_log_movement(cmd)
@@ -107,10 +110,22 @@ class LogMovementCommandHandler(EventHandler[LogMovementCommand, dict]):
                 logged_at=logged_at,
             )
             saved = await uow.movement_entries.add(entry)
-
-        if self.cache_invalidation:
-            await self.cache_invalidation.schedule_after_movement_write(
-                cmd.user_id, log_date
+            integration_event = MovementCreatedEvent(
+                environment=self.environment,
+                aggregate_id=saved.id,
+                data={
+                    "user_id": cmd.user_id,
+                    "log_date": log_date.isoformat(),
+                },
             )
+
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published movement created integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         return _movement_response(saved)

@@ -21,7 +21,6 @@ from src.domain.exceptions.meal_recommendation_exceptions import (
     MealRecommendationCreationError,
 )
 
-from .background_task_manager import BackgroundTaskManager
 from .event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -66,7 +65,7 @@ class PyMediatorEventBus(EventBus):
     Uses async-native execution without thread pools for proper event loop handling.
     """
 
-    def __init__(self, task_manager: BackgroundTaskManager | None = None):
+    def __init__(self):
         # Use SingletonRegistry to ensure handlers are reused
         registry = SingletonRegistry()
         self._mediator = PyMediator(registry=registry)
@@ -74,7 +73,6 @@ class PyMediatorEventBus(EventBus):
         self._domain_event_subscribers: dict[type[DomainEvent], list[Any]] = {}
         # Store direct handler references for async execution
         self._async_handlers: dict[type[Event], EventHandler] = {}
-        self._task_manager = task_manager or BackgroundTaskManager()
 
     def register_handler(self, event_type: type[Event], handler: EventHandler) -> None:
         """Register a handler for a specific event type."""
@@ -223,27 +221,16 @@ class PyMediatorEventBus(EventBus):
                 tasks.append(async_wrapper(subscriber, event))
 
         if tasks:
-            # Execute all tasks in the background (fire-and-forget)
-            async def run_tasks_in_background():
-                logger.debug(f"Starting background processing for {event_type.__name__}")
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                # Log any exceptions
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        logger.error(
-                            f"Subscriber {i} for {event_type.__name__} failed: {result}",
-                            exc_info=result,
-                        )
-                logger.debug(
-                    f"Background processing completed for {event_type.__name__}"
-                )
-
-            # Schedule the task to run in the background (managed lifecycle)
-            logger.debug(f"Scheduling background task for {event_type.__name__}")
-            self._task_manager.spawn(
-                f"event_bus:{event_type.__name__}",
-                run_tasks_in_background(),
+            logger.debug(f"Starting execution for {event_type.__name__}")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(
+                        f"Subscriber {i} for {event_type.__name__} failed: {result}",
+                        exc_info=result,
+                    )
+            logger.debug(
+                f"Processing completed for {event_type.__name__}"
             )
 
     def close(self):

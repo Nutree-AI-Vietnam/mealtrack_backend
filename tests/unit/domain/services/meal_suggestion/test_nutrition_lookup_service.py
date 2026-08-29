@@ -14,6 +14,7 @@ Covers:
 """
 
 import asyncio
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -57,6 +58,7 @@ def _make_service(
     resolver_result=None,
     gen_result=None,
     redis_client=None,
+    cache_service=None,
 ) -> NutritionLookupService:
     """Build a NutritionLookupService with all dependencies mocked."""
     repo = MagicMock()
@@ -76,6 +78,7 @@ def _make_service(
         ingredient_nutrition_resolver=resolver,
         generation_service=gen,
         redis_client=redis_client,
+        cache_service=cache_service,
     )
 
 
@@ -133,12 +136,13 @@ async def test_cached_t1_result_preserves_food_reference_id():
     """Warm Redis lookup preserves canonical food reference identity."""
     redis = MagicMock()
     redis.get = AsyncMock(return_value=None)
-    redis.set = AsyncMock()
+    cache = MagicMock()
+    cache.set = AsyncMock()
     ref = _make_ref(ref_id=77)
-    svc = _make_service(ref_result=ref, redis_client=redis)
+    svc = _make_service(ref_result=ref, redis_client=redis, cache_service=cache)
 
     cold = await svc._lookup_ingredient("chicken breast", 100.0)
-    payload = redis.set.await_args.args[1]
+    payload = json.dumps(cache.set.await_args.args[1])
     redis.get.return_value = payload
     warm = await svc._lookup_ingredient("chicken breast", 200.0)
 

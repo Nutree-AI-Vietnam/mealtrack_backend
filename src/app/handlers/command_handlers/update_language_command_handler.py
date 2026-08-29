@@ -1,15 +1,19 @@
 """Handler for updating user language preference."""
 
 import logging
-from typing import Dict, Any
+from typing import Any
 
 from src.app.commands.user.update_language_command import (
-    UpdateLanguageCommand,
     SUPPORTED_LANGUAGES,
+    UpdateLanguageCommand,
 )
 from src.app.events.base import EventHandler, handles
-from src.infra.services.daily_context_precompute_service import (
-    DailyContextPrecomputeService,
+from src.app.events.user.user_profile_updated_event import (
+    UserProfileUpdatedEvent,
+)
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -17,20 +21,24 @@ logger = logging.getLogger(__name__)
 
 
 @handles(UpdateLanguageCommand)
-class UpdateLanguageCommandHandler(EventHandler[UpdateLanguageCommand, Dict[str, Any]]):
+class UpdateLanguageCommandHandler(EventHandler[UpdateLanguageCommand, dict[str, Any]]):
     """Handler for updating user language preference."""
 
     def __init__(
-        self, precompute_service: DailyContextPrecomputeService | None = None
+        self,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
+        **kwargs: Any,
     ):
-        self.precompute_service = precompute_service
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     def set_dependencies(self, **kwargs):
         """Set dependencies for dependency injection."""
-        if "precompute_service" in kwargs:
-            self.precompute_service = kwargs["precompute_service"]
+        if "event_publisher" in kwargs:
+            self.event_publisher = kwargs["event_publisher"]
 
-    async def handle(self, command: UpdateLanguageCommand) -> Dict[str, Any]:
+    async def handle(self, command: UpdateLanguageCommand) -> dict[str, Any]:
         """Handle language update command."""
         language = command.language_code.lower().strip()
 
@@ -47,16 +55,15 @@ class UpdateLanguageCommandHandler(EventHandler[UpdateLanguageCommand, Dict[str,
             )
             await uow.commit()
 
-        if self.precompute_service:
-            try:
-                await self.precompute_service.reschedule_user_notifications(
-                    str(command.user_id)
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to reschedule notifications after language update: %s",
-                    exc,
-                )
+        event = UserProfileUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={
+                "user_id": str(command.user_id),
+                "language": language,
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
 
         logger.info(f"Updated language for user {command.user_id}: {language}")
         return {"success": True, "language_code": language}

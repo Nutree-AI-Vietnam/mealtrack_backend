@@ -45,7 +45,6 @@ def _make_handler(vision_analyze_mock, max_attempts: int = 3):
         gpt_parser=Mock(),
         meal_translation_service=None,
         fast_path_policy=_make_fast_path_policy(max_attempts),
-        cache_invalidation=None,
     )
     return handler
 
@@ -153,7 +152,9 @@ class TestVisionRetryRouting:
         command = _make_command()
         command.scan_mode = "food_label"
 
-        with pytest.raises(ValidationException, match="require the scan-by-url image flow"):
+        with pytest.raises(
+            ValidationException, match="require the scan-by-url image flow"
+        ):
             await handler.handle(command)
 
         analyze_mock.assert_not_called()

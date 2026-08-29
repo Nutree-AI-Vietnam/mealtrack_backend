@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from src.domain.constants.food_density import get_density
 from src.domain.model.nutrition.macros import Macros
+from src.domain.ports.cache_port import CachePort
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
     normalize_food_name,
 )
@@ -110,11 +111,13 @@ class NutritionLookupService:
         ingredient_nutrition_resolver: Any,
         generation_service: Any,
         redis_client: Any = None,
+        cache_service: CachePort | None = None,
     ) -> None:
         self._repo = food_ref_repo
         self._resolver = ingredient_nutrition_resolver
         self._gen = generation_service
         self._redis = redis_client
+        self._cache_service = cache_service
 
     # ------------------------------------------------------------------
     # Public API
@@ -332,8 +335,8 @@ class NutritionLookupService:
         )
 
     async def _cache_result(self, key: str, result: IngredientMacros) -> None:
-        """Cache per-100g macros in Redis."""
-        if not self._redis:
+        """Schedule per-100g macros cache population."""
+        if self._cache_service is None:
             return
         try:
             factor = 100.0 / result.quantity_g if result.quantity_g > 0 else 1.0
@@ -347,7 +350,7 @@ class NutritionLookupService:
             }
             if result.food_reference_id is not None:
                 data["food_reference_id"] = result.food_reference_id
-            await self._redis.set(key, json.dumps(data), ttl=NUTRITION_CACHE_TTL)
+            await self._cache_service.set(key, data, NUTRITION_CACHE_TTL)
         except Exception as exc:
             logger.warning("Redis set failed for %s: %s", key, exc)
 

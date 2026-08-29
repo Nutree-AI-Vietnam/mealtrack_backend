@@ -9,7 +9,6 @@ These tests describe intended post-refactor behavior. Some will FAIL
 before Phase 2 (central exception boundary) is in place.
 """
 
-import asyncio
 import logging
 
 import pytest
@@ -263,34 +262,3 @@ class TestMiddlewareOutcomeLog:
         )
 
 
-# ---------------------------------------------------------------------------
-# Background / cron boundary — must log once locally
-# ---------------------------------------------------------------------------
-
-
-class TestBackgroundTaskLogging:
-    """Background task failures have no request middleware; they must log once locally."""
-
-    @pytest.mark.asyncio
-    async def test_background_task_manager_logs_once_on_failure(self, caplog):
-        """BackgroundTaskManager._on_done must emit exactly one ERROR for a failed task."""
-        from src.infra.event_bus.background_task_manager import BackgroundTaskManager
-
-        mgr = BackgroundTaskManager()
-
-        async def failing_task():
-            raise ValueError("background failure")
-
-        with caplog.at_level(logging.ERROR):
-            mgr.spawn("test-task", failing_task())
-            # Give the event loop a tick to run the task and invoke _on_done
-            await asyncio.sleep(0.01)
-
-        errors = _error_records(caplog)
-        assert len(errors) == 1, (
-            f"Expected exactly 1 ERROR from background task failure, got {len(errors)}"
-        )
-        assert (
-            "background failure" in errors[0].message
-            or "test-task" in errors[0].message
-        )

@@ -289,15 +289,14 @@ async def save_meal_suggestion(
 
     meal_id = await event_bus.send(command)
 
-    # Unsplash API compliance: trigger download event (fire-and-forget, managed)
+    # Unsplash API compliance: trigger download event
     if body.unsplash_download_location:
-        from src.api.dependencies.task_manager import get_task_manager
         from src.infra.adapters.unsplash_image_adapter import UnsplashImageAdapter
 
-        get_task_manager().spawn(
-            "unsplash_download",
-            UnsplashImageAdapter.trigger_download(body.unsplash_download_location),
-        )
+        try:
+            await UnsplashImageAdapter.trigger_download(body.unsplash_download_location)
+        except Exception as exc:
+            logger.debug("unsplash_download.trigger_failed error=%s", type(exc).__name__)
 
     meal = await event_bus.send(GetMealByIdQuery(meal_id=meal_id, user_id=user_id))
     display_projections = await load_food_reference_display_projections(

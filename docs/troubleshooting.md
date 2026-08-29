@@ -92,6 +92,41 @@ redis-cli ping
 
 ---
 
+### Cloudflare Cache or Integration Event Stalls
+
+**Problem:** A mutation succeeds, but its cache/integration event does not reach
+Cloudflare Queue or the Worker.
+
+**Diagnosis:**
+```bash
+rg -n "hydration.created.v1|cache_invalidation.v1|CloudflareQueuePublisher|IntegrationEventRouter" src workers
+```
+
+**Solutions:**
+1. For hydration, confirm the business row committed, then check the API log for
+   the direct Queue publish result. Hydration no longer waits for the outbox
+   worker.
+2. Verify the environment-specific Queue ID, account ID, and valid Queue
+   credentials. The REST publisher must use the alphanumeric Queue ID, not the
+   Worker/Wrangler queue name. Publication is required; there is no disabled
+   fallback.
+3. Check the Worker logs for `integration_event_ack`,
+   `integration_event_retry`, `ack`, `retry`, or DLQ movement on the matching
+   `event_id`.
+4. For hydration, verify the Worker has valid Upstash Redis REST access,
+   `NEON_DATABASE_URL` (or `DATABASE_URL`), and the environment ingress queue.
+   A handler failure or database lookup failure retries the whole ingress event.
+5. Other mutation paths publish directly through the same Queue publisher;
+   inspect the API publication result and the Worker event ID.
+
+**MVP risk note:** if the SQL transaction commits and the direct Queue publish
+fails afterward, the hydration row is still durable but the event can be lost.
+There is no automatic outbox fallback for that path in this MVP.
+
+**Evidence note:** staging/live deployment proof for this slice is currently pending or blocked on environment credentials. Do not mark the rollout complete until Queue, Worker, and Upstash access are verified separately.
+
+---
+
 ### Slow Database Queries
 
 **Problem:** `[SLOW_REQUEST_DETECTED >1s]` in logs

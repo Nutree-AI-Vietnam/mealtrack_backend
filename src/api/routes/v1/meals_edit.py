@@ -8,14 +8,11 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Header, Request
 
 from src.api.base_dependencies import (
-    get_ai_model_manager,
     get_async_food_reference_repository,
-    get_cache_service,
     get_meal_translation_service,
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.api.dependencies.task_manager import get_optional_task_manager
 from src.api.exceptions import ValidationException
 from src.api.mappers.meal_locale_ensure import ensure_requested_meal_translation
 from src.api.mappers.meal_mapper import MealMapper
@@ -38,12 +35,7 @@ from src.app.commands.meal.attach_meal_photo_command import AttachMealPhotoComma
 from src.app.commands.meal.delete_meal_command import DeleteMealCommand
 from src.app.commands.meal.delete_meal_photo_command import DeleteMealPhotoCommand
 from src.app.queries.meal import GetMealByIdQuery
-from src.app.services.meal_value_insight_scheduler import (
-    schedule_value_insight_generation,
-)
-from src.domain.ports.cache_port import CachePort
-from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
-from src.infra.event_bus import BackgroundTaskManager, EventBus
+from src.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -80,9 +72,6 @@ async def update_meal_ingredients(
     request: Request,
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
-    cache_service: CachePort | None = Depends(get_cache_service),
-    task_manager: BackgroundTaskManager | None = Depends(get_optional_task_manager),
-    ai_manager: MealInsightAIPort = Depends(get_ai_model_manager),
     x_nutrition_contract_version: int | None = Header(
         default=None, alias="X-Nutrition-Contract-Version"
     ),
@@ -177,6 +166,7 @@ async def update_meal_ingredients(
         override_intent=payload.override_intent,
         idempotency_key=idempotency_key,
         request_fingerprint=_edit_request_fingerprint(meal_id, payload),
+        language=get_request_language(request),
     )
 
     logger.info(
@@ -197,15 +187,6 @@ async def update_meal_ingredients(
         query=query,
         event_bus=event_bus,
         meal_translation_service=meal_translation_service,
-    )
-    schedule_value_insight_generation(
-        task_manager,
-        meal,
-        language=language,
-        cache_service=cache_service,
-        ai_manager=ai_manager,
-        event_bus=event_bus,
-        user_id=user_id,
     )
     if payload.nutrition_contract_version == 2:
         result = dict(result)

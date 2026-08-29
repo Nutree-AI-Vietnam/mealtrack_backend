@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from src.domain.ports.food_data_service_port import FoodDataServicePort
+from src.infra.http import get_shared_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +27,12 @@ class FoodDataService(FoodDataServicePort):
 
     async def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         params = {**params, "api_key": self.api_key}
-        if self._client is not None:
-            resp = await self._client.get(
-                f"{self.BASE_URL}{path}", params=params, timeout=10
-            )
-            resp.raise_for_status()
-            return resp.json()
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{self.BASE_URL}{path}", params=params, timeout=10
-            )
-            resp.raise_for_status()
-            return resp.json()
+        client = self._client or get_shared_http_client()
+        resp = await client.get(
+            f"{self.BASE_URL}{path}", params=params, timeout=10
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def search_foods(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         data = await self._get("/foods/search", {"query": query, "pageSize": limit})

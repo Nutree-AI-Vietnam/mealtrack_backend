@@ -51,7 +51,7 @@ from .meal_recommendation import (
 from .meal_write_operation import MealWriteOperationORM
 
 # Notification models
-from .notification import NotificationORM, NotificationPreferencesORM, UserFcmTokenORM
+from .notification import NotificationPreferencesORM
 from .nutrition.food_item import FoodItemORM
 
 # Nutrition models
@@ -81,16 +81,10 @@ from .weekly.weekly_macro_budget import WeeklyMacroBudgetORM
 BarcodeProductModel = FoodReferenceModel
 
 # AI Handshake guest trial quota
-# Affiliate outbox
-from .affiliate_event_outbox import AffiliateEventOutbox
 from .ai_handshake_guest_trial_quota import AiHandshakeGuestTrialQuota
 
 # Durable mutation replay
 from .durable_write_record import DurableWriteRecordORM
-
-# Referral system
-# Email log
-from .email_log import EmailLog
 
 # Movement tracking
 from .movement_entry import MovementEntryORM
@@ -142,9 +136,7 @@ __all__ = [
     "FoodItemTranslationORM",
     # Test models
     # Notification models
-    "NotificationORM",
     "NotificationPreferencesORM",
-    "UserFcmTokenORM",
     # Feature flags
     "FeatureFlag",
     # Saved suggestions
@@ -182,13 +174,9 @@ __all__ = [
     "DurableWriteRecordORM",
     # Movement tracking
     "MovementEntryORM",
-    # Email log
-    "EmailLog",
     # Promo codes
     "PromoCode",
     "PromoCodeRedemption",
-    # Affiliate outbox
-    "AffiliateEventOutbox",
     # AI Handshake guest trial quota
     "AiHandshakeGuestTrialQuota",
     "WebFunnelLead",

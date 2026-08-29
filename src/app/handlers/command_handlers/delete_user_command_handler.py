@@ -1,9 +1,8 @@
 """
 DeleteUserCommandHandler - Handler for deleting user accounts.
-Performs soft delete in database and hard delete in Firebase Auth.
+Performs soft delete in database and emits UserDeletedEvent for async cleanup.
 """
 
-import asyncio
 import logging
 from typing import Any
 
@@ -11,8 +10,13 @@ from src.api.dependencies.auth_cache import invalidate_cached_user_id
 from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.user import DeleteUserCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.user.user_deleted_event import UserDeletedEvent
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.cache_port import CachePort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.enums import MealStatusEnum
 
@@ -21,11 +25,7 @@ from src.infra.database.models.meal.meal import MealORM
 from src.infra.database.models.notification.notification_preferences import (
     NotificationPreferencesORM as NotificationPreferences,
 )
-from src.infra.database.models.notification.user_fcm_token import (
-    UserFcmTokenORM as UserFcmToken,
-)
 from src.infra.database.uow_async import AsyncUnitOfWork
-from src.infra.services.firebase_auth_service import FirebaseAuthService
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +38,20 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
         self,
         uow: AsyncUnitOfWorkPort | None = None,
         cache_service: CachePort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
         self.cache_service = cache_service
-        self.firebase_auth_service = FirebaseAuthService()
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: DeleteUserCommand) -> dict[str, Any]:
         """
         Delete user account.
         - Soft delete in database (set is_active=False)
         - Anonymize user data
-        - Hard delete in Firebase Authentication
+        - Emit UserDeletedEvent for out-of-process cleanup (nutreeai_async)
         """
         # Use provided UoW or create default
         uow = self.uow or AsyncUnitOfWork()
@@ -87,67 +90,7 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 # Save changes
                 await uow.users.save(user)
                 await uow.commit()
-                await invalidate_cached_user_id(
-                    self.cache_service, command.firebase_uid
-                )
                 logger.info("Successfully soft deleted user in database")
-
-                # Step 4: Revoke refresh tokens to invalidate all active sessions
-                # This prevents the user from getting new access tokens
-                # Run in thread pool to avoid blocking the async event loop
-                tokens_revoked = False
-                try:
-                    await asyncio.to_thread(
-                        self.firebase_auth_service.revoke_refresh_tokens,
-                        command.firebase_uid,
-                    )
-                    tokens_revoked = True
-                    logger.info("Successfully revoked Firebase refresh tokens")
-                except Exception as revoke_error:
-                    logger.warning(f"Token revocation failed: {str(revoke_error)}")
-                    # Continue - deletion is more important
-
-                # Step 5: Hard delete from Firebase Authentication.
-                # The DB soft-delete is already committed, so a Firebase failure
-                # here leaves an orphaned auth account (login still works but the
-                # backend rejects it as inactive). Surface it as an alertable,
-                # structured error and report it in the result so it can be
-                # retried out-of-band instead of being silently dropped.
-                firebase_deleted = False
-                try:
-                    firebase_deleted = await asyncio.to_thread(
-                        self.firebase_auth_service.delete_firebase_user,
-                        command.firebase_uid,
-                    )
-                    if firebase_deleted:
-                        logger.info("Successfully deleted user from Firebase")
-                    else:
-                        logger.error(
-                            "Firebase deletion returned False — orphaned auth account",
-                            extra={
-                                "firebase_uid": command.firebase_uid,
-                                "user_id": str(user_id),
-                                "firebase_delete_pending": True,
-                            },
-                        )
-                except Exception as firebase_error:
-                    logger.error(
-                        f"Firebase deletion failed: {str(firebase_error)}",
-                        exc_info=True,
-                        extra={
-                            "firebase_uid": command.firebase_uid,
-                            "user_id": str(user_id),
-                            "firebase_delete_pending": True,
-                        },
-                    )
-
-                return {
-                    "firebase_uid": command.firebase_uid,
-                    "deleted": True,
-                    "firebase_deleted": firebase_deleted,
-                    "tokens_revoked": tokens_revoked,
-                    "message": "Account successfully deleted",
-                }
 
             except ResourceNotFoundException:
                 # Re-raise not found errors
@@ -155,6 +98,33 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             except Exception as e:
                 await uow.rollback()
                 raise Exception(f"Failed to delete user account: {str(e)}") from e
+
+        await invalidate_cached_user_id(self.cache_service, command.firebase_uid)
+
+        # Step 4: Emit UserDeletedEvent to async queue for nutreeai_async to perform Firebase cleanup
+        event = UserDeletedEvent(
+            environment=self.environment,
+            aggregate_id=str(user_id),
+            data={
+                "user_id": str(user_id),
+                "firebase_uid": command.firebase_uid,
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published user deleted integration event event_id=%s aggregate_id=%s",
+            event.event_id,
+            event.aggregate_id,
+        )
+
+        return {
+            "firebase_uid": command.firebase_uid,
+            "deleted": True,
+            "firebase_deleted": False,
+            "tokens_revoked": False,
+            "firebase_cleanup_queued": True,
+            "message": "Account successfully deleted; Firebase cleanup queued",
+        }
 
     async def _soft_delete_related_data(self, uow, user_id: str) -> None:
         """
@@ -172,18 +142,7 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             )
             meals_count = meals_result.rowcount
 
-            # 2. Soft-delete meal plans - no longer applicable (feature removed)
-            meal_plans_count = 0
-
-            # 3. Deactivate FCM tokens (set is_active=False)
-            fcm_result = await uow.session.execute(
-                sa_update(UserFcmToken)
-                .where(UserFcmToken.user_id == user_id)
-                .values(is_active=False)
-            )
-            fcm_tokens_count = fcm_result.rowcount
-
-            # 4. Mark notification preferences as deleted (set is_deleted=True)
+            # 3. Mark notification preferences as deleted (set is_deleted=True)
             notif_result = await uow.session.execute(
                 sa_update(NotificationPreferences)
                 .where(NotificationPreferences.user_id == user_id)
@@ -195,8 +154,8 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             await uow.session.flush()
 
             logger.info(
-                f"Soft-deleted related data: meals={meals_count}, meal_plans={meal_plans_count}, "
-                f"fcm_tokens={fcm_tokens_count}, notification_prefs={notif_prefs_count}"
+                f"Soft-deleted related data: meals={meals_count}, "
+                f"notification_prefs={notif_prefs_count}"
             )
-        except Exception as e:
+        except Exception:
             raise

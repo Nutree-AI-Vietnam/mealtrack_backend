@@ -1,78 +1,10 @@
 from abc import ABC, abstractmethod
 
-from src.domain.model.notification import NotificationPreferences, UserFcmToken
+from src.domain.model.notification import NotificationPreferences
 
 
 class NotificationRepositoryPort(ABC):
     """Port interface for notification persistence operations."""
-
-    # FCM Token operations
-    @abstractmethod
-    async def save_fcm_token(self, token: UserFcmToken) -> UserFcmToken:
-        """
-        Persists an FCM token.
-
-        Args:
-            token: The FCM token to be saved
-
-        Returns:
-            The saved FCM token with any generated IDs
-        """
-        pass
-
-    @abstractmethod
-    async def find_fcm_token_by_token(self, fcm_token: str) -> UserFcmToken | None:
-        """
-        Finds an FCM token by the token string.
-
-        Args:
-            fcm_token: The FCM token string to find
-
-        Returns:
-            The FCM token if found, None otherwise
-        """
-        pass
-
-    @abstractmethod
-    async def find_active_fcm_tokens_by_user(
-        self, user_id: str
-    ) -> list[UserFcmToken]:
-        """
-        Finds all active FCM tokens for a user.
-
-        Args:
-            user_id: The user ID to find tokens for
-
-        Returns:
-            List of active FCM tokens for the user
-        """
-        pass
-
-    @abstractmethod
-    async def deactivate_fcm_token(self, fcm_token: str) -> bool:
-        """
-        Deactivates an FCM token.
-
-        Args:
-            fcm_token: The FCM token string to deactivate
-
-        Returns:
-            True if token was found and deactivated, False otherwise
-        """
-        pass
-
-    @abstractmethod
-    async def delete_fcm_token(self, fcm_token: str) -> bool:
-        """
-        Deletes an FCM token.
-
-        Args:
-            fcm_token: The FCM token string to delete
-
-        Returns:
-            True if token was found and deleted, False otherwise
-        """
-        pass
 
     # Notification Preferences operations
     @abstractmethod

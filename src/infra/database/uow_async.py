@@ -11,9 +11,6 @@ from src.domain.ports.meal_suggestion_repository_port import (
     MealSuggestionRepositoryPort,
 )
 from src.infra.database.config_async import AsyncSessionLocal
-from src.infra.repositories.affiliate_event_outbox_repository import (
-    AffiliateEventOutboxRepository,
-)
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
 )
@@ -140,7 +137,6 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.meal_translations = AsyncMealTranslationRepository(session)
         self.promo_codes = PromoCodeRepository(session)
         self.referrals = ReferralRepository(session)
-        self.affiliate_outbox = AffiliateEventOutboxRepository(session)
         self.meal_write_operations = AsyncMealWriteOperationRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

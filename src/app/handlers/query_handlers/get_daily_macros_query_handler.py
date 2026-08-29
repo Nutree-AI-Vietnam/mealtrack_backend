@@ -171,9 +171,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                     )
                 user_profile = await uow.users.get_profile(UUID(query.user_id))
                 water_goal_ml = (
-                    resolve_hydration_goal_ml(user_profile)
-                    if user_profile
-                    else 2000
+                    resolve_hydration_goal_ml(user_profile) if user_profile else 2000
                 )
             except Exception as exc:
                 logger.warning(
@@ -338,13 +336,19 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             logger.warning(f"Could not fetch weekly budget context: {e}")
             return None
 
-    async def _try_get_cached_result(self, user_id: str, target_date: date, revision: int | None):
+    async def _try_get_cached_result(
+        self, user_id: str, target_date: date, revision: int | None
+    ):
         if not self.cache_service:
             return None
         cache_key, _ = CacheKeys.daily_macros(user_id, target_date)
         try:
             cached = await self.cache_service.get_json(cache_key)
-            if revision is not None and cached and cached.get("target_revision") == revision:
+            if (
+                revision is not None
+                and cached
+                and cached.get("target_revision") == revision
+            ):
                 return cached
             return None
         except Exception as exc:
@@ -358,7 +362,9 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             return
         cache_key, ttl = CacheKeys.daily_macros(user_id, target_date)
         try:
-            await self.cache_service.set_json(cache_key, payload, ttl)
+            await self.cache_service.set_json(
+                cache_key, payload, ttl, revision_field="target_revision"
+            )
         except Exception as exc:
             logger.warning(
                 "Failed to write daily macros cache for %s: %s", user_id, exc

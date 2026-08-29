@@ -5,9 +5,7 @@ These tests scan source files to prevent regression into banned patterns.
 They do NOT execute runtime code — they operate purely on text/AST.
 """
 
-import ast
 import re
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).parents[3]  # repo root
@@ -76,15 +74,15 @@ class TestRouteLogAndRethrow:
 # is safe; logging headers["Authorization"] is not).
 _BANNED_LOG_PATTERNS = [
     # Food payload dumping — variable name in log call
-    r'logger\.\w+\(.*food_item_changes',
-    r'logger\.\w+\(.*content\[:',
+    r"logger\.\w+\(.*food_item_changes",
+    r"logger\.\w+\(.*content\[:",
     # Raw image / URL leaking
-    r'logger\.\w+\(.*image_url',
+    r"logger\.\w+\(.*image_url",
     # Auth header VALUE leaking (quoted key or variable reference — not just the word)
     r'logger\.\w+\(.*["\']Authorization["\']',
-    r'logger\.\w+\(.*authorization_header',
+    r"logger\.\w+\(.*authorization_header",
     # Bearer token value being logged (followed by a token character)
-    r'logger\.\w+\(.*Bearer\s+[A-Za-z0-9]',
+    r"logger\.\w+\(.*Bearer\s+[A-Za-z0-9]",
     # Email address leaking in logs
     r'logger\.\w+\(.*"Email sent to',
     r'logger\.\w+\(.*"Failed to send email to',
@@ -104,11 +102,12 @@ class TestSensitiveLogSubstrings:
             text = py_file.read_text()
             for lineno, line in enumerate(text.splitlines(), 1):
                 if combined.search(line):
-                    violations.append(f"{py_file.relative_to(ROOT)}:{lineno}: {line.strip()}")
+                    violations.append(
+                        f"{py_file.relative_to(ROOT)}:{lineno}: {line.strip()}"
+                    )
 
         assert violations == [], (
-            "Banned sensitive substrings found in log calls:\n"
-            + "\n".join(violations)
+            "Banned sensitive substrings found in log calls:\n" + "\n".join(violations)
         )
 
 
@@ -118,9 +117,6 @@ class TestSensitiveLogSubstrings:
 
 _ENTRYPOINTS = {
     SRC / "api" / "main.py",
-    SRC / "cron" / "email.py",
-    SRC / "cron" / "push.py",
-    SRC / "cron" / "affiliate_outbox.py",
 }
 
 

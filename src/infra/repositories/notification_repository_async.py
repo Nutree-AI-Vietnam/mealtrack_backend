@@ -1,20 +1,15 @@
 """Async notification repository."""
 
 import logging
-from datetime import date
 
-from sqlalchemy import and_, delete, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.domain.model.notification import NotificationPreferences, UserFcmToken
-from src.infra.database.models.notification.notification import NotificationORM
+from src.domain.model.notification import NotificationPreferences
 from src.infra.database.models.notification.notification_preferences import (
     NotificationPreferencesORM,
 )
-from src.infra.database.models.notification.user_fcm_token import UserFcmTokenORM
 from src.infra.mappers.notification_mapper import (
-    fcm_token_orm_to_domain,
     notification_prefs_orm_to_domain,
 )
 
@@ -26,86 +21,6 @@ class AsyncNotificationRepository:
 
     def __init__(self, session: AsyncSession):
         self.session = session
-
-    # ------------------------------------------------------------------
-    # FCM Token operations
-    # ------------------------------------------------------------------
-
-    async def save_fcm_token(self, token: UserFcmToken) -> UserFcmToken:
-        """Insert or update an FCM token.
-
-        Uses PostgreSQL upsert to avoid race-condition duplicate key failures
-        when multiple requests register the same token concurrently.
-        """
-        stmt = (
-            insert(UserFcmTokenORM)
-            .values(
-                id=token.token_id,
-                user_id=token.user_id,
-                fcm_token=token.fcm_token,
-                device_type=token.device_type.value,
-                is_active=token.is_active,
-                created_at=token.created_at,
-                updated_at=token.updated_at,
-            )
-            .on_conflict_do_update(
-                index_elements=[UserFcmTokenORM.fcm_token],
-                set_={
-                    "user_id": token.user_id,
-                    "device_type": token.device_type.value,
-                    "is_active": token.is_active,
-                    "updated_at": token.updated_at,
-                },
-            )
-            .returning(UserFcmTokenORM)
-        )
-        result = await self.session.execute(stmt)
-        db_token = result.scalar_one()
-        return fcm_token_orm_to_domain(db_token)
-
-    async def find_fcm_token_by_token(self, fcm_token: str) -> UserFcmToken | None:
-        """Find an FCM token by the token string."""
-        result = await self.session.execute(
-            select(UserFcmTokenORM).where(UserFcmTokenORM.fcm_token == fcm_token)
-        )
-        db_token = result.scalars().first()
-        return fcm_token_orm_to_domain(db_token) if db_token else None
-
-    async def find_active_fcm_tokens_by_user(self, user_id: str) -> list[UserFcmToken]:
-        """Find all active FCM tokens for a user."""
-        result = await self.session.execute(
-            select(UserFcmTokenORM).where(
-                and_(
-                    UserFcmTokenORM.user_id == user_id,
-                    UserFcmTokenORM.is_active == True,  # noqa: E712
-                )
-            )
-        )
-        return [fcm_token_orm_to_domain(t) for t in result.scalars().all()]
-
-    async def deactivate_fcm_token(self, fcm_token: str) -> bool:
-        """Deactivate an FCM token."""
-        result = await self.session.execute(
-            select(UserFcmTokenORM).where(UserFcmTokenORM.fcm_token == fcm_token)
-        )
-        db_token = result.scalars().first()
-        if db_token:
-            db_token.is_active = False
-            await self.session.flush()
-            return True
-        return False
-
-    async def delete_fcm_token(self, fcm_token: str) -> bool:
-        """Delete an FCM token."""
-        result = await self.session.execute(
-            select(UserFcmTokenORM).where(UserFcmTokenORM.fcm_token == fcm_token)
-        )
-        db_token = result.scalars().first()
-        if db_token:
-            await self.session.delete(db_token)
-            await self.session.flush()
-            return True
-        return False
 
     # ------------------------------------------------------------------
     # Notification Preferences operations
@@ -197,26 +112,3 @@ class AsyncNotificationRepository:
             await self.session.flush()
             return True
         return False
-
-    # ------------------------------------------------------------------
-    # Notification scheduling operations
-    # ------------------------------------------------------------------
-
-    async def delete_pending_notifications_for_user(
-        self, user_id: str, scheduled_date: date
-    ) -> int:
-        """Delete pending notifications for a user on a specific date.
-
-        Returns the number of deleted rows.
-        """
-        result = await self.session.execute(
-            delete(NotificationORM).where(
-                and_(
-                    NotificationORM.user_id == user_id,
-                    NotificationORM.scheduled_date == scheduled_date,
-                    NotificationORM.status == "pending",
-                )
-            )
-        )
-        await self.session.flush()
-        return result.rowcount

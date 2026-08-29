@@ -68,11 +68,11 @@ async def test_delete_meal_command_deletes_hydration_entry_alias():
     )
     uow.hydration_entries.delete_by_id_or_legacy_meal_id = AsyncMock(return_value=True)
 
-    cache = MagicMock()
-    cache.after_hydration_write = AsyncMock()
-    cache.after_meal_write = AsyncMock()
+    event_publisher = AsyncMock()
 
-    handler = DeleteMealCommandHandler(uow=uow, cache_invalidation=cache)
+    handler = DeleteMealCommandHandler(
+        uow=uow, event_publisher=event_publisher, environment="staging"
+    )
 
     result = await handler.handle(DeleteMealCommand(meal_id=entry_id, user_id=user_id))
 
@@ -80,5 +80,11 @@ async def test_delete_meal_command_deletes_hydration_entry_alias():
     uow.hydration_entries.delete_by_id_or_legacy_meal_id.assert_awaited_once_with(
         user_id, entry_id
     )
-    cache.after_hydration_write.assert_awaited_once_with(user_id, logged_at.date())
-    cache.after_meal_write.assert_not_called()
+    event_publisher.publish.assert_awaited_once()
+    payload = event_publisher.publish.await_args.args[0]
+    assert payload["event_type"] == "hydration.deleted.v1"
+    assert payload["aggregate_id"] == entry_id
+    assert payload["data"] == {
+        "user_id": user_id,
+        "log_date": "2026-06-16",
+    }

@@ -100,21 +100,13 @@ async def capture_plan_events(
     user_id: str,
     plan: PersistedMealRecommendationPlan,
     events: tuple[str, ...],
-    task_manager=None,
 ) -> None:
-    async def capture_all() -> None:
-        for event in events:
-            await analytics_service.capture_plan_response(
-                user_id=user_id,
-                event=event,
-                plan=plan,
-            )
-
-    if task_manager is not None and hasattr(task_manager, "spawn"):
-        task_manager.spawn("meal_recommendation_analytics", capture_all())
-        return
-
-    await capture_all()
+    for event in events:
+        await analytics_service.capture_plan_response(
+            user_id=user_id,
+            event=event,
+            plan=plan,
+        )
 
 
 async def capture_slot_event(
@@ -123,20 +115,12 @@ async def capture_slot_event(
     user_id: str,
     event: str,
     plan_id: str,
-    task_manager=None,
 ) -> None:
-    async def capture_one() -> None:
-        await analytics_service.capture_slot_response(
-            user_id=user_id,
-            event=event,
-            plan_id=plan_id,
-        )
-
-    if task_manager is not None and hasattr(task_manager, "spawn"):
-        task_manager.spawn("meal_recommendation_slot_analytics", capture_one())
-        return
-
-    await capture_one()
+    await analytics_service.capture_slot_response(
+        user_id=user_id,
+        event=event,
+        plan_id=plan_id,
+    )
 
 
 def to_response(

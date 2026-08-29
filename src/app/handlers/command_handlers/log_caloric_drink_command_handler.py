@@ -4,9 +4,15 @@ import logging
 
 from src.app.commands.hydration.log_caloric_drink_command import LogCaloricDrinkCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.hydration.hydration_caloric_created_event import (
+    HydrationCaloricCreatedEvent,
+)
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.nutrition.macros import Macros
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.services.hydration_catalog_service import find_by_id, localized_name
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
@@ -25,10 +31,12 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
     def __init__(
         self,
         uow: AsyncUnitOfWork,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, cmd: LogCaloricDrinkCommand) -> dict:
         drink = find_by_id(cmd.drink_id)
@@ -80,12 +88,28 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
                     source="hydration",
                 )
             )
+            integration_event = HydrationCaloricCreatedEvent(
+                environment=self.environment,
+                aggregate_id=hydration_entry.id,
+                data={
+                    "user_id": cmd.user_id,
+                    "log_date": log_date.isoformat(),
+                },
+            )
 
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_hydration_write(cmd.user_id, log_date)
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published hydration caloric created integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         kcal = round(
-            Macros(protein=0.0, carbs=carbs, fat=fat, fiber=0.0, sugar=sugar).total_calories,
+            Macros(
+                protein=0.0, carbs=carbs, fat=fat, fiber=0.0, sugar=sugar
+            ).total_calories,
             1,
         )
         return {

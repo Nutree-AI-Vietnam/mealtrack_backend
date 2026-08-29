@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
@@ -77,7 +78,9 @@ async def test_onboarding_sets_goal_journey_baseline(monkeypatch):
         lambda: fixed_now,
     )
     uow = _FakeUow()
-    handler = SaveUserOnboardingCommandHandler(uow=uow)
+    handler = SaveUserOnboardingCommandHandler(
+        uow=uow, event_publisher=MagicMock(publish=AsyncMock())
+    )
     user_id = str(UUID("11111111-1111-1111-1111-111111111111"))
 
     await handler.handle(
@@ -130,7 +133,9 @@ async def test_target_weight_change_resets_journey_seed(monkeypatch):
         },
     )()
     uow = _FakeMetricUow(profile)
-    handler = UpdateUserMetricsCommandHandler(uow=uow)
+    handler = UpdateUserMetricsCommandHandler(
+        uow=uow, event_publisher=MagicMock(publish=AsyncMock())
+    )
 
     await handler.handle(
         UpdateUserMetricsCommand(

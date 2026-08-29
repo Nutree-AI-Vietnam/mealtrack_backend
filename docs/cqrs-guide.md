@@ -148,6 +148,33 @@ async with AsyncUnitOfWork() as uow:
     result = await uow.meals.find_by_id(meal_id)
 ```
 
+### Cache Work Is Outside the Business Critical Path
+
+The database transaction is authoritative for command completion. After the
+unit of work commits, mutation handlers publish cache invalidation or
+integration events directly to the required Cloudflare Queue; they do not wait
+on Redis maintenance. This applies to meal, hydration, movement, and derived
+macro/budget projections.
+
+Query handlers may read Redis first. A cache miss falls back to SQL, and the
+concrete `CacheService` schedules any cache population write on
+`BackgroundTaskManager`. Cache consistency is therefore eventual, while SQL
+correctness and the command response remain independent of Redis availability.
+
+The integration-event boundary is: the backend owns the SQL transaction, then
+publishes one versioned `IntegrationEvent` to the environment-specific ingress
+Queue. The Worker
+orchestrator invokes all registered handlers for the event and ACKs only after
+they all succeed. A failure retries the whole ingress message, so handlers
+must be idempotent. `cache_invalidation.v1` remains the compatibility owner
+for other delete-only cache paths.
+
+External secondary effects follow the same boundary. Preference, timezone,
+language, and account deletion changes commit SQL first and publish their
+integration event. Notification and email delivery are intentionally out of
+scope. AI discovery, recipe generation, and three-day recommendation creation
+remain synchronous until the HTTP contract exposes an accepted/job-status flow.
+
 ---
 
 ## Key Rules

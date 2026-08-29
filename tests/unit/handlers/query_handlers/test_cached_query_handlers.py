@@ -457,51 +457,6 @@ class TestGetSavedSuggestionsQueryHandlerCache:
         assert cache_service.set_json.call_args[0][0] == expected_key
 
 
-class TestGetNotificationPreferencesQueryHandlerCache:
-    """Cache behaviour for GetNotificationPreferencesQueryHandler."""
-
-    @pytest.mark.asyncio
-    async def test_returns_cached_value_on_hit(self):
-        from src.app.handlers.query_handlers.get_notification_preferences_query_handler import (
-            GetNotificationPreferencesQueryHandler,
-        )
-        from src.app.queries.notification import GetNotificationPreferencesQuery
-
-        cached = {"push_enabled": True}
-        cache_service = MagicMock()
-        cache_service.get_json = AsyncMock(return_value=cached)
-        cache_service.set_json = AsyncMock()
-
-        handler = GetNotificationPreferencesQueryHandler(cache_service=cache_service)
-        query = GetNotificationPreferencesQuery(user_id="u1")
-        result = await handler.handle(query)
-
-        assert result == cached
-        cache_service.set_json.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_stores_result_in_cache_on_miss(self):
-        from src.app.handlers.query_handlers.get_notification_preferences_query_handler import (
-            GetNotificationPreferencesQueryHandler,
-        )
-        from src.app.queries.notification import GetNotificationPreferencesQuery
-
-        db_result = {"push_enabled": False}
-        cache_service = MagicMock()
-        cache_service.get_json = AsyncMock(return_value=None)
-        cache_service.set_json = AsyncMock()
-
-        handler = GetNotificationPreferencesQueryHandler(cache_service=cache_service)
-        query = GetNotificationPreferencesQuery(user_id="u1")
-
-        with patch.object(handler, "_compute", AsyncMock(return_value=db_result)):
-            result = await handler.handle(query)
-
-        assert result == db_result
-        cache_service.set_json.assert_awaited_once()
-        expected_key, _ = CacheKeys.notification_prefs("u1")
-        assert cache_service.set_json.call_args[0][0] == expected_key
-
 
 class TestGetUserMetricsQueryHandlerCache:
     """Cache behaviour for GetUserMetricsQueryHandler."""

@@ -3,13 +3,14 @@ Handler for parsing natural language meal text into structured food items.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
@@ -132,6 +133,13 @@ def _parse_text_fatsecret_timeout_seconds() -> float:
         return 3.0
 
 
+def _parse_text_cache_key(text: str, language: str | None) -> str:
+    norm_text = " ".join(text.strip().lower().split())
+    norm_lang = (language or "en").strip().lower()
+    digest = hashlib.sha256(norm_text.encode("utf-8")).hexdigest()[:24]
+    return f"parse_text:{norm_lang}:{digest}"
+
+
 @handles(ParseMealTextCommand)
 class ParseMealTextHandler(
     EventHandler[ParseMealTextCommand, ParseMealTextResponseDto]
@@ -145,6 +153,8 @@ class ParseMealTextHandler(
         translation_service: Any | None = None,
         food_reference_batch_lookup: Any | None = None,
         structured_reference_enabled: bool = True,
+        cache_service: Any | None = None,
+        cache_ttl_seconds: int = 604800,
         uow_factory: Any | None = None,
     ):
         self._meal_generation_service = meal_generation_service
@@ -152,6 +162,8 @@ class ParseMealTextHandler(
         self._translation_service = translation_service
         self._food_reference_batch_lookup = food_reference_batch_lookup
         self._structured_reference_enabled = structured_reference_enabled
+        self._cache_service = cache_service
+        self._cache_ttl_seconds = cache_ttl_seconds
         self._uow_factory = uow_factory
 
     async def handle(self, command: ParseMealTextCommand) -> ParseMealTextResponseDto:
@@ -161,6 +173,56 @@ class ParseMealTextHandler(
             raise ValueError("Invalid or empty meal description.")
         user_utterance = sanitized_text
         validated_current_items = validate_refinement_items(command.current_items)
+
+        # Check utterance query cache for non-refinement queries
+        cache_key = _parse_text_cache_key(sanitized_text, command.language)
+        if not validated_current_items and self._cache_service:
+            try:
+                cached_data = await self._cache_service.get(cache_key)
+                if isinstance(cached_data, dict) and "items" in cached_data:
+                    cached_items = [
+                        ParsedFoodItemDto(
+                            name=item.get("name", "Unknown"),
+                            quantity=float(item.get("quantity") or 1.0),
+                            unit=item.get("unit", "serving"),
+                            protein=float(item.get("protein") or 0.0),
+                            carbs=float(item.get("carbs") or 0.0),
+                            fat=float(item.get("fat") or 0.0),
+                            fiber=float(item.get("fiber") or 0.0),
+                            sugar=float(item.get("sugar") or 0.0),
+                            data_source=item.get("data_source"),
+                            fdc_id=item.get("fdc_id"),
+                            allowed_units=item.get("allowed_units"),
+                            food_id=item.get("food_id"),
+                            food_reference_id=item.get("food_reference_id"),
+                            origin=item.get("origin"),
+                            source_namespace=item.get("source_namespace"),
+                            source_food_id=item.get("source_food_id"),
+                            nutrition_basis=item.get("nutrition_basis"),
+                            nutrition_contract_version=item.get(
+                                "nutrition_contract_version"
+                            ),
+                            calories_per_100g=item.get("calories_per_100g"),
+                            protein_per_100g=item.get("protein_per_100g"),
+                            carbs_per_100g=item.get("carbs_per_100g"),
+                            fat_per_100g=item.get("fat_per_100g"),
+                            fiber_per_100g=item.get("fiber_per_100g"),
+                            sugar_per_100g=item.get("sugar_per_100g"),
+                            canonical_name=item.get("canonical_name"),
+                            source_snapshot=item.get("source_snapshot"),
+                        )
+                        for item in cached_data.get("items", [])
+                    ]
+                    return ParseMealTextResponseDto(
+                        items=cached_items,
+                        total_protein=float(cached_data.get("total_protein") or 0.0),
+                        total_carbs=float(cached_data.get("total_carbs") or 0.0),
+                        total_fat=float(cached_data.get("total_fat") or 0.0),
+                        emoji=cached_data.get("emoji"),
+                        unmatched_terms=cached_data.get("unmatched_terms") or [],
+                    )
+            except Exception as exc:
+                logger.debug("parse_text cache read failed: %s", exc)
 
         # Add refinement context if current_items provided
         if validated_current_items:
@@ -257,9 +319,7 @@ class ParseMealTextHandler(
                 item["name"] = self._extract_display_name(
                     item.get("name", "Unknown"), command.language
                 )
-            await self._localize_english_display_names(
-                enhanced_items, command.language
-            )
+            await self._localize_english_display_names(enhanced_items, command.language)
 
         await self._adopt_fatsecret_items(enhanced_items, command)
         if command.language and command.language != "en":
@@ -308,7 +368,7 @@ class ParseMealTextHandler(
             for item in enhanced_items
         ]
 
-        return ParseMealTextResponseDto(
+        response_dto = ParseMealTextResponseDto(
             items=items,
             total_protein=total_protein,
             total_carbs=total_carbs,
@@ -316,6 +376,17 @@ class ParseMealTextHandler(
             emoji=emoji,
             unmatched_terms=[],
         )
+        if not validated_current_items and self._cache_service:
+            try:
+                await self._cache_service.set(
+                    cache_key,
+                    asdict(response_dto),
+                    ttl_seconds=self._cache_ttl_seconds,
+                )
+            except Exception as exc:
+                logger.debug("parse_text cache write failed: %s", exc)
+
+        return response_dto
 
     def _attach_per_100g_snapshot(self, item: dict[str, Any]) -> None:
         """Expose the validated density used to derive the displayed portion."""
@@ -1127,7 +1198,9 @@ class ParseMealTextHandler(
                 attempt_count=1,
             )
         except Exception:
-            logger.warning("parse-text leftover name localization failed", exc_info=True)
+            logger.warning(
+                "parse-text leftover name localization failed", exc_info=True
+            )
             return
         translated = [str(name).strip() for name in validated.get("items", [])]
         if len(translated) != len(leftovers):

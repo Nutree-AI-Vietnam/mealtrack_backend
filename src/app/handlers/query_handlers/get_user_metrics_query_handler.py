@@ -4,14 +4,15 @@ Auto-extracted for better maintainability.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+from sqlalchemy import select
 
 from src.api.exceptions import ResourceNotFoundException
-from src.app.events.base import handles, EventHandler
+from src.app.events.base import EventHandler, handles
 from src.app.queries.user import GetUserMetricsQuery
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.ports.cache_port import CachePort
-from sqlalchemy import select
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -31,10 +32,18 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
         if self.cache_service:
             cached = await self.cache_service.get_json(cache_key)
             if cached is not None:
-                return cached
+                cached_revision = cached.get("profile_target_revision")
+                if (
+                    cached_revision is None
+                    or cached_revision
+                    == await self._current_profile_revision(query.user_id)
+                ):
+                    return cached
         result = await self._compute(query)
         if self.cache_service:
-            await self.cache_service.set_json(cache_key, result, ttl)
+            await self.cache_service.set_json(
+                cache_key, result, ttl, revision_field="profile_target_revision"
+            )
         return result
 
     async def _compute(self, query: GetUserMetricsQuery) -> Dict[str, Any]:
@@ -73,4 +82,15 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
                     profile, "journey_progress_seed_percent", 0.0
                 ),
                 "updated_at": profile.updated_at,
+                "profile_target_revision": profile.profile_target_revision,
+                "target_revision": profile.profile_target_revision,
             }
+
+    async def _current_profile_revision(self, user_id: str) -> int | None:
+        async with AsyncUnitOfWork() as uow:
+            result = await uow.session.execute(
+                select(UserProfile.profile_target_revision).where(
+                    UserProfile.user_id == user_id, UserProfile.is_current.is_(True)
+                )
+            )
+            return result.scalar_one_or_none()

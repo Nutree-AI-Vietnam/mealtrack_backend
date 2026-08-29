@@ -54,3 +54,4 @@ class CreateManualMealCommand(Command):
     nutrition_contract_version: Optional[int] = None
     idempotency_key: Optional[str] = None
     request_fingerprint: Optional[str] = None
+    language: str = "en"

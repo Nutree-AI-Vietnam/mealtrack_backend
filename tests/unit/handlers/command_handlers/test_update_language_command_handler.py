@@ -2,13 +2,13 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from tests.fixtures.fakes.fake_uow import FakeUnitOfWork
 
 from src.app.commands.user.update_language_command import UpdateLanguageCommand
 from src.app.handlers.command_handlers.update_language_command_handler import (
     UpdateLanguageCommandHandler,
 )
 from src.domain.model.notification import NotificationPreferences
-from tests.fixtures.fakes.fake_uow import FakeUnitOfWork
 
 
 @pytest.mark.asyncio
@@ -18,8 +18,8 @@ async def test_update_language_syncs_notification_preferences_and_reschedules():
     fake_uow.notifications.preferences[user_id] = (
         NotificationPreferences.create_default(user_id)
     )
-    precompute = AsyncMock()
-    handler = UpdateLanguageCommandHandler(precompute_service=precompute)
+    publisher = AsyncMock()
+    handler = UpdateLanguageCommandHandler(event_publisher=publisher)
 
     with patch(
         "src.app.handlers.command_handlers.update_language_command_handler.AsyncUnitOfWork",
@@ -31,17 +31,17 @@ async def test_update_language_syncs_notification_preferences_and_reschedules():
 
     assert result == {"success": True, "language_code": "vi"}
     assert fake_uow.notifications.preferences[user_id].language == "vi"
-    precompute.reschedule_user_notifications.assert_awaited_once_with(user_id)
+    publisher.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_update_language_rejects_unsupported_language_without_reschedule():
-    precompute = AsyncMock()
-    handler = UpdateLanguageCommandHandler(precompute_service=precompute)
+    publisher = AsyncMock()
+    handler = UpdateLanguageCommandHandler(event_publisher=publisher)
 
     result = await handler.handle(
         UpdateLanguageCommand(user_id=uuid4(), language_code="unsupported")
     )
 
     assert result["success"] is False
-    precompute.reschedule_user_notifications.assert_not_called()
+    publisher.publish.assert_not_awaited()

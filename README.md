@@ -26,16 +26,16 @@ Stateful progress/history and superseded docs: [`docs/archive/`](./docs/archive/
 - **API Surface**: Versioned REST under `/v1/*`; live inventory is OpenAPI at `/docs` and router registration in `src/api/main.py`.
 - **Paid Web Redemption**: RevenueCat web checkout handoff via `/v1/web-funnel/*` with passwordless Firebase sign-in and backend finalization.
 - **CQRS Architecture**: Commands, queries, events, and handlers wired through a PyMediator singleton event bus.
-- **Vector Cache**: Active meal-image-name vector cache uses `pgvector`; Pinecone is legacy documentation only and is not a runtime adapter.
+- **Vector Cache**: Active meal-image-name vector cache uses `pgvector`
 - **Multi-Language Support**: 7 languages (en, vi, es, fr, de, ja, zh) with translation service.
-- **Smart Notifications**: FCM push with timezone-aware scheduling and preferences.
+- **Notification Preferences**: Timezone-aware configuration of user meal and daily summary reminder schedules for local on-device notifications.
 
 ## 🛠 Technology Stack
 
 - **Core**: FastAPI 0.136.3 (Python 3.13.2), SQLAlchemy 2.0 async runtime (`AsyncSession`, `AsyncUnitOfWork`).
 - **Database**: PostgreSQL (Neon) with SQLAlchemy 2.0, Redis 7.0 for selective optional caching; required state is modeled separately.
 - **AI**: OpenAI via LangChain/Responses API as the default text and vision provider, with optional Cloudflare Workers AI routing for configured text purposes and vision fallback. Gemini packages remain in dependencies, but the runtime provider registry is OpenAI + Cloudflare.
-- **Infrastructure**: Firebase (JWT Auth + FCM), Cloudinary (image storage), RevenueCat (subscriptions).
+- **Infrastructure**: Firebase (JWT Auth), Cloudinary (image storage), RevenueCat (subscriptions).
 - **Event Bus**: PyMediator with singleton registry for CQRS.
 - **Testing**: pytest (unit-biased default config), ruff (linting), mypy (type checking).
 

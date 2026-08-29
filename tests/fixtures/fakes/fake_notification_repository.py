@@ -1,37 +1,10 @@
-
-from src.domain.model.notification import NotificationPreferences, UserFcmToken
+from src.domain.model.notification import NotificationPreferences
 from src.domain.ports.notification_repository_port import NotificationRepositoryPort
 
 
 class FakeNotificationRepository(NotificationRepositoryPort):
     def __init__(self):
-        self.fcm_tokens = {}  # token_string -> UserFcmToken
         self.preferences = {}  # user_id -> NotificationPreferences
-
-    # FCM Token operations
-    async def save_fcm_token(self, token: UserFcmToken) -> UserFcmToken:
-        self.fcm_tokens[token.token] = token
-        return token
-
-    async def find_fcm_token_by_token(self, fcm_token: str) -> UserFcmToken | None:
-        return self.fcm_tokens.get(fcm_token)
-
-    async def find_active_fcm_tokens_by_user(self, user_id: str) -> list[UserFcmToken]:
-        return [
-            t for t in self.fcm_tokens.values() if t.user_id == user_id and t.is_active
-        ]
-
-    async def deactivate_fcm_token(self, fcm_token: str) -> bool:
-        if fcm_token in self.fcm_tokens:
-            self.fcm_tokens[fcm_token].is_active = False
-            return True
-        return False
-
-    async def delete_fcm_token(self, fcm_token: str) -> bool:
-        if fcm_token in self.fcm_tokens:
-            del self.fcm_tokens[fcm_token]
-            return True
-        return False
 
     # Notification Preferences operations
     async def save_notification_preferences(

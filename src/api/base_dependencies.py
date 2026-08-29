@@ -47,7 +47,6 @@ from src.infra.repositories.catalog_recipe_repository_async import (
 from src.infra.repositories.food_reference_repository_async import (
     AsyncFoodReferenceRepository,
 )
-from src.infra.services.firebase_service import FirebaseService
 
 if TYPE_CHECKING:
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
@@ -369,31 +368,6 @@ get_food_reference_repository = get_async_food_reference_repository
 get_barcode_product_repository = get_food_reference_repository
 
 
-# Firebase Service (singleton pattern - create once and reuse)
-_firebase_service = None
-
-
-def get_firebase_service() -> FirebaseService:
-    """
-    Get the Firebase service instance (singleton).
-
-    Returns:
-        FirebaseService: The Firebase service
-    """
-    global _firebase_service
-    if _firebase_service is None:
-        _firebase_service = FirebaseService()
-    return _firebase_service
-
-
-def get_daily_context_precompute_service():
-    """Get daily context precompute service for notification rescheduling."""
-    from src.infra.services.daily_context_precompute_service import (
-        DailyContextPrecomputeService,
-    )
-
-    return DailyContextPrecomputeService()
-
 
 # Phase 06: Meal Suggestion Dependencies
 def get_raw_redis_client():
@@ -625,6 +599,7 @@ def get_nutrition_lookup_service():
             ingredient_nutrition_resolver=get_ingredient_nutrition_resolver(),
             generation_service=MealGenerationService(),
             redis_client=_redis_client,
+            cache_service=get_cache_service(),
         )
     return _nutrition_lookup_service
 

@@ -9,10 +9,15 @@ from uuid import UUID
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user import SaveUserOnboardingCommand
 from src.app.events.base import EventHandler, handles
-from src.domain.cache.cache_keys import CacheKeys
+from src.app.events.user.user_profile_updated_event import (
+    UserProfileUpdatedEvent,
+)
 from src.domain.model.user import UserProfileDomainModel
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.ports.cache_port import CachePort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -26,10 +31,12 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort | None = None,
-        cache_service: CachePort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_service = cache_service
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: SaveUserOnboardingCommand) -> None:
         """Save user onboarding data."""
@@ -174,19 +181,19 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                 # Save profile
                 await uow.users.update_profile(profile)
                 await uow.commit()
-                await self._invalidate_user_profile(command.user_id)
 
             except Exception:
                 await uow.rollback()
                 raise
 
-    async def _invalidate_user_profile(self, user_id: str):
-        if not self.cache_service:
-            return
-        cache_key, _ = CacheKeys.user_profile(user_id)
-        try:
-            await self.cache_service.invalidate(cache_key)
-        except Exception as exc:
-            # The profile transaction has already committed. Cache readers use
-            # the revision fence, so a deletion failure is safe to log only.
-            logger.warning("Failed to invalidate profile cache for user %s: %s", user_id, exc)
+        event = UserProfileUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={"user_id": str(command.user_id)},
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published user profile updated integration event event_id=%s aggregate_id=%s",
+            event.event_id,
+            event.aggregate_id,
+        )

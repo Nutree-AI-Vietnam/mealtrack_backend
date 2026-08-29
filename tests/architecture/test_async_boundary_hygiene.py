@@ -118,16 +118,10 @@ def test_unmanaged_create_task_does_not_expand() -> None:
         SRC_ROOT / "infra" / "event_bus",
     ]
 
-    # background_task_manager.py IS the managed runner — it wraps create_task
-    # intentionally and is excluded from the "unmanaged caller" scan.
-    _MANAGED_RUNNER_IMPL = "src/infra/event_bus/background_task_manager.py"
-
     offenders: set[str] = set()
     for root in scan_roots:
         for path in _python_files(root):
             rel = _relative(path)
-            if rel == _MANAGED_RUNNER_IMPL:
-                continue
             if "asyncio.create_task(" in path.read_text(encoding="utf-8"):
                 offenders.add(rel)
 

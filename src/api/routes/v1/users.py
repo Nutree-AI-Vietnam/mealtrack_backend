@@ -285,12 +285,12 @@ async def delete_user_account(
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """
-    Delete user account (soft delete in DB, hard delete in Firebase).
+    Delete user account and queue Firebase cleanup.
 
     Performs complete account deletion:
     - Soft deletes user in database (sets is_active=False)
     - Anonymizes user data for GDPR compliance
-    - Hard deletes user from Firebase Authentication
+    - Queues Firebase token revocation and account deletion after the SQL commit
 
     This action cannot be undone. All user data will be anonymized and
     the account will be marked as inactive.

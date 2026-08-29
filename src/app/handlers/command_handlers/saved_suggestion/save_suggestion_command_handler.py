@@ -5,9 +5,14 @@ from typing import Any
 
 from src.app.commands.saved_suggestion import SaveSuggestionCommand
 from src.app.events.base import EventHandler, handles
-from src.domain.cache.cache_keys import CacheKeys
+from src.app.events.saved_suggestion.saved_suggestion_created_event import (
+    SavedSuggestionCreatedEvent,
+)
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.ports.cache_port import CachePort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,32 +21,54 @@ logger = logging.getLogger(__name__)
 class SaveSuggestionCommandHandler(EventHandler[SaveSuggestionCommand, dict[str, Any]]):
     """Save a meal suggestion. Returns existing if already saved (idempotent)."""
 
-    def __init__(self, uow: AsyncUnitOfWorkPort, cache_service: CachePort | None = None):
+    def __init__(
+        self,
+        uow: AsyncUnitOfWorkPort,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
+    ):
         self.uow = uow
-        self.cache_service = cache_service
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: SaveSuggestionCommand) -> dict[str, Any]:
-        async with self.uow as uow:
+        published_needed = False
+        async with self.uow:
             # Check if already saved (idempotent)
-            existing = await uow.saved_suggestions.find_by_user_and_suggestion(
+            existing = await self.uow.saved_suggestions.find_by_user_and_suggestion(
                 command.user_id, command.suggestion_id
             )
             if existing:
                 return existing
 
-            result = await uow.saved_suggestions.save(
+            result = await self.uow.saved_suggestions.save(
                 user_id=command.user_id,
                 suggestion_id=command.suggestion_id,
                 meal_type=command.meal_type,
                 portion_multiplier=command.portion_multiplier,
                 suggestion_data=command.suggestion_data,
             )
+            published_needed = True
             logger.info(
                 f"Saved suggestion {command.suggestion_id} for user {command.user_id}"
             )
 
-        if self.cache_service:
-            cache_key, _ = CacheKeys.saved_suggestions(command.user_id)
-            await self.cache_service.invalidate(cache_key)
+        if published_needed:
+            event = SavedSuggestionCreatedEvent(
+                environment=self.environment,
+                aggregate_id=command.suggestion_id,
+                data={
+                    "user_id": command.user_id,
+                },
+            )
+            await require_event_publisher(self.event_publisher).publish(
+                event.to_payload()
+            )
+            logger.info(
+                "Published saved suggestion created event event_id=%s user_id=%s suggestion_id=%s",
+                event.event_id,
+                command.user_id,
+                command.suggestion_id,
+            )
 
         return result

@@ -12,8 +12,20 @@ from typing import Any
 from src.api.exceptions import AuthorizationException
 from src.app.commands.meal import DeleteMealCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.hydration.hydration_caloric_deleted_event import (
+    HydrationCaloricDeletedEvent,
+)
+from src.app.events.hydration.hydration_deleted_event import (
+    HydrationDeletedEvent,
+)
+from src.app.events.meal.meal_events import MealDeletedEvent
+from src.domain.model.hydration import DrinkCategory
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
+from src.domain.services.hydration_catalog_service import find_by_id
 from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -26,14 +38,18 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: DeleteMealCommand) -> dict[str, Any]:
         """Handle meal deletion with data preservation."""
         deleted_kind = "meal"
+        hydration_delete_event = None
+        meal_delete_event = None
         async with self.uow as uow:
             meal = await uow.meals.find_by_id(command.meal_id)
             if meal is not None:
@@ -49,6 +65,15 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                     await plans.clear_links_for_deleted_meal(meal_id=command.meal_id)
                 await uow.meals.delete(command.meal_id)
                 log_date = (meal.created_at or utc_now()).date()
+                meal_delete_event = MealDeletedEvent(
+                    environment=self.environment,
+                    aggregate_id=command.meal_id,
+                    data={
+                        "user_id": command.user_id,
+                        "meal_id": command.meal_id,
+                        "meal_date": log_date.isoformat(),
+                    },
+                )
             else:
                 hydration_entries = getattr(uow, "hydration_entries", None)
                 hydration_entry = (
@@ -66,19 +91,57 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                     )
                     deleted_kind = "hydration"
                     log_date = hydration_entry.logged_at.date()
+
+                    drink_id = getattr(hydration_entry, "drink_id", None)
+                    drink = find_by_id(drink_id) if drink_id else None
+                    carbs_g = float(getattr(hydration_entry, "carbs_g", 0.0) or 0.0)
+                    fat_g = float(getattr(hydration_entry, "fat_g", 0.0) or 0.0)
+                    protein_g = float(getattr(hydration_entry, "protein_g", 0.0) or 0.0)
+                    is_caloric = (
+                        drink is not None and drink.category == DrinkCategory.CALORIC
+                    ) or (carbs_g > 0 or fat_g > 0 or protein_g > 0)
+                    if is_caloric:
+                        hydration_delete_event = HydrationCaloricDeletedEvent(
+                            environment=self.environment,
+                            aggregate_id=hydration_entry.id,
+                            data={
+                                "user_id": command.user_id,
+                                "log_date": log_date.isoformat(),
+                            },
+                        )
+                    else:
+                        hydration_delete_event = HydrationDeletedEvent(
+                            environment=self.environment,
+                            aggregate_id=hydration_entry.id,
+                            data={
+                                "user_id": command.user_id,
+                                "log_date": log_date.isoformat(),
+                            },
+                        )
                 else:
                     return {
                         "meal_id": command.meal_id,
                         "message": "Meal already deleted",
                     }
 
-        if self.cache_invalidation:
-            if deleted_kind == "hydration":
-                await self.cache_invalidation.after_hydration_write(
-                    command.user_id, log_date
-                )
-            else:
-                await self.cache_invalidation.after_meal_write(command.user_id, log_date)
+        if deleted_kind == "hydration" and hydration_delete_event is not None:
+            await require_event_publisher(self.event_publisher).publish(
+                hydration_delete_event.to_payload()
+            )
+            logger.info(
+                "Published hydration deleted integration event event_id=%s aggregate_id=%s",
+                hydration_delete_event.event_id,
+                hydration_delete_event.aggregate_id,
+            )
+        elif deleted_kind == "meal" and meal_delete_event is not None:
+            await require_event_publisher(self.event_publisher).publish(
+                meal_delete_event.to_payload()
+            )
+            logger.info(
+                "Published meal deleted integration event event_id=%s aggregate_id=%s",
+                meal_delete_event.event_id,
+                meal_delete_event.aggregate_id,
+            )
 
         return {
             "meal_id": command.meal_id,

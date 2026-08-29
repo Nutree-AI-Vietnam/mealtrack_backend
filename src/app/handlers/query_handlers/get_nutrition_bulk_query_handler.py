@@ -57,15 +57,26 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
             query.user_id, query.start_date, query.end_date
         )
         # A target-bearing cache is valid only for the current DB profile fence.
-        _, _, _, revision, _, _ = await self._get_user_targets(query.user_id)
+        user_targets = await self._get_user_targets(query.user_id)
+        _, _, _, revision, _, _ = user_targets
         cached = await self.cache_service.get_json(key)
-        if revision is not None and cached and cached.get("target_revision") == revision:
+        if (
+            revision is not None
+            and cached
+            and cached.get("target_revision") == revision
+        ):
             return cached
-        result = await self._compute(query)
-        await self.cache_service.set_json(key, result, ttl)
+        result = await self._compute(query, user_targets=user_targets)
+        await self.cache_service.set_json(
+            key, result, ttl, revision_field="target_revision"
+        )
         return result
 
-    async def _compute(self, query: GetNutritionBulkQuery) -> dict[str, Any]:
+    async def _compute(
+        self,
+        query: GetNutritionBulkQuery,
+        user_targets: tuple | None = None,
+    ) -> dict[str, Any]:
         """Build the bulk nutrition response (uncached)."""
         async with AsyncUnitOfWork() as uow:
             user_tz_str = await resolve_user_timezone_async(
@@ -82,9 +93,17 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
                 projection=MealProjection.MACROS_ONLY,
             )
 
-            target_calories, target_macros, bmr, target_revision, macro_preset, is_custom = await self._get_user_targets(
-                query.user_id
-            )
+            if user_targets is None:
+                user_targets = await self._get_user_targets(query.user_id)
+
+            (
+                target_calories,
+                target_macros,
+                bmr,
+                target_revision,
+                macro_preset,
+                is_custom,
+            ) = user_targets
 
             meals_by_date: dict[date, list] = {}
             for meal in meals:
@@ -201,7 +220,9 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
                         query.user_id,
                     )
             elif weekly_budget:
-                logger.warning("Refusing stale weekly target row for user %s", query.user_id)
+                logger.warning(
+                    "Refusing stale weekly target row for user %s", query.user_id
+                )
 
             cache_version = self._compute_cache_version(dates_result, weekly_summary)
 

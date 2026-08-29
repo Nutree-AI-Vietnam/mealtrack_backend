@@ -11,9 +11,6 @@ from src.app.commands.referral.apply_referral_code_command import (
     ApplyReferralCodeCommand,
 )
 from src.app.commands.referral.request_payout_command import RequestPayoutCommand
-from src.app.handlers.command_handlers.referral.apply_referral_code_handler import (
-    ApplyReferralCodeCommandHandler,
-)
 from src.app.handlers.command_handlers.referral.request_payout_handler import (
     MIN_WITHDRAWAL,
     RequestPayoutCommandHandler,
@@ -33,6 +30,7 @@ from src.app.queries.referral.get_referral_stats_query import GetReferralStatsQu
 from src.app.queries.referral.validate_referral_code_query import (
     ValidateReferralCodeQuery,
 )
+from src.bootstrap.referral import get_apply_referral_code_handler
 
 router = APIRouter(prefix="/v1/referrals", tags=["Referrals"])
 logger = logging.getLogger(__name__)
@@ -144,7 +142,7 @@ async def apply_code(
 ):
     """Record the referred user's code application (call after purchase confirmation)."""
     try:
-        handler = ApplyReferralCodeCommandHandler()
+        handler = get_apply_referral_code_handler()
         await handler.handle(
             ApplyReferralCodeCommand(
                 user_id=user_id,

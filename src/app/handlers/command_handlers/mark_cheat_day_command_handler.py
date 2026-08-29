@@ -7,8 +7,13 @@ from typing import Any
 from src.api.exceptions import ValidationException
 from src.app.commands.cheat_day import MarkCheatDayCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.cheat_day.cheat_day_marked_event import CheatDayMarkedEvent
 from src.domain.model.cheat_day import CheatDay
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.utils.timezone_utils import (
     resolve_user_timezone_async,
     user_today,
@@ -21,9 +26,15 @@ logger = logging.getLogger(__name__)
 
 @handles(MarkCheatDayCommand)
 class MarkCheatDayCommandHandler(EventHandler[MarkCheatDayCommand, dict[str, Any]]):
-
-    def __init__(self, uow: AsyncUnitOfWorkPort | None = None):
+    def __init__(
+        self,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
+    ):
         self.uow = uow
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     async def handle(self, command: MarkCheatDayCommand) -> dict[str, Any]:
         uow = self.uow or AsyncUnitOfWork()
@@ -58,7 +69,7 @@ class MarkCheatDayCommandHandler(EventHandler[MarkCheatDayCommand, dict[str, Any
                 await uow.cheat_days.add(cheat_day)
                 await uow.commit()
 
-                return {
+                result = {
                     "cheat_day_id": cheat_day.cheat_day_id,
                     "date": target_date.isoformat(),
                     "message": "Date marked as cheat day",
@@ -66,6 +77,24 @@ class MarkCheatDayCommandHandler(EventHandler[MarkCheatDayCommand, dict[str, Any
             except ValidationException:
                 await uow.rollback()
                 raise
-            except Exception as e:
+            except Exception:
                 await uow.rollback()
                 raise
+
+        event = CheatDayMarkedEvent(
+            environment=self.environment,
+            aggregate_id=cheat_day.cheat_day_id,
+            data={
+                "user_id": command.user_id,
+                "date": target_date.isoformat(),
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
+        logger.info(
+            "Published cheat day marked event event_id=%s user_id=%s date=%s",
+            event.event_id,
+            command.user_id,
+            target_date.isoformat(),
+        )
+
+        return result

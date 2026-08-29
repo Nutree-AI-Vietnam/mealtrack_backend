@@ -1,6 +1,6 @@
 from datetime import date
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from tests.unit.infra.repositories.test_meal_recommendation_plan_repository_async import (
@@ -81,7 +81,9 @@ class _ConflictPlanRepo(_PlanRepo):
 class _LogPlanRepo(_PlanRepo):
     def __init__(self, *, replayed=False):
         super().__init__()
-        self.claim_slot_log = AsyncMock(return_value=(_plan(), _plan().slots[0], replayed))
+        self.claim_slot_log = AsyncMock(
+            return_value=(_plan(), _plan().slots[0], replayed)
+        )
         self.finalize_slot_logged = AsyncMock(
             return_value=PersistedMealRecommendationSlotMutationResult(
                 plan_id="plan-1",
@@ -111,15 +113,18 @@ class _Materializer:
             {"id": "food-1", "name": "Rice"},
         )()
         nutrition = type("Nutrition", (), {"food_items": [food_item]})()
-        self.meal = meal or type(
-            "Meal",
-            (),
-            {
-                "meal_id": "meal-1",
-                "dish_name": "Rice Bowl",
-                "nutrition": nutrition,
-            },
-        )()
+        self.meal = (
+            meal
+            or type(
+                "Meal",
+                (),
+                {
+                    "meal_id": "meal-1",
+                    "dish_name": "Rice Bowl",
+                    "nutrition": nutrition,
+                },
+            )()
+        )
         self.materialize = AsyncMock(return_value=self.meal)
 
 
@@ -297,6 +302,7 @@ async def test_log_handler_replays_without_materializing_duplicate_meal():
     handler = LogRecommendedMealCommandHandler(
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(_log_command())
@@ -314,6 +320,7 @@ async def test_log_handler_claims_materializes_then_finalizes():
     handler = LogRecommendedMealCommandHandler(
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(_log_command())
@@ -340,16 +347,13 @@ async def test_log_handler_translates_and_invalidates_cache_for_non_english(capl
         (),
         {"translate_meal": AsyncMock(return_value={"dish_name": "Rice Bowl"})},
     )()
-    cache_invalidation = type(
-        "CacheInvalidation",
-        (),
-        {"after_meal_write": AsyncMock()},
-    )()
+    event_publisher = MagicMock()
+    event_publisher.publish = AsyncMock()
     handler = LogRecommendedMealCommandHandler(
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
         meal_translation_service=translation_service,
-        cache_invalidation=cache_invalidation,
+        event_publisher=event_publisher,
     )
 
     await handler.handle(_log_command(language="vi"))
@@ -359,9 +363,7 @@ async def test_log_handler_translates_and_invalidates_cache_for_non_english(capl
     assert kwargs["target_language"] == "vi"
     assert kwargs["dish_name"] == "Rice Bowl"
     assert kwargs["food_items"][0].name == "Rice"
-    cache_invalidation.after_meal_write.assert_awaited_once_with(
-        "user-1", _plan().slots[0].slot_date
-    )
+    event_publisher.publish.assert_awaited_once()
     assert "recommended meal translated" not in caplog.text
 
 
@@ -378,6 +380,7 @@ async def test_log_handler_skips_translation_for_english():
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
         meal_translation_service=translation_service,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     await handler.handle(_log_command(language="en"))
@@ -398,6 +401,7 @@ async def test_log_handler_does_not_fail_when_translation_raises():
         uow=_Uow(plans, _CatalogRepo()),
         materializer=materializer,
         meal_translation_service=translation_service,
+        event_publisher=MagicMock(publish=AsyncMock()),
     )
 
     result = await handler.handle(_log_command(language="vi"))

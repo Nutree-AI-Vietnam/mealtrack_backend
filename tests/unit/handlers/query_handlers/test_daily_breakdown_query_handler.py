@@ -133,7 +133,7 @@ async def test_base_daily_targets_passes_cache_service_to_tdee_handler():
         )
 
     mock_tdee_cls.assert_called_once_with(cache_service=cache)
-    assert result == (2100.0, 120.0, 220.0, 70.0)
+    assert result == (2100.0, 120.0, 220.0, 70.0, None)
 
 
 @pytest.mark.asyncio
