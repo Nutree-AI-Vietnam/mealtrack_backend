@@ -76,9 +76,14 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
         self,
         query: GetNutritionBulkQuery,
         user_targets: tuple | None = None,
+        auto_adjust: bool | None = None,
     ) -> dict[str, Any]:
         """Build the bulk nutrition response (uncached)."""
         async with AsyncUnitOfWork() as uow:
+            if auto_adjust is None:
+                auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
+                    await uow.users.get_weekly_auto_adjust(query.user_id)
+                )
             user_tz_str = await resolve_user_timezone_async(
                 query.user_id, uow, query.header_timezone
             )
@@ -185,6 +190,7 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
                             base_daily_fat=(target_macros or {}).get("fat", 70),
                             bmr=bmr,
                             user_timezone=user_tz_str,
+                            auto_adjust=auto_adjust,
                         )
                     )
                     adjusted = effective.adjusted
@@ -232,6 +238,7 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
             "cache_version": cache_version,
             "profile_target_revision": target_revision,
             "target_revision": target_revision,
+            "weekly_auto_adjust": auto_adjust,
             "macro_preset": macro_preset.value,
         }
 

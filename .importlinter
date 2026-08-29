@@ -70,6 +70,7 @@ ignore_imports =
     src.app.handlers.command_handlers.update_movement_entry_command_handler -> src.infra.database.uow_async
     src.app.handlers.command_handlers.update_notification_preferences_command_handler -> src.infra.database.uow_async
     src.app.handlers.command_handlers.update_timezone_command_handler -> src.infra.database.uow_async
+    src.app.handlers.command_handlers.update_weekly_auto_adjust_command_handler -> src.infra.database.uow_async
     src.app.handlers.command_handlers.update_user_last_accessed_command_handler -> src.infra.database.uow_async
     src.app.handlers.command_handlers.upload_meal_image_immediately_command_handler -> src.infra.config.settings
     src.app.services.web_funnel_claim_cleanup -> src.infra.database.models.user.user

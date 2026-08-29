@@ -59,6 +59,11 @@ class WeeklyBudgetService:
     """Service for weekly budget calculations."""
 
     @staticmethod
+    def auto_adjust_enabled(value: object) -> bool:
+        """Treat missing/unknown as enabled. Only explicit False disables."""
+        return value is not False
+
+    @staticmethod
     async def calculate_weekly_consumed_async(
         uow: Any,
         user_id: str,
@@ -341,6 +346,7 @@ class WeeklyBudgetService:
         consumed_total: dict[str, float],
         consumed_before_today: dict[str, float],
         consumed_for_redistribution: dict[str, float],
+        auto_adjust: bool = True,
     ) -> EffectiveAdjustedResult:
         """Shared effective-adjusted policy for async and batch-preloaded callers."""
         calc = WeeklyBudgetService
@@ -359,6 +365,23 @@ class WeeklyBudgetService:
                 and past_days_count >= 3
             ):
                 show_logging_prompt = True
+
+        if not calc.auto_adjust_enabled(auto_adjust):
+            return EffectiveAdjustedResult(
+                adjusted=AdjustedDailyTargets(
+                    calories=round(base_daily_cal, 1),
+                    carbs=round(base_daily_carbs, 1),
+                    fat=round(base_daily_fat, 1),
+                    protein=round(base_daily_protein, 1),
+                    bmr_floor_active=False,
+                    remaining_days=remaining_days,
+                ),
+                consumed_before_today=consumed_before_today,
+                consumed_total=consumed_total,
+                logged_past_days=logged_past_days,
+                skipped_days=skipped_days,
+                show_logging_prompt=False,
+            )
 
         redistribution_logged_days = max(0, logged_past_days - past_cheat_count)
 
@@ -436,6 +459,7 @@ class WeeklyBudgetService:
         user_timezone: str = "UTC",
         cheat_dates: list[date] | None = None,
         weekly_preload: WeeklyEffectivePreload | None = None,
+        auto_adjust: bool = True,
     ) -> EffectiveAdjustedResult:
         """Async version of get_effective_adjusted_daily for AsyncUnitOfWork."""
         calc = WeeklyBudgetService
@@ -463,6 +487,7 @@ class WeeklyBudgetService:
                 consumed_total=weekly_preload.consumed_total,
                 consumed_before_today=weekly_preload.consumed_before_today,
                 consumed_for_redistribution=weekly_preload.consumed_for_redistribution,
+                auto_adjust=auto_adjust,
             )
 
         past_end = target_date - timedelta(days=1)
@@ -517,6 +542,7 @@ class WeeklyBudgetService:
             consumed_total=consumed_total,
             consumed_before_today=consumed_before_today,
             consumed_for_redistribution=consumed_for_redistribution,
+            auto_adjust=auto_adjust,
         )
 
     @staticmethod

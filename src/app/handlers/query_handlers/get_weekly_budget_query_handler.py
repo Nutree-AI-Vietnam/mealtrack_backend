@@ -68,11 +68,18 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 profile_revision = await self._profile_target_revision(
                     uow, query.user_id
                 )
+                auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
+                    await uow.users.get_weekly_auto_adjust(query.user_id)
+                )
                 if self.cache_service:
                     cached = await self.cache_service.get_json(cache_key)
                     if (
                         cached is not None
                         and cached.get("profile_target_revision") == profile_revision
+                        and WeeklyBudgetService.auto_adjust_enabled(
+                            cached.get("weekly_auto_adjust", True)
+                        )
+                        == auto_adjust
                     ):
                         return cached
 
@@ -135,6 +142,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                         bmr=bmr,
                         user_timezone=user_tz_str,
                         cheat_dates=past_cheat_dates,
+                        auto_adjust=auto_adjust,
                     )
                 )
                 adjusted = effective.adjusted
@@ -171,7 +179,8 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                     f"cheat_today={is_today_cheat}, cheat_past={len(past_cheat_dates)}"
                 )
                 if (
-                    remaining_days > 1
+                    auto_adjust
+                    and remaining_days > 1
                     and not show_logging_prompt
                     and today_consumed_cal > 0
                 ):
@@ -281,6 +290,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                     "profile_target_revision": profile_revision,
                     "target_revision": weekly_budget.target_revision,
                     "bmr_floor_active": adjusted.bmr_floor_active,
+                    "weekly_auto_adjust": auto_adjust,
                     "cheat_days": [cd.date.isoformat() for cd in cheat_days],
                     "skipped_days": skipped_days,
                     "show_logging_prompt": show_logging_prompt,

@@ -46,6 +46,7 @@ from .get_user_profile_query_handler import GetUserProfileQueryHandler
 # TDEE handlers
 from .get_user_tdee_query_handler import GetUserTdeeQueryHandler
 from .get_user_timezone_query_handler import GetUserTimezoneQueryHandler
+from .get_weekly_auto_adjust_query_handler import GetWeeklyAutoAdjustQueryHandler
 from .get_weekly_budget_query_handler import GetWeeklyBudgetQueryHandler
 from .get_weekly_hydration_query_handler import GetWeeklyHydrationQueryHandler
 
@@ -70,6 +71,7 @@ __all__ = [
     # User
     "GetUserProfileQueryHandler",
     "GetUserTimezoneQueryHandler",
+    "GetWeeklyAutoAdjustQueryHandler",
     "GetBodyFatVisualProfileQueryHandler",
     "GetUserByFirebaseUidQueryHandler",
     "GetUserOnboardingStatusQueryHandler",

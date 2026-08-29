@@ -49,6 +49,12 @@ class User(Base, BaseMixin):
     # Preferred language (ISO 639-1: 'en', 'vi', 'es', 'fr', 'de', 'ja', 'zh')
     language_code = Column(String(5), nullable=False, default="en", server_default="en")
 
+    # When true, leftover weekly calories are split across remaining days.
+    # When false, daily targets stay at the fixed base (weekly / 7).
+    weekly_auto_adjust = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+
     # Email preferences
     welcome_email_sent_at = Column(DateTime(timezone=True), nullable=True)
     email_opt_out = Column(Boolean, default=False, nullable=False)

@@ -90,6 +90,7 @@ class TestGetAdjustedDailyTarget:
 
         mock_uow = Mock()
         mock_uow.weekly_budgets.find_by_user_and_week = AsyncMock(return_value=mock_budget)
+        mock_uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
 
         with patch("src.domain.services.meal_suggestion.suggestion_tdee_helpers.WeeklyBudgetService") as mock_budget_svc, \
              patch("src.domain.services.meal_suggestion.suggestion_tdee_helpers.get_user_monday_async", new_callable=AsyncMock, return_value=date(2026, 3, 9)), \

@@ -901,3 +901,45 @@ class TestGetEffectiveAdjustedDailyAsync:
         assert leftover_split < floor
         assert result.adjusted.calories == pytest.approx(floor, abs=1)
         assert result.adjusted.protein == _BASE_P
+
+    @pytest.mark.asyncio
+    async def test_disabled_auto_adjust_keeps_fixed_base_daily(self):
+        """Overeating must not change today's target when auto-adjust is off."""
+        week_start = date(2026, 3, 23)
+        tuesday = date(2026, 3, 24)
+        meals = [
+            FakeMeal(
+                status=MealStatus.READY,
+                nutrition=FakeNutrition(
+                    calories=8000,
+                    macros=FakeNutritionMacros(protein=200, carbs=900, fat=400),
+                ),
+                created_at=datetime(2026, 3, 23, 12, 0, tzinfo=UTC),
+            ),
+        ]
+        daily_counts = {date(2026, 3, 23): 1}
+        budget = _make_budget(week_start)
+        uow = FakeUoWAsync(meals=meals, daily_counts=daily_counts)
+
+        result = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=uow,
+            user_id="user-1",
+            week_start=week_start,
+            target_date=tuesday,
+            weekly_budget=budget,
+            base_daily_cal=_BASE_CAL,
+            base_daily_protein=_BASE_P,
+            base_daily_carbs=_BASE_C,
+            base_daily_fat=_BASE_F,
+            bmr=_BMR,
+            cheat_dates=[],
+            auto_adjust=False,
+        )
+
+        assert result.adjusted.calories == pytest.approx(_BASE_CAL, abs=0.1)
+        assert result.adjusted.protein == _BASE_P
+        assert result.adjusted.carbs == pytest.approx(_BASE_C, abs=0.1)
+        assert result.adjusted.fat == pytest.approx(_BASE_F, abs=0.1)
+        assert result.adjusted.bmr_floor_active is False
+        assert result.show_logging_prompt is False
+

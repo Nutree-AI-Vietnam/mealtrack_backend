@@ -529,6 +529,22 @@ class TestUserRepository:
         )
         return entity.timezone if entity else None
 
+    def get_weekly_auto_adjust(self, user_id) -> bool:
+        entity = (
+            self.db.query(User)
+            .filter(User.id == str(user_id), User.is_active.is_(True))
+            .first()
+        )
+        if entity is None:
+            return True
+        return bool(getattr(entity, "weekly_auto_adjust", True))
+
+    def update_user_weekly_auto_adjust(self, user_id, enabled: bool) -> None:
+        self.db.query(User).filter(User.id == str(user_id)).update(
+            {"weekly_auto_adjust": enabled}
+        )
+        self.db.commit()
+
 
 class AsyncTestMealRepository:
     """Explicit async test facade for legacy sync-session handler tests."""
@@ -602,6 +618,12 @@ class AsyncTestUserRepository:
 
     async def get_user_timezone(self, *args, **kwargs):
         return self._repo.get_user_timezone(*args, **kwargs)
+
+    async def get_weekly_auto_adjust(self, *args, **kwargs):
+        return self._repo.get_weekly_auto_adjust(*args, **kwargs)
+
+    async def update_user_weekly_auto_adjust(self, *args, **kwargs):
+        return self._repo.update_user_weekly_auto_adjust(*args, **kwargs)
 
 
 class TestUnitOfWork:
