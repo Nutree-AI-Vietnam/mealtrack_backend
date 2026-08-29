@@ -20,6 +20,12 @@ def normalize_language(language: str | None) -> str:
     )
 
 
+def resolve_app_locale(language: str | None) -> str:
+    """Return an enabled picker locale, defaulting to English."""
+    code = normalize_language(language)
+    return code if code in ENABLED_APP_LOCALES else DEFAULT_LANGUAGE
+
+
 def is_supported_language(language: str | None) -> bool:
     """Return whether a language belongs to the exact translation allowlist."""
     return normalize_language(language) in SUPPORTED_TRANSLATION_LANGUAGES

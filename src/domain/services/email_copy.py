@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.domain.constants.languages import DEFAULT_LANGUAGE, normalize_language
+from src.domain.constants.languages import DEFAULT_LANGUAGE, resolve_app_locale
 from src.domain.services.email_copy_east_asian import EMAIL_COPY_EAST_ASIAN
 from src.domain.services.email_copy_en_vi import EMAIL_COPY_EN_VI
 from src.domain.services.email_copy_western import EMAIL_COPY_WESTERN
@@ -23,7 +23,7 @@ def get_email_copy(language: str | None, template: str) -> dict[str, str]:
     if template not in EMAIL_TEMPLATES:
         raise ValueError(f"Unknown email template: {template}")
 
-    lang = normalize_language(language)
+    lang = resolve_app_locale(language)
     en_copy = EMAIL_COPY[DEFAULT_LANGUAGE][template]
     locale_copy = EMAIL_COPY.get(lang, {}).get(template, {})
     return {**en_copy, **locale_copy}

@@ -6,7 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.domain.constants.languages import SUPPORTED_TRANSLATION_LANGUAGES
+from src.domain.constants.languages import ENABLED_APP_LOCALES
 
 
 class NotificationPreferencesUpdateRequest(BaseModel):
@@ -54,8 +54,8 @@ class NotificationPreferencesUpdateRequest(BaseModel):
     @classmethod
     def validate_language(cls, v: Optional[str]) -> Optional[str]:
         """Validate notification language is supported."""
-        if v is not None and v.lower() not in SUPPORTED_TRANSLATION_LANGUAGES:
-            supported = ", ".join(sorted(SUPPORTED_TRANSLATION_LANGUAGES))
+        if v is not None and v.lower() not in ENABLED_APP_LOCALES:
+            supported = ", ".join(sorted(ENABLED_APP_LOCALES))
             raise ValueError(
                 f"Unsupported notification language: '{v}'. Supported languages: {supported}"
             )

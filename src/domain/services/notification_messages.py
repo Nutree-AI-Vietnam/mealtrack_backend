@@ -14,6 +14,7 @@ Placeholders:
 - Daily summary: {percentage}, {deficit}, {excess}
 """
 
+from src.domain.constants.languages import resolve_app_locale
 from src.domain.services.notification_messages_de import NOTIFICATION_MESSAGES_DE
 from src.domain.services.notification_messages_es import NOTIFICATION_MESSAGES_ES
 from src.domain.services.notification_messages_fr import NOTIFICATION_MESSAGES_FR
@@ -246,5 +247,6 @@ def get_messages(language: str, gender: str) -> dict:
 
     Falls back to: EN male if language/gender combo not found.
     """
-    locale = NOTIFICATION_MESSAGES.get(language, NOTIFICATION_MESSAGES["en"])
+    locale_code = resolve_app_locale(language)
+    locale = NOTIFICATION_MESSAGES.get(locale_code, NOTIFICATION_MESSAGES["en"])
     return locale.get(gender, locale["male"])
