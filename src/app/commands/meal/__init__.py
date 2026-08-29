@@ -12,7 +12,10 @@ from .edit_meal_command import (
     FoodItemChange,
     NutritionOverride,
 )
+from .favorite_meal_command import FavoriteMealCommand
+from .repeat_meal_command import RepeatMealCommand
 from .scan_by_url_command import ScanByUrlCommand
+from .unfavorite_meal_command import UnfavoriteMealCommand
 from .upload_meal_image_immediately_command import UploadMealImageImmediatelyCommand
 
 __all__ = [
@@ -26,4 +29,7 @@ __all__ = [
     "DeleteMealCommand",
     "DeleteMealPhotoCommand",
     "AttachMealPhotoCommand",
+    "FavoriteMealCommand",
+    "UnfavoriteMealCommand",
+    "RepeatMealCommand",
 ]

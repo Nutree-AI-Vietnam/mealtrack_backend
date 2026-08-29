@@ -9,6 +9,9 @@ if TYPE_CHECKING:
     from src.domain.ports.body_fat_visual_profile_repository_port import (
         BodyFatVisualProfileRepositoryPort,
     )
+    from src.domain.ports.favorite_meal_repository_port import (
+        FavoriteMealRepositoryPort,
+    )
     from src.domain.ports.meal_repository_port import MealRepositoryPort
     from src.domain.ports.meal_suggestion_repository_port import (
         MealSuggestionRepositoryPort,
@@ -28,6 +31,7 @@ class AsyncUnitOfWorkPort(ABC):
 
     users: UserRepositoryPort
     meals: MealRepositoryPort
+    favorite_meals: FavoriteMealRepositoryPort
     meal_recommendation_plans: Any
     meal_suggestions: MealSuggestionRepositoryPort
     subscriptions: SubscriptionRepositoryPort

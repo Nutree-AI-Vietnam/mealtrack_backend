@@ -31,8 +31,8 @@ from .feature_flag import FeatureFlag
 from .food_reference_model import FoodReferenceModel
 from .food_reference_nutrient import FoodReferenceNutrientModel
 from .food_reference_serving_size import FoodReferenceServingSizeModel
-from .serving_phrase_translation import ServingPhraseTranslationModel
 from .hydration_entry import HydrationEntryORM
+from .meal.favorite_meal import FavoriteMealORM
 from .meal.food_item_translation_model import FoodItemTranslationORM
 
 # Meal models
@@ -67,6 +67,7 @@ from .pending_meal_image_resolution import PendingMealImageResolutionModel
 from .saved_suggestion import SavedSuggestionModel
 from .saved_suggestion_item import SavedSuggestionItemModel
 from .saved_suggestion_step import SavedSuggestionStepModel
+from .serving_phrase_translation import ServingPhraseTranslationModel
 from .subscription import Subscription
 from .user.body_fat_visual_profile import BodyFatVisualProfile
 from .user.profile import UserProfile
@@ -132,6 +133,7 @@ __all__ = [
     "MealORM",
     "MealImageORM",
     "MealInstructionStepORM",
+    "FavoriteMealORM",
     "MealWriteOperationORM",
     "MealTranslationORM",
     "FoodItemTranslationORM",
