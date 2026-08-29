@@ -134,7 +134,12 @@ class AIModelManager:
 
         self._append_model_for_purposes(
             settings.OPENAI_TEXT_MODEL,
-            TEXT_PURPOSES,
+            TEXT_PURPOSES - {ModelPurpose.PARSE_TEXT},
+            remove_models={DEFAULT_OPENAI_MODEL, settings.OPENAI_TEXT_MODEL},
+        )
+        self._prepend_model_for_purposes(
+            settings.OPENAI_TEXT_MODEL,
+            {ModelPurpose.PARSE_TEXT},
             remove_models={DEFAULT_OPENAI_MODEL, settings.OPENAI_TEXT_MODEL},
         )
         self._prepend_model_for_purposes(
@@ -211,13 +216,16 @@ class AIModelManager:
         )
 
     def _append_cf_to_text_chains(self, cf_model: str, text_purposes_csv: str) -> None:
-        """Prepend raw CF model id to configured text-purpose chains."""
+        """Prepend raw CF model id to configured text-purpose chains, appending for PARSE_TEXT."""
         configured = {
             p.strip().lower() for p in text_purposes_csv.split(",") if p.strip()
         }
         for purpose in ModelPurpose:
             if purpose.value in configured:
-                self._prepend_model_for_purposes(cf_model, {purpose})
+                if purpose == ModelPurpose.PARSE_TEXT:
+                    self._append_model_for_purposes(cf_model, {purpose})
+                else:
+                    self._prepend_model_for_purposes(cf_model, {purpose})
 
     def _append_cf_to_vision_chains(
         self, cf_model: str, vision_purposes_csv: str

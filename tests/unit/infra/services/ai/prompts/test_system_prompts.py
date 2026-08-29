@@ -1,5 +1,6 @@
 def test_recipe_generation_prompt_exists():
     from src.domain.services.prompts.system_prompts import SystemPrompts
+
     assert hasattr(SystemPrompts, "RECIPE_GENERATION")
     assert isinstance(SystemPrompts.RECIPE_GENERATION, str)
     assert len(SystemPrompts.RECIPE_GENERATION) > 1000  # at least ~1024 tokens worth
@@ -7,8 +8,12 @@ def test_recipe_generation_prompt_exists():
 
 def test_recipe_generation_has_worked_examples():
     from src.domain.services.prompts.system_prompts import SystemPrompts
+
     # Must have at least one worked example
-    assert "WORKED EXAMPLE" in SystemPrompts.RECIPE_GENERATION or "example" in SystemPrompts.RECIPE_GENERATION.lower()
+    assert (
+        "WORKED EXAMPLE" in SystemPrompts.RECIPE_GENERATION
+        or "example" in SystemPrompts.RECIPE_GENERATION.lower()
+    )
     # Must include the JSON structure
     assert "recipe_steps" in SystemPrompts.RECIPE_GENERATION
     assert "ingredients" in SystemPrompts.RECIPE_GENERATION
@@ -19,14 +24,7 @@ def test_meal_text_parsing_prompt_requires_localized_display_names():
 
     prompt = SystemPrompts.get_meal_text_parsing_prompt("vi")
 
-    assert "Never leave 'name' in English" in prompt
-    assert "English-only names" in prompt
-    assert "slash-separated segment" in prompt
-    assert '"lookup_name": "Eggs"' in prompt
-    assert "Trứng gà (Eggs)" not in prompt
-    assert "COMPOSITION:" in prompt
-    assert "one-for-one" in prompt
-    assert "Minimum 3 ingredients" not in prompt
-    assert "DECOMPOSITION (MANDATORY)" not in prompt
-    assert "Bánh mì" not in prompt
-    assert "Toast with butter" not in prompt
+    assert "Vietnamese (vi)" in prompt
+    assert "`lookup_name`: Canonical English food name" in prompt
+    assert 'mode is "dish"' in prompt
+    assert 'mode is "ingredient_list"' in prompt

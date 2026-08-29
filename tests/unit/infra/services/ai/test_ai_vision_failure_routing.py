@@ -96,7 +96,6 @@ def test_text_purposes_prefer_cf_and_fallback_to_openai(mock_circuit_breaker):
                 manager = AIModelManager(settings=settings)
 
     for purpose in {
-        ModelPurpose.PARSE_TEXT,
         ModelPurpose.BARCODE,
         ModelPurpose.MEAL_NAMES,
         ModelPurpose.RECIPE,
@@ -107,6 +106,10 @@ def test_text_purposes_prefer_cf_and_fallback_to_openai(mock_circuit_breaker):
             "cf-text-model",
             "openai-text-model",
         ]
+    assert manager.get_fallback_chain(ModelPurpose.PARSE_TEXT)[:2] == [
+        "openai-text-model",
+        "cf-text-model",
+    ]
 
 
 def test_image_scan_purposes_prefer_openai_and_fallback_to_cf(mock_circuit_breaker):

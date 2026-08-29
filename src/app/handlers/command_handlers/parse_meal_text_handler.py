@@ -23,17 +23,13 @@ from src.app.schemas.meal_schemas import ParsedFoodItemDto, ParseMealTextRespons
 from src.app.services.food_display_name import (
     apply_fail_closed_display_names,
     apply_glossary_display_names,
-    apply_localized_display_names,
-    leftover_display_names,
     needs_display_localization,
 )
-from src.app.services.food_name_localizer import translate_food_texts
-from src.app.services.serving_label_localizer import localize_item_servings
-from src.app.services.parse_text_composition import composition_retry_feedback
+from src.app.services.parse_text_composition import classify_parse_text_input
 from src.app.services.parse_text_custom_estimate import apply_custom_estimate
+from src.app.services.serving_label_localizer import localize_item_servings
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
 from src.domain.model.ai.nutrition_contracts import (
-    LocalizedFoodNameBatch,
     MealTextNutritionResponse,
 )
 from src.domain.model.nutrition.macros import Macros
@@ -237,68 +233,40 @@ class ParseMealTextHandler(
             language=command.language
         )
 
+        advisory_mode = classify_parse_text_input(user_utterance)
+        user_envelope = (
+            f"mode: {advisory_mode}\n"
+            f"language: {command.language or 'en'}\n"
+            f"meal: {sanitized_text}"
+        )
+
         budget = _ParseTextRequestBudget()
-        semantic_feedback: list[str] = []
-        enhanced_items: list[dict[str, Any]] = []
-        validated_payload: dict[str, Any] | None = None
-        for semantic_attempt in range(2):
-            retry_prompt = sanitized_text
-            if semantic_feedback:
-                retry_prompt += (
-                    "\n\nValidation feedback (fix the whole response): "
-                    + "; ".join(semantic_feedback[:4])
-                )
-            validated_payload, raw_payload = await self._generate_parse_text_payload(
-                prompt=retry_prompt,
-                system_prompt=system_prompt,
+        validated_payload, raw_payload = await self._generate_parse_text_payload(
+            prompt=user_envelope,
+            system_prompt=system_prompt,
+            budget=budget,
+        )
+        emoji = validate_emoji(validated_payload.get("emoji"))
+        parsed_items = self._to_flat_parse_text_items(validated_payload, raw_payload)
+        if budget.deadline is None:
+            budget.deadline = time.monotonic() + _parse_text_fatsecret_timeout_seconds()
+        local_references = await self._find_local_references(
+            parsed_items, budget, command.language
+        )
+        enhanced_items = []
+        for item in parsed_items:
+            resolved = await self._cascade_lookup(
+                item,
                 budget=budget,
-            )
-            emoji = validate_emoji(validated_payload.get("emoji"))
-            parsed_items = self._to_flat_parse_text_items(
-                validated_payload, raw_payload
-            )
-            composition_feedback = composition_retry_feedback(
-                user_utterance, parsed_items
-            )
-            if composition_feedback and semantic_attempt == 0:
-                semantic_feedback = [composition_feedback]
-                continue
-            if budget.deadline is None:
-                budget.deadline = (
-                    time.monotonic() + _parse_text_fatsecret_timeout_seconds()
-                )
-            local_references = await self._find_local_references(
-                parsed_items, budget, command.language
-            )
-            try:
-                enhanced_items = []
-                for item in parsed_items:
-                    resolved = await self._cascade_lookup(
-                        item,
-                        budget=budget,
-                        local_reference=local_references.get(
-                            normalize_food_lookup_name(
-                                item.get("lookup_name") or item.get("name", "")
-                            )
-                        ),
+                local_reference=local_references.get(
+                    normalize_food_lookup_name(
+                        item.get("lookup_name") or item.get("name", "")
                     )
-                    if resolved is None:
-                        continue
-                    enhanced_items.append(resolved)
-                break
-            except AIOutputValidationError as exc:
-                if semantic_attempt >= 1 or budget.ai_generations >= 2:
-                    raise
-                semantic_feedback = list(
-                    exc.validation_details or ["nutrition fallback failed"]
-                )
-        else:
-            raise AIOutputValidationError(
-                "Invalid AI nutrition output",
-                purpose=PARSE_TEXT_VALIDATION_PURPOSE,
-                attempt_count=budget.ai_generations,
-                validation_details=semantic_feedback,
+                ),
             )
+            if resolved is None:
+                continue
+            enhanced_items.append(resolved)
 
         # Clamp nutrition to physically plausible ranges
         for item in enhanced_items:
@@ -312,21 +280,21 @@ class ParseMealTextHandler(
         total_carbs = sum(item.get("carbs", 0) for item in enhanced_items)
         total_fat = sum(item.get("fat", 0) for item in enhanced_items)
 
-        # Localize names for non-English users
+        # Localize names for non-English users (1-turn deterministic only)
         if command.language and command.language != "en":
-            # Step 1: Strip bilingual parentheses
             for item in enhanced_items:
                 item["name"] = self._extract_display_name(
                     item.get("name", "Unknown"), command.language
                 )
-            await self._localize_english_display_names(enhanced_items, command.language)
+            apply_glossary_display_names(enhanced_items, command.language)
+            apply_fail_closed_display_names(enhanced_items, command.language)
 
         await self._adopt_fatsecret_items(enhanced_items, command)
         if command.language and command.language != "en":
             await localize_item_servings(
                 enhanced_items,
                 language=command.language,
-                translation_service=self._translation_service,
+                translation_service=None,
                 uow_factory=self._uow_factory,
                 persist=True,
             )
@@ -648,14 +616,16 @@ class ParseMealTextHandler(
                     )
                     locale_hits = {}
                 for display_name, row in (locale_hits or {}).items():
-                    key = key_by_display_name.get(display_name)
-                    if key and key not in hits:
-                        hits[key] = row
+                    target_key = key_by_display_name.get(display_name)
+                    if target_key and target_key not in hits:
+                        hits[target_key] = row
         return hits
 
     async def _locale_reference_lookup(
         self, language: str, names: list[str]
     ) -> dict[str, dict[str, Any]]:
+        if self._uow_factory is None:
+            return {}
         async with self._uow_factory() as uow:
             return await uow.food_references.find_by_locale_names(language, names)
 
@@ -1143,71 +1113,6 @@ class ParseMealTextHandler(
                 }
             )
         return normalize_serving_options(units, provider_100g_label=True) or []
-
-    async def _localize_english_display_names(
-        self, items: list[dict[str, Any]], language: str
-    ) -> None:
-        """Translate leftover English display names after bilingual stripping.
-
-        Lookup already ran against lookup_name, so translating name is
-        presentation-only. Names that are already localized stay as-is.
-        """
-        leftovers = leftover_display_names(items, language)
-        if not leftovers:
-            return
-        if self._translation_service is not None:
-            result = await translate_food_texts(
-                leftovers,
-                target_language=language,
-                translation_service=self._translation_service,
-            )
-            apply_localized_display_names(
-                items,
-                dict(zip(leftovers, result.texts, strict=False)),
-                language,
-            )
-        apply_glossary_display_names(items, language)
-        leftovers = leftover_display_names(items, language)
-        if leftovers:
-            await self._force_translate_display_names(items, leftovers, language)
-        apply_fail_closed_display_names(items, language)
-
-    async def _force_translate_display_names(
-        self,
-        items: list[dict[str, Any]],
-        leftovers: list[str],
-        language: str,
-    ) -> None:
-        try:
-            raw = await self._meal_generation_service.generate_meal_plan_async(
-                prompt=json.dumps({"names": leftovers}, ensure_ascii=False),
-                system_message=SystemPrompts.get_food_name_localization_prompt(
-                    language
-                ),
-                response_type="json",
-                max_tokens=512,
-                schema=LocalizedFoodNameBatch,
-                model_purpose="parse_text",
-                thinking_budget=0,
-            )
-            payload = self._extract_parse_text_payload(raw)
-            validated = validate_ai_output(
-                payload,
-                schema=LocalizedFoodNameBatch,
-                purpose=PARSE_TEXT_VALIDATION_PURPOSE,
-                attempt_count=1,
-            )
-        except Exception:
-            logger.warning(
-                "parse-text leftover name localization failed", exc_info=True
-            )
-            return
-        translated = [str(name).strip() for name in validated.get("items", [])]
-        if len(translated) != len(leftovers):
-            return
-        apply_localized_display_names(
-            items, dict(zip(leftovers, translated, strict=False)), language
-        )
 
     @staticmethod
     def _extract_english_name(name: str) -> str:
