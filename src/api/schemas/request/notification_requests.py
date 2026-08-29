@@ -6,8 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-# Supported notification languages (TODO: add more locales)
-SUPPORTED_NOTIFICATION_LANGUAGES = {"en", "vi"}
+from src.domain.constants.languages import ENABLED_APP_LOCALES
 
 
 class NotificationPreferencesUpdateRequest(BaseModel):
@@ -48,15 +47,15 @@ class NotificationPreferencesUpdateRequest(BaseModel):
     # Preferred notification language
     language: Optional[str] = Field(
         None,
-        description="Preferred notification language (ISO 639-1 code, e.g., 'en', 'vi')",
+        description="Preferred notification language (ISO 639-1 code, e.g., 'en', 'ja')",
     )
 
     @field_validator("language")
     @classmethod
     def validate_language(cls, v: Optional[str]) -> Optional[str]:
         """Validate notification language is supported."""
-        if v is not None and v.lower() not in SUPPORTED_NOTIFICATION_LANGUAGES:
-            supported = ", ".join(sorted(SUPPORTED_NOTIFICATION_LANGUAGES))
+        if v is not None and v.lower() not in ENABLED_APP_LOCALES:
+            supported = ", ".join(sorted(ENABLED_APP_LOCALES))
             raise ValueError(
                 f"Unsupported notification language: '{v}'. Supported languages: {supported}"
             )
