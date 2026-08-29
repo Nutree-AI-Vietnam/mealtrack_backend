@@ -744,3 +744,13 @@ class AddCustomIngredientRequest(BaseModel):
                 },
             }
         }
+
+
+class RepeatMealRequest(BaseModel):
+    """Request DTO for repeating a meal."""
+
+    meal_type: Optional[str] = Field(
+        None,
+        description="Target meal type for the repeated meal (e.g., breakfast, lunch, dinner, snack)",
+    )
+
