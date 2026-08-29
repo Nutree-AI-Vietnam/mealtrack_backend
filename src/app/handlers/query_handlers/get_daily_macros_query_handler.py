@@ -87,12 +87,15 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             )
             user_tz = get_zone_info(user_tz_str)
             target_date = query.target_date or datetime.now(user_tz).date()
+            auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
+                await uow.users.get_weekly_auto_adjust(query.user_id)
+            )
 
             # Cache-aside BEFORE meal aggregation. Returning a Redis hit after
             # computing fresh totals discarded those totals and could leave
             # clients with stale consumed=0 while meals already existed.
             cached_result = await self._try_get_cached_result(
-                query.user_id, target_date, target_revision
+                query.user_id, target_date, target_revision, auto_adjust
             )
             if cached_result is not None:
                 return cached_result
@@ -216,6 +219,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                     macro_preset,
                     is_custom,
                     target_revision,
+                    auto_adjust,
                 )
 
         result = {
@@ -229,6 +233,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             "total_fat": round(total_fat, 1),
             "meal_count": meal_count,
             "meals_with_nutrition": meals_with_nutrition,
+            "weekly_auto_adjust": auto_adjust,
         }
 
         if target_calories is not None:
@@ -275,6 +280,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
         macro_preset: MacroPreset = MacroPreset.STANDARD,
         is_custom: bool = False,
         target_revision: int | None = None,
+        auto_adjust: bool = True,
     ) -> dict[str, Any] | None:
         """Get weekly budget context using the weekly-budget adjustment path.
 
@@ -310,6 +316,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 base_daily_fat=standard_daily_fat,
                 bmr=bmr,
                 user_timezone=user_timezone,
+                auto_adjust=auto_adjust,
             )
             adjusted = effective.adjusted
             policy_targets = TdeeCalculationService.apply_adjusted_macro_policy(
@@ -337,7 +344,11 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             return None
 
     async def _try_get_cached_result(
-        self, user_id: str, target_date: date, revision: int | None
+        self,
+        user_id: str,
+        target_date: date,
+        revision: int | None,
+        auto_adjust: bool,
     ):
         if not self.cache_service:
             return None
@@ -348,6 +359,10 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 revision is not None
                 and cached
                 and cached.get("target_revision") == revision
+                and WeeklyBudgetService.auto_adjust_enabled(
+                    cached.get("weekly_auto_adjust", True)
+                )
+                == auto_adjust
             ):
                 return cached
             return None

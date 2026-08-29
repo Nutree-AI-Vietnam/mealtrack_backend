@@ -54,6 +54,9 @@ from .update_notification_preferences_command_handler import (
     UpdateNotificationPreferencesCommandHandler,
 )
 from .update_timezone_command_handler import UpdateTimezoneCommandHandler
+from .update_weekly_auto_adjust_command_handler import (
+    UpdateWeeklyAutoAdjustCommandHandler,
+)
 from .update_user_last_accessed_command_handler import (
     UpdateUserLastAccessedCommandHandler,
 )
@@ -80,6 +83,7 @@ __all__ = [
     "UpdateCustomMacrosCommandHandler",
     "UpdateLanguageCommandHandler",
     "UpdateTimezoneCommandHandler",
+    "UpdateWeeklyAutoAdjustCommandHandler",
     # Meal Suggestion handlers
     "DiscoverMealsCommandHandler",
     "GenerateMealRecipesCommandHandler",

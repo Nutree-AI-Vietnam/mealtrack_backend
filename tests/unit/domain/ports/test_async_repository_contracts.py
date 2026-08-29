@@ -49,6 +49,8 @@ def test_repository_ports_are_async_contracts():
             "update_user_timezone",
             "get_user_timezone",
             "update_user_language",
+            "get_weekly_auto_adjust",
+            "update_user_weekly_auto_adjust",
         ],
     )
     _assert_async_methods(

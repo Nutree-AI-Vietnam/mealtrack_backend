@@ -51,6 +51,7 @@ from src.app.commands.user import (
     UpdateCustomMacrosCommand,
     UpdateLanguageCommand,
     UpdateTimezoneCommand,
+    UpdateWeeklyAutoAdjustCommand,
 )
 from src.app.commands.user.sync_user_command import (
     SyncUserCommand,
@@ -93,6 +94,7 @@ from src.app.handlers.command_handlers import (
     UpdateMovementEntryCommandHandler,
     UpdateNotificationPreferencesCommandHandler,
     UpdateTimezoneCommandHandler,
+    UpdateWeeklyAutoAdjustCommandHandler,
     UpdateUserLastAccessedCommandHandler,
     UpdateUserMetricsCommandHandler,
     UploadMealImageImmediatelyHandler,
@@ -146,6 +148,7 @@ from src.app.handlers.query_handlers import (
     GetUserProfileQueryHandler,
     GetUserTdeeQueryHandler,
     GetUserTimezoneQueryHandler,
+    GetWeeklyAutoAdjustQueryHandler,
     GetWeeklyBudgetQueryHandler,
     LookupBarcodeQueryHandler,
     PreviewTdeeQueryHandler,
@@ -207,6 +210,7 @@ from src.app.queries.user import (
     GetUserMetricsQuery,
     GetUserProfileQuery,
     GetUserTimezoneQuery,
+    GetWeeklyAutoAdjustQuery,
 )
 from src.app.queries.user.get_user_by_firebase_uid_query import (
     GetUserByFirebaseUidQuery,
@@ -858,6 +862,13 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
     event_bus.register_handler(
+        UpdateWeeklyAutoAdjustCommand,
+        UpdateWeeklyAutoAdjustCommandHandler(
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+        ),
+    )
+    event_bus.register_handler(
         UpdateCustomMacrosCommand,
         UpdateCustomMacrosCommandHandler(
             uow=AsyncUnitOfWork(),
@@ -876,6 +887,10 @@ def get_configured_event_bus() -> EventBus:
     )
     event_bus.register_handler(
         GetUserTimezoneQuery, GetUserTimezoneQueryHandler(AsyncUnitOfWork)
+    )
+    event_bus.register_handler(
+        GetWeeklyAutoAdjustQuery,
+        GetWeeklyAutoAdjustQueryHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetUserByFirebaseUidQuery, GetUserByFirebaseUidQueryHandler()

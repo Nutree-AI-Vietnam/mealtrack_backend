@@ -111,6 +111,9 @@ async def get_adjusted_daily_target(
             raise ValueError("Weekly target revision is stale")
 
         # Use async shared method: recalculates consumed, applies skip/redistribute
+        auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
+            await uow.users.get_weekly_auto_adjust(user_id)
+        )
         effective = await WeeklyBudgetService.get_effective_adjusted_daily_async(
             uow=uow, user_id=user_id,
             week_start=week_start, target_date=today,
@@ -120,6 +123,7 @@ async def get_adjusted_daily_target(
             base_daily_carbs=tdee_result.macros.carbs,
             base_daily_fat=tdee_result.macros.fat,
             bmr=bmr, user_timezone=user_tz,
+            auto_adjust=auto_adjust,
         )
         logger.info(
             f"Adjusted daily target for user {user_id}: "

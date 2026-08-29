@@ -6,10 +6,12 @@ from .get_user_metrics_query import GetUserMetricsQuery
 from .get_user_onboarding_status_query import GetUserOnboardingStatusQuery
 from .get_user_profile_query import GetUserProfileQuery
 from .get_user_timezone_query import GetUserTimezoneQuery
+from .get_weekly_auto_adjust_query import GetWeeklyAutoAdjustQuery
 
 __all__ = [
     "GetUserProfileQuery",
     "GetUserTimezoneQuery",
+    "GetWeeklyAutoAdjustQuery",
     "GetBodyFatVisualProfileQuery",
     "GetUserMetricsQuery",
     "GetUserByFirebaseUidQuery",
