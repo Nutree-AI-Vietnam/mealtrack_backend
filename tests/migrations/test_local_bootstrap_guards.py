@@ -10,7 +10,7 @@ USER_ENHANCEMENT_MIGRATION = Path(
     "migrations/versions/002_add_seasonings_and_user_enhancements.py"
 )
 USER_PROVIDER_MIGRATION = Path(
-    "migrations/versions/20260828000001_widen_user_auth_provider.py"
+    "migrations/versions/20260828000001_widen_users_provider_column.py"
 )
 FOOD_ITEM_UUID_MIGRATION = Path(
     "migrations/versions/006_convert_food_item_id_to_uuid.py"
@@ -92,6 +92,7 @@ def test_user_provider_migration_widens_legacy_column_for_email_link_auth() -> N
     assert '"provider"' in text
     assert "existing_type=sa.String(length=6)" in text
     assert "type_=sa.String(length=32)" in text
+    assert 'postgresql_using="provider::text"' in text
     assert User.__table__.c.provider.type.length == 32
 
 
