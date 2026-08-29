@@ -208,18 +208,102 @@ _DRINK_TRANSLATIONS: dict[str, dict[str, dict[str, str | None]]] = {
         "energy": {"name": "Nước tăng lực", "sub": "Red Bull"},
         "iced-latte": {"name": "Latte đá", "sub": "Cold brew"},
         "beer": {"name": "Bia", "sub": "Lager"},
-    }
+    },
+    "es": {
+        "water": {"name": "Agua", "sub": None},
+        "sparkling": {"name": "Agua con gas", "sub": "Con gas"},
+        "tea": {"name": "Té", "sub": None},
+        "coffee": {"name": "Café", "sub": None},
+        "electrolyte": {"name": "Bebida isotónica", "sub": "Deportiva"},
+        "milk-tea": {"name": "Té con leche", "sub": "Boba"},
+        "coke": {"name": "Refresco", "sub": "Con gas"},
+        "coke-zero": {"name": "Coca-Cola Zero", "sub": "Sin azúcar"},
+        "oj": {"name": "Jugo de fruta", "sub": "Recién exprimido"},
+        "smoothie": {"name": "Batido", "sub": "Mezcla açaí"},
+        "energy": {"name": "Bebida energética", "sub": "Red Bull"},
+        "iced-latte": {"name": "Latte frío", "sub": "Cold brew"},
+        "beer": {"name": "Cerveza", "sub": "Lager"},
+    },
+    "fr": {
+        "water": {"name": "Eau", "sub": None},
+        "sparkling": {"name": "Eau pétillante", "sub": "Gazeuse"},
+        "tea": {"name": "Thé", "sub": None},
+        "coffee": {"name": "Café", "sub": None},
+        "electrolyte": {"name": "Boisson électrolytique", "sub": "Sport"},
+        "milk-tea": {"name": "Thé au lait", "sub": "Boba"},
+        "coke": {"name": "Soda", "sub": "Gazeux"},
+        "coke-zero": {"name": "Coca-Cola Zero", "sub": "Sans sucre"},
+        "oj": {"name": "Jus de fruits", "sub": "Pressé"},
+        "smoothie": {"name": "Smoothie", "sub": "Mélange açaí"},
+        "energy": {"name": "Boisson énergisante", "sub": "Red Bull"},
+        "iced-latte": {"name": "Latte glacé", "sub": "Cold brew"},
+        "beer": {"name": "Bière", "sub": "Lager"},
+    },
+    "de": {
+        "water": {"name": "Wasser", "sub": None},
+        "sparkling": {"name": "Sprudelwasser", "sub": "Kohlensäure"},
+        "tea": {"name": "Tee", "sub": None},
+        "coffee": {"name": "Kaffee", "sub": None},
+        "electrolyte": {"name": "Elektrolytgetränk", "sub": "Sport"},
+        "milk-tea": {"name": "Milchtee", "sub": "Boba"},
+        "coke": {"name": "Softdrink", "sub": "Kohlensäure"},
+        "coke-zero": {"name": "Coca-Cola Zero", "sub": "Zuckerfrei"},
+        "oj": {"name": "Fruchtsaft", "sub": "Frisch gepresst"},
+        "smoothie": {"name": "Smoothie", "sub": "Açaí-Mix"},
+        "energy": {"name": "Energydrink", "sub": "Red Bull"},
+        "iced-latte": {"name": "Eiskaffee", "sub": "Cold brew"},
+        "beer": {"name": "Bier", "sub": "Lager"},
+    },
+    "ja": {
+        "water": {"name": "水", "sub": None},
+        "sparkling": {"name": "炭酸水", "sub": "発泡"},
+        "tea": {"name": "お茶", "sub": None},
+        "coffee": {"name": "コーヒー", "sub": None},
+        "electrolyte": {"name": "スポーツドリンク", "sub": "電解質"},
+        "milk-tea": {"name": "ミルクティー", "sub": "タピオカ"},
+        "coke": {"name": "ソーダ", "sub": "炭酸"},
+        "coke-zero": {"name": "コカ・ゼロ", "sub": "無糖"},
+        "oj": {"name": "フルーツジュース", "sub": "搾りたて"},
+        "smoothie": {"name": "スムージー", "sub": "アサイーブレンド"},
+        "energy": {"name": "エナジードリンク", "sub": "Red Bull"},
+        "iced-latte": {"name": "アイスラテ", "sub": "コールドブルー"},
+        "beer": {"name": "ビール", "sub": "ラガー"},
+    },
+    "zh": {
+        "water": {"name": "水", "sub": None},
+        "sparkling": {"name": "气泡水", "sub": "碳酸"},
+        "tea": {"name": "茶", "sub": None},
+        "coffee": {"name": "咖啡", "sub": None},
+        "electrolyte": {"name": "电解质饮料", "sub": "运动"},
+        "milk-tea": {"name": "奶茶", "sub": "珍珠"},
+        "coke": {"name": "汽水", "sub": "碳酸"},
+        "coke-zero": {"name": "零度可乐", "sub": "无糖"},
+        "oj": {"name": "果汁", "sub": "鲜榨"},
+        "smoothie": {"name": "思慕雪", "sub": "巴西莓"},
+        "energy": {"name": "能量饮料", "sub": "Red Bull"},
+        "iced-latte": {"name": "冰拿铁", "sub": "冷萃"},
+        "beer": {"name": "啤酒", "sub": "拉格"},
+    },
 }
 
-_DRINK_IDS_BY_ENGLISH_NAME: dict[str, str] = {
+_DRINK_IDS_BY_CANONICAL_NAME: dict[str, str] = {
     drink.name.lower(): drink.id for drink in _DRINKS
 }
-_DRINK_IDS_BY_ENGLISH_NAME.update(
+_DRINK_IDS_BY_CANONICAL_NAME.update(
     {
         "coke zero": "coke-zero",
         "coca/pepsi zero": "coke-zero",
+        "milk tea": "milk-tea",
+        "fruit juice": "oj",
+        "energy drink": "energy",
+        "iced latte": "iced-latte",
     }
 )
+for _locale_map in _DRINK_TRANSLATIONS.values():
+    for _drink_id, _fields in _locale_map.items():
+        _label = _fields.get("name")
+        if _label:
+            _DRINK_IDS_BY_CANONICAL_NAME[_label.lower()] = _drink_id
 
 
 # ---------------------------------------------------------------------------
@@ -253,11 +337,17 @@ def localized_sub(drink: Drink, language: str = "en") -> str | None:
 
 
 def localized_name_for_catalog_name(
-    name: str | None, language: str = "en"
+    name: str | None,
+    language: str = "en",
+    drink_id: str | None = None,
 ) -> str | None:
-    """Localize a stored canonical catalog name."""
+    """Localize a stored canonical catalog name or drink id snapshot."""
+    if drink_id:
+        drink = find_by_id(drink_id)
+        if drink:
+            return localized_name(drink, language)
     if not name:
         return name
-    drink_id = _DRINK_IDS_BY_ENGLISH_NAME.get(name.lower())
-    drink = DRINK_CATALOG.get(drink_id) if drink_id else None
+    resolved_id = _DRINK_IDS_BY_CANONICAL_NAME.get(name.lower())
+    drink = DRINK_CATALOG.get(resolved_id) if resolved_id else None
     return localized_name(drink, language) if drink else name

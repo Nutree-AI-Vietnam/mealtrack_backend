@@ -21,6 +21,10 @@ from src.domain.utils.timezone_utils import (
     get_zone_info,
     resolve_user_timezone_async,
 )
+from src.domain.services.movement_catalog_service import (
+    localized_activity_name,
+    localized_activity_name_for_snapshot,
+)
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -77,7 +81,7 @@ class GetDailyActivitiesQueryHandler(
                 query, user_tz_str, local_date
             )
             workout_activities = await self._get_workout_activities(
-                query, tz, local_date
+                query, tz, local_date, query.language or "en"
             )
             fetch_ok = True
         except Exception as e:
@@ -149,6 +153,7 @@ class GetDailyActivitiesQueryHandler(
         query: GetDailyActivitiesQuery,
         tz,
         local_date,
+        language: str,
     ) -> list[dict[str, Any]]:
         """Fetch movement entries using a short-lived UoW."""
         from datetime import time, timedelta
@@ -159,14 +164,22 @@ class GetDailyActivitiesQueryHandler(
             entries = await uow.movement_entries.find_by_user_and_logged_range(
                 query.user_id, start_utc, end_utc
             )
-        return [self._build_movement_activity(entry) for entry in entries]
+        return [self._build_movement_activity(entry, language) for entry in entries]
 
-    def _build_movement_activity(self, entry) -> dict[str, Any]:
+    def _build_movement_activity(self, entry, language: str = "en") -> dict[str, Any]:
+        title = (
+            (
+                localized_activity_name(entry.activity_id, language)
+                if entry.activity_id and entry.activity_id != "custom"
+                else localized_activity_name_for_snapshot(entry.activity_name, language)
+            )
+            or entry.activity_name
+        )
         return {
             "id": entry.id,
             "type": "movement",
             "timestamp": format_iso_utc(entry.logged_at),
-            "title": entry.activity_name,
+            "title": title,
             "activity_id": entry.activity_id,
             "intensity": entry.intensity,
             "duration_min": entry.duration_min,
@@ -252,10 +265,13 @@ class GetDailyActivitiesQueryHandler(
             "type": "hydration",
             "timestamp": format_iso_utc(entry.logged_at),
             "title": localized_name_for_catalog_name(
-                entry.drink_name_snapshot, language
+                entry.drink_name_snapshot,
+                language,
+                drink_id=entry.drink_id,
             )
             or entry.drink_name_snapshot
             or "Water",
+            "drink_id": entry.drink_id,
             "emoji": entry.emoji_snapshot or "💧",
             "meal_type": "hydration",
             "calories": round(entry.calories, 1),

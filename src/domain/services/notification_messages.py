@@ -14,6 +14,12 @@ Placeholders:
 - Daily summary: {percentage}, {deficit}, {excess}
 """
 
+from src.domain.services.notification_messages_de import NOTIFICATION_MESSAGES_DE
+from src.domain.services.notification_messages_es import NOTIFICATION_MESSAGES_ES
+from src.domain.services.notification_messages_fr import NOTIFICATION_MESSAGES_FR
+from src.domain.services.notification_messages_ja import NOTIFICATION_MESSAGES_JA
+from src.domain.services.notification_messages_zh import NOTIFICATION_MESSAGES_ZH
+
 NOTIFICATION_MESSAGES = {
     "en": {
         "male": {
@@ -227,6 +233,11 @@ NOTIFICATION_MESSAGES = {
             },
         },
     },
+    "es": NOTIFICATION_MESSAGES_ES,
+    "fr": NOTIFICATION_MESSAGES_FR,
+    "de": NOTIFICATION_MESSAGES_DE,
+    "ja": NOTIFICATION_MESSAGES_JA,
+    "zh": NOTIFICATION_MESSAGES_ZH,
 }
 
 

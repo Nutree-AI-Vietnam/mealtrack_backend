@@ -81,9 +81,14 @@ def _build_hydration_entry_activity(entry, language: str = "en") -> dict[str, An
         "id": entry.id,
         "type": "hydration",
         "timestamp": format_iso_utc(entry.logged_at),
-        "title": localized_name_for_catalog_name(entry.drink_name_snapshot, language)
+        "title": localized_name_for_catalog_name(
+            entry.drink_name_snapshot,
+            language,
+            drink_id=entry.drink_id,
+        )
         or entry.drink_name_snapshot
         or "Water",
+        "drink_id": entry.drink_id,
         "emoji": entry.emoji_snapshot or "💧",
         "meal_type": "hydration",
         "calories": round(entry.calories, 1),
