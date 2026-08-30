@@ -1,6 +1,5 @@
 import os
 import sys
-from datetime import UTC, datetime
 from logging.config import fileConfig
 from pathlib import Path
 
@@ -8,7 +7,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from alembic import context
-from migrations.utils import MIGRATION_URL, migration_engine
+from migrations.utils import (
+    MIGRATION_URL,
+    generate_timestamp_revision_id,
+    migration_engine,
+)
 from sqlalchemy import text
 
 import src.infra.database.models  # noqa: F401
@@ -55,10 +58,11 @@ def _apply_migration_timeouts(connection) -> None:
 
 
 def _timestamp_rev_id(context, revision, directives):
-    """Assign a UTC timestamp revision ID to avoid cross-branch collisions."""
+    """Assign a 14-digit YYYYMMDDHHmmss revision ID (e.g. 20260829000002)."""
     if not directives:
         return
-    directives[0].rev_id = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    versions_dir = Path(__file__).parent / "versions"
+    directives[0].rev_id = generate_timestamp_revision_id(versions_dir)
 
 
 def run_migrations_offline() -> None:

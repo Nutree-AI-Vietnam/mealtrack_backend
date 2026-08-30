@@ -6,10 +6,48 @@ Neon's PgBouncer pooler doesn't handle DDL commits reliably.
 """
 
 import os
+from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
+
+
+def generate_timestamp_revision_id(
+    versions_dir: Path | None = None,
+    target_time: datetime | None = None,
+) -> str:
+    """Generate a 14-digit UTC timestamp revision ID: YYYYMMDDHHmmss.
+
+    Example:
+    - 20260829000002 (2026-08-29 00:00:02 UTC)
+    """
+    if target_time is None:
+        target_time = datetime.now(UTC)
+
+    base_id = target_time.strftime("%Y%m%d%H%M%S")
+    if versions_dir is None or not versions_dir.exists():
+        return base_id
+
+    existing_revs = {
+        f.name.split("_")[0]
+        for f in versions_dir.glob("*.py")
+        if not f.name.startswith("__")
+    }
+
+    if base_id not in existing_revs:
+        return base_id
+
+    # If same-second collision occurs, increment sequentially until unique
+    candidate_val = int(base_id)
+    while str(candidate_val) in existing_revs:
+        candidate_val += 1
+    return str(candidate_val)
+
+
+# Backward compatibility alias
+generate_sequential_revision_id = generate_timestamp_revision_id
 
 
 def get_migration_url() -> str:
@@ -32,6 +70,9 @@ def get_migration_url() -> str:
         url = base_url.replace("-pooler", "")
     else:
         url = base_url
+
+    if not url:
+        url = "postgresql+psycopg2://nutree:@localhost:5432/nutree"
 
     # Normalize protocol for psycopg2
     if url.startswith("postgres://"):

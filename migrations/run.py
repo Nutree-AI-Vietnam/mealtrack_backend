@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from migrations.utils import migration_engine as engine
 from sqlalchemy import inspect, text
@@ -139,14 +140,22 @@ def initialize_first_deployment(alembic_cfg: Config) -> bool:
         return False
 
 
-def run_migrations() -> bool:
-    """
-    Run database migrations with proper error handling.
+def run_migrations(
+    action: str = "upgrade",
+    target: str = "head",
+) -> bool:
+    """Run database migrations or rollbacks with proper error handling.
+
+    Args:
+        action: 'upgrade' or 'downgrade'/'rollback'
+        target: Target revision ('head', '-1', or revision ID)
 
     Returns:
         bool: True if successful, False otherwise
     """
-    logger.info("🚀 Starting database migration process...")
+    logger.info(
+        f"🚀 Starting database migration process (action={action}, target={target})..."
+    )
 
     # Step 1: Wait for database
     if not wait_for_database():
@@ -173,31 +182,66 @@ def run_migrations() -> bool:
                 ).scalar()
 
         logger.info(
-            "📌 Alembic revision before upgrade: current=%s head=%s",
+            "📌 Alembic revision before run: current=%s head=%s",
             current_revision or "<none>",
             head_revision or "<none>",
         )
 
-        # Step 4: Handle first deployment
-        if "alembic_version" not in tables:
-            logger.info("🆕 First deployment detected, initializing...")
-            if not initialize_first_deployment(alembic_cfg):
+        # Check for orphan revision (database ahead of codebase)
+        if current_revision is not None:
+            all_revisions = {rev.revision for rev in script_dir.walk_revisions()}
+            if current_revision not in all_revisions:
+                logger.error(
+                    "\n"
+                    "===============================================================\n"
+                    "❌ ORPHAN REVISION / DATABASE AHEAD OF CODEBASE DETECTED!\n"
+                    "===============================================================\n"
+                    f"The database has revision '{current_revision}', which DOES NOT EXIST\n"
+                    f"in this codebase's migration history (head={head_revision}).\n\n"
+                    "This typically happens when a Git commit was reverted or an older\n"
+                    "container image was deployed without first rolling back the database.\n\n"
+                    "HOW TO RESOLVE:\n"
+                    "  1. Pre-Revert Rollback:\n"
+                    "     Run the migration runner/image from the branch that introduced\n"
+                    f"     '{current_revision}' and execute a rollback to {head_revision}.\n\n"
+                    "  2. Forward-Fix Reversion:\n"
+                    "     Keep the migration file in git and create a new forward migration\n"
+                    "     to revert schema changes rather than deleting the migration file.\n"
+                    "==============================================================="
+                )
                 return False
-        else:
-            logger.info("📋 Existing deployment detected")
 
-        # Step 5: Run migrations
-        logger.info("⏩ Running pending migrations...")
-        command.upgrade(alembic_cfg, "head")
-        logger.info("✅ All migrations completed successfully")
+        # Step 4: Handle first deployment (only during forward upgrade)
+        if action == "upgrade":
+            if "alembic_version" not in tables:
+                logger.info("🆕 First deployment detected, initializing...")
+                if not initialize_first_deployment(alembic_cfg):
+                    return False
+            else:
+                logger.info("📋 Existing deployment detected")
+
+            # Step 5: Run upgrade
+            logger.info(f"⏩ Running pending migrations to {target}...")
+            if target == "head":
+                command.upgrade(alembic_cfg, "head")
+            else:
+                command.upgrade(alembic_cfg, target)
+            logger.info("✅ Upgrade completed successfully")
+
+        elif action in ("downgrade", "rollback"):
+            logger.info(f"⏪ Running downgrade to {target}...")
+            command.downgrade(alembic_cfg, target)
+            logger.info("✅ Downgrade completed successfully")
+
+        else:
+            logger.error(f"❌ Unknown migration action: {action}")
+            return False
 
         # Step 6: Verify final state
-        from alembic.runtime.migration import MigrationContext
-
         with engine.connect() as conn:
             context = MigrationContext.configure(conn)
             current_rev = context.get_current_revision()
-            logger.info(f"📌 Current database revision: {current_rev}")
+            logger.info(f"📌 Current database revision: {current_rev or '<none>'}")
 
         return True
 
@@ -210,9 +254,41 @@ def run_migrations() -> bool:
         return False
 
 
+def _parse_runner_args():
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(description="Database migration runner")
+    parser.add_argument(
+        "--action",
+        choices=["upgrade", "downgrade", "rollback"],
+        default=os.getenv("MIGRATION_ACTION", "upgrade"),
+        help="Migration action to perform (default: upgrade)",
+    )
+    parser.add_argument(
+        "--target",
+        default=os.getenv("MIGRATION_TARGET", "head"),
+        help="Target revision (default: head)",
+    )
+    parser.add_argument(
+        "--rollback",
+        dest="rollback_target",
+        help="Shortcut to rollback to a specific target revision",
+    )
+    return parser.parse_known_args()[0]
+
+
 if __name__ == "__main__":
     try:
-        success = run_migrations()
+        args = _parse_runner_args()
+        if args.rollback_target:
+            action = "rollback"
+            target = args.rollback_target
+        else:
+            action = args.action
+            target = args.target
+
+        success = run_migrations(action=action, target=target)
         exit_code = 0 if success else 1
 
         if success:

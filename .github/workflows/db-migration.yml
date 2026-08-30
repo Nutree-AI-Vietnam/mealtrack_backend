@@ -1,0 +1,109 @@
+name: Database Migration & Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      action:
+        description: "Migration Action"
+        required: true
+        type: choice
+        options:
+          - status
+          - upgrade
+          - downgrade
+          - rollback
+          - test
+        default: status
+      target:
+        description: "Target revision or steps (e.g. 'head', '-1', '20260829000001', 'base')"
+        required: false
+        type: string
+        default: "head"
+      confirm_production:
+        description: "Confirm production migration / rollback (Required for production actions)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  db-migration:
+    name: 🗄️ DB ${{ inputs.action }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔒 Validate Production Confirmation
+        if: ${{ inputs.environment == 'production' && inputs.action != 'status' && !inputs.confirm_production }}
+        run: |
+          echo "::error::Production migration or rollback requires 'confirm_production' checkbox to be checked."
+          exit 1
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.2'
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: 📊 Check Migration Status
+        if: ${{ inputs.action == 'status' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          python migrations/cli.py status
+
+      - name: ⏩ Run Migration Upgrade
+        if: ${{ inputs.action == 'upgrade' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          TARGET="${{ inputs.target }}"
+          if [ -n "$TARGET" ] && [ "$TARGET" != "head" ]; then
+            python migrations/cli.py upgrade --target "$TARGET"
+          else
+            python migrations/cli.py upgrade
+          fi
+
+      - name: ⏪ Run Migration Downgrade
+        if: ${{ inputs.action == 'downgrade' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          TARGET="${{ inputs.target }}"
+          if [ -n "$TARGET" ] && [ "$TARGET" != "head" ]; then
+            python migrations/cli.py downgrade --target "$TARGET"
+          else
+            python migrations/cli.py downgrade --steps 1
+          fi
+
+      - name: 🔄 Run Explicit Rollback
+        if: ${{ inputs.action == 'rollback' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          python migrations/cli.py rollback "${{ inputs.target }}"
+
+      - name: 🧪 Run Migration Test Cycle
+        if: ${{ inputs.action == 'test' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          python migrations/cli.py test

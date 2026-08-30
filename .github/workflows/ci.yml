@@ -41,6 +41,11 @@ jobs:
         env:
           PYTHONPATH: .
 
+      - name: 🗄️ Validate Migrations & Downgrades
+        run: python migrations/cli.py check-downgrades
+        env:
+          PYTHONPATH: .
+
       - name: 🧪 Run Unit Tests
         run: |
           pytest \

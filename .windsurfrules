@@ -1,0 +1,24 @@
+# Windsurf Rules — MealTrack Backend
+
+Process memory for AI agents. See `AGENTS.md` and `README.md`.
+
+## MUST-Follow Rules for DB Migrations
+
+- **Always use CLI generator**:
+  `./scripts/development/migrate.sh generate "<msg>"` or `python migrations/cli.py generate "<msg>"`
+  (Use `--empty` if generating template without a live running database).
+- **Never hand-craft migration files or revision IDs**:
+  Revision IDs must strictly follow the 14-digit UTC timestamp pattern (`YYYYMMDDHHmmss`, e.g. `20260830152437`).
+- **Always implement valid `downgrade()` methods**:
+  Every migration must be fully reversible. Merge revisions must use `pass`.
+- **Single Head**:
+  Always ensure the migration graph resolves to a single head.
+- **Verify Migrations**:
+  Run `python migrations/cli.py check-downgrades` before completing tasks.
+
+## Other Core Rules
+
+- **Calories = backend is source of truth**: Clients must not re-derive calories (`src/domain/services/meal_calorie_service.py`).
+- **Weekly budget `remaining_days` includes today** (Mon=7, Tue=6, ..., Sun=1).
+- **Architecture**: Domain has no outer I/O dependencies. Follow CQRS conventions.
+- **Tests**: Run `pytest tests/unit --cov=src --cov-fail-under=65`. Do not run bare unscoped `pytest`.

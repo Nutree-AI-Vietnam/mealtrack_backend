@@ -1,0 +1,13 @@
+---
+description: Database migration and rollback rules for MealTrack backend
+globs: migrations/**, scripts/development/migrate.sh, alembic.ini
+alwaysApply: false
+---
+
+# Database Migration Rules
+
+- **Generate via CLI**: Always run `./scripts/development/migrate.sh generate "<msg>"` or `python migrations/cli.py generate "<msg>"`.
+- **Never hand-craft migration files or revision IDs**: IDs must strictly match the 14-digit UTC timestamp format `YYYYMMDDHHmmss` (e.g. `20260830152437`).
+- **Always provide `downgrade()`**: Every migration must be reversible.
+- **Single Head**: The migration graph must have exactly one head revision.
+- **Validate Before Completion**: Run `python migrations/cli.py check-downgrades`.

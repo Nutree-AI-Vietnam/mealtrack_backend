@@ -165,25 +165,78 @@ PROCESSING → ANALYZING → ENRICHING → READY
 
 ---
 
-## Migrations
+## Migrations & Rollback Flow
 
 ```bash
-alembic upgrade head                              # Apply latest
-alembic revision --autogenerate -m "description"  # Create new
-alembic downgrade -1                              # Rollback one
+# Standard workflow
+./scripts/development/migrate.sh status                              # Check current state
+./scripts/development/migrate.sh generate "Add user preferences"    # Create new with 14-digit ID
+./scripts/development/migrate.sh test                               # Test upgrade -> downgrade -> upgrade
+./scripts/development/migrate.sh upgrade                            # Apply latest migrations
+./scripts/development/migrate.sh downgrade                          # Rollback last migration
+./scripts/development/migrate.sh rollback 20260829000001            # Rollback to specific target
+./scripts/development/migrate.sh check-downgrades                   # Lint naming & downgrade methods
 ```
 
-Migration files live under `migrations/versions/`. `alembic upgrade head` is the
-standard versioned upgrade path. `python migrations/run.py` is the guarded fresh
-bootstrap / recovery path: it upgrades empty databases from base to head and
-refuses to stamp existing unversioned application tables automatically. Use
-timestamp naming for new migrations and keep app runtime URLs separate from
-migration/admin URLs.
+### Migration File Naming Pattern
+
+New migrations use a 14-digit UTC timestamp for both the revision ID
+and filename: `YYYYMMDDHHmmss_slug.py`.
+
+Example: `20260829000002_add_users_weekly_auto_adjust.py`
+
+- `YYYY`: 4-digit year (e.g. `2026`)
+- `MM`: 2-digit month (e.g. `08`)
+- `DD`: 2-digit day (e.g. `29`)
+- `HH`: 2-digit hour in UTC (e.g. `00`)
+- `mm`: 2-digit minute in UTC (e.g. `00`)
+- `SS`: 2-digit second in UTC (e.g. `02`)
+
+### Safe Migration & Rollback Procedures
+
+When deploying releases with schema changes or rolling them back, follow these procedures to avoid broken Alembic revision trees:
+
+1. **Procedure A: Downgrade-First Flow (Pre-Revert Rollback)**:
+   - Run the database rollback *before* rolling back application code / container images, while the migration file still exists in the codebase:
+     ```bash
+     python migrations/cli.py rollback <target_revision>
+     ```
+   - Alternatively, trigger the **Database Migration & Rollback** GitHub Actions workflow (`.github/workflows/db-migration.yml`) with action `rollback` and the target revision.
+   - Then redeploy the older application code / image.
+
+2. **Procedure B: Forward-Fix Reversion Flow (Compensating Migration)**:
+   - If application code is reverted in Git after deployment:
+   - **Do NOT delete the migration file from Git**. Deleting migration files breaks Alembic's history for any database already migrated.
+   - Generate a new forward migration that reverses the schema changes:
+     ```bash
+     ./scripts/development/migrate.sh generate "Revert feature x"
+     ```
+   - Deploy this forward migration normally.
+
+3. **Expand-Migrate-Contract Pattern**:
+   - All schema changes must be backward-compatible with the previous application release.
+   - Never delete or rename active columns in the same release where code stops reading them.
 
 **Recent migrations:**
 
 | Version | Changes |
 |---------|---------|
+| 20260829000003 | Add favorite_meals table |
+| 20260829000002 | Add users weekly_auto_adjust column |
+| 20260829000001 | Merge provider widen and outbox heads |
+| 20260828000001 | Widen users provider column for email link auth |
+| 20260827000001 | Merge web funnel and outbox heads |
+| 20260825000001 | Web funnel repeat purchase and hash finalize |
+| 20260823000003 | Merge outbox and serving label heads |
+| 20260823000002 | Backfill popular staple serving labels |
+| 20260823000001 | Add serving label translations |
+| 20260822000001 | Create outbox_events table |
+| 20260820000002 | Widen mealimage URL length |
+| 20260819000001 | Add meal_catalog_meal_id |
+| 20260818000001 | Merge catalog browse and translation heads |
+| 20260817000001 | Add meal translation version |
+| 20260816000005 | Add catalog popularity rank |
+| 20260815000004 | Add food reference integrity state |
 | 20260727000001 | Add meal-recommendation candidate lifecycle states |
 | 20260726000001 | Relax meal recommendation anchor metadata |
 | 20260724000001 | Add meal recommendation skip state |
