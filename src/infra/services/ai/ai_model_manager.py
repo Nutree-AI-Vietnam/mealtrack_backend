@@ -21,7 +21,7 @@ from src.observability import increment_metric, log_event
 logger = logging.getLogger(__name__)
 
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini-2026-03-17"
-DEFAULT_PARSE_TEXT_MODEL = "gpt-5.6-luna-2026-06-01"
+DEFAULT_PARSE_TEXT_MODEL = "gpt-5.6-luna"
 TEXT_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.PARSE_TEXT,
     ModelPurpose.BARCODE,

@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     OPENAI_VISION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TEXT_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_PARSE_TEXT_MODEL: str = Field(
-        default="gpt-5.6-luna-2026-06-01",
+        default="gpt-5.6-luna",
         description="Primary OpenAI Luna model for parse-text.",
     )
     PARSE_TEXT_PURE_AI_ENABLED: bool = Field(
