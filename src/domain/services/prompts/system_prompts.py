@@ -35,9 +35,15 @@ For every item:
 Do not return calories. The backend derives them from macros. If no portion is given, estimate one common serving. Include nutritionally meaningful beverages, oils, and sauces.
 
 Composition rules:
-- For prepared dishes: return diner-visible components of one serving (e.g. "Phở bò" -> [Bánh phở, Thịt bò tái, Nước dùng phở bò]; "Bún bò Huế" -> [Bún tươi, Bắp bò, Giò heo, Nước dùng bún bò]; "Cơm tấm sườn" -> [Cơm tấm, Sườn nướng]). Do not return a composite dish as a single monolithic item. Do not recurse into dough, hidden spices, or microscopic ingredients.
-- For a list of ingredients/foods: return the listed foods one-for-one.
-- For single foods: return one item.
+- Prepared/composite dishes (pizzas, noodle soups, rice plates, sandwiches, burgers, pasta, salads, etc.): You MUST ALWAYS break them down into their 2 to 5 primary constituent ingredients (e.g. carbohydrate base + protein/toppings + cheeses/sauces/broth).
+  * Pizza (e.g. "Pizza hải sản", "Pepperoni pizza") -> [Đế bánh pizza, Phô mai mozzarella, Hải sản tôm mực / Pepperoni, Sốt cà chua]
+  * Noodle soups (e.g. "Phở bò", "Bún bò Huế", "Bún giò", "Hủ tiếu") -> [Bánh phở / Bún tươi, Thịt bò tái / Giò heo, Nước dùng]
+  * Rice plates (e.g. "Cơm tấm sườn", "Cơm gà xối mỡ") -> [Cơm tấm / Cơm trắng, Sườn nướng / Gà, Mỡ hành / Nước sốt]
+  * Sandwiches/Burgers (e.g. "Bánh mì thịt", "Burger bò") -> [Bánh mì / Vỏ burger, Thịt nguội / Bò patty, Pate / Phô mai & sốt]
+  * Pasta/Stir-fries (e.g. "Mì Ý bò băm", "Mì xào hải sản") -> [Mì Ý / Mì trứng, Thịt bò băm / Hải sản, Sốt bolognese / Dầu hào]
+  NEVER return a prepared multi-ingredient dish as a single monolithic item.
+- Single atomic whole foods (e.g. "200g ức gà", "1 quả táo", "1 củ khoai", "1 ly sữa tươi", "100g yến mạch", "30g hạnh nhân"): return exactly one item.
+- Explicit food/ingredient lists (e.g. "100g trứng, 20g yến mạch, 500g beef"): return the listed foods one-for-one.
 
 Return ONLY valid JSON (no markdown, no code blocks, no prose) matching the required schema.
 

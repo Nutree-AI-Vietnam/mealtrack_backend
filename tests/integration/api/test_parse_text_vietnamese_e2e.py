@@ -256,6 +256,72 @@ class _VietnameseSimulationMealGenService(MealGenerationServicePort):
                     },
                 ]
             }
+        elif "pizza" in p:
+            return {
+                "items": [
+                    {
+                        "name": "Đế bánh pizza",
+                        "lookup_name": "Pizza crust",
+                        "quantity": 150,
+                        "quantity_g": 150,
+                        "unit": "g",
+                        "macros": {"protein_g": 11.0, "carbs_g": 70.0, "fat_g": 4.5},
+                    },
+                    {
+                        "name": "Phô mai mozzarella",
+                        "lookup_name": "Mozzarella cheese",
+                        "quantity": 60,
+                        "quantity_g": 60,
+                        "unit": "g",
+                        "macros": {"protein_g": 13.5, "carbs_g": 1.5, "fat_g": 13.0},
+                    },
+                    {
+                        "name": "Tôm và mực",
+                        "lookup_name": "Mixed seafood shrimp squid",
+                        "quantity": 70,
+                        "quantity_g": 70,
+                        "unit": "g",
+                        "macros": {"protein_g": 14.0, "carbs_g": 0.5, "fat_g": 1.0},
+                    },
+                    {
+                        "name": "Sốt cà chua",
+                        "lookup_name": "Tomato sauce",
+                        "quantity": 30,
+                        "quantity_g": 30,
+                        "unit": "g",
+                        "macros": {"protein_g": 0.5, "carbs_g": 3.0, "fat_g": 0.2},
+                    },
+                ]
+            }
+        elif "bún giò" in p:
+            return {
+                "items": [
+                    {
+                        "name": "Bún tươi",
+                        "lookup_name": "Rice noodles",
+                        "quantity": 180,
+                        "quantity_g": 180,
+                        "unit": "g",
+                        "macros": {"protein_g": 3.0, "carbs_g": 45.0, "fat_g": 0.4},
+                    },
+                    {
+                        "name": "Giò heo luộc",
+                        "lookup_name": "Boiled pork knuckle",
+                        "quantity": 100,
+                        "quantity_g": 100,
+                        "unit": "g",
+                        "macros": {"protein_g": 19.0, "carbs_g": 0.0, "fat_g": 16.0},
+                    },
+                    {
+                        "name": "Nước dùng bún",
+                        "lookup_name": "Pork broth",
+                        "quantity": 350,
+                        "quantity_g": 350,
+                        "unit": "ml",
+                        "macros": {"protein_g": 4.5, "carbs_g": 1.5, "fat_g": 3.0},
+                    },
+                ]
+            }
 
         # 2. Ingredient lists (Bữa ăn liệt kê)
         elif "rau muống" in p:
@@ -521,6 +587,22 @@ def test_parse_text_vietnamese_comprehensive_suite(authenticated_client: TestCli
             "expected_items": 4,
             "min_kcal": 250,
             "max_kcal": 500,
+        },
+        {
+            "group": "Món phức hợp",
+            "name": "Pizza hải sản",
+            "text": "1 cái pizza hải sản 300g",
+            "expected_items": 4,
+            "min_kcal": 400,
+            "max_kcal": 800,
+        },
+        {
+            "group": "Món phức hợp",
+            "name": "Bún giò heo",
+            "text": "1 tô bún giò heo",
+            "expected_items": 3,
+            "min_kcal": 350,
+            "max_kcal": 650,
         },
         # --- Ingredient Lists (Danh sách món) ---
         {
