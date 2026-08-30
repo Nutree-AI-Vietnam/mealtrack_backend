@@ -33,6 +33,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   db-migration:
     name: 🗄️ DB ${{ inputs.action }} (${{ inputs.environment }})

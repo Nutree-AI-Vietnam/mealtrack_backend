@@ -34,6 +34,9 @@ env:
   PYTHON_VERSION: "3.13.2"
   CLOUDFLARE_WORKERS_AI_IMAGE_MODEL: "@cf/black-forest-labs/flux-2-klein-9b"
 
+permissions:
+  contents: read
+
 jobs:
   generate:
     name: Generate Missing Catalog Meal Images
