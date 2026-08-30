@@ -22,44 +22,33 @@ class SystemPrompts:
     """
 
     # Meal Text Parsing Prompt
-    MEAL_TEXT_PARSING = """You are a nutrition parser. Your task is to parse natural language food descriptions into structured nutritional information.
+    MEAL_TEXT_PARSING = """You parse a meal description into MealTextNutritionResponse.
 
-Parse the user's food description into a list of items with nutritional data. Each item should include:
-- name: Food name in the user's language only. English-only names are invalid. Mixed slash names that mix languages are invalid; every segment must be in the user's language. Optional bilingual form "Local name (English name)" is allowed.
-- lookup_name: Canonical English food identity for reference lookup. Do not include
-  preparation here unless it is part of the food identity.
-- preparation: One of raw, boiled, baked, fried, mashed, or unknown. Use unknown
-  when the user did not state preparation; never invent a cooked state.
-- quantity: Amount (number)
-- unit: Serving unit in the user's language (e.g., "quả lớn", "miếng", "lát", "g", "ml")
-- english_unit: Same unit in English (e.g., "large", "medium", "small", "slice", "cup", "piece", "g", "ml"). MUST be English.
-- calories: Estimated calories
-- protein: Protein in grams
-- carbs: Carbohydrates in grams
-- fat: Fat in grams
-- fiber_g: Fiber in grams, or 0 when unavailable
-- sugar_g: Sugar in grams, or 0 when unavailable
-- quantity_g: Weight in grams when stated or confidently convertible, otherwise null
+For every item:
+- `name`: natural display name in {language_name} ({language_code}). Use one language only. Do not add translations, alternatives, or uncertainty notes.
+- `lookup_name`: concise canonical English food identity for reference lookup. Keep preparation out unless it is part of the food's identity.
+- `preparation`: raw, boiled, baked, fried, mashed, or unknown. Use a stated preparation only; otherwise use unknown.
+- `quantity` and `unit`: preserve the described portion. `unit` is in the requested language; `english_unit` is the equivalent English unit.
+- `quantity_g`: total estimated edible mass in grams (number), or null. Do not use milliliters or volume; convert liquids to mass in grams using density (e.g. oil=0.92g/ml, milk=1.03g/ml, honey=1.42g/ml).
+- `macros`: absolute grams for the described portion with `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, and `sugar_g`.
 
-IMPORTANT: You MUST respond with ONLY valid JSON object (no markdown, no code blocks):
-{
-  "emoji": "single emoji representing the overall dish (🍜 noodle soup, 🍝 dry pasta, 🍚 rice, 🍲 stew/hotpot, 🍖 grilled meat, 🥗 salad, 🥘 braised, 🥟 rolls/dumplings, 🥪 sandwich)",
-  "items": {{json_example}}
-}
+Do not return calories. The backend derives them from macros. If no portion is given, estimate one common serving. Include nutritionally meaningful beverages, oils, and sauces.
 
-Guidelines:
-- Estimate nutritional values based on standard food databases
-- Use reasonable portion sizes
-- If ambiguous, make a reasonable assumption and note it in the name
-- Include common items like beverages, condiments, and cooking oils
-- COMPOSITION: If the user named a prepared dish or meal as a whole, return the edible components of one serving as separate items. Do not return the dish as a single row. Stop at foods a diner would point to on the plate. Do not recurse into recipes, dough, or unnamed spices.
-- If the user listed separate foods (commas, new lines, "and"/"và", or several quantity+food pairs), return those foods one-for-one. Do not expand listed foods into compositions.
-- A measured mass or volume of one food, or a counted piece of one food, stays one item.
-- All quantities should be in GRAMS when possible. Convert volumes using density (honey=1.42g/ml, oil=0.92g/ml, milk=1.03g/ml)
-- Verify: calories ≈ protein*4 + carbs*4 + fat*9
-- Treat calories as advisory; the backend derives final calories from macros.
-- {{language_instruction}}
-- Be accurate but acknowledge estimates are approximate"""
+Composition rules:
+- Prepared/composite dishes (pizzas, noodle soups, rice plates, sandwiches, burgers, pasta, salads, etc.): You MUST ALWAYS break them down into their 2 to 5 primary constituent ingredients (e.g. carbohydrate base + protein/toppings + cheeses/sauces/broth).
+  * Pizza (e.g. "Pizza hải sản", "Pepperoni pizza") -> [Đế bánh pizza, Phô mai mozzarella, Hải sản tôm mực / Pepperoni, Sốt cà chua]
+  * Noodle soups (e.g. "Phở bò", "Bún bò Huế", "Bún giò", "Hủ tiếu") -> [Bánh phở / Bún tươi, Thịt bò tái / Giò heo, Nước dùng]
+  * Rice plates (e.g. "Cơm tấm sườn", "Cơm gà xối mỡ") -> [Cơm tấm / Cơm trắng, Sườn nướng / Gà, Mỡ hành / Nước sốt]
+  * Sandwiches/Burgers (e.g. "Bánh mì thịt", "Burger bò") -> [Bánh mì / Vỏ burger, Thịt nguội / Bò patty, Pate / Phô mai & sốt]
+  * Pasta/Stir-fries (e.g. "Mì Ý bò băm", "Mì xào hải sản") -> [Mì Ý / Mì trứng, Thịt bò băm / Hải sản, Sốt bolognese / Dầu hào]
+  NEVER return a prepared multi-ingredient dish as a single monolithic item.
+- Single atomic whole foods (e.g. "200g ức gà", "1 quả táo", "1 củ khoai", "1 ly sữa tươi", "100g yến mạch", "30g hạnh nhân"): return exactly one item.
+- Explicit food/ingredient lists (e.g. "100g trứng, 20g yến mạch, 500g beef"): return the listed foods one-for-one.
+
+Return ONLY valid JSON (no markdown, no code blocks, no prose) matching the required schema.
+
+Fallback shape for providers without native schema generation:
+{{"emoji":"🍽️","items":[{{"name":"...","lookup_name":"...","preparation":"unknown","quantity":1,"unit":"...","english_unit":"...","quantity_g":null,"macros":{{"protein_g":0,"carbs_g":0,"fat_g":0,"fiber_g":0,"sugar_g":0}}}}]}}"""
 
     RECIPE_GENERATION = """You are a professional chef and nutritionist. Generate complete, accurate recipes as JSON only. No markdown, no prose, no commentary. JSON keys in English only.
 
@@ -299,19 +288,7 @@ Return ONLY valid JSON matching the structure above."""
     # Supported language codes (ISO 639-1)
     SUPPORTED_LANGUAGES = SUPPORTED_TRANSLATION_LANGUAGES
 
-    # English-only JSON example for prompt
-    _EXAMPLE_EN = """[
-  {{"name": "Eggs", "lookup_name": "Eggs", "quantity": 2, "unit": "large", "english_unit": "large", "calories": 144, "protein": 12.6, "carbs": 0.7, "fat": 9.5}},
-  {{"name": "Chicken breast", "lookup_name": "Chicken breast", "quantity": 100, "unit": "g", "english_unit": "g", "calories": 165, "protein": 31.0, "carbs": 0.0, "fat": 3.6}}
-]"""
-
-    # Localized JSON example — user-language name, English identity in lookup_name
-    _EXAMPLE_BILINGUAL = """[
-  {{"name": "Trứng gà", "lookup_name": "Eggs", "quantity": 2, "unit": "quả lớn", "english_unit": "large", "calories": 144, "protein": 12.6, "carbs": 0.7, "fat": 9.5}},
-  {{"name": "Ức gà", "lookup_name": "Chicken breast", "quantity": 100, "unit": "g", "english_unit": "g", "calories": 165, "protein": 31.0, "carbs": 0.0, "fat": 3.6}}
-]"""
-
-    PROMPT_VERSION = "2026-06-27"
+    PROMPT_VERSION = "2026-08-29"
 
     BARCODE_AI_ESTIMATE = (
         "You are a nutrition expert. This barcode was scanned in a food tracking app. "
@@ -379,32 +356,9 @@ Return ONLY valid JSON matching the structure above."""
     @staticmethod
     def get_meal_text_parsing_prompt(language: str = "en") -> str:
         """Get meal text parsing prompt with locale-aware food names."""
-        # Validate language to prevent prompt injection
         lang = language if language in SystemPrompts.SUPPORTED_LANGUAGES else "en"
-        if lang == "en":
-            instruction = "Respond with food names in English"
-            example = SystemPrompts._EXAMPLE_EN
-        else:
-            instruction = (
-                f"The 'name' field MUST be in {lang} for the user to read. "
-                "Never leave 'name' in English. English-only names and mixed "
-                "slash names that mix languages are invalid. Translate every "
-                "slash-separated segment. Put the canonical English food "
-                "identity only in lookup_name. Optional bilingual form "
-                "'Local Name (English Name)' is allowed."
-            )
-            example = SystemPrompts._EXAMPLE_BILINGUAL
-        prompt = SystemPrompts.MEAL_TEXT_PARSING.replace("{{json_example}}", example)
-        return prompt.replace("{{language_instruction}}", instruction)
-
-    @staticmethod
-    def get_food_name_localization_prompt(language: str) -> str:
-        """Force leftover English food names into the user's language."""
-        lang = language if language in SystemPrompts.SUPPORTED_LANGUAGES else "en"
-        return (
-            f"Translate each English food name into {lang}. "
-            "Return JSON only: {\"items\": [\"...\"]} with the same count and order. "
-            "Never leave an item in English. Generic ingredients are not brands. "
-            "Use the everyday name a speaker of that language would say for "
-            "that food, not a brand or a copied English label."
+        language_name = LANGUAGE_NAMES.get(lang, "English")
+        return SystemPrompts.MEAL_TEXT_PARSING.format(
+            language_name=language_name,
+            language_code=lang,
         )
