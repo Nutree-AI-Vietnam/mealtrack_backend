@@ -150,6 +150,10 @@ class Settings(BaseSettings):
         default="gpt-5.6-luna-2026-06-01",
         description="Primary OpenAI Luna model for parse-text.",
     )
+    PARSE_TEXT_PURE_AI_ENABLED: bool = Field(
+        default=True,
+        description="Enable pure AI parsing for meal text without blocking on external provider lookups.",
+    )
     OPENAI_TRANSLATION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
     OPENAI_REQUEST_TIMEOUT_SECONDS: int = Field(default=20)

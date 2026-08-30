@@ -1758,8 +1758,58 @@ async def test_parse_text_adopt_never_writes_generic_sentinel_to_catalog():
 
     # In response, fail-closed localization applies "Nguyên liệu" for user display
     assert response.items[0].name == "Nguyên liệu"
-    # But in adopt_calls, locale_name must NOT be "Nguyên liệu" (must be empty/None)
     assert len(food_references.adopt_calls) == 1
     adopt_call = food_references.adopt_calls[0]
     assert adopt_call.get("locale_name") != "Nguyên liệu"
     assert adopt_call.get("locale_name") in ("", None)
+
+
+@pytest.mark.asyncio
+async def test_pure_ai_mode_bypasses_fatsecret_and_db_lookups():
+    """Verify that pure_ai_mode=True never invokes FatSecret or local DB lookups."""
+    fatsecret = _StructuredFatSecretService()
+    food_references = _FakeFoodReferenceAdoptRepository()
+    generation = _FakeMealGenerationService(
+        responses=[
+            {
+                "emoji": "🥩",
+                "items": [
+                    {
+                        "name": "Bò bít tết",
+                        "lookup_name": "Beef steak",
+                        "quantity": 200,
+                        "unit": "g",
+                        "quantity_g": 200,
+                        "macros": {
+                            "protein_g": 52.0,
+                            "carbs_g": 0.0,
+                            "fat_g": 30.0,
+                            "fiber_g": 0.0,
+                            "sugar_g": 0.0,
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation,
+        fat_secret_service=fatsecret,
+        uow_factory=_FakeUowFactory(food_references),
+        pure_ai_mode=True,
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="200g bò bít tết", user_id="user-1", language="vi")
+    )
+
+    assert len(response.items) == 1
+    assert response.items[0].name == "Bò bít tết"
+    assert response.items[0].protein == 52.0
+    assert response.items[0].fat == 30.0
+    assert response.total_protein == 52.0
+    assert response.total_fat == 30.0
+    assert response.total_carbs == 0.0
+    assert response.emoji == "🥩"
+    # Verify zero FatSecret adopt calls occurred
+    assert len(food_references.adopt_calls) == 0

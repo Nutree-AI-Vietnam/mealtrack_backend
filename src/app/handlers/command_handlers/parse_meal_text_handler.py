@@ -151,6 +151,7 @@ class ParseMealTextHandler(
         cache_service: Any | None = None,
         cache_ttl_seconds: int = 604800,
         uow_factory: Any | None = None,
+        pure_ai_mode: bool | None = None,
     ):
         self._meal_generation_service = meal_generation_service
         self._fat_secret_service = fat_secret_service
@@ -160,6 +161,11 @@ class ParseMealTextHandler(
         self._cache_service = cache_service
         self._cache_ttl_seconds = cache_ttl_seconds
         self._uow_factory = uow_factory
+        self._pure_ai_mode = (
+            pure_ai_mode
+            if pure_ai_mode is not None
+            else (fat_secret_service is None and food_reference_batch_lookup is None)
+        )
 
     async def handle(self, command: ParseMealTextCommand) -> ParseMealTextResponseDto:
         # Sanitize user input
@@ -241,25 +247,31 @@ class ParseMealTextHandler(
         )
         emoji = validate_emoji(validated_payload.get("emoji"))
         parsed_items = self._to_flat_parse_text_items(validated_payload, raw_payload)
-        if budget.deadline is None:
-            budget.deadline = time.monotonic() + _parse_text_fatsecret_timeout_seconds()
-        local_references = await self._find_local_references(
-            parsed_items, budget, command.language
-        )
         enhanced_items = []
-        for item in parsed_items:
-            resolved = await self._cascade_lookup(
-                item,
-                budget=budget,
-                local_reference=local_references.get(
-                    normalize_food_lookup_name(
-                        item.get("lookup_name") or item.get("name", "")
-                    )
-                ),
+        if self._pure_ai_mode:
+            for item in parsed_items:
+                resolved = apply_custom_estimate(item) or item
+                enhanced_items.append(resolved)
+        else:
+            if budget.deadline is None:
+                budget.deadline = (
+                    time.monotonic() + _parse_text_fatsecret_timeout_seconds()
+                )
+            local_references = await self._find_local_references(
+                parsed_items, budget, command.language
             )
-            if resolved is None:
-                continue
-            enhanced_items.append(resolved)
+            for item in parsed_items:
+                cascaded = await self._cascade_lookup(
+                    item,
+                    budget=budget,
+                    local_reference=local_references.get(
+                        normalize_food_lookup_name(
+                            item.get("lookup_name") or item.get("name", "")
+                        )
+                    ),
+                )
+                if cascaded is not None:
+                    enhanced_items.append(cascaded)
 
         # Clamp nutrition to physically plausible ranges
         for item in enhanced_items:
@@ -282,15 +294,16 @@ class ParseMealTextHandler(
             apply_glossary_display_names(enhanced_items, command.language)
             apply_fail_closed_display_names(enhanced_items, command.language)
 
-        await self._adopt_fatsecret_items(enhanced_items, command)
-        if command.language and command.language != "en":
-            await localize_item_servings(
-                enhanced_items,
-                language=command.language,
-                translation_service=None,
-                uow_factory=self._uow_factory,
-                persist=True,
-            )
+        if not self._pure_ai_mode:
+            await self._adopt_fatsecret_items(enhanced_items, command)
+            if command.language and command.language != "en":
+                await localize_item_servings(
+                    enhanced_items,
+                    language=command.language,
+                    translation_service=None,
+                    uow_factory=self._uow_factory,
+                    persist=True,
+                )
 
         # Build response items
         items = [
