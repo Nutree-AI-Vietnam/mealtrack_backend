@@ -334,7 +334,10 @@ def get_parse_text_settings() -> dict[str, bool]:
     return {
         "structured_reference_enabled": bool(
             getattr(current_settings, "PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED", False)
-        )
+        ),
+        "pure_ai_mode": bool(
+            getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", True)
+        ),
     }
 
 
@@ -366,7 +369,6 @@ def get_async_food_reference_repository():
 # Backward-compatible aliases for older callers; runtime receives async adapter.
 get_food_reference_repository = get_async_food_reference_repository
 get_barcode_product_repository = get_food_reference_repository
-
 
 
 # Phase 06: Meal Suggestion Dependencies
@@ -402,7 +404,9 @@ def get_suggestion_translation_service():
     # Requires text translation service
     text_service = get_text_translation_service()
     if text_service is None:
-        logger.warning("OPENAI_API_KEY not set - suggestion translation will be skipped")
+        logger.warning(
+            "OPENAI_API_KEY not set - suggestion translation will be skipped"
+        )
         return None
 
     from src.domain.services.meal_suggestion.suggestion_translation_service import (
@@ -522,13 +526,13 @@ def get_text_translation_service():
     )
 
     adapter_module = import_module("src.infra.adapters.openai_translation_adapter")
-    provider_module = import_module(
-        "src.infra.services.ai.providers.openai_provider"
-    )
+    provider_module = import_module("src.infra.services.ai.providers.openai_provider")
 
     provider = provider_module.OpenAIProvider(
         api_key=settings.OPENAI_API_KEY,
-        request_timeout_seconds=max(1, int(settings.OPENAI_TRANSLATION_TIMEOUT_SECONDS)),
+        request_timeout_seconds=max(
+            1, int(settings.OPENAI_TRANSLATION_TIMEOUT_SECONDS)
+        ),
         max_retries=settings.OPENAI_MAX_RETRIES,
         store_responses=False,
         prompt_cache_enabled=settings.OPENAI_PROMPT_CACHE_ENABLED,

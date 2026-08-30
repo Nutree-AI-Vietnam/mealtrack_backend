@@ -94,9 +94,9 @@ from src.app.handlers.command_handlers import (
     UpdateMovementEntryCommandHandler,
     UpdateNotificationPreferencesCommandHandler,
     UpdateTimezoneCommandHandler,
-    UpdateWeeklyAutoAdjustCommandHandler,
     UpdateUserLastAccessedCommandHandler,
     UpdateUserMetricsCommandHandler,
+    UpdateWeeklyAutoAdjustCommandHandler,
     UploadMealImageImmediatelyHandler,
 )
 from src.app.handlers.command_handlers.add_weight_entry_command_handler import (
@@ -602,6 +602,7 @@ def get_configured_event_bus() -> EventBus:
             structured_reference_enabled=parse_text_settings[
                 "structured_reference_enabled"
             ],
+            pure_ai_mode=parse_text_settings.get("pure_ai_mode", True),
             uow_factory=AsyncUnitOfWork,
         ),
     )
