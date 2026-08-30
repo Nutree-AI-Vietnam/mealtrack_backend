@@ -902,7 +902,8 @@ async def test_parse_text_retries_when_a_named_dish_returns_one_row():
     )
 
     assert len(generation.calls) == 1
-    assert "mode: dish" in generation.calls[0]["prompt"]
+    assert "language: vi" in generation.calls[0]["prompt"]
+    assert "meal: Bánh mì thịt" in generation.calls[0]["prompt"]
     assert [item.name for item in response.items] == ["Bánh mì", "Thịt"]
 
 

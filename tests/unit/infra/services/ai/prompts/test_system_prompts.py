@@ -26,10 +26,13 @@ def test_meal_text_parsing_prompt_requires_localized_display_names():
 
     assert "Vietnamese (vi)" in prompt
     assert "`lookup_name`: concise canonical English food identity" in prompt
-    assert "dish: return diner-visible components of one serving" in prompt
-    assert "ingredient_list: return the listed foods one-for-one" in prompt
-    assert "single_food: return one item" in prompt
-    assert "The user message includes an advisory mode" in prompt
+    assert (
+        "For prepared dishes: return diner-visible components of one serving" in prompt
+    )
+    assert (
+        "For a list of ingredients/foods: return the listed foods one-for-one" in prompt
+    )
+    assert "For single foods: return one item" in prompt
     assert "Fallback shape for providers without native schema generation" in prompt
     assert "english_unit" in prompt
     assert "fiber_g" in prompt

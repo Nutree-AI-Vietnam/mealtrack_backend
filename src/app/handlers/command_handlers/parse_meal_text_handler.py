@@ -25,7 +25,6 @@ from src.app.services.food_display_name import (
     apply_glossary_display_names,
     needs_display_localization,
 )
-from src.app.services.parse_text_composition import classify_parse_text_input
 from src.app.services.parse_text_custom_estimate import apply_custom_estimate
 from src.app.services.serving_label_localizer import localize_item_servings
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
@@ -167,7 +166,6 @@ class ParseMealTextHandler(
         sanitized_text = sanitize_user_description(command.text)
         if not sanitized_text:
             raise ValueError("Invalid or empty meal description.")
-        user_utterance = sanitized_text
         validated_current_items = validate_refinement_items(command.current_items)
 
         # Check utterance query cache for non-refinement queries
@@ -233,12 +231,7 @@ class ParseMealTextHandler(
             language=command.language
         )
 
-        advisory_mode = classify_parse_text_input(user_utterance)
-        user_envelope = (
-            f"mode: {advisory_mode}\n"
-            f"language: {command.language or 'en'}\n"
-            f"meal: {sanitized_text}"
-        )
+        user_envelope = f"language: {command.language or 'en'}\nmeal: {sanitized_text}"
 
         budget = _ParseTextRequestBudget()
         validated_payload, raw_payload = await self._generate_parse_text_payload(

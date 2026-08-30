@@ -115,7 +115,7 @@ async def test_parse_text_falls_back_to_cloudflare_on_primary_failure():
         manager = AIModelManager(settings)
         result = await manager.generate(
             purpose=ModelPurpose.PARSE_TEXT,
-            prompt="mode: dish\nlanguage: vi\nmeal: 1 tô phở bò",
+            prompt="language: vi\nmeal: 1 tô phở bò",
             system_message="system prompt",
         )
 

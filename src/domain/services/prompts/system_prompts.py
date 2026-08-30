@@ -34,12 +34,11 @@ For every item:
 
 Do not return calories. The backend derives them from macros. If no portion is given, estimate one common serving. Include nutritionally meaningful beverages, oils, and sauces.
 
-Composition modes:
-- dish: return diner-visible components of one serving. Do not recurse into recipes, dough, unnamed spices, or hidden sub-ingredients.
-- ingredient_list: return the listed foods one-for-one.
-- single_food: return one item.
+Composition rules:
+- For prepared dishes: return diner-visible components of one serving. Do not recurse into recipes, dough, unnamed spices, or hidden sub-ingredients.
+- For a list of ingredients/foods: return the listed foods one-for-one.
+- For single foods: return one item.
 
-The user message includes an advisory mode. Follow it when consistent with the meal description; prefer the description when the hint is clearly wrong.
 Return ONLY valid JSON (no markdown, no code blocks, no prose) matching the required schema.
 
 Fallback shape for providers without native schema generation:
