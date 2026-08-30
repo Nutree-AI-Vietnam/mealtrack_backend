@@ -35,7 +35,7 @@ For every item:
 Do not return calories. The backend derives them from macros. If no portion is given, estimate one common serving. Include nutritionally meaningful beverages, oils, and sauces.
 
 Composition rules:
-- For prepared dishes: return diner-visible components of one serving. Do not recurse into recipes, dough, unnamed spices, or hidden sub-ingredients.
+- For prepared dishes: return diner-visible components of one serving (e.g. "Phở bò" -> [Bánh phở, Thịt bò tái, Nước dùng phở bò]; "Bún bò Huế" -> [Bún tươi, Bắp bò, Giò heo, Nước dùng bún bò]; "Cơm tấm sườn" -> [Cơm tấm, Sườn nướng]). Do not return a composite dish as a single monolithic item. Do not recurse into dough, hidden spices, or microscopic ingredients.
 - For a list of ingredients/foods: return the listed foods one-for-one.
 - For single foods: return one item.
 
