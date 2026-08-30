@@ -21,6 +21,7 @@ from src.observability import increment_metric, log_event
 logger = logging.getLogger(__name__)
 
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini-2026-03-17"
+DEFAULT_PARSE_TEXT_MODEL = "gpt-5.6-luna"
 TEXT_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.PARSE_TEXT,
     ModelPurpose.BARCODE,
@@ -49,10 +50,10 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
         DEFAULT_OPENAI_MODEL,
     ],
     # ==========================================================================
-    # SHORT STRUCTURED TEXT: OpenAI fallback when CF text is configured
+    # SHORT STRUCTURED TEXT: Luna primary for parse_text, CF fallback
     # ==========================================================================
     ModelPurpose.PARSE_TEXT: [
-        DEFAULT_OPENAI_MODEL,
+        DEFAULT_PARSE_TEXT_MODEL,
     ],
     ModelPurpose.BARCODE: [DEFAULT_OPENAI_MODEL],
     ModelPurpose.MEAL_NAMES: [
@@ -128,14 +129,29 @@ class AIModelManager:
             prompt_cache_retention=settings.OPENAI_PROMPT_CACHE_RETENTION or None,
             prompt_cache_key_prefix=settings.OPENAI_PROMPT_CACHE_KEY_PREFIX,
         )
+        parse_text_model = (
+            getattr(settings, "OPENAI_PARSE_TEXT_MODEL", None)
+            or getattr(settings, "OPENAI_TEXT_MODEL", None)
+            or DEFAULT_PARSE_TEXT_MODEL
+        )
         self._providers["openai"] = openai
         self._model_provider_overrides[settings.OPENAI_TEXT_MODEL] = "openai"
         self._model_provider_overrides[settings.OPENAI_VISION_MODEL] = "openai"
+        self._model_provider_overrides[parse_text_model] = "openai"
 
         self._append_model_for_purposes(
             settings.OPENAI_TEXT_MODEL,
-            TEXT_PURPOSES,
+            TEXT_PURPOSES - {ModelPurpose.PARSE_TEXT},
             remove_models={DEFAULT_OPENAI_MODEL, settings.OPENAI_TEXT_MODEL},
+        )
+        self._prepend_model_for_purposes(
+            parse_text_model,
+            {ModelPurpose.PARSE_TEXT},
+            remove_models={
+                DEFAULT_PARSE_TEXT_MODEL,
+                DEFAULT_OPENAI_MODEL,
+                parse_text_model,
+            },
         )
         self._prepend_model_for_purposes(
             settings.OPENAI_VISION_MODEL,
@@ -211,13 +227,16 @@ class AIModelManager:
         )
 
     def _append_cf_to_text_chains(self, cf_model: str, text_purposes_csv: str) -> None:
-        """Prepend raw CF model id to configured text-purpose chains."""
+        """Prepend raw CF model id to configured text-purpose chains, appending for PARSE_TEXT."""
         configured = {
             p.strip().lower() for p in text_purposes_csv.split(",") if p.strip()
         }
         for purpose in ModelPurpose:
             if purpose.value in configured:
-                self._prepend_model_for_purposes(cf_model, {purpose})
+                if purpose == ModelPurpose.PARSE_TEXT:
+                    self._append_model_for_purposes(cf_model, {purpose})
+                else:
+                    self._prepend_model_for_purposes(cf_model, {purpose})
 
     def _append_cf_to_vision_chains(
         self, cf_model: str, vision_purposes_csv: str

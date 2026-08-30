@@ -135,13 +135,13 @@ from src.app.handlers.query_handlers import (
     GetDailyMacrosQueryHandler,
     GetDailyMovementQueryHandler,
     GetFoodDetailsQueryHandler,
-    GetProviderFoodDetailsQueryHandler,
-    GetPopularStaplesQueryHandler,
     GetJourneyProgressQueryHandler,
     GetMealByIdQueryHandler,
     GetMealsByDateQueryHandler,
     GetMovementCatalogQueryHandler,
     GetNotificationPreferencesQueryHandler,
+    GetPopularStaplesQueryHandler,
+    GetProviderFoodDetailsQueryHandler,
     GetSavedSuggestionsQueryHandler,
     GetStreakQueryHandler,
     GetUserByFirebaseUidQueryHandler,
@@ -179,10 +179,10 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 from src.app.queries.activity import GetBulkActivitiesQuery, GetDailyActivitiesQuery
 from src.app.queries.cheat_day import GetCheatDaysQuery
 from src.app.queries.food.get_food_details_query import GetFoodDetailsQuery
+from src.app.queries.food.get_popular_staples_query import GetPopularStaplesQuery
 from src.app.queries.food.get_provider_food_details_query import (
     GetProviderFoodDetailsQuery,
 )
-from src.app.queries.food.get_popular_staples_query import GetPopularStaplesQuery
 from src.app.queries.food.lookup_barcode_query import LookupBarcodeQuery
 from src.app.queries.food.search_foods_query import SearchFoodsQuery
 from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
@@ -604,6 +604,7 @@ def get_configured_event_bus() -> EventBus:
             structured_reference_enabled=parse_text_settings[
                 "structured_reference_enabled"
             ],
+            pure_ai_mode=parse_text_settings.get("pure_ai_mode", True),
             uow_factory=AsyncUnitOfWork,
         ),
     )
