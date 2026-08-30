@@ -286,6 +286,32 @@ async def test_finalization_rejects_user_different_from_legacy_preflight_binding
 
 
 @pytest.mark.asyncio
+async def test_finalization_accepts_preflight_bound_provider_identity_before_webhook():
+    binding = _binding(
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        preflight_uid="firebase-user",
+        environment="SANDBOX",
+        finalized_uid="firebase-user",
+    )
+
+    result = await finalize_redemption(
+        FinalizationSession(binding, _lead(), None, None),
+        uid="firebase-user",
+        email="buyer@example.com",
+        original_app_user_id="firebase-user",
+        redemption_link_hash=_link_hash(),
+        idempotency_key="request-provider-before-webhook",
+        environment="SANDBOX",
+    )
+
+    assert result == {
+        "version": "redemption_result_v1",
+        "access_status": "active",
+    }
+
+
+@pytest.mark.asyncio
 async def test_finalization_rejects_new_link_without_preflight_binding():
     with pytest.raises(HTTPException) as error:
         await finalize_redemption(
