@@ -588,6 +588,7 @@ async def test_lookup_barcode_materializes_brave_estimate_for_legacy_clients():
     assert result["origin"] == "local"
     assert result["food_reference_id"] == 74
     assert repo.upserts[0]["source"] == "brave_search"
-    assert repo.upserts[0]["is_verified"] is True
+    assert repo.upserts[0]["is_verified"] is False
+    assert repo.upserts[0]["is_estimate"] is True
     assert repo.upserts[0]["source_namespace"] == "ai_estimate"
     assert repo.upserts[0]["source_food_id"] == "00036000291452"
