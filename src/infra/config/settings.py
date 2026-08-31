@@ -145,6 +145,9 @@ class Settings(BaseSettings):
     )
     OPENAI_API_KEY: str | None = Field(default=None)
     OPENAI_VISION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
+    OPENAI_MEAL_SCAN_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
+    OPENAI_FOOD_LABEL_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
+    OPENAI_BARCODE_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TEXT_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_PARSE_TEXT_MODEL: str = Field(
         default="gpt-5.6-luna",
@@ -326,6 +329,36 @@ class Settings(BaseSettings):
         default=3.0,
         gt=0,
         description="Request-wide parse-text FatSecret deadline in seconds.",
+    )
+    BARCODE_REQUEST_TIMEOUT_SECONDS: float = Field(
+        default=8.0,
+        gt=0,
+        description="Request-wide barcode lookup deadline in seconds.",
+    )
+    BARCODE_HEDGE_DELAY_SECONDS: float = Field(
+        default=0.8,
+        gt=0,
+        description="Delay in seconds before hedging with secondary barcode providers.",
+    )
+    BARCODE_LIVE_EVAL_ENABLED: bool = Field(
+        default=False,
+        description="Explicit toggle required for guarded barcode staging live eval.",
+    )
+    AI_MEAL_SCAN_DETAIL_TIER: str = Field(
+        default="high",
+        description="Explicit OpenAI image detail tier for meal scans (low, high, auto).",
+    )
+    AI_FOOD_LABEL_DETAIL_TIER: str = Field(
+        default="high",
+        description="Explicit OpenAI image detail tier for food labels (low, high, auto).",
+    )
+    MEAL_SCAN_LIVE_EVAL_ENABLED: bool = Field(
+        default=False,
+        description="Explicit toggle required for guarded meal scan staging live eval.",
+    )
+    FOOD_LABEL_LIVE_EVAL_ENABLED: bool = Field(
+        default=False,
+        description="Explicit toggle required for guarded food label staging live eval.",
     )
 
     # Catalog meal recommendations analytics

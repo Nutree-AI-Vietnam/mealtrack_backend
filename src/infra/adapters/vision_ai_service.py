@@ -53,6 +53,16 @@ class VisionAIService(VisionAIServicePort):
         """Fallback compression and format normalization using shared utility."""
         return compress_image(image_bytes)
 
+    def _compress_image_for_strategy(
+        self, image_bytes: bytes, strategy: MealAnalysisStrategy
+    ) -> bytes:
+        """Compress image preserving food label crop resolution when applicable."""
+        if isinstance(strategy, FoodLabelImageAnalysisStrategy):
+            if len(image_bytes) <= 2 * 1024 * 1024:
+                return image_bytes
+            return compress_image(image_bytes, max_dim=1600)
+        return self._compress_image(image_bytes)
+
     async def analyze_with_strategy(
         self, image_bytes: bytes, strategy: MealAnalysisStrategy
     ) -> dict[str, Any]:
@@ -69,7 +79,7 @@ class VisionAIService(VisionAIServicePort):
         Raises:
             RuntimeError: If analysis fails
         """
-        image_bytes = self._compress_image(image_bytes)
+        image_bytes = self._compress_image_for_strategy(image_bytes, strategy)
 
         if isinstance(strategy, IngredientIdentificationStrategy):
             return await self._analyze_without_nutrition_contract(image_bytes, strategy)
@@ -87,6 +97,12 @@ class VisionAIService(VisionAIServicePort):
                 if is_food_label
                 else ModelPurpose.MEAL_SCAN
             )
+            settings = get_settings()
+            detail_tier = (
+                settings.AI_FOOD_LABEL_DETAIL_TIER
+                if is_food_label
+                else settings.AI_MEAL_SCAN_DETAIL_TIER
+            )
             result = await self._ai_manager.generate_with_vision(
                 purpose=model_purpose,
                 prompt=strategy.get_user_message(),
@@ -94,6 +110,7 @@ class VisionAIService(VisionAIServicePort):
                 system_message=strategy.get_analysis_prompt(),
                 max_tokens=self._max_output_tokens,
                 schema=schema,
+                image_detail=detail_tier,
             )
             structured_data = validate_ai_output(
                 result,

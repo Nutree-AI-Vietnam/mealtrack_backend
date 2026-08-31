@@ -102,9 +102,7 @@ class AsyncFoodReferenceRepository:
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)
-        return [
-            food_reference_model_to_dict(model) for model in result.scalars().all()
-        ]
+        return [food_reference_model_to_dict(model) for model in result.scalars().all()]
 
     async def get_by_source_identities(
         self, identities: list[tuple[str, str]]
@@ -131,9 +129,7 @@ class AsyncFoodReferenceRepository:
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)
-        return [
-            food_reference_model_to_dict(model) for model in result.scalars().all()
-        ]
+        return [food_reference_model_to_dict(model) for model in result.scalars().all()]
 
     async def get_nutrition_projection(
         self,
@@ -189,6 +185,12 @@ class AsyncFoodReferenceRepository:
                 FoodReferenceModel.density,
             )
             .where(self._integrity_repository.public_eligibility_clause())
+            .where(
+                or_(
+                    FoodReferenceModel.source_namespace != "ai_estimate",
+                    FoodReferenceModel.source_namespace.is_(None),
+                )
+            )
             .order_by(
                 FoodReferenceModel.is_verified.desc(),
                 FoodReferenceModel.id.asc(),
@@ -223,6 +225,12 @@ class AsyncFoodReferenceRepository:
             )
             .where(FoodReferenceModel.name_normalized == name_normalized)
             .where(self._integrity_repository.public_eligibility_clause())
+            .where(
+                or_(
+                    FoodReferenceModel.source_namespace != "ai_estimate",
+                    FoodReferenceModel.source_namespace.is_(None),
+                )
+            )
             .order_by(
                 FoodReferenceModel.is_verified.desc(), FoodReferenceModel.id.asc()
             )
@@ -298,6 +306,12 @@ class AsyncFoodReferenceRepository:
             .where(FoodReferenceModel.name.ilike(f"%{query}%"))
             .where(FoodReferenceModel.region.in_([region, "global"]))
             .where(self._integrity_repository.public_eligibility_clause())
+            .where(
+                or_(
+                    FoodReferenceModel.source_namespace != "ai_estimate",
+                    FoodReferenceModel.source_namespace.is_(None),
+                )
+            )
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
             .limit(limit)
         )
@@ -334,7 +348,9 @@ class AsyncFoodReferenceRepository:
         if identity_query:
             key_match = func.lower(FoodReferenceModel.name_normalized) == identity_query
             match_clause = (
-                or_(display_match, key_match) if display_match is not None else key_match
+                or_(display_match, key_match)
+                if display_match is not None
+                else key_match
             )
             similarity_score = func.similarity(
                 FoodReferenceModel.name_normalized, identity_query
@@ -345,7 +361,9 @@ class AsyncFoodReferenceRepository:
                 FoodReferenceModel.name_normalized.notlike(identity_prefix),
             )
             match_clause = (
-                or_(display_match, key_match) if display_match is not None else key_match
+                or_(display_match, key_match)
+                if display_match is not None
+                else key_match
             )
             similarity_score = func.similarity(
                 FoodReferenceModel.name, normalized_query
@@ -353,6 +371,12 @@ class AsyncFoodReferenceRepository:
         base_stmt = (
             select(FoodReferenceModel)
             .where(self._integrity_repository.public_eligibility_clause())
+            .where(
+                or_(
+                    FoodReferenceModel.source_namespace != "ai_estimate",
+                    FoodReferenceModel.source_namespace.is_(None),
+                )
+            )
             .where(FoodReferenceModel.region.in_([region, "global"]))
             .where(match_clause)
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)

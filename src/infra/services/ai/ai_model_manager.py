@@ -135,9 +135,34 @@ class AIModelManager:
             or DEFAULT_PARSE_TEXT_MODEL
         )
         self._providers["openai"] = openai
-        self._model_provider_overrides[settings.OPENAI_TEXT_MODEL] = "openai"
-        self._model_provider_overrides[settings.OPENAI_VISION_MODEL] = "openai"
-        self._model_provider_overrides[parse_text_model] = "openai"
+        meal_scan_raw = getattr(settings, "OPENAI_MEAL_SCAN_MODEL", None)
+        meal_scan_model = (
+            meal_scan_raw
+            if isinstance(meal_scan_raw, str)
+            else settings.OPENAI_VISION_MODEL
+        )
+
+        food_label_raw = getattr(settings, "OPENAI_FOOD_LABEL_MODEL", None)
+        food_label_model = (
+            food_label_raw
+            if isinstance(food_label_raw, str)
+            else settings.OPENAI_VISION_MODEL
+        )
+
+        barcode_raw = getattr(settings, "OPENAI_BARCODE_MODEL", None)
+        barcode_model = (
+            barcode_raw if isinstance(barcode_raw, str) else settings.OPENAI_TEXT_MODEL
+        )
+
+        for m in (
+            settings.OPENAI_TEXT_MODEL,
+            settings.OPENAI_VISION_MODEL,
+            parse_text_model,
+            meal_scan_model,
+            food_label_model,
+            barcode_model,
+        ):
+            self._model_provider_overrides[m] = "openai"
 
         self._append_model_for_purposes(
             settings.OPENAI_TEXT_MODEL,
@@ -158,6 +183,56 @@ class AIModelManager:
             VISION_PURPOSES,
             remove_models={DEFAULT_OPENAI_MODEL, settings.OPENAI_VISION_MODEL},
         )
+
+        # Wire purpose-specific models with fallbacks
+        if meal_scan_model:
+            self._prepend_model_for_purposes(
+                meal_scan_model,
+                {ModelPurpose.MEAL_SCAN},
+                remove_models={DEFAULT_OPENAI_MODEL, meal_scan_model},
+            )
+            if (
+                settings.OPENAI_VISION_MODEL
+                and settings.OPENAI_VISION_MODEL != meal_scan_model
+            ):
+                self._append_model_for_purposes(
+                    settings.OPENAI_VISION_MODEL,
+                    {ModelPurpose.MEAL_SCAN},
+                )
+
+        if food_label_model:
+            self._prepend_model_for_purposes(
+                food_label_model,
+                {ModelPurpose.FOOD_LABEL_SCAN},
+                remove_models={DEFAULT_OPENAI_MODEL, food_label_model},
+            )
+            if (
+                settings.OPENAI_VISION_MODEL
+                and settings.OPENAI_VISION_MODEL != food_label_model
+            ):
+                self._append_model_for_purposes(
+                    settings.OPENAI_VISION_MODEL,
+                    {ModelPurpose.FOOD_LABEL_SCAN},
+                )
+
+        if barcode_model:
+            self._append_model_for_purposes(
+                barcode_model,
+                {ModelPurpose.BARCODE},
+                remove_models={
+                    DEFAULT_OPENAI_MODEL,
+                    settings.OPENAI_TEXT_MODEL,
+                    barcode_model,
+                },
+            )
+            if (
+                settings.OPENAI_TEXT_MODEL
+                and settings.OPENAI_TEXT_MODEL != barcode_model
+            ):
+                self._append_model_for_purposes(
+                    settings.OPENAI_TEXT_MODEL,
+                    {ModelPurpose.BARCODE},
+                )
 
     def _prepend_model_for_purposes(
         self,

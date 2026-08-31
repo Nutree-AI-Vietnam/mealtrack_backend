@@ -102,6 +102,7 @@ class OpenAILangChainAdapter:
         schema: type,
         max_tokens: int | None,
         request_kwargs: dict[str, Any] | None,
+        image_detail: str = "high",
     ) -> LangChainOpenAIResult:
         llm = self._llm(model=model)
         structured = llm.with_structured_output(
@@ -112,6 +113,9 @@ class OpenAILangChainAdapter:
         )
         image_b64 = base64.b64encode(image_data).decode("ascii")
         data_url = f"data:{image_mime_type};base64,{image_b64}"
+        detail_tier = (
+            image_detail if image_detail in {"low", "high", "auto"} else "high"
+        )
         response = await structured.ainvoke(
             [
                 SystemMessage(content=system_message or ""),
@@ -120,7 +124,7 @@ class OpenAILangChainAdapter:
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {"url": data_url, "detail": "high"},
+                            "image_url": {"url": data_url, "detail": detail_tier},
                         },
                     ]
                 ),

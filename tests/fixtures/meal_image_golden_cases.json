@@ -1,0 +1,3406 @@
+[
+  {
+    "case_id": "meal-atomic-apple-red",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Red Apple",
+    "expected_foods": [
+      {
+        "name": "Red Apple",
+        "quantity_g": 182,
+        "macros": {
+          "protein": 0.5,
+          "carbs": 25.1,
+          "fat": 0.3
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      85,
+      105
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Red Apple",
+      "foods": [
+        {
+          "name": "Red Apple",
+          "quantity_g": 182,
+          "macros": {
+            "protein": 0.5,
+            "carbs": 25.1,
+            "fat": 0.3
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-banana-medium",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Banana",
+    "expected_foods": [
+      {
+        "name": "Banana",
+        "quantity_g": 118,
+        "macros": {
+          "protein": 1.3,
+          "carbs": 27.0,
+          "fat": 0.4
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      95,
+      115
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Banana",
+      "foods": [
+        {
+          "name": "Banana",
+          "quantity_g": 118,
+          "macros": {
+            "protein": 1.3,
+            "carbs": 27.0,
+            "fat": 0.4
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-boiled-egg",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Hard Boiled Egg",
+    "expected_foods": [
+      {
+        "name": "Hard Boiled Egg",
+        "quantity_g": 50,
+        "macros": {
+          "protein": 6.3,
+          "carbs": 0.6,
+          "fat": 5.3
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      70,
+      85
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Hard Boiled Egg",
+      "foods": [
+        {
+          "name": "Hard Boiled Egg",
+          "quantity_g": 50,
+          "macros": {
+            "protein": 6.3,
+            "carbs": 0.6,
+            "fat": 5.3
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-chicken-breast-grilled",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Grilled Chicken Breast",
+    "expected_foods": [
+      {
+        "name": "Grilled Chicken Breast",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 46.5,
+          "carbs": 0.0,
+          "fat": 5.4
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      230,
+      260
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Grilled Chicken Breast",
+      "foods": [
+        {
+          "name": "Grilled Chicken Breast",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 46.5,
+            "carbs": 0.0,
+            "fat": 5.4
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-white-rice-bowl",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Steamed White Rice",
+    "expected_foods": [
+      {
+        "name": "Steamed White Rice",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 5.4,
+          "carbs": 56.4,
+          "fat": 0.6
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      240,
+      280
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Steamed White Rice",
+      "foods": [
+        {
+          "name": "Steamed White Rice",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 5.4,
+            "carbs": 56.4,
+            "fat": 0.6
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-avocado-half",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Avocado",
+    "expected_foods": [
+      {
+        "name": "Avocado",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 2.0,
+          "carbs": 8.5,
+          "fat": 14.7
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      150,
+      180
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Avocado",
+      "foods": [
+        {
+          "name": "Avocado",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 2.0,
+            "carbs": 8.5,
+            "fat": 14.7
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-salmon-fillet",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Pan Seared Salmon",
+    "expected_foods": [
+      {
+        "name": "Salmon Fillet",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 36.0,
+          "carbs": 0.0,
+          "fat": 22.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      330,
+      380
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Pan Seared Salmon",
+      "foods": [
+        {
+          "name": "Salmon Fillet",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 36.0,
+            "carbs": 0.0,
+            "fat": 22.0
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-broccoli-steamed",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Steamed Broccoli",
+    "expected_foods": [
+      {
+        "name": "Steamed Broccoli",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 4.2,
+          "carbs": 10.0,
+          "fat": 0.6
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      45,
+      65
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Steamed Broccoli",
+      "foods": [
+        {
+          "name": "Steamed Broccoli",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 4.2,
+            "carbs": 10.0,
+            "fat": 0.6
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-oatmeal-plain",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Oatmeal",
+    "expected_foods": [
+      {
+        "name": "Cooked Oatmeal",
+        "quantity_g": 240,
+        "macros": {
+          "protein": 6.0,
+          "carbs": 28.0,
+          "fat": 2.5
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      140,
+      170
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Oatmeal",
+      "foods": [
+        {
+          "name": "Cooked Oatmeal",
+          "quantity_g": 240,
+          "macros": {
+            "protein": 6.0,
+            "carbs": 28.0,
+            "fat": 2.5
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-almonds-handful",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Almonds",
+    "expected_foods": [
+      {
+        "name": "Raw Almonds",
+        "quantity_g": 30,
+        "macros": {
+          "protein": 6.3,
+          "carbs": 6.1,
+          "fat": 15.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      160,
+      190
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Almonds",
+      "foods": [
+        {
+          "name": "Raw Almonds",
+          "quantity_g": 30,
+          "macros": {
+            "protein": 6.3,
+            "carbs": 6.1,
+            "fat": 15.0
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-greek-yogurt",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Greek Yogurt",
+    "expected_foods": [
+      {
+        "name": "Plain Greek Yogurt",
+        "quantity_g": 170,
+        "macros": {
+          "protein": 17.0,
+          "carbs": 6.0,
+          "fat": 0.7
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      90,
+      115
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Greek Yogurt",
+      "foods": [
+        {
+          "name": "Plain Greek Yogurt",
+          "quantity_g": 170,
+          "macros": {
+            "protein": 17.0,
+            "carbs": 6.0,
+            "fat": 0.7
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-peanut-butter-toast",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Peanut Butter Toast",
+    "expected_foods": [
+      {
+        "name": "Whole Wheat Bread",
+        "quantity_g": 35,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 15.0,
+          "fat": 1.0
+        }
+      },
+      {
+        "name": "Peanut Butter",
+        "quantity_g": 32,
+        "macros": {
+          "protein": 8.0,
+          "carbs": 6.0,
+          "fat": 16.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      250,
+      300
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Peanut Butter Toast",
+      "foods": [
+        {
+          "name": "Whole Wheat Bread",
+          "quantity_g": 35,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 15.0,
+            "fat": 1.0
+          }
+        },
+        {
+          "name": "Peanut Butter",
+          "quantity_g": 32,
+          "macros": {
+            "protein": 8.0,
+            "carbs": 6.0,
+            "fat": 16.0
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-sweet-potato-baked",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Baked Sweet Potato",
+    "expected_foods": [
+      {
+        "name": "Sweet Potato",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 41.0,
+          "fat": 0.3
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      160,
+      200
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Baked Sweet Potato",
+      "foods": [
+        {
+          "name": "Sweet Potato",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 41.0,
+            "fat": 0.3
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-tofu-cubes",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Firm Tofu",
+    "expected_foods": [
+      {
+        "name": "Firm Tofu",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 15.0,
+          "carbs": 3.0,
+          "fat": 8.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      130,
+      165
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Firm Tofu",
+      "foods": [
+        {
+          "name": "Firm Tofu",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 15.0,
+            "carbs": 3.0,
+            "fat": 8.0
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-atomic-blueberries-fresh",
+    "language": "en",
+    "category": "atomic",
+    "expected_is_food": true,
+    "expected_dish_name": "Fresh Blueberries",
+    "expected_foods": [
+      {
+        "name": "Blueberries",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 0.7,
+          "carbs": 14.5,
+          "fat": 0.3
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      50,
+      70
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Fresh Blueberries",
+      "foods": [
+        {
+          "name": "Blueberries",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 0.7,
+            "carbs": 14.5,
+            "fat": 0.3
+          }
+        }
+      ],
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "meal-composite-chicken-rice-broccoli",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Chicken Rice & Broccoli",
+    "expected_foods": [
+      {
+        "name": "Grilled Chicken Breast",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 46.5,
+          "carbs": 0.0,
+          "fat": 5.4
+        }
+      },
+      {
+        "name": "White Rice",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 42.0,
+          "fat": 0.5
+        }
+      },
+      {
+        "name": "Steamed Broccoli",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 2.8,
+          "carbs": 7.0,
+          "fat": 0.4
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      430,
+      520
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Chicken Rice & Broccoli",
+      "foods": [
+        {
+          "name": "Grilled Chicken Breast",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 46.5,
+            "carbs": 0.0,
+            "fat": 5.4
+          }
+        },
+        {
+          "name": "White Rice",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 42.0,
+            "fat": 0.5
+          }
+        },
+        {
+          "name": "Steamed Broccoli",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 2.8,
+            "carbs": 7.0,
+            "fat": 0.4
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-steak-mashed-potatoes",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Steak and Mashed Potatoes",
+    "expected_foods": [
+      {
+        "name": "Sirloin Steak",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 52.0,
+          "carbs": 0.0,
+          "fat": 18.0
+        }
+      },
+      {
+        "name": "Mashed Potatoes",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 30.0,
+          "fat": 8.0
+        }
+      },
+      {
+        "name": "Green Beans",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 1.5,
+          "carbs": 6.0,
+          "fat": 0.2
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      550,
+      680
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Steak and Mashed Potatoes",
+      "foods": [
+        {
+          "name": "Sirloin Steak",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 52.0,
+            "carbs": 0.0,
+            "fat": 18.0
+          }
+        },
+        {
+          "name": "Mashed Potatoes",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 30.0,
+            "fat": 8.0
+          }
+        },
+        {
+          "name": "Green Beans",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 1.5,
+            "carbs": 6.0,
+            "fat": 0.2
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-spaghetti-bolognese",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Spaghetti Bolognese",
+    "expected_foods": [
+      {
+        "name": "Cooked Spaghetti",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 8.0,
+          "carbs": 60.0,
+          "fat": 1.5
+        }
+      },
+      {
+        "name": "Bolognese Sauce with Beef",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 18.0,
+          "carbs": 12.0,
+          "fat": 14.0
+        }
+      },
+      {
+        "name": "Parmesan Cheese",
+        "quantity_g": 15,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 0.5,
+          "fat": 4.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      520,
+      640
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Spaghetti Bolognese",
+      "foods": [
+        {
+          "name": "Cooked Spaghetti",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 8.0,
+            "carbs": 60.0,
+            "fat": 1.5
+          }
+        },
+        {
+          "name": "Bolognese Sauce with Beef",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 18.0,
+            "carbs": 12.0,
+            "fat": 14.0
+          }
+        },
+        {
+          "name": "Parmesan Cheese",
+          "quantity_g": 15,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 0.5,
+            "fat": 4.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-salmon-quinoa-salad",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Salmon Quinoa Bowl",
+    "expected_foods": [
+      {
+        "name": "Grilled Salmon",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 30.0,
+          "carbs": 0.0,
+          "fat": 18.0
+        }
+      },
+      {
+        "name": "Cooked Quinoa",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 6.0,
+          "carbs": 32.0,
+          "fat": 3.0
+        }
+      },
+      {
+        "name": "Mixed Salad Greens",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 1.0,
+          "carbs": 3.0,
+          "fat": 0.2
+        }
+      },
+      {
+        "name": "Vinaigrette Dressing",
+        "quantity_g": 20,
+        "macros": {
+          "protein": 0.0,
+          "carbs": 2.0,
+          "fat": 10.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      500,
+      620
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Salmon Quinoa Bowl",
+      "foods": [
+        {
+          "name": "Grilled Salmon",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 30.0,
+            "carbs": 0.0,
+            "fat": 18.0
+          }
+        },
+        {
+          "name": "Cooked Quinoa",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 6.0,
+            "carbs": 32.0,
+            "fat": 3.0
+          }
+        },
+        {
+          "name": "Mixed Salad Greens",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 1.0,
+            "carbs": 3.0,
+            "fat": 0.2
+          }
+        },
+        {
+          "name": "Vinaigrette Dressing",
+          "quantity_g": 20,
+          "macros": {
+            "protein": 0.0,
+            "carbs": 2.0,
+            "fat": 10.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-burger-and-fries",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Cheeseburger and French Fries",
+    "expected_foods": [
+      {
+        "name": "Cheeseburger",
+        "quantity_g": 220,
+        "macros": {
+          "protein": 30.0,
+          "carbs": 40.0,
+          "fat": 28.0
+        }
+      },
+      {
+        "name": "French Fries",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 45.0,
+          "fat": 16.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      750,
+      920
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Cheeseburger and French Fries",
+      "foods": [
+        {
+          "name": "Cheeseburger",
+          "quantity_g": 220,
+          "macros": {
+            "protein": 30.0,
+            "carbs": 40.0,
+            "fat": 28.0
+          }
+        },
+        {
+          "name": "French Fries",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 45.0,
+            "fat": 16.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-burrito-bowl",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Chicken Burrito Bowl",
+    "expected_foods": [
+      {
+        "name": "Brown Rice",
+        "quantity_g": 140,
+        "macros": {
+          "protein": 3.5,
+          "carbs": 32.0,
+          "fat": 1.0
+        }
+      },
+      {
+        "name": "Black Beans",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 7.0,
+          "carbs": 20.0,
+          "fat": 0.5
+        }
+      },
+      {
+        "name": "Grilled Chicken",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 36.0,
+          "carbs": 0.0,
+          "fat": 4.0
+        }
+      },
+      {
+        "name": "Guacamole",
+        "quantity_g": 50,
+        "macros": {
+          "protein": 1.0,
+          "carbs": 4.0,
+          "fat": 8.0
+        }
+      },
+      {
+        "name": "Salsa",
+        "quantity_g": 40,
+        "macros": {
+          "protein": 0.5,
+          "carbs": 3.0,
+          "fat": 0.1
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      520,
+      640
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Chicken Burrito Bowl",
+      "foods": [
+        {
+          "name": "Brown Rice",
+          "quantity_g": 140,
+          "macros": {
+            "protein": 3.5,
+            "carbs": 32.0,
+            "fat": 1.0
+          }
+        },
+        {
+          "name": "Black Beans",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 7.0,
+            "carbs": 20.0,
+            "fat": 0.5
+          }
+        },
+        {
+          "name": "Grilled Chicken",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 36.0,
+            "carbs": 0.0,
+            "fat": 4.0
+          }
+        },
+        {
+          "name": "Guacamole",
+          "quantity_g": 50,
+          "macros": {
+            "protein": 1.0,
+            "carbs": 4.0,
+            "fat": 8.0
+          }
+        },
+        {
+          "name": "Salsa",
+          "quantity_g": 40,
+          "macros": {
+            "protein": 0.5,
+            "carbs": 3.0,
+            "fat": 0.1
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-pancakes-bacon-eggs",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Pancakes with Bacon & Scrambled Eggs",
+    "expected_foods": [
+      {
+        "name": "Pancakes",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 6.0,
+          "carbs": 45.0,
+          "fat": 8.0
+        }
+      },
+      {
+        "name": "Maple Syrup",
+        "quantity_g": 30,
+        "macros": {
+          "protein": 0.0,
+          "carbs": 26.0,
+          "fat": 0.0
+        }
+      },
+      {
+        "name": "Scrambled Eggs",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 12.0,
+          "carbs": 1.5,
+          "fat": 11.0
+        }
+      },
+      {
+        "name": "Crispy Bacon",
+        "quantity_g": 30,
+        "macros": {
+          "protein": 11.0,
+          "carbs": 0.5,
+          "fat": 12.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      580,
+      720
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Pancakes with Bacon & Scrambled Eggs",
+      "foods": [
+        {
+          "name": "Pancakes",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 6.0,
+            "carbs": 45.0,
+            "fat": 8.0
+          }
+        },
+        {
+          "name": "Maple Syrup",
+          "quantity_g": 30,
+          "macros": {
+            "protein": 0.0,
+            "carbs": 26.0,
+            "fat": 0.0
+          }
+        },
+        {
+          "name": "Scrambled Eggs",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 12.0,
+            "carbs": 1.5,
+            "fat": 11.0
+          }
+        },
+        {
+          "name": "Crispy Bacon",
+          "quantity_g": 30,
+          "macros": {
+            "protein": 11.0,
+            "carbs": 0.5,
+            "fat": 12.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-caesar-salad-chicken",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Chicken Caesar Salad",
+    "expected_foods": [
+      {
+        "name": "Romaine Lettuce",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 1.5,
+          "carbs": 4.0,
+          "fat": 0.3
+        }
+      },
+      {
+        "name": "Grilled Chicken Breast",
+        "quantity_g": 140,
+        "macros": {
+          "protein": 42.0,
+          "carbs": 0.0,
+          "fat": 5.0
+        }
+      },
+      {
+        "name": "Caesar Dressing",
+        "quantity_g": 35,
+        "macros": {
+          "protein": 1.0,
+          "carbs": 2.0,
+          "fat": 18.0
+        }
+      },
+      {
+        "name": "Croutons & Parmesan",
+        "quantity_g": 30,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 15.0,
+          "fat": 6.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      430,
+      540
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Chicken Caesar Salad",
+      "foods": [
+        {
+          "name": "Romaine Lettuce",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 1.5,
+            "carbs": 4.0,
+            "fat": 0.3
+          }
+        },
+        {
+          "name": "Grilled Chicken Breast",
+          "quantity_g": 140,
+          "macros": {
+            "protein": 42.0,
+            "carbs": 0.0,
+            "fat": 5.0
+          }
+        },
+        {
+          "name": "Caesar Dressing",
+          "quantity_g": 35,
+          "macros": {
+            "protein": 1.0,
+            "carbs": 2.0,
+            "fat": 18.0
+          }
+        },
+        {
+          "name": "Croutons & Parmesan",
+          "quantity_g": 30,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 15.0,
+            "fat": 6.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-sushi-combo-roll",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Sushi Roll Combo",
+    "expected_foods": [
+      {
+        "name": "Salmon Avocado Roll",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 12.0,
+          "carbs": 48.0,
+          "fat": 8.0
+        }
+      },
+      {
+        "name": "Tuna Nigiri",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 14.0,
+          "carbs": 20.0,
+          "fat": 1.0
+        }
+      },
+      {
+        "name": "Edamame",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 6.0,
+          "carbs": 5.0,
+          "fat": 2.5
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      460,
+      570
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Sushi Roll Combo",
+      "foods": [
+        {
+          "name": "Salmon Avocado Roll",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 12.0,
+            "carbs": 48.0,
+            "fat": 8.0
+          }
+        },
+        {
+          "name": "Tuna Nigiri",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 14.0,
+            "carbs": 20.0,
+            "fat": 1.0
+          }
+        },
+        {
+          "name": "Edamame",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 6.0,
+            "carbs": 5.0,
+            "fat": 2.5
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-greek-salad-feta",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Greek Salad with Feta",
+    "expected_foods": [
+      {
+        "name": "Cucumbers & Tomatoes",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 2.0,
+          "carbs": 9.0,
+          "fat": 0.5
+        }
+      },
+      {
+        "name": "Feta Cheese",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 8.5,
+          "carbs": 2.5,
+          "fat": 13.0
+        }
+      },
+      {
+        "name": "Kalamata Olives",
+        "quantity_g": 30,
+        "macros": {
+          "protein": 0.5,
+          "carbs": 1.5,
+          "fat": 4.5
+        }
+      },
+      {
+        "name": "Olive Oil Dressing",
+        "quantity_g": 20,
+        "macros": {
+          "protein": 0.0,
+          "carbs": 0.0,
+          "fat": 20.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      340,
+      420
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Greek Salad with Feta",
+      "foods": [
+        {
+          "name": "Cucumbers & Tomatoes",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 2.0,
+            "carbs": 9.0,
+            "fat": 0.5
+          }
+        },
+        {
+          "name": "Feta Cheese",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 8.5,
+            "carbs": 2.5,
+            "fat": 13.0
+          }
+        },
+        {
+          "name": "Kalamata Olives",
+          "quantity_g": 30,
+          "macros": {
+            "protein": 0.5,
+            "carbs": 1.5,
+            "fat": 4.5
+          }
+        },
+        {
+          "name": "Olive Oil Dressing",
+          "quantity_g": 20,
+          "macros": {
+            "protein": 0.0,
+            "carbs": 0.0,
+            "fat": 20.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-teriyaki-chicken-bowl",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Teriyaki Chicken Rice Bowl",
+    "expected_foods": [
+      {
+        "name": "White Rice",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 4.5,
+          "carbs": 50.0,
+          "fat": 0.6
+        }
+      },
+      {
+        "name": "Teriyaki Chicken Thigh",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 32.0,
+          "carbs": 14.0,
+          "fat": 12.0
+        }
+      },
+      {
+        "name": "Stir-fried Veggies",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 2.5,
+          "carbs": 8.0,
+          "fat": 3.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      530,
+      660
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Teriyaki Chicken Rice Bowl",
+      "foods": [
+        {
+          "name": "White Rice",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 4.5,
+            "carbs": 50.0,
+            "fat": 0.6
+          }
+        },
+        {
+          "name": "Teriyaki Chicken Thigh",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 32.0,
+            "carbs": 14.0,
+            "fat": 12.0
+          }
+        },
+        {
+          "name": "Stir-fried Veggies",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 2.5,
+            "carbs": 8.0,
+            "fat": 3.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-curry-rice-tofu",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Tofu Vegetable Curry",
+    "expected_foods": [
+      {
+        "name": "Jasmine Rice",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 4.5,
+          "carbs": 50.0,
+          "fat": 0.6
+        }
+      },
+      {
+        "name": "Tofu & Coconut Curry",
+        "quantity_g": 220,
+        "macros": {
+          "protein": 16.0,
+          "carbs": 18.0,
+          "fat": 22.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      510,
+      630
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Tofu Vegetable Curry",
+      "foods": [
+        {
+          "name": "Jasmine Rice",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 4.5,
+            "carbs": 50.0,
+            "fat": 0.6
+          }
+        },
+        {
+          "name": "Tofu & Coconut Curry",
+          "quantity_g": 220,
+          "macros": {
+            "protein": 16.0,
+            "carbs": 18.0,
+            "fat": 22.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-tacos-beef-duo",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Beef Tacos",
+    "expected_foods": [
+      {
+        "name": "Corn Tortillas",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 3.0,
+          "carbs": 28.0,
+          "fat": 1.5
+        }
+      },
+      {
+        "name": "Seasoned Ground Beef",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 26.0,
+          "carbs": 2.0,
+          "fat": 18.0
+        }
+      },
+      {
+        "name": "Cheddar & Pico",
+        "quantity_g": 40,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 3.0,
+          "fat": 7.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      420,
+      520
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Beef Tacos",
+      "foods": [
+        {
+          "name": "Corn Tortillas",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 3.0,
+            "carbs": 28.0,
+            "fat": 1.5
+          }
+        },
+        {
+          "name": "Seasoned Ground Beef",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 26.0,
+            "carbs": 2.0,
+            "fat": 18.0
+          }
+        },
+        {
+          "name": "Cheddar & Pico",
+          "quantity_g": 40,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 3.0,
+            "fat": 7.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-ramen-pork-egg",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Tonkotsu Pork Ramen",
+    "expected_foods": [
+      {
+        "name": "Ramen Noodles & Broth",
+        "quantity_g": 400,
+        "macros": {
+          "protein": 14.0,
+          "carbs": 65.0,
+          "fat": 18.0
+        }
+      },
+      {
+        "name": "Chashu Pork",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 12.0,
+          "carbs": 1.0,
+          "fat": 14.0
+        }
+      },
+      {
+        "name": "Soft Boiled Egg",
+        "quantity_g": 50,
+        "macros": {
+          "protein": 6.3,
+          "carbs": 0.6,
+          "fat": 5.3
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      580,
+      710
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Tonkotsu Pork Ramen",
+      "foods": [
+        {
+          "name": "Ramen Noodles & Broth",
+          "quantity_g": 400,
+          "macros": {
+            "protein": 14.0,
+            "carbs": 65.0,
+            "fat": 18.0
+          }
+        },
+        {
+          "name": "Chashu Pork",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 12.0,
+            "carbs": 1.0,
+            "fat": 14.0
+          }
+        },
+        {
+          "name": "Soft Boiled Egg",
+          "quantity_g": 50,
+          "macros": {
+            "protein": 6.3,
+            "carbs": 0.6,
+            "fat": 5.3
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-composite-falafel-pita-pocket",
+    "language": "en",
+    "category": "composite",
+    "expected_is_food": true,
+    "expected_dish_name": "Falafel Pita Sandwich",
+    "expected_foods": [
+      {
+        "name": "Pita Bread",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 7.0,
+          "carbs": 42.0,
+          "fat": 1.5
+        }
+      },
+      {
+        "name": "Fried Falafel Balls",
+        "quantity_g": 90,
+        "macros": {
+          "protein": 9.0,
+          "carbs": 24.0,
+          "fat": 15.0
+        }
+      },
+      {
+        "name": "Tahini Sauce & Veggies",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 3.0,
+          "carbs": 5.0,
+          "fat": 12.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      470,
+      580
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Falafel Pita Sandwich",
+      "foods": [
+        {
+          "name": "Pita Bread",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 7.0,
+            "carbs": 42.0,
+            "fat": 1.5
+          }
+        },
+        {
+          "name": "Fried Falafel Balls",
+          "quantity_g": 90,
+          "macros": {
+            "protein": 9.0,
+            "carbs": 24.0,
+            "fat": 15.0
+          }
+        },
+        {
+          "name": "Tahini Sauce & Veggies",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 3.0,
+            "carbs": 5.0,
+            "fat": 12.0
+          }
+        }
+      ],
+      "confidence": 0.92
+    }
+  },
+  {
+    "case_id": "meal-vi-pho-bo",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "Ph\u1edf b\u00f2",
+    "expected_foods": [
+      {
+        "name": "B\u00e1nh ph\u1edf v\u00e0 n\u01b0\u1edbc d\u00f9ng",
+        "quantity_g": 400,
+        "macros": {
+          "protein": 10.0,
+          "carbs": 65.0,
+          "fat": 6.0
+        }
+      },
+      {
+        "name": "Th\u1ecbt b\u00f2 t\u00e1i n\u1ea1m",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 24.0,
+          "carbs": 0.0,
+          "fat": 8.0
+        }
+      },
+      {
+        "name": "Rau th\u01a1m v\u00e0 gi\u00e1",
+        "quantity_g": 50,
+        "macros": {
+          "protein": 1.5,
+          "carbs": 3.0,
+          "fat": 0.2
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      430,
+      530
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Ph\u1edf b\u00f2",
+      "foods": [
+        {
+          "name": "B\u00e1nh ph\u1edf v\u00e0 n\u01b0\u1edbc d\u00f9ng",
+          "quantity_g": 400,
+          "macros": {
+            "protein": 10.0,
+            "carbs": 65.0,
+            "fat": 6.0
+          }
+        },
+        {
+          "name": "Th\u1ecbt b\u00f2 t\u00e1i n\u1ea1m",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 24.0,
+            "carbs": 0.0,
+            "fat": 8.0
+          }
+        },
+        {
+          "name": "Rau th\u01a1m v\u00e0 gi\u00e1",
+          "quantity_g": 50,
+          "macros": {
+            "protein": 1.5,
+            "carbs": 3.0,
+            "fat": 0.2
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-bun-cha-hanoi",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "B\u00fan ch\u1ea3 H\u00e0 N\u1ed9i",
+    "expected_foods": [
+      {
+        "name": "B\u00fan t\u01b0\u01a1i",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 52.0,
+          "fat": 0.5
+        }
+      },
+      {
+        "name": "Ch\u1ea3 th\u1ecbt n\u01b0\u1edbng v\u00e0 n\u01b0\u1edbc ch\u1ea5m",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 28.0,
+          "carbs": 16.0,
+          "fat": 20.0
+        }
+      },
+      {
+        "name": "Rau s\u1ed1ng c\u00e1c lo\u1ea1i",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 1.5,
+          "carbs": 4.0,
+          "fat": 0.3
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      540,
+      660
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "B\u00fan ch\u1ea3 H\u00e0 N\u1ed9i",
+      "foods": [
+        {
+          "name": "B\u00fan t\u01b0\u01a1i",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 52.0,
+            "fat": 0.5
+          }
+        },
+        {
+          "name": "Ch\u1ea3 th\u1ecbt n\u01b0\u1edbng v\u00e0 n\u01b0\u1edbc ch\u1ea5m",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 28.0,
+            "carbs": 16.0,
+            "fat": 20.0
+          }
+        },
+        {
+          "name": "Rau s\u1ed1ng c\u00e1c lo\u1ea1i",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 1.5,
+            "carbs": 4.0,
+            "fat": 0.3
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-com-tam-suon-bi-cha",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "C\u01a1m t\u1ea5m s\u01b0\u1eddn b\u00ec ch\u1ea3",
+    "expected_foods": [
+      {
+        "name": "C\u01a1m t\u1ea5m",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 58.0,
+          "fat": 0.8
+        }
+      },
+      {
+        "name": "S\u01b0\u1eddn heo n\u01b0\u1edbng",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 26.0,
+          "carbs": 6.0,
+          "fat": 16.0
+        }
+      },
+      {
+        "name": "Ch\u1ea3 tr\u1ee9ng h\u1ea5p",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 8.0,
+          "carbs": 4.0,
+          "fat": 7.0
+        }
+      },
+      {
+        "name": "B\u00ec heo",
+        "quantity_g": 30,
+        "macros": {
+          "protein": 9.0,
+          "carbs": 1.0,
+          "fat": 4.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      650,
+      790
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "C\u01a1m t\u1ea5m s\u01b0\u1eddn b\u00ec ch\u1ea3",
+      "foods": [
+        {
+          "name": "C\u01a1m t\u1ea5m",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 58.0,
+            "fat": 0.8
+          }
+        },
+        {
+          "name": "S\u01b0\u1eddn heo n\u01b0\u1edbng",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 26.0,
+            "carbs": 6.0,
+            "fat": 16.0
+          }
+        },
+        {
+          "name": "Ch\u1ea3 tr\u1ee9ng h\u1ea5p",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 8.0,
+            "carbs": 4.0,
+            "fat": 7.0
+          }
+        },
+        {
+          "name": "B\u00ec heo",
+          "quantity_g": 30,
+          "macros": {
+            "protein": 9.0,
+            "carbs": 1.0,
+            "fat": 4.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-banh-mi-thit-nuong",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "B\u00e1nh m\u00ec th\u1ecbt n\u01b0\u1edbng",
+    "expected_foods": [
+      {
+        "name": "B\u00e1nh m\u00ec gi\u00f2n",
+        "quantity_g": 90,
+        "macros": {
+          "protein": 8.0,
+          "carbs": 48.0,
+          "fat": 2.0
+        }
+      },
+      {
+        "name": "Th\u1ecbt n\u01b0\u1edbng x\u00e1 x\u00edu",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 18.0,
+          "carbs": 5.0,
+          "fat": 12.0
+        }
+      },
+      {
+        "name": "Pate, s\u1ed1t b\u01a1 v\u00e0 \u0111\u1ed3 chua",
+        "quantity_g": 40,
+        "macros": {
+          "protein": 3.0,
+          "carbs": 4.0,
+          "fat": 14.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      460,
+      560
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "B\u00e1nh m\u00ec th\u1ecbt n\u01b0\u1edbng",
+      "foods": [
+        {
+          "name": "B\u00e1nh m\u00ec gi\u00f2n",
+          "quantity_g": 90,
+          "macros": {
+            "protein": 8.0,
+            "carbs": 48.0,
+            "fat": 2.0
+          }
+        },
+        {
+          "name": "Th\u1ecbt n\u01b0\u1edbng x\u00e1 x\u00edu",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 18.0,
+            "carbs": 5.0,
+            "fat": 12.0
+          }
+        },
+        {
+          "name": "Pate, s\u1ed1t b\u01a1 v\u00e0 \u0111\u1ed3 chua",
+          "quantity_g": 40,
+          "macros": {
+            "protein": 3.0,
+            "carbs": 4.0,
+            "fat": 14.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-bun-bo-hue",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "B\u00fan b\u00f2 Hu\u1ebf",
+    "expected_foods": [
+      {
+        "name": "B\u00fan s\u1ee3i to v\u00e0 n\u01b0\u1edbc l\u00e8o cay",
+        "quantity_g": 420,
+        "macros": {
+          "protein": 12.0,
+          "carbs": 68.0,
+          "fat": 10.0
+        }
+      },
+      {
+        "name": "Th\u1ecbt b\u1eafp b\u00f2 v\u00e0 gi\u00f2 heo",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 28.0,
+          "carbs": 0.0,
+          "fat": 15.0
+        }
+      },
+      {
+        "name": "Ch\u1ea3 cua Hu\u1ebf",
+        "quantity_g": 40,
+        "macros": {
+          "protein": 7.0,
+          "carbs": 2.0,
+          "fat": 4.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      580,
+      710
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "B\u00fan b\u00f2 Hu\u1ebf",
+      "foods": [
+        {
+          "name": "B\u00fan s\u1ee3i to v\u00e0 n\u01b0\u1edbc l\u00e8o cay",
+          "quantity_g": 420,
+          "macros": {
+            "protein": 12.0,
+            "carbs": 68.0,
+            "fat": 10.0
+          }
+        },
+        {
+          "name": "Th\u1ecbt b\u1eafp b\u00f2 v\u00e0 gi\u00f2 heo",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 28.0,
+            "carbs": 0.0,
+            "fat": 15.0
+          }
+        },
+        {
+          "name": "Ch\u1ea3 cua Hu\u1ebf",
+          "quantity_g": 40,
+          "macros": {
+            "protein": 7.0,
+            "carbs": 2.0,
+            "fat": 4.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-goi-cuon-tom-thit",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "G\u1ecfi cu\u1ed1n t\u00f4m th\u1ecbt",
+    "expected_foods": [
+      {
+        "name": "G\u1ecfi cu\u1ed1n b\u00e1nh tr\u00e1ng t\u00f4m th\u1ecbt",
+        "quantity_g": 160,
+        "macros": {
+          "protein": 16.0,
+          "carbs": 32.0,
+          "fat": 3.5
+        }
+      },
+      {
+        "name": "N\u01b0\u1edbc ch\u1ea5m t\u01b0\u01a1ng \u0111\u1eadu ph\u1ed9ng",
+        "quantity_g": 40,
+        "macros": {
+          "protein": 3.0,
+          "carbs": 10.0,
+          "fat": 6.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      270,
+      340
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "G\u1ecfi cu\u1ed1n t\u00f4m th\u1ecbt",
+      "foods": [
+        {
+          "name": "G\u1ecfi cu\u1ed1n b\u00e1nh tr\u00e1ng t\u00f4m th\u1ecbt",
+          "quantity_g": 160,
+          "macros": {
+            "protein": 16.0,
+            "carbs": 32.0,
+            "fat": 3.5
+          }
+        },
+        {
+          "name": "N\u01b0\u1edbc ch\u1ea5m t\u01b0\u01a1ng \u0111\u1eadu ph\u1ed9ng",
+          "quantity_g": 40,
+          "macros": {
+            "protein": 3.0,
+            "carbs": 10.0,
+            "fat": 6.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-banh-xeo-mien-tay",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "B\u00e1nh x\u00e8o mi\u1ec1n T\u00e2y",
+    "expected_foods": [
+      {
+        "name": "V\u1ecf b\u00e1nh x\u00e8o b\u1ed9t g\u1ea1o n\u01b0\u1edbc c\u1ed1t d\u1eeba",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 42.0,
+          "fat": 18.0
+        }
+      },
+      {
+        "name": "Nh\u00e2n t\u00f4m th\u1ecbt ba ch\u1ec9 gi\u00e1 \u0111\u1ed7",
+        "quantity_g": 140,
+        "macros": {
+          "protein": 22.0,
+          "carbs": 6.0,
+          "fat": 15.0
+        }
+      },
+      {
+        "name": "Rau c\u1ea3i xanh v\u00e0 n\u01b0\u1edbc m\u1eafm chua ng\u1ecdt",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 2.0,
+          "carbs": 8.0,
+          "fat": 0.2
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      490,
+      610
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "B\u00e1nh x\u00e8o mi\u1ec1n T\u00e2y",
+      "foods": [
+        {
+          "name": "V\u1ecf b\u00e1nh x\u00e8o b\u1ed9t g\u1ea1o n\u01b0\u1edbc c\u1ed1t d\u1eeba",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 42.0,
+            "fat": 18.0
+          }
+        },
+        {
+          "name": "Nh\u00e2n t\u00f4m th\u1ecbt ba ch\u1ec9 gi\u00e1 \u0111\u1ed7",
+          "quantity_g": 140,
+          "macros": {
+            "protein": 22.0,
+            "carbs": 6.0,
+            "fat": 15.0
+          }
+        },
+        {
+          "name": "Rau c\u1ea3i xanh v\u00e0 n\u01b0\u1edbc m\u1eafm chua ng\u1ecdt",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 2.0,
+            "carbs": 8.0,
+            "fat": 0.2
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-chao-ga-xe-phay",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "Ch\u00e1o g\u00e0 x\u00e9 phay",
+    "expected_foods": [
+      {
+        "name": "Ch\u00e1o tr\u1eafng n\u1ea5u n\u01b0\u1edbc d\u00f9ng g\u00e0",
+        "quantity_g": 350,
+        "macros": {
+          "protein": 6.0,
+          "carbs": 45.0,
+          "fat": 4.0
+        }
+      },
+      {
+        "name": "Th\u1ecbt g\u00e0 lu\u1ed9c x\u00e9 phay",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 25.0,
+          "carbs": 0.0,
+          "fat": 7.0
+        }
+      },
+      {
+        "name": "G\u1ecfi b\u1eafp c\u1ea3i h\u00e0nh t\u00e2y rau r\u0103m",
+        "quantity_g": 80,
+        "macros": {
+          "protein": 1.5,
+          "carbs": 6.0,
+          "fat": 1.5
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      360,
+      440
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Ch\u00e1o g\u00e0 x\u00e9 phay",
+      "foods": [
+        {
+          "name": "Ch\u00e1o tr\u1eafng n\u1ea5u n\u01b0\u1edbc d\u00f9ng g\u00e0",
+          "quantity_g": 350,
+          "macros": {
+            "protein": 6.0,
+            "carbs": 45.0,
+            "fat": 4.0
+          }
+        },
+        {
+          "name": "Th\u1ecbt g\u00e0 lu\u1ed9c x\u00e9 phay",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 25.0,
+            "carbs": 0.0,
+            "fat": 7.0
+          }
+        },
+        {
+          "name": "G\u1ecfi b\u1eafp c\u1ea3i h\u00e0nh t\u00e2y rau r\u0103m",
+          "quantity_g": 80,
+          "macros": {
+            "protein": 1.5,
+            "carbs": 6.0,
+            "fat": 1.5
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-hu-tieu-nam-vang",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "H\u1ee7 ti\u1ebfu Nam Vang",
+    "expected_foods": [
+      {
+        "name": "H\u1ee7 ti\u1ebfu dai v\u00e0 n\u01b0\u1edbc s\u00fap th\u1ecbt",
+        "quantity_g": 380,
+        "macros": {
+          "protein": 10.0,
+          "carbs": 62.0,
+          "fat": 8.0
+        }
+      },
+      {
+        "name": "T\u00f4m, th\u1ecbt b\u0103m, gan heo, tr\u1ee9ng c\u00fat",
+        "quantity_g": 110,
+        "macros": {
+          "protein": 26.0,
+          "carbs": 2.0,
+          "fat": 9.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      480,
+      580
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "H\u1ee7 ti\u1ebfu Nam Vang",
+      "foods": [
+        {
+          "name": "H\u1ee7 ti\u1ebfu dai v\u00e0 n\u01b0\u1edbc s\u00fap th\u1ecbt",
+          "quantity_g": 380,
+          "macros": {
+            "protein": 10.0,
+            "carbs": 62.0,
+            "fat": 8.0
+          }
+        },
+        {
+          "name": "T\u00f4m, th\u1ecbt b\u0103m, gan heo, tr\u1ee9ng c\u00fat",
+          "quantity_g": 110,
+          "macros": {
+            "protein": 26.0,
+            "carbs": 2.0,
+            "fat": 9.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-mi-quang-ga",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "M\u00ec Qu\u1ea3ng g\u00e0",
+    "expected_foods": [
+      {
+        "name": "S\u1ee3i m\u00ec Qu\u1ea3ng ngh\u1ec7",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 54.0,
+          "fat": 2.0
+        }
+      },
+      {
+        "name": "Th\u1ecbt g\u00e0 kho \u0111\u1eadm \u0111\u00e0",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 26.0,
+          "carbs": 4.0,
+          "fat": 12.0
+        }
+      },
+      {
+        "name": "\u0110\u1eadu ph\u1ed9ng rang v\u00e0 b\u00e1nh tr\u00e1ng m\u00e8",
+        "quantity_g": 30,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 10.0,
+          "fat": 9.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      520,
+      640
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "M\u00ec Qu\u1ea3ng g\u00e0",
+      "foods": [
+        {
+          "name": "S\u1ee3i m\u00ec Qu\u1ea3ng ngh\u1ec7",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 54.0,
+            "fat": 2.0
+          }
+        },
+        {
+          "name": "Th\u1ecbt g\u00e0 kho \u0111\u1eadm \u0111\u00e0",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 26.0,
+            "carbs": 4.0,
+            "fat": 12.0
+          }
+        },
+        {
+          "name": "\u0110\u1eadu ph\u1ed9ng rang v\u00e0 b\u00e1nh tr\u00e1ng m\u00e8",
+          "quantity_g": 30,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 10.0,
+            "fat": 9.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-ca-kho-to-com-trang",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "C\u00e1 kho t\u1ed9 v\u00e0 c\u01a1m tr\u1eafng",
+    "expected_foods": [
+      {
+        "name": "C\u01a1m tr\u1eafng",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 56.0,
+          "fat": 0.6
+        }
+      },
+      {
+        "name": "C\u00e1 l\u00f3c kho t\u1ed9 n\u01b0\u1edbc m\u00e0u",
+        "quantity_g": 140,
+        "macros": {
+          "protein": 28.0,
+          "carbs": 8.0,
+          "fat": 9.0
+        }
+      },
+      {
+        "name": "Canh rau ng\u00f3t n\u1ea5u t\u00f4m",
+        "quantity_g": 150,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 5.0,
+          "fat": 1.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      480,
+      590
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "C\u00e1 kho t\u1ed9 v\u00e0 c\u01a1m tr\u1eafng",
+      "foods": [
+        {
+          "name": "C\u01a1m tr\u1eafng",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 56.0,
+            "fat": 0.6
+          }
+        },
+        {
+          "name": "C\u00e1 l\u00f3c kho t\u1ed9 n\u01b0\u1edbc m\u00e0u",
+          "quantity_g": 140,
+          "macros": {
+            "protein": 28.0,
+            "carbs": 8.0,
+            "fat": 9.0
+          }
+        },
+        {
+          "name": "Canh rau ng\u00f3t n\u1ea5u t\u00f4m",
+          "quantity_g": 150,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 5.0,
+            "fat": 1.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-thit-kho-tau-trung",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "Th\u1ecbt kho t\u00e0u tr\u1ee9ng c\u00fat",
+    "expected_foods": [
+      {
+        "name": "C\u01a1m tr\u1eafng d\u1ebbo",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 5.0,
+          "carbs": 56.0,
+          "fat": 0.6
+        }
+      },
+      {
+        "name": "Th\u1ecbt ba r\u1ecdi kho n\u01b0\u1edbc d\u1eeba",
+        "quantity_g": 120,
+        "macros": {
+          "protein": 20.0,
+          "carbs": 8.0,
+          "fat": 28.0
+        }
+      },
+      {
+        "name": "Tr\u1ee9ng v\u1ecbt kho",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 7.5,
+          "carbs": 0.8,
+          "fat": 6.5
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      630,
+      770
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Th\u1ecbt kho t\u00e0u tr\u1ee9ng c\u00fat",
+      "foods": [
+        {
+          "name": "C\u01a1m tr\u1eafng d\u1ebbo",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 5.0,
+            "carbs": 56.0,
+            "fat": 0.6
+          }
+        },
+        {
+          "name": "Th\u1ecbt ba r\u1ecdi kho n\u01b0\u1edbc d\u1eeba",
+          "quantity_g": 120,
+          "macros": {
+            "protein": 20.0,
+            "carbs": 8.0,
+            "fat": 28.0
+          }
+        },
+        {
+          "name": "Tr\u1ee9ng v\u1ecbt kho",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 7.5,
+            "carbs": 0.8,
+            "fat": 6.5
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-bo-luc-lac-khoai-tay",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "B\u00f2 l\u00fac l\u1eafc khoai t\u00e2y",
+    "expected_foods": [
+      {
+        "name": "Th\u1ecbt b\u00f2 th\u0103n \u00e1p ch\u1ea3o",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 44.0,
+          "carbs": 4.0,
+          "fat": 14.0
+        }
+      },
+      {
+        "name": "Khoai t\u00e2y chi\u00ean",
+        "quantity_g": 100,
+        "macros": {
+          "protein": 3.0,
+          "carbs": 38.0,
+          "fat": 12.0
+        }
+      },
+      {
+        "name": "X\u00e0 l\u00e1ch c\u00e0 chua d\u1ea7u gi\u1ea5m",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 1.0,
+          "carbs": 3.0,
+          "fat": 3.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      520,
+      640
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "B\u00f2 l\u00fac l\u1eafc khoai t\u00e2y",
+      "foods": [
+        {
+          "name": "Th\u1ecbt b\u00f2 th\u0103n \u00e1p ch\u1ea3o",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 44.0,
+            "carbs": 4.0,
+            "fat": 14.0
+          }
+        },
+        {
+          "name": "Khoai t\u00e2y chi\u00ean",
+          "quantity_g": 100,
+          "macros": {
+            "protein": 3.0,
+            "carbs": 38.0,
+            "fat": 12.0
+          }
+        },
+        {
+          "name": "X\u00e0 l\u00e1ch c\u00e0 chua d\u1ea7u gi\u1ea5m",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 1.0,
+            "carbs": 3.0,
+            "fat": 3.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-canh-chua-ca-loc",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "Canh chua c\u00e1 l\u00f3c",
+    "expected_foods": [
+      {
+        "name": "C\u01a1m tr\u1eafng",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 4.5,
+          "carbs": 50.0,
+          "fat": 0.5
+        }
+      },
+      {
+        "name": "C\u00e1 l\u00f3c v\u00e0 n\u01b0\u1edbc canh chua th\u01a1m me",
+        "quantity_g": 350,
+        "macros": {
+          "protein": 24.0,
+          "carbs": 18.0,
+          "fat": 5.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      390,
+      480
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Canh chua c\u00e1 l\u00f3c",
+      "foods": [
+        {
+          "name": "C\u01a1m tr\u1eafng",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 4.5,
+            "carbs": 50.0,
+            "fat": 0.5
+          }
+        },
+        {
+          "name": "C\u00e1 l\u00f3c v\u00e0 n\u01b0\u1edbc canh chua th\u01a1m me",
+          "quantity_g": 350,
+          "macros": {
+            "protein": 24.0,
+            "carbs": 18.0,
+            "fat": 5.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-vi-banh-cuon-nong",
+    "language": "vi",
+    "category": "vietnamese",
+    "expected_is_food": true,
+    "expected_dish_name": "B\u00e1nh cu\u1ed1n n\u00f3ng ch\u1ea3 l\u1ee5a",
+    "expected_foods": [
+      {
+        "name": "B\u00e1nh cu\u1ed1n nh\u00e2n th\u1ecbt m\u1ed9c nh\u0129",
+        "quantity_g": 180,
+        "macros": {
+          "protein": 8.0,
+          "carbs": 46.0,
+          "fat": 8.0
+        }
+      },
+      {
+        "name": "Ch\u1ea3 l\u1ee5a chi\u00ean",
+        "quantity_g": 60,
+        "macros": {
+          "protein": 10.0,
+          "carbs": 2.0,
+          "fat": 11.0
+        }
+      },
+      {
+        "name": "N\u01b0\u1edbc m\u1eafm pha v\u00e0 h\u00e0nh phi",
+        "quantity_g": 40,
+        "macros": {
+          "protein": 1.5,
+          "carbs": 8.0,
+          "fat": 4.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      430,
+      530
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "B\u00e1nh cu\u1ed1n n\u00f3ng ch\u1ea3 l\u1ee5a",
+      "foods": [
+        {
+          "name": "B\u00e1nh cu\u1ed1n nh\u00e2n th\u1ecbt m\u1ed9c nh\u0129",
+          "quantity_g": 180,
+          "macros": {
+            "protein": 8.0,
+            "carbs": 46.0,
+            "fat": 8.0
+          }
+        },
+        {
+          "name": "Ch\u1ea3 l\u1ee5a chi\u00ean",
+          "quantity_g": 60,
+          "macros": {
+            "protein": 10.0,
+            "carbs": 2.0,
+            "fat": 11.0
+          }
+        },
+        {
+          "name": "N\u01b0\u1edbc m\u1eafm pha v\u00e0 h\u00e0nh phi",
+          "quantity_g": 40,
+          "macros": {
+            "protein": 1.5,
+            "carbs": 8.0,
+            "fat": 4.0
+          }
+        }
+      ],
+      "confidence": 0.94
+    }
+  },
+  {
+    "case_id": "meal-bev-iced-latte-whole-milk",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Iced Latte",
+    "expected_foods": [
+      {
+        "name": "Espresso and Whole Milk",
+        "quantity_g": 350,
+        "macros": {
+          "protein": 9.0,
+          "carbs": 14.0,
+          "fat": 9.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      160,
+      200
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Iced Latte",
+      "foods": [
+        {
+          "name": "Espresso and Whole Milk",
+          "quantity_g": 350,
+          "macros": {
+            "protein": 9.0,
+            "carbs": 14.0,
+            "fat": 9.0
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-green-smoothie",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Green Spinach Smoothie",
+    "expected_foods": [
+      {
+        "name": "Spinach Apple Banana Smoothie",
+        "quantity_g": 400,
+        "macros": {
+          "protein": 4.0,
+          "carbs": 48.0,
+          "fat": 1.5
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      200,
+      250
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Green Spinach Smoothie",
+      "foods": [
+        {
+          "name": "Spinach Apple Banana Smoothie",
+          "quantity_g": 400,
+          "macros": {
+            "protein": 4.0,
+            "carbs": 48.0,
+            "fat": 1.5
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-whey-protein-shake",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Whey Protein Shake",
+    "expected_foods": [
+      {
+        "name": "Whey Protein in Water",
+        "quantity_g": 350,
+        "macros": {
+          "protein": 25.0,
+          "carbs": 3.0,
+          "fat": 1.5
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      120,
+      150
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Whey Protein Shake",
+      "foods": [
+        {
+          "name": "Whey Protein in Water",
+          "quantity_g": 350,
+          "macros": {
+            "protein": 25.0,
+            "carbs": 3.0,
+            "fat": 1.5
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-orange-juice-fresh",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Fresh Orange Juice",
+    "expected_foods": [
+      {
+        "name": "Orange Juice",
+        "quantity_g": 250,
+        "macros": {
+          "protein": 1.8,
+          "carbs": 26.0,
+          "fat": 0.5
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      105,
+      130
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Fresh Orange Juice",
+      "foods": [
+        {
+          "name": "Orange Juice",
+          "quantity_g": 250,
+          "macros": {
+            "protein": 1.8,
+            "carbs": 26.0,
+            "fat": 0.5
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-bubble-milk-tea",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Boba Milk Tea",
+    "expected_foods": [
+      {
+        "name": "Milk Tea with Tapioca Pearls",
+        "quantity_g": 450,
+        "macros": {
+          "protein": 3.0,
+          "carbs": 68.0,
+          "fat": 12.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      360,
+      440
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Boba Milk Tea",
+      "foods": [
+        {
+          "name": "Milk Tea with Tapioca Pearls",
+          "quantity_g": 450,
+          "macros": {
+            "protein": 3.0,
+            "carbs": 68.0,
+            "fat": 12.0
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-vietnamese-iced-coffee",
+    "language": "vi",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "C\u00e0 ph\u00ea s\u1eefa \u0111\u00e1",
+    "expected_foods": [
+      {
+        "name": "C\u00e0 ph\u00ea pha phin s\u1eefa \u0111\u1eb7c",
+        "quantity_g": 200,
+        "macros": {
+          "protein": 3.0,
+          "carbs": 28.0,
+          "fat": 5.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      150,
+      190
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "C\u00e0 ph\u00ea s\u1eefa \u0111\u00e1",
+      "foods": [
+        {
+          "name": "C\u00e0 ph\u00ea pha phin s\u1eefa \u0111\u1eb7c",
+          "quantity_g": 200,
+          "macros": {
+            "protein": 3.0,
+            "carbs": 28.0,
+            "fat": 5.0
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-coconut-water-fresh",
+    "language": "vi",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "N\u01b0\u1edbc d\u1eeba t\u01b0\u01a1i",
+    "expected_foods": [
+      {
+        "name": "N\u01b0\u1edbc d\u1eeba xi\u00eam",
+        "quantity_g": 300,
+        "macros": {
+          "protein": 1.5,
+          "carbs": 12.0,
+          "fat": 0.6
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      55,
+      75
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "N\u01b0\u1edbc d\u1eeba t\u01b0\u01a1i",
+      "foods": [
+        {
+          "name": "N\u01b0\u1edbc d\u1eeba xi\u00eam",
+          "quantity_g": 300,
+          "macros": {
+            "protein": 1.5,
+            "carbs": 12.0,
+            "fat": 0.6
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-matcha-latte-oat",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Iced Matcha Latte",
+    "expected_foods": [
+      {
+        "name": "Matcha with Oat Milk",
+        "quantity_g": 350,
+        "macros": {
+          "protein": 3.5,
+          "carbs": 22.0,
+          "fat": 5.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      140,
+      180
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Iced Matcha Latte",
+      "foods": [
+        {
+          "name": "Matcha with Oat Milk",
+          "quantity_g": 350,
+          "macros": {
+            "protein": 3.5,
+            "carbs": 22.0,
+            "fat": 5.0
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-cappuccino-medium",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Hot Cappuccino",
+    "expected_foods": [
+      {
+        "name": "Cappuccino Foam and Milk",
+        "quantity_g": 240,
+        "macros": {
+          "protein": 6.0,
+          "carbs": 9.0,
+          "fat": 6.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      110,
+      140
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Hot Cappuccino",
+      "foods": [
+        {
+          "name": "Cappuccino Foam and Milk",
+          "quantity_g": 240,
+          "macros": {
+            "protein": 6.0,
+            "carbs": 9.0,
+            "fat": 6.0
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-bev-soda-cola-can",
+    "language": "en",
+    "category": "beverage",
+    "expected_is_food": true,
+    "expected_dish_name": "Cola Soft Drink",
+    "expected_foods": [
+      {
+        "name": "Cola Soda Can",
+        "quantity_g": 330,
+        "macros": {
+          "protein": 0.0,
+          "carbs": 35.0,
+          "fat": 0.0
+        }
+      }
+    ],
+    "expected_calorie_range": [
+      130,
+      160
+    ],
+    "ai_payload": {
+      "is_food": true,
+      "dish_name": "Cola Soft Drink",
+      "foods": [
+        {
+          "name": "Cola Soda Can",
+          "quantity_g": 330,
+          "macros": {
+            "protein": 0.0,
+            "carbs": 35.0,
+            "fat": 0.0
+          }
+        }
+      ],
+      "confidence": 0.93
+    }
+  },
+  {
+    "case_id": "meal-nonfood-office-desk-laptop",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-smartphone-screen",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-car-steering-wheel",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-dog-on-couch",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-paper-receipt",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-blank-white-wall",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-shoes-sneakers",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-plastic-toy-brick",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-flower-bouquet",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "meal-nonfood-empty-cardboard-box",
+    "language": "en",
+    "category": "non_food",
+    "expected_is_food": false,
+    "expected_dish_name": "",
+    "expected_foods": [],
+    "expected_calorie_range": [
+      0,
+      0
+    ],
+    "ai_payload": {
+      "is_food": false,
+      "dish_name": null,
+      "foods": [],
+      "confidence": 0.05
+    }
+  }
+]

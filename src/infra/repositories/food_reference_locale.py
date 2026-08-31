@@ -60,6 +60,12 @@ class FoodReferenceLocaleRepository:
         stmt = (
             select(FoodReferenceModel)
             .where(self._integrity_repository.public_eligibility_clause())
+            .where(
+                or_(
+                    FoodReferenceModel.source_namespace != "ai_estimate",
+                    FoodReferenceModel.source_namespace.is_(None),
+                )
+            )
             .where(or_(*conditions))
             .options(*_DISPLAY_LOAD_OPTIONS)
         )
@@ -150,7 +156,9 @@ class FoodReferenceLocaleRepository:
     ) -> None:
         if not labels_by_unit:
             return
-        keyed = {serving_phrase_key(unit): label for unit, label in labels_by_unit.items()}
+        keyed = {
+            serving_phrase_key(unit): label for unit, label in labels_by_unit.items()
+        }
         result = await self._session.execute(
             select(FoodReferenceServingSizeModel).where(
                 FoodReferenceServingSizeModel.food_reference_id == food_reference_id

@@ -14,6 +14,7 @@ from src.app.events.meal.meal_events import publish_meal_event
 from src.app.graphs.meal_analyze.runtime import MealAnalyzeRuntime
 from src.app.services.meal_analyze_workflow import MealAnalyzeWorkflow
 from src.domain.exceptions.ai_exceptions import (
+    AIOutputValidationError,
     AIVisionError,
     AIVisionFailureKind,
     MealResponseLocalizationError,
@@ -130,18 +131,24 @@ class UploadMealImageImmediatelyHandler(
                 last_error = e
                 # Deterministic failures (schema/parse/no-food) cannot be fixed by retrying
                 # the same provider chain — skip outer retry and surface immediately
-                if isinstance(e, MealResponseLocalizationError) or (
-                    isinstance(e, AIVisionError)
-                    and e.kind
-                    in (
-                        AIVisionFailureKind.schema_validation,
-                        AIVisionFailureKind.json_parse,
-                        AIVisionFailureKind.no_food,
+                if (
+                    isinstance(e, MealResponseLocalizationError)
+                    or isinstance(e, AIOutputValidationError)
+                    or (
+                        isinstance(e, AIVisionError)
+                        and e.kind
+                        in (
+                            AIVisionFailureKind.schema_validation,
+                            AIVisionFailureKind.json_parse,
+                            AIVisionFailureKind.no_food,
+                        )
                     )
                 ):
                     failure_kind = (
                         e.kind.value
                         if isinstance(e, AIVisionError)
+                        else "schema_validation"
+                        if isinstance(e, AIOutputValidationError)
                         else "localization_validation"
                     )
                     logger.warning(

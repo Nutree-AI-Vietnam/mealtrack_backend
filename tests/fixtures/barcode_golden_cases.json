@@ -1,0 +1,3062 @@
+[
+  {
+    "case_id": "barcode-gtin12-hit-001",
+    "barcode": "00012345000001",
+    "scanned_barcode": "012345000001",
+    "aliases": [
+      "012345000001",
+      "0012345000001",
+      "00012345000001"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 1",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 1",
+        "protein_100g": 11.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-002",
+    "barcode": "00012345000002",
+    "scanned_barcode": "012345000002",
+    "aliases": [
+      "012345000002",
+      "0012345000002",
+      "00012345000002"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 2",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 2",
+        "protein_100g": 12.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-003",
+    "barcode": "00012345000003",
+    "scanned_barcode": "012345000003",
+    "aliases": [
+      "012345000003",
+      "0012345000003",
+      "00012345000003"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 3",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 3",
+        "protein_100g": 13.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-004",
+    "barcode": "00012345000004",
+    "scanned_barcode": "012345000004",
+    "aliases": [
+      "012345000004",
+      "0012345000004",
+      "00012345000004"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 4",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 4",
+        "protein_100g": 14.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-005",
+    "barcode": "00012345000005",
+    "scanned_barcode": "012345000005",
+    "aliases": [
+      "012345000005",
+      "0012345000005",
+      "00012345000005"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 5",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 5",
+        "protein_100g": 15.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-006",
+    "barcode": "00012345000006",
+    "scanned_barcode": "012345000006",
+    "aliases": [
+      "012345000006",
+      "0012345000006",
+      "00012345000006"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 6",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 6",
+        "protein_100g": 16.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-007",
+    "barcode": "00012345000007",
+    "scanned_barcode": "012345000007",
+    "aliases": [
+      "012345000007",
+      "0012345000007",
+      "00012345000007"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 7",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 7",
+        "protein_100g": 17.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-008",
+    "barcode": "00012345000008",
+    "scanned_barcode": "012345000008",
+    "aliases": [
+      "012345000008",
+      "0012345000008",
+      "00012345000008"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 8",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 8",
+        "protein_100g": 18.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-009",
+    "barcode": "00012345000009",
+    "scanned_barcode": "012345000009",
+    "aliases": [
+      "012345000009",
+      "0012345000009",
+      "00012345000009"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 9",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 9",
+        "protein_100g": 19.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-010",
+    "barcode": "00012345000010",
+    "scanned_barcode": "012345000010",
+    "aliases": [
+      "012345000010",
+      "0012345000010",
+      "00012345000010"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 10",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 10",
+        "protein_100g": 20.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-011",
+    "barcode": "00012345000011",
+    "scanned_barcode": "012345000011",
+    "aliases": [
+      "012345000011",
+      "0012345000011",
+      "00012345000011"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 11",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 11",
+        "protein_100g": 21.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-012",
+    "barcode": "00012345000012",
+    "scanned_barcode": "012345000012",
+    "aliases": [
+      "012345000012",
+      "0012345000012",
+      "00012345000012"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 12",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 12",
+        "protein_100g": 22.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-013",
+    "barcode": "00012345000013",
+    "scanned_barcode": "012345000013",
+    "aliases": [
+      "012345000013",
+      "0012345000013",
+      "00012345000013"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 13",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 13",
+        "protein_100g": 23.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-014",
+    "barcode": "00012345000014",
+    "scanned_barcode": "012345000014",
+    "aliases": [
+      "012345000014",
+      "0012345000014",
+      "00012345000014"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 14",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 14",
+        "protein_100g": 24.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-015",
+    "barcode": "00012345000015",
+    "scanned_barcode": "012345000015",
+    "aliases": [
+      "012345000015",
+      "0012345000015",
+      "00012345000015"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "fatsecret",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 15",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": {
+        "name": "Verified Brand Product 15",
+        "protein_100g": 10.0,
+        "carbs_100g": 40.0,
+        "fat_100g": 5.0,
+        "calories_100g": 245.0
+      },
+      "openfoodfacts": null
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-016",
+    "barcode": "00012345000016",
+    "scanned_barcode": "012345000016",
+    "aliases": [
+      "012345000016",
+      "0012345000016",
+      "00012345000016"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 16",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 16",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-017",
+    "barcode": "00012345000017",
+    "scanned_barcode": "012345000017",
+    "aliases": [
+      "012345000017",
+      "0012345000017",
+      "00012345000017"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 17",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 17",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-018",
+    "barcode": "00012345000018",
+    "scanned_barcode": "012345000018",
+    "aliases": [
+      "012345000018",
+      "0012345000018",
+      "00012345000018"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 18",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 18",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-019",
+    "barcode": "00012345000019",
+    "scanned_barcode": "012345000019",
+    "aliases": [
+      "012345000019",
+      "0012345000019",
+      "00012345000019"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 19",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 19",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-020",
+    "barcode": "00012345000020",
+    "scanned_barcode": "012345000020",
+    "aliases": [
+      "012345000020",
+      "0012345000020",
+      "00012345000020"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 20",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 20",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-021",
+    "barcode": "00012345000021",
+    "scanned_barcode": "012345000021",
+    "aliases": [
+      "012345000021",
+      "0012345000021",
+      "00012345000021"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 21",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 21",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-022",
+    "barcode": "00012345000022",
+    "scanned_barcode": "012345000022",
+    "aliases": [
+      "012345000022",
+      "0012345000022",
+      "00012345000022"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 22",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 22",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-023",
+    "barcode": "00012345000023",
+    "scanned_barcode": "012345000023",
+    "aliases": [
+      "012345000023",
+      "0012345000023",
+      "00012345000023"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 23",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 23",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-024",
+    "barcode": "00012345000024",
+    "scanned_barcode": "012345000024",
+    "aliases": [
+      "012345000024",
+      "0012345000024",
+      "00012345000024"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 24",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 24",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-025",
+    "barcode": "00012345000025",
+    "scanned_barcode": "012345000025",
+    "aliases": [
+      "012345000025",
+      "0012345000025",
+      "00012345000025"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 25",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 25",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-026",
+    "barcode": "00012345000026",
+    "scanned_barcode": "012345000026",
+    "aliases": [
+      "012345000026",
+      "0012345000026",
+      "00012345000026"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 26",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 26",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-027",
+    "barcode": "00012345000027",
+    "scanned_barcode": "012345000027",
+    "aliases": [
+      "012345000027",
+      "0012345000027",
+      "00012345000027"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 27",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 27",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-028",
+    "barcode": "00012345000028",
+    "scanned_barcode": "012345000028",
+    "aliases": [
+      "012345000028",
+      "0012345000028",
+      "00012345000028"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 28",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 28",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-029",
+    "barcode": "00012345000029",
+    "scanned_barcode": "012345000029",
+    "aliases": [
+      "012345000029",
+      "0012345000029",
+      "00012345000029"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 29",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 29",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-gtin12-hit-030",
+    "barcode": "00012345000030",
+    "scanned_barcode": "012345000030",
+    "aliases": [
+      "012345000030",
+      "0012345000030",
+      "00012345000030"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Verified Brand Product 30",
+    "expected_calories_100g_range": [
+      100.0,
+      400.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": {
+        "name": "Verified Brand Product 30",
+        "protein_100g": 8.0,
+        "carbs_100g": 45.0,
+        "fat_100g": 6.0,
+        "calories_100g": 266.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-001",
+    "barcode": "08938500000001",
+    "scanned_barcode": "8938500000001",
+    "aliases": [
+      "8938500000001",
+      "08938500000001"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 1",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 1",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-002",
+    "barcode": "08938500000002",
+    "scanned_barcode": "8938500000002",
+    "aliases": [
+      "8938500000002",
+      "08938500000002"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 2",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 2",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-003",
+    "barcode": "08938500000003",
+    "scanned_barcode": "8938500000003",
+    "aliases": [
+      "8938500000003",
+      "08938500000003"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 3",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 3",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-004",
+    "barcode": "08938500000004",
+    "scanned_barcode": "8938500000004",
+    "aliases": [
+      "8938500000004",
+      "08938500000004"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 4",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 4",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-005",
+    "barcode": "08938500000005",
+    "scanned_barcode": "8938500000005",
+    "aliases": [
+      "8938500000005",
+      "08938500000005"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 5",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 5",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-006",
+    "barcode": "08938500000006",
+    "scanned_barcode": "8938500000006",
+    "aliases": [
+      "8938500000006",
+      "08938500000006"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 6",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 6",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-007",
+    "barcode": "08938500000007",
+    "scanned_barcode": "8938500000007",
+    "aliases": [
+      "8938500000007",
+      "08938500000007"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 7",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 7",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-008",
+    "barcode": "08938500000008",
+    "scanned_barcode": "8938500000008",
+    "aliases": [
+      "8938500000008",
+      "08938500000008"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 8",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 8",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-009",
+    "barcode": "08938500000009",
+    "scanned_barcode": "8938500000009",
+    "aliases": [
+      "8938500000009",
+      "08938500000009"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 9",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 9",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-010",
+    "barcode": "08938500000010",
+    "scanned_barcode": "8938500000010",
+    "aliases": [
+      "8938500000010",
+      "08938500000010"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 10",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 10",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-011",
+    "barcode": "08938500000011",
+    "scanned_barcode": "8938500000011",
+    "aliases": [
+      "8938500000011",
+      "08938500000011"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 11",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 11",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-012",
+    "barcode": "08938500000012",
+    "scanned_barcode": "8938500000012",
+    "aliases": [
+      "8938500000012",
+      "08938500000012"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 12",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 12",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-013",
+    "barcode": "08938500000013",
+    "scanned_barcode": "8938500000013",
+    "aliases": [
+      "8938500000013",
+      "08938500000013"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 13",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 13",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-014",
+    "barcode": "08938500000014",
+    "scanned_barcode": "8938500000014",
+    "aliases": [
+      "8938500000014",
+      "08938500000014"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 14",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 14",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-015",
+    "barcode": "08938500000015",
+    "scanned_barcode": "8938500000015",
+    "aliases": [
+      "8938500000015",
+      "08938500000015"
+    ],
+    "language": "vi",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 15",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "S\u1ea3n ph\u1ea9m Vi\u1ec7t Nam 15",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-016",
+    "barcode": "08938500000016",
+    "scanned_barcode": "8938500000016",
+    "aliases": [
+      "8938500000016",
+      "08938500000016"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 16",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "Global EAN Food 16",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-017",
+    "barcode": "08938500000017",
+    "scanned_barcode": "8938500000017",
+    "aliases": [
+      "8938500000017",
+      "08938500000017"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 17",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "Global EAN Food 17",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-018",
+    "barcode": "08938500000018",
+    "scanned_barcode": "8938500000018",
+    "aliases": [
+      "8938500000018",
+      "08938500000018"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 18",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "Global EAN Food 18",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-019",
+    "barcode": "08938500000019",
+    "scanned_barcode": "8938500000019",
+    "aliases": [
+      "8938500000019",
+      "08938500000019"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 19",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "Global EAN Food 19",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-020",
+    "barcode": "08938500000020",
+    "scanned_barcode": "8938500000020",
+    "aliases": [
+      "8938500000020",
+      "08938500000020"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "openfoodfacts",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 20",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": {
+        "name": "Global EAN Food 20",
+        "protein_100g": 5.0,
+        "carbs_100g": 20.0,
+        "fat_100g": 2.0,
+        "calories_100g": 118.0
+      },
+      "usda_fdc": null
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-021",
+    "barcode": "08938500000021",
+    "scanned_barcode": "8938500000021",
+    "aliases": [
+      "8938500000021",
+      "08938500000021"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 21",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 21",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-022",
+    "barcode": "08938500000022",
+    "scanned_barcode": "8938500000022",
+    "aliases": [
+      "8938500000022",
+      "08938500000022"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 22",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 22",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-023",
+    "barcode": "08938500000023",
+    "scanned_barcode": "8938500000023",
+    "aliases": [
+      "8938500000023",
+      "08938500000023"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 23",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 23",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-024",
+    "barcode": "08938500000024",
+    "scanned_barcode": "8938500000024",
+    "aliases": [
+      "8938500000024",
+      "08938500000024"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 24",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 24",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-025",
+    "barcode": "08938500000025",
+    "scanned_barcode": "8938500000025",
+    "aliases": [
+      "8938500000025",
+      "08938500000025"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 25",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 25",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-026",
+    "barcode": "08938500000026",
+    "scanned_barcode": "8938500000026",
+    "aliases": [
+      "8938500000026",
+      "08938500000026"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 26",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 26",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-027",
+    "barcode": "08938500000027",
+    "scanned_barcode": "8938500000027",
+    "aliases": [
+      "8938500000027",
+      "08938500000027"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 27",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 27",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-028",
+    "barcode": "08938500000028",
+    "scanned_barcode": "8938500000028",
+    "aliases": [
+      "8938500000028",
+      "08938500000028"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 28",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 28",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-029",
+    "barcode": "08938500000029",
+    "scanned_barcode": "8938500000029",
+    "aliases": [
+      "8938500000029",
+      "08938500000029"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 29",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 29",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ean13-hit-030",
+    "barcode": "08938500000030",
+    "scanned_barcode": "8938500000030",
+    "aliases": [
+      "8938500000030",
+      "08938500000030"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "usda_fdc",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Global EAN Food 30",
+    "expected_calories_100g_range": [
+      50.0,
+      500.0
+    ],
+    "provider_responses": {
+      "openfoodfacts": null,
+      "usda_fdc": {
+        "name": "Global EAN Food 30",
+        "protein_100g": 12.0,
+        "carbs_100g": 30.0,
+        "fat_100g": 8.0,
+        "calories_100g": 240.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-001",
+    "barcode": "00049000000001",
+    "scanned_barcode": "00049000000001",
+    "aliases": [
+      "00049000000001"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 1",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1001,
+        "name": "Cached Pantry Item 1",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-002",
+    "barcode": "00049000000002",
+    "scanned_barcode": "00049000000002",
+    "aliases": [
+      "00049000000002"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 2",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1002,
+        "name": "Cached Pantry Item 2",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-003",
+    "barcode": "00049000000003",
+    "scanned_barcode": "00049000000003",
+    "aliases": [
+      "00049000000003"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 3",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1003,
+        "name": "Cached Pantry Item 3",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-004",
+    "barcode": "00049000000004",
+    "scanned_barcode": "00049000000004",
+    "aliases": [
+      "00049000000004"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 4",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1004,
+        "name": "Cached Pantry Item 4",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-005",
+    "barcode": "00049000000005",
+    "scanned_barcode": "00049000000005",
+    "aliases": [
+      "00049000000005"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 5",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1005,
+        "name": "Cached Pantry Item 5",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-006",
+    "barcode": "00049000000006",
+    "scanned_barcode": "00049000000006",
+    "aliases": [
+      "00049000000006"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 6",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1006,
+        "name": "Cached Pantry Item 6",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-007",
+    "barcode": "00049000000007",
+    "scanned_barcode": "00049000000007",
+    "aliases": [
+      "00049000000007"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 7",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1007,
+        "name": "Cached Pantry Item 7",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-008",
+    "barcode": "00049000000008",
+    "scanned_barcode": "00049000000008",
+    "aliases": [
+      "00049000000008"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 8",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1008,
+        "name": "Cached Pantry Item 8",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-009",
+    "barcode": "00049000000009",
+    "scanned_barcode": "00049000000009",
+    "aliases": [
+      "00049000000009"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 9",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1009,
+        "name": "Cached Pantry Item 9",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-010",
+    "barcode": "00049000000010",
+    "scanned_barcode": "00049000000010",
+    "aliases": [
+      "00049000000010"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 10",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1010,
+        "name": "Cached Pantry Item 10",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-011",
+    "barcode": "00049000000011",
+    "scanned_barcode": "00049000000011",
+    "aliases": [
+      "00049000000011"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 11",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1011,
+        "name": "Cached Pantry Item 11",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-012",
+    "barcode": "00049000000012",
+    "scanned_barcode": "00049000000012",
+    "aliases": [
+      "00049000000012"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 12",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1012,
+        "name": "Cached Pantry Item 12",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-013",
+    "barcode": "00049000000013",
+    "scanned_barcode": "00049000000013",
+    "aliases": [
+      "00049000000013"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 13",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1013,
+        "name": "Cached Pantry Item 13",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-014",
+    "barcode": "00049000000014",
+    "scanned_barcode": "00049000000014",
+    "aliases": [
+      "00049000000014"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 14",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1014,
+        "name": "Cached Pantry Item 14",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-cache-hit-015",
+    "barcode": "00049000000015",
+    "scanned_barcode": "00049000000015",
+    "aliases": [
+      "00049000000015"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "cache",
+    "expected_is_estimate": false,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": false,
+    "expected_name": "Cached Pantry Item 15",
+    "expected_calories_100g_range": [
+      100.0,
+      300.0
+    ],
+    "provider_responses": {
+      "cache": {
+        "id": 1015,
+        "name": "Cached Pantry Item 15",
+        "is_verified": true,
+        "source": "fatsecret",
+        "protein_100g": 7.0,
+        "carbs_100g": 25.0,
+        "fat_100g": 3.0,
+        "calories_100g": 155.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-001",
+    "barcode": "00099999000001",
+    "scanned_barcode": "099999000001",
+    "aliases": [
+      "099999000001",
+      "0099999000001",
+      "00099999000001"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 1",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 1",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-002",
+    "barcode": "00099999000002",
+    "scanned_barcode": "099999000002",
+    "aliases": [
+      "099999000002",
+      "0099999000002",
+      "00099999000002"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 2",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 2",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-003",
+    "barcode": "00099999000003",
+    "scanned_barcode": "099999000003",
+    "aliases": [
+      "099999000003",
+      "0099999000003",
+      "00099999000003"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 3",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 3",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-004",
+    "barcode": "00099999000004",
+    "scanned_barcode": "099999000004",
+    "aliases": [
+      "099999000004",
+      "0099999000004",
+      "00099999000004"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 4",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 4",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-005",
+    "barcode": "00099999000005",
+    "scanned_barcode": "099999000005",
+    "aliases": [
+      "099999000005",
+      "0099999000005",
+      "00099999000005"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 5",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 5",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-006",
+    "barcode": "00099999000006",
+    "scanned_barcode": "099999000006",
+    "aliases": [
+      "099999000006",
+      "0099999000006",
+      "00099999000006"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 6",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 6",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-007",
+    "barcode": "00099999000007",
+    "scanned_barcode": "099999000007",
+    "aliases": [
+      "099999000007",
+      "0099999000007",
+      "00099999000007"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 7",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 7",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-008",
+    "barcode": "00099999000008",
+    "scanned_barcode": "099999000008",
+    "aliases": [
+      "099999000008",
+      "0099999000008",
+      "00099999000008"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 8",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 8",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-009",
+    "barcode": "00099999000009",
+    "scanned_barcode": "099999000009",
+    "aliases": [
+      "099999000009",
+      "0099999000009",
+      "00099999000009"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 9",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 9",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-010",
+    "barcode": "00099999000010",
+    "scanned_barcode": "099999000010",
+    "aliases": [
+      "099999000010",
+      "0099999000010",
+      "00099999000010"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 10",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 10",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-011",
+    "barcode": "00099999000011",
+    "scanned_barcode": "099999000011",
+    "aliases": [
+      "099999000011",
+      "0099999000011",
+      "00099999000011"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 11",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 11",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-012",
+    "barcode": "00099999000012",
+    "scanned_barcode": "099999000012",
+    "aliases": [
+      "099999000012",
+      "0099999000012",
+      "00099999000012"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 12",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 12",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-013",
+    "barcode": "00099999000013",
+    "scanned_barcode": "099999000013",
+    "aliases": [
+      "099999000013",
+      "0099999000013",
+      "00099999000013"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 13",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 13",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-014",
+    "barcode": "00099999000014",
+    "scanned_barcode": "099999000014",
+    "aliases": [
+      "099999000014",
+      "0099999000014",
+      "00099999000014"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 14",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 14",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-ai-estimate-015",
+    "barcode": "00099999000015",
+    "scanned_barcode": "099999000015",
+    "aliases": [
+      "099999000015",
+      "0099999000015",
+      "00099999000015"
+    ],
+    "language": "en",
+    "expected_hit": true,
+    "expected_source": "ai_estimate",
+    "expected_is_estimate": true,
+    "expected_saveable": true,
+    "expected_canonical_quarantine": true,
+    "expected_name": "Estimated Barcode Snack 15",
+    "expected_calories_100g_range": [
+      150.0,
+      450.0
+    ],
+    "provider_responses": {
+      "fatsecret": null,
+      "openfoodfacts": null,
+      "usda_fdc": null,
+      "brave_search": null,
+      "ai_estimate": {
+        "name": "Estimated Barcode Snack 15",
+        "protein_100g": 6.0,
+        "carbs_100g": 35.0,
+        "fat_100g": 12.0,
+        "calories_100g": 272.0
+      }
+    }
+  },
+  {
+    "case_id": "barcode-invalid-miss-001",
+    "barcode": "badgtin1",
+    "scanned_barcode": "badgtin1",
+    "aliases": [
+      "badgtin1"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-002",
+    "barcode": "badgtin2",
+    "scanned_barcode": "badgtin2",
+    "aliases": [
+      "badgtin2"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-003",
+    "barcode": "badgtin3",
+    "scanned_barcode": "badgtin3",
+    "aliases": [
+      "badgtin3"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-004",
+    "barcode": "badgtin4",
+    "scanned_barcode": "badgtin4",
+    "aliases": [
+      "badgtin4"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-005",
+    "barcode": "badgtin5",
+    "scanned_barcode": "badgtin5",
+    "aliases": [
+      "badgtin5"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-006",
+    "barcode": "000000000006",
+    "scanned_barcode": "000000000006",
+    "aliases": [
+      "000000000006"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-007",
+    "barcode": "000000000007",
+    "scanned_barcode": "000000000007",
+    "aliases": [
+      "000000000007"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-008",
+    "barcode": "000000000008",
+    "scanned_barcode": "000000000008",
+    "aliases": [
+      "000000000008"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-009",
+    "barcode": "000000000009",
+    "scanned_barcode": "000000000009",
+    "aliases": [
+      "000000000009"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-010",
+    "barcode": "000000000010",
+    "scanned_barcode": "000000000010",
+    "aliases": [
+      "000000000010"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-011",
+    "barcode": "000000000011",
+    "scanned_barcode": "000000000011",
+    "aliases": [
+      "000000000011"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-012",
+    "barcode": "000000000012",
+    "scanned_barcode": "000000000012",
+    "aliases": [
+      "000000000012"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-013",
+    "barcode": "000000000013",
+    "scanned_barcode": "000000000013",
+    "aliases": [
+      "000000000013"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-014",
+    "barcode": "000000000014",
+    "scanned_barcode": "000000000014",
+    "aliases": [
+      "000000000014"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  },
+  {
+    "case_id": "barcode-invalid-miss-015",
+    "barcode": "000000000015",
+    "scanned_barcode": "000000000015",
+    "aliases": [
+      "000000000015"
+    ],
+    "language": "en",
+    "expected_hit": false,
+    "expected_source": "none",
+    "expected_is_estimate": false,
+    "expected_saveable": false,
+    "expected_canonical_quarantine": true,
+    "expected_name": null,
+    "expected_calories_100g_range": null,
+    "provider_responses": {}
+  }
+]

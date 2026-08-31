@@ -1,0 +1,2127 @@
+[
+  {
+    "case_id": "label-us-greek-yogurt-chobani",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Chobani Plain Non-Fat Greek Yogurt",
+    "expected_serving_grams": 170.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 90.0,
+    "expected_macros": {
+      "protein": 16.0,
+      "carbs": 6.0,
+      "fat": 0.0,
+      "sugar": 4.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Chobani Plain Non-Fat Greek Yogurt",
+      "serving_size": {
+        "display_text": "170.0g",
+        "grams": 170.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 90.0,
+      "macros_per_serving": {
+        "protein": 16.0,
+        "carbs": 6.0,
+        "fat": 0.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-cheerios-cereal",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Cheerios Whole Grain Oat Cereal",
+    "expected_serving_grams": 39.0,
+    "expected_servings_per_package": 12.0,
+    "expected_calories_per_serving": 140.0,
+    "expected_macros": {
+      "protein": 5.0,
+      "carbs": 29.0,
+      "fat": 2.5,
+      "sugar": 2.0,
+      "fiber": 4.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Cheerios Whole Grain Oat Cereal",
+      "serving_size": {
+        "display_text": "39.0g",
+        "grams": 39.0
+      },
+      "servings_per_package": 12.0,
+      "label_calories_per_serving": 140.0,
+      "macros_per_serving": {
+        "protein": 5.0,
+        "carbs": 29.0,
+        "fat": 2.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-quaker-oats-old-fashioned",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Quaker Rolled Oats",
+    "expected_serving_grams": 40.0,
+    "expected_servings_per_package": 30.0,
+    "expected_calories_per_serving": 150.0,
+    "expected_macros": {
+      "protein": 5.0,
+      "carbs": 27.0,
+      "fat": 3.0,
+      "sugar": 1.0,
+      "fiber": 4.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Quaker Rolled Oats",
+      "serving_size": {
+        "display_text": "40.0g",
+        "grams": 40.0
+      },
+      "servings_per_package": 30.0,
+      "label_calories_per_serving": 150.0,
+      "macros_per_serving": {
+        "protein": 5.0,
+        "carbs": 27.0,
+        "fat": 3.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-skippy-creamy-peanut-butter",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Skippy Creamy Peanut Butter",
+    "expected_serving_grams": 32.0,
+    "expected_servings_per_package": 14.0,
+    "expected_calories_per_serving": 190.0,
+    "expected_macros": {
+      "protein": 7.0,
+      "carbs": 7.0,
+      "fat": 16.0,
+      "sugar": 3.0,
+      "fiber": 2.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Skippy Creamy Peanut Butter",
+      "serving_size": {
+        "display_text": "32.0g",
+        "grams": 32.0
+      },
+      "servings_per_package": 14.0,
+      "label_calories_per_serving": 190.0,
+      "macros_per_serving": {
+        "protein": 7.0,
+        "carbs": 7.0,
+        "fat": 16.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-barilla-penne-pasta",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Barilla Penne Rigate Pasta",
+    "expected_serving_grams": 56.0,
+    "expected_servings_per_package": 8.0,
+    "expected_calories_per_serving": 200.0,
+    "expected_macros": {
+      "protein": 7.0,
+      "carbs": 42.0,
+      "fat": 1.0,
+      "sugar": 2.0,
+      "fiber": 3.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Barilla Penne Rigate Pasta",
+      "serving_size": {
+        "display_text": "56.0g",
+        "grams": 56.0
+      },
+      "servings_per_package": 8.0,
+      "label_calories_per_serving": 200.0,
+      "macros_per_serving": {
+        "protein": 7.0,
+        "carbs": 42.0,
+        "fat": 1.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-starkist-tuna-water",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "StarKist Chunk Light Tuna in Water",
+    "expected_serving_grams": 85.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 90.0,
+    "expected_macros": {
+      "protein": 20.0,
+      "carbs": 0.0,
+      "fat": 1.0,
+      "sugar": 0.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "StarKist Chunk Light Tuna in Water",
+      "serving_size": {
+        "display_text": "85.0g",
+        "grams": 85.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 90.0,
+      "macros_per_serving": {
+        "protein": 20.0,
+        "carbs": 0.0,
+        "fat": 1.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-heinz-tomato-ketchup",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Heinz Tomato Ketchup",
+    "expected_serving_grams": 17.0,
+    "expected_servings_per_package": 38.0,
+    "expected_calories_per_serving": 20.0,
+    "expected_macros": {
+      "protein": 0.0,
+      "carbs": 5.0,
+      "fat": 0.0,
+      "sugar": 4.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Heinz Tomato Ketchup",
+      "serving_size": {
+        "display_text": "17.0g",
+        "grams": 17.0
+      },
+      "servings_per_package": 38.0,
+      "label_calories_per_serving": 20.0,
+      "macros_per_serving": {
+        "protein": 0.0,
+        "carbs": 5.0,
+        "fat": 0.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-philadelphia-cream-cheese",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Philadelphia Original Cream Cheese",
+    "expected_serving_grams": 28.0,
+    "expected_servings_per_package": 8.0,
+    "expected_calories_per_serving": 100.0,
+    "expected_macros": {
+      "protein": 2.0,
+      "carbs": 2.0,
+      "fat": 9.0,
+      "sugar": 1.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Philadelphia Original Cream Cheese",
+      "serving_size": {
+        "display_text": "28.0g",
+        "grams": 28.0
+      },
+      "servings_per_package": 8.0,
+      "label_calories_per_serving": 100.0,
+      "macros_per_serving": {
+        "protein": 2.0,
+        "carbs": 2.0,
+        "fat": 9.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-nature-valley-oats-honey",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Nature Valley Crunchy Granola Bar",
+    "expected_serving_grams": 42.0,
+    "expected_servings_per_package": 12.0,
+    "expected_calories_per_serving": 190.0,
+    "expected_macros": {
+      "protein": 3.0,
+      "carbs": 29.0,
+      "fat": 7.0,
+      "sugar": 11.0,
+      "fiber": 2.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Nature Valley Crunchy Granola Bar",
+      "serving_size": {
+        "display_text": "42.0g",
+        "grams": 42.0
+      },
+      "servings_per_package": 12.0,
+      "label_calories_per_serving": 190.0,
+      "macros_per_serving": {
+        "protein": 3.0,
+        "carbs": 29.0,
+        "fat": 7.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-silk-almond-milk-unsweetened",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Silk Unsweetened Almond Milk",
+    "expected_serving_grams": 240.0,
+    "expected_servings_per_package": 4.0,
+    "expected_calories_per_serving": 30.0,
+    "expected_macros": {
+      "protein": 1.0,
+      "carbs": 1.0,
+      "fat": 2.5,
+      "sugar": 0.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Silk Unsweetened Almond Milk",
+      "serving_size": {
+        "display_text": "240.0g",
+        "grams": 240.0
+      },
+      "servings_per_package": 4.0,
+      "label_calories_per_serving": 30.0,
+      "macros_per_serving": {
+        "protein": 1.0,
+        "carbs": 1.0,
+        "fat": 2.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-campbells-tomato-soup",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Campbell's Condensed Tomato Soup",
+    "expected_serving_grams": 126.0,
+    "expected_servings_per_package": 2.5,
+    "expected_calories_per_serving": 90.0,
+    "expected_macros": {
+      "protein": 2.0,
+      "carbs": 20.0,
+      "fat": 0.5,
+      "sugar": 12.0,
+      "fiber": 2.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Campbell's Condensed Tomato Soup",
+      "serving_size": {
+        "display_text": "126.0g",
+        "grams": 126.0
+      },
+      "servings_per_package": 2.5,
+      "label_calories_per_serving": 90.0,
+      "macros_per_serving": {
+        "protein": 2.0,
+        "carbs": 20.0,
+        "fat": 0.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-oreo-cookies-original",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "OREO Chocolate Sandwich Cookies",
+    "expected_serving_grams": 34.0,
+    "expected_servings_per_package": 10.0,
+    "expected_calories_per_serving": 160.0,
+    "expected_macros": {
+      "protein": 1.0,
+      "carbs": 25.0,
+      "fat": 7.0,
+      "sugar": 14.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "OREO Chocolate Sandwich Cookies",
+      "serving_size": {
+        "display_text": "34.0g",
+        "grams": 34.0
+      },
+      "servings_per_package": 10.0,
+      "label_calories_per_serving": 160.0,
+      "macros_per_serving": {
+        "protein": 1.0,
+        "carbs": 25.0,
+        "fat": 7.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-goldfish-cheddar-crackers",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Pepperidge Farm Goldfish Cheddar",
+    "expected_serving_grams": 30.0,
+    "expected_servings_per_package": 6.0,
+    "expected_calories_per_serving": 140.0,
+    "expected_macros": {
+      "protein": 3.0,
+      "carbs": 20.0,
+      "fat": 5.0,
+      "sugar": 0.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Pepperidge Farm Goldfish Cheddar",
+      "serving_size": {
+        "display_text": "30.0g",
+        "grams": 30.0
+      },
+      "servings_per_package": 6.0,
+      "label_calories_per_serving": 140.0,
+      "macros_per_serving": {
+        "protein": 3.0,
+        "carbs": 20.0,
+        "fat": 5.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-rxbar-chocolate-sea-salt",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "RXBAR Chocolate Sea Salt Protein Bar",
+    "expected_serving_grams": 52.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 210.0,
+    "expected_macros": {
+      "protein": 12.0,
+      "carbs": 24.0,
+      "fat": 9.0,
+      "sugar": 13.0,
+      "fiber": 5.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "RXBAR Chocolate Sea Salt Protein Bar",
+      "serving_size": {
+        "display_text": "52.0g",
+        "grams": 52.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 210.0,
+      "macros_per_serving": {
+        "protein": 12.0,
+        "carbs": 24.0,
+        "fat": 9.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-fairlife-chocolate-milk",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Fairlife 2% Ultra-Filtered Chocolate Milk",
+    "expected_serving_grams": 240.0,
+    "expected_servings_per_package": 6.0,
+    "expected_calories_per_serving": 140.0,
+    "expected_macros": {
+      "protein": 13.0,
+      "carbs": 13.0,
+      "fat": 4.5,
+      "sugar": 12.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Fairlife 2% Ultra-Filtered Chocolate Milk",
+      "serving_size": {
+        "display_text": "240.0g",
+        "grams": 240.0
+      },
+      "servings_per_package": 6.0,
+      "label_calories_per_serving": 140.0,
+      "macros_per_serving": {
+        "protein": 13.0,
+        "carbs": 13.0,
+        "fat": 4.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-eggland-large-eggs",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Eggland's Best Large Grade A Eggs",
+    "expected_serving_grams": 50.0,
+    "expected_servings_per_package": 12.0,
+    "expected_calories_per_serving": 70.0,
+    "expected_macros": {
+      "protein": 6.0,
+      "carbs": 0.0,
+      "fat": 4.5,
+      "sugar": 0.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Eggland's Best Large Grade A Eggs",
+      "serving_size": {
+        "display_text": "50.0g",
+        "grams": 50.0
+      },
+      "servings_per_package": 12.0,
+      "label_calories_per_serving": 70.0,
+      "macros_per_serving": {
+        "protein": 6.0,
+        "carbs": 0.0,
+        "fat": 4.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-lays-classic-potato-chips",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Lay's Classic Potato Chips",
+    "expected_serving_grams": 28.0,
+    "expected_servings_per_package": 8.0,
+    "expected_calories_per_serving": 160.0,
+    "expected_macros": {
+      "protein": 2.0,
+      "carbs": 15.0,
+      "fat": 10.0,
+      "sugar": 1.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Lay's Classic Potato Chips",
+      "serving_size": {
+        "display_text": "28.0g",
+        "grams": 28.0
+      },
+      "servings_per_package": 8.0,
+      "label_calories_per_serving": 160.0,
+      "macros_per_serving": {
+        "protein": 2.0,
+        "carbs": 15.0,
+        "fat": 10.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-sargento-string-cheese",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Sargento Mozzarella String Cheese",
+    "expected_serving_grams": 24.0,
+    "expected_servings_per_package": 12.0,
+    "expected_calories_per_serving": 80.0,
+    "expected_macros": {
+      "protein": 7.0,
+      "carbs": 1.0,
+      "fat": 6.0,
+      "sugar": 0.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Sargento Mozzarella String Cheese",
+      "serving_size": {
+        "display_text": "24.0g",
+        "grams": 24.0
+      },
+      "servings_per_package": 12.0,
+      "label_calories_per_serving": 80.0,
+      "macros_per_serving": {
+        "protein": 7.0,
+        "carbs": 1.0,
+        "fat": 6.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-trader-joes-almond-butter",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Trader Joe's Creamy Almond Butter",
+    "expected_serving_grams": 32.0,
+    "expected_servings_per_package": 14.0,
+    "expected_calories_per_serving": 190.0,
+    "expected_macros": {
+      "protein": 7.0,
+      "carbs": 7.0,
+      "fat": 17.0,
+      "sugar": 2.0,
+      "fiber": 4.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Trader Joe's Creamy Almond Butter",
+      "serving_size": {
+        "display_text": "32.0g",
+        "grams": 32.0
+      },
+      "servings_per_package": 14.0,
+      "label_calories_per_serving": 190.0,
+      "macros_per_serving": {
+        "protein": 7.0,
+        "carbs": 7.0,
+        "fat": 17.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-us-dole-pineapple-chunks",
+    "language": "en",
+    "format_type": "standard_us",
+    "expected_is_food_label": true,
+    "expected_product_name": "Dole Canned Pineapple Chunks in 100% Juice",
+    "expected_serving_grams": 122.0,
+    "expected_servings_per_package": 3.5,
+    "expected_calories_per_serving": 70.0,
+    "expected_macros": {
+      "protein": 1.0,
+      "carbs": 17.0,
+      "fat": 0.0,
+      "sugar": 14.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Dole Canned Pineapple Chunks in 100% Juice",
+      "serving_size": {
+        "display_text": "122.0g",
+        "grams": 122.0
+      },
+      "servings_per_package": 3.5,
+      "label_calories_per_serving": 70.0,
+      "macros_per_serving": {
+        "protein": 1.0,
+        "carbs": 17.0,
+        "fat": 0.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-nutella-ferrero",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Nutella Hazelnut Spread",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 4.0,
+    "expected_calories_per_serving": 539.0,
+    "expected_macros": {
+      "protein": 6.3,
+      "carbs": 57.5,
+      "fat": 30.9,
+      "sugar": 56.3,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Nutella Hazelnut Spread",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 4.0,
+      "label_calories_per_serving": 539.0,
+      "macros_per_serving": {
+        "protein": 6.3,
+        "carbs": 57.5,
+        "fat": 30.9
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-lindt-excellence-dark-85",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Lindt Excellence 85% Cocoa Dark Chocolate",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 584.0,
+    "expected_macros": {
+      "protein": 11.0,
+      "carbs": 19.0,
+      "fat": 46.0,
+      "sugar": 11.0,
+      "fiber": 14.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Lindt Excellence 85% Cocoa Dark Chocolate",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 584.0,
+      "macros_per_serving": {
+        "protein": 11.0,
+        "carbs": 19.0,
+        "fat": 46.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-alpro-soya-original",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Alpro Soya Milk Drink",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 10.0,
+    "expected_calories_per_serving": 39.0,
+    "expected_macros": {
+      "protein": 3.0,
+      "carbs": 2.5,
+      "fat": 1.8,
+      "sugar": 2.5,
+      "fiber": 0.5
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Alpro Soya Milk Drink",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 10.0,
+      "label_calories_per_serving": 39.0,
+      "macros_per_serving": {
+        "protein": 3.0,
+        "carbs": 2.5,
+        "fat": 1.8
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-barilla-pesto-genovese",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Barilla Pesto alla Genovese",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.9,
+    "expected_calories_per_serving": 482.0,
+    "expected_macros": {
+      "protein": 4.5,
+      "carbs": 7.0,
+      "fat": 48.0,
+      "sugar": 4.0,
+      "fiber": 2.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Barilla Pesto alla Genovese",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.9,
+      "label_calories_per_serving": 482.0,
+      "macros_per_serving": {
+        "protein": 4.5,
+        "carbs": 7.0,
+        "fat": 48.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-ryvita-crispbread-original",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Ryvita Dark Rye Crispbread",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 20.0,
+    "expected_calories_per_serving": 334.0,
+    "expected_macros": {
+      "protein": 8.5,
+      "carbs": 64.0,
+      "fat": 1.5,
+      "sugar": 2.5,
+      "fiber": 18.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Ryvita Dark Rye Crispbread",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 20.0,
+      "label_calories_per_serving": 334.0,
+      "macros_per_serving": {
+        "protein": 8.5,
+        "carbs": 64.0,
+        "fat": 1.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-muller-corner-strawberry",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Muller Corner Strawberry Yogurt",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.3,
+    "expected_calories_per_serving": 107.0,
+    "expected_macros": {
+      "protein": 3.8,
+      "carbs": 14.2,
+      "fat": 3.7,
+      "sugar": 13.5,
+      "fiber": 0.2
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Muller Corner Strawberry Yogurt",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.3,
+      "label_calories_per_serving": 107.0,
+      "macros_per_serving": {
+        "protein": 3.8,
+        "carbs": 14.2,
+        "fat": 3.7
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-heinz-beanz-tomato-sauce",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Heinz Baked Beans in Tomato Sauce",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 4.15,
+    "expected_calories_per_serving": 81.0,
+    "expected_macros": {
+      "protein": 4.7,
+      "carbs": 12.9,
+      "fat": 0.2,
+      "sugar": 4.7,
+      "fiber": 3.7
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Heinz Baked Beans in Tomato Sauce",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 4.15,
+      "label_calories_per_serving": 81.0,
+      "macros_per_serving": {
+        "protein": 4.7,
+        "carbs": 12.9,
+        "fat": 0.2
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-weetabix-original",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Weetabix Whole Grain Cereal",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 12.0,
+    "expected_calories_per_serving": 362.0,
+    "expected_macros": {
+      "protein": 12.0,
+      "carbs": 69.0,
+      "fat": 2.0,
+      "sugar": 4.4,
+      "fiber": 10.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Weetabix Whole Grain Cereal",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 12.0,
+      "label_calories_per_serving": 362.0,
+      "macros_per_serving": {
+        "protein": 12.0,
+        "carbs": 69.0,
+        "fat": 2.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-marmite-yeast-extract",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Marmite Yeast Extract Spread",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 50.0,
+    "expected_calories_per_serving": 260.0,
+    "expected_macros": {
+      "protein": 34.0,
+      "carbs": 30.0,
+      "fat": 0.5,
+      "sugar": 1.2,
+      "fiber": 1.1
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Marmite Yeast Extract Spread",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 50.0,
+      "label_calories_per_serving": 260.0,
+      "macros_per_serving": {
+        "protein": 34.0,
+        "carbs": 30.0,
+        "fat": 0.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-bon-maman-strawberry-jam",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Bonne Maman Strawberry Conserve",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 241.0,
+    "expected_macros": {
+      "protein": 0.4,
+      "carbs": 59.0,
+      "fat": 0.1,
+      "sugar": 59.0,
+      "fiber": 1.2
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Bonne Maman Strawberry Conserve",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 241.0,
+      "macros_per_serving": {
+        "protein": 0.4,
+        "carbs": 59.0,
+        "fat": 0.1
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-activia-vanilla-yogurt",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Danone Activia Vanilla Yogurt",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.2,
+    "expected_calories_per_serving": 94.0,
+    "expected_macros": {
+      "protein": 3.9,
+      "carbs": 12.8,
+      "fat": 2.9,
+      "sugar": 12.6,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Danone Activia Vanilla Yogurt",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.2,
+      "label_calories_per_serving": 94.0,
+      "macros_per_serving": {
+        "protein": 3.9,
+        "carbs": 12.8,
+        "fat": 2.9
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-cadbury-dairy-milk",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Cadbury Dairy Milk Chocolate Bar",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 2.0,
+    "expected_calories_per_serving": 534.0,
+    "expected_macros": {
+      "protein": 7.3,
+      "carbs": 57.0,
+      "fat": 30.5,
+      "sugar": 56.0,
+      "fiber": 2.1
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Cadbury Dairy Milk Chocolate Bar",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 2.0,
+      "label_calories_per_serving": 534.0,
+      "macros_per_serving": {
+        "protein": 7.3,
+        "carbs": 57.0,
+        "fat": 30.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-twinings-earl-grey-tea",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Twinings Earl Grey Black Tea",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 50.0,
+    "expected_calories_per_serving": 2.0,
+    "expected_macros": {
+      "protein": 0.1,
+      "carbs": 0.3,
+      "fat": 0.0,
+      "sugar": 0.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Twinings Earl Grey Black Tea",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 50.0,
+      "label_calories_per_serving": 2.0,
+      "macros_per_serving": {
+        "protein": 0.1,
+        "carbs": 0.3,
+        "fat": 0.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-lotus-biscoff-spread",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Lotus Biscoff Caramelised Cookie Spread",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 4.0,
+    "expected_calories_per_serving": 584.0,
+    "expected_macros": {
+      "protein": 2.9,
+      "carbs": 57.0,
+      "fat": 38.1,
+      "sugar": 36.8,
+      "fiber": 0.8
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Lotus Biscoff Caramelised Cookie Spread",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 4.0,
+      "label_calories_per_serving": 584.0,
+      "macros_per_serving": {
+        "protein": 2.9,
+        "carbs": 57.0,
+        "fat": 38.1
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-eu-knorr-vegetable-stock-pot",
+    "language": "en",
+    "format_type": "per_100g",
+    "expected_is_food_label": true,
+    "expected_product_name": "Knorr Rich Vegetable Stock Pot",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 8.0,
+    "expected_calories_per_serving": 114.0,
+    "expected_macros": {
+      "protein": 2.3,
+      "carbs": 14.0,
+      "fat": 4.9,
+      "sugar": 7.6,
+      "fiber": 1.2
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Knorr Rich Vegetable Stock Pot",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 8.0,
+      "label_calories_per_serving": 114.0,
+      "macros_per_serving": {
+        "protein": 2.3,
+        "carbs": 14.0,
+        "fat": 4.9
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-vinamilk-100-fresh-milk",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "S\u1eefa t\u01b0\u01a1i ti\u1ec7t tr\u00f9ng Vinamilk 100%",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.8,
+    "expected_calories_per_serving": 73.0,
+    "expected_macros": {
+      "protein": 3.0,
+      "carbs": 7.8,
+      "fat": 3.3,
+      "sugar": 7.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "S\u1eefa t\u01b0\u01a1i ti\u1ec7t tr\u00f9ng Vinamilk 100%",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.8,
+      "label_calories_per_serving": 73.0,
+      "macros_per_serving": {
+        "protein": 3.0,
+        "carbs": 7.8,
+        "fat": 3.3
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-th-true-milk-it-duong",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "S\u1eefa t\u01b0\u01a1i TH true MILK \u00edt \u0111\u01b0\u1eddng",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.8,
+    "expected_calories_per_serving": 70.0,
+    "expected_macros": {
+      "protein": 3.0,
+      "carbs": 6.8,
+      "fat": 3.3,
+      "sugar": 5.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "S\u1eefa t\u01b0\u01a1i TH true MILK \u00edt \u0111\u01b0\u1eddng",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.8,
+      "label_calories_per_serving": 70.0,
+      "macros_per_serving": {
+        "protein": 3.0,
+        "carbs": 6.8,
+        "fat": 3.3
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-hao-hao-tom-chua-cay",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "M\u00ec H\u1ea3o H\u1ea3o t\u00f4m chua cay Acecook",
+    "expected_serving_grams": 75.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 350.0,
+    "expected_macros": {
+      "protein": 6.8,
+      "carbs": 51.0,
+      "fat": 13.0,
+      "sugar": 4.0,
+      "fiber": 1.5
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "M\u00ec H\u1ea3o H\u1ea3o t\u00f4m chua cay Acecook",
+      "serving_size": {
+        "display_text": "75.0g",
+        "grams": 75.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 350.0,
+      "macros_per_serving": {
+        "protein": 6.8,
+        "carbs": 51.0,
+        "fat": 13.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-omachi-sot-bo-ham",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "M\u00ec khoai t\u00e2y Omachi s\u1ed1t b\u00f2 h\u1ea7m",
+    "expected_serving_grams": 80.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 375.0,
+    "expected_macros": {
+      "protein": 7.5,
+      "carbs": 54.0,
+      "fat": 14.5,
+      "sugar": 3.5,
+      "fiber": 2.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "M\u00ec khoai t\u00e2y Omachi s\u1ed1t b\u00f2 h\u1ea7m",
+      "serving_size": {
+        "display_text": "80.0g",
+        "grams": 80.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 375.0,
+      "macros_per_serving": {
+        "protein": 7.5,
+        "carbs": 54.0,
+        "fat": 14.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-chin-su-tuong-ot",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "T\u01b0\u01a1ng \u1edbt Chin-su \u0111\u01b0\u1ee3m v\u1ecb cay",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 2.5,
+    "expected_calories_per_serving": 78.0,
+    "expected_macros": {
+      "protein": 1.0,
+      "carbs": 18.0,
+      "fat": 0.2,
+      "sugar": 14.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "T\u01b0\u01a1ng \u1edbt Chin-su \u0111\u01b0\u1ee3m v\u1ecb cay",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 2.5,
+      "label_calories_per_serving": 78.0,
+      "macros_per_serving": {
+        "protein": 1.0,
+        "carbs": 18.0,
+        "fat": 0.2
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-ong-tho-sua-dac",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "S\u1eefa \u0111\u1eb7c c\u00f3 \u0111\u01b0\u1eddng \u00d4ng Th\u1ecd tr\u1eafng",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 3.8,
+    "expected_calories_per_serving": 341.0,
+    "expected_macros": {
+      "protein": 7.0,
+      "carbs": 55.0,
+      "fat": 10.0,
+      "sugar": 55.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "S\u1eefa \u0111\u1eb7c c\u00f3 \u0111\u01b0\u1eddng \u00d4ng Th\u1ecd tr\u1eafng",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 3.8,
+      "label_calories_per_serving": 341.0,
+      "macros_per_serving": {
+        "protein": 7.0,
+        "carbs": 55.0,
+        "fat": 10.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-milo-hop-uong-lien",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "Th\u1ee9c u\u1ed1ng l\u00faa m\u1ea1ch Nestl\u00e9 Milo",
+    "expected_serving_grams": 180.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 124.0,
+    "expected_macros": {
+      "protein": 3.2,
+      "carbs": 19.8,
+      "fat": 3.6,
+      "sugar": 14.0,
+      "fiber": 1.2
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Th\u1ee9c u\u1ed1ng l\u00faa m\u1ea1ch Nestl\u00e9 Milo",
+      "serving_size": {
+        "display_text": "180.0g",
+        "grams": 180.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 124.0,
+      "macros_per_serving": {
+        "protein": 3.2,
+        "carbs": 19.8,
+        "fat": 3.6
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-vinasoy-fami-nguyen-chat",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "S\u1eefa \u0111\u1eadu n\u00e0nh Fami nguy\u00ean ch\u1ea5t",
+    "expected_serving_grams": 200.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 116.0,
+    "expected_macros": {
+      "protein": 4.8,
+      "carbs": 18.0,
+      "fat": 2.8,
+      "sugar": 15.0,
+      "fiber": 0.8
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "S\u1eefa \u0111\u1eadu n\u00e0nh Fami nguy\u00ean ch\u1ea5t",
+      "serving_size": {
+        "display_text": "200.0g",
+        "grams": 200.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 116.0,
+      "macros_per_serving": {
+        "protein": 4.8,
+        "carbs": 18.0,
+        "fat": 2.8
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-cozy-tra-dao-hoa-tan",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "Tr\u00e0 \u0111\u00e0o h\u00f2a tan Cozy g\u00f3i",
+    "expected_serving_grams": 18.0,
+    "expected_servings_per_package": 16.0,
+    "expected_calories_per_serving": 70.0,
+    "expected_macros": {
+      "protein": 0.0,
+      "carbs": 17.5,
+      "fat": 0.0,
+      "sugar": 16.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Tr\u00e0 \u0111\u00e0o h\u00f2a tan Cozy g\u00f3i",
+      "serving_size": {
+        "display_text": "18.0g",
+        "grams": 18.0
+      },
+      "servings_per_package": 16.0,
+      "label_calories_per_serving": 70.0,
+      "macros_per_serving": {
+        "protein": 0.0,
+        "carbs": 17.5,
+        "fat": 0.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-orion-custas-kem-trung",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "B\u00e1nh tr\u1ee9ng Custas Orion",
+    "expected_serving_grams": 23.5,
+    "expected_servings_per_package": 6.0,
+    "expected_calories_per_serving": 110.0,
+    "expected_macros": {
+      "protein": 1.5,
+      "carbs": 13.0,
+      "fat": 6.0,
+      "sugar": 7.0,
+      "fiber": 0.2
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "B\u00e1nh tr\u1ee9ng Custas Orion",
+      "serving_size": {
+        "display_text": "23.5g",
+        "grams": 23.5
+      },
+      "servings_per_package": 6.0,
+      "label_calories_per_serving": 110.0,
+      "macros_per_serving": {
+        "protein": 1.5,
+        "carbs": 13.0,
+        "fat": 6.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-orion-chocopie-tinh",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "B\u00e1nh Chocopie Orion truy\u1ec1n th\u1ed1ng",
+    "expected_serving_grams": 33.0,
+    "expected_servings_per_package": 12.0,
+    "expected_calories_per_serving": 140.0,
+    "expected_macros": {
+      "protein": 1.2,
+      "carbs": 21.0,
+      "fat": 6.0,
+      "sugar": 12.0,
+      "fiber": 0.5
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "B\u00e1nh Chocopie Orion truy\u1ec1n th\u1ed1ng",
+      "serving_size": {
+        "display_text": "33.0g",
+        "grams": 33.0
+      },
+      "servings_per_package": 12.0,
+      "label_calories_per_serving": 140.0,
+      "macros_per_serving": {
+        "protein": 1.2,
+        "carbs": 21.0,
+        "fat": 6.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-kinh-do-cosy-marie",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "B\u00e1nh quy s\u1eefa Cosy Marie Kinh \u0110\u00f4",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 3.0,
+    "expected_calories_per_serving": 480.0,
+    "expected_macros": {
+      "protein": 7.0,
+      "carbs": 68.0,
+      "fat": 20.0,
+      "sugar": 22.0,
+      "fiber": 1.5
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "B\u00e1nh quy s\u1eefa Cosy Marie Kinh \u0110\u00f4",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 3.0,
+      "label_calories_per_serving": 480.0,
+      "macros_per_serving": {
+        "protein": 7.0,
+        "carbs": 68.0,
+        "fat": 20.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-coca-cola-vietnam-sleek",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "N\u01b0\u1edbc ng\u1ecdt c\u00f3 ga Coca-Cola",
+    "expected_serving_grams": 320.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 139.0,
+    "expected_macros": {
+      "protein": 0.0,
+      "carbs": 35.0,
+      "fat": 0.0,
+      "sugar": 35.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "N\u01b0\u1edbc ng\u1ecdt c\u00f3 ga Coca-Cola",
+      "serving_size": {
+        "display_text": "320.0g",
+        "grams": 320.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 139.0,
+      "macros_per_serving": {
+        "protein": 0.0,
+        "carbs": 35.0,
+        "fat": 0.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-kho-bo-tuyen-ky",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "Kh\u00f4 b\u00f2 mi\u1ebfng Tuy\u1ec1n K\u00fd",
+    "expected_serving_grams": 100.0,
+    "expected_servings_per_package": 1.0,
+    "expected_calories_per_serving": 310.0,
+    "expected_macros": {
+      "protein": 42.0,
+      "carbs": 25.0,
+      "fat": 4.5,
+      "sugar": 18.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Kh\u00f4 b\u00f2 mi\u1ebfng Tuy\u1ec1n K\u00fd",
+      "serving_size": {
+        "display_text": "100.0g",
+        "grams": 100.0
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 310.0,
+      "macros_per_serving": {
+        "protein": 42.0,
+        "carbs": 25.0,
+        "fat": 4.5
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-vi-rong-bien-an-lien",
+    "language": "vi",
+    "format_type": "vietnamese",
+    "expected_is_food_label": true,
+    "expected_product_name": "Rong bi\u1ec3n n\u01b0\u1edbng \u0103n li\u1ec1n v\u1ecb truy\u1ec1n th\u1ed1ng",
+    "expected_serving_grams": 5.0,
+    "expected_servings_per_package": 3.0,
+    "expected_calories_per_serving": 25.0,
+    "expected_macros": {
+      "protein": 1.0,
+      "carbs": 1.5,
+      "fat": 1.8,
+      "sugar": 0.2,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Rong bi\u1ec3n n\u01b0\u1edbng \u0103n li\u1ec1n v\u1ecb truy\u1ec1n th\u1ed1ng",
+      "serving_size": {
+        "display_text": "5.0g",
+        "grams": 5.0
+      },
+      "servings_per_package": 3.0,
+      "label_calories_per_serving": 25.0,
+      "macros_per_serving": {
+        "protein": 1.0,
+        "carbs": 1.5,
+        "fat": 1.8
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-dual-lays-family-size",
+    "language": "en",
+    "format_type": "dual_column",
+    "expected_is_food_label": true,
+    "expected_product_name": "Lay's Party Size Potato Chips",
+    "expected_serving_grams": 28.0,
+    "expected_servings_per_package": 15.0,
+    "expected_calories_per_serving": 160.0,
+    "expected_macros": {
+      "protein": 2.0,
+      "carbs": 15.0,
+      "fat": 10.0,
+      "sugar": 1.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Lay's Party Size Potato Chips",
+      "serving_size": {
+        "display_text": "28.0g",
+        "grams": 28.0
+      },
+      "servings_per_package": 15.0,
+      "label_calories_per_serving": 160.0,
+      "macros_per_serving": {
+        "protein": 2.0,
+        "carbs": 15.0,
+        "fat": 10.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-dual-cheez-it-snack-pack",
+    "language": "en",
+    "format_type": "dual_column",
+    "expected_is_food_label": true,
+    "expected_product_name": "Cheez-It Original Baked Snack Crackers",
+    "expected_serving_grams": 30.0,
+    "expected_servings_per_package": 10.0,
+    "expected_calories_per_serving": 150.0,
+    "expected_macros": {
+      "protein": 3.0,
+      "carbs": 18.0,
+      "fat": 8.0,
+      "sugar": 0.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Cheez-It Original Baked Snack Crackers",
+      "serving_size": {
+        "display_text": "30.0g",
+        "grams": 30.0
+      },
+      "servings_per_package": 10.0,
+      "label_calories_per_serving": 150.0,
+      "macros_per_serving": {
+        "protein": 3.0,
+        "carbs": 18.0,
+        "fat": 8.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-dual-ben-jerry-half-baked",
+    "language": "en",
+    "format_type": "dual_column",
+    "expected_is_food_label": true,
+    "expected_product_name": "Ben & Jerry's Half Baked Ice Cream Pint",
+    "expected_serving_grams": 135.0,
+    "expected_servings_per_package": 3.0,
+    "expected_calories_per_serving": 340.0,
+    "expected_macros": {
+      "protein": 6.0,
+      "carbs": 44.0,
+      "fat": 16.0,
+      "sugar": 34.0,
+      "fiber": 2.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Ben & Jerry's Half Baked Ice Cream Pint",
+      "serving_size": {
+        "display_text": "135.0g",
+        "grams": 135.0
+      },
+      "servings_per_package": 3.0,
+      "label_calories_per_serving": 340.0,
+      "macros_per_serving": {
+        "protein": 6.0,
+        "carbs": 44.0,
+        "fat": 16.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-dual-monster-energy-drink",
+    "language": "en",
+    "format_type": "dual_column",
+    "expected_is_food_label": true,
+    "expected_product_name": "Monster Energy Original Green Can",
+    "expected_serving_grams": 240.0,
+    "expected_servings_per_package": 2.0,
+    "expected_calories_per_serving": 110.0,
+    "expected_macros": {
+      "protein": 0.0,
+      "carbs": 27.0,
+      "fat": 0.0,
+      "sugar": 27.0,
+      "fiber": 0.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Monster Energy Original Green Can",
+      "serving_size": {
+        "display_text": "240.0g",
+        "grams": 240.0
+      },
+      "servings_per_package": 2.0,
+      "label_calories_per_serving": 110.0,
+      "macros_per_serving": {
+        "protein": 0.0,
+        "carbs": 27.0,
+        "fat": 0.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-dual-pringles-sour-cream",
+    "language": "en",
+    "format_type": "dual_column",
+    "expected_is_food_label": true,
+    "expected_product_name": "Pringles Sour Cream & Onion Crisps",
+    "expected_serving_grams": 28.0,
+    "expected_servings_per_package": 6.0,
+    "expected_calories_per_serving": 150.0,
+    "expected_macros": {
+      "protein": 1.0,
+      "carbs": 16.0,
+      "fat": 9.0,
+      "sugar": 1.0,
+      "fiber": 1.0
+    },
+    "ai_payload": {
+      "is_food_label": true,
+      "product_name": "Pringles Sour Cream & Onion Crisps",
+      "serving_size": {
+        "display_text": "28.0g",
+        "grams": 28.0
+      },
+      "servings_per_package": 6.0,
+      "label_calories_per_serving": 150.0,
+      "macros_per_serving": {
+        "protein": 1.0,
+        "carbs": 16.0,
+        "fat": 9.0
+      },
+      "confidence": 0.95
+    }
+  },
+  {
+    "case_id": "label-nonlabel-restaurant-menu",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-apple-on-table",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-store-receipt",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-blurry-finger",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-front-packaging-logo",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-barcode-only",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-newspaper-article",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-cooking-recipe-book",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-car-dashboard",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  },
+  {
+    "case_id": "label-nonlabel-dog-food-bowl",
+    "language": "en",
+    "format_type": "non_label",
+    "expected_is_food_label": false,
+    "expected_product_name": "",
+    "expected_serving_grams": 0.0,
+    "expected_servings_per_package": 0.0,
+    "expected_calories_per_serving": 0.0,
+    "expected_macros": {
+      "protein": 0,
+      "carbs": 0,
+      "fat": 0
+    },
+    "ai_payload": {
+      "is_food_label": false,
+      "product_name": "Scanned Food Label",
+      "serving_size": {
+        "display_text": "100g",
+        "grams": 100
+      },
+      "servings_per_package": 1.0,
+      "label_calories_per_serving": 0.0,
+      "macros_per_serving": {
+        "protein": 0,
+        "carbs": 0,
+        "fat": 0
+      },
+      "confidence": 0.05
+    }
+  }
+]

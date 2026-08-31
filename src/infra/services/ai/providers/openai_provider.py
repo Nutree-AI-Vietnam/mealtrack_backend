@@ -233,6 +233,7 @@ class OpenAIProvider(AIProviderPort):
                 schema=schema,
                 max_tokens=max_tokens,
                 request_kwargs=prompt_cache_kwargs,
+                image_detail=kwargs.get("image_detail", "high"),
             )
         except ValidationError as exc:
             raise AIVisionError(

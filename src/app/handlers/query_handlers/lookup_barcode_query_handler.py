@@ -3,6 +3,7 @@ LookupBarcodeQueryHandler - Handle barcode lookup with cascade:
 DB -> FatSecret -> OpenFoodFacts -> USDA FDC -> Brave identity/estimate -> AI estimate.
 """
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -24,6 +25,7 @@ from src.domain.services.barcode.barcode_nutrition_validator import (
 from src.domain.services.prompts.system_prompts import SystemPrompts
 from src.infra.adapters.fat_secret_service import FatSecretService
 from src.infra.adapters.open_food_facts_service import OpenFoodFactsService
+from src.infra.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,8 @@ class LookupBarcodeQueryHandler(
         macro_validation_service: Any | None = None,
         food_data_service: Any | None = None,
         food_mapping_service: Any | None = None,
+        request_timeout_seconds: float | None = None,
+        hedge_delay_seconds: float | None = None,
     ):
         self.off = open_food_facts_service
         self.fat_secret = fat_secret_service
@@ -64,9 +68,35 @@ class LookupBarcodeQueryHandler(
         self.macro_validator = macro_validation_service
         self.food_data_service = food_data_service
         self.food_mapping_service = food_mapping_service
+        settings = get_settings()
+        self.request_timeout_seconds = (
+            request_timeout_seconds
+            if request_timeout_seconds is not None
+            else getattr(settings, "BARCODE_REQUEST_TIMEOUT_SECONDS", 8.0)
+        )
+        self.hedge_delay_seconds = (
+            hedge_delay_seconds
+            if hedge_delay_seconds is not None
+            else getattr(settings, "BARCODE_HEDGE_DELAY_SECONDS", 0.8)
+        )
 
     async def handle(self, query: LookupBarcodeQuery) -> dict[str, Any] | None:
-        """Look up product by barcode with provider cascade."""
+        """Look up product by barcode with provider cascade and request deadline."""
+        try:
+            async with asyncio.timeout(self.request_timeout_seconds):
+                return await self._handle_internal(query)
+        except TimeoutError:
+            logger.warning(
+                "[BARCODE-TIMEOUT] barcode_ref=%s deadline_seconds=%.2f",
+                redact_barcode(query.scanned_barcode or query.barcode),
+                self.request_timeout_seconds,
+            )
+            return None
+
+    async def _handle_internal(
+        self, query: LookupBarcodeQuery
+    ) -> dict[str, Any] | None:
+        """Internal lookup handler executing within request deadline."""
         started_at = time.perf_counter()
         miss_reasons: list[str] = []
         scanned_barcode = query.scanned_barcode or query.barcode
@@ -130,109 +160,27 @@ class LookupBarcodeQueryHandler(
         else:
             miss_reasons.append("cache_empty")
 
-        # A global barcode row must always be acquired in canonical English.
-        # Request-locale provider output cannot safely be persisted globally.
-        region = "US"
-        fat_secret_result = None
-        if self.fat_secret is not None:
-            fat_secret_result = await self._first_barcode_hit(
-                aliases,
-                lambda alias: self.fat_secret.get_product(
-                    alias,
-                    region=region,
-                    language="en",
-                ),
-            )
-        if (
-            fat_secret_result
-            and self._has_nutrition(fat_secret_result)
-            and self._has_name(fat_secret_result)
-        ):
-            result = self._trusted_provider_result(
-                fat_secret_result, query.barcode, scanned_barcode, "fatsecret"
-            )
-            cached_reference = await self._cache_result(
-                result, cache_barcode=query.barcode
-            )
-            result = self._resolve_verified_identity(
-                result, cached_reference, provider_source="fatsecret"
-            )
-            log_hit("fatsecret", result)
-            return await self._maybe_translate(
-                result, query.language, source_language="en"
-            )
-        if fat_secret_result:
-            partial_name = partial_name or fat_secret_result.get("name")
-            miss_reasons.append(
-                "fatsecret_partial_no_nutrition"
-                if not self._has_nutrition(fat_secret_result)
-                else "fatsecret_partial_no_name"
-            )
-        else:
-            miss_reasons.append(
-                "fatsecret_empty"
-                if self.fat_secret is not None
-                else "fatsecret_not_configured"
-            )
-
-        off_result = await self._first_barcode_hit(aliases, self.off.get_product)
-        if (
-            off_result
-            and self._has_nutrition(off_result)
-            and self._has_name(off_result)
-        ):
-            off_result = dict(off_result)
-            source_language = off_result.pop("source_language", None)
-            result = self._trusted_provider_result(
-                off_result, query.barcode, scanned_barcode, "openfoodfacts"
-            )
-            cached_reference = await self._cache_result(
-                result, cache_barcode=query.barcode
-            )
-            result = self._resolve_verified_identity(
-                result, cached_reference, provider_source="openfoodfacts"
-            )
-            log_hit("openfoodfacts", result)
-            return await self._maybe_translate(
-                result, query.language, source_language=source_language
-            )
-        if off_result:
-            partial_name = partial_name or off_result.get("name")
-            miss_reasons.append(
-                "openfoodfacts_partial_no_nutrition"
-                if not self._has_nutrition(off_result)
-                else "openfoodfacts_partial_no_name"
-            )
-        else:
-            miss_reasons.append("openfoodfacts_empty")
-
-        fdc_result = await self._get_fdc_product(
-            aliases, query.barcode, scanned_barcode
+        # Hedged trusted provider lookup (FatSecret primary with OFF/USDA hedging)
+        (
+            trusted_result,
+            provider_name,
+            source_lang,
+        ) = await self._lookup_trusted_providers(
+            aliases, query.barcode, scanned_barcode, miss_reasons
         )
-        if (
-            fdc_result
-            and self._has_nutrition(fdc_result)
-            and self._has_name(fdc_result)
-        ):
+        if trusted_result is not None and provider_name is not None:
             cached_reference = await self._cache_result(
-                fdc_result, cache_barcode=query.barcode
+                trusted_result, cache_barcode=query.barcode
             )
-            fdc_result = self._resolve_verified_identity(
-                fdc_result, cached_reference, provider_source="usda_fdc"
+            trusted_result = self._resolve_verified_identity(
+                trusted_result, cached_reference, provider_source=provider_name
             )
-            log_hit("usda_fdc", fdc_result)
+            log_hit(provider_name, trusted_result)
             return await self._maybe_translate(
-                fdc_result, query.language, source_language="en"
+                trusted_result, query.language, source_language=source_lang
             )
-        if fdc_result:
-            partial_name = partial_name or fdc_result.get("name")
-            if self._has_nutrition(fdc_result):
-                miss_reasons.append("usda_fdc_partial_no_name")
-            else:
-                miss_reasons.append("usda_fdc_partial_no_nutrition")
-        else:
-            miss_reasons.append("usda_fdc_empty")
 
+        region = "US"
         brave_name: str | None = None
         brave_result: dict[str, Any] | None = None
         if self.brave_search:
@@ -690,3 +638,120 @@ class LookupBarcodeQueryHandler(
                 type(exc).__name__,
             )
             return None
+
+    async def _lookup_trusted_providers(
+        self,
+        aliases: tuple[str, ...],
+        query_barcode: str,
+        scanned_barcode: str,
+        miss_reasons: list[str],
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        """Lookup barcode across trusted providers with FatSecret-first hedging."""
+        fs_task: asyncio.Task[Any] | None = None
+        if self.fat_secret is not None:
+            fs_task = asyncio.create_task(
+                self._first_barcode_hit(
+                    aliases,
+                    lambda alias: self.fat_secret.get_product(
+                        alias,
+                        region="US",
+                        language="en",
+                    ),
+                )
+            )
+
+        off_task: asyncio.Task[Any] | None = None
+        fdc_task: asyncio.Task[Any] | None = None
+
+        if fs_task is not None:
+            done, _ = await asyncio.wait({fs_task}, timeout=self.hedge_delay_seconds)
+            if fs_task in done:
+                try:
+                    fat_secret_result = fs_task.result()
+                    if (
+                        fat_secret_result
+                        and self._has_nutrition(fat_secret_result)
+                        and self._has_name(fat_secret_result)
+                    ):
+                        result = self._trusted_provider_result(
+                            fat_secret_result,
+                            query_barcode,
+                            scanned_barcode,
+                            "fatsecret",
+                        )
+                        return result, "fatsecret", "en"
+                except Exception as exc:
+                    logger.warning("[BARCODE-FATSECRET-FAIL] %s", exc)
+
+        # Launch secondary providers concurrently
+        if self.off is not None:
+            off_task = asyncio.create_task(
+                self._first_barcode_hit(aliases, self.off.get_product)
+            )
+        if self.food_data_service is not None:
+            fdc_task = asyncio.create_task(
+                self._get_fdc_product(aliases, query_barcode, scanned_barcode)
+            )
+
+        pending_tasks = [t for t in [fs_task, off_task, fdc_task] if t is not None]
+        while pending_tasks:
+            done, _ = await asyncio.wait(
+                pending_tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in done:
+                pending_tasks.remove(t)
+
+            if fs_task is not None and fs_task.done() and not fs_task.cancelled():
+                try:
+                    fs_res = fs_task.result()
+                    if (
+                        fs_res
+                        and self._has_nutrition(fs_res)
+                        and self._has_name(fs_res)
+                    ):
+                        for pending in pending_tasks:
+                            pending.cancel()
+                        result = self._trusted_provider_result(
+                            fs_res, query_barcode, scanned_barcode, "fatsecret"
+                        )
+                        return result, "fatsecret", "en"
+                except Exception:
+                    pass
+
+            if off_task is not None and off_task.done() and not off_task.cancelled():
+                try:
+                    off_res = off_task.result()
+                    if (
+                        off_res
+                        and self._has_nutrition(off_res)
+                        and self._has_name(off_res)
+                    ):
+                        for pending in pending_tasks:
+                            pending.cancel()
+                        res_dict = dict(off_res)
+                        source_language = res_dict.pop("source_language", None)
+                        result = self._trusted_provider_result(
+                            res_dict,
+                            query_barcode,
+                            scanned_barcode,
+                            "openfoodfacts",
+                        )
+                        return result, "openfoodfacts", source_language
+                except Exception:
+                    pass
+
+            if fdc_task is not None and fdc_task.done() and not fdc_task.cancelled():
+                try:
+                    fdc_res = fdc_task.result()
+                    if (
+                        fdc_res
+                        and self._has_nutrition(fdc_res)
+                        and self._has_name(fdc_res)
+                    ):
+                        for pending in pending_tasks:
+                            pending.cancel()
+                        return fdc_res, "usda_fdc", "en"
+                except Exception:
+                    pass
+
+        return None, None, None
