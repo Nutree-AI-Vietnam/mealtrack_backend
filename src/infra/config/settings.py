@@ -145,9 +145,18 @@ class Settings(BaseSettings):
     )
     OPENAI_API_KEY: str | None = Field(default=None)
     OPENAI_VISION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
-    OPENAI_MEAL_SCAN_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
-    OPENAI_FOOD_LABEL_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
-    OPENAI_BARCODE_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
+    OPENAI_MEAL_SCAN_MODEL: str | None = Field(
+        default=None,
+        description="Optional explicit OpenAI model for meal scanning. Defaults to OPENAI_VISION_MODEL.",
+    )
+    OPENAI_FOOD_LABEL_MODEL: str | None = Field(
+        default=None,
+        description="Optional explicit OpenAI model for food label OCR. Defaults to OPENAI_VISION_MODEL.",
+    )
+    OPENAI_BARCODE_MODEL: str | None = Field(
+        default=None,
+        description="Optional explicit OpenAI model for barcode AI estimation. Defaults to OPENAI_TEXT_MODEL.",
+    )
     OPENAI_TEXT_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_PARSE_TEXT_MODEL: str = Field(
         default="gpt-5.6-luna",

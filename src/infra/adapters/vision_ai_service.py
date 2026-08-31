@@ -5,6 +5,9 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from io import BytesIO
+from PIL import Image
+
 from src.domain.exceptions.ai_exceptions import (
     AIOutputValidationError,
     AIUnavailableError,
@@ -36,6 +39,32 @@ ALLOWED_URL_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VISION_VALIDATION_PURPOSE = "meal_scan"
 
 
+def _detect_mime_type(image_bytes: bytes) -> str:
+    """Determine MIME type from image bytes header or PIL format."""
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if (
+        image_bytes.startswith(b"RIFF")
+        and len(image_bytes) >= 12
+        and image_bytes[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            fmt = (img.format or "").upper()
+            if fmt == "PNG":
+                return "image/png"
+            if fmt == "WEBP":
+                return "image/webp"
+            if fmt in ("JPEG", "JPG"):
+                return "image/jpeg"
+    except Exception:
+        pass
+    return "image/jpeg"
+
+
 class VisionAIService(VisionAIServicePort):
     """Vision AI service with automatic fallback on failures."""
 
@@ -56,10 +85,15 @@ class VisionAIService(VisionAIServicePort):
     def _compress_image_for_strategy(
         self, image_bytes: bytes, strategy: MealAnalysisStrategy
     ) -> bytes:
-        """Compress image preserving food label crop resolution when applicable."""
+        """Compress image preserving food label crop resolution when within limits."""
         if isinstance(strategy, FoodLabelImageAnalysisStrategy):
-            if len(image_bytes) <= 2 * 1024 * 1024:
-                return image_bytes
+            try:
+                with Image.open(BytesIO(image_bytes)) as img:
+                    w, h = img.size
+                    if max(w, h) <= 1600 and len(image_bytes) <= 2 * 1024 * 1024:
+                        return image_bytes
+            except Exception:
+                pass
             return compress_image(image_bytes, max_dim=1600)
         return self._compress_image(image_bytes)
 
@@ -103,10 +137,12 @@ class VisionAIService(VisionAIServicePort):
                 if is_food_label
                 else settings.AI_MEAL_SCAN_DETAIL_TIER
             )
+            mime_type = _detect_mime_type(image_bytes)
             result = await self._ai_manager.generate_with_vision(
                 purpose=model_purpose,
                 prompt=strategy.get_user_message(),
                 image_data=image_bytes,
+                image_mime_type=mime_type,
                 system_message=strategy.get_analysis_prompt(),
                 max_tokens=self._max_output_tokens,
                 schema=schema,

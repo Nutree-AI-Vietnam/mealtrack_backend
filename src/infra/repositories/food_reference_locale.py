@@ -66,6 +66,7 @@ class FoodReferenceLocaleRepository:
                     FoodReferenceModel.source_namespace.is_(None),
                 )
             )
+            .where(FoodReferenceModel.source != "ai_estimate")
             .where(or_(*conditions))
             .options(*_DISPLAY_LOAD_OPTIONS)
         )

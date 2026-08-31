@@ -91,7 +91,10 @@ class LookupBarcodeQueryHandler(
                 redact_barcode(query.scanned_barcode or query.barcode),
                 self.request_timeout_seconds,
             )
-            return None
+            raise ExternalServiceException(
+                "Barcode lookup timed out. Please try again.",
+                error_code="BARCODE_LOOKUP_TIMEOUT",
+            )
 
     async def _handle_internal(
         self, query: LookupBarcodeQuery
@@ -261,6 +264,12 @@ class LookupBarcodeQueryHandler(
 
     @staticmethod
     def _is_trusted_cached_row(result: dict[str, Any]) -> bool:
+        if (
+            result.get("is_estimate")
+            or result.get("source_namespace") == "ai_estimate"
+            or result.get("source") == "ai_estimate"
+        ):
+            return False
         return (
             bool(result.get("is_verified"))
             or result.get("source") in TRUSTED_CACHE_SOURCES
@@ -272,6 +281,12 @@ class LookupBarcodeQueryHandler(
     ) -> dict[str, Any] | None:
         """Attach a durable identity before returning a cached barcode row."""
         cached = dict(result)
+        is_est = (
+            cached.get("is_estimate")
+            or cached.get("source_namespace") == "ai_estimate"
+            or cached.get("source") == "ai_estimate"
+        )
+        cached["is_estimate"] = bool(is_est)
         reference_id = cached.get("id") or cached.get("food_reference_id")
         if reference_id is not None:
             try:
@@ -368,7 +383,8 @@ class LookupBarcodeQueryHandler(
         payload = dict(result)
         payload.update(
             {
-                "is_verified": True,
+                "is_verified": False,
+                "is_estimate": True,
                 "source_namespace": "ai_estimate",
                 "source_food_id": cache_barcode,
             }
@@ -377,11 +393,13 @@ class LookupBarcodeQueryHandler(
             payload,
             cache_barcode=cache_barcode,
         )
-        return self._resolve_verified_identity(
+        resolved = self._resolve_verified_identity(
             payload,
             cached_reference,
             provider_source=str(payload["source"]),
         )
+        resolved["is_estimate"] = True
+        return resolved
 
     async def _first_barcode_hit(self, aliases, fetch):
         for alias in aliases:
@@ -648,110 +666,121 @@ class LookupBarcodeQueryHandler(
     ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         """Lookup barcode across trusted providers with FatSecret-first hedging."""
         fs_task: asyncio.Task[Any] | None = None
-        if self.fat_secret is not None:
-            fs_task = asyncio.create_task(
-                self._first_barcode_hit(
-                    aliases,
-                    lambda alias: self.fat_secret.get_product(
-                        alias,
-                        region="US",
-                        language="en",
-                    ),
-                )
-            )
-
         off_task: asyncio.Task[Any] | None = None
         fdc_task: asyncio.Task[Any] | None = None
+        all_tasks: list[asyncio.Task[Any]] = []
 
-        if fs_task is not None:
-            done, _ = await asyncio.wait({fs_task}, timeout=self.hedge_delay_seconds)
-            if fs_task in done:
-                try:
-                    fat_secret_result = fs_task.result()
-                    if (
-                        fat_secret_result
-                        and self._has_nutrition(fat_secret_result)
-                        and self._has_name(fat_secret_result)
-                    ):
-                        result = self._trusted_provider_result(
-                            fat_secret_result,
-                            query_barcode,
-                            scanned_barcode,
-                            "fatsecret",
-                        )
-                        return result, "fatsecret", "en"
-                except Exception as exc:
-                    logger.warning("[BARCODE-FATSECRET-FAIL] %s", exc)
+        try:
+            if self.fat_secret is not None:
+                fs_task = asyncio.create_task(
+                    self._first_barcode_hit(
+                        aliases,
+                        lambda alias: self.fat_secret.get_product(
+                            alias,
+                            region="US",
+                            language="en",
+                        ),
+                    )
+                )
+                all_tasks.append(fs_task)
 
-        # Launch secondary providers concurrently
-        if self.off is not None:
-            off_task = asyncio.create_task(
-                self._first_barcode_hit(aliases, self.off.get_product)
-            )
-        if self.food_data_service is not None:
-            fdc_task = asyncio.create_task(
-                self._get_fdc_product(aliases, query_barcode, scanned_barcode)
-            )
+            if fs_task is not None:
+                done, _ = await asyncio.wait({fs_task}, timeout=self.hedge_delay_seconds)
+                if fs_task in done:
+                    try:
+                        fat_secret_result = fs_task.result()
+                        if (
+                            fat_secret_result
+                            and self._has_nutrition(fat_secret_result)
+                            and self._has_name(fat_secret_result)
+                        ):
+                            result = self._trusted_provider_result(
+                                fat_secret_result,
+                                query_barcode,
+                                scanned_barcode,
+                                "fatsecret",
+                            )
+                            return result, "fatsecret", "en"
+                    except Exception as exc:
+                        logger.warning("[BARCODE-FATSECRET-FAIL] %s", exc)
 
-        pending_tasks = [t for t in [fs_task, off_task, fdc_task] if t is not None]
-        while pending_tasks:
-            done, _ = await asyncio.wait(
-                pending_tasks, return_when=asyncio.FIRST_COMPLETED
-            )
-            for t in done:
-                pending_tasks.remove(t)
+            # Launch secondary providers concurrently
+            if self.off is not None:
+                off_task = asyncio.create_task(
+                    self._first_barcode_hit(aliases, self.off.get_product)
+                )
+                all_tasks.append(off_task)
+            if self.food_data_service is not None:
+                fdc_task = asyncio.create_task(
+                    self._get_fdc_product(aliases, query_barcode, scanned_barcode)
+                )
+                all_tasks.append(fdc_task)
 
-            if fs_task is not None and fs_task.done() and not fs_task.cancelled():
-                try:
-                    fs_res = fs_task.result()
-                    if (
-                        fs_res
-                        and self._has_nutrition(fs_res)
-                        and self._has_name(fs_res)
-                    ):
-                        for pending in pending_tasks:
-                            pending.cancel()
-                        result = self._trusted_provider_result(
-                            fs_res, query_barcode, scanned_barcode, "fatsecret"
-                        )
-                        return result, "fatsecret", "en"
-                except Exception:
-                    pass
+            pending_tasks = [t for t in all_tasks if not t.done()]
+            while pending_tasks:
+                done, _ = await asyncio.wait(
+                    pending_tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                for t in done:
+                    pending_tasks.remove(t)
 
-            if off_task is not None and off_task.done() and not off_task.cancelled():
-                try:
-                    off_res = off_task.result()
-                    if (
-                        off_res
-                        and self._has_nutrition(off_res)
-                        and self._has_name(off_res)
-                    ):
-                        for pending in pending_tasks:
-                            pending.cancel()
-                        res_dict = dict(off_res)
-                        source_language = res_dict.pop("source_language", None)
-                        result = self._trusted_provider_result(
-                            res_dict,
-                            query_barcode,
-                            scanned_barcode,
-                            "openfoodfacts",
-                        )
-                        return result, "openfoodfacts", source_language
-                except Exception:
-                    pass
+                if fs_task is not None and fs_task.done() and not fs_task.cancelled():
+                    try:
+                        fs_res = fs_task.result()
+                        if (
+                            fs_res
+                            and self._has_nutrition(fs_res)
+                            and self._has_name(fs_res)
+                        ):
+                            for pending in pending_tasks:
+                                pending.cancel()
+                            result = self._trusted_provider_result(
+                                fs_res, query_barcode, scanned_barcode, "fatsecret"
+                            )
+                            return result, "fatsecret", "en"
+                    except Exception:
+                        pass
 
-            if fdc_task is not None and fdc_task.done() and not fdc_task.cancelled():
-                try:
-                    fdc_res = fdc_task.result()
-                    if (
-                        fdc_res
-                        and self._has_nutrition(fdc_res)
-                        and self._has_name(fdc_res)
-                    ):
-                        for pending in pending_tasks:
-                            pending.cancel()
-                        return fdc_res, "usda_fdc", "en"
-                except Exception:
-                    pass
+                if off_task is not None and off_task.done() and not off_task.cancelled():
+                    try:
+                        off_res = off_task.result()
+                        if (
+                            off_res
+                            and self._has_nutrition(off_res)
+                            and self._has_name(off_res)
+                        ):
+                            for pending in pending_tasks:
+                                pending.cancel()
+                            res_dict = dict(off_res)
+                            source_language = res_dict.pop("source_language", None)
+                            result = self._trusted_provider_result(
+                                res_dict,
+                                query_barcode,
+                                scanned_barcode,
+                                "openfoodfacts",
+                            )
+                            return result, "openfoodfacts", source_language
+                    except Exception:
+                        pass
 
-        return None, None, None
+                if fdc_task is not None and fdc_task.done() and not fdc_task.cancelled():
+                    try:
+                        fdc_res = fdc_task.result()
+                        if (
+                            fdc_res
+                            and self._has_nutrition(fdc_res)
+                            and self._has_name(fdc_res)
+                        ):
+                            for pending in pending_tasks:
+                                pending.cancel()
+                            return fdc_res, "usda_fdc", "en"
+                    except Exception:
+                        pass
+
+            return None, None, None
+        finally:
+            for t in all_tasks:
+                if not t.done():
+                    t.cancel()
+            if all_tasks:
+                await asyncio.gather(*all_tasks, return_exceptions=True)

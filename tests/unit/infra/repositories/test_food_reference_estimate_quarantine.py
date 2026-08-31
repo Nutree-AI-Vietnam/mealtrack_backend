@@ -20,6 +20,9 @@ class _Scalars:
     def unique(self):
         return self
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
 
 class _Result:
     def __init__(self, rows=None):
@@ -96,3 +99,33 @@ async def test_find_by_locale_names_excludes_ai_estimate():
         "source_namespace !=" in compiled_sql
         or "source_namespace IS NULL" in compiled_sql
     )
+
+
+@pytest.mark.asyncio
+async def test_find_batch_by_normalized_names_excludes_ai_estimate():
+    session = _AsyncSession()
+    repo = AsyncFoodReferenceRepository(session)
+
+    await repo.find_batch_by_normalized_names(["rice", "chicken breast"])
+
+    compiled_sql = str(session.statement)
+    assert (
+        "source_namespace !=" in compiled_sql
+        or "source_namespace IS NULL" in compiled_sql
+    )
+    assert "source !=" in compiled_sql
+
+
+@pytest.mark.asyncio
+async def test_find_by_normalized_name_excludes_ai_estimate():
+    session = _AsyncSession()
+    repo = AsyncFoodReferenceRepository(session)
+
+    await repo.find_by_normalized_name("rice")
+
+    compiled_sql = str(session.statement)
+    assert (
+        "source_namespace !=" in compiled_sql
+        or "source_namespace IS NULL" in compiled_sql
+    )
+    assert "source !=" in compiled_sql

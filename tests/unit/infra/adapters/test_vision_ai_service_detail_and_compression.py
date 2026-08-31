@@ -92,3 +92,72 @@ async def test_meal_photo_strategy_compresses_to_768():
         sent_bytes = call_kwargs["image_data"]
         img = Image.open(BytesIO(sent_bytes))
         assert max(img.width, img.height) == 768
+
+
+@pytest.mark.asyncio
+async def test_food_label_preserves_png_mime_type():
+    img = Image.new("RGB", (800, 1000), color=(255, 255, 255))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    with patch(_MGR_PATCH) as mock_cls:
+        mock_manager = MagicMock()
+        mock_manager.generate_with_vision = AsyncMock(
+            return_value={
+                "is_food_label": True,
+                "product_name": "Greek Yogurt",
+                "serving_size": {"display_text": "1 cup", "grams": 227},
+                "servings_per_package": 1,
+                "label_calories_per_serving": 130,
+                "macros_per_serving": {"protein": 22, "carbs": 7, "fat": 0},
+                "confidence": 0.95,
+            }
+        )
+        mock_cls.get_instance.return_value = mock_manager
+
+        service = VisionAIService()
+        strategy = FoodLabelImageAnalysisStrategy()
+
+        result = await service.analyze_with_strategy(png_bytes, strategy)
+
+        assert result is not None
+        mock_manager.generate_with_vision.assert_called_once()
+        call_kwargs = mock_manager.generate_with_vision.call_args.kwargs
+        assert call_kwargs["image_mime_type"] == "image/png"
+        assert call_kwargs["image_detail"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_oversized_food_label_compresses_to_1600():
+    img = Image.new("RGB", (3000, 2000), color=(255, 255, 255))
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    oversized_bytes = buf.getvalue()
+
+    with patch(_MGR_PATCH) as mock_cls:
+        mock_manager = MagicMock()
+        mock_manager.generate_with_vision = AsyncMock(
+            return_value={
+                "is_food_label": True,
+                "product_name": "Cereal Box",
+                "serving_size": {"display_text": "1 cup", "grams": 50},
+                "servings_per_package": 8,
+                "label_calories_per_serving": 150,
+                "macros_per_serving": {"protein": 4, "carbs": 30, "fat": 2},
+                "confidence": 0.95,
+            }
+        )
+        mock_cls.get_instance.return_value = mock_manager
+
+        service = VisionAIService()
+        strategy = FoodLabelImageAnalysisStrategy()
+
+        result = await service.analyze_with_strategy(oversized_bytes, strategy)
+
+        assert result is not None
+        mock_manager.generate_with_vision.assert_called_once()
+        call_kwargs = mock_manager.generate_with_vision.call_args.kwargs
+        sent_bytes = call_kwargs["image_data"]
+        sent_img = Image.open(BytesIO(sent_bytes))
+        assert max(sent_img.width, sent_img.height) == 1600

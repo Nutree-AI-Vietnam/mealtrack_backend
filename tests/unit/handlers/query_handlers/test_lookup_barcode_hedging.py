@@ -126,8 +126,11 @@ async def test_slow_fatsecret_hedges_with_off():
     off_mock.get_product.assert_called_once()
 
 
+from src.api.exceptions import ExternalServiceException
+
+
 @pytest.mark.asyncio
-async def test_request_wide_timeout_returns_none_when_all_hang():
+async def test_request_wide_timeout_raises_external_service_exception_and_cleans_up_tasks():
     repo = _DummyRepo()
     fs_mock = AsyncMock()
 
@@ -153,5 +156,44 @@ async def test_request_wide_timeout_returns_none_when_all_hang():
         language="en",
     )
 
-    result = await handler.handle(query)
-    assert result is None
+    with pytest.raises(ExternalServiceException) as exc_info:
+        await handler.handle(query)
+    assert exc_info.value.error_code == "BARCODE_LOOKUP_TIMEOUT"
+
+
+@pytest.mark.asyncio
+async def test_repeated_barcode_scan_maintains_estimate_status():
+    repo = _DummyRepo()
+    handler = LookupBarcodeQueryHandler(
+        open_food_facts_service=AsyncMock(get_product=AsyncMock(return_value=None)),
+        fat_secret_service=AsyncMock(get_product=AsyncMock(return_value=None)),
+        async_uow_factory=_DummyUowFactory(repo),
+    )
+
+    # 1. First scan generates an AI estimate
+    estimate_payload = {
+        "name": "Estimated Homemade Cookies",
+        "protein_100g": 5.0,
+        "carbs_100g": 60.0,
+        "fat_100g": 20.0,
+        "calories_100g": 440.0,
+        "source": "ai_estimate",
+        "is_food": True,
+    }
+    handler._ai_estimate = AsyncMock(return_value=estimate_payload)
+
+    query = LookupBarcodeQuery(
+        barcode="00012345678999",
+        scanned_barcode="00012345678999",
+        language="en",
+    )
+
+    first_res = await handler.handle(query)
+    assert first_res is not None
+    assert first_res["is_estimate"] is True
+    assert first_res["source"] == "ai_estimate"
+
+    # 2. Second scan should NOT trust the cached row as a verified catalog item
+    second_res = await handler.handle(query)
+    assert second_res is not None
+    assert second_res["is_estimate"] is True

@@ -623,6 +623,13 @@ class AsyncFoodReferenceRepository:
             select(FoodReferenceModel)
             .where(FoodReferenceModel.name_normalized.in_(names_normalized))
             .where(self._integrity_repository.public_eligibility_clause())
+            .where(
+                or_(
+                    FoodReferenceModel.source_namespace != "ai_estimate",
+                    FoodReferenceModel.source_namespace.is_(None),
+                )
+            )
+            .where(FoodReferenceModel.source != "ai_estimate")
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)
@@ -639,6 +646,13 @@ class AsyncFoodReferenceRepository:
             select(FoodReferenceModel)
             .where(FoodReferenceModel.name_normalized == name_normalized)
             .where(self._integrity_repository.public_eligibility_clause())
+            .where(
+                or_(
+                    FoodReferenceModel.source_namespace != "ai_estimate",
+                    FoodReferenceModel.source_namespace.is_(None),
+                )
+            )
+            .where(FoodReferenceModel.source != "ai_estimate")
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)
