@@ -42,6 +42,9 @@ class _StubOrchestrator:
         self.cleared = False
         self.prepared = None
 
+    def release_slot(self, prepared) -> None:
+        return None
+
     async def get_thread(self, **kwargs):
         return self.thread_payload
 
