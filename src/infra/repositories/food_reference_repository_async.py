@@ -41,6 +41,9 @@ from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_integrity_data,
     food_reference_model_to_nutrition_projection,
 )
+from src.infra.repositories.food_reference_quarantine import (
+    ai_estimate_quarantine_clause,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -185,12 +188,7 @@ class AsyncFoodReferenceRepository:
                 FoodReferenceModel.density,
             )
             .where(self._integrity_repository.public_eligibility_clause())
-            .where(
-                or_(
-                    FoodReferenceModel.source_namespace != "ai_estimate",
-                    FoodReferenceModel.source_namespace.is_(None),
-                )
-            )
+            .where(ai_estimate_quarantine_clause())
             .order_by(
                 FoodReferenceModel.is_verified.desc(),
                 FoodReferenceModel.id.asc(),
@@ -225,12 +223,7 @@ class AsyncFoodReferenceRepository:
             )
             .where(FoodReferenceModel.name_normalized == name_normalized)
             .where(self._integrity_repository.public_eligibility_clause())
-            .where(
-                or_(
-                    FoodReferenceModel.source_namespace != "ai_estimate",
-                    FoodReferenceModel.source_namespace.is_(None),
-                )
-            )
+            .where(ai_estimate_quarantine_clause())
             .order_by(
                 FoodReferenceModel.is_verified.desc(), FoodReferenceModel.id.asc()
             )
@@ -306,12 +299,7 @@ class AsyncFoodReferenceRepository:
             .where(FoodReferenceModel.name.ilike(f"%{query}%"))
             .where(FoodReferenceModel.region.in_([region, "global"]))
             .where(self._integrity_repository.public_eligibility_clause())
-            .where(
-                or_(
-                    FoodReferenceModel.source_namespace != "ai_estimate",
-                    FoodReferenceModel.source_namespace.is_(None),
-                )
-            )
+            .where(ai_estimate_quarantine_clause())
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
             .limit(limit)
         )
@@ -371,12 +359,7 @@ class AsyncFoodReferenceRepository:
         base_stmt = (
             select(FoodReferenceModel)
             .where(self._integrity_repository.public_eligibility_clause())
-            .where(
-                or_(
-                    FoodReferenceModel.source_namespace != "ai_estimate",
-                    FoodReferenceModel.source_namespace.is_(None),
-                )
-            )
+            .where(ai_estimate_quarantine_clause())
             .where(FoodReferenceModel.region.in_([region, "global"]))
             .where(match_clause)
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
@@ -623,13 +606,7 @@ class AsyncFoodReferenceRepository:
             select(FoodReferenceModel)
             .where(FoodReferenceModel.name_normalized.in_(names_normalized))
             .where(self._integrity_repository.public_eligibility_clause())
-            .where(
-                or_(
-                    FoodReferenceModel.source_namespace != "ai_estimate",
-                    FoodReferenceModel.source_namespace.is_(None),
-                )
-            )
-            .where(FoodReferenceModel.source != "ai_estimate")
+            .where(ai_estimate_quarantine_clause())
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)
@@ -646,13 +623,7 @@ class AsyncFoodReferenceRepository:
             select(FoodReferenceModel)
             .where(FoodReferenceModel.name_normalized == name_normalized)
             .where(self._integrity_repository.public_eligibility_clause())
-            .where(
-                or_(
-                    FoodReferenceModel.source_namespace != "ai_estimate",
-                    FoodReferenceModel.source_namespace.is_(None),
-                )
-            )
-            .where(FoodReferenceModel.source != "ai_estimate")
+            .where(ai_estimate_quarantine_clause())
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)

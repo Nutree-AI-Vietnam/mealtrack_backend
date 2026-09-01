@@ -21,6 +21,7 @@ class FoodLabelEvalCase:
     expected_calories_per_serving: float
     expected_macros: dict[str, float]
     ai_payload: dict[str, Any] = field(default_factory=dict)
+    description: str = ""
 
 
 @dataclass(frozen=True)

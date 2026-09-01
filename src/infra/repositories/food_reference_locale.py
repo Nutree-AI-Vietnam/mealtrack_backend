@@ -26,6 +26,9 @@ from src.infra.repositories.food_reference_integrity_repository import (
 from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_dict,
 )
+from src.infra.repositories.food_reference_quarantine import (
+    ai_estimate_quarantine_clause,
+)
 from src.infra.repositories.serving_phrase_repository import ServingPhraseRepository
 
 _DISPLAY_LOAD_OPTIONS = (
@@ -60,13 +63,7 @@ class FoodReferenceLocaleRepository:
         stmt = (
             select(FoodReferenceModel)
             .where(self._integrity_repository.public_eligibility_clause())
-            .where(
-                or_(
-                    FoodReferenceModel.source_namespace != "ai_estimate",
-                    FoodReferenceModel.source_namespace.is_(None),
-                )
-            )
-            .where(FoodReferenceModel.source != "ai_estimate")
+            .where(ai_estimate_quarantine_clause())
             .where(or_(*conditions))
             .options(*_DISPLAY_LOAD_OPTIONS)
         )

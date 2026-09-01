@@ -57,6 +57,7 @@ async def test_search_by_name_excludes_ai_estimate():
         "source_namespace !=" in compiled_sql
         or "source_namespace IS NULL" in compiled_sql
     )
+    assert "source !=" in compiled_sql
 
 
 @pytest.mark.asyncio
@@ -71,6 +72,7 @@ async def test_search_local_excludes_ai_estimate():
         "source_namespace !=" in compiled_sql
         or "source_namespace IS NULL" in compiled_sql
     )
+    assert "source !=" in compiled_sql
 
 
 @pytest.mark.asyncio
@@ -85,6 +87,7 @@ async def test_list_catalog_seed_candidates_excludes_ai_estimate():
         "source_namespace !=" in compiled_sql
         or "source_namespace IS NULL" in compiled_sql
     )
+    assert "source !=" in compiled_sql
 
 
 @pytest.mark.asyncio
@@ -99,6 +102,7 @@ async def test_find_by_locale_names_excludes_ai_estimate():
         "source_namespace !=" in compiled_sql
         or "source_namespace IS NULL" in compiled_sql
     )
+    assert "source !=" in compiled_sql
 
 
 @pytest.mark.asyncio
