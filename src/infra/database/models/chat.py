@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
-    Computed,
     DateTime,
     ForeignKey,
     Index,
@@ -25,6 +25,8 @@ from src.infra.database.base import Base
 from src.infra.database.models.base import BaseMixin
 
 CHAT_EMBEDDING_DIMENSIONS = 1536
+_StringArray = ARRAY(String).with_variant(JSON(), "sqlite")
+_TSVector = TSVECTOR().with_variant(Text(), "sqlite")
 
 
 class ChatThreadORM(Base, BaseMixin):
@@ -81,7 +83,7 @@ class ChatMessageORM(Base, BaseMixin):
     provider_response_id = Column(String(128), nullable=True)
     prompt_version = Column(String(32), nullable=True)
     context_version = Column(String(32), nullable=True)
-    citation_source_keys = Column(ARRAY(String), nullable=False, server_default="{}")
+    citation_source_keys = Column(_StringArray, nullable=False, default=list)
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
     cached_tokens = Column(Integer, nullable=True)
@@ -131,9 +133,9 @@ class ChatKnowledgeDocumentORM(Base, BaseMixin):
     reviewer_id = Column(String(128), nullable=False)
     approved_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     expires_at = Column(DateTime(timezone=True), nullable=True)
-    safety_tags = Column(ARRAY(String), nullable=False, server_default="{}")
-    topic_tags = Column(ARRAY(String), nullable=False, server_default="{}")
-    audience_tags = Column(ARRAY(String), nullable=False, server_default="{}")
+    safety_tags = Column(_StringArray, nullable=False, default=list)
+    topic_tags = Column(_StringArray, nullable=False, default=list)
+    audience_tags = Column(_StringArray, nullable=False, default=list)
     active = Column(Boolean, nullable=False, server_default="true")
 
     chunks = relationship(
@@ -159,11 +161,7 @@ class ChatKnowledgeChunkORM(Base, BaseMixin):
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     token_count = Column(Integer, nullable=False, default=0)
-    tsv = Column(
-        TSVECTOR,
-        Computed("to_tsvector('simple', coalesce(content, ''))", persisted=True),
-        nullable=False,
-    )
+    tsv = Column(_TSVector, nullable=True)
     embedding = Column(Vector(CHAT_EMBEDDING_DIMENSIONS), nullable=True)
 
     document = relationship(

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from functools import lru_cache
+from typing import Any
 
 from src.app.services.chat_context_builder import ChatContextBuilder
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import ChatProviderUnavailableError
+from src.domain.model.chat import ChatCompletionDelta, ChatHistoryTurn
+from src.domain.ports.chat_completion_port import ChatCompletionPort
+from src.domain.ports.chat_embedding_port import ChatEmbeddingPort
 from src.infra.adapters.chat_knowledge_retrieval_adapter import (
     ChatKnowledgeRetrievalAdapter,
 )
@@ -33,6 +38,8 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
     )
     from src.api.base_dependencies import get_cache_service
 
+    completion: ChatCompletionPort
+    embedding: ChatEmbeddingPort
     if api_key:
         completion = OpenAIChatCompletionAdapter(
             api_key=api_key,
@@ -68,14 +75,33 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
     )
 
 
-class _UnavailableCompletion:
-    async def stream(self, **kwargs):
+class _UnavailableCompletion(ChatCompletionPort):
+    async def stream(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        grounding_message: str,
+        history: list[ChatHistoryTurn],
+        user_message: str,
+        max_output_tokens: int,
+        cache_kwargs: dict[str, Any] | None = None,
+    ) -> AsyncIterator[ChatCompletionDelta]:
+        del (
+            model,
+            system_instructions,
+            grounding_message,
+            history,
+            user_message,
+            max_output_tokens,
+            cache_kwargs,
+        )
         if False:  # pragma: no cover - makes this an async generator
-            yield None
+            yield ChatCompletionDelta(text="")
         raise ChatProviderUnavailableError(retry_after_seconds=30, retryable=True)
 
 
-class _UnavailableEmbedding:
+class _UnavailableEmbedding(ChatEmbeddingPort):
     async def embed_query(self, text: str) -> list[float]:
         del text
         return []

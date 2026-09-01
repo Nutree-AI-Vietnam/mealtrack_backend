@@ -161,12 +161,7 @@ def upgrade() -> None:
         sa.Column("chunk_index", sa.Integer(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column(
-            "tsv",
-            postgresql.TSVECTOR(),
-            sa.Computed("to_tsvector('simple', coalesce(content, ''))", persisted=True),
-            nullable=False,
-        ),
+        sa.Column("tsv", postgresql.TSVECTOR(), nullable=True),
         sa.Column("embedding", Vector(1536), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -191,9 +186,29 @@ def upgrade() -> None:
         "CREATE INDEX ix_chat_knowledge_chunk_embedding "
         "ON chat_knowledge_chunk USING hnsw (embedding vector_cosine_ops)"
     )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION chat_knowledge_chunk_tsv_refresh()
+        RETURNS trigger AS $$
+        BEGIN
+            NEW.tsv := to_tsvector('simple', coalesce(NEW.content, ''));
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER trg_chat_knowledge_chunk_tsv
+        BEFORE INSERT OR UPDATE OF content ON chat_knowledge_chunk
+        FOR EACH ROW EXECUTE PROCEDURE chat_knowledge_chunk_tsv_refresh()
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER IF EXISTS trg_chat_knowledge_chunk_tsv ON chat_knowledge_chunk")
+    op.execute("DROP FUNCTION IF EXISTS chat_knowledge_chunk_tsv_refresh()")
     op.execute("DROP INDEX IF EXISTS ix_chat_knowledge_chunk_embedding")
     op.drop_index("ix_chat_knowledge_chunk_tsv", table_name="chat_knowledge_chunk")
     op.drop_index(

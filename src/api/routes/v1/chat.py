@@ -58,7 +58,7 @@ async def clear_chat_thread(
     return ChatClearResponse.model_validate(payload)
 
 
-@router.post("/messages")
+@router.post("/messages", response_model=None)
 @limiter.limit("10/minute")
 async def post_chat_message(
     request: Request,
@@ -66,7 +66,7 @@ async def post_chat_message(
     user_id: str = Depends(get_current_user_id),
     orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
     idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
-) -> StreamingResponse:
+) -> StreamingResponse | JSONResponse:
     try:
         idempotency_key = normalize_idempotency_key(idempotency_key_header)
     except ValueError as exc:
