@@ -385,6 +385,8 @@ def get_food_search_event_bus() -> EventBus:
             macro_validation_service=macro_validation_service,
             food_data_service=food_data_service,
             food_mapping_service=food_mapping_service,
+            request_timeout_seconds=settings.BARCODE_REQUEST_TIMEOUT_SECONDS,
+            hedge_delay_seconds=settings.BARCODE_HEDGE_DELAY_SECONDS,
         ),
     )
 

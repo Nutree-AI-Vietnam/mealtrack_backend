@@ -1,8 +1,10 @@
 import asyncio
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
 
+from src.api.exceptions import ExternalServiceException
 from src.app.handlers.query_handlers.lookup_barcode_query_handler import (
     LookupBarcodeQueryHandler,
 )
@@ -21,7 +23,6 @@ class _DummyRepo:
         self.upserts.append(data)
         saved = dict(data)
         saved.setdefault("id", 123)
-        saved.setdefault("is_verified", True)
         self._store[data.get("barcode")] = saved
         return saved
 
@@ -126,9 +127,6 @@ async def test_slow_fatsecret_hedges_with_off():
     off_mock.get_product.assert_called_once()
 
 
-from src.api.exceptions import ExternalServiceException
-
-
 @pytest.mark.asyncio
 async def test_request_wide_timeout_raises_external_service_exception_and_cleans_up_tasks():
     repo = _DummyRepo()
@@ -197,3 +195,72 @@ async def test_repeated_barcode_scan_maintains_estimate_status():
     second_res = await handler.handle(query)
     assert second_res is not None
     assert second_res["is_estimate"] is True
+
+
+@pytest.mark.asyncio
+async def test_partial_fatsecret_name_is_passed_to_ai_estimate():
+    repo = _DummyRepo()
+    fs_mock = AsyncMock()
+    fs_mock.get_product.return_value = {"name": "Partial Oats"}
+    off_mock = AsyncMock()
+    off_mock.get_product.return_value = None
+
+    handler = LookupBarcodeQueryHandler(
+        open_food_facts_service=off_mock,
+        fat_secret_service=fs_mock,
+        async_uow_factory=_DummyUowFactory(repo),
+        hedge_delay_seconds=0.01,
+    )
+    handler._ai_estimate = AsyncMock(
+        return_value={
+            "name": "Estimated Oats",
+            "protein_100g": 13.0,
+            "carbs_100g": 68.0,
+            "fat_100g": 7.0,
+            "calories_100g": 389.0,
+            "source": "ai_estimate",
+            "is_food": True,
+        }
+    )
+
+    query = LookupBarcodeQuery(
+        barcode="00012345678905",
+        scanned_barcode="00012345678905",
+        language="en",
+    )
+    result = await handler.handle(query)
+
+    assert result is not None
+    assert result["is_estimate"] is True
+    handler._ai_estimate.assert_awaited_once()
+    assert handler._ai_estimate.await_args.args[2] == "Partial Oats"
+
+
+@pytest.mark.asyncio
+async def test_trusted_provider_miss_reasons_are_logged(caplog):
+    repo = _DummyRepo()
+    fs_mock = AsyncMock()
+    fs_mock.get_product.return_value = {"name": "Partial Oats"}
+    off_mock = AsyncMock()
+    off_mock.get_product.return_value = None
+
+    handler = LookupBarcodeQueryHandler(
+        open_food_facts_service=off_mock,
+        fat_secret_service=fs_mock,
+        async_uow_factory=_DummyUowFactory(repo),
+        hedge_delay_seconds=0.01,
+    )
+    handler._ai_estimate = AsyncMock(return_value=None)
+
+    query = LookupBarcodeQuery(
+        barcode="00012345678905",
+        scanned_barcode="00012345678905",
+        language="en",
+    )
+    with caplog.at_level(logging.WARNING):
+        result = await handler.handle(query)
+
+    assert result is None
+    assert "fatsecret_partial_no_nutrition" in caplog.text
+    assert "openfoodfacts_empty" in caplog.text
+    assert "usda_fdc_empty" in caplog.text

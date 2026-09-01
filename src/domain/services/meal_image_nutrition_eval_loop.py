@@ -20,6 +20,7 @@ class MealImageEvalCase:
     expected_calorie_range: tuple[float, float]
     ai_payload: dict[str, Any] = field(default_factory=dict)
     local_reference: dict[str, Any] | None = None
+    description: str = ""
 
 
 @dataclass(frozen=True)
