@@ -2,7 +2,11 @@
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.domain.model.chat import CHAT_CONTEXT_VERSION, CHAT_PROMPT_VERSION
+from src.domain.model.chat import (
+    CHAT_CONTEXT_VERSION,
+    CHAT_DEFAULT_MODEL,
+    CHAT_PROMPT_VERSION,
+)
 from src.infra.services.durable_write_service import (
     RETENTION_DAYS,
     durable_write_schema_is_ready,
@@ -61,14 +65,12 @@ async def durable_write_capabilities() -> dict[str, object]:
 @router.get("/chat")
 async def chat_capabilities() -> dict[str, object]:
     """Advertise the read-only single-thread Nutree coach contract."""
-    from src.infra.config.settings import settings
-
     return {
         "chat": True,
         "thread_model": "single",
         "read_only": True,
-        "default_model": settings.CHAT_MODEL,
-        "escalation_enabled": bool(settings.CHAT_ESCALATION_MODEL),
+        "default_model": CHAT_DEFAULT_MODEL,
+        "escalation_enabled": False,
         "sse": True,
         "header": "Idempotency-Key",
         "exact_replay": True,

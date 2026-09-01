@@ -28,6 +28,7 @@ CHAT_PROMPT_VERSION = "chat_prompt_v1"
 CHAT_CONTEXT_VERSION = "chat_context_v1"
 CHAT_RETRIEVAL_VERSION = "chat_retrieval_v1"
 CHAT_EVAL_VERSION = "chat_eval_v1"
+CHAT_DEFAULT_MODEL = "gpt-5.6-luna"
 
 CHAT_HISTORY_LIMIT = 20
 CHAT_RECENT_MEAL_DAYS = 3

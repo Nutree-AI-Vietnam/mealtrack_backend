@@ -213,3 +213,5 @@ def test_chat_capabilities_advertise_single_thread_contract():
     assert body["read_only"] is True
     assert body["sse"] is True
     assert body["header"] == "Idempotency-Key"
+    assert body["default_model"] == "gpt-5.6-luna"
+    assert body["escalation_enabled"] is False

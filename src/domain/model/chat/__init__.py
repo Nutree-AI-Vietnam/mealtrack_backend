@@ -2,6 +2,7 @@
 
 from src.domain.model.chat.models import (
     CHAT_CONTEXT_VERSION,
+    CHAT_DEFAULT_MODEL,
     CHAT_EVAL_VERSION,
     CHAT_HISTORY_LIMIT,
     CHAT_MAX_OUTPUT_TOKENS,
@@ -31,6 +32,7 @@ from src.domain.model.chat.models import (
 
 __all__ = [
     "CHAT_CONTEXT_VERSION",
+    "CHAT_DEFAULT_MODEL",
     "CHAT_EVAL_VERSION",
     "CHAT_HISTORY_LIMIT",
     "CHAT_MAX_OUTPUT_TOKENS",
