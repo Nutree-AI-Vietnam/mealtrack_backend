@@ -139,6 +139,7 @@ from src.app.handlers.query_handlers import (
     GetMovementCatalogQueryHandler,
     GetNotificationPreferencesQueryHandler,
     GetPopularStaplesQueryHandler,
+    GetProgressSummaryQueryHandler,
     GetProviderFoodDetailsQueryHandler,
     GetSavedSuggestionsQueryHandler,
     GetStreakQueryHandler,
@@ -202,7 +203,7 @@ from src.app.queries.meal_recommendation import (
 from src.app.queries.movement import GetDailyMovementQuery, GetMovementCatalogQuery
 from src.app.queries.notification import GetNotificationPreferencesQuery
 from src.app.queries.nutrition import GetActivitiesPresenceQuery, GetNutritionBulkQuery
-from src.app.queries.progress import GetJourneyProgressQuery
+from src.app.queries.progress import GetJourneyProgressQuery, GetProgressSummaryQuery
 from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
@@ -961,6 +962,10 @@ def get_configured_event_bus() -> EventBus:
             uow=AsyncUnitOfWork(),
             cache_service=cache_service,
         ),
+    )
+    event_bus.register_handler(
+        GetProgressSummaryQuery,
+        GetProgressSummaryQueryHandler(cache_service=cache_service),
     )
 
     # Register hydration handlers

@@ -10,6 +10,7 @@ from .base import BaseMixin, PrimaryEntityMixin, SecondaryEntityMixin, Timestamp
 
 # Cheat days
 from .cheat_day.cheat_day import CheatDayORM
+from .daily_target_snapshot import DailyTargetSnapshotORM
 
 # Enums
 from .enums import (
@@ -147,6 +148,7 @@ __all__ = [
     "WeeklyMacroBudgetORM",
     # Cheat days
     "CheatDayORM",
+    "DailyTargetSnapshotORM",
     # Food reference (evolved from barcode_products)
     "FoodReferenceModel",
     "FoodReferenceNutrientModel",
