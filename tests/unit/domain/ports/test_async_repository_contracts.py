@@ -1,6 +1,7 @@
 import inspect
 
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.chat_repository_port import ChatRepositoryPort
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.ports.notification_repository_port import NotificationRepositoryPort
 from src.domain.ports.saved_suggestion_repository_port import (
@@ -88,6 +89,21 @@ def test_repository_ports_are_async_contracts():
             "delete_notification_preferences",
         ],
     )
+    _assert_async_methods(
+        ChatRepositoryPort,
+        [
+            "get_or_create_thread",
+            "get_thread",
+            "claim_turn",
+            "list_completed_messages",
+            "list_recent_completed_history",
+            "complete_assistant_message",
+            "fail_assistant_message",
+            "count_user_turns_since",
+            "clear_thread",
+            "delete_user_chat",
+        ],
+    )
 
 
 def test_async_unit_of_work_contract_declares_runtime_repositories():
@@ -107,6 +123,7 @@ def test_async_unit_of_work_contract_declares_runtime_repositories():
         "movement_entries",
         "food_references",
         "meal_translations",
+        "chat",
     }
 
     assert expected_repositories <= set(AsyncUnitOfWorkPort.__annotations__)

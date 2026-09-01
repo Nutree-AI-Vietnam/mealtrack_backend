@@ -30,7 +30,6 @@ from .feature_flag import FeatureFlag
 from .food_reference_model import FoodReferenceModel
 from .food_reference_nutrient import FoodReferenceNutrientModel
 from .food_reference_serving_size import FoodReferenceServingSizeModel
-from .serving_phrase_translation import ServingPhraseTranslationModel
 from .hydration_entry import HydrationEntryORM
 from .meal.food_item_translation_model import FoodItemTranslationORM
 
@@ -66,6 +65,7 @@ from .pending_meal_image_resolution import PendingMealImageResolutionModel
 from .saved_suggestion import SavedSuggestionModel
 from .saved_suggestion_item import SavedSuggestionItemModel
 from .saved_suggestion_step import SavedSuggestionStepModel
+from .serving_phrase_translation import ServingPhraseTranslationModel
 from .subscription import Subscription
 from .user.body_fat_visual_profile import BodyFatVisualProfile
 from .user.profile import UserProfile
@@ -82,6 +82,14 @@ BarcodeProductModel = FoodReferenceModel
 
 # AI Handshake guest trial quota
 from .ai_handshake_guest_trial_quota import AiHandshakeGuestTrialQuota
+
+# Chat coach
+from .chat import (
+    ChatKnowledgeChunkORM,
+    ChatKnowledgeDocumentORM,
+    ChatMessageORM,
+    ChatThreadORM,
+)
 
 # Durable mutation replay
 from .durable_write_record import DurableWriteRecordORM
@@ -180,6 +188,10 @@ __all__ = [
     # AI Handshake guest trial quota
     "AiHandshakeGuestTrialQuota",
     "WebFunnelLead",
+    "ChatThreadORM",
+    "ChatMessageORM",
+    "ChatKnowledgeDocumentORM",
+    "ChatKnowledgeChunkORM",
     "WebFunnelClaim",
     "WebFunnelOutbox",
     "WebFunnelProviderEvent",

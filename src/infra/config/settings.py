@@ -174,6 +174,22 @@ class Settings(BaseSettings):
         default="mealtrack",
         description="Safe prefix for OpenAI prompt_cache_key values.",
     )
+    # Single-thread Nutree coach
+    CHAT_MODEL: str = Field(
+        default="gpt-5.6-luna",
+        description="Default chat generation model. Luna explains Nutree values; it does not calculate them.",
+    )
+    CHAT_ESCALATION_MODEL: str | None = Field(
+        default=None,
+        description="Optional escalation model. Disabled for MVP until evaluation proves a quality gap.",
+    )
+    CHAT_EMBEDDING_MODEL: str = Field(default="text-embedding-3-small")
+    CHAT_REASONING_EFFORT: str = Field(default="low")
+    CHAT_MAX_OUTPUT_TOKENS: int = Field(default=900, ge=100, le=2000)
+    CHAT_REQUEST_TIMEOUT_SECONDS: int = Field(default=45, ge=5)
+    CHAT_DAILY_TURN_BUDGET: int = Field(default=40, ge=1)
+    CHAT_GENERATION_LEASE_SECONDS: int = Field(default=90, ge=15)
+    CHAT_GLOBAL_CONCURRENCY: int = Field(default=8, ge=1)
     # Image search (meal discovery photos)
     PEXELS_API_KEY: str | None = Field(
         default=None, description="Pexels API key for food photos"

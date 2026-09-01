@@ -150,12 +150,17 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             )
             notif_prefs_count = notif_result.rowcount
 
+            chat_count = 0
+            if getattr(uow, "chat", None) is not None:
+                await uow.chat.delete_user_chat(user_id)
+                chat_count = 1
+
             # Flush to ensure all changes are pending in the transaction
             await uow.session.flush()
 
             logger.info(
                 f"Soft-deleted related data: meals={meals_count}, "
-                f"notification_prefs={notif_prefs_count}"
+                f"notification_prefs={notif_prefs_count}, chat={chat_count}"
             )
         except Exception:
             raise

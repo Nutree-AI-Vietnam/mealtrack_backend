@@ -17,6 +17,7 @@ from src.infra.repositories.body_fat_visual_profile_repository_async import (
 from src.infra.repositories.catalog_recipe_repository_async import (
     AsyncCatalogMealRepository,
 )
+from src.infra.repositories.chat_repository_async import AsyncChatRepository
 from src.infra.repositories.cheat_day_repository_async import AsyncCheatDayRepository
 from src.infra.repositories.food_reference_integrity_repository import (
     FoodReferenceIntegrityRepository,
@@ -138,6 +139,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.promo_codes = PromoCodeRepository(session)
         self.referrals = ReferralRepository(session)
         self.meal_write_operations = AsyncMealWriteOperationRepository(session)
+        self.chat = AsyncChatRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         session = self.session

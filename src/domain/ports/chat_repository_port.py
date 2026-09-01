@@ -1,0 +1,98 @@
+"""Persistence port for the single-thread chat coach."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from datetime import datetime
+
+from src.domain.model.chat import (
+    ChatMessage,
+    ChatThread,
+    ChatTurnClaim,
+    ChatUsage,
+)
+
+
+class ChatRepositoryPort(ABC):
+    """Owns thread/message persistence and turn-claim invariants."""
+
+    @abstractmethod
+    async def get_or_create_thread(self, user_id: str) -> ChatThread:
+        """Return the unique thread for the user, creating it if needed."""
+
+    @abstractmethod
+    async def get_thread(self, user_id: str) -> ChatThread | None:
+        """Return the user's thread without creating one."""
+
+    @abstractmethod
+    async def claim_turn(
+        self,
+        *,
+        user_id: str,
+        content: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        lease_expires_at: datetime,
+    ) -> ChatTurnClaim:
+        """Persist the user message and a generating assistant placeholder."""
+
+    @abstractmethod
+    async def list_completed_messages(
+        self,
+        *,
+        thread_id: str,
+        limit: int,
+        before_message_id: str | None = None,
+    ) -> list[ChatMessage]:
+        """Return completed messages newest-first, optionally before a cursor."""
+
+    @abstractmethod
+    async def list_recent_completed_history(
+        self,
+        *,
+        thread_id: str,
+        limit: int,
+    ) -> list[ChatMessage]:
+        """Return the latest completed messages oldest-first for model history."""
+
+    @abstractmethod
+    async def complete_assistant_message(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        model: str,
+        usage: ChatUsage,
+        prompt_version: str,
+        context_version: str,
+        citation_source_keys: tuple[str, ...],
+        provider_response_id: str | None,
+    ) -> ChatMessage:
+        """Mark a generating assistant message completed."""
+
+    @abstractmethod
+    async def fail_assistant_message(
+        self,
+        *,
+        message_id: str,
+        error_code: str,
+        content: str | None = None,
+    ) -> ChatMessage | None:
+        """Mark a generating assistant message failed."""
+
+    @abstractmethod
+    async def count_user_turns_since(
+        self,
+        *,
+        user_id: str,
+        since: datetime,
+    ) -> int:
+        """Count user messages created at or after *since*."""
+
+    @abstractmethod
+    async def clear_thread(self, user_id: str) -> ChatThread:
+        """Delete messages and summary while preserving the one-thread identity."""
+
+    @abstractmethod
+    async def delete_user_chat(self, user_id: str) -> None:
+        """Remove the thread and messages during account deletion."""
