@@ -204,12 +204,13 @@ class AsyncMealRepository(MealRepositoryPort):
         nutrition_result = await self.session.execute(
             select(NutritionORM).where(NutritionORM.meal_id == meal_id)
         )
-        nutrition = nutrition_result.scalars().first()
+        nutritions = nutrition_result.scalars().all()
+        nutrition_ids = [n.id for n in nutritions]
 
-        if nutrition:
+        if nutrition_ids:
             await self.session.execute(
                 update(FoodItemORM)
-                .where(FoodItemORM.nutrition_id == nutrition.id)
+                .where(FoodItemORM.nutrition_id.in_(nutrition_ids))
                 .values(is_deleted=True, nutrition_id=None)
             )
 
