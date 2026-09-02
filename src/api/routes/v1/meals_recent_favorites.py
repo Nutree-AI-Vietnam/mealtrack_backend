@@ -36,13 +36,13 @@ router = APIRouter()
 @router.get("/recent", response_model=RecentMealsListResponse)
 async def list_recent_meals(
     request: Request,
-    limit: int = Query(20, ge=1, le=50, description="Max recent meals to return"),
+    limit: int = Query(10, ge=1, le=10, description="Max recent meals to return"),
     user_id: str = Depends(get_current_user_id),
     language: str = Depends(get_request_language),
     event_bus: Any = Depends(get_configured_event_bus),
 ) -> RecentMealsListResponse:
 
-    """Retrieve unique recent meals from the last 30 calendar days."""
+    """Retrieve up to 10 distinct recent meals from the last 7 local calendar days."""
     header_tz = request.headers.get("X-Timezone")
     user_tz = await event_bus.send(
         GetUserTimezoneQuery(user_id=user_id, header_timezone=header_tz)
@@ -59,7 +59,7 @@ async def list_recent_meals(
 
 @router.get("/favorites", response_model=FavoriteMealsListResponse)
 async def list_favorite_meals(
-    limit: int = Query(50, ge=1, le=100, description="Max favorites to return"),
+    limit: int = Query(20, ge=1, le=20, description="Max favorites to return"),
     user_id: str = Depends(get_current_user_id),
     language: str = Depends(get_request_language),
     event_bus: Any = Depends(get_configured_event_bus),

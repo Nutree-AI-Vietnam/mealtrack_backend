@@ -166,6 +166,12 @@ def e2e_client(
     monkeypatch.setenv("ENABLE_DEV_AUTH_BYPASS", "0")
     event_bus_module._configured_event_bus = None
 
+    # Rate limiting is not under test; the TestClient shares one IP key, so
+    # multi-meal scenarios would trip the 10/minute analyze limit.
+    from src.api.middleware.rate_limit import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+
     user_id_str = str(user.id)
     app.dependency_overrides[get_current_user_id] = lambda: user_id_str
 
@@ -194,7 +200,7 @@ class TestRecentFavoriteMealsE2E:
         assert meal_1["status"] == "ready"
 
         # 2. Check GET /v1/meals/recent -> meal_1 is in recent, is_favorite is False
-        recent_resp = client.get("/v1/meals/recent?limit=20")
+        recent_resp = client.get("/v1/meals/recent?limit=10")
         assert recent_resp.status_code == 200
         recent_data = recent_resp.json()
         assert recent_data["total"] >= 1
@@ -204,7 +210,7 @@ class TestRecentFavoriteMealsE2E:
         assert found[0]["favorited_at"] is None
 
         # 3. Check GET /v1/meals/favorites -> initially empty
-        fav_resp = client.get("/v1/meals/favorites?limit=50")
+        fav_resp = client.get("/v1/meals/favorites?limit=20")
         assert fav_resp.status_code == 200
         assert fav_resp.json()["total"] == 0
 
@@ -217,7 +223,7 @@ class TestRecentFavoriteMealsE2E:
         assert action_data["favorited_at"] is not None
 
         # 5. Check GET /v1/meals/favorites -> contains meal_1
-        fav_resp2 = client.get("/v1/meals/favorites?limit=50")
+        fav_resp2 = client.get("/v1/meals/favorites?limit=20")
         assert fav_resp2.status_code == 200
         fav_items = fav_resp2.json()["items"]
         assert len(fav_items) == 1
@@ -226,7 +232,7 @@ class TestRecentFavoriteMealsE2E:
         assert fav_items[0]["favorited_at"] is not None
 
         # 6. Check GET /v1/meals/recent -> revision invalidated, meal_1 is_favorite is now True
-        recent_resp2 = client.get("/v1/meals/recent?limit=20")
+        recent_resp2 = client.get("/v1/meals/recent?limit=10")
         assert recent_resp2.status_code == 200
         found2 = [m for m in recent_resp2.json()["items"] if m["meal_id"] == meal_1_id]
         assert len(found2) == 1
@@ -272,7 +278,7 @@ class TestRecentFavoriteMealsE2E:
         assert get_single.status_code == 404
 
         # 11. GET /v1/meals/recent -> meal_1 is removed from recent list
-        recent_resp3 = client.get("/v1/meals/recent?limit=20")
+        recent_resp3 = client.get("/v1/meals/recent?limit=10")
         assert recent_resp3.status_code == 200
         recent_ids = [m["meal_id"] for m in recent_resp3.json().get("items", [])]
         assert meal_1_id not in recent_ids
@@ -281,7 +287,7 @@ class TestRecentFavoriteMealsE2E:
         # 12. GET /v1/meals/favorites -> meal_1 is gone. DELETE /v1/meals/{id}
         # hard-deletes the meal row today (no soft-delete/INACTIVE path is
         # implemented), so the favorite membership disappears with the meal.
-        fav_resp3 = client.get("/v1/meals/favorites?limit=50")
+        fav_resp3 = client.get("/v1/meals/favorites?limit=20")
         assert fav_resp3.status_code == 200
         fav_ids = [m["meal_id"] for m in fav_resp3.json()["items"]]
         assert meal_1_id not in fav_ids
@@ -298,7 +304,7 @@ class TestRecentFavoriteMealsE2E:
         assert unfav_resp.status_code == 200
         assert unfav_resp.json()["is_favorite"] is False
 
-        fav_resp4 = client.get("/v1/meals/favorites?limit=50")
+        fav_resp4 = client.get("/v1/meals/favorites?limit=20")
         assert fav_resp4.status_code == 200
         assert meal_1_id not in [m["meal_id"] for m in fav_resp4.json()["items"]]
 
@@ -321,10 +327,106 @@ class TestRecentFavoriteMealsE2E:
         assert m1_id != m2_id
 
         # GET /v1/meals/recent -> both have identical content, only latest should appear
-        recent_resp = client.get("/v1/meals/recent?limit=20")
+        recent_resp = client.get("/v1/meals/recent?limit=10")
         assert recent_resp.status_code == 200
         recent_items = recent_resp.json()["items"]
 
         m_ids = [m["meal_id"] for m in recent_items]
         assert m2_id in m_ids
         assert m1_id not in m_ids
+
+    def test_recent_meals_rejects_limit_above_ten(
+        self, e2e_client, sample_image_bytes, test_session
+    ):
+        """AC: recent list is capped at 10 distinct meals."""
+        client, _user = e2e_client
+        resp = client.get("/v1/meals/recent?limit=11")
+        assert resp.status_code == 422
+
+    def test_favorites_cap_rejects_21st_without_eviction(
+        self, e2e_client, sample_image_bytes, test_session
+    ):
+        """AC: favorites cap is 20; the 21st is rejected, nothing is evicted."""
+        client, _user = e2e_client
+
+        meal_ids = []
+        for i in range(21):
+            files = {"file": (f"meal{i}.jpg", sample_image_bytes, "image/jpeg")}
+            resp = client.post("/v1/meals/image/analyze", files=files)
+            assert resp.status_code == 200
+            meal_ids.append(resp.json()["meal_id"])
+
+        # Star the first 20 -> all succeed
+        for meal_id in meal_ids[:20]:
+            resp = client.put(f"/v1/meals/{meal_id}/favorite")
+            assert resp.status_code == 200
+
+        # Re-star an existing favorite at the cap -> idempotent success
+        restar = client.put(f"/v1/meals/{meal_ids[0]}/favorite")
+        assert restar.status_code == 200
+        assert restar.json()["is_favorite"] is True
+
+        # The 21st distinct favorite -> rejected with an error, no eviction
+        rejected = client.put(f"/v1/meals/{meal_ids[20]}/favorite")
+        assert rejected.status_code == 400
+        assert "limit" in rejected.json()["detail"]["message"].lower()
+
+        fav_resp = client.get("/v1/meals/favorites?limit=20")
+        assert fav_resp.status_code == 200
+        fav_ids = {m["meal_id"] for m in fav_resp.json()["items"]}
+        assert fav_ids == set(meal_ids[:20])
+        assert meal_ids[20] not in fav_ids
+
+        # After unfavoriting one, the previously rejected meal can be starred
+        unfav = client.delete(f"/v1/meals/{meal_ids[0]}/favorite")
+        assert unfav.status_code == 200
+        retry = client.put(f"/v1/meals/{meal_ids[20]}/favorite")
+        assert retry.status_code == 200
+
+    def test_repeat_appends_to_slot_without_overwriting(
+        self, e2e_client, sample_image_bytes, test_session
+    ):
+        """AC: repeat/log-from-list appends into the target slot, never overwrites."""
+        client, _user = e2e_client
+
+        files = {"file": ("meal.jpg", sample_image_bytes, "image/jpeg")}
+        create_resp = client.post("/v1/meals/image/analyze", files=files)
+        assert create_resp.status_code == 200
+        source = create_resp.json()
+        source_id = source["meal_id"]
+
+        # First repeat into the dinner slot
+        first = client.post(
+            f"/v1/meals/{source_id}/repeat",
+            json={"meal_type": "dinner"},
+            headers={"Idempotency-Key": "append-key-1"},
+        )
+        assert first.status_code == 201
+        first_meal = first.json()
+        assert first_meal["meal_type"] == "dinner"
+
+        # Second repeat into the SAME dinner slot with a new idempotency key
+        second = client.post(
+            f"/v1/meals/{source_id}/repeat",
+            json={"meal_type": "dinner"},
+            headers={"Idempotency-Key": "append-key-2"},
+        )
+        assert second.status_code == 201
+        second_meal = second.json()
+        assert second_meal["meal_type"] == "dinner"
+        assert second_meal["meal_id"] != first_meal["meal_id"]
+
+        # Both dinner entries coexist; the first was not replaced or emptied
+        first_check = client.get(f"/v1/meals/{first_meal['meal_id']}")
+        assert first_check.status_code == 200
+        first_data = first_check.json()
+        assert first_data["meal_type"] == "dinner"
+        assert len(first_data["food_items"]) == len(source["food_items"])
+        assert {i["id"] for i in first_data["food_items"]} == {
+            i["id"] for i in first_meal["food_items"]
+        }
+
+        # Source meal is also untouched
+        source_check = client.get(f"/v1/meals/{source_id}")
+        assert source_check.status_code == 200
+        assert len(source_check.json()["food_items"]) == len(source["food_items"])
