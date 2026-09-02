@@ -8,9 +8,10 @@ Process memory for agents. Product and stack detail: `README.md`.
 # Dev
 uvicorn src.api.main:app --reload
 
-# DB
-alembic upgrade head
-alembic revision --autogenerate -m "description"
+# DB (always use the CLI; never hand-create migration files)
+./scripts/development/migrate.sh generate "description"
+./scripts/development/migrate.sh upgrade
+./scripts/development/migrate.sh status
 
 # Format / lint (pre-commit uses ruff-format)
 ruff format src/ tests/ && ruff check src/ && mypy src/
@@ -20,6 +21,12 @@ pytest tests/unit --cov=src --cov-fail-under=65
 ```
 
 ## MUST-Follow Rules (Non-Inferable)
+
+**DB migrations = use the CLI generator**
+- Always generate via `./scripts/development/migrate.sh generate "<msg>"`
+  or `python migrations/cli.py generate "<msg>"`.
+- Never hand-craft migration files, revision IDs, or filenames.
+- Every migration must implement a valid `downgrade()`.
 
 **Calories = backend is source of truth**
 - Clients must not re-derive calories.

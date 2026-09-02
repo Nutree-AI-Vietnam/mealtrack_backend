@@ -1,0 +1,12 @@
+---
+description: Database migration rules — always use the CLI generator
+globs: migrations/**,scripts/development/migrate.sh,alembic.ini
+alwaysApply: false
+---
+
+# Database Migration Rules
+
+- **Generate via CLI**: `./scripts/development/migrate.sh generate "<msg>"` or `python migrations/cli.py generate "<msg>"`.
+- **Never hand-craft** migration files, revision IDs, or filenames.
+- **Always implement** a valid `downgrade()`.
+- Prefer `./scripts/development/migrate.sh upgrade` / `status` over raw `alembic` commands.
