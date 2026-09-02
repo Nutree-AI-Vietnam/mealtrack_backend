@@ -166,6 +166,12 @@ def e2e_client(
     monkeypatch.setenv("ENABLE_DEV_AUTH_BYPASS", "0")
     event_bus_module._configured_event_bus = None
 
+    # Rate limiting is not under test; the TestClient shares one IP key, so
+    # multi-meal scenarios would trip the per-minute analyze limit.
+    from src.api.middleware.rate_limit import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+
     user_id_str = str(user.id)
     app.dependency_overrides[get_current_user_id] = lambda: user_id_str
 
@@ -194,7 +200,7 @@ class TestRecentFavoriteMealsE2E:
         assert meal_1["status"] == "ready"
 
         # 2. Check GET /v1/meals/recent -> meal_1 is in recent, is_favorite is False
-        recent_resp = client.get("/v1/meals/recent?limit=20")
+        recent_resp = client.get("/v1/meals/recent?limit=10")
         assert recent_resp.status_code == 200
         recent_data = recent_resp.json()
         assert recent_data["total"] >= 1
@@ -204,7 +210,7 @@ class TestRecentFavoriteMealsE2E:
         assert found[0]["favorited_at"] is None
 
         # 3. Check GET /v1/meals/favorites -> initially empty
-        fav_resp = client.get("/v1/meals/favorites?limit=50")
+        fav_resp = client.get("/v1/meals/favorites?limit=20")
         assert fav_resp.status_code == 200
         assert fav_resp.json()["total"] == 0
 
@@ -217,7 +223,7 @@ class TestRecentFavoriteMealsE2E:
         assert action_data["favorited_at"] is not None
 
         # 5. Check GET /v1/meals/favorites -> contains meal_1
-        fav_resp2 = client.get("/v1/meals/favorites?limit=50")
+        fav_resp2 = client.get("/v1/meals/favorites?limit=20")
         assert fav_resp2.status_code == 200
         fav_items = fav_resp2.json()["items"]
         assert len(fav_items) == 1
@@ -226,7 +232,7 @@ class TestRecentFavoriteMealsE2E:
         assert fav_items[0]["favorited_at"] is not None
 
         # 6. Check GET /v1/meals/recent -> revision invalidated, meal_1 is_favorite is now True
-        recent_resp2 = client.get("/v1/meals/recent?limit=20")
+        recent_resp2 = client.get("/v1/meals/recent?limit=10")
         assert recent_resp2.status_code == 200
         found2 = [m for m in recent_resp2.json()["items"] if m["meal_id"] == meal_1_id]
         assert len(found2) == 1
@@ -289,7 +295,7 @@ class TestRecentFavoriteMealsE2E:
         assert get_single.status_code == 404
 
         # 11. GET /v1/meals/recent -> meal_1 is removed from recent list
-        recent_resp3 = client.get("/v1/meals/recent?limit=20")
+        recent_resp3 = client.get("/v1/meals/recent?limit=10")
         assert recent_resp3.status_code == 200
         recent_ids = [m["meal_id"] for m in recent_resp3.json().get("items", [])]
         assert meal_1_id not in recent_ids
@@ -344,10 +350,57 @@ class TestRecentFavoriteMealsE2E:
         assert m1_id != m2_id
 
         # GET /v1/meals/recent -> both have identical content, only latest should appear
-        recent_resp = client.get("/v1/meals/recent?limit=20")
+        recent_resp = client.get("/v1/meals/recent?limit=10")
         assert recent_resp.status_code == 200
         recent_items = recent_resp.json()["items"]
 
         m_ids = [m["meal_id"] for m in recent_items]
         assert m2_id in m_ids
         assert m1_id not in m_ids
+
+    def test_recent_meals_rejects_limit_above_ten(
+        self, e2e_client, sample_image_bytes, test_session
+    ):
+        """AC: recent list is capped at 10 distinct meals."""
+        client, _user = e2e_client
+        resp = client.get("/v1/meals/recent?limit=11")
+        assert resp.status_code == 422
+
+    def test_repeat_appends_without_overwriting_existing_slot_entries(
+        self, e2e_client, sample_image_bytes, test_session
+    ):
+        """AC: repeat/log-from-list appends a new meal; it never replaces
+        or empties the caller's existing entries in the target slot."""
+        client, _user = e2e_client
+
+        files = {"file": ("meal.jpg", sample_image_bytes, "image/jpeg")}
+        create_resp = client.post("/v1/meals/image/analyze", files=files)
+        assert create_resp.status_code == 200
+        source_id = create_resp.json()["meal_id"]
+
+        # First repeat into the dinner slot
+        first = client.post(
+            f"/v1/meals/{source_id}/repeat",
+            json={"meal_type": "dinner"},
+            headers={"Idempotency-Key": "append-key-1"},
+        )
+        assert first.status_code == 201
+        first_meal = first.json()
+        assert first_meal["meal_type"] == "dinner"
+
+        # Second repeat into the SAME dinner slot with a new idempotency key
+        second = client.post(
+            f"/v1/meals/{source_id}/repeat",
+            json={"meal_type": "dinner"},
+            headers={"Idempotency-Key": "append-key-2"},
+        )
+        assert second.status_code == 201
+        second_meal = second.json()
+        assert second_meal["meal_type"] == "dinner"
+        assert second_meal["meal_id"] != first_meal["meal_id"]
+
+        # Both dinner entries coexist; nothing was replaced or emptied
+        for meal_id in (source_id, first_meal["meal_id"], second_meal["meal_id"]):
+            get_resp = client.get(f"/v1/meals/{meal_id}")
+            assert get_resp.status_code == 200
+            assert get_resp.json()["food_items"]

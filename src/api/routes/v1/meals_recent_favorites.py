@@ -37,7 +37,7 @@ router = APIRouter()
 @router.get("/recent", response_model=RecentMealsListResponse)
 async def list_recent_meals(
     request: Request,
-    limit: int = Query(10, ge=1, le=50, description="Max distinct recent meals"),
+    limit: int = Query(10, ge=1, le=10, description="Max distinct recent meals"),
     user_id: str = Depends(get_current_user_id),
     language: str = Depends(get_request_language),
     event_bus: Any = Depends(get_configured_event_bus),
@@ -59,7 +59,7 @@ async def list_recent_meals(
 
 @router.get("/favorites", response_model=FavoriteMealsListResponse)
 async def list_favorite_meals(
-    limit: int = Query(20, ge=1, le=100, description="Max favorites to return"),
+    limit: int = Query(20, ge=1, le=20, description="Max favorites to return"),
     user_id: str = Depends(get_current_user_id),
     language: str = Depends(get_request_language),
     event_bus: Any = Depends(get_configured_event_bus),

@@ -8,7 +8,7 @@ from typing import Any
 from src.api.mappers.meal_mapper import MealMapper
 from src.app.events.base import EventHandler, handles
 from src.app.queries.meal import GetFavoriteMealsQuery
-from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.favorite_meal_repository_port import MAX_FAVORITE_MEALS
 from src.domain.ports.meal_list_cache_port import MealListCachePort
 
 logger = logging.getLogger(__name__)
@@ -26,9 +26,8 @@ class GetFavoriteMealsQueryHandler(EventHandler[GetFavoriteMealsQuery, dict[str,
         self.uow_factory = uow_factory
         self.cache_service = cache_service
 
-
     async def handle(self, query: GetFavoriteMealsQuery) -> dict[str, Any]:
-        limit = max(1, min(query.limit, 100))
+        limit = max(1, min(query.limit, MAX_FAVORITE_MEALS))
         language = query.language or "en"
 
         # Check cache if service available

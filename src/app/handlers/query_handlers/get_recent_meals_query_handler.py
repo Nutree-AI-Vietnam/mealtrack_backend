@@ -21,7 +21,9 @@ from src.domain.utils.timezone_utils import get_zone_info, utc_now
 logger = logging.getLogger(__name__)
 
 # NM-437: recent list covers the last 7 calendar days in the user's timezone
+# and returns at most 10 distinct meals.
 RECENT_WINDOW_DAYS = 7
+RECENT_MAX_DISTINCT = 10
 
 
 @handles(GetRecentMealsQuery)
@@ -37,7 +39,7 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
         self.cache_service = cache_service
 
     async def handle(self, query: GetRecentMealsQuery) -> dict[str, Any]:
-        limit = max(1, min(query.limit, 50))
+        limit = max(1, min(query.limit, RECENT_MAX_DISTINCT))
         language = query.language or "en"
         tz_str = query.user_timezone or "UTC"
 
