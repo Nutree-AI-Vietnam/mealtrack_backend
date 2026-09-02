@@ -28,7 +28,7 @@ class GetFavoriteMealsQueryHandler(EventHandler[GetFavoriteMealsQuery, dict[str,
 
 
     async def handle(self, query: GetFavoriteMealsQuery) -> dict[str, Any]:
-        limit = max(1, min(query.limit, 100))
+        limit = max(1, min(query.limit, 20))
         language = query.language or "en"
 
         # Check cache if service available

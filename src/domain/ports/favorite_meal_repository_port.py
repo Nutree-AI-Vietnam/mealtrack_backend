@@ -41,6 +41,11 @@ class FavoriteMealRepositoryPort(ABC):
         pass
 
     @abstractmethod
+    async def count_favorites(self, user_id: str) -> int:
+        """Return the number of meals currently favorited by the user."""
+        pass
+
+    @abstractmethod
     async def filter_favorited_meal_ids(
         self,
         user_id: str,
