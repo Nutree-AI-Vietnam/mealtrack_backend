@@ -1,4 +1,4 @@
-"""Handler for retrieving unique recent meals within the last 30 calendar days."""
+"""Handler for retrieving distinct recent meals within the last 7 calendar days."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
 
 
     async def handle(self, query: GetRecentMealsQuery) -> dict[str, Any]:
-        limit = max(1, min(query.limit, 50))
+        limit = max(1, min(query.limit, 10))
         language = query.language or "en"
         tz_str = query.user_timezone or "UTC"
 
@@ -49,11 +49,11 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
             if cached is not None:
                 return cached
 
-        # Resolve 30 local calendar days
+        # Resolve the last 7 local calendar days (today plus the preceding 6)
         tz = get_zone_info(query.user_timezone or "UTC")
         today = utc_now().astimezone(tz).date()
 
-        start_date = today - timedelta(days=29)
+        start_date = today - timedelta(days=6)
         start_dt = datetime.combine(
             start_date, datetime.min.time(), tzinfo=tz
         ).astimezone(UTC)

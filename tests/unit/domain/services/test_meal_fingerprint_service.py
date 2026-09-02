@@ -99,6 +99,33 @@ def test_different_portion_produces_different_fingerprint():
 
 
 @pytest.mark.unit
+def test_same_foods_and_grams_match_despite_different_dish_names():
+    """AC: same meal = same foods + grams; dish name is not part of identity."""
+    items = [
+        ("Chicken Breast", 150.0, "g", 46.5, 0.0, 5.4),
+        ("White Rice", 200.0, "g", 5.0, 56.0, 0.6),
+    ]
+    meal1 = _make_sample_meal("Chicken Rice Bowl", items)
+    meal2 = _make_sample_meal("Com Ga", items)
+    assert compute_meal_content_fingerprint(meal1) == compute_meal_content_fingerprint(
+        meal2
+    )
+
+
+@pytest.mark.unit
+def test_itemless_meals_fall_back_to_dish_name_identity():
+    meal1 = _make_sample_meal("Mystery Bowl", [])
+    meal2 = _make_sample_meal("Other Bowl", [])
+    meal3 = _make_sample_meal("mystery bowl", [])
+    assert compute_meal_content_fingerprint(meal1) != compute_meal_content_fingerprint(
+        meal2
+    )
+    assert compute_meal_content_fingerprint(meal1) == compute_meal_content_fingerprint(
+        meal3
+    )
+
+
+@pytest.mark.unit
 def test_deduplicate_recent_meals_preserves_newest_and_limits():
     m1_id = str(uuid4())
     m2_id = str(uuid4())

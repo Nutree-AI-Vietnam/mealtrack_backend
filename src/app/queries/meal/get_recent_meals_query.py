@@ -1,4 +1,4 @@
-"""Query to retrieve unique recent meals within the last 30 calendar days."""
+"""Query to retrieve distinct recent meals within the last 7 calendar days."""
 
 from dataclasses import dataclass
 
@@ -9,5 +9,5 @@ from src.app.events.base import Query
 class GetRecentMealsQuery(Query):
     user_id: str
     user_timezone: str | None = None
-    limit: int = 20
+    limit: int = 10
     language: str = "en"
