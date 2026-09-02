@@ -418,7 +418,7 @@ class AsyncMealRepository(MealRepositoryPort):
             .order_by(MealORM.created_at.desc())
             .limit(limit)
         )
-        return _map_domain_hydratable_meals(result.unique().scalars().all())
+        return _map_domain_hydratable_meals(list(result.unique().scalars().all()))
 
     async def aggregate_linked_ingredient_history(
         self,

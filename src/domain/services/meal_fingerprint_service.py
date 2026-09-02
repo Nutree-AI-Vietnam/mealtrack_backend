@@ -10,14 +10,15 @@ from src.domain.model.meal import Meal
 
 
 def compute_meal_content_fingerprint(meal: Meal) -> str:
-    """Generate deterministic hash representing repeatable food content of a meal.
+    """Generate deterministic hash of a meal's food content identity.
 
-    Includes normalized dish name, ingredient canonical identities/names,
-    quantities, units, macros, and nutrition overrides.
-    Excludes meal IDs, timestamps, images, translations, and source metadata.
+    Two meals are the same when they contain the same foods in the same
+    amounts (AC: same foods + grams). Identity per food item is its
+    canonical reference (food_reference_id / source_food_id) or normalized
+    name, plus quantity and unit. Excludes dish name, macros, nutrition
+    overrides, meal IDs, timestamps, images, translations, and source
+    metadata.
     """
-    dish_name = (meal.dish_name or "").strip().lower()
-
     items_data: list[dict[str, Any]] = []
     food_items = getattr(getattr(meal, "nutrition", None), "food_items", None) or []
     for item in food_items:
@@ -27,29 +28,6 @@ def compute_meal_content_fingerprint(meal: Meal) -> str:
         quantity = round(float(getattr(item, "quantity", 0.0) or 0.0), 3)
         unit = (getattr(item, "unit", "") or "").strip().lower()
 
-        # Macros if present
-        macros = getattr(item, "macros", None)
-        macro_dict = None
-        if macros:
-            macro_dict = {
-                "protein": round(float(getattr(macros, "protein", 0.0) or 0.0), 1),
-                "carbs": round(float(getattr(macros, "carbs", 0.0) or 0.0), 1),
-                "fat": round(float(getattr(macros, "fat", 0.0) or 0.0), 1),
-                "fiber": round(float(getattr(macros, "fiber", 0.0) or 0.0), 1),
-                "sugar": round(float(getattr(macros, "sugar", 0.0) or 0.0), 1),
-            }
-
-        # Custom nutrition / override
-        override = getattr(item, "nutrition_override", None)
-        override_dict = None
-        if override:
-            override_dict = {
-                "calories": round(float(getattr(override, "calories", 0.0) or 0.0), 1),
-                "protein": round(float(getattr(override, "protein", 0.0) or 0.0), 1),
-                "carbs": round(float(getattr(override, "carbs", 0.0) or 0.0), 1),
-                "fat": round(float(getattr(override, "fat", 0.0) or 0.0), 1),
-            }
-
         items_data.append(
             {
                 "name": item_name,
@@ -57,8 +35,6 @@ def compute_meal_content_fingerprint(meal: Meal) -> str:
                 "source_food_id": source_food_id,
                 "quantity": quantity,
                 "unit": unit,
-                "macros": macro_dict,
-                "override": override_dict,
             }
         )
 
@@ -73,40 +49,17 @@ def compute_meal_content_fingerprint(meal: Meal) -> str:
         )
     )
 
-    meal_macros = getattr(getattr(meal, "nutrition", None), "macros", None)
-    meal_macro_dict = None
-    if meal_macros:
-        meal_macro_dict = {
-            "protein": round(float(getattr(meal_macros, "protein", 0.0) or 0.0), 1),
-            "carbs": round(float(getattr(meal_macros, "carbs", 0.0) or 0.0), 1),
-            "fat": round(float(getattr(meal_macros, "fat", 0.0) or 0.0), 1),
-            "fiber": round(float(getattr(meal_macros, "fiber", 0.0) or 0.0), 1),
-            "sugar": round(float(getattr(meal_macros, "sugar", 0.0) or 0.0), 1),
-        }
+    payload: dict[str, Any] = {"items": items_data}
+    if not items_data:
+        # Item-less meals carry no food identity; fall back to dish name so
+        # distinct manual entries do not collapse into one fingerprint.
+        payload["dish_name"] = (meal.dish_name or "").strip().lower()
 
-    meal_override = getattr(
-        getattr(meal, "nutrition", None), "nutrition_override", None
-    )
-    meal_override_dict = None
-    if meal_override:
-        meal_override_dict = {
-            "calories": round(float(getattr(meal_override, "calories", 0.0) or 0.0), 1),
-            "protein": round(float(getattr(meal_override, "protein", 0.0) or 0.0), 1),
-            "carbs": round(float(getattr(meal_override, "carbs", 0.0) or 0.0), 1),
-            "fat": round(float(getattr(meal_override, "fat", 0.0) or 0.0), 1),
-        }
-
-    payload = {
-        "dish_name": dish_name,
-        "items": items_data,
-        "macros": meal_macro_dict,
-        "override": meal_override_dict,
-    }
     canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
-def deduplicate_recent_meals(meals: list[Meal], limit: int = 20) -> list[Meal]:
+def deduplicate_recent_meals(meals: list[Meal], limit: int = 10) -> list[Meal]:
     """Deduplicate recent meals by repeatable content fingerprint, preserving newest first."""
     seen_fingerprints: set[str] = set()
     unique_meals: list[Meal] = []
