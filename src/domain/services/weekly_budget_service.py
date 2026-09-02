@@ -15,6 +15,7 @@ from src.domain.constants import WeeklyBudgetConstants
 from src.domain.model.meal import MealStatus
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly import WeeklyMacroBudget
+from src.domain.services.daily_target_snapshot_service import maybe_write_today_snapshot
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
 
@@ -473,7 +474,7 @@ class WeeklyBudgetService:
             all_cheat_dates = cheat_dates
 
         if weekly_preload is not None:
-            return calc._apply_effective_adjusted_policy(
+            result = calc._apply_effective_adjusted_policy(
                 weekly_budget=weekly_budget,
                 week_start=week_start,
                 target_date=target_date,
@@ -489,6 +490,10 @@ class WeeklyBudgetService:
                 consumed_for_redistribution=weekly_preload.consumed_for_redistribution,
                 auto_adjust=auto_adjust,
             )
+            await maybe_write_today_snapshot(
+                uow, user_id, target_date, result.adjusted.calories, user_timezone
+            )
+            return result
 
         past_end = target_date - timedelta(days=1)
         past_days_count = (target_date - week_start).days
@@ -528,7 +533,7 @@ class WeeklyBudgetService:
         else:
             consumed_for_redistribution = consumed_before_today
 
-        return calc._apply_effective_adjusted_policy(
+        result = calc._apply_effective_adjusted_policy(
             weekly_budget=weekly_budget,
             week_start=week_start,
             target_date=target_date,
@@ -544,6 +549,10 @@ class WeeklyBudgetService:
             consumed_for_redistribution=consumed_for_redistribution,
             auto_adjust=auto_adjust,
         )
+        await maybe_write_today_snapshot(
+            uow, user_id, target_date, result.adjusted.calories, user_timezone
+        )
+        return result
 
     @staticmethod
     def calculate_adjusted_daily(

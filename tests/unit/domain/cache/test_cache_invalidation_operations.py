@@ -25,9 +25,9 @@ def test_meal_operations_preserve_current_week_cache_coverage() -> None:
         CacheKeys.daily_breakdown("user1", date(2026, 6, 1))[0],
         CacheKeys.user_streak("user1")[0],
     }
-    assert "user:user1:nutrition_bulk:*" in {
-        operation.get("pattern") for operation in operations
-    }
+    patterns = {operation.get("pattern") for operation in operations}
+    assert "user:user1:nutrition_bulk:*" in patterns
+    assert "user:user1:progress_summary:*" in patterns
 
 
 def test_backdated_meal_operations_include_current_week() -> None:
