@@ -6,6 +6,23 @@ status: accepted
 
 # Brainstorm: Recent and Favorite Meals Architecture
 
+> **Addendum (2026-09-02, NM-445 / NM-447):** the shipped implementation
+> supersedes this brainstorm on the following points, per the accepted
+> Jira acceptance criteria (NM-437 / NM-438):
+>
+> - Recent window is the last **7** local calendar days (not 30), returning
+>   at most **10** distinct meals by default.
+> - Meal identity (dedup fingerprint) is the **set of food items and their
+>   grams** only. Dish name, macro estimates, and nutrition overrides are
+>   excluded (item-less meals fall back to dish name + totals).
+> - Favorites are capped at **20** per user, one favorite per meal
+>   identity. Starring twice (same meal or same identity) is idempotent;
+>   the 21st favorite is rejected with `FAVORITES_LIMIT_REACHED` (409) and
+>   nothing is evicted.
+> - User-facing meal deletion remains the existing hard delete with data
+>   preservation; soft deletion was not introduced, so deleting a meal
+>   removes its favorite via `ON DELETE CASCADE`.
+
 ## Summary
 
 Add durable favorite membership with one minimal PostgreSQL join table. Serve both favorite and recent meal lists through five-minute Redis caches backed by PostgreSQL. Repeating a meal clones existing persisted nutrition immediately, without scan, text parsing, AI, or provider calls.
