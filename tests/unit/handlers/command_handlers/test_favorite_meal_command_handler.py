@@ -13,6 +13,7 @@ from src.api.exceptions import (
 )
 from src.app.commands.meal import FavoriteMealCommand, UnfavoriteMealCommand
 from src.app.handlers.command_handlers.favorite_meal_command_handler import (
+    MAX_FAVORITE_MEALS,
     FavoriteMealCommandHandler,
 )
 from src.app.handlers.command_handlers.unfavorite_meal_command_handler import (
@@ -61,6 +62,8 @@ class TestFavoriteMealCommandHandler:
         uow.meals.find_by_id = AsyncMock(return_value=meal)
         fav_time = datetime.now(UTC)
         uow.favorite_meals.favorite = AsyncMock(return_value=fav_time)
+        uow.favorite_meals.is_favorite = AsyncMock(return_value=False)
+        uow.favorite_meals.count_favorites = AsyncMock(return_value=0)
 
         cache_service = MagicMock()
         cache_service.increment_revision = AsyncMock(return_value=1)
@@ -79,6 +82,53 @@ class TestFavoriteMealCommandHandler:
         assert call_kwargs["meal_id"] == meal_id
         assert call_kwargs["favorited_at"] == result["favorited_at"]
         cache_service.increment_revision.assert_awaited_once_with(user_id)
+
+    @pytest.mark.asyncio
+    async def test_favorite_rejected_at_cap_without_eviction(self):
+        user_id = str(uuid4())
+        meal_id = str(uuid4())
+        meal = _create_meal(user_id, meal_id)
+
+        uow = MagicMock()
+        uow.__aenter__ = AsyncMock(return_value=uow)
+        uow.__aexit__ = AsyncMock(return_value=False)
+        uow.meals.find_by_id = AsyncMock(return_value=meal)
+        uow.favorite_meals.is_favorite = AsyncMock(return_value=False)
+        uow.favorite_meals.count_favorites = AsyncMock(return_value=MAX_FAVORITE_MEALS)
+        uow.favorite_meals.favorite = AsyncMock()
+        uow.favorite_meals.unfavorite = AsyncMock()
+
+        handler = FavoriteMealCommandHandler(uow=uow)
+        with pytest.raises(ValidationException) as exc_info:
+            await handler.handle(FavoriteMealCommand(user_id=user_id, meal_id=meal_id))
+
+        assert "limit" in str(exc_info.value).lower()
+        # No favorite written and no older favorite evicted
+        uow.favorite_meals.favorite.assert_not_awaited()
+        uow.favorite_meals.unfavorite.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refavorite_at_cap_is_idempotent_success(self):
+        user_id = str(uuid4())
+        meal_id = str(uuid4())
+        meal = _create_meal(user_id, meal_id)
+
+        uow = MagicMock()
+        uow.__aenter__ = AsyncMock(return_value=uow)
+        uow.__aexit__ = AsyncMock(return_value=False)
+        uow.meals.find_by_id = AsyncMock(return_value=meal)
+        # Meal already favorited: cap must not block re-starring
+        uow.favorite_meals.is_favorite = AsyncMock(return_value=True)
+        uow.favorite_meals.count_favorites = AsyncMock(return_value=MAX_FAVORITE_MEALS)
+        uow.favorite_meals.favorite = AsyncMock(return_value=False)
+
+        handler = FavoriteMealCommandHandler(uow=uow)
+        result = await handler.handle(
+            FavoriteMealCommand(user_id=user_id, meal_id=meal_id)
+        )
+
+        assert result["is_favorite"] is True
+        assert uow.favorite_meals.favorite.await_count == 1
 
     @pytest.mark.asyncio
     async def test_favorite_nonexistent_meal_raises_not_found(self):
