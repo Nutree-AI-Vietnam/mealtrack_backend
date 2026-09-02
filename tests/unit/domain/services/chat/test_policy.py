@@ -1,8 +1,10 @@
 from src.domain.model.chat import ChatUserContext, RetrievedKnowledgeChunk
 from src.domain.services.chat.policy import (
     SentenceBuffer,
+    build_grounding_message,
     citations_are_valid,
     filter_chunks_for_allergies,
+    hydrate_citations,
     inspect_sentence,
     is_near_duplicate,
     label_chunks,
@@ -54,6 +56,37 @@ def test_fingerprint_changes_with_body_or_locale():
     assert left == request_fingerprint("hello", "en")
     assert left != request_fingerprint("hello", "vi")
     assert left != request_fingerprint("hello!", "en")
+    assert left != request_fingerprint("hello", "en", "remaining_budget")
+    assert request_fingerprint(
+        "hello", "en", "remaining_budget"
+    ) == request_fingerprint("hello", "en", "remaining_budget")
+
+
+def test_hydrate_citations_rebuilds_labels_and_titles():
+    citations = hydrate_citations(
+        ["protein-guide", "missing"],
+        {"protein-guide": ("Protein", "https://nutree.app/protein")},
+    )
+    assert citations == [
+        {
+            "label": "[K1]",
+            "source_key": "protein-guide",
+            "title": "Protein",
+            "canonical_uri": "https://nutree.app/protein",
+        },
+        {
+            "label": "[K2]",
+            "source_key": "missing",
+            "title": None,
+            "canonical_uri": None,
+        },
+    ]
+
+
+def test_grounding_includes_structured_intent():
+    text = build_grounding_message(_context(), [], intent="remaining_budget")
+    assert "COACH INTENT" in text
+    assert "remaining_budget" in text
 
 
 def test_stable_instructions_are_versioned_and_forbid_mutation():

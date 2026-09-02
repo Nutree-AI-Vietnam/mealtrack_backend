@@ -255,6 +255,7 @@ ignore_imports =
     src.api.routes.v1.meals_manual_text -> src.infra.event_bus
     src.api.routes.v1.meals_manual_text -> src.infra.services.durable_write_service
     src.api.routes.v1.manual_meal_durable -> src.infra.services.durable_write_service
+    src.api.routes.v1.capabilities -> src.infra.services.chat_schema
     src.api.routes.v1.capabilities -> src.infra.services.durable_write_service
     src.api.routes.v1.chat -> src.infra.services.durable_write_service
     src.api.routes.v1.meals_read -> src.infra.event_bus

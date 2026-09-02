@@ -2,12 +2,13 @@
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.domain.model.chat import CHAT_MAX_USER_MESSAGE_CHARS
+from src.domain.model.chat import CHAT_MAX_USER_MESSAGE_CHARS, ChatIntent
 
 
 class ChatMessageCreateRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=CHAT_MAX_USER_MESSAGE_CHARS)
     locale: str | None = Field(default=None, max_length=8)
+    intent: ChatIntent | None = None
 
     @field_validator("content")
     @classmethod

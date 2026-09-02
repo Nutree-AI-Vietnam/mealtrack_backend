@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import delete, func, select, update
@@ -25,7 +26,11 @@ from src.domain.model.chat import (
 )
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
 from src.domain.utils.timezone_utils import utc_now
-from src.infra.database.models.chat import ChatMessageORM, ChatThreadORM
+from src.infra.database.models.chat import (
+    ChatKnowledgeDocumentORM,
+    ChatMessageORM,
+    ChatThreadORM,
+)
 
 
 class AsyncChatRepository(ChatRepositoryPort):
@@ -170,6 +175,34 @@ class AsyncChatRepository(ChatRepositoryPort):
     ) -> list[ChatMessage]:
         recent = await self.list_completed_messages(thread_id=thread_id, limit=limit)
         return list(reversed(recent))
+
+    async def get_generating_turn(
+        self, thread_id: str
+    ) -> tuple[ChatMessage, ChatMessage] | None:
+        now = utc_now()
+        await self._reclaim_expired_generation(thread_id, now)
+        assistant = await self._active_generation(thread_id)
+        if assistant is None or assistant.in_reply_to_id is None:
+            return None
+        user = await self.session.get(ChatMessageORM, assistant.in_reply_to_id)
+        if user is None:
+            return None
+        return _to_message(user), _to_message(assistant)
+
+    async def list_citation_metadata(
+        self, source_keys: Sequence[str]
+    ) -> dict[str, tuple[str | None, str | None]]:
+        keys = [key for key in source_keys if key]
+        if not keys:
+            return {}
+        result = await self.session.execute(
+            select(
+                ChatKnowledgeDocumentORM.source_key,
+                ChatKnowledgeDocumentORM.title,
+                ChatKnowledgeDocumentORM.canonical_uri,
+            ).where(ChatKnowledgeDocumentORM.source_key.in_(keys))
+        )
+        return {row.source_key: (row.title, row.canonical_uri) for row in result.all()}
 
     async def complete_assistant_message(
         self,

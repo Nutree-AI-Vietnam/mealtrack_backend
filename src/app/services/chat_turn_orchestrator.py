@@ -42,6 +42,7 @@ from src.domain.services.chat.policy import (
     citations_are_valid,
     cited_labels,
     filter_chunks_for_allergies,
+    hydrate_citations,
     inspect_sentence,
     no_evidence_message,
     nutrition_numbers_are_traceable,
@@ -92,6 +93,7 @@ class PreparedChatTurn:
     locale: str
     header_timezone: str | None
     started: float
+    intent: str | None = None
     slot_acquired: bool = False
 
 
@@ -135,13 +137,14 @@ class ChatTurnOrchestrator:
         locale: str | None,
         header_timezone: str | None,
         user_language: str | None,
+        intent: str | None = None,
     ) -> PreparedChatTurn:
         started = time.perf_counter()
         resolved_locale = resolve_chat_locale(locale, user_language)
         trimmed = content.strip()
         if len(trimmed) > CHAT_MAX_USER_MESSAGE_CHARS:
             trimmed = trimmed[:CHAT_MAX_USER_MESSAGE_CHARS]
-        fingerprint = request_fingerprint(trimmed, resolved_locale)
+        fingerprint = request_fingerprint(trimmed, resolved_locale, intent)
         await self._enforce_daily_budget(user_id)
         claim = await self._claim(
             user_id=user_id,
@@ -176,6 +179,7 @@ class ChatTurnOrchestrator:
             locale=resolved_locale,
             header_timezone=header_timezone,
             started=started,
+            intent=intent,
             slot_acquired=slot_acquired,
         )
 
@@ -188,6 +192,7 @@ class ChatTurnOrchestrator:
         locale: str | None,
         header_timezone: str | None,
         user_language: str | None,
+        intent: str | None = None,
     ) -> AsyncIterator[ChatSseEvent]:
         prepared = await self.prepare_turn(
             user_id=user_id,
@@ -196,6 +201,7 @@ class ChatTurnOrchestrator:
             locale=locale,
             header_timezone=header_timezone,
             user_language=user_language,
+            intent=intent,
         )
         async for event in self.stream_prepared(user_id=user_id, prepared=prepared):
             yield event
@@ -211,6 +217,7 @@ class ChatTurnOrchestrator:
         resolved_locale = prepared.locale
         header_timezone = prepared.header_timezone
         started = prepared.started
+        intent = prepared.intent
 
         try:
             if claim.kind == ChatClaimKind.REPLAY:
@@ -249,6 +256,7 @@ class ChatTurnOrchestrator:
                 history=history,
                 user_message=trimmed,
                 generation=generation,
+                intent=intent,
             ):
                 sentences.append(delta_text)
 
@@ -396,6 +404,11 @@ class ChatTurnOrchestrator:
                 limit=limit + 1,
                 before_message_id=before,
             )
+            generating = await repo.get_generating_turn(thread.id)
+            source_keys = [
+                key for message in messages for key in message.citation_source_keys
+            ]
+            citation_metadata = await repo.list_citation_metadata(source_keys)
         has_more = len(messages) > limit
         page = messages[:limit]
         chronological = list(reversed(page))
@@ -405,8 +418,15 @@ class ChatTurnOrchestrator:
                 "created_at": thread.created_at.isoformat(),
                 "updated_at": thread.updated_at.isoformat(),
             },
-            "messages": [_public_message(message) for message in chronological],
+            "messages": [
+                _public_message(
+                    message,
+                    hydrate_citations(message.citation_source_keys, citation_metadata),
+                )
+                for message in chronological
+            ],
             "has_more": has_more,
+            "in_flight": _in_flight_payload(generating),
         }
 
     async def clear_thread(self, user_id: str) -> dict[str, Any]:
@@ -444,6 +464,7 @@ class ChatTurnOrchestrator:
             )
 
     async def _replay(self, claim: ChatTurnClaim) -> AsyncIterator[ChatSseEvent]:
+        citations = await self._citations_for_message(claim.assistant_message)
         yield _started_event(claim)
         content = claim.assistant_message.content or ""
         if content:
@@ -468,12 +489,19 @@ class ChatTurnOrchestrator:
                     "output_tokens": claim.assistant_message.output_tokens or 0,
                     "cached_tokens": claim.assistant_message.cached_tokens or 0,
                 },
-                "citations": [
-                    {"source_key": key, "label": None, "title": None}
-                    for key in claim.assistant_message.citation_source_keys
-                ],
+                "citations": citations,
             },
         )
+
+    async def _citations_for_message(
+        self, message: ChatMessage
+    ) -> list[dict[str, str | None]]:
+        keys = list(message.citation_source_keys)
+        if not keys:
+            return []
+        async with self._uow_factory() as uow:
+            metadata = await _chat_repo(uow).list_citation_metadata(keys)
+        return hydrate_citations(keys, metadata)
 
     async def _ground(
         self,
@@ -550,12 +578,13 @@ class ChatTurnOrchestrator:
         history: list[ChatHistoryTurn],
         user_message: str,
         generation: dict[str, Any],
+        intent: str | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
 
         instructions = stable_system_instructions()
-        grounding = build_grounding_message(context, chunks)
+        grounding = build_grounding_message(context, chunks, intent=intent)
         cache_kwargs = {}
         if self._cache_policy is not None:
             cache_kwargs = self._cache_policy.request_kwargs(
@@ -713,14 +742,34 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
     )
 
 
-def _public_message(message: ChatMessage) -> dict[str, Any]:
+def _public_message(
+    message: ChatMessage,
+    citations: list[dict[str, str | None]] | None = None,
+) -> dict[str, Any]:
     return {
         "id": message.id,
         "role": message.role.value,
+        "status": message.status.value,
         "content": message.content,
         "created_at": message.created_at.isoformat(),
         "model": message.model,
         "citation_source_keys": list(message.citation_source_keys),
+        "citations": citations or hydrate_citations(message.citation_source_keys, {}),
+    }
+
+
+def _in_flight_payload(
+    generating: tuple[ChatMessage, ChatMessage] | None,
+) -> dict[str, Any] | None:
+    if generating is None:
+        return None
+    user_message, assistant_message = generating
+    lease = assistant_message.generation_lease_expires_at
+    return {
+        "user_message": _public_message(user_message),
+        "assistant_message_id": assistant_message.id,
+        "idempotency_key": user_message.idempotency_key,
+        "lease_expires_at": lease.isoformat() if lease else None,
     }
 
 

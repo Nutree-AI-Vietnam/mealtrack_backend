@@ -44,6 +44,12 @@ class _FakeRepo:
     async def list_recent_completed_history(self, **kwargs):
         return self.history
 
+    async def get_generating_turn(self, thread_id: str):
+        return getattr(self, "generating_turn", None)
+
+    async def list_citation_metadata(self, source_keys):
+        return getattr(self, "citation_metadata", {})
+
     async def complete_assistant_message(self, **kwargs):
         self.completed = kwargs
         message = self.claim.assistant_message
@@ -151,7 +157,10 @@ class _OpenCircuit:
 
 
 def _claim(
-    kind=ChatClaimKind.NEW, assistant_content=None, status=ChatMessageStatus.GENERATING
+    kind=ChatClaimKind.NEW,
+    assistant_content=None,
+    status=ChatMessageStatus.GENERATING,
+    citation_source_keys=(),
 ):
     now = utc_now()
     thread = ChatThread(id="t1", user_id="u1", created_at=now, updated_at=now)
@@ -176,6 +185,7 @@ def _claim(
         content=assistant_content,
         in_reply_to_id="m-user",
         model="gpt-5.6-luna",
+        citation_source_keys=citation_source_keys,
     )
     return ChatTurnClaim(
         kind=kind, thread=thread, user_message=user, assistant_message=assistant
@@ -335,3 +345,68 @@ async def test_open_circuit_fails_claimed_turn_before_stream():
         )
     assert repo.failed is not None
     assert repo.failed["error_code"] == "CHAT_PROVIDER_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_replay_hydrates_citation_titles():
+    claim = _claim(
+        kind=ChatClaimKind.REPLAY,
+        assistant_content="Stay at your protein target [K1].",
+        status=ChatMessageStatus.COMPLETED,
+        citation_source_keys=("protein-guide",),
+    )
+    repo = _FakeRepo(claim=claim)
+    repo.citation_metadata = {
+        "protein-guide": ("Protein", "https://nutree.app/protein"),
+    }
+    orchestrator = _orchestrator(repo)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="How much is left?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    completed = next(event for event in events if event.event == "message.completed")
+    assert completed.data["citations"] == [
+        {
+            "label": "[K1]",
+            "source_key": "protein-guide",
+            "title": "Protein",
+            "canonical_uri": "https://nutree.app/protein",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_thread_includes_in_flight_and_citations():
+    claim = _claim(
+        status=ChatMessageStatus.GENERATING,
+        citation_source_keys=("protein-guide",),
+    )
+    completed = ChatMessage(
+        id="m-done",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Stay at protein [K1].",
+        citation_source_keys=("protein-guide",),
+        model="gpt-5.6-luna",
+    )
+    repo = _FakeRepo(claim=claim, history=[completed])
+    repo.generating_turn = (claim.user_message, claim.assistant_message)
+    repo.citation_metadata = {"protein-guide": ("Protein", None)}
+    orchestrator = _orchestrator(repo)
+
+    payload = await orchestrator.get_thread(user_id="u1", limit=50, before=None)
+
+    assert payload["in_flight"]["assistant_message_id"] == "m-asst"
+    assert payload["in_flight"]["idempotency_key"] == "key-1"
+    assert payload["messages"][0]["citations"][0]["title"] == "Protein"
+    assert payload["messages"][0]["citations"][0]["label"] == "[K1]"

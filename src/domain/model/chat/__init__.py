@@ -2,9 +2,13 @@
 
 from src.domain.model.chat.models import (
     CHAT_CONTEXT_VERSION,
+    CHAT_DAILY_TURN_BUDGET,
     CHAT_DEFAULT_MODEL,
+    CHAT_ERROR_CODES,
     CHAT_EVAL_VERSION,
+    CHAT_GENERATION_LEASE_SECONDS,
     CHAT_HISTORY_LIMIT,
+    CHAT_INTENTS,
     CHAT_MAX_OUTPUT_TOKENS,
     CHAT_MAX_USER_MESSAGE_CHARS,
     CHAT_PROMPT_VERSION,
@@ -18,6 +22,7 @@ from src.domain.model.chat.models import (
     ChatClaimKind,
     ChatCompletionDelta,
     ChatHistoryTurn,
+    ChatIntent,
     ChatMealSummary,
     ChatMessage,
     ChatMessageRole,
@@ -32,9 +37,13 @@ from src.domain.model.chat.models import (
 
 __all__ = [
     "CHAT_CONTEXT_VERSION",
+    "CHAT_DAILY_TURN_BUDGET",
     "CHAT_DEFAULT_MODEL",
+    "CHAT_ERROR_CODES",
     "CHAT_EVAL_VERSION",
+    "CHAT_GENERATION_LEASE_SECONDS",
     "CHAT_HISTORY_LIMIT",
+    "CHAT_INTENTS",
     "CHAT_MAX_OUTPUT_TOKENS",
     "CHAT_MAX_USER_MESSAGE_CHARS",
     "CHAT_PROMPT_VERSION",
@@ -48,6 +57,7 @@ __all__ = [
     "ChatClaimKind",
     "ChatCompletionDelta",
     "ChatHistoryTurn",
+    "ChatIntent",
     "ChatMealSummary",
     "ChatMessage",
     "ChatMessageRole",

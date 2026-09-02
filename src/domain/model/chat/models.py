@@ -24,6 +24,13 @@ class ChatClaimKind(StrEnum):
     REPLAY = "replay"
 
 
+class ChatIntent(StrEnum):
+    REMAINING_BUDGET = "remaining_budget"
+    NEXT_MEAL = "next_meal"
+    DAY_PROGRESS = "day_progress"
+    LIMITS = "limits"
+
+
 CHAT_PROMPT_VERSION = "chat_prompt_v1"
 CHAT_CONTEXT_VERSION = "chat_context_v1"
 CHAT_RETRIEVAL_VERSION = "chat_retrieval_v1"
@@ -35,9 +42,23 @@ CHAT_RECENT_MEAL_DAYS = 3
 CHAT_RECENT_MEAL_LIMIT = 24
 CHAT_MAX_USER_MESSAGE_CHARS = 4000
 CHAT_MAX_OUTPUT_TOKENS = 900
+CHAT_DAILY_TURN_BUDGET = 40
+CHAT_GENERATION_LEASE_SECONDS = 90
 CHAT_RETRIEVAL_MIN_CHUNKS = 3
 CHAT_RETRIEVAL_MAX_CHUNKS = 5
 CHAT_SUPPORTED_LOCALES = frozenset({"en", "vi"})
+CHAT_INTENTS = tuple(intent.value for intent in ChatIntent)
+CHAT_ERROR_CODES = (
+    "CHAT_BUSY",
+    "CHAT_IDEMPOTENCY_CONFLICT",
+    "CHAT_DAILY_LIMIT",
+    "CHAT_RATE_LIMITED",
+    "CHAT_PROVIDER_UNAVAILABLE",
+    "CHAT_TURN_FAILED",
+    "CHAT_UNAVAILABLE",
+    "IDEMPOTENCY_KEY_REQUIRED",
+    "INVALID_IDEMPOTENCY_KEY",
+)
 
 
 @dataclass(frozen=True, slots=True)

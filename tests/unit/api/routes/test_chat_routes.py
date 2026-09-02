@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -41,6 +43,7 @@ class _StubOrchestrator:
         }
         self.cleared = False
         self.prepared = None
+        self.prepare_kwargs = None
 
     def release_slot(self, prepared) -> None:
         return None
@@ -53,6 +56,7 @@ class _StubOrchestrator:
         return {"thread_id": "t1", "cleared": True}
 
     async def prepare_turn(self, **kwargs):
+        self.prepare_kwargs = kwargs
         if self.prepare_error:
             raise self.prepare_error
         now = utc_now()
@@ -205,8 +209,12 @@ def test_post_streams_sse_events():
 
 
 def test_chat_capabilities_advertise_single_thread_contract():
-    client = TestClient(_app(_StubOrchestrator()))
-    response = client.get("/v1/capabilities/chat")
+    with patch(
+        "src.api.routes.v1.capabilities.chat_schema_is_ready",
+        new=AsyncMock(return_value=True),
+    ):
+        client = TestClient(_app(_StubOrchestrator()))
+        response = client.get("/v1/capabilities/chat")
     assert response.status_code == 200
     body = response.json()
     assert body["thread_model"] == "single"
@@ -215,3 +223,85 @@ def test_chat_capabilities_advertise_single_thread_contract():
     assert body["header"] == "Idempotency-Key"
     assert body["default_model"] == "gpt-5.6-luna"
     assert body["escalation_enabled"] is False
+    assert body["max_user_message_chars"] == 4000
+    assert body["daily_turn_budget"] == 40
+    assert body["generation_lease_seconds"] == 90
+    assert body["intents"] == [
+        "remaining_budget",
+        "next_meal",
+        "day_progress",
+        "limits",
+    ]
+    assert "CHAT_BUSY" in body["error_codes"]
+    assert "CHAT_UNAVAILABLE" in body["error_codes"]
+
+
+def test_chat_capabilities_unavailable_when_schema_missing():
+    with patch(
+        "src.api.routes.v1.capabilities.chat_schema_is_ready",
+        new=AsyncMock(return_value=False),
+    ):
+        client = TestClient(_app(_StubOrchestrator()))
+        response = client.get("/v1/capabilities/chat")
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "CHAT_UNAVAILABLE"
+
+
+def test_post_forwards_structured_intent():
+    orchestrator = _StubOrchestrator(
+        events=[
+            ChatSseEvent(
+                event="message.started",
+                data={"thread_id": "t1"},
+            )
+        ]
+    )
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/messages",
+        json={"content": "What's left?", "intent": "remaining_budget"},
+        headers={"Idempotency-Key": "k1"},
+    )
+    assert response.status_code == 200
+    assert orchestrator.prepare_kwargs["intent"] == "remaining_budget"
+
+
+def test_post_rejects_unknown_intent():
+    client = TestClient(_app(_StubOrchestrator()))
+    response = client.post(
+        "/v1/chat/messages",
+        json={"content": "What's left?", "intent": "log_meal"},
+        headers={"Idempotency-Key": "k1"},
+    )
+    assert response.status_code == 422
+
+
+def test_get_chat_passes_through_in_flight():
+    orchestrator = _StubOrchestrator(
+        thread_payload={
+            "thread": {
+                "id": "t1",
+                "created_at": "2026-09-01T00:00:00+00:00",
+                "updated_at": "2026-09-01T00:00:00+00:00",
+            },
+            "messages": [],
+            "has_more": False,
+            "in_flight": {
+                "user_message": {
+                    "id": "m-user",
+                    "role": "user",
+                    "content": "What's left?",
+                    "created_at": "2026-09-01T00:00:00+00:00",
+                },
+                "assistant_message_id": "m-asst",
+                "idempotency_key": "k1",
+                "lease_expires_at": "2026-09-01T00:01:30+00:00",
+            },
+        }
+    )
+    client = TestClient(_app(orchestrator))
+    response = client.get("/v1/chat")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["in_flight"]["assistant_message_id"] == "m-asst"
+    assert body["in_flight"]["idempotency_key"] == "k1"

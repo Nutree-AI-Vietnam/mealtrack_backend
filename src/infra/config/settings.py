@@ -9,6 +9,18 @@ from typing import Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.domain.model.chat import (
+    CHAT_DAILY_TURN_BUDGET as _CHAT_DAILY_TURN_BUDGET,
+)
+from src.domain.model.chat import (
+    CHAT_DEFAULT_MODEL as _CHAT_DEFAULT_MODEL,
+)
+from src.domain.model.chat import (
+    CHAT_GENERATION_LEASE_SECONDS as _CHAT_GENERATION_LEASE_SECONDS,
+)
+from src.domain.model.chat import (
+    CHAT_MAX_OUTPUT_TOKENS as _CHAT_MAX_OUTPUT_TOKENS,
+)
 from src.domain.services.meal_analysis.fast_path_policy import (
     MEAL_ANALYZE_DEFAULT_MAX_OUTPUT_TOKENS,
 )
@@ -176,7 +188,7 @@ class Settings(BaseSettings):
     )
     # Single-thread Nutree coach
     CHAT_MODEL: str = Field(
-        default="gpt-5.6-luna",
+        default=_CHAT_DEFAULT_MODEL,
         description="Default chat generation model. Luna explains Nutree values; it does not calculate them.",
     )
     CHAT_ESCALATION_MODEL: str | None = Field(
@@ -185,10 +197,14 @@ class Settings(BaseSettings):
     )
     CHAT_EMBEDDING_MODEL: str = Field(default="text-embedding-3-small")
     CHAT_REASONING_EFFORT: str = Field(default="low")
-    CHAT_MAX_OUTPUT_TOKENS: int = Field(default=900, ge=100, le=2000)
+    CHAT_MAX_OUTPUT_TOKENS: int = Field(
+        default=_CHAT_MAX_OUTPUT_TOKENS, ge=100, le=2000
+    )
     CHAT_REQUEST_TIMEOUT_SECONDS: int = Field(default=45, ge=5)
-    CHAT_DAILY_TURN_BUDGET: int = Field(default=40, ge=1)
-    CHAT_GENERATION_LEASE_SECONDS: int = Field(default=90, ge=15)
+    CHAT_DAILY_TURN_BUDGET: int = Field(default=_CHAT_DAILY_TURN_BUDGET, ge=1)
+    CHAT_GENERATION_LEASE_SECONDS: int = Field(
+        default=_CHAT_GENERATION_LEASE_SECONDS, ge=15
+    )
     CHAT_GLOBAL_CONCURRENCY: int = Field(default=8, ge=1)
     # Image search (meal discovery photos)
     PEXELS_API_KEY: str | None = Field(

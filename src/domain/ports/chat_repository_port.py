@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
 
 from src.domain.model.chat import (
@@ -54,6 +55,18 @@ class ChatRepositoryPort(ABC):
         limit: int,
     ) -> list[ChatMessage]:
         """Return the latest completed messages oldest-first for model history."""
+
+    @abstractmethod
+    async def get_generating_turn(
+        self, thread_id: str
+    ) -> tuple[ChatMessage, ChatMessage] | None:
+        """Return the in-flight user and assistant messages, if any."""
+
+    @abstractmethod
+    async def list_citation_metadata(
+        self, source_keys: Sequence[str]
+    ) -> dict[str, tuple[str | None, str | None]]:
+        """Map source keys to (title, canonical_uri) from reviewed knowledge."""
 
     @abstractmethod
     async def complete_assistant_message(

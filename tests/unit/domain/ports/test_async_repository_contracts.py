@@ -97,6 +97,8 @@ def test_repository_ports_are_async_contracts():
             "claim_turn",
             "list_completed_messages",
             "list_recent_completed_history",
+            "get_generating_turn",
+            "list_citation_metadata",
             "complete_assistant_message",
             "fail_assistant_message",
             "count_user_turns_since",

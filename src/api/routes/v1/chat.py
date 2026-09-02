@@ -90,6 +90,7 @@ async def post_chat_message(
             locale=locale,
             header_timezone=header_timezone,
             user_language=locale,
+            intent=payload.intent.value if payload.intent else None,
         )
     except ChatBusyError as exc:
         return _error_response(
