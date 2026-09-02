@@ -392,6 +392,34 @@ class AsyncMealRepository(MealRepositoryPort):
         )
         return _map_domain_hydratable_meals(result.unique().scalars().all())
 
+    async def find_recent_food_meals(
+        self,
+        user_id: str,
+        start_dt: datetime,
+        end_dt: datetime,
+        limit: int = 500,
+        projection: MealProjection = MealProjection.FULL,
+    ) -> list[Meal]:
+        """Return owned READY food meals in [start_dt, end_dt) UTC, newest first.
+
+        Excludes hydration entries and inactive/failed/processing/incomplete meals.
+        """
+        result = await self.session.execute(
+            select(MealORM)
+            .options(*_PROJECTION_OPTS[projection])
+            .where(
+                MealORM.user_id == user_id,
+                MealORM.created_at >= start_dt,
+                MealORM.created_at < end_dt,
+                MealORM.status == MealStatusEnum.READY,
+                or_(MealORM.meal_type.is_(None), MealORM.meal_type != "hydration"),
+                _domain_hydratable_active_meal_filter(),
+            )
+            .order_by(MealORM.created_at.desc())
+            .limit(limit)
+        )
+        return _map_domain_hydratable_meals(result.unique().scalars().all())
+
     async def aggregate_linked_ingredient_history(
         self,
         *,
