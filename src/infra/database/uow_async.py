@@ -18,6 +18,9 @@ from src.infra.repositories.catalog_recipe_repository_async import (
     AsyncCatalogMealRepository,
 )
 from src.infra.repositories.cheat_day_repository_async import AsyncCheatDayRepository
+from src.infra.repositories.daily_target_snapshot_repository_async import (
+    AsyncDailyTargetSnapshotRepository,
+)
 from src.infra.repositories.favorite_meal_repository_async import (
     AsyncFavoriteMealRepository,
 )
@@ -127,6 +130,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.users = AsyncUserRepository(session)
         self.weekly_budgets = AsyncWeeklyBudgetRepository(session)
         self.cheat_days = AsyncCheatDayRepository(session)
+        self.daily_target_snapshots = AsyncDailyTargetSnapshotRepository(session)
         self.subscriptions = AsyncSubscriptionRepository(session)
         self.notifications = AsyncNotificationRepository(session)
         self.saved_suggestions = AsyncSavedSuggestionDbRepository(session)

@@ -42,6 +42,7 @@ class AsyncUnitOfWorkPort(ABC):
 
     weekly_budgets: Any
     cheat_days: Any
+    daily_target_snapshots: Any
     hydration_entries: Any
     weight_entries: Any
     movement_entries: Any

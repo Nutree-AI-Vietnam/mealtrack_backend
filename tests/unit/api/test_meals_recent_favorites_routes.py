@@ -71,7 +71,7 @@ class TestMealsRecentFavoritesRoutes:
             if isinstance(event, GetRecentMealsQuery):
                 assert event.user_id == user_id
                 assert event.user_timezone == "Asia/Ho_Chi_Minh"
-                assert event.limit == 20
+                assert event.limit == 10
                 return {"items": [], "total": 0}
             raise AssertionError(f"Unexpected query: {event}")
 
@@ -79,7 +79,7 @@ class TestMealsRecentFavoritesRoutes:
 
         response = await list_recent_meals(
             request=mock_request,
-            limit=20,
+            limit=10,
             user_id=user_id,
             language="vi",
             event_bus=event_bus,
@@ -96,14 +96,14 @@ class TestMealsRecentFavoritesRoutes:
         async def _mock_send(event):
             if isinstance(event, GetFavoriteMealsQuery):
                 assert event.user_id == user_id
-                assert event.limit == 50
+                assert event.limit == 20
                 return {"items": [], "total": 0}
             raise AssertionError(f"Unexpected query: {event}")
 
         event_bus.send = AsyncMock(side_effect=_mock_send)
 
         response = await list_favorite_meals(
-            limit=50,
+            limit=20,
             user_id=user_id,
             language="en",
             event_bus=event_bus,

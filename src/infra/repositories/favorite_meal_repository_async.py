@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -73,6 +73,16 @@ class AsyncFavoriteMealRepository(FavoriteMealRepositoryPort):
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none() is not None
+
+    async def count_favorites(self, user_id: str) -> int:
+        """Return the number of meals currently favorited by the user."""
+        stmt = (
+            select(func.count())
+            .select_from(FavoriteMealORM)
+            .where(FavoriteMealORM.user_id == user_id)
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one())
 
     async def filter_favorited_meal_ids(
         self,

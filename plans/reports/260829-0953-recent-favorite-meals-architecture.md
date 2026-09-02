@@ -16,7 +16,8 @@ Redis is used for favorite-list speed, but not as the only favorite store. Postg
 
 - Users can favorite and unfavorite their own meals.
 - Favorites survive deletion of the original log from normal meal history.
-- Users can list unique recent meals from the last 30 local calendar days.
+- Users can list up to 10 distinct recent meals from the last 7 local calendar days.
+- Users can hold at most 20 favorites; the 21st favorite is rejected without evicting older favorites.
 - Selecting a recent or favorite meal logs a new meal immediately.
 - Recent and favorite reads should normally be served from Redis.
 - No new columns are added to `meal`.
@@ -80,14 +81,14 @@ Access rules:
 `GET /v1/meals/recent` derives candidates from PostgreSQL on cache miss:
 
 - Resolve the user's effective timezone.
-- Use today plus the preceding 29 local calendar days.
+- Use today plus the preceding 6 local calendar days.
 - Include only owned `READY` food meals.
 - Exclude hydration and `INACTIVE`, failed, processing, or incomplete meals.
 - Order newest first.
 - Deduplicate by repeatable content and keep the newest representative.
-- Return at most 20 unique meals by default; allow a bounded maximum of 50.
+- Return at most 10 distinct meals.
 
-Do not deduplicate by dish name alone because the same name can represent different ingredients or portions. Calculate a non-persisted fingerprint from normalized dish name, canonical ingredient identity or normalized name, quantities, units, nutrition overrides, and macros. Exclude record IDs, timestamps, image URLs, translations, and source metadata.
+Two meals are the same when they contain the same foods in the same amounts. Calculate a non-persisted fingerprint from canonical ingredient identity or normalized name, quantities, and units. Exclude dish name, macros, nutrition overrides, record IDs, timestamps, image URLs, translations, and source metadata. Item-less meals fall back to normalized dish name so distinct manual entries do not collapse.
 
 This fingerprint can later power frequent-meal ranking without a `meal` schema change.
 

@@ -117,6 +117,17 @@ class MealRepositoryPort(ABC):
         """Find meals created within a local date range, inclusive."""
         return []
 
+    async def find_recent_food_meals(
+        self,
+        user_id: str,
+        start_dt: datetime,
+        end_dt: datetime,
+        limit: int = 500,
+        projection: Any = None,
+    ) -> list[Meal]:
+        """Return owned READY food meals in [start_dt, end_dt) UTC, newest first."""
+        return []
+
     async def aggregate_linked_ingredient_history(
         self,
         *,

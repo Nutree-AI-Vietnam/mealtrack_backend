@@ -19,10 +19,17 @@ from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
+MAX_FAVORITE_MEALS = 20
+
 
 @handles(FavoriteMealCommand)
 class FavoriteMealCommandHandler(EventHandler[FavoriteMealCommand, dict[str, Any]]):
-    """Handler for adding a meal to favorites."""
+    """Handler for adding a meal to favorites.
+
+    Favoriting is idempotent. A user may hold at most MAX_FAVORITE_MEALS
+    favorites; the next favorite beyond the cap is rejected outright (no
+    eviction of older favorites).
+    """
 
     def __init__(
         self,
@@ -47,6 +54,20 @@ class FavoriteMealCommandHandler(EventHandler[FavoriteMealCommand, dict[str, Any
                 )
             if meal.meal_type == "hydration" or meal.status != MealStatus.READY:
                 raise ValidationException("Only ready food meals can be favorited")
+
+            already_favorited = await uow.favorite_meals.is_favorite(
+                command.user_id, command.meal_id
+            )
+            if not already_favorited:
+                favorite_count = await uow.favorite_meals.count_favorites(
+                    command.user_id
+                )
+                if favorite_count >= MAX_FAVORITE_MEALS:
+                    raise ValidationException(
+                        f"Favorites limit of {MAX_FAVORITE_MEALS} reached. "
+                        "Remove a favorite before adding a new one.",
+                        error_code="FAVORITES_LIMIT_REACHED",
+                    )
 
             now = utc_now()
             await uow.favorite_meals.favorite(

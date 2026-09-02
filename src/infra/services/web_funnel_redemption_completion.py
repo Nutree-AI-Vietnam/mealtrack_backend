@@ -145,6 +145,10 @@ async def finalize_redemption(
         binding.original_app_user_id != original_app_user_id
         and original_app_user_id not in aliases
         and binding.verified_app_user_id != original_app_user_id
+        # The provider lookup is keyed by the preflight-bound Firebase UID.
+        # RevenueCat may make that UID the subscriber's original ID before
+        # the asynchronous PURCHASE_REDEEMED alias webhook is persisted.
+        and original_app_user_id != uid
     ):
         raise claim_not_found()
     if binding.redeemer_uid and binding.redeemer_uid != uid:

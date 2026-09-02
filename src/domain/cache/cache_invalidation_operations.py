@@ -14,6 +14,13 @@ def _week_start(value: date) -> date:
     return value - timedelta(days=value.weekday())
 
 
+def _progress_summary_pattern(user_id: str) -> dict[str, str]:
+    return {
+        "op": DELETE_PATTERN,
+        "pattern": f"user:{user_id}:progress_summary:*",
+    }
+
+
 def build_meal_invalidation_operations(
     user_id: str,
     meal_date: date,
@@ -45,6 +52,7 @@ def build_meal_invalidation_operations(
             "op": DELETE_PATTERN,
             "pattern": f"user:{user_id}:nutrition_bulk:*",
         },
+        _progress_summary_pattern(user_id),
         {
             "op": DELETE_KEY,
             "key": CacheKeys.daily_breakdown(user_id, meal_week_start)[0],
@@ -113,6 +121,7 @@ def build_hydration_invalidation_operations(
             "op": DELETE_PATTERN,
             "pattern": f"user:{user_id}:nutrition_bulk:*",
         },
+        _progress_summary_pattern(user_id),
         {
             "op": DELETE_KEY,
             "key": CacheKeys.weekly_hydration(user_id, log_week_start)[0],
@@ -181,6 +190,7 @@ def build_movement_invalidation_operations(
             "op": DELETE_PATTERN,
             "pattern": f"user:{user_id}:nutrition_bulk:*",
         },
+        _progress_summary_pattern(user_id),
         {
             "op": DELETE_KEY,
             "key": CacheKeys.daily_breakdown(user_id, log_week_start)[0],
@@ -233,6 +243,7 @@ def build_profile_invalidation_operations(user_id: str) -> list[dict[str, str]]:
             "op": DELETE_PATTERN,
             "pattern": f"user:{user_id}:nutrition_bulk:*",
         },
+        _progress_summary_pattern(user_id),
         {
             "op": DELETE_PATTERN,
             "pattern": CacheKeys.weekly_budget_user_pattern(user_id),
@@ -266,6 +277,7 @@ def build_cheat_day_invalidation_operations(
             "op": DELETE_PATTERN,
             "pattern": CacheKeys.weekly_budget_pattern(user_id, cheat_week_start),
         },
+        _progress_summary_pattern(user_id),
     ]
 
 

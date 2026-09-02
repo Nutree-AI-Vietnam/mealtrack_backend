@@ -102,9 +102,9 @@ from src.app.handlers.command_handlers import (
     UpdateMovementEntryCommandHandler,
     UpdateNotificationPreferencesCommandHandler,
     UpdateTimezoneCommandHandler,
-    UpdateWeeklyAutoAdjustCommandHandler,
     UpdateUserLastAccessedCommandHandler,
     UpdateUserMetricsCommandHandler,
+    UpdateWeeklyAutoAdjustCommandHandler,
     UploadMealImageImmediatelyHandler,
 )
 from src.app.handlers.command_handlers.add_weight_entry_command_handler import (
@@ -148,6 +148,7 @@ from src.app.handlers.query_handlers import (
     GetMovementCatalogQueryHandler,
     GetNotificationPreferencesQueryHandler,
     GetPopularStaplesQueryHandler,
+    GetProgressSummaryQueryHandler,
     GetProviderFoodDetailsQueryHandler,
     GetRecentMealsQueryHandler,
     GetSavedSuggestionsQueryHandler,
@@ -216,7 +217,7 @@ from src.app.queries.meal_recommendation import (
 from src.app.queries.movement import GetDailyMovementQuery, GetMovementCatalogQuery
 from src.app.queries.notification import GetNotificationPreferencesQuery
 from src.app.queries.nutrition import GetActivitiesPresenceQuery, GetNutritionBulkQuery
-from src.app.queries.progress import GetJourneyProgressQuery
+from src.app.queries.progress import GetJourneyProgressQuery, GetProgressSummaryQuery
 from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
@@ -649,6 +650,7 @@ def get_configured_event_bus() -> EventBus:
             structured_reference_enabled=parse_text_settings[
                 "structured_reference_enabled"
             ],
+            pure_ai_mode=parse_text_settings.get("pure_ai_mode", True),
             uow_factory=AsyncUnitOfWork,
         ),
     )
@@ -1022,6 +1024,10 @@ def get_configured_event_bus() -> EventBus:
             uow=AsyncUnitOfWork(),
             cache_service=cache_service,
         ),
+    )
+    event_bus.register_handler(
+        GetProgressSummaryQuery,
+        GetProgressSummaryQueryHandler(cache_service=cache_service),
     )
 
     # Register hydration handlers

@@ -48,7 +48,8 @@ def test_get_parse_text_settings_reads_structured_reference_flag(monkeypatch):
     monkeypatch.setattr(settings_module, "get_settings", lambda: _Settings())
 
     assert dependencies.get_parse_text_settings() == {
-        "structured_reference_enabled": True
+        "structured_reference_enabled": True,
+        "pure_ai_mode": True,
     }
 
 

@@ -106,6 +106,7 @@ ignore_imports =
     src.app.handlers.query_handlers.get_meals_by_date_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_notification_preferences_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_nutrition_bulk_query_handler -> src.infra.database.uow_async
+    src.app.handlers.query_handlers.get_progress_summary_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_saved_suggestions_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_streak_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_user_by_firebase_uid_query_handler -> src.infra.database.uow_async
