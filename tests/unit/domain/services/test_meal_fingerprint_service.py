@@ -99,6 +99,67 @@ def test_different_portion_produces_different_fingerprint():
 
 
 @pytest.mark.unit
+def test_same_items_and_grams_with_different_dish_name_is_same_meal():
+    """NM-437 identity: same set of food items and grams = same meal."""
+    items = [
+        ("Chicken Breast", 150.0, "g", 46.5, 0.0, 5.4),
+        ("White Rice", 200.0, "g", 5.0, 56.0, 0.6),
+    ]
+    meal1 = _make_sample_meal("Chicken Rice Bowl", items)
+    meal2 = _make_sample_meal("Com Ga", items)
+    assert compute_meal_content_fingerprint(meal1) == compute_meal_content_fingerprint(
+        meal2
+    )
+
+
+@pytest.mark.unit
+def test_same_items_and_grams_with_different_macros_is_same_meal():
+    """Macro estimates (e.g. AI jitter) are not part of the meal identity."""
+    meal1 = _make_sample_meal(
+        "Chicken Rice",
+        [("Chicken Breast", 150.0, "g", 46.5, 0.0, 5.4)],
+    )
+    meal2 = _make_sample_meal(
+        "Chicken Rice",
+        [("Chicken Breast", 150.0, "g", 44.0, 1.0, 6.0)],
+    )
+    assert compute_meal_content_fingerprint(meal1) == compute_meal_content_fingerprint(
+        meal2
+    )
+
+
+@pytest.mark.unit
+def test_different_item_set_produces_different_fingerprint():
+    meal1 = _make_sample_meal(
+        "Salad",
+        [
+            ("Chicken Breast", 150.0, "g", 46.5, 0.0, 5.4),
+            ("Lettuce", 50.0, "g", 0.7, 1.5, 0.1),
+        ],
+    )
+    meal2 = _make_sample_meal(
+        "Salad",
+        [("Chicken Breast", 150.0, "g", 46.5, 0.0, 5.4)],
+    )
+    assert compute_meal_content_fingerprint(meal1) != compute_meal_content_fingerprint(
+        meal2
+    )
+
+
+@pytest.mark.unit
+def test_itemless_meals_fall_back_to_dish_name_identity():
+    meal1 = _make_sample_meal("Mystery Soup", [])
+    meal2 = _make_sample_meal("Mystery Stew", [])
+    meal3 = _make_sample_meal("mystery soup", [])
+    assert compute_meal_content_fingerprint(meal1) != compute_meal_content_fingerprint(
+        meal2
+    )
+    assert compute_meal_content_fingerprint(meal1) == compute_meal_content_fingerprint(
+        meal3
+    )
+
+
+@pytest.mark.unit
 def test_deduplicate_recent_meals_preserves_newest_and_limits():
     m1_id = str(uuid4())
     m2_id = str(uuid4())
