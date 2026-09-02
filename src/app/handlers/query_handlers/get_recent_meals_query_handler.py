@@ -1,4 +1,4 @@
-"""Handler for retrieving unique recent meals within the last 30 calendar days."""
+"""Handler for retrieving distinct recent meals within the last 7 calendar days."""
 
 from __future__ import annotations
 
@@ -10,12 +10,18 @@ from src.api.mappers.meal_mapper import MealMapper
 from src.app.events.base import EventHandler, handles
 from src.app.queries.meal import GetRecentMealsQuery
 from src.domain.model.meal_projection import MealProjection
-from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.favorite_meal_repository_port import MAX_FAVORITE_MEALS
 from src.domain.ports.meal_list_cache_port import MealListCachePort
-from src.domain.services.meal_fingerprint_service import deduplicate_recent_meals
+from src.domain.services.meal_fingerprint_service import (
+    compute_meal_content_fingerprint,
+    deduplicate_recent_meals,
+)
 from src.domain.utils.timezone_utils import get_zone_info, utc_now
 
 logger = logging.getLogger(__name__)
+
+# NM-437: recent list covers the last 7 calendar days in the user's timezone
+RECENT_WINDOW_DAYS = 7
 
 
 @handles(GetRecentMealsQuery)
@@ -29,7 +35,6 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
     ):
         self.uow_factory = uow_factory
         self.cache_service = cache_service
-
 
     async def handle(self, query: GetRecentMealsQuery) -> dict[str, Any]:
         limit = max(1, min(query.limit, 50))
@@ -49,11 +54,11 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
             if cached is not None:
                 return cached
 
-        # Resolve 30 local calendar days
+        # Resolve the last 7 local calendar days (today plus the previous 6)
         tz = get_zone_info(query.user_timezone or "UTC")
         today = utc_now().astimezone(tz).date()
 
-        start_date = today - timedelta(days=29)
+        start_date = today - timedelta(days=RECENT_WINDOW_DAYS - 1)
         start_dt = datetime.combine(
             start_date, datetime.min.time(), tzinfo=tz
         ).astimezone(UTC)
@@ -70,11 +75,17 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
                 projection=MealProjection.FULL_WITH_TRANSLATIONS,
             )
             deduped = deduplicate_recent_meals(raw_meals, limit=limit)
-            meal_ids = [m.meal_id for m in deduped]
 
-            favorited_ids = await uow.favorite_meals.filter_favorited_meal_ids(
-                query.user_id, meal_ids
+            # Favorites are one-per-meal-identity, so flag recent entries by
+            # identity fingerprint rather than by meal_id (the favorited row
+            # may be an older meal with the same food items and grams).
+            favorites = await uow.favorite_meals.list_favorite_meals(
+                user_id=query.user_id,
+                limit=MAX_FAVORITE_MEALS,
             )
+            favorited_fingerprints = {
+                compute_meal_content_fingerprint(fav_meal) for fav_meal, _ in favorites
+            }
 
         items = []
         for meal in deduped:
@@ -82,7 +93,9 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
                 meal,
                 target_language=language,
             )
-            detailed.is_favorite = meal.meal_id in favorited_ids
+            detailed.is_favorite = (
+                compute_meal_content_fingerprint(meal) in favorited_fingerprints
+            )
             items.append(detailed.model_dump(mode="json"))
 
         result = {

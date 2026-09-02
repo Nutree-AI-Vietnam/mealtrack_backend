@@ -8,5 +8,5 @@ from src.app.events.base import Query
 @dataclass
 class GetFavoriteMealsQuery(Query):
     user_id: str
-    limit: int = 50
+    limit: int = 20
     language: str = "en"

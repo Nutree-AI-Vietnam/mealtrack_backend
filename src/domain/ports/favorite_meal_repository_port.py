@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from datetime import datetime
 
 from src.domain.model.meal import Meal
+
+# NM-438: a user can have at most 20 favorite meals. The 21st star is
+# rejected; the oldest favorite is never evicted.
+MAX_FAVORITE_MEALS = 20
 
 
 class FavoriteMealRepositoryPort(ABC):
@@ -41,19 +44,10 @@ class FavoriteMealRepositoryPort(ABC):
         pass
 
     @abstractmethod
-    async def filter_favorited_meal_ids(
-        self,
-        user_id: str,
-        meal_ids: Sequence[str],
-    ) -> set[str]:
-        """Return the subset of meal_ids that are favorited by the user."""
-        pass
-
-    @abstractmethod
     async def list_favorite_meals(
         self,
         user_id: str,
-        limit: int = 50,
+        limit: int = MAX_FAVORITE_MEALS,
     ) -> list[tuple[Meal, datetime]]:
         """Return user's favorited meals ordered newest-favorited first.
 

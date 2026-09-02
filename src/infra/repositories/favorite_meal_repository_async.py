@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from datetime import datetime
 from typing import cast
 
@@ -13,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.domain.model.meal import Meal
-from src.domain.ports.favorite_meal_repository_port import FavoriteMealRepositoryPort
+from src.domain.ports.favorite_meal_repository_port import (
+    MAX_FAVORITE_MEALS,
+    FavoriteMealRepositoryPort,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.meal.favorite_meal import FavoriteMealORM
 from src.infra.database.models.meal.meal import MealORM
@@ -74,25 +76,10 @@ class AsyncFavoriteMealRepository(FavoriteMealRepositoryPort):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
-    async def filter_favorited_meal_ids(
-        self,
-        user_id: str,
-        meal_ids: Sequence[str],
-    ) -> set[str]:
-        """Return set of meal IDs favorited by user."""
-        if not meal_ids:
-            return set()
-        stmt = select(FavoriteMealORM.meal_id).where(
-            FavoriteMealORM.user_id == user_id,
-            FavoriteMealORM.meal_id.in_(list(meal_ids)),
-        )
-        result = await self.session.execute(stmt)
-        return set(result.scalars().all())
-
     async def list_favorite_meals(
         self,
         user_id: str,
-        limit: int = 50,
+        limit: int = MAX_FAVORITE_MEALS,
     ) -> list[tuple[Meal, datetime]]:
         """Return user's favorited meals ordered newest-favorited first.
 

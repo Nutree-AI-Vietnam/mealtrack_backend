@@ -8,6 +8,7 @@ import pytest
 
 from src.api.exceptions import (
     AuthorizationException,
+    ConflictException,
     ResourceNotFoundException,
     ValidationException,
 )
@@ -19,7 +20,8 @@ from src.app.handlers.command_handlers.unfavorite_meal_command_handler import (
     UnfavoriteMealCommandHandler,
 )
 from src.domain.model.meal import Meal, MealStatus
-from src.domain.model.nutrition import Macros, Nutrition
+from src.domain.model.nutrition import FoodItem, Macros, Nutrition
+from src.domain.ports.favorite_meal_repository_port import MAX_FAVORITE_MEALS
 
 
 def _create_meal(
@@ -27,10 +29,23 @@ def _create_meal(
     meal_id: str,
     status: MealStatus = MealStatus.READY,
     meal_type: str = "lunch",
+    item_name: str = "Test Item",
+    quantity: float = 100.0,
 ) -> Meal:
     now = datetime.now(UTC)
     nutrition = (
-        Nutrition(macros=Macros(protein=10, carbs=10, fat=10))
+        Nutrition(
+            macros=Macros(protein=10, carbs=10, fat=10),
+            food_items=[
+                FoodItem(
+                    id=str(uuid4()),
+                    name=item_name,
+                    quantity=quantity,
+                    unit="g",
+                    macros=Macros(protein=10, carbs=10, fat=10),
+                )
+            ],
+        )
         if status == MealStatus.READY
         else None
     )
@@ -47,6 +62,17 @@ def _create_meal(
     )
 
 
+def _make_uow(meal=None, favorites=None):
+    uow = MagicMock()
+    uow.__aenter__ = AsyncMock(return_value=uow)
+    uow.__aexit__ = AsyncMock(return_value=False)
+    uow.meals.find_by_id = AsyncMock(return_value=meal)
+    uow.favorite_meals.list_favorite_meals = AsyncMock(return_value=favorites or [])
+    uow.favorite_meals.favorite = AsyncMock(return_value=True)
+    uow.favorite_meals.unfavorite = AsyncMock(return_value=True)
+    return uow
+
+
 @pytest.mark.unit
 class TestFavoriteMealCommandHandler:
     @pytest.mark.asyncio
@@ -55,13 +81,7 @@ class TestFavoriteMealCommandHandler:
         meal_id = str(uuid4())
         meal = _create_meal(user_id, meal_id)
 
-        uow = MagicMock()
-        uow.__aenter__ = AsyncMock(return_value=uow)
-        uow.__aexit__ = AsyncMock(return_value=False)
-        uow.meals.find_by_id = AsyncMock(return_value=meal)
-        fav_time = datetime.now(UTC)
-        uow.favorite_meals.favorite = AsyncMock(return_value=fav_time)
-
+        uow = _make_uow(meal=meal)
         cache_service = MagicMock()
         cache_service.increment_revision = AsyncMock(return_value=1)
 
@@ -81,14 +101,105 @@ class TestFavoriteMealCommandHandler:
         cache_service.increment_revision.assert_awaited_once_with(user_id)
 
     @pytest.mark.asyncio
+    async def test_favorite_same_meal_twice_is_idempotent(self):
+        """NM-438: starring an already-favorited meal is a no-op success."""
+        user_id = str(uuid4())
+        meal_id = str(uuid4())
+        meal = _create_meal(user_id, meal_id)
+        fav_at = datetime.now(UTC)
+
+        uow = _make_uow(meal=meal, favorites=[(meal, fav_at)])
+        cache_service = MagicMock()
+        cache_service.increment_revision = AsyncMock(return_value=1)
+
+        handler = FavoriteMealCommandHandler(uow=uow, cache_service=cache_service)
+        result = await handler.handle(
+            FavoriteMealCommand(user_id=user_id, meal_id=meal_id)
+        )
+
+        assert result["is_favorite"] is True
+        assert result["favorited_at"] == fav_at
+        uow.favorite_meals.favorite.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_favorite_meal_with_same_identity_is_idempotent(self):
+        """NM-438: one favorite per meal identity (same items and grams)."""
+        user_id = str(uuid4())
+        favorited = _create_meal(user_id, str(uuid4()), item_name="Beef", quantity=200)
+        clone = _create_meal(user_id, str(uuid4()), item_name="Beef", quantity=200)
+        fav_at = datetime.now(UTC)
+
+        uow = _make_uow(meal=clone, favorites=[(favorited, fav_at)])
+
+        handler = FavoriteMealCommandHandler(uow=uow)
+        result = await handler.handle(
+            FavoriteMealCommand(user_id=user_id, meal_id=clone.meal_id)
+        )
+
+        assert result["is_favorite"] is True
+        assert result["favorited_at"] == fav_at
+        uow.favorite_meals.favorite.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_favorite_twenty_first_meal_is_rejected_without_eviction(self):
+        """NM-438: the 21st favorite is rejected; nothing is evicted."""
+        user_id = str(uuid4())
+        favorites = [
+            (
+                _create_meal(
+                    user_id, str(uuid4()), item_name=f"Item {i}", quantity=100 + i
+                ),
+                datetime.now(UTC),
+            )
+            for i in range(MAX_FAVORITE_MEALS)
+        ]
+        new_meal = _create_meal(
+            user_id, str(uuid4()), item_name="Brand New", quantity=42
+        )
+
+        uow = _make_uow(meal=new_meal, favorites=favorites)
+
+        handler = FavoriteMealCommandHandler(uow=uow)
+        with pytest.raises(ConflictException) as exc_info:
+            await handler.handle(
+                FavoriteMealCommand(user_id=user_id, meal_id=new_meal.meal_id)
+            )
+
+        assert exc_info.value.error_code == "FAVORITES_LIMIT_REACHED"
+        uow.favorite_meals.favorite.assert_not_awaited()
+        uow.favorite_meals.unfavorite.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_favorite_at_cap_still_idempotent_for_existing_favorite(self):
+        """Re-starring an existing favorite succeeds even at the cap."""
+        user_id = str(uuid4())
+        favorites = [
+            (
+                _create_meal(
+                    user_id, str(uuid4()), item_name=f"Item {i}", quantity=100 + i
+                ),
+                datetime.now(UTC),
+            )
+            for i in range(MAX_FAVORITE_MEALS)
+        ]
+        existing_meal = favorites[5][0]
+
+        uow = _make_uow(meal=existing_meal, favorites=favorites)
+
+        handler = FavoriteMealCommandHandler(uow=uow)
+        result = await handler.handle(
+            FavoriteMealCommand(user_id=user_id, meal_id=existing_meal.meal_id)
+        )
+
+        assert result["is_favorite"] is True
+        uow.favorite_meals.favorite.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_favorite_nonexistent_meal_raises_not_found(self):
         user_id = str(uuid4())
         meal_id = str(uuid4())
 
-        uow = MagicMock()
-        uow.__aenter__ = AsyncMock(return_value=uow)
-        uow.__aexit__ = AsyncMock(return_value=False)
-        uow.meals.find_by_id = AsyncMock(return_value=None)
+        uow = _make_uow(meal=None)
 
         handler = FavoriteMealCommandHandler(uow=uow)
         with pytest.raises(ResourceNotFoundException):
@@ -101,10 +212,7 @@ class TestFavoriteMealCommandHandler:
         meal_id = str(uuid4())
         meal = _create_meal(owner_id, meal_id)
 
-        uow = MagicMock()
-        uow.__aenter__ = AsyncMock(return_value=uow)
-        uow.__aexit__ = AsyncMock(return_value=False)
-        uow.meals.find_by_id = AsyncMock(return_value=meal)
+        uow = _make_uow(meal=meal)
 
         handler = FavoriteMealCommandHandler(uow=uow)
         with pytest.raises(AuthorizationException):
@@ -118,10 +226,7 @@ class TestFavoriteMealCommandHandler:
         meal_id = str(uuid4())
         meal = _create_meal(user_id, meal_id, meal_type="hydration")
 
-        uow = MagicMock()
-        uow.__aenter__ = AsyncMock(return_value=uow)
-        uow.__aexit__ = AsyncMock(return_value=False)
-        uow.meals.find_by_id = AsyncMock(return_value=meal)
+        uow = _make_uow(meal=meal)
 
         handler = FavoriteMealCommandHandler(uow=uow)
         with pytest.raises(ValidationException):
@@ -133,10 +238,7 @@ class TestFavoriteMealCommandHandler:
         meal_id = str(uuid4())
         meal = _create_meal(user_id, meal_id, status=MealStatus.INACTIVE)
 
-        uow = MagicMock()
-        uow.__aenter__ = AsyncMock(return_value=uow)
-        uow.__aexit__ = AsyncMock(return_value=False)
-        uow.meals.find_by_id = AsyncMock(return_value=meal)
+        uow = _make_uow(meal=meal)
 
         handler = FavoriteMealCommandHandler(uow=uow)
         with pytest.raises(ValidationException):
@@ -170,3 +272,29 @@ class TestUnfavoriteMealCommandHandler:
             user_id=user_id, meal_id=meal_id
         )
         cache_service.increment_revision.assert_awaited_once_with(user_id)
+
+    @pytest.mark.asyncio
+    async def test_unfavorite_falls_back_to_identity_match(self):
+        """Unstarring a clone removes the favorite recorded on the original."""
+        user_id = str(uuid4())
+        favorited = _create_meal(user_id, str(uuid4()), item_name="Pho", quantity=350)
+        clone = _create_meal(user_id, str(uuid4()), item_name="Pho", quantity=350)
+
+        uow = MagicMock()
+        uow.__aenter__ = AsyncMock(return_value=uow)
+        uow.__aexit__ = AsyncMock(return_value=False)
+        uow.meals.find_by_id = AsyncMock(return_value=clone)
+        uow.favorite_meals.unfavorite = AsyncMock(side_effect=[False, True])
+        uow.favorite_meals.list_favorite_meals = AsyncMock(
+            return_value=[(favorited, datetime.now(UTC))]
+        )
+
+        handler = UnfavoriteMealCommandHandler(uow=uow)
+        result = await handler.handle(
+            UnfavoriteMealCommand(user_id=user_id, meal_id=clone.meal_id)
+        )
+
+        assert result["is_favorite"] is False
+        assert uow.favorite_meals.unfavorite.await_count == 2
+        second_call_kwargs = uow.favorite_meals.unfavorite.await_args_list[1].kwargs
+        assert second_call_kwargs["meal_id"] == favorited.meal_id
