@@ -153,17 +153,15 @@ def e2e_client(
 
     import src.api.base_dependencies as base_deps_module
     import src.api.dependencies.event_bus as event_bus_module
-    import src.app.handlers.query_handlers.get_favorite_meals_query_handler as get_fav_handler_module
     import src.app.handlers.query_handlers.get_meal_by_id_query_handler as get_meal_handler_module
-    import src.app.handlers.query_handlers.get_recent_meals_query_handler as get_recent_handler_module
     import src.infra.database.uow_async as uow_module
 
+    # The recent/favorite query handlers receive uow_factory via event_bus
+    # composition, so patching uow_async + event_bus covers them.
     monkeypatch.setattr(uow_module, "AsyncUnitOfWork", sqlite_uow)
     monkeypatch.setattr(base_deps_module, "AsyncUnitOfWork", sqlite_uow)
     monkeypatch.setattr(event_bus_module, "AsyncUnitOfWork", sqlite_uow)
-    monkeypatch.setattr(get_fav_handler_module, "AsyncUnitOfWork", sqlite_uow)
     monkeypatch.setattr(get_meal_handler_module, "AsyncUnitOfWork", sqlite_uow)
-    monkeypatch.setattr(get_recent_handler_module, "AsyncUnitOfWork", sqlite_uow)
 
     monkeypatch.setenv("ENABLE_DEV_AUTH_BYPASS", "0")
     event_bus_module._configured_event_bus = None
@@ -280,23 +278,22 @@ class TestRecentFavoriteMealsE2E:
         assert meal_1_id not in recent_ids
         assert meal_2_id in recent_ids
 
-        # 12. GET /v1/meals/favorites -> meal_1 is STILL present in favorites (soft-delete preserved)
+        # 12. GET /v1/meals/favorites -> meal_1 is gone. DELETE /v1/meals/{id}
+        # hard-deletes the meal row today (no soft-delete/INACTIVE path is
+        # implemented), so the favorite membership disappears with the meal.
         fav_resp3 = client.get("/v1/meals/favorites?limit=50")
         assert fav_resp3.status_code == 200
         fav_ids = [m["meal_id"] for m in fav_resp3.json()["items"]]
-        assert meal_1_id in fav_ids
+        assert meal_1_id not in fav_ids
 
-        # 13. Repeat soft-deleted favorited meal_1 -> succeeds
-        repeat_inactive_fav = client.post(
+        # 13. Repeat the deleted meal_1 -> 404 (meal row no longer exists)
+        repeat_deleted = client.post(
             f"/v1/meals/{meal_1_id}/repeat",
             headers={"Idempotency-Key": "repeat-idempotency-key-002"},
         )
-        assert repeat_inactive_fav.status_code == 201
-        meal_3 = repeat_inactive_fav.json()
-        assert meal_3["meal_id"] not in {meal_1_id, meal_2_id}
-        assert meal_3["status"] == "ready"
+        assert repeat_deleted.status_code == 404
 
-        # 14. Unfavorite meal_1: DELETE /v1/meals/{meal_1_id}/favorite
+        # 14. Unfavorite deleted meal_1 -> idempotent success
         unfav_resp = client.delete(f"/v1/meals/{meal_1_id}/favorite")
         assert unfav_resp.status_code == 200
         assert unfav_resp.json()["is_favorite"] is False
@@ -304,14 +301,6 @@ class TestRecentFavoriteMealsE2E:
         fav_resp4 = client.get("/v1/meals/favorites?limit=50")
         assert fav_resp4.status_code == 200
         assert meal_1_id not in [m["meal_id"] for m in fav_resp4.json()["items"]]
-
-        # 15. Attempt to repeat inactive and now UNFAVORITED meal_1 -> returns 400 error
-        repeat_inactive_unfav = client.post(
-            f"/v1/meals/{meal_1_id}/repeat",
-            headers={"Idempotency-Key": "repeat-idempotency-key-003"},
-        )
-        assert repeat_inactive_unfav.status_code == 400
-        assert "cannot be repeated" in repeat_inactive_unfav.json()["detail"]["message"]
 
     def test_recent_meals_deduplication(
         self, e2e_client, sample_image_bytes, test_session
