@@ -29,6 +29,7 @@ from src.domain.services.meal_suggestion.parallel_recipe_generator import (
 )
 from src.domain.services.meal_suggestion.recipe_attempt_builder import (
     PARALLEL_SINGLE_MEAL_TIMEOUT,
+    SELECTED_RECIPE_ATTEMPT_TIMEOUT,
 )
 
 # ---------------------------------------------------------------------------
@@ -297,6 +298,7 @@ class TestSuggestionGenerationPipeline:
             recipe_generator.MIN_ACCEPTABLE_RESULTS == 1
         )  # relaxed to allow partial results
         assert PARALLEL_SINGLE_MEAL_TIMEOUT == 20  # reduced from 35 for faster timeouts
+        assert SELECTED_RECIPE_ATTEMPT_TIMEOUT == 40
 
 
 # -----------------------------------------------------------------------------

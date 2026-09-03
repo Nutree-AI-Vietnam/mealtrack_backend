@@ -7,10 +7,7 @@ from functools import lru_cache
 from typing import Any
 
 from src.app.services.chat_context_builder import ChatContextBuilder
-from src.app.services.chat_next_meal_candidates import (
-    ChatNextMealCandidates,
-    SuggestionChatDiscoverAdapter,
-)
+from src.app.services.chat_next_meal_candidates import ChatNextMealCandidates
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import ChatProviderUnavailableError
 from src.domain.model.chat import ChatCompletionDelta, ChatHistoryTurn
@@ -42,13 +39,13 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
     )
     from src.api.base_dependencies import (
         get_cache_service,
-        get_suggestion_orchestration_service,
+        get_nutrition_lookup_service,
     )
-    from src.api.dependencies.food_image import get_food_image_service
 
     completion: ChatCompletionPort
     embedding: ChatEmbeddingPort
     follow_ups = None
+    recipes = None
     if api_key:
         adapter = OpenAIChatCompletionAdapter(
             api_key=api_key,
@@ -58,6 +55,7 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
         )
         completion = adapter
         follow_ups = adapter
+        recipes = adapter
         embedding = OpenAIChatEmbeddingAdapter(
             api_key=api_key,
             model=settings.CHAT_EMBEDDING_MODEL,
@@ -83,11 +81,14 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
         max_output_tokens=settings.CHAT_MAX_OUTPUT_TOKENS,
         semaphore=get_chat_semaphore(settings.CHAT_GLOBAL_CONCURRENCY),
         circuit_breaker=get_chat_circuit_breaker(),
-        next_meals=ChatNextMealCandidates(
-            SuggestionChatDiscoverAdapter(
-                get_suggestion_orchestration_service(),
-                image_search=get_food_image_service().search_food_image,
+        next_meals=(
+            ChatNextMealCandidates(
+                recipes,
+                get_nutrition_lookup_service(),
+                model=settings.CHAT_MODEL,
             )
+            if recipes is not None
+            else None
         ),
         follow_ups=follow_ups,
     )

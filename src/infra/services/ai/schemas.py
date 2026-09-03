@@ -118,3 +118,38 @@ class RecipeDetailsResponse(BaseModel):
     emoji: Optional[str] = Field(
         default=None, description="Single emoji representing the dish"
     )
+
+
+class ChatMealRecipeItem(BaseModel):
+    """RecipeDetailsResponse fields plus a name. All properties required for
+    OpenAI strict json_schema (no optional/nullable macros).
+    """
+
+    name: str = Field(description="Concise meal name (max 60 chars)", max_length=60)
+    english_name: str = Field(
+        description="English meal name, or repeat name if already English"
+    )
+    emoji: str = Field(description="Single emoji representing the dish")
+    ingredients: List[IngredientItem] = Field(
+        description="List of 3-8 ingredients with exact amounts",
+        min_length=3,
+        max_length=8,
+    )
+    recipe_steps: List[RecipeStepItem] = Field(
+        description="List of 2-6 recipe steps with instructions and durations",
+        min_length=2,
+        max_length=6,
+    )
+    prep_time_minutes: int = Field(
+        description="Total preparation and cooking time in minutes", ge=5, le=120
+    )
+
+
+class ChatMealRecipeBatch(BaseModel):
+    """Three next-meal recipes in one structured chat call."""
+
+    meals: list[ChatMealRecipeItem] = Field(
+        description="Exactly 3 complete next-meal recipes",
+        min_length=1,
+        max_length=3,
+    )
