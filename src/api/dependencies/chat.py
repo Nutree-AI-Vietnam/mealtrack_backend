@@ -44,6 +44,7 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
         get_cache_service,
         get_suggestion_orchestration_service,
     )
+    from src.api.dependencies.food_image import get_food_image_service
 
     completion: ChatCompletionPort
     embedding: ChatEmbeddingPort
@@ -83,7 +84,10 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
         semaphore=get_chat_semaphore(settings.CHAT_GLOBAL_CONCURRENCY),
         circuit_breaker=get_chat_circuit_breaker(),
         next_meals=ChatNextMealCandidates(
-            SuggestionChatDiscoverAdapter(get_suggestion_orchestration_service())
+            SuggestionChatDiscoverAdapter(
+                get_suggestion_orchestration_service(),
+                image_search=get_food_image_service().search_food_image,
+            )
         ),
         follow_ups=follow_ups,
     )

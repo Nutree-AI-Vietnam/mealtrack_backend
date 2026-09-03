@@ -23,6 +23,31 @@ def test_missing_payload_hydrates_as_empty_lists() -> None:
     assert reply_sidecar(message) == empty_reply_payload()
 
 
+def test_sidecar_includes_discover_session_id() -> None:
+    message = _message(
+        {
+            "suggestions": [{"name": "Oats", "calories": 300}],
+            "follow_ups": [],
+            "discover_session_id": "sess-9",
+        }
+    )
+    sidecar = reply_sidecar(message)
+    assert sidecar["discover_session_id"] == "sess-9"
+    assert sidecar["suggestions"][0]["name"] == "Oats"
+
+
+def test_sidecar_includes_intent() -> None:
+    message = _message(
+        {
+            "suggestions": [],
+            "follow_ups": [],
+            "intent": "remaining_budget",
+        }
+    )
+    assert message.intent() == "remaining_budget"
+    assert reply_sidecar(message)["intent"] == "remaining_budget"
+
+
 def test_malformed_payload_is_ignored() -> None:
     message = _message({"suggestions": "nope", "follow_ups": [1, {"label": "More"}]})
     assert message.suggestions() == []

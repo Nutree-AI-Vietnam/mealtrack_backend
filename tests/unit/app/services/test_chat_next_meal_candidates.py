@@ -4,6 +4,7 @@ import pytest
 
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
+    SuggestionChatDiscoverAdapter,
     map_discover_meals,
 )
 from src.domain.model.chat import ChatUserContext
@@ -163,6 +164,123 @@ async def test_rate_limit_skips_discover() -> None:
     )
     assert len(discover.calls) == 1
     assert second.suggestions == []
+
+
+def test_map_keeps_photos_and_english_name() -> None:
+    cards = map_discover_meals(
+        [
+            {
+                "id": "d1",
+                "name": "Cơm gà",
+                "english_name": "Chicken rice",
+                "calories": 420,
+                "protein": 28,
+                "carbs": 45,
+                "fat": 12,
+                "emoji": "🍚",
+                "thumbnail_url": "https://cdn.example/thumb.jpg",
+                "image_url": "https://cdn.example/full.jpg",
+                "image_source": "pexels",
+                "image_confidence": 0.91,
+                "photographer": "Ann",
+            }
+        ],
+        "lunch",
+    )
+    assert cards[0]["english_name"] == "Chicken rice"
+    assert cards[0]["thumbnail_url"] == "https://cdn.example/thumb.jpg"
+    assert cards[0]["image_confidence"] == 0.91
+    assert cards[0]["photographer"] == "Ann"
+
+
+@pytest.mark.asyncio
+async def test_adapter_attaches_food_photos() -> None:
+    class _Session:
+        id = "sess-img"
+
+    class _Service:
+        async def generate_discovery(self, **kwargs):
+            del kwargs
+            return _Session(), [
+                {
+                    "id": "d1",
+                    "name": "Pho",
+                    "english_name": "Pho",
+                    "calories": 400,
+                    "protein": 20,
+                    "carbs": 50,
+                    "fat": 10,
+                }
+            ]
+
+    class _Image:
+        url = "https://cdn.example/full.jpg"
+        thumbnail_url = "https://cdn.example/thumb.jpg"
+        source = "pexels"
+        photographer = "Ann"
+        photographer_url = "https://pexels.example/ann"
+        download_location = None
+        confidence = 0.88
+
+    async def search(name: str):
+        assert name == "Pho"
+        return _Image()
+
+    adapter = SuggestionChatDiscoverAdapter(_Service(), image_search=search)
+    batch = await adapter.discover_meals(
+        user_id="u1",
+        meal_type="lunch",
+        meal_portion_type="main",
+        language="en",
+        calorie_target=650,
+        protein_target=50,
+        carbs_target=80,
+        fat_target=20,
+        session_id=None,
+        count=3,
+    )
+    meal = batch.meals[0]
+    assert meal["thumbnail_url"] == "https://cdn.example/thumb.jpg"
+    assert meal["image_confidence"] == 0.88
+
+
+@pytest.mark.asyncio
+async def test_adapter_keeps_meals_when_image_search_fails() -> None:
+    class _Session:
+        id = "sess-img"
+
+    class _Service:
+        async def generate_discovery(self, **kwargs):
+            del kwargs
+            return _Session(), [
+                {
+                    "id": "d1",
+                    "name": "Pho",
+                    "calories": 400,
+                    "protein": 20,
+                    "carbs": 50,
+                    "fat": 10,
+                }
+            ]
+
+    async def search(name: str):
+        raise RuntimeError(f"search failed for {name}")
+
+    adapter = SuggestionChatDiscoverAdapter(_Service(), image_search=search)
+    batch = await adapter.discover_meals(
+        user_id="u1",
+        meal_type="lunch",
+        meal_portion_type="main",
+        language="en",
+        calorie_target=650,
+        protein_target=50,
+        carbs_target=80,
+        fat_target=20,
+        session_id=None,
+        count=3,
+    )
+    assert batch.meals[0]["name"] == "Pho"
+    assert "thumbnail_url" not in batch.meals[0]
 
 
 def test_map_drops_meals_without_calories() -> None:

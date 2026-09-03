@@ -31,7 +31,7 @@ class ChatIntent(StrEnum):
     LIMITS = "limits"
 
 
-CHAT_PROMPT_VERSION = "chat_prompt_v1"
+CHAT_PROMPT_VERSION = "chat_prompt_v2"
 CHAT_CONTEXT_VERSION = "chat_context_v1"
 CHAT_RETRIEVAL_VERSION = "chat_retrieval_v1"
 CHAT_EVAL_VERSION = "chat_eval_v1"
@@ -108,6 +108,14 @@ class ChatMessage:
         value = self.reply_payload.get("discover_session_id")
         if isinstance(value, str) and value.strip():
             return value.strip()
+        return None
+
+    def intent(self) -> str | None:
+        if not self.reply_payload:
+            return None
+        value = self.reply_payload.get("intent")
+        if value in CHAT_INTENTS:
+            return str(value)
         return None
 
 
@@ -272,11 +280,18 @@ def empty_reply_payload() -> dict[str, list[dict[str, Any]]]:
     return {"suggestions": [], "follow_ups": []}
 
 
-def reply_sidecar(message: ChatMessage) -> dict[str, list[dict[str, Any]]]:
-    return {
+def reply_sidecar(message: ChatMessage) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "suggestions": message.suggestions(),
         "follow_ups": message.follow_ups(),
     }
+    session_id = message.discover_session_id()
+    if session_id:
+        payload["discover_session_id"] = session_id
+    intent = message.intent()
+    if intent:
+        payload["intent"] = intent
+    return payload
 
 
 def _payload_list(payload: dict[str, Any] | None, key: str) -> list[dict[str, Any]]:

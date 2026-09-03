@@ -612,8 +612,10 @@ async def test_next_meal_persists_suggestions_and_follow_ups():
 
     assert completed.data["suggestions"] == cards
     assert completed.data["follow_ups"] == follow_ups.chips
+    assert completed.data["intent"] == "next_meal"
     assert repo.completed["reply_payload"]["suggestions"] == cards
     assert repo.completed["reply_payload"]["discover_session_id"] == "sess-9"
+    assert repo.completed["reply_payload"]["intent"] == "next_meal"
     assert next_meals.calls[0]["session_id"] is None
 
 

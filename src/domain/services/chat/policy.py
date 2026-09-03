@@ -143,17 +143,13 @@ def build_grounding_message(
             "Do not cite general model memory as a Nutree source."
         )
         knowledge_note = knowledge
-    intent_block = ""
-    if intent:
-        intent_block = (
-            "COACH INTENT (structured chip; answer this intent. "
-            "The user text is only the localized label):\n"
-            f"{intent}\n\n"
-        )
+    intent_block = intent_template(intent)
+    if intent_block:
+        intent_block = f"{intent_block}\n\n"
     candidates_block = ""
     if meal_candidates:
         candidates_json = json.dumps(
-            list(meal_candidates),
+            [_prompt_meal_candidate(item) for item in meal_candidates],
             ensure_ascii=False,
             indent=2,
             default=str,
@@ -173,6 +169,43 @@ def build_grounding_message(
         f"{knowledge_note}\n\n"
         f"{knowledge}"
     )
+
+
+_INTENT_TEMPLATES = {
+    "remaining_budget": (
+        "COACH INTENT remaining_budget. The user text is only the localized label.\n"
+        "The app already shows remaining kcal and P/C/F as beakers from Nutree. "
+        "Write 1-2 short sentences about what is left. Do not repeat the leftover "
+        "numbers. Do not list meals. Do not claim you logged anything."
+    ),
+    "day_progress": (
+        "COACH INTENT day_progress. The user text is only the localized label.\n"
+        "The app already shows remaining beakers from Nutree. Write 1-2 short "
+        "sentences about how the day is going (nothing logged yet, on track, or "
+        "over) using USER CONTEXT only. Do not repeat every macro number."
+    ),
+    "next_meal": (
+        "COACH INTENT next_meal. The user text is only the localized label.\n"
+        "The app already shows tappable meal cards with photos and macros. "
+        "Write 1-2 short sentences: pick a favorite and why it fits remaining "
+        "budget. Do not repeat kcal or gram numbers. Do not list the three meals. "
+        "Tell the user they can tap a card for the recipe and to log it. "
+        "Never claim you logged or saved a meal."
+    ),
+    "limits": (
+        "COACH INTENT limits. The user text is only the localized label.\n"
+        "The app already shows a can/can't card. Write at most two sentences: "
+        "you explain the log and suggest meals; you cannot log meals, change "
+        "targets, or give medical advice. Do not include nutrition numbers."
+    ),
+}
+
+
+def intent_template(intent: str | None) -> str:
+    """Per-intent output contract. Unknown or missing intent → free-text markdown."""
+    if not intent:
+        return ""
+    return _INTENT_TEMPLATES.get(intent, "")
 
 
 def request_fingerprint(content: str, locale: str, intent: str | None = None) -> str:
@@ -243,6 +276,22 @@ def is_near_duplicate(left: str, right: str, *, threshold: float = 0.9) -> bool:
         return left.strip() == right.strip()
     overlap = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
     return overlap >= threshold
+
+
+_PROMPT_MEAL_KEYS = (
+    "id",
+    "name",
+    "meal_type",
+    "calories",
+    "protein_g",
+    "carbs_g",
+    "fat_g",
+)
+
+
+def _prompt_meal_candidate(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Macros only — photos and photographer fields do not belong in the prompt."""
+    return {key: item[key] for key in _PROMPT_MEAL_KEYS if key in item}
 
 
 def _tokenize(text: str) -> list[str]:

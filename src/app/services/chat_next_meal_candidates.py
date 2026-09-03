@@ -4,14 +4,27 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.app.services.discovery_meal_images import attach_food_images
 from src.domain.model.chat import ChatMessage, ChatUserContext
 from src.domain.ports.chat_discover_port import ChatDiscoverBatch, ChatDiscoverPort
 from src.domain.services.chat.meal_slot import (
     meal_portion_type_for_slot,
     resolve_meal_slot,
+)
+
+_OPTIONAL_CARD_STRINGS = (
+    "english_name",
+    "emoji",
+    "thumbnail_url",
+    "image_url",
+    "image_source",
+    "photographer",
+    "photographer_url",
+    "unsplash_download_location",
 )
 
 logger = logging.getLogger(__name__)
@@ -119,9 +132,18 @@ def map_discover_meals(
             "carbs_g": _number_or_none(meal.get("carbs_g", meal.get("carbs"))),
             "fat_g": _number_or_none(meal.get("fat_g", meal.get("fat"))),
         }
-        emoji = meal.get("emoji")
-        if isinstance(emoji, str) and emoji.strip():
-            card["emoji"] = emoji.strip()
+        english_name = str(meal.get("english_name") or "").strip()
+        if english_name:
+            card["english_name"] = english_name
+        confidence = _number_or_none(meal.get("image_confidence"))
+        if confidence is not None:
+            card["image_confidence"] = confidence
+        for key in _OPTIONAL_CARD_STRINGS:
+            if key == "english_name":
+                continue
+            value = meal.get(key)
+            if isinstance(value, str) and value.strip():
+                card[key] = value.strip()
         cards.append(card)
         if len(cards) >= DISCOVER_COUNT:
             break
@@ -150,10 +172,15 @@ def _number_or_none(value: Any) -> float | int | None:
 
 
 class SuggestionChatDiscoverAdapter(ChatDiscoverPort):
-    """Thin wrapper around SuggestionOrchestrationService.generate_discovery."""
+    """Discover meals, then attach the same food photos Discover uses."""
 
-    def __init__(self, service: Any) -> None:
+    def __init__(
+        self,
+        service: Any,
+        image_search: Callable[[str], Awaitable[Any]] | None = None,
+    ) -> None:
         self._service = service
+        self._image_search = image_search
 
     async def discover_meals(
         self,
@@ -182,7 +209,8 @@ class SuggestionChatDiscoverAdapter(ChatDiscoverPort):
             fat_target=fat_target,
             count=count,
         )
+        enriched = await attach_food_images(tuple(meals or ()), self._image_search)
         return ChatDiscoverBatch(
             session_id=getattr(session, "id", None),
-            meals=tuple(meals or ()),
+            meals=tuple(enriched),
         )

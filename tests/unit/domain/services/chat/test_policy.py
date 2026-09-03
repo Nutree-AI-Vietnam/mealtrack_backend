@@ -96,8 +96,9 @@ def test_hydrate_citations_rebuilds_labels_and_titles():
 
 def test_grounding_includes_structured_intent():
     text = build_grounding_message(_context(), [], intent="remaining_budget")
-    assert "COACH INTENT" in text
-    assert "remaining_budget" in text
+    assert "COACH INTENT remaining_budget" in text
+    assert "beakers" in text
+    assert "Do not repeat the leftover" in text
 
 
 def test_stable_instructions_are_versioned_and_forbid_mutation():
@@ -159,11 +160,22 @@ def test_grounding_includes_meal_candidates():
         _context(),
         [],
         intent="next_meal",
-        meal_candidates=[{"name": "Egg rice bowl", "calories": 420}],
+        meal_candidates=[
+            {
+                "name": "Egg rice bowl",
+                "calories": 420,
+                "thumbnail_url": "https://cdn.example/pho.jpg",
+                "photographer": "Ann",
+            }
+        ],
     )
     assert "MEAL CANDIDATES" in text
     assert "Egg rice bowl" in text
     assert "420" in text
+    assert "COACH INTENT next_meal" in text
+    assert "tappable meal cards" in text
+    assert "https://cdn.example/pho.jpg" not in text
+    assert "thumbnail_url" not in text
 
 
 def test_citations_must_match_retrieved_labels():

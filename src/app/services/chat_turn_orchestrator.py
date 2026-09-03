@@ -332,6 +332,7 @@ class ChatTurnOrchestrator:
                     suggestions=suggestions,
                     follow_ups=follow_ups,
                     discover_session_id=discover_session_id,
+                    intent=intent,
                 ),
             )
             if blocked:
@@ -829,6 +830,7 @@ def _reply_payload(
     suggestions: list[dict[str, Any]],
     follow_ups: list[dict[str, str]],
     discover_session_id: str | None,
+    intent: str | None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "suggestions": suggestions,
@@ -836,6 +838,8 @@ def _reply_payload(
     }
     if discover_session_id:
         payload["discover_session_id"] = discover_session_id
+    if intent:
+        payload["intent"] = intent
     return payload
 
 
