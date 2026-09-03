@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -9,15 +11,24 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from src.domain.model.chat import (
+    CHAT_INTENTS,
     ChatCompletionDelta,
     ChatHistoryTurn,
     ChatMessageRole,
     ChatUsage,
 )
 from src.domain.ports.chat_completion_port import ChatCompletionPort
+from src.domain.ports.chat_follow_up_port import ChatFollowUpPort
+from src.domain.services.chat.follow_up_schema import (
+    ChatFollowUpList,
+    sanitize_follow_ups,
+)
+
+FOLLOW_UP_TIMEOUT_SECONDS = 2.0
+FOLLOW_UP_MAX_TOKENS = 180
 
 
-class OpenAIChatCompletionAdapter(ChatCompletionPort):
+class OpenAIChatCompletionAdapter(ChatCompletionPort, ChatFollowUpPort):
     """Stateless streaming completion with store=false."""
 
     def __init__(
@@ -33,6 +44,7 @@ class OpenAIChatCompletionAdapter(ChatCompletionPort):
         self._max_retries = max_retries
         self._reasoning_effort = reasoning_effort
         self._llms: dict[str, ChatOpenAI] = {}
+        self._structured_llms: dict[str, ChatOpenAI] = {}
 
     def _llm(self, model: str) -> ChatOpenAI:
         cached = self._llms.get(model)
@@ -96,6 +108,74 @@ class OpenAIChatCompletionAdapter(ChatCompletionPort):
             usage=usage,
             done=True,
         )
+
+    def _structured_llm(self, model: str) -> ChatOpenAI:
+        cached = self._structured_llms.get(model)
+        if cached is not None:
+            return cached
+        llm = ChatOpenAI(
+            model=model,
+            api_key=self._api_key,
+            timeout=min(self._timeout_seconds, 8),
+            max_retries=0,
+            use_responses_api=True,
+            reasoning={"effort": "low"},
+            streaming=False,
+        )
+        self._structured_llms[model] = llm
+        return llm
+
+    async def generate_follow_ups(
+        self,
+        *,
+        model: str,
+        locale: str,
+        intent: str | None,
+        slot: str | None,
+        user_message: str,
+        assistant_text: str,
+        has_suggestions: bool,
+    ) -> list[dict[str, str]]:
+        prompt = json.dumps(
+            {
+                "locale": locale,
+                "intent": intent,
+                "suggested_meal_slot": slot,
+                "user_message": user_message[:400],
+                "assistant_text": assistant_text[:800],
+                "has_suggestions": has_suggestions,
+                "allowed_actions": list(CHAT_INTENTS),
+            },
+            ensure_ascii=False,
+        )
+        structured = self._structured_llm(model).with_structured_output(
+            ChatFollowUpList,
+            method="json_schema",
+            strict=True,
+        )
+        try:
+            parsed = await asyncio.wait_for(
+                structured.ainvoke(
+                    [
+                        SystemMessage(content=_FOLLOW_UP_INSTRUCTIONS),
+                        HumanMessage(content=prompt),
+                    ],
+                    store=False,
+                    max_tokens=FOLLOW_UP_MAX_TOKENS,
+                ),
+                timeout=FOLLOW_UP_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            return []
+        return sanitize_follow_ups(parsed)
+
+
+_FOLLOW_UP_INSTRUCTIONS = """Author 2-3 short Nutree Coach follow-up chips.
+Each chip is {label, action}. action must be one of the allowed_actions.
+Reply in the given locale. Labels are tap targets, not answers.
+Do not invent nutrition numbers. Do not claim a meal was saved or logged.
+If has_suggestions is true, one chip may request more ideas via next_meal.
+"""
 
 
 def _chunk_text(chunk: Any) -> str:

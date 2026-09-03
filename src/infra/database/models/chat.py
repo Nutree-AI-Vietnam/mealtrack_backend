@@ -90,6 +90,7 @@ class ChatMessageORM(Base, BaseMixin):
     generation_lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     error_code = Column(String(64), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    reply_payload = Column(JSON, nullable=True)
 
     thread = relationship(
         "ChatThreadORM",

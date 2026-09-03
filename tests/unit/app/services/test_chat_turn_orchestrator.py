@@ -1,5 +1,8 @@
+import asyncio
+
 import pytest
 
+from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
@@ -16,6 +19,7 @@ from src.domain.model.chat import (
     ChatTurnClaim,
     ChatUsage,
     ChatUserContext,
+    empty_reply_payload,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
@@ -67,6 +71,7 @@ class _FakeRepo:
             output_tokens=kwargs["usage"].output_tokens,
             cached_tokens=kwargs["usage"].cached_tokens,
             completed_at=utc_now(),
+            reply_payload=kwargs.get("reply_payload"),
         )
 
     async def fail_assistant_message(self, **kwargs):
@@ -100,6 +105,25 @@ class _FakeCompletion:
     async def stream(self, **kwargs):
         for chunk in self.chunks:
             yield ChatCompletionDelta(text=chunk)
+        yield ChatCompletionDelta(
+            text="",
+            usage=ChatUsage(input_tokens=10, output_tokens=4, model="gpt-5.6-luna"),
+            done=True,
+        )
+
+
+class _GatedCompletion:
+    """Yields the first token, then waits until the test releases the rest."""
+
+    def __init__(self, first: str, second: str):
+        self.first = first
+        self.second = second
+        self.release = asyncio.Event()
+
+    async def stream(self, **kwargs):
+        yield ChatCompletionDelta(text=self.first)
+        await self.release.wait()
+        yield ChatCompletionDelta(text=self.second)
         yield ChatCompletionDelta(
             text="",
             usage=ChatUsage(input_tokens=10, output_tokens=4, model="gpt-5.6-luna"),
@@ -142,6 +166,9 @@ class _FakeContext:
             remaining_carbs_g=80,
             remaining_fat_g=20,
             remaining_days=4,
+            local_hour=8,
+            local_minute=12,
+            suggested_meal_slot="breakfast",
         )
 
 
@@ -199,7 +226,37 @@ def _reset_concurrency():
     reset_chat_concurrency_for_tests()
 
 
-def _orchestrator(repo, completion=None, turns_used=0, circuit_breaker=None):
+class _FakeNextMeals:
+    def __init__(self, result: NextMealCandidateResult):
+        self.result = result
+        self.calls: list[dict] = []
+
+    async def fetch(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+
+class _FakeFollowUps:
+    def __init__(self, chips=None, error=None):
+        self.chips = chips or []
+        self.error = error
+        self.calls: list[dict] = []
+
+    async def generate_follow_ups(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.chips
+
+
+def _orchestrator(
+    repo,
+    completion=None,
+    turns_used=0,
+    circuit_breaker=None,
+    next_meals=None,
+    follow_ups=None,
+):
     repo.turns_used = turns_used
     uow = _FakeUow(repo)
 
@@ -215,6 +272,8 @@ def _orchestrator(repo, completion=None, turns_used=0, circuit_breaker=None):
         generation_lease_seconds=90,
         global_concurrency=2,
         circuit_breaker=circuit_breaker,
+        next_meals=next_meals,
+        follow_ups=follow_ups,
     )
 
 
@@ -244,6 +303,8 @@ async def test_replay_emits_started_delta_and_completed():
         "message.completed",
     ]
     assert events[2].data["replayed"] is True
+    assert events[2].data["suggestions"] == []
+    assert events[2].data["follow_ups"] == []
 
 
 @pytest.mark.asyncio
@@ -267,6 +328,46 @@ async def test_new_turn_streams_sentence_and_persists():
     assert names[-1] == "message.completed"
     assert repo.completed is not None
     assert "650" in repo.completed["content"]
+    assert repo.completed["reply_payload"] == empty_reply_payload()
+    completed = next(event for event in events if event.event == "message.completed")
+    assert completed.data["suggestions"] == []
+    assert completed.data["follow_ups"] == []
+
+
+@pytest.mark.asyncio
+async def test_deltas_are_streamed_before_generation_finishes():
+    completion = _GatedCompletion(
+        first="Nutree has ",
+        second="650 calories remaining. ",
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=completion)
+    events: list = []
+
+    async def consume() -> None:
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="How much is left?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        ):
+            events.append(event)
+            if event.event == "message.delta" and "Nutree has " in event.data.get(
+                "delta", ""
+            ):
+                completion.release.set()
+
+    await asyncio.wait_for(consume(), timeout=2)
+    deltas = [
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    ]
+    assert deltas[0] == "Nutree has "
+    assert "650 calories remaining. " in deltas
+    assert events[-1].event == "message.completed"
 
 
 @pytest.mark.asyncio
@@ -298,6 +399,34 @@ async def test_invalid_citation_is_not_streamed_to_client():
     assert repo.completed is not None
     assert "[K9]" not in repo.completed["content"]
     assert "reviewed Nutree guidance" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_untraceable_nutrition_is_not_streamed_to_client():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo,
+        completion=_FakeCompletion(["Eat 9999 calories of cake. "]),
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="What should I eat?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    deltas = "".join(
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    )
+    assert "9999" not in deltas
+    assert repo.completed is not None
+    assert "9999" not in repo.completed["content"]
 
 
 @pytest.mark.asyncio
@@ -410,3 +539,131 @@ async def test_get_thread_includes_in_flight_and_citations():
     assert payload["in_flight"]["idempotency_key"] == "key-1"
     assert payload["messages"][0]["citations"][0]["title"] == "Protein"
     assert payload["messages"][0]["citations"][0]["label"] == "[K1]"
+    assert payload["messages"][0]["suggestions"] == []
+    assert payload["messages"][0]["follow_ups"] == []
+
+
+def _three_cards() -> list[dict]:
+    return [
+        {
+            "id": "d1",
+            "name": "Egg rice bowl",
+            "meal_type": "breakfast",
+            "calories": 420,
+            "protein_g": 28,
+            "carbs_g": 45,
+            "fat_g": 12,
+        },
+        {
+            "id": "d2",
+            "name": "Yogurt cup",
+            "meal_type": "breakfast",
+            "calories": 220,
+            "protein_g": 18,
+            "carbs_g": 20,
+            "fat_g": 6,
+        },
+        {
+            "id": "d3",
+            "name": "Tofu scramble",
+            "meal_type": "breakfast",
+            "calories": 380,
+            "protein_g": 24,
+            "carbs_g": 18,
+            "fat_g": 22,
+        },
+    ]
+
+
+async def _stream(orchestrator, *, intent=None, content="What should I eat next?"):
+    return [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content=content,
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+            intent=intent,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_next_meal_persists_suggestions_and_follow_ups():
+    cards = _three_cards()
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(
+            suggestions=cards, session_id="sess-9", meal_slot="breakfast"
+        )
+    )
+    follow_ups = _FakeFollowUps(
+        [
+            {"label": "What's left?", "action": "remaining_budget"},
+            {"label": "More breakfast ideas", "action": "next_meal"},
+        ]
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals, follow_ups=follow_ups)
+
+    events = await _stream(orchestrator, intent="next_meal")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert completed.data["suggestions"] == cards
+    assert completed.data["follow_ups"] == follow_ups.chips
+    assert repo.completed["reply_payload"]["suggestions"] == cards
+    assert repo.completed["reply_payload"]["discover_session_id"] == "sess-9"
+    assert next_meals.calls[0]["session_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_next_meal_reuses_discover_session_id():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try breakfast.",
+        reply_payload={"discover_session_id": "sess-1", "suggestions": []},
+    )
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(
+            suggestions=[], session_id="sess-1", meal_slot="breakfast"
+        )
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    orchestrator = _orchestrator(repo, next_meals=next_meals)
+
+    await _stream(orchestrator, intent="next_meal", content="More breakfast ideas")
+    assert next_meals.calls[0]["session_id"] == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_remaining_budget_never_calls_discover():
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), session_id="x")
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals)
+
+    events = await _stream(
+        orchestrator, intent="remaining_budget", content="What's left?"
+    )
+    completed = next(event for event in events if event.event == "message.completed")
+    assert next_meals.calls == []
+    assert completed.data["suggestions"] == []
+
+
+@pytest.mark.asyncio
+async def test_follow_up_failure_persists_empty_chips():
+    follow_ups = _FakeFollowUps(error=TimeoutError())
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, follow_ups=follow_ups)
+
+    events = await _stream(orchestrator, intent="day_progress")
+    completed = next(event for event in events if event.event == "message.completed")
+    assert completed.data["follow_ups"] == []
+    assert repo.completed["reply_payload"]["follow_ups"] == []

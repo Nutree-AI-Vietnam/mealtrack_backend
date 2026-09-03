@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -23,6 +24,7 @@ from src.domain.model.chat import (
     ChatThread,
     ChatTurnClaim,
     ChatUsage,
+    empty_reply_payload,
 )
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
 from src.domain.utils.timezone_utils import utc_now
@@ -215,6 +217,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         context_version: str,
         citation_source_keys: tuple[str, ...],
         provider_response_id: str | None,
+        reply_payload: dict[str, Any] | None = None,
     ) -> ChatMessage:
         now = utc_now()
         await self.session.execute(
@@ -238,6 +241,7 @@ class AsyncChatRepository(ChatRepositoryPort):
                 error_code=None,
                 completed_at=now,
                 updated_at=now,
+                reply_payload=reply_payload or empty_reply_payload(),
             )
         )
         row = await self.session.get(ChatMessageORM, message_id)
@@ -473,4 +477,5 @@ def _to_message(row: ChatMessageORM) -> ChatMessage:
         generation_lease_expires_at=row.generation_lease_expires_at,
         error_code=row.error_code,
         completed_at=row.completed_at,
+        reply_payload=getattr(row, "reply_payload", None),
     )

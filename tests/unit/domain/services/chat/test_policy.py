@@ -45,6 +45,17 @@ def _context(**overrides) -> ChatUserContext:
     return ChatUserContext(**values)
 
 
+def test_prompt_dict_includes_local_meal_slot() -> None:
+    payload = _context(
+        local_hour=8,
+        local_minute=12,
+        suggested_meal_slot="breakfast",
+    ).to_prompt_dict()
+    assert payload["today"]["local_hour"] == 8
+    assert payload["today"]["local_minute"] == 12
+    assert payload["today"]["suggested_meal_slot"] == "breakfast"
+
+
 def test_locale_prefers_supported_request_then_profile():
     assert resolve_chat_locale("vi", "en") == "vi"
     assert resolve_chat_locale("fr", "vi") == "vi"
@@ -127,6 +138,32 @@ def test_nutrition_numbers_must_come_from_context():
     bad = "Eat 9999 calories of protein."
     assert nutrition_numbers_are_traceable(ok, context=context, chunks=[]) is True
     assert nutrition_numbers_are_traceable(bad, context=context, chunks=[]) is False
+
+
+def test_candidate_macros_are_traceable():
+    context = _context()
+    candidates = [{"name": "Egg rice bowl", "calories": 420, "protein_g": 28}]
+    assert (
+        nutrition_numbers_are_traceable(
+            "Egg rice bowl is 420 calories.",
+            context=context,
+            chunks=[],
+            meal_candidates=candidates,
+        )
+        is True
+    )
+
+
+def test_grounding_includes_meal_candidates():
+    text = build_grounding_message(
+        _context(),
+        [],
+        intent="next_meal",
+        meal_candidates=[{"name": "Egg rice bowl", "calories": 420}],
+    )
+    assert "MEAL CANDIDATES" in text
+    assert "Egg rice bowl" in text
+    assert "420" in text
 
 
 def test_citations_must_match_retrieved_labels():

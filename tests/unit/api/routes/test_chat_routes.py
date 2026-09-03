@@ -119,6 +119,34 @@ def test_get_chat_returns_single_thread():
     assert body["messages"] == []
 
 
+def test_get_chat_defaults_empty_suggestions_and_follow_ups():
+    orchestrator = _StubOrchestrator(
+        thread_payload={
+            "thread": {
+                "id": "t1",
+                "created_at": "2026-09-01T00:00:00+00:00",
+                "updated_at": "2026-09-01T00:00:00+00:00",
+            },
+            "messages": [
+                {
+                    "id": "m1",
+                    "role": "assistant",
+                    "content": "You have 650 remaining.",
+                    "created_at": "2026-09-01T00:00:00+00:00",
+                    "status": "completed",
+                }
+            ],
+            "has_more": False,
+        }
+    )
+    client = TestClient(_app(orchestrator))
+    response = client.get("/v1/chat")
+    assert response.status_code == 200
+    message = response.json()["messages"][0]
+    assert message["suggestions"] == []
+    assert message["follow_ups"] == []
+
+
 def test_delete_chat_clears_messages():
     orchestrator = _StubOrchestrator()
     client = TestClient(_app(orchestrator))

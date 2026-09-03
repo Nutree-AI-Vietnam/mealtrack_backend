@@ -94,6 +94,21 @@ class ChatMessage:
     generation_lease_expires_at: datetime | None = None
     error_code: str | None = None
     completed_at: datetime | None = None
+    reply_payload: dict[str, Any] | None = None
+
+    def suggestions(self) -> list[dict[str, Any]]:
+        return _payload_list(self.reply_payload, "suggestions")
+
+    def follow_ups(self) -> list[dict[str, Any]]:
+        return _payload_list(self.reply_payload, "follow_ups")
+
+    def discover_session_id(self) -> str | None:
+        if not self.reply_payload:
+            return None
+        value = self.reply_payload.get("discover_session_id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +189,9 @@ class ChatUserContext:
     remaining_carbs_g: float | None
     remaining_fat_g: float | None
     remaining_days: int | None
+    local_hour: int | None = None
+    local_minute: int | None = None
+    suggested_meal_slot: str | None = None
     recent_meals: tuple[ChatMealSummary, ...] = ()
     missing: tuple[str, ...] = ()
 
@@ -206,6 +224,9 @@ class ChatUserContext:
                 "remaining_carbs_g": self.remaining_carbs_g,
                 "remaining_fat_g": self.remaining_fat_g,
                 "remaining_days": self.remaining_days,
+                "local_hour": self.local_hour,
+                "local_minute": self.local_minute,
+                "suggested_meal_slot": self.suggested_meal_slot,
             },
             "recent_meals": [
                 {
@@ -245,3 +266,23 @@ class ChatCompletionDelta:
 class ChatSseEvent:
     event: str
     data: dict[str, Any] = field(default_factory=dict)
+
+
+def empty_reply_payload() -> dict[str, list[dict[str, Any]]]:
+    return {"suggestions": [], "follow_ups": []}
+
+
+def reply_sidecar(message: ChatMessage) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "suggestions": message.suggestions(),
+        "follow_ups": message.follow_ups(),
+    }
+
+
+def _payload_list(payload: dict[str, Any] | None, key: str) -> list[dict[str, Any]]:
+    if not payload:
+        return []
+    raw = payload.get(key)
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]

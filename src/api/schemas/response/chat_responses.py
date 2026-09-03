@@ -1,5 +1,7 @@
 """Chat response DTOs."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -25,6 +27,8 @@ class ChatMessageResponse(BaseModel):
     model: str | None = None
     citation_source_keys: list[str] = Field(default_factory=list)
     citations: list[ChatCitationResponse] = Field(default_factory=list)
+    suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    follow_ups: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatInFlightResponse(BaseModel):

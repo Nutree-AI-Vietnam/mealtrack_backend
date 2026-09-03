@@ -5,11 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
+from src.app.services.chat_next_meal_candidates import (
+    ChatNextMealCandidates,
+    last_discover_session_id,
+)
 from src.domain.exceptions.chat_exceptions import (
     ChatProviderUnavailableError,
     ChatRateLimitedError,
@@ -24,18 +28,23 @@ from src.domain.model.chat import (
     ChatCitation,
     ChatClaimKind,
     ChatHistoryTurn,
+    ChatIntent,
     ChatMessage,
     ChatSseEvent,
     ChatTurnClaim,
     ChatUsage,
     ChatUserContext,
     RetrievedKnowledgeChunk,
+    empty_reply_payload,
+    reply_sidecar,
 )
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.chat_completion_port import ChatCompletionPort
 from src.domain.ports.chat_embedding_port import ChatEmbeddingPort
+from src.domain.ports.chat_follow_up_port import ChatFollowUpPort
 from src.domain.ports.chat_knowledge_retrieval_port import ChatKnowledgeRetrievalPort
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
+from src.domain.services.chat.meal_slot import resolve_meal_slot
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
@@ -114,6 +123,8 @@ class ChatTurnOrchestrator:
         max_output_tokens: int = CHAT_MAX_OUTPUT_TOKENS,
         semaphore: asyncio.Semaphore | None = None,
         circuit_breaker: CircuitBreaker | None = None,
+        next_meals: ChatNextMealCandidates | None = None,
+        follow_ups: ChatFollowUpPort | None = None,
     ) -> None:
         self._completion = completion
         self._embedding = embedding
@@ -127,6 +138,8 @@ class ChatTurnOrchestrator:
         self._max_output_tokens = max_output_tokens
         self._semaphore = semaphore or asyncio.Semaphore(max(1, global_concurrency))
         self._circuit = circuit_breaker
+        self._next_meals = next_meals
+        self._follow_ups = follow_ups
 
     async def prepare_turn(
         self,
@@ -239,9 +252,24 @@ class ChatTurnOrchestrator:
                 locale=resolved_locale,
                 header_timezone=header_timezone,
             )
-            history = await self._history(
+            history_messages = await self._completed_history(
                 claim.thread.id, exclude_message_id=claim.user_message.id
             )
+            history = _history_turns(history_messages)
+            suggestions: list[dict[str, Any]] = []
+            discover_session_id = last_discover_session_id(history_messages)
+            meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
+            if intent == ChatIntent.NEXT_MEAL.value and self._next_meals is not None:
+                batch = await self._next_meals.fetch(
+                    user_id=user_id,
+                    context=context,
+                    user_text=trimmed,
+                    locale=resolved_locale,
+                    session_id=discover_session_id,
+                )
+                suggestions = batch.suggestions
+                discover_session_id = batch.session_id or discover_session_id
+                meal_slot = batch.meal_slot
 
             generation = {
                 "text": "",
@@ -257,28 +285,11 @@ class ChatTurnOrchestrator:
                 user_message=trimmed,
                 generation=generation,
                 intent=intent,
+                meal_candidates=suggestions,
             ):
-                sentences.append(delta_text)
-
-            final_text = "".join(sentences).strip()
-            usage = generation["usage"]
-            provider_response_id = generation["provider_response_id"]
-            blocked = bool(generation["blocked"])
-
-            if not citations_are_valid(final_text, chunks):
-                blocked = True
-                final_text = safe_fallback_message(resolved_locale)
-                sentences = [final_text]
-            if not nutrition_numbers_are_traceable(
-                final_text, context=context, chunks=chunks
-            ):
-                blocked = True
-                final_text = safe_fallback_message(resolved_locale)
-                sentences = [final_text]
-
-            for delta_text in sentences:
                 if not delta_text:
                     continue
+                sentences.append(delta_text)
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
@@ -287,13 +298,41 @@ class ChatTurnOrchestrator:
                     },
                 )
 
+            final_text = "".join(sentences).strip()
+            usage = generation["usage"]
+            provider_response_id = generation["provider_response_id"]
+            blocked = bool(generation["blocked"])
+            if not final_text:
+                blocked = True
+                final_text = safe_fallback_message(resolved_locale)
+                yield ChatSseEvent(
+                    event="message.delta",
+                    data={
+                        "assistant_message_id": claim.assistant_message.id,
+                        "delta": final_text,
+                    },
+                )
+
             citations = _citations_for(final_text, chunks)
+            follow_ups = await self._generate_follow_ups(
+                locale=resolved_locale,
+                intent=intent,
+                slot=meal_slot,
+                user_message=trimmed,
+                assistant_text=final_text,
+                has_suggestions=bool(suggestions),
+            )
             completed = await self._complete(
                 claim.assistant_message.id,
                 content=final_text,
                 usage=usage,
                 citations=citations,
                 provider_response_id=provider_response_id,
+                reply_payload=_reply_payload(
+                    suggestions=suggestions,
+                    follow_ups=follow_ups,
+                    discover_session_id=discover_session_id,
+                ),
             )
             if blocked:
                 increment_metric(
@@ -336,6 +375,7 @@ class ChatTurnOrchestrator:
                         }
                         for item in citations
                     ],
+                    **reply_sidecar(completed),
                 },
             )
         except ChatProviderUnavailableError as exc:
@@ -490,6 +530,7 @@ class ChatTurnOrchestrator:
                     "cached_tokens": claim.assistant_message.cached_tokens or 0,
                 },
                 "citations": citations,
+                **reply_sidecar(claim.assistant_message),
             },
         )
 
@@ -552,23 +593,16 @@ class ChatTurnOrchestrator:
         )
         return chunks
 
-    async def _history(
+    async def _completed_history(
         self, thread_id: str, *, exclude_message_id: str
-    ) -> list[ChatHistoryTurn]:
+    ) -> list[ChatMessage]:
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
             messages = await repo.list_recent_completed_history(
                 thread_id=thread_id,
                 limit=CHAT_HISTORY_LIMIT + 1,
             )
-        turns: list[ChatHistoryTurn] = []
-        for message in messages:
-            if message.id == exclude_message_id:
-                continue
-            if not message.content:
-                continue
-            turns.append(ChatHistoryTurn(role=message.role, content=message.content))
-        return turns[-CHAT_HISTORY_LIMIT:]
+        return [message for message in messages if message.id != exclude_message_id]
 
     async def _iter_validated_sentences(
         self,
@@ -579,12 +613,15 @@ class ChatTurnOrchestrator:
         user_message: str,
         generation: dict[str, Any],
         intent: str | None = None,
+        meal_candidates: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
 
         instructions = stable_system_instructions()
-        grounding = build_grounding_message(context, chunks, intent=intent)
+        grounding = build_grounding_message(
+            context, chunks, intent=intent, meal_candidates=meal_candidates
+        )
         cache_kwargs = {}
         if self._cache_policy is not None:
             cache_kwargs = self._cache_policy.request_kwargs(
@@ -597,10 +634,11 @@ class ChatTurnOrchestrator:
         started = time.perf_counter()
         allergies = context.allergies or []
         last_error: Exception | None = None
+        yielded_any = False
 
         for attempt in range(2):
             kept: list[str] = []
-            buffer = SentenceBuffer()
+            pending = ""
             generation["blocked"] = False
             try:
                 async for delta in self._completion.stream(
@@ -624,29 +662,33 @@ class ChatTurnOrchestrator:
                                 (first_token_at - started) * 1000,
                                 unit="millisecond",
                             )
-                        for sentence in buffer.push(delta.text):
-                            decision = inspect_sentence(sentence, allergies=allergies)
-                            if not decision.allowed:
-                                generation["blocked"] = True
-                                continue
-                            kept.append(sentence)
-                    if delta.done:
-                        leftover = buffer.flush()
-                        if leftover:
-                            decision = inspect_sentence(leftover, allergies=allergies)
-                            if decision.allowed:
-                                kept.append(leftover)
-                            else:
-                                generation["blocked"] = True
+                        next_pending = _accept_stream_chunk(
+                            emitted="".join(kept),
+                            pending=pending,
+                            chunk=delta.text,
+                            allergies=allergies,
+                            chunks=chunks,
+                            context=context,
+                            meal_candidates=meal_candidates,
+                        )
+                        if next_pending is None:
+                            generation["blocked"] = True
+                            continue
+                        kept.append(delta.text)
+                        pending = next_pending
+                        yielded_any = True
+                        yield delta.text
                 self._record_circuit_success()
                 last_error = None
                 generation["text"] = "".join(kept)
-                for sentence in kept:
-                    yield sentence
                 break
             except Exception as exc:
                 last_error = exc
-                if attempt == 0 and _is_retryable_provider_error(exc):
+                if (
+                    attempt == 0
+                    and not yielded_any
+                    and _is_retryable_provider_error(exc)
+                ):
                     self._record_circuit_failure()
                     increment_metric("chat.turn.provider_retry")
                     continue
@@ -659,7 +701,7 @@ class ChatTurnOrchestrator:
         if not generation["text"].strip():
             fallback = (
                 no_evidence_message(context.locale)
-                if not chunks
+                if not chunks and not generation["blocked"]
                 else safe_fallback_message(context.locale)
             )
             generation["text"] = fallback
@@ -674,6 +716,7 @@ class ChatTurnOrchestrator:
         usage: ChatUsage,
         citations: list[ChatCitation],
         provider_response_id: str | None,
+        reply_payload: dict[str, Any] | None = None,
     ) -> ChatMessage:
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
@@ -686,7 +729,37 @@ class ChatTurnOrchestrator:
                 context_version=CHAT_CONTEXT_VERSION,
                 citation_source_keys=tuple(item.source_key for item in citations),
                 provider_response_id=provider_response_id,
+                reply_payload=reply_payload or empty_reply_payload(),
             )
+
+    async def _generate_follow_ups(
+        self,
+        *,
+        locale: str,
+        intent: str | None,
+        slot: str | None,
+        user_message: str,
+        assistant_text: str,
+        has_suggestions: bool,
+    ) -> list[dict[str, str]]:
+        if self._follow_ups is None:
+            return []
+        try:
+            return await asyncio.wait_for(
+                self._follow_ups.generate_follow_ups(
+                    model=self._model,
+                    locale=locale,
+                    intent=intent,
+                    slot=slot,
+                    user_message=user_message,
+                    assistant_text=assistant_text,
+                    has_suggestions=has_suggestions,
+                ),
+                timeout=2.0,
+            )
+        except Exception:
+            logger.info("chat follow-up generation failed", extra={"intent": intent})
+            return []
 
     async def _fail(self, message_id: str, error_code: str) -> None:
         try:
@@ -742,6 +815,30 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
     )
 
 
+def _history_turns(messages: list[ChatMessage]) -> list[ChatHistoryTurn]:
+    turns: list[ChatHistoryTurn] = []
+    for message in messages:
+        if not message.content:
+            continue
+        turns.append(ChatHistoryTurn(role=message.role, content=message.content))
+    return turns[-CHAT_HISTORY_LIMIT:]
+
+
+def _reply_payload(
+    *,
+    suggestions: list[dict[str, Any]],
+    follow_ups: list[dict[str, str]],
+    discover_session_id: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "suggestions": suggestions,
+        "follow_ups": follow_ups,
+    }
+    if discover_session_id:
+        payload["discover_session_id"] = discover_session_id
+    return payload
+
+
 def _public_message(
     message: ChatMessage,
     citations: list[dict[str, str | None]] | None = None,
@@ -755,6 +852,7 @@ def _public_message(
         "model": message.model,
         "citation_source_keys": list(message.citation_source_keys),
         "citations": citations or hydrate_citations(message.citation_source_keys, {}),
+        **reply_sidecar(message),
     }
 
 
@@ -791,6 +889,38 @@ def _citations_for(
                 )
             )
     return citations
+
+
+def _accept_stream_chunk(
+    *,
+    emitted: str,
+    pending: str,
+    chunk: str,
+    allergies: Iterable[str],
+    chunks: list[RetrievedKnowledgeChunk],
+    context: ChatUserContext,
+    meal_candidates: list[dict[str, Any]] | None,
+) -> str | None:
+    """Return the new unfinished sentence if `chunk` is safe to stream."""
+    tentative = emitted + chunk
+    if not citations_are_valid(tentative, chunks):
+        return None
+    if not nutrition_numbers_are_traceable(
+        tentative,
+        context=context,
+        chunks=chunks,
+        meal_candidates=meal_candidates,
+    ):
+        return None
+    splitter = SentenceBuffer()
+    completed = splitter.push(pending + chunk)
+    leftover = splitter.flush()
+    for sentence in completed:
+        if not inspect_sentence(sentence, allergies=allergies).allowed:
+            return None
+    if leftover and not inspect_sentence(leftover, allergies=allergies).allowed:
+        return None
+    return leftover
 
 
 def _is_retryable_provider_error(exc: Exception) -> bool:

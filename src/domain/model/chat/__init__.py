@@ -33,6 +33,8 @@ from src.domain.model.chat.models import (
     ChatUsage,
     ChatUserContext,
     RetrievedKnowledgeChunk,
+    empty_reply_payload,
+    reply_sidecar,
 )
 
 __all__ = [
@@ -68,4 +70,6 @@ __all__ = [
     "ChatUsage",
     "ChatUserContext",
     "RetrievedKnowledgeChunk",
+    "empty_reply_payload",
+    "reply_sidecar",
 ]

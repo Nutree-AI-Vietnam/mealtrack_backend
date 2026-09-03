@@ -7,6 +7,10 @@ from functools import lru_cache
 from typing import Any
 
 from src.app.services.chat_context_builder import ChatContextBuilder
+from src.app.services.chat_next_meal_candidates import (
+    ChatNextMealCandidates,
+    SuggestionChatDiscoverAdapter,
+)
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import ChatProviderUnavailableError
 from src.domain.model.chat import ChatCompletionDelta, ChatHistoryTurn
@@ -36,17 +40,23 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
         key_prefix=settings.OPENAI_PROMPT_CACHE_KEY_PREFIX,
         retention=settings.OPENAI_PROMPT_CACHE_RETENTION or None,
     )
-    from src.api.base_dependencies import get_cache_service
+    from src.api.base_dependencies import (
+        get_cache_service,
+        get_suggestion_orchestration_service,
+    )
 
     completion: ChatCompletionPort
     embedding: ChatEmbeddingPort
+    follow_ups = None
     if api_key:
-        completion = OpenAIChatCompletionAdapter(
+        adapter = OpenAIChatCompletionAdapter(
             api_key=api_key,
             timeout_seconds=settings.CHAT_REQUEST_TIMEOUT_SECONDS,
             max_retries=0,
             reasoning_effort=settings.CHAT_REASONING_EFFORT,
         )
+        completion = adapter
+        follow_ups = adapter
         embedding = OpenAIChatEmbeddingAdapter(
             api_key=api_key,
             model=settings.CHAT_EMBEDDING_MODEL,
@@ -72,6 +82,10 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
         max_output_tokens=settings.CHAT_MAX_OUTPUT_TOKENS,
         semaphore=get_chat_semaphore(settings.CHAT_GLOBAL_CONCURRENCY),
         circuit_breaker=get_chat_circuit_breaker(),
+        next_meals=ChatNextMealCandidates(
+            SuggestionChatDiscoverAdapter(get_suggestion_orchestration_service())
+        ),
+        follow_ups=follow_ups,
     )
 
 

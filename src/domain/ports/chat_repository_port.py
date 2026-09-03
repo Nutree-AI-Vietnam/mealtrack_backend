@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from src.domain.model.chat import (
     ChatMessage,
@@ -80,6 +81,7 @@ class ChatRepositoryPort(ABC):
         context_version: str,
         citation_source_keys: tuple[str, ...],
         provider_response_id: str | None,
+        reply_payload: dict[str, Any] | None = None,
     ) -> ChatMessage:
         """Mark a generating assistant message completed."""
 

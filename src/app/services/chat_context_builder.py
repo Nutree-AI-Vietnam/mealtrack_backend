@@ -29,6 +29,7 @@ from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.cache_port import CachePort
+from src.domain.services.chat.meal_slot import slot_from_local_datetime
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
@@ -64,7 +65,11 @@ class ChatContextBuilder:
         async with self._uow_factory() as uow:
             timezone = await resolve_user_timezone_async(user_id, uow, header_timezone)
             zone = get_zone_info(timezone)
-            today = datetime.now(zone).date()
+            local_now = datetime.now(zone)
+            today = local_now.date()
+            local_hour, local_minute, suggested_slot = slot_from_local_datetime(
+                local_now
+            )
             recent_meals = await self._recent_meals(uow, user_id, today, timezone)
 
         profile = await self._safe_profile(user_id, missing)
@@ -121,6 +126,9 @@ class ChatContextBuilder:
             remaining_carbs_g=_remaining(target_carbs, consumed_carbs),
             remaining_fat_g=_remaining(target_fat, consumed_fat),
             remaining_days=int(remaining_days) if remaining_days is not None else None,
+            local_hour=local_hour,
+            local_minute=local_minute,
+            suggested_meal_slot=suggested_slot,
             recent_meals=tuple(recent_meals),
             missing=tuple(dict.fromkeys(missing)),
         )
