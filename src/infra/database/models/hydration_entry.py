@@ -1,6 +1,6 @@
 """Hydration entry database model."""
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Index, Integer, String
 
 from src.infra.database.base import Base
 from src.infra.database.models.base import BaseMixin
@@ -26,6 +26,7 @@ class HydrationEntryORM(Base, BaseMixin):
     fat_g = Column(Float, nullable=False, default=0.0)
     fiber_g = Column(Float, nullable=False, default=0.0)
     sugar_g = Column(Float, nullable=False, default=0.0)
+    micros = Column(JSON, nullable=True)
     logged_at = Column(DateTime(timezone=True), nullable=False)
     source = Column(String(32), nullable=False, default="hydration")
     legacy_meal_id = Column(

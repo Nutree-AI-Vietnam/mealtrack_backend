@@ -66,6 +66,8 @@ def _uow(
     uow.hydration_entries.sum_ml_by_date_range = AsyncMock(
         return_value=hydration or {}
     )
+    uow.hydration_entries.sum_macros_by_date_range = AsyncMock(return_value={})
+    uow.hydration_entries.sum_micros_by_date_range = AsyncMock(return_value={})
     uow.movement_entries.fetch_included_kcal_for_range = AsyncMock(
         return_value=movement or []
     )

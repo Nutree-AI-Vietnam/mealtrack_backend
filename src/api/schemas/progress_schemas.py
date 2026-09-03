@@ -82,6 +82,8 @@ class ProgressSummaryDay(BaseModel):
     protein_g: float
     carbs_g: float
     fat_g: float
+    fiber_g: float = 0.0
+    fiber_target_g: float = 0.0
     calories: float
     target_calories: float
     target_source: str  # adjusted_live | snapshot | base
@@ -92,6 +94,8 @@ class ProgressSummaryDay(BaseModel):
     meal_count: int
     logged_status: str  # full | partial | none
     is_cheat_day: bool
+    nrf_quality: float = 0.0
+    nrf_coverage: int = 0
 
 
 class ProgressSummaryResponse(BaseModel):

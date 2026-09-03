@@ -73,6 +73,23 @@ class AINutritionMacros(BaseModel):
     )
 
 
+class AINutrientMicros(BaseModel):
+    """Optional NRF-related micros. Omit unknown values; never invent."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    vitamin_a: float | None = Field(None, ge=0)
+    vitamin_c: float | None = Field(None, ge=0)
+    vitamin_e: float | None = Field(None, ge=0)
+    calcium: float | None = Field(None, ge=0)
+    iron: float | None = Field(None, ge=0)
+    magnesium: float | None = Field(None, ge=0)
+    potassium: float | None = Field(None, ge=0)
+    sodium: float | None = Field(None, ge=0)
+    saturated_fat: float | None = Field(None, ge=0)
+    added_sugar: float | None = Field(None, ge=0)
+
+
 class AIVisionNutritionMacros(AINutritionMacros):
     """Strict macronutrients contract for provider-facing vision responses."""
 
@@ -93,6 +110,7 @@ class VisionFoodEstimate(BaseModel):
         validation_alias=AliasChoices("quantity_g", "quantity"),
     )
     macros: AIVisionNutritionMacros
+    micros: AINutrientMicros | None = None
     confidence: float = Field(1.0, ge=0, le=1)
 
     @field_validator("name")
@@ -149,6 +167,7 @@ class FoodLabelNutritionResponse(BaseModel):
     servings_per_package: float = Field(1, gt=0, le=1000)
     label_calories_per_serving: float | None = Field(None, ge=0, le=5000)
     macros_per_serving: AIVisionNutritionMacros
+    micros_per_serving: AINutrientMicros | None = None
     confidence: float = Field(0.5, ge=0, le=1)
     label_notes: list[str] = Field(default_factory=list)
 
@@ -244,6 +263,7 @@ class MealTextFoodEstimate(BaseModel):
     english_unit: str | None = Field(None, max_length=50)
     quantity_g: float | None = Field(None, gt=0, le=MAX_FOOD_ITEM_QUANTITY)
     macros: AINutritionMacros
+    micros: AINutrientMicros | None = None
 
     @model_validator(mode="before")
     @classmethod
