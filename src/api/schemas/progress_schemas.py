@@ -96,6 +96,10 @@ class ProgressSummaryDay(BaseModel):
     is_cheat_day: bool
     nrf_quality: float = 0.0
     nrf_coverage: int = 0
+    iron_mg: float | None = None
+    potassium_mg: float | None = None
+    sodium_mg: float | None = None
+    added_sugar_g: float | None = None
 
 
 class ProgressSummaryResponse(BaseModel):
