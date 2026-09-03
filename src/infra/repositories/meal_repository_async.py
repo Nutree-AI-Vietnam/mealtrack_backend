@@ -11,7 +11,9 @@ from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.meal.meal_image import MealImage as DomainMealImage
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition import Nutrition
+from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros_ops import mapping_from_micros
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.services.meal_recommendation.ingredient_affinity_service import (
     IngredientHistoryBucket,
@@ -685,6 +687,11 @@ class AsyncMealRepository(MealRepositoryPort):
         db_nutrition.fat = domain_nutrition.macros.fat
         db_nutrition.fiber = domain_nutrition.macros.fiber
         db_nutrition.sugar = domain_nutrition.macros.sugar
+        db_nutrition.micros = mapping_from_micros(
+            merge_meal_micros(
+                domain_nutrition.micros, domain_nutrition.food_items
+            )
+        )
         db_nutrition.confidence_score = domain_nutrition.confidence_score
         db_nutrition.nutrition_override = (
             domain_nutrition.nutrition_override.to_dict()

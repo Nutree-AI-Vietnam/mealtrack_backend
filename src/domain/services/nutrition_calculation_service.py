@@ -9,6 +9,8 @@ from typing import Any
 
 from src.domain.constants.food_density import DEFAULT_DENSITY, get_density
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
+from src.domain.model.nutrition.extra_nutrients import micros_from_snapshot
+from src.domain.model.nutrition.micros_ops import merge_micros
 
 logger = logging.getLogger(__name__)
 
@@ -667,7 +669,10 @@ class NutritionCalculationService:
                         fiber=fiber,
                         sugar=sugar,
                     ),
-                    micros=None,
+                    micros=micros_from_snapshot(
+                        getattr(item, "source_snapshot", None),
+                        quantity_grams,
+                    ),
                     confidence=1.0,
                     fdc_id=getattr(item, "fdc_id", None),
                     food_reference_id=getattr(item, "food_reference_id", None),
@@ -690,6 +695,7 @@ class NutritionCalculationService:
                 fiber=round(total_fiber, 1),
                 sugar=round(total_sugar, 1),
             ),
+            micros=merge_micros(*(item.micros for item in food_items)),
             food_items=food_items,
             confidence_score=1.0,
         )

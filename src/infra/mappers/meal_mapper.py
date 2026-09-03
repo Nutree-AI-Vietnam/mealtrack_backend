@@ -22,6 +22,11 @@ from src.domain.model.nutrition import (
 from src.domain.model.nutrition import (
     Nutrition as DomainNutrition,
 )
+from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
+from src.domain.model.nutrition.micros_ops import (
+    mapping_from_micros,
+    micros_from_mapping,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.meal.food_item_translation_model import (
     FoodItemTranslationORM,
@@ -83,7 +88,7 @@ def food_item_orm_to_domain(orm: FoodItemORM) -> DomainFoodItem:
             fiber=orm.fiber or 0.0,
             sugar=orm.sugar or 0.0,
         ),
-        micros=None,
+        micros=micros_from_mapping(getattr(orm, "micros", None)),
         confidence=orm.confidence,
         fdc_id=orm.fdc_id,
         food_reference_id=orm.food_reference_id,
@@ -111,7 +116,7 @@ def nutrition_orm_to_domain(orm: NutritionORM) -> DomainNutrition:
             fiber=orm.fiber or 0.0,
             sugar=orm.sugar or 0.0,
         ),
-        micros=None,
+        micros=micros_from_mapping(getattr(orm, "micros", None)),
         food_items=food_items,
         confidence_score=orm.confidence_score,
         nutrition_override=_nutrition_override_from_orm(orm.nutrition_override),
@@ -250,6 +255,7 @@ def food_item_domain_to_orm(domain: DomainFoodItem, nutrition_id=None) -> FoodIt
         item.fat = domain.macros.fat
         item.fiber = domain.macros.fiber
         item.sugar = domain.macros.sugar
+    item.micros = mapping_from_micros(getattr(domain, "micros", None))
     return item
 
 
@@ -265,6 +271,9 @@ def nutrition_domain_to_orm(domain: DomainNutrition, meal_id: str) -> NutritionO
         orm.fat = domain.macros.fat
         orm.fiber = domain.macros.fiber
         orm.sugar = domain.macros.sugar
+    orm.micros = mapping_from_micros(
+        merge_meal_micros(domain.micros, domain.food_items)
+    )
     if domain.food_items:
         orm.food_items = [food_item_domain_to_orm(fi) for fi in domain.food_items]
         for idx, fi_orm in enumerate(orm.food_items):

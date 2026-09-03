@@ -13,6 +13,7 @@ from src.domain.model.nutrition import (
     Macros,
     Nutrition,
 )
+from src.domain.model.nutrition.micros_ops import merge_micros, micros_from_mapping
 from src.domain.services.emoji_validator import validate_emoji
 
 
@@ -20,6 +21,13 @@ class VisionResponseParsingError(Exception):
     """Exception raised for errors in parsing Vision AI responses."""
 
     pass
+
+
+def _ai_micros(payload: Any):
+    if payload is None:
+        return None
+    data = payload.model_dump(exclude_none=True) if hasattr(payload, "model_dump") else payload
+    return micros_from_mapping(data)
 
 
 class VisionResponseParser:
@@ -66,7 +74,7 @@ class VisionResponseParser:
             # Create Nutrition object — calories derived from macros
             nutrition = Nutrition(
                 macros=total_macros,
-                micros=None,  # No micros from GPT
+                micros=merge_micros(*(item.micros for item in food_items)),
                 food_items=food_items if food_items else None,
                 confidence_score=confidence_score,
             )
@@ -101,7 +109,7 @@ class VisionResponseParser:
                 quantity=float(canonical.serving_size.grams),
                 unit="g",
                 macros=macros,
-                micros=None,
+                micros=_ai_micros(canonical.micros_per_serving),
                 confidence=min(max(0.0, float(canonical.confidence)), 1.0),
                 is_custom=True,
                 allowed_units=[
@@ -123,7 +131,7 @@ class VisionResponseParser:
             )
             return Nutrition(
                 macros=macros,
-                micros=None,
+                micros=food_item.micros,
                 food_items=[food_item],
                 confidence_score=min(max(0.0, float(canonical.confidence)), 1.0),
             )
@@ -221,7 +229,7 @@ class VisionResponseParser:
                     quantity=float(food_data.quantity_g),
                     unit="g",
                     macros=macros,
-                    micros=None,
+                    micros=_ai_micros(food_data.micros),
                     confidence=min(max(0.0, float(food_data.confidence)), 1.0),
                     allowed_units=[
                         {"unit": "g", "gram_weight": 1.0, "description": "1 g"}

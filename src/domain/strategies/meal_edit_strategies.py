@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 
 from src.domain.model.meal.food_item_change import FoodItemChange
 from src.domain.model.nutrition import FoodItem, Macros, NutritionOverride
+from src.domain.model.nutrition.extra_nutrients import micros_for_portion
 from src.domain.services import NutritionCalculationService
 from src.domain.services.nutrition_calculation_service import (
     ScaledNutritionResult,
@@ -187,7 +188,17 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
                         carbs=scaled_nutrition.carbs,
                         fat=scaled_nutrition.fat,
                     ),
-                    micros=existing_item.micros,
+                    micros=micros_for_portion(
+                        snapshot=existing_item.source_snapshot,
+                        quantity_g=quantity_to_grams(
+                            new_quantity,
+                            new_unit,
+                            existing_item.name,
+                            existing_item.allowed_units or [],
+                        ),
+                        fallback=existing_item.micros,
+                        scale_factor=1.0,
+                    ),
                     confidence=0.9,
                     fdc_id=existing_item.fdc_id,
                     food_reference_id=existing_item.food_reference_id,
@@ -259,7 +270,12 @@ class UpdateFoodItemStrategy(FoodItemChangeStrategy):
                 fiber=existing_item.macros.fiber * scale_factor,
                 sugar=existing_item.macros.sugar * scale_factor,
             ),
-            micros=existing_item.micros,
+            micros=micros_for_portion(
+                snapshot=existing_item.source_snapshot,
+                quantity_g=new_quantity_grams,
+                fallback=existing_item.micros,
+                scale_factor=scale_factor,
+            ),
             confidence=existing_item.confidence,
             fdc_id=existing_item.fdc_id,
             food_reference_id=existing_item.food_reference_id,

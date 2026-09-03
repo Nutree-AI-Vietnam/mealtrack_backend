@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros import Micros
 
 
 def _hydration_entry_id() -> str:
@@ -31,6 +32,7 @@ class HydrationEntry:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     image_url: str | None = None  # URL of scanned beverage image
+    micros: Micros | None = None
 
     @property
     def calories(self) -> float:

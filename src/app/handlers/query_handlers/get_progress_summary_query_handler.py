@@ -102,6 +102,12 @@ class GetProgressSummaryQueryHandler(
         hydration_by_day = await uow.hydration_entries.sum_ml_by_date_range(
             user_id, start, end, user_timezone=user_tz_str
         )
+        drink_macros_by_day = await uow.hydration_entries.sum_macros_by_date_range(
+            user_id, start, end, user_timezone=user_tz_str
+        )
+        drink_micros_by_day = await uow.hydration_entries.sum_micros_by_date_range(
+            user_id, start, end, user_timezone=user_tz_str
+        )
         movement_by_day = await fetch_movement_by_day(
             uow, user_id, start, end, user_tz_str, user_tz
         )
@@ -133,6 +139,8 @@ class GetProgressSummaryQueryHandler(
                     target_calories=target_cal,
                     target_source=source,
                     is_cheat_day=current in cheat_set,
+                    drink_macros=drink_macros_by_day.get(current),
+                    drink_micros=drink_micros_by_day.get(current),
                 )
             )
             current += timedelta(days=1)

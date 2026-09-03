@@ -192,8 +192,9 @@ RESPONSE FORMAT - return exactly this structure:
     "fiber_g": 0.0,
     "sugar_g": 0.0
   },
+  "micros_per_serving": null,
   "confidence": 0.86,
-  "label_notes": ["Read from nutrition panel; sodium/potassium ignored by app schema."]
+  "label_notes": ["Read from nutrition panel."]
 }
 
 LABEL GUARD:
@@ -217,8 +218,9 @@ FIELD RULES:
 - servings_per_package: Use the label value when visible. If missing or unreadable, use 1.
 - label_calories_per_serving: Use kcal/calories per serving. If only kJ is visible, convert kcal = kJ / 4.184. If no energy value is readable, null is allowed.
 - macros_per_serving: Return protein_g, carbs_g, fat_g, fiber_g, and sugar_g per serving. Missing fiber or sugar should be 0.0. Protein, carbs, and fat must be present; use 0.0 only when the label explicitly says 0 or the row is clearly absent from a simplified zero-macro label.
+- micros_per_serving: When printed, include sodium (mg), saturated_fat (g), added_sugar (g), potassium (mg), calcium (mg), iron (mg), vitamin_a (mcg), vitamin_c (mg), vitamin_e (mg), magnesium (mg). Omit a field rather than guessing. Do not convert %DV into milligrams unless the label also prints the absolute amount.
 - confidence: 0.0 to 1.0 based on image clarity and table readability.
-- label_notes: Short factual notes only: source basis, per-100g fallback, kJ conversion, unreadable rows, or ignored micronutrients.
+- label_notes: Short factual notes only: source basis, per-100g fallback, kJ conversion, unreadable rows, or omitted micronutrients.
 
 NUTRIENT MAPPING:
 - protein_g: protein, proteine, proteina, proteinas, โปรตีน, たんぱく質, 蛋白质, 단백질.
@@ -226,7 +228,7 @@ NUTRIENT MAPPING:
 - fat_g: total fat, fat, lipides, grasas, ไขมันทั้งหมด, 脂質, 脂肪.
 - fiber_g: dietary fiber, fibre, fibra, ใยอาหาร, 食物繊維, 膳食纤维.
 - sugar_g: total sugars, sugars, sucre, azucares, น้ำตาล, 糖類, 糖.
-- Ignore percent daily value columns, sodium, potassium, cholesterol, saturated fat, trans fat, added sugars, vitamins, and minerals unless a requested top-level macro is otherwise missing.
+- Read sodium, saturated fat, added sugars, potassium, and printed vitamins/minerals into micros_per_serving when the label shows absolute amounts. Ignore percent daily value columns unless they are the only source and you add a note.
 
 SERVING NORMALIZATION:
 - If the table gives values "per serving", use those values directly.
@@ -249,7 +251,7 @@ WORKED EXAMPLE 1 - Thai nutrition panel:
   "label_calories_per_serving": 5.0,
   "macros_per_serving": {"protein_g": 0.0, "carbs_g": 1.0, "fat_g": 0.0, "fiber_g": 0.0, "sugar_g": 0.0},
   "confidence": 0.82,
-  "label_notes": ["Thai nutrition panel read from image; sodium and potassium ignored by app schema."]
+  "label_notes": ["Thai nutrition panel read from image."]
 }
 
 WORKED EXAMPLE 2 - Per 100g European label:
