@@ -159,6 +159,36 @@ async def test_publish_meal_event_success(sample_meal):
 
 
 @pytest.mark.asyncio
+async def test_publish_meal_event_skips_insight_when_nutrition_is_incomplete():
+    publisher = AsyncMock()
+    food_item = type("FoodItem", (), {"id": "food-1", "name": "Rice"})()
+    nutrition = type("Nutrition", (), {"food_items": [food_item]})()
+    meal = type(
+        "Meal",
+        (),
+        {
+            "meal_id": "meal-1",
+            "user_id": "user-1",
+            "dish_name": "Rice Bowl",
+            "nutrition": nutrition,
+        },
+    )()
+
+    published = await publish_meal_event(
+        publisher,
+        meal,
+        event_type="created",
+        environment="test",
+        meal_date=date(2026, 8, 24),
+        language="en",
+    )
+
+    assert published is True
+    payload = publisher.publish.call_args[0][0]
+    assert "insight" not in payload["data"]
+
+
+@pytest.mark.asyncio
 async def test_publish_meal_event_requires_publisher(sample_meal):
     with pytest.raises(IntegrationEventPublisherRequiredError):
         await publish_meal_event(

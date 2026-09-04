@@ -74,38 +74,38 @@ class MealInsightSnapshot(BaseModel):
             raise ValueError("Meal insight events require nutrition")
 
         nutrition = meal.nutrition
-        macros = nutrition.effective_macros
+        macros = getattr(nutrition, "effective_macros", None) or getattr(
+            nutrition, "macros", None
+        )
+        if macros is None:
+            raise ValueError("Meal insight events require nutrition macros")
         meal_micros = compact_insight_micros(
-            merge_meal_micros(nutrition.micros, nutrition.food_items)
+            merge_meal_micros(
+                getattr(nutrition, "micros", None),
+                getattr(nutrition, "food_items", None),
+            )
         )
         ingredients = [
-            MealInsightIngredient(
-                id=str(item.id),
-                name=item.name,
-                quantity=float(item.quantity),
-                unit=item.unit,
-                calories=float(item.calories),
-                protein_g=float(item.effective_macros.protein),
-                carbs_g=float(item.effective_macros.carbs),
-                fat_g=float(item.effective_macros.fat),
-                fiber_g=float(item.effective_macros.fiber),
-                sugar_g=float(item.effective_macros.sugar),
-                confidence=float(item.confidence),
-                micros=compact_insight_micros(food_item_effective_micros(item)),
-            )
-            for item in (nutrition.food_items or [])[:8]
+            _insight_ingredient(item)
+            for item in (getattr(nutrition, "food_items", None) or [])[:8]
+            if _item_macros(item) is not None
         ]
+        calories = getattr(nutrition, "calories", None)
+        if calories is None:
+            calories = getattr(macros, "total_calories", 0) or 0
         return cls(
             dish_name=meal.dish_name,
             language=insight_language_code(language),
             nutrition=MealInsightNutrition(
-                calories=float(nutrition.calories),
+                calories=float(calories),
                 protein_g=float(macros.protein),
                 carbs_g=float(macros.carbs),
                 fat_g=float(macros.fat),
-                fiber_g=float(macros.fiber),
-                sugar_g=float(macros.sugar),
-                confidence_score=float(nutrition.confidence_score),
+                fiber_g=float(getattr(macros, "fiber", 0) or 0),
+                sugar_g=float(getattr(macros, "sugar", 0) or 0),
+                confidence_score=_optional_float(
+                    getattr(nutrition, "confidence_score", None)
+                ),
                 micros=meal_micros,
             ),
             ingredients=ingredients,
@@ -124,9 +124,38 @@ def insight_language_name(language: str | None) -> str:
     return LANGUAGE_NAMES.get(insight_language_code(language), "English")
 
 
+def _item_macros(item: Any) -> Any:
+    return getattr(item, "effective_macros", None) or getattr(item, "macros", None)
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _insight_ingredient(item: Any) -> MealInsightIngredient:
+    macros = _item_macros(item)
+    return MealInsightIngredient(
+        id=str(getattr(item, "id", "")),
+        name=str(getattr(item, "name", "")),
+        quantity=float(getattr(item, "quantity", 0) or 0),
+        unit=str(getattr(item, "unit", "") or "g"),
+        calories=float(getattr(item, "calories", 0) or 0),
+        protein_g=float(macros.protein),
+        carbs_g=float(macros.carbs),
+        fat_g=float(macros.fat),
+        fiber_g=float(getattr(macros, "fiber", 0) or 0),
+        sugar_g=float(getattr(macros, "sugar", 0) or 0),
+        confidence=_optional_float(getattr(item, "confidence", None)),
+        micros=compact_insight_micros(food_item_effective_micros(item)),
+    )
+
+
 def compact_insight_micros(micros: Micros | None) -> dict[str, float] | None:
     """Keep logged micros only, rounded for the Queue snapshot."""
-    if micros is None:
+    if not isinstance(micros, Micros):
         return None
     compact = {
         key: round(float(value), 1) for key, value in micros.to_dict().items()

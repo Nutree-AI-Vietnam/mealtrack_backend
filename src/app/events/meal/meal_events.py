@@ -79,7 +79,11 @@ def _insight_payload(
             language=language,
             user_context=user_context,
         ).model_dump(mode="json", exclude_none=True)
-    except ValueError:
+    except (ValueError, AttributeError, TypeError):
+        logger.info(
+            "meal insight snapshot skipped meal_id=%s",
+            getattr(meal, "meal_id", None),
+        )
         return None
 
 

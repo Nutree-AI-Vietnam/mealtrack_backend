@@ -25,6 +25,17 @@ def test_extra_nutrients_aliases_and_nested_amount():
     assert micros.saturated_fat == 1.5
 
 
+def test_merge_skips_non_micros_values():
+    from unittest.mock import MagicMock
+
+    from src.domain.model.nutrition.micros_ops import is_empty
+
+    assert is_empty(MagicMock()) is True
+    merged = merge_micros(MagicMock(), extra_nutrients_to_micros({"iron_mg": 2}))
+    assert merged is not None
+    assert merged.iron == 2
+
+
 def test_merge_and_scale_skip_empty():
     assert merge_micros(None, None) is None
     left = extra_nutrients_to_micros({"iron_mg": 2})
