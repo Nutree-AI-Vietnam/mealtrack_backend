@@ -1,6 +1,7 @@
 """Handler for updating custom macro targets."""
 
 import logging
+from typing import Any
 
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user.update_custom_macros_command import UpdateCustomMacrosCommand
@@ -14,7 +15,6 @@ from src.domain.ports.integration_event_publisher_port import (
     require_event_publisher,
 )
 from src.infra.database.models.user.profile import UserProfile
-from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +26,16 @@ class UpdateCustomMacrosCommandHandler(EventHandler[UpdateCustomMacrosCommand, N
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, command: UpdateCustomMacrosCommand) -> None:
-        uow = self.uow or AsyncUnitOfWork()
-        async with uow:
+        async with self.uow_factory() as uow:
             from sqlalchemy import select
 
             result = await uow.session.execute(

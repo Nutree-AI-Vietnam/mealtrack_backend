@@ -559,7 +559,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         AddCustomIngredientCommand,
         AddCustomIngredientCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
@@ -568,7 +568,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         AttachMealPhotoCommand,
         AttachMealPhotoCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
@@ -577,7 +577,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         DeleteMealPhotoCommand,
         DeleteMealPhotoCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),
@@ -586,7 +586,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         DeleteMealCommand,
         DeleteMealCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -758,7 +758,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogMovementCommand,
         LogMovementCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -766,7 +766,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         DeleteMovementEntryCommand,
         DeleteMovementEntryCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -774,7 +774,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UpdateMovementEntryCommand,
         UpdateMovementEntryCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -785,7 +785,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         CreateThreeDayMealRecommendationCommand,
         CreateThreeDayMealRecommendationCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             optimizer=ThreeDayPlanOptimizer(),
             catalog_snapshot_service=recommendation_snapshot,
         ),
@@ -793,7 +793,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SwapMealRecommendationSlotCommand,
         SwapMealRecommendationSlotCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             optimizer=ThreeDayPlanOptimizer(),
             catalog_snapshot_service=recommendation_snapshot,
             history_projector=recommendation_history,
@@ -802,7 +802,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogRecommendedMealCommand,
         LogRecommendedMealCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
             event_bus=event_bus,
@@ -817,7 +817,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogCatalogMealCommand,
         LogCatalogMealCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             browse_service=get_catalog_meal_browse_service(),
             meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
@@ -840,7 +840,7 @@ def get_configured_event_bus() -> EventBus:
     )
     event_bus.register_handler(
         SkipMealRecommendationSlotCommand,
-        SkipMealRecommendationSlotCommandHandler(uow=AsyncUnitOfWork()),
+        SkipMealRecommendationSlotCommandHandler(uow_factory=AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetMealRecommendationPlanQuery,
@@ -863,7 +863,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveMealSuggestionCommand,
         SaveMealSuggestionCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
             event_bus=event_bus,
             environment=settings.ENVIRONMENT,
@@ -874,14 +874,14 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveUserOnboardingCommand,
         SaveUserOnboardingCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
     )
     event_bus.register_handler(
         SaveBodyFatVisualProfileCommand,
-        SaveBodyFatVisualProfileCommandHandler(uow=AsyncUnitOfWork()),
+        SaveBodyFatVisualProfileCommandHandler(uow_factory=AsyncUnitOfWork),
     )
     event_bus.register_handler(SyncUserCommand, SyncUserCommandHandler())
     event_bus.register_handler(
@@ -890,7 +890,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         CompleteOnboardingCommand,
         CompleteOnboardingCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -906,7 +906,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UpdateUserMetricsCommand,
         UpdateUserMetricsCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -935,7 +935,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UpdateCustomMacrosCommand,
         UpdateCustomMacrosCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -1055,7 +1055,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogHydrationCommand,
         LogHydrationCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -1063,7 +1063,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogCaloricDrinkCommand,
         LogCaloricDrinkCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -1071,7 +1071,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         DeleteHydrationEntryCommand,
         DeleteHydrationEntryCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -1091,7 +1091,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         SaveSuggestionCommand,
         SaveSuggestionCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
         ),

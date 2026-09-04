@@ -1,5 +1,7 @@
 """Handler for recommendation slot swaps."""
 
+from typing import Any
+
 from src.app.commands.meal_recommendation import SwapMealRecommendationSlotCommand
 from src.app.events.base import EventHandler, handles
 from src.domain.model.meal_recommendation import (
@@ -20,12 +22,13 @@ class SwapMealRecommendationSlotCommandHandler(
 ):
     def __init__(
         self,
-        uow,
+        uow=None,
+        uow_factory: Any = None,
         optimizer: ThreeDayPlanOptimizer | None = None,
         catalog_snapshot_service=None,
         history_projector=None,
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.optimizer = optimizer or ThreeDayPlanOptimizer()
         self.catalog_snapshot_service = catalog_snapshot_service
         self.history_projector = history_projector
@@ -33,7 +36,7 @@ class SwapMealRecommendationSlotCommandHandler(
     async def handle(
         self, command: SwapMealRecommendationSlotCommand
     ) -> PersistedMealRecommendationSlotMutationResult:
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             replenishment: tuple[MealRecommendationAlternative, ...] = ()
             context_loader = getattr(
                 uow.meal_recommendation_plans,
