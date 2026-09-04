@@ -341,3 +341,9 @@ async def test_meal_event_publish_includes_compact_profile_context() -> None:
     assert payload["data"]["user_id"] == meal.user_id
     assert payload["data"]["meal_id"] == meal.meal_id
     assert payload["data"]["meal_date"] == "2026-08-24"
+    insight = payload["data"]["insight"]
+    assert insight["language"] == "en"
+    assert insight["user_context"]["fitness_goal"] == "weight_loss"
+    assert insight["user_context"]["allergies"] == ["peanuts"]
+    assert insight["user_context"]["target_calories"] == 2000
+    assert "unused_field" not in insight["user_context"]

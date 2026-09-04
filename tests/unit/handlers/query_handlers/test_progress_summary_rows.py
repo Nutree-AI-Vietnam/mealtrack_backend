@@ -190,3 +190,46 @@ def test_nrf_quality_turns_on_with_four_logged_micros():
     )
     assert row["nrf_coverage"] == 4
     assert row["nrf_quality"] == 100.0
+    assert row["iron_mg"] == 18.0
+    assert row["sodium_mg"] == 0.0
+    assert row["potassium_mg"] is None
+    assert row["added_sugar_g"] is None
+
+
+def test_missing_micros_leave_highlight_amounts_none():
+    row = build_progress_day_row(
+        date(2026, 9, 1),
+        meals=[_meal(10.0, 20.0, 5.0, fiber=8.0)],
+        burned_calories=0.0,
+        hydration_ml=0,
+        hydration_goal_ml=2000,
+        protein_target_g=140.0,
+        target_calories=2000.0,
+        target_source="base",
+        is_cheat_day=False,
+    )
+    assert row["iron_mg"] is None
+    assert row["potassium_mg"] is None
+    assert row["sodium_mg"] is None
+    assert row["added_sugar_g"] is None
+
+
+def test_drink_micros_contribute_highlight_amounts():
+    drinks = Macros(protein=20.0, carbs=8.0, fat=1.0, fiber=2.0)
+    row = build_progress_day_row(
+        date(2026, 9, 1),
+        meals=[],
+        burned_calories=0.0,
+        hydration_ml=400,
+        hydration_goal_ml=2000,
+        protein_target_g=140.0,
+        target_calories=2000.0,
+        target_source="base",
+        is_cheat_day=False,
+        drink_macros=drinks,
+        drink_micros=Micros(iron=9.0, potassium=2350.0),
+    )
+    assert row["iron_mg"] == 9.0
+    assert row["potassium_mg"] == 2350.0
+    assert row["sodium_mg"] is None
+    assert row["added_sugar_g"] is None

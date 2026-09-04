@@ -102,6 +102,7 @@ def food_reference_model_to_nutrition_projection(
         fat_100g=model.fat_100g,
         fiber_100g=model.fiber_100g or 0.0,
         sugar_100g=model.sugar_100g or 0.0,
+        extra_nutrients=food_reference_nutrients_to_dict(model),
         density_g_ml=model.density,
         name_normalized=model.name_normalized,
         source_namespace=getattr(model, "source_namespace", None),

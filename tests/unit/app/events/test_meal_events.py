@@ -10,8 +10,10 @@ from src.app.events.meal.meal_events import (
     MealInsightSnapshot,
     publish_meal_event,
 )
+from src.app.events.meal.meal_insight_snapshot import compact_insight_user_context
 from src.domain.model.meal.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros import Micros
 from src.domain.model.nutrition.nutrition import FoodItem, Nutrition
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherRequiredError,
@@ -34,6 +36,7 @@ def sample_meal():
                 quantity=150.0,
                 unit="g",
                 macros=Macros(protein=30.0, carbs=0.0, fat=5.0, fiber=0.0, sugar=0.0),
+                micros=Micros(iron=7.6, sodium=420.0),
                 confidence=0.9,
             )
         ],
@@ -67,11 +70,60 @@ def test_meal_insight_snapshot_from_meal(sample_meal):
     assert snapshot.language == "vi"
     assert snapshot.nutrition.calories == 400.0
     assert snapshot.nutrition.protein_g == 30.0
+    assert snapshot.nutrition.micros == {"iron": 7.6, "sodium": 420.0}
     assert len(snapshot.ingredients) == 1
     assert snapshot.ingredients[0].name == "Chicken Breast"
     assert snapshot.ingredients[0].quantity == 150.0
+    assert snapshot.ingredients[0].micros == {"iron": 7.6, "sodium": 420.0}
     assert snapshot.user_context == {"goal": "gain_muscle"}
     assert snapshot.tokens == ["fcm_token_123"]
+
+
+def test_meal_insight_snapshot_falls_back_to_english_for_unknown_locale(sample_meal):
+    snapshot = MealInsightSnapshot.from_meal(sample_meal, language="xx")
+    assert snapshot.language == "en"
+
+
+def test_compact_insight_user_context_keeps_language_preference():
+    context = compact_insight_user_context(
+        {
+            "profile": {
+                "fitness_goal": "weight_loss",
+                "language_code": "vi-VN",
+            },
+            "tdee": {},
+        }
+    )
+    assert context == {
+        "fitness_goal": "weight_loss",
+        "language_code": "vi",
+    }
+
+
+@pytest.mark.asyncio
+async def test_publish_meal_event_uses_profile_language_when_request_blank(
+    sample_meal,
+):
+    publisher = AsyncMock()
+    event_bus = AsyncMock()
+    event_bus.send.return_value = {
+        "profile": {"language_code": "vi"},
+        "tdee": {},
+    }
+
+    await publish_meal_event(
+        publisher,
+        sample_meal,
+        event_type="created",
+        environment="production",
+        meal_date=date(2026, 8, 24),
+        language="",
+        event_bus=event_bus,
+    )
+
+    insight = publisher.publish.call_args[0][0]["data"]["insight"]
+    assert insight["language"] == "vi"
+    assert insight["user_context"]["language_code"] == "vi"
 
 
 @pytest.mark.asyncio
@@ -97,6 +149,43 @@ async def test_publish_meal_event_success(sample_meal):
     assert payload["data"]["meal_date"] == "2026-08-24"
     assert payload["data"]["language"] == "en"
     assert payload["data"]["old_meal_date"] == "2026-08-23"
+    insight = payload["data"]["insight"]
+    assert insight["dish_name"] == "Chicken Dish"
+    assert insight["language"] == "en"
+    assert insight["nutrition"]["protein_g"] == 30.0
+    assert insight["nutrition"]["micros"] == {"iron": 7.6, "sodium": 420.0}
+    assert insight["ingredients"][0]["name"] == "Chicken Breast"
+    assert insight["ingredients"][0]["micros"]["iron"] == 7.6
+
+
+@pytest.mark.asyncio
+async def test_publish_meal_event_skips_insight_when_nutrition_is_incomplete():
+    publisher = AsyncMock()
+    food_item = type("FoodItem", (), {"id": "food-1", "name": "Rice"})()
+    nutrition = type("Nutrition", (), {"food_items": [food_item]})()
+    meal = type(
+        "Meal",
+        (),
+        {
+            "meal_id": "meal-1",
+            "user_id": "user-1",
+            "dish_name": "Rice Bowl",
+            "nutrition": nutrition,
+        },
+    )()
+
+    published = await publish_meal_event(
+        publisher,
+        meal,
+        event_type="created",
+        environment="test",
+        meal_date=date(2026, 8, 24),
+        language="en",
+    )
+
+    assert published is True
+    payload = publisher.publish.call_args[0][0]
+    assert "insight" not in payload["data"]
 
 
 @pytest.mark.asyncio

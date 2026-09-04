@@ -95,12 +95,16 @@ async def initialize_cache_layer() -> None:
         monitor=_cache_monitor,
         enabled=settings.CACHE_ENABLED,
     )
+    _register_local_insight_hook()
 
 
 async def shutdown_cache_layer() -> None:
     """Gracefully close Redis connections."""
     global _redis_client, _cache_service
 
+    from src.app.events.meal.meal_events import register_local_insight_hook
+
+    register_local_insight_hook(None)
     if _cache_service:
         _cache_service = None
     if _redis_client:
@@ -172,6 +176,16 @@ def get_food_cache_service() -> FoodCacheServicePort:
 def get_cache_service() -> CacheService | None:
     """Expose cache service for dependency injection."""
     return _cache_service
+
+
+def _register_local_insight_hook() -> None:
+    """Write meal insights to Docker Redis when the Worker cannot reach it."""
+    from src.api.services.local_meal_insight_cache import LocalMealInsightWriter
+    from src.app.events.meal.meal_events import register_local_insight_hook
+
+    register_local_insight_hook(
+        LocalMealInsightWriter(get_cache_service, get_ai_model_manager).schedule
+    )
 
 
 def get_cache_monitor() -> CacheMonitor:
@@ -333,10 +347,10 @@ def get_parse_text_settings() -> dict[str, bool]:
     current_settings = get_settings()
     return {
         "structured_reference_enabled": bool(
-            getattr(current_settings, "PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED", False)
+            getattr(current_settings, "PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED", True)
         ),
         "pure_ai_mode": bool(
-            getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", True)
+            getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", False)
         ),
     }
 

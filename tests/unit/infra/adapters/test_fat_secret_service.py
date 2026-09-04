@@ -113,6 +113,37 @@ def test_fatsecret_nutrition_prefers_100g_serving():
 
 
 @pytest.mark.unit
+def test_fatsecret_nutrition_extracts_extra_nutrients_per_100g():
+    service = FatSecretService("client", "secret")
+    nutrition = service._extract_nutrition_from_details(
+        {
+            "servings": {
+                "serving": {
+                    "measurement_description": "g",
+                    "metric_serving_amount": "50.000",
+                    "calories": "80",
+                    "protein": "5",
+                    "carbohydrate": "10",
+                    "fat": "2",
+                    "fiber": "1",
+                    "sugar": "3",
+                    "iron": "0.6",
+                    "sodium": "115",
+                    "potassium": "180",
+                    "added_sugars": "2",
+                }
+            }
+        }
+    )
+
+    extras = nutrition["extra_nutrients"]
+    assert extras["iron_mg"] == pytest.approx(1.2)
+    assert extras["sodium_mg"] == pytest.approx(230)
+    assert extras["potassium_mg"] == pytest.approx(360)
+    assert extras["added_sugar_g"] == pytest.approx(4)
+
+
+@pytest.mark.unit
 def test_fatsecret_nutrition_rejects_missing_metric_basis():
     service = FatSecretService("client", "secret")
     nutrition = service._extract_nutrition_from_details(

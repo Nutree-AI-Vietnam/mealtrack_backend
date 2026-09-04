@@ -121,6 +121,7 @@ async def test_provider_details_only_selected_candidate():
             "protein_100g": 2.7,
             "carbs_100g": 30,
             "fat_100g": 0.7,
+            "extra_nutrients": {"iron_mg": 0.4, "sodium_mg": 2, "potassium_mg": 35},
             "allowed_units": [
                 {"unit": "serving", "gram_weight": 150, "description": "1 bowl"}
             ],
@@ -143,6 +144,13 @@ async def test_provider_details_only_selected_candidate():
         {"unit": "g", "gram_weight": 1.0, "description": "1 g"},
         {"unit": "serving", "gram_weight": 150.0, "description": "1 bowl"},
     ]
+    micros = meal.nutrition.food_items[0].micros
+    assert micros is not None
+    assert micros.iron == pytest.approx(0.6)
+    assert micros.sodium == pytest.approx(3)
+    assert meal.nutrition.food_items[0].source_snapshot["extra_nutrients"]["iron_mg"] == (
+        0.4
+    )
 
 
 @pytest.mark.asyncio

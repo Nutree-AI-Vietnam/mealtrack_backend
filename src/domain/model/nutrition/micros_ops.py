@@ -10,7 +10,7 @@ _FIELDS = tuple(Micros.__dataclass_fields__)
 
 
 def is_empty(micros: Micros | None) -> bool:
-    if micros is None:
+    if micros is None or not isinstance(micros, Micros):
         return True
     return all(getattr(micros, name) is None for name in _FIELDS)
 

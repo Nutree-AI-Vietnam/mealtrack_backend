@@ -26,6 +26,7 @@ from src.app.services.food_display_name import (
     needs_display_localization,
 )
 from src.app.services.parse_text_custom_estimate import apply_custom_estimate
+from src.domain.model.nutrition.extra_nutrients import extras_from_portion_micros
 from src.app.services.serving_label_localizer import localize_item_servings
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
 from src.domain.model.ai.nutrition_contracts import (
@@ -409,6 +410,12 @@ class ParseMealTextHandler(
             "source_food_id": item.get("source_food_id"),
         }
         extras = item.get("extra_nutrients")
+        if not extras:
+            extras = extras_from_portion_micros(
+                item.get("portion_micros"), quantity_g
+            )
+            if extras:
+                item["extra_nutrients"] = extras
         if extras:
             snapshot["extra_nutrients"] = extras
         canonical_name = item.get("canonical_name")
@@ -553,6 +560,9 @@ class ParseMealTextHandler(
                         break
             if item.get("quantity_g") is not None:
                 flat_item["quantity_g"] = item["quantity_g"]
+            micros = item.get("micros")
+            if isinstance(micros, dict) and micros:
+                flat_item["portion_micros"] = micros
 
             flat_items.append(flat_item)
 
@@ -958,6 +968,9 @@ class ParseMealTextHandler(
                 "fiber_100g": item.get("fiber_per_100g") or 0.0,
                 "sugar_100g": item.get("sugar_per_100g") or 0.0,
             }
+            extras = item.get("extra_nutrients")
+            if isinstance(extras, dict) and extras:
+                per_100g["extra_nutrients"] = extras
             servings = item.get("allowed_units") or None
             try:
                 async with self._uow_factory() as uow:
