@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
+from src.app.services.chat_intent_classifier import ChatIntentClassifier
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
     last_discover_session_id,
@@ -55,11 +56,14 @@ from src.domain.services.chat.policy import (
     inspect_sentence,
     no_evidence_message,
     nutrition_numbers_are_traceable,
+    out_of_scope_follow_ups,
+    out_of_scope_message,
     request_fingerprint,
     resolve_chat_locale,
     safe_fallback_message,
     stable_system_instructions,
 )
+from src.domain.services.chat.topic_scope import SCOPE_OUT
 from src.domain.utils.timezone_utils import utc_now
 from src.observability import distribution_metric, increment_metric, log_event
 
@@ -125,6 +129,7 @@ class ChatTurnOrchestrator:
         circuit_breaker: CircuitBreaker | None = None,
         next_meals: ChatNextMealCandidates | None = None,
         follow_ups: ChatFollowUpPort | None = None,
+        intent_classifier: ChatIntentClassifier | None = None,
     ) -> None:
         self._completion = completion
         self._embedding = embedding
@@ -140,6 +145,7 @@ class ChatTurnOrchestrator:
         self._circuit = circuit_breaker
         self._next_meals = next_meals
         self._follow_ups = follow_ups
+        self._intent_classifier = intent_classifier or ChatIntentClassifier(embedding)
 
     async def prepare_turn(
         self,
@@ -246,12 +252,23 @@ class ChatTurnOrchestrator:
 
             yield _started_event(claim)
 
-            context, chunks = await self._ground(
+            context, chunks, query_embedding = await self._ground(
                 user_id=user_id,
                 query=trimmed,
                 locale=resolved_locale,
                 header_timezone=header_timezone,
             )
+            if intent is None:
+                decision = await self._intent_classifier.classify(
+                    trimmed, query_embedding=query_embedding
+                )
+                intent = decision.intent
+            out_of_scope = False
+            if intent is None:
+                scope = await self._intent_classifier.classify_scope(
+                    trimmed, query_embedding=query_embedding
+                )
+                out_of_scope = scope.scope == SCOPE_OUT
             history_messages = await self._completed_history(
                 claim.thread.id, exclude_message_id=claim.user_message.id
             )
@@ -259,7 +276,11 @@ class ChatTurnOrchestrator:
             suggestions: list[dict[str, Any]] = []
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
-            if intent == ChatIntent.NEXT_MEAL.value and self._next_meals is not None:
+            if (
+                not out_of_scope
+                and intent == ChatIntent.NEXT_MEAL.value
+                and self._next_meals is not None
+            ):
                 batch = await self._next_meals.fetch(
                     user_id=user_id,
                     context=context,
@@ -278,33 +299,8 @@ class ChatTurnOrchestrator:
                 "blocked": False,
             }
             sentences: list[str] = []
-            async for delta_text in self._iter_validated_sentences(
-                context=context,
-                chunks=chunks,
-                history=history,
-                user_message=trimmed,
-                generation=generation,
-                intent=intent,
-                meal_candidates=suggestions,
-            ):
-                if not delta_text:
-                    continue
-                sentences.append(delta_text)
-                yield ChatSseEvent(
-                    event="message.delta",
-                    data={
-                        "assistant_message_id": claim.assistant_message.id,
-                        "delta": delta_text,
-                    },
-                )
-
-            final_text = "".join(sentences).strip()
-            usage = generation["usage"]
-            provider_response_id = generation["provider_response_id"]
-            blocked = bool(generation["blocked"])
-            if not final_text:
-                blocked = True
-                final_text = safe_fallback_message(resolved_locale)
+            if out_of_scope:
+                final_text = out_of_scope_message(resolved_locale)
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
@@ -312,16 +308,56 @@ class ChatTurnOrchestrator:
                         "delta": final_text,
                     },
                 )
+                usage = generation["usage"]
+                provider_response_id = None
+                blocked = False
+                citations = []
+                follow_ups = out_of_scope_follow_ups(resolved_locale)
+            else:
+                async for delta_text in self._iter_validated_sentences(
+                    context=context,
+                    chunks=chunks,
+                    history=history,
+                    user_message=trimmed,
+                    generation=generation,
+                    intent=intent,
+                    meal_candidates=suggestions,
+                ):
+                    if not delta_text:
+                        continue
+                    sentences.append(delta_text)
+                    yield ChatSseEvent(
+                        event="message.delta",
+                        data={
+                            "assistant_message_id": claim.assistant_message.id,
+                            "delta": delta_text,
+                        },
+                    )
 
-            citations = _citations_for(final_text, chunks)
-            follow_ups = await self._generate_follow_ups(
-                locale=resolved_locale,
-                intent=intent,
-                slot=meal_slot,
-                user_message=trimmed,
-                assistant_text=final_text,
-                has_suggestions=bool(suggestions),
-            )
+                final_text = "".join(sentences).strip()
+                usage = generation["usage"]
+                provider_response_id = generation["provider_response_id"]
+                blocked = bool(generation["blocked"])
+                if not final_text:
+                    blocked = True
+                    final_text = safe_fallback_message(resolved_locale)
+                    yield ChatSseEvent(
+                        event="message.delta",
+                        data={
+                            "assistant_message_id": claim.assistant_message.id,
+                            "delta": final_text,
+                        },
+                    )
+
+                citations = _citations_for(final_text, chunks)
+                follow_ups = await self._generate_follow_ups(
+                    locale=resolved_locale,
+                    intent=intent,
+                    slot=meal_slot,
+                    user_message=trimmed,
+                    assistant_text=final_text,
+                    has_suggestions=bool(suggestions),
+                )
             completed = await self._complete(
                 claim.assistant_message.id,
                 content=final_text,
@@ -552,7 +588,7 @@ class ChatTurnOrchestrator:
         query: str,
         locale: str,
         header_timezone: str | None,
-    ) -> tuple[ChatUserContext, list[RetrievedKnowledgeChunk]]:
+    ) -> tuple[ChatUserContext, list[RetrievedKnowledgeChunk], list[float] | None]:
         context_task = asyncio.create_task(
             self._context_builder.build(
                 user_id=user_id,
@@ -561,10 +597,17 @@ class ChatTurnOrchestrator:
             )
         )
         retrieval_task = asyncio.create_task(self._retrieve(query, locale))
-        context, chunks = await asyncio.gather(context_task, retrieval_task)
-        return context, filter_chunks_for_allergies(chunks, context.allergies or [])
+        context, retrieved = await asyncio.gather(context_task, retrieval_task)
+        chunks, embedding = retrieved
+        return (
+            context,
+            filter_chunks_for_allergies(chunks, context.allergies or []),
+            embedding,
+        )
 
-    async def _retrieve(self, query: str, locale: str) -> list[RetrievedKnowledgeChunk]:
+    async def _retrieve(
+        self, query: str, locale: str
+    ) -> tuple[list[RetrievedKnowledgeChunk], list[float] | None]:
         embedding: list[float] | None = None
         try:
             embedding = await self._embedding.embed_query(query)
@@ -588,11 +631,11 @@ class ChatTurnOrchestrator:
                 "chat retrieval failed",
                 attributes={"error_code": "CHAT_RETRIEVAL_FAILED"},
             )
-            return []
+            return [], embedding
         increment_metric(
             "chat.retrieval.hit" if chunks else "chat.retrieval.no_evidence"
         )
-        return chunks
+        return chunks, embedding
 
     async def _completed_history(
         self, thread_id: str, *, exclude_message_id: str

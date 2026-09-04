@@ -4,6 +4,7 @@ import pytest
 
 from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
+from src.domain.services.chat.policy import out_of_scope_message
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatProviderUnavailableError,
@@ -19,7 +20,6 @@ from src.domain.model.chat import (
     ChatTurnClaim,
     ChatUsage,
     ChatUserContext,
-    empty_reply_payload,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
@@ -101,8 +101,10 @@ class _FakeUow:
 class _FakeCompletion:
     def __init__(self, chunks: list[str]):
         self.chunks = chunks
+        self.stream_calls = 0
 
     async def stream(self, **kwargs):
+        self.stream_calls += 1
         for chunk in self.chunks:
             yield ChatCompletionDelta(text=chunk)
         yield ChatCompletionDelta(
@@ -328,10 +330,13 @@ async def test_new_turn_streams_sentence_and_persists():
     assert names[-1] == "message.completed"
     assert repo.completed is not None
     assert "650" in repo.completed["content"]
-    assert repo.completed["reply_payload"] == empty_reply_payload()
+    assert repo.completed["reply_payload"]["suggestions"] == []
+    assert repo.completed["reply_payload"]["follow_ups"] == []
+    assert repo.completed["reply_payload"]["intent"] == "remaining_budget"
     completed = next(event for event in events if event.event == "message.completed")
     assert completed.data["suggestions"] == []
     assert completed.data["follow_ups"] == []
+    assert completed.data["intent"] == "remaining_budget"
 
 
 @pytest.mark.asyncio
@@ -641,6 +646,93 @@ async def test_next_meal_reuses_discover_session_id():
 
     await _stream(orchestrator, intent="next_meal", content="More breakfast ideas")
     assert next_meals.calls[0]["session_id"] == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_typed_dinner_fetches_next_meal_without_chip():
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals)
+
+    events = await _stream(orchestrator, content="What's for dinner?")
+    completed = next(event for event in events if event.event == "message.completed")
+    assert next_meals.calls
+    assert completed.data["intent"] == "next_meal"
+    assert completed.data["suggestions"] == _three_cards()
+
+
+@pytest.mark.asyncio
+async def test_client_intent_is_not_reclassified():
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals)
+
+    events = await _stream(
+        orchestrator,
+        intent="remaining_budget",
+        content="What's for dinner?",
+    )
+    completed = next(event for event in events if event.event == "message.completed")
+    assert next_meals.calls == []
+    assert completed.data["intent"] == "remaining_budget"
+    assert completed.data["suggestions"] == []
+
+
+@pytest.mark.asyncio
+async def test_unrelated_typed_text_does_not_fetch_next_meals():
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals)
+
+    events = await _stream(orchestrator, content="Cite protein guidance")
+    completed = next(event for event in events if event.event == "message.completed")
+    assert next_meals.calls == []
+    assert "intent" not in completed.data
+
+
+@pytest.mark.asyncio
+async def test_nutrition_free_text_still_streams_an_answer():
+    completion = _FakeCompletion(["Protein stays at your Nutree target. "])
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=completion)
+
+    events = await _stream(orchestrator, content="Cite protein guidance")
+    completed = next(event for event in events if event.event == "message.completed")
+    assert completion.stream_calls == 1
+    assert "intent" not in completed.data
+    assert completed.data["suggestions"] == []
+    assert "Protein stays" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_off_topic_typed_text_rejects_without_llm():
+    completion = _FakeCompletion(["I should never answer coding. "])
+    follow_ups = _FakeFollowUps(
+        [{"label": "unused", "action": "remaining_budget"}]
+    )
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo, completion=completion, next_meals=next_meals, follow_ups=follow_ups
+    )
+
+    events = await _stream(orchestrator, content="Write a Python function")
+    completed = next(event for event in events if event.event == "message.completed")
+    assert completion.stream_calls == 0
+    assert next_meals.calls == []
+    assert follow_ups.calls == []
+    assert "intent" not in completed.data
+    assert completed.data["suggestions"] == []
+    assert completed.data["follow_ups"][0]["action"] == "remaining_budget"
+    assert repo.completed["content"] == out_of_scope_message("en")
 
 
 @pytest.mark.asyncio

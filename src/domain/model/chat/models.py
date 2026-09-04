@@ -31,7 +31,7 @@ class ChatIntent(StrEnum):
     LIMITS = "limits"
 
 
-CHAT_PROMPT_VERSION = "chat_prompt_v2"
+CHAT_PROMPT_VERSION = "chat_prompt_v3"
 CHAT_CONTEXT_VERSION = "chat_context_v1"
 CHAT_RETRIEVAL_VERSION = "chat_retrieval_v1"
 CHAT_EVAL_VERSION = "chat_eval_v1"

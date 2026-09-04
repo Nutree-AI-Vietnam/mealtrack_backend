@@ -9,6 +9,8 @@ from src.domain.services.chat.policy import (
     is_near_duplicate,
     label_chunks,
     nutrition_numbers_are_traceable,
+    out_of_scope_follow_ups,
+    out_of_scope_message,
     reciprocal_rank_fusion,
     request_fingerprint,
     resolve_chat_locale,
@@ -106,6 +108,13 @@ def test_stable_instructions_are_versioned_and_forbid_mutation():
     assert "Nutree Coach" in text
     assert "Never recalculate" in text
     assert "cannot change" in text
+    assert "programming" in text
+
+
+def test_grounding_includes_free_text_contract_when_intent_missing() -> None:
+    text = build_grounding_message(_context(), [])
+    assert "COACH INTENT free_text" in text
+    assert "Do not list recipe cards" in text
 
 
 def test_sentence_buffer_emits_on_boundary_and_flush():
@@ -226,6 +235,12 @@ def test_allergy_tagged_chunks_are_filtered():
     )
     kept = filter_chunks_for_allergies(chunks, ["peanut"])
     assert [chunk.source_key for chunk in kept] == ["rice-bowl"]
+
+
+def test_out_of_scope_copy_is_localized() -> None:
+    assert "food, nutrition" in out_of_scope_message("en")
+    assert "dinh dưỡng" in out_of_scope_message("vi")
+    assert out_of_scope_follow_ups("en")[0]["action"] == "remaining_budget"
 
 
 def test_reciprocal_rank_fusion_and_near_duplicate():

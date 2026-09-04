@@ -45,6 +45,11 @@ Safety:
 - For emergency symptoms, tell the user to seek urgent care.
 - For medical diagnosis, medication, pregnancy complications, severe allergy reactions, or eating-disorder risk, use professional-care language and do not give a clinical treatment plan.
 - Do not give extreme-restriction advice.
+
+Scope:
+- Answer questions about food, meals, calories, macros, hydration, allergies, Nutree logging, and practical eating.
+- Greetings and questions about what Coach can do are in scope.
+- If the user asks for programming, homework, weather, finance, or anything unrelated to nutrition or Nutree, refuse in one or two sentences and offer a nutrition question. Do not answer the off-topic request.
 """
 
 _MUTATION_CLAIM_RE = re.compile(
@@ -95,6 +100,15 @@ _NO_EVIDENCE_EN = (
 _NO_EVIDENCE_VI = (
     "Nutree chưa có đủ thông tin đã xác minh cho nội dung đó. "
     "Bạn vẫn có thể hỏi về mục tiêu hôm nay, macro còn lại, hoặc bữa ăn gần đây."
+)
+
+_OUT_OF_SCOPE_EN = (
+    "I can only help with food, nutrition, and your Nutree log. "
+    "Ask about today's remaining budget, a meal idea, or something you already logged."
+)
+_OUT_OF_SCOPE_VI = (
+    "Tôi chỉ hỗ trợ đồ ăn, dinh dưỡng và nhật ký Nutree. "
+    "Hãy hỏi về calo còn lại hôm nay, gợi ý bữa ăn, hoặc món bạn đã ghi."
 )
 
 
@@ -202,9 +216,15 @@ _INTENT_TEMPLATES = {
 
 
 def intent_template(intent: str | None) -> str:
-    """Per-intent output contract. Unknown or missing intent → free-text markdown."""
+    """Per-intent output contract. Missing intent → free-text nutrition answer."""
     if not intent:
-        return ""
+        return (
+            "COACH INTENT free_text. Answer the user's food, nutrition, meal, or "
+            "Nutree question in short markdown. Do not invent nutrition numbers. "
+            "Do not list recipe cards. If the question is not about food, "
+            "nutrition, meals, or Nutree, refuse in 1-2 sentences and offer a "
+            "Coach topic instead."
+        )
     return _INTENT_TEMPLATES.get(intent, "")
 
 
@@ -426,3 +446,19 @@ def safe_fallback_message(locale: str) -> str:
 
 def no_evidence_message(locale: str) -> str:
     return _NO_EVIDENCE_VI if locale == "vi" else _NO_EVIDENCE_EN
+
+
+def out_of_scope_message(locale: str) -> str:
+    return _OUT_OF_SCOPE_VI if locale == "vi" else _OUT_OF_SCOPE_EN
+
+
+def out_of_scope_follow_ups(locale: str) -> list[dict[str, str]]:
+    if locale == "vi":
+        return [
+            {"label": "Hôm nay còn bao nhiêu?", "action": "remaining_budget"},
+            {"label": "Tôi nên ăn gì tiếp?", "action": "next_meal"},
+        ]
+    return [
+        {"label": "What's left in my day?", "action": "remaining_budget"},
+        {"label": "What should I eat next?", "action": "next_meal"},
+    ]
