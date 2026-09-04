@@ -106,6 +106,7 @@ ignore_imports =
     src.app.handlers.query_handlers.get_meals_by_date_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_notification_preferences_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_nutrition_bulk_query_handler -> src.infra.database.uow_async
+    src.app.handlers.query_handlers.get_progress_summary_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_saved_suggestions_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_streak_query_handler -> src.infra.database.uow_async
     src.app.handlers.query_handlers.get_user_by_firebase_uid_query_handler -> src.infra.database.uow_async
@@ -199,7 +200,9 @@ ignore_imports =
     src.api.dependencies.event_bus -> src.infra.adapters.brave_search_nutrition_service
     src.api.dependencies.event_bus -> src.infra.adapters.meal_generation_service
     src.api.dependencies.event_bus -> src.infra.adapters.nutritionix_service
+    src.api.dependencies.event_bus -> src.infra.cache.meal_list_cache_service
     src.api.dependencies.event_bus -> src.infra.cache.provider_budget
+
     src.api.dependencies.event_bus -> src.infra.config.settings
     src.api.dependencies.event_bus -> src.infra.database.uow_async
     src.api.dependencies.event_bus -> src.infra.event_bus

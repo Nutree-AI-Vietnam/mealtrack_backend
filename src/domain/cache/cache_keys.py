@@ -101,6 +101,20 @@ class CacheKeys:
         )
 
     @staticmethod
+    def progress_summary(
+        user_id: str, start_date: date, end_date: date
+    ) -> tuple[str, int]:
+        """Cache key for a progress-summary date range. 5 min TTL.
+
+        Meal/movement/hydration/profile/cheat-day writes purge
+        `user:{id}:progress_summary:*` (see cache_invalidation_operations).
+        """
+        return (
+            f"user:{user_id}:progress_summary:{start_date.isoformat()}:{end_date.isoformat()}",
+            CacheKeys.TTL_5_MIN,
+        )
+
+    @staticmethod
     def food_search(
         query: str,
         *,

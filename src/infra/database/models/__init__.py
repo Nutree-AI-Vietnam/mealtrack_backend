@@ -10,6 +10,7 @@ from .base import BaseMixin, PrimaryEntityMixin, SecondaryEntityMixin, Timestamp
 
 # Cheat days
 from .cheat_day.cheat_day import CheatDayORM
+from .daily_target_snapshot import DailyTargetSnapshotORM
 
 # Enums
 from .enums import (
@@ -31,6 +32,7 @@ from .food_reference_model import FoodReferenceModel
 from .food_reference_nutrient import FoodReferenceNutrientModel
 from .food_reference_serving_size import FoodReferenceServingSizeModel
 from .hydration_entry import HydrationEntryORM
+from .meal.favorite_meal import FavoriteMealORM
 from .meal.food_item_translation_model import FoodItemTranslationORM
 
 # Meal models
@@ -139,6 +141,7 @@ __all__ = [
     "MealORM",
     "MealImageORM",
     "MealInstructionStepORM",
+    "FavoriteMealORM",
     "MealWriteOperationORM",
     "MealTranslationORM",
     "FoodItemTranslationORM",
@@ -155,6 +158,7 @@ __all__ = [
     "WeeklyMacroBudgetORM",
     # Cheat days
     "CheatDayORM",
+    "DailyTargetSnapshotORM",
     # Food reference (evolved from barcode_products)
     "FoodReferenceModel",
     "FoodReferenceNutrientModel",

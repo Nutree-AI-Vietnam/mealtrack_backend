@@ -40,6 +40,7 @@ class FoodItemORM(Base, PrimaryEntityMixin):
     fat = Column(Float, default=0, nullable=False)
     fiber = Column(Float, default=0, nullable=False)
     sugar = Column(Float, default=0, nullable=False)
+    micros = Column(JSON, nullable=True)
 
     # Foreign keys
     nutrition_id = Column(

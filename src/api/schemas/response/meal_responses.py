@@ -372,6 +372,11 @@ class DetailedMealResponse(SimpleMealResponse):
     cook_time_min: int | None = Field(None, description="Cook time in minutes")
     cuisine_type: str | None = Field(None, description="Cuisine type")
     origin_country: str | None = Field(None, description="Country of origin")
+    is_favorite: bool = Field(False, description="Whether the meal is favorited")
+    favorited_at: datetime | None = Field(
+        None, description="Timestamp when the meal was favorited"
+    )
+
 
 
 class MealListResponse(BaseModel):
@@ -430,4 +435,36 @@ class ManualMealCreationResponse(BaseModel):
         None, description="Created meal detail for immediate client-side caching"
     )
 
+
     model_config = ConfigDict(json_encoders={datetime: _serialize_datetime_utc})
+
+
+class FavoriteMealActionResponse(BaseModel):
+    """Response DTO for favorite/unfavorite meal actions."""
+
+    meal_id: str = Field(..., description="Meal ID")
+    is_favorite: bool = Field(..., description="Whether the meal is currently a favorite")
+    favorited_at: datetime | None = Field(
+        None, description="Timestamp when the meal was favorited"
+    )
+
+    model_config = ConfigDict(json_encoders={datetime: _serialize_datetime_utc})
+
+
+class RecentMealsListResponse(BaseModel):
+    """Response DTO for listing recent deduplicated meals."""
+
+    items: list[DetailedMealResponse] = Field(
+        default_factory=list, description="Recent meals"
+    )
+    total: int = Field(..., ge=0, description="Total items returned")
+
+
+class FavoriteMealsListResponse(BaseModel):
+    """Response DTO for listing favorite meals."""
+
+    items: list[DetailedMealResponse] = Field(
+        default_factory=list, description="Favorite meals"
+    )
+    total: int = Field(..., ge=0, description="Total items returned")
+

@@ -11,7 +11,9 @@ from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.meal.meal_image import MealImage as DomainMealImage
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition import Nutrition
+from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros_ops import mapping_from_micros
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.services.meal_recommendation.ingredient_affinity_service import (
     IngredientHistoryBucket,
@@ -392,6 +394,34 @@ class AsyncMealRepository(MealRepositoryPort):
         )
         return _map_domain_hydratable_meals(result.unique().scalars().all())
 
+    async def find_recent_food_meals(
+        self,
+        user_id: str,
+        start_dt: datetime,
+        end_dt: datetime,
+        limit: int = 500,
+        projection: MealProjection = MealProjection.FULL,
+    ) -> list[Meal]:
+        """Return owned READY food meals in [start_dt, end_dt) UTC, newest first.
+
+        Excludes hydration entries and inactive/failed/processing/incomplete meals.
+        """
+        result = await self.session.execute(
+            select(MealORM)
+            .options(*_PROJECTION_OPTS[projection])
+            .where(
+                MealORM.user_id == user_id,
+                MealORM.created_at >= start_dt,
+                MealORM.created_at < end_dt,
+                MealORM.status == MealStatusEnum.READY,
+                or_(MealORM.meal_type.is_(None), MealORM.meal_type != "hydration"),
+                _domain_hydratable_active_meal_filter(),
+            )
+            .order_by(MealORM.created_at.desc())
+            .limit(limit)
+        )
+        return _map_domain_hydratable_meals(list(result.unique().scalars().all()))
+
     async def aggregate_linked_ingredient_history(
         self,
         *,
@@ -657,6 +687,11 @@ class AsyncMealRepository(MealRepositoryPort):
         db_nutrition.fat = domain_nutrition.macros.fat
         db_nutrition.fiber = domain_nutrition.macros.fiber
         db_nutrition.sugar = domain_nutrition.macros.sugar
+        db_nutrition.micros = mapping_from_micros(
+            merge_meal_micros(
+                domain_nutrition.micros, domain_nutrition.food_items
+            )
+        )
         db_nutrition.confidence_score = domain_nutrition.confidence_score
         db_nutrition.nutrition_override = (
             domain_nutrition.nutrition_override.to_dict()

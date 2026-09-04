@@ -22,11 +22,15 @@ from .get_provider_food_details_query_handler import (
 )
 from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
 from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
+from .get_progress_summary_query_handler import GetProgressSummaryQueryHandler
 
 # Meal handlers
+from .get_favorite_meals_query_handler import GetFavoriteMealsQueryHandler
 from .get_meal_by_id_query_handler import GetMealByIdQueryHandler
 from .get_meals_by_date_query_handler import GetMealsByDateQueryHandler
 from .get_movement_catalog_query_handler import GetMovementCatalogQueryHandler
+from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
+
 
 # Notification handlers
 from .get_notification_preferences_query_handler import (
@@ -68,6 +72,8 @@ __all__ = [
     # Meal
     "GetMealByIdQueryHandler",
     "GetDailyMacrosQueryHandler",
+    "GetRecentMealsQueryHandler",
+    "GetFavoriteMealsQueryHandler",
     # User
     "GetUserProfileQueryHandler",
     "GetUserTimezoneQueryHandler",
@@ -96,4 +102,5 @@ __all__ = [
     "GetDrinkCatalogQueryHandler",
     "GetWeeklyHydrationQueryHandler",
     "GetJourneyProgressQueryHandler",
+    "GetProgressSummaryQueryHandler",
 ]

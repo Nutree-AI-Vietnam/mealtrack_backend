@@ -6,6 +6,13 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.hydration import HydrationEntry
+from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros import Micros
+from src.domain.model.nutrition.micros_ops import (
+    mapping_from_micros,
+    merge_micros,
+    micros_from_mapping,
+)
 from src.domain.utils.timezone_utils import get_zone_info
 from src.infra.database.models.hydration_entry import HydrationEntryORM
 
@@ -49,6 +56,7 @@ def _orm_to_domain(row: HydrationEntryORM | None) -> HydrationEntry | None:
         created_at=row.created_at,
         updated_at=row.updated_at,
         image_url=row.image_url,
+        micros=micros_from_mapping(getattr(row, "micros", None)),
     )
 
 
@@ -70,6 +78,7 @@ def _domain_to_orm(entry: HydrationEntry) -> HydrationEntryORM:
         source=entry.source,
         legacy_meal_id=entry.legacy_meal_id,
         image_url=entry.image_url,
+        micros=mapping_from_micros(entry.micros),
     )
 
 
@@ -179,6 +188,70 @@ class AsyncHydrationRepository:
             if isinstance(day_val, str):
                 day_val = date.fromisoformat(day_val)
             totals[day_val] = int(total)
+        return totals
+
+    async def sum_macros_by_date_range(
+        self,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+        user_timezone: str | None = None,
+    ) -> dict[date, Macros]:
+        start_dt, _ = _local_day_range(start_date, user_timezone)
+        _, end_dt = _local_day_range(end_date, user_timezone)
+        date_expr = _date_expr(user_timezone)
+        result = await self.session.execute(
+            select(
+                date_expr,
+                func.coalesce(func.sum(HydrationEntryORM.protein_g), 0),
+                func.coalesce(func.sum(HydrationEntryORM.carbs_g), 0),
+                func.coalesce(func.sum(HydrationEntryORM.fat_g), 0),
+                func.coalesce(func.sum(HydrationEntryORM.fiber_g), 0),
+            )
+            .where(
+                HydrationEntryORM.user_id == user_id,
+                HydrationEntryORM.logged_at >= start_dt,
+                HydrationEntryORM.logged_at < end_dt,
+            )
+            .group_by(date_expr)
+        )
+        totals: dict[date, Macros] = {}
+        for day_val, protein, carbs, fat, fiber in result.all():
+            if isinstance(day_val, str):
+                day_val = date.fromisoformat(day_val)
+            totals[day_val] = Macros(
+                protein=float(protein or 0.0),
+                carbs=float(carbs or 0.0),
+                fat=float(fat or 0.0),
+                fiber=float(fiber or 0.0),
+            )
+        return totals
+
+    async def sum_micros_by_date_range(
+        self,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+        user_timezone: str | None = None,
+    ) -> dict[date, Micros]:
+        start_dt, _ = _local_day_range(start_date, user_timezone)
+        _, end_dt = _local_day_range(end_date, user_timezone)
+        date_expr = _date_expr(user_timezone)
+        result = await self.session.execute(
+            select(date_expr, HydrationEntryORM.micros).where(
+                HydrationEntryORM.user_id == user_id,
+                HydrationEntryORM.logged_at >= start_dt,
+                HydrationEntryORM.logged_at < end_dt,
+            )
+        )
+        totals: dict[date, Micros] = {}
+        for day_val, raw in result.all():
+            if isinstance(day_val, str):
+                day_val = date.fromisoformat(day_val)
+            part = micros_from_mapping(raw)
+            if part is None:
+                continue
+            totals[day_val] = merge_micros(totals.get(day_val), part)
         return totals
 
     async def fetch_journey_progress_hydration(

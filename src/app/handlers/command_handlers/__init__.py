@@ -17,7 +17,11 @@ from .delete_user_command_handler import DeleteUserCommandHandler
 
 # Meal handlers (already extracted)
 from .edit_meal_command_handler import EditMealCommandHandler
+from .favorite_meal_command_handler import FavoriteMealCommandHandler
 from .log_caloric_drink_command_handler import LogCaloricDrinkCommandHandler
+from .repeat_meal_command_handler import RepeatMealCommandHandler
+from .unfavorite_meal_command_handler import UnfavoriteMealCommandHandler
+
 
 # Hydration handlers
 from .log_hydration_command_handler import LogHydrationCommandHandler
@@ -72,6 +76,9 @@ __all__ = [
     "AttachMealPhotoCommandHandler",
     "DeleteMealPhotoCommandHandler",
     "DeleteMealCommandHandler",
+    "FavoriteMealCommandHandler",
+    "UnfavoriteMealCommandHandler",
+    "RepeatMealCommandHandler",
     # User handlers
     "SaveUserOnboardingCommandHandler",
     "SaveBodyFatVisualProfileCommandHandler",

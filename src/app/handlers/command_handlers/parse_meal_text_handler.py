@@ -408,6 +408,9 @@ class ParseMealTextHandler(
             "source_namespace": item.get("source_namespace"),
             "source_food_id": item.get("source_food_id"),
         }
+        extras = item.get("extra_nutrients")
+        if extras:
+            snapshot["extra_nutrients"] = extras
         canonical_name = item.get("canonical_name")
         if isinstance(canonical_name, str) and canonical_name.strip():
             snapshot["canonical_name"] = canonical_name.strip()
@@ -803,6 +806,9 @@ class ParseMealTextHandler(
         item["calories"] = self._derive_calories_from_macros(item)
         item["allowed_units"] = allowed_units
         item["data_source"] = "fatsecret"
+        extras = selected.get("extra_nutrients")
+        if extras:
+            item["extra_nutrients"] = extras
         item.update(self._reference_identity(selected, "fatsecret"))
         catalog_name = str(
             selected.get("food_name")
@@ -1043,6 +1049,9 @@ class ParseMealTextHandler(
         item["fiber_per_100g"] = candidate.fiber_per_100g
         item["sugar_per_100g"] = candidate.sugar_per_100g
         item["allowed_units"] = allowed_units
+        extras = raw.get("extra_nutrients")
+        if extras:
+            item["extra_nutrients"] = extras
         return item
 
     @staticmethod
