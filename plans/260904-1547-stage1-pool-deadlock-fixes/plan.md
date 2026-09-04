@@ -46,7 +46,7 @@ Daily macros already uses the safe pattern (TDEE **before** UoW). This plan appl
 | 1 | [Unnest weekly budget TDEE](./phase-01-unnest-weekly-budget-tdee.md) | Completed |
 | 2 | [Convert singleton UoW to factory](./phase-02-convert-singleton-uow-to-factory.md) | In Progress |
 | 3 | [Cache-first before UoW on hot reads](./phase-03-cache-first-before-uow-on-hot-reads.md) | Pending |
-| 4 | [Verify and document Stage 2 prerequisites](./phase-04-verify-and-document-stage-2-prerequisites.md) | Pending |
+| 4 | [Verify and document Stage 2 prerequisites](./phase-04-verify-and-document-stage-2-prerequisites.md) | In Progress |
 
 ## Dependencies
 
