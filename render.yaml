@@ -1,0 +1,5 @@
+services:
+  - type: web
+    name: mealtrack-backend
+    runtime: docker
+    preDeployCommand: python migrations/run.py
