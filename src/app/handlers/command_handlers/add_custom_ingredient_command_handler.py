@@ -27,18 +27,19 @@ class AddCustomIngredientCommandHandler(
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
+        uow: AsyncUnitOfWorkPort | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, command: AddCustomIngredientCommand) -> dict[str, Any]:
         """Handle adding custom ingredient to meal."""
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 meal = await uow.meals.find_by_id(command.meal_id)
                 if not meal:
                     raise ValueError(f"Meal {command.meal_id} not found")

@@ -33,14 +33,15 @@ class LogRecommendedMealCommandHandler(
 ):
     def __init__(
         self,
-        uow,
+        uow=None,
+        uow_factory: Any = None,
         materializer: RecommendedMealMaterializationService | None = None,
         meal_translation_service: MealTranslationService | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         event_bus: Any | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.materializer = materializer or RecommendedMealMaterializationService()
         self.meal_translation_service = meal_translation_service
         self.event_publisher = event_publisher
@@ -53,7 +54,7 @@ class LogRecommendedMealCommandHandler(
         saved_meal: Meal | None = None
         meal_date = None
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             plan, slot, replayed = await uow.meal_recommendation_plans.claim_slot_log(
                 user_id=command.user_id,
                 plan_id=command.plan_id,

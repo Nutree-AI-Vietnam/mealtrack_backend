@@ -3,6 +3,7 @@ Command handler for updating user metrics.
 """
 
 import logging
+from typing import Any
 
 from src.api.exceptions import ResourceNotFoundException, ValidationException
 from src.app.commands.user.update_user_metrics_command import UpdateUserMetricsCommand
@@ -60,11 +61,12 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
+        uow: AsyncUnitOfWorkPort | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.environment = environment
 
@@ -73,7 +75,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
         if not _has_metric_update(command):
             raise ValidationException("At least one metric must be provided")
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             profile = await uow.users.get_profile(command.user_id)
 
             if not profile:

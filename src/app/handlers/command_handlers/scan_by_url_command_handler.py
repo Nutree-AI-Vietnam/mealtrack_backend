@@ -57,8 +57,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
-        event_bus: Any,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_bus: Any = None,
         vision_service: VisionAIServicePort = None,
         gpt_parser: GPTResponseParser = None,
         meal_translation_service: MealTranslationService | None = None,
@@ -68,8 +68,10 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
         download_image_bytes: Any | None = None,
+        uow_factory=None,
     ):
         self.uow = uow
+        self.uow_factory = uow_factory if uow_factory is not None else (lambda: uow)
         self.event_bus = event_bus
         self.vision_service = vision_service
         self.gpt_parser = gpt_parser
@@ -198,7 +200,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 )
 
             # Determine timezone-aware datetime
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user_timezone = await uow.users.get_user_timezone(command.user_id)
             if not user_timezone or not is_valid_timezone(user_timezone):
                 user_timezone = "UTC"
@@ -306,7 +308,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     nutrition=nutrition,
                 )
 
-                async with self.uow as uow:
+                async with self.uow_factory() as uow:
                     saved_meal = await uow.meals.save(meal)
                     await uow.commit()
 
@@ -389,7 +391,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             )
             meal = persist_meal_response_localization(meal, localization)
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 saved_meal = await uow.meals.save(meal)
                 await uow.commit()
 
@@ -432,7 +434,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     compress_image=compress_image,
                     vision_service=self.vision_service,
                     gpt_parser=self.gpt_parser,
-                    uow=self.uow,
+                    uow=self.uow_factory(),
                     event_publisher=self.event_publisher,
                     environment=self.environment,
                     event_bus=self.event_bus,
