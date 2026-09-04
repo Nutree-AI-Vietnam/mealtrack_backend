@@ -121,7 +121,6 @@ def resolve_connection_policy(env: dict | None = None) -> DatabaseConnectionPoli
             app_url=raw_url,
             pool_class=NullPool,
             connect_args={"prepared_statement_cache_size": 0},
-            worker_count=workers,
         )
 
     return DatabaseConnectionPolicy(
