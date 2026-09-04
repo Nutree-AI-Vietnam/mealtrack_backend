@@ -1,8 +1,8 @@
 ---
 phase: 2
-title: "Convert singleton UoW to factory"
-status: pending
-effort: "L"
+title: Convert singleton UoW to factory
+status: in-progress
+effort: L
 ---
 
 # Phase 2: Convert singleton UoW to factory
