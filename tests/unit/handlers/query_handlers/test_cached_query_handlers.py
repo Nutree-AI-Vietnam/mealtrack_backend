@@ -21,7 +21,12 @@ class TestGetUserTdeeQueryHandlerCache:
             GetUserTdeeQueryHandler,
         )
 
-        cached_payload = {"user_id": "u1", "tdee": 2000.0, "bmr": 1700.0, "profile_target_revision": 1}
+        cached_payload = {
+            "user_id": "u1",
+            "tdee": 2000.0,
+            "bmr": 1700.0,
+            "profile_target_revision": 1,
+        }
         cache_service = MagicMock()
         cache_service.get_json = AsyncMock(return_value=cached_payload)
         cache_service.set_json = AsyncMock()
@@ -29,7 +34,9 @@ class TestGetUserTdeeQueryHandlerCache:
         handler = GetUserTdeeQueryHandler(cache_service=cache_service)
         query = GetUserTdeeQuery(user_id="u1")
 
-        with patch.object(handler, "_current_profile_revision", AsyncMock(return_value=1)):
+        with patch.object(
+            handler, "_current_profile_revision", AsyncMock(return_value=1)
+        ):
             result = await handler.handle(query)
 
         assert result == cached_payload
@@ -52,7 +59,9 @@ class TestGetUserTdeeQueryHandlerCache:
         query = GetUserTdeeQuery(user_id="u1")
 
         with (
-            patch.object(handler, "_current_profile_revision", AsyncMock(return_value=1)),
+            patch.object(
+                handler, "_current_profile_revision", AsyncMock(return_value=1)
+            ),
             patch.object(handler, "_compute_tdee", AsyncMock(return_value=db_result)),
         ):
             result = await handler.handle(query)
@@ -77,7 +86,9 @@ class TestGetUserTdeeQueryHandlerCache:
         fresh = {"profile_target_revision": 2, "target_calories": 2100.0}
 
         with (
-            patch.object(handler, "_current_profile_revision", AsyncMock(return_value=2)),
+            patch.object(
+                handler, "_current_profile_revision", AsyncMock(return_value=2)
+            ),
             patch.object(handler, "_compute_tdee", AsyncMock(return_value=fresh)),
         ):
             assert await handler.handle(GetUserTdeeQuery(user_id="u1")) == fresh
@@ -96,7 +107,9 @@ class TestGetUserTdeeQueryHandlerCache:
         query = GetUserTdeeQuery(user_id="u1")
 
         with (
-            patch.object(handler, "_current_profile_revision", AsyncMock(return_value=1)),
+            patch.object(
+                handler, "_current_profile_revision", AsyncMock(return_value=1)
+            ),
             patch.object(handler, "_compute_tdee", AsyncMock(return_value=db_result)),
         ):
             result = await handler.handle(query)
@@ -118,7 +131,11 @@ class TestGetWeeklyBudgetQueryHandlerCache:
         )
         from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 
-        cached_payload = {"week_start_date": "2024-01-01", "target_calories": 14000.0, "profile_target_revision": 1}
+        cached_payload = {
+            "week_start_date": "2024-01-01",
+            "target_calories": 14000.0,
+            "profile_target_revision": 1,
+        }
         cache_service = MagicMock()
         cache_service.get_json = AsyncMock(return_value=cached_payload)
         cache_service.set_json = AsyncMock()
@@ -126,6 +143,7 @@ class TestGetWeeklyBudgetQueryHandlerCache:
         injected_uow = AsyncMock()
         injected_uow.__aenter__ = AsyncMock(return_value=injected_uow)
         injected_uow.__aexit__ = AsyncMock(return_value=False)
+        injected_uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
 
         handler = GetWeeklyBudgetQueryHandler(
             uow=injected_uow, cache_service=cache_service
@@ -152,7 +170,19 @@ class TestGetWeeklyBudgetQueryHandlerCache:
                 "src.app.handlers.query_handlers.get_weekly_budget_query_handler.get_user_monday",
                 return_value=date(2024, 1, 1),
             ),
-            patch.object(handler, "_profile_target_revision", AsyncMock(return_value=1)),
+            patch.object(
+                handler,
+                "_resolve_tdee",
+                AsyncMock(
+                    return_value={
+                        "profile_target_revision": 1,
+                        "macro_preset": "standard",
+                        "is_custom": False,
+                        "bmr": 1800,
+                        "macros": {"protein": 70, "carbs": 200, "fat": 70},
+                    }
+                ),
+            ),
         ):
             result = await handler.handle(query)
 
@@ -172,7 +202,11 @@ class TestGetWeeklyBudgetQueryHandlerCache:
         )
         from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 
-        cached_payload = {"week_start_date": "2024-01-01", "target_calories": 14000.0, "profile_target_revision": 1}
+        cached_payload = {
+            "week_start_date": "2024-01-01",
+            "target_calories": 14000.0,
+            "profile_target_revision": 1,
+        }
         cache_service = MagicMock()
         cache_service.get_json = AsyncMock(return_value=cached_payload)
         cache_service.set_json = AsyncMock()
@@ -180,6 +214,7 @@ class TestGetWeeklyBudgetQueryHandlerCache:
         mock_uow = AsyncMock()
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
+        mock_uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
 
         handler = GetWeeklyBudgetQueryHandler(cache_service=cache_service)
         target_date = date(2024, 1, 2)
@@ -205,7 +240,19 @@ class TestGetWeeklyBudgetQueryHandlerCache:
                 "src.app.handlers.query_handlers.get_weekly_budget_query_handler.get_user_monday",
                 return_value=date(2024, 1, 1),
             ),
-            patch.object(handler, "_profile_target_revision", AsyncMock(return_value=1)),
+            patch.object(
+                handler,
+                "_resolve_tdee",
+                AsyncMock(
+                    return_value={
+                        "profile_target_revision": 1,
+                        "macro_preset": "standard",
+                        "is_custom": False,
+                        "bmr": 1800,
+                        "macros": {"protein": 70, "carbs": 200, "fat": 70},
+                    }
+                ),
+            ),
         ):
             result = await handler.handle(query)
 
@@ -273,6 +320,7 @@ class TestGetWeeklyBudgetQueryHandlerCache:
         mock_uow = AsyncMock()
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
+        mock_uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
         mock_uow.cheat_days.find_by_user_and_date_range.return_value = []
         mock_uow.weekly_budgets.find_by_user_and_week.return_value = mock_budget
 
@@ -309,13 +357,24 @@ class TestGetWeeklyBudgetQueryHandlerCache:
                 "_sync_targets_if_stale",
                 AsyncMock(return_value=(mock_budget, 1800.0)),
             ),
-            patch.object(handler, "_profile_target_revision", AsyncMock(return_value=1)),
             patch.object(
                 handler,
-                "_current_target_policy",
-                AsyncMock(return_value=("standard", False)),
+                "_resolve_tdee",
+                AsyncMock(
+                    return_value={
+                        "profile_target_revision": 1,
+                        "macro_preset": "standard",
+                        "is_custom": False,
+                        "bmr": 1800,
+                        "macros": {"protein": 70, "carbs": 200, "fat": 70},
+                    }
+                ),
             ),
-            patch.object(handler, "_apply_target_policy", side_effect=lambda adjusted, _: adjusted),
+            patch.object(
+                handler,
+                "_apply_target_policy",
+                side_effect=lambda adjusted, _: adjusted,
+            ),
             patch(
                 "src.app.handlers.query_handlers.get_weekly_budget_query_handler."
                 "WeeklyBudgetService.get_effective_adjusted_daily_async",
@@ -331,18 +390,12 @@ class TestGetWeeklyBudgetQueryHandlerCache:
 
     @pytest.mark.asyncio
     async def test_passes_cache_service_to_tdee_handler(self):
-        """_create_weekly_budget passes cache_service to GetUserTdeeQueryHandler."""
-        from datetime import date
-
+        """_resolve_tdee passes cache_service to GetUserTdeeQueryHandler."""
         from src.app.handlers.query_handlers.get_weekly_budget_query_handler import (
             GetWeeklyBudgetQueryHandler,
         )
 
         cache_service = MagicMock()
-        mock_uow = AsyncMock()
-        mock_uow.users.get_profile.return_value = MagicMock(fitness_goal="cut")
-        mock_uow.weekly_budgets.create = AsyncMock()
-
         handler = GetWeeklyBudgetQueryHandler(cache_service=cache_service)
 
         tdee_instance = MagicMock()
@@ -351,6 +404,9 @@ class TestGetWeeklyBudgetQueryHandlerCache:
                 "target_calories": 2000,
                 "macros": {"protein": 70, "carbs": 200, "fat": 70},
                 "bmr": 1800,
+                "profile_target_revision": 1,
+                "macro_preset": "standard",
+                "is_custom": False,
             }
         )
 
@@ -358,9 +414,7 @@ class TestGetWeeklyBudgetQueryHandlerCache:
             "src.app.handlers.query_handlers.get_user_tdee_query_handler.GetUserTdeeQueryHandler",
             return_value=tdee_instance,
         ) as MockTdeeClass:
-            await handler._create_weekly_budget(
-                mock_uow, "u1", date(2024, 1, 1), date(2024, 1, 1)
-            )
+            await handler._resolve_tdee("u1", persist=True)
 
         MockTdeeClass.assert_called_once_with(cache_service=cache_service)
 
@@ -455,7 +509,6 @@ class TestGetSavedSuggestionsQueryHandlerCache:
         cache_service.set_json.assert_awaited_once()
         expected_key, _ = CacheKeys.saved_suggestions("u1")
         assert cache_service.set_json.call_args[0][0] == expected_key
-
 
 
 class TestGetUserMetricsQueryHandlerCache:
