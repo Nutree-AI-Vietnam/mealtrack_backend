@@ -1,7 +1,7 @@
 ---
 phase: 1
 title: Hardening and health for pooler mode
-status: in-progress
+status: completed
 effort: S
 ---
 

@@ -1,8 +1,8 @@
 ---
 phase: 3
-title: "Verify unit tests and PR"
-status: pending
-effort: "S"
+title: Verify unit tests and PR
+status: completed
+effort: S
 ---
 
 # Phase 3: Verify unit tests and PR

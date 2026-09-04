@@ -3,7 +3,7 @@ title: Stage 2 Neon PgBouncer pooler cutover
 description: >-
   Prepare and document production cutover to Neon -pooler +
   DB_CONNECTION_MODE=neon_pooler; separate from Stage 1 app fixes.
-status: in-progress
+status: completed
 priority: P1
 branch: feature/stage2-neon-pooler-ab72
 tags:
@@ -34,9 +34,9 @@ deployed before enabling pooler + more workers in production.
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | [Hardening and health for pooler mode](./phase-01-hardening-and-health-for-pooler-mode.md) | In Progress |
-| 2 | [Cutover runbook and env examples](./phase-02-cutover-runbook-and-env-examples.md) | Pending |
-| 3 | [Verify unit tests and PR](./phase-03-verify-unit-tests-and-pr.md) | Pending |
+| 1 | [Hardening and health for pooler mode](./phase-01-hardening-and-health-for-pooler-mode.md) | Completed |
+| 2 | [Cutover runbook and env examples](./phase-02-cutover-runbook-and-env-examples.md) | Completed |
+| 3 | [Verify unit tests and PR](./phase-03-verify-unit-tests-and-pr.md) | Completed |
 
 ## Dependencies
 

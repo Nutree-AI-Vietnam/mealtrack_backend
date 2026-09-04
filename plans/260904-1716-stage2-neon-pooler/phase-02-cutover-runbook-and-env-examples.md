@@ -1,8 +1,8 @@
 ---
 phase: 2
-title: "Cutover runbook and env examples"
-status: pending
-effort: "S"
+title: Cutover runbook and env examples
+status: completed
+effort: S
 ---
 
 # Phase 2: Cutover runbook and env examples
