@@ -2,6 +2,7 @@
 
 from enum import Enum, StrEnum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -210,6 +211,21 @@ class SaveMealSuggestionRequest(BaseModel):
         None,
         description="Unsplash download_location URL — triggers download event per API guidelines",
     )
+    meal_id: str | None = Field(
+        None,
+        max_length=36,
+        description="Client-assigned meal UUID to persist and reopen after save",
+    )
+
+    @field_validator("meal_id")
+    @classmethod
+    def validate_meal_id_uuid(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        try:
+            return str(UUID(str(value).strip()))
+        except ValueError as exc:
+            raise ValueError("meal_id must be a valid UUID") from exc
 
     @field_validator("meal_date")
     @classmethod

@@ -104,12 +104,22 @@ class _FakeUow:
 
 
 class _FakeCompletion:
-    def __init__(self, chunks: list[str]):
+    def __init__(self, chunks: list[str], tool_calls=None):
         self.chunks = chunks
+        self.tool_calls = tool_calls
         self.stream_calls = 0
 
     async def stream(self, **kwargs):
         self.stream_calls += 1
+        if self.tool_calls and self.stream_calls == 1:
+            yield ChatCompletionDelta(
+                text="",
+                tool_calls=self.tool_calls,
+                done=True,
+                usage=ChatUsage(input_tokens=10, output_tokens=4, model="gpt-5.6-luna"),
+            )
+            return
+            
         for chunk in self.chunks:
             yield ChatCompletionDelta(text=chunk)
         yield ChatCompletionDelta(
@@ -340,11 +350,9 @@ async def test_new_turn_streams_sentence_and_persists():
     assert "650" in repo.completed["content"]
     assert repo.completed["reply_payload"]["suggestions"] == []
     assert repo.completed["reply_payload"]["follow_ups"] == []
-    assert repo.completed["reply_payload"]["intent"] == "remaining_budget"
     completed = next(event for event in events if event.event == "message.completed")
     assert completed.data["suggestions"] == []
     assert completed.data["follow_ups"] == []
-    assert completed.data["intent"] == "remaining_budget"
 
 
 @pytest.mark.asyncio
@@ -701,9 +709,13 @@ async def test_next_meal_persists_suggestions_and_follow_ups():
         ]
     )
     repo = _FakeRepo(claim=_claim())
-    orchestrator = _orchestrator(repo, next_meals=next_meals, follow_ups=follow_ups)
+    completion = _FakeCompletion(
+        ["Here are suggestions. "],
+        tool_calls=[{"id": "call_1", "name": "suggest_next_meal"}],
+    )
+    orchestrator = _orchestrator(repo, next_meals=next_meals, follow_ups=follow_ups, completion=completion)
 
-    events = await _stream(orchestrator, intent="next_meal")
+    events = await _stream(orchestrator, intent=None)
     completed = next(event for event in events if event.event == "message.completed")
 
     assert completed.data["suggestions"] == cards
@@ -733,9 +745,13 @@ async def test_next_meal_reuses_discover_session_id():
         )
     )
     repo = _FakeRepo(claim=_claim(), history=[prior])
-    orchestrator = _orchestrator(repo, next_meals=next_meals)
+    completion = _FakeCompletion(
+        ["Here you go. "],
+        tool_calls=[{"id": "call_1", "name": "suggest_next_meal"}],
+    )
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
 
-    await _stream(orchestrator, intent="next_meal", content="More breakfast ideas")
+    await _stream(orchestrator, intent=None, content="More breakfast ideas")
     assert next_meals.calls[0]["session_id"] == "sess-1"
 
 
@@ -745,7 +761,11 @@ async def test_typed_dinner_fetches_next_meal_without_chip():
         NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")
     )
     repo = _FakeRepo(claim=_claim())
-    orchestrator = _orchestrator(repo, next_meals=next_meals)
+    completion = _FakeCompletion(
+        ["Here you go. "],
+        tool_calls=[{"id": "call_1", "name": "suggest_next_meal"}],
+    )
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
 
     events = await _stream(orchestrator, content="What's for dinner?")
     completed = next(event for event in events if event.event == "message.completed")
@@ -754,37 +774,7 @@ async def test_typed_dinner_fetches_next_meal_without_chip():
     assert completed.data["suggestions"] == _three_cards()
 
 
-@pytest.mark.asyncio
-async def test_client_intent_is_not_reclassified():
-    next_meals = _FakeNextMeals(
-        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")
-    )
-    repo = _FakeRepo(claim=_claim())
-    orchestrator = _orchestrator(repo, next_meals=next_meals)
 
-    events = await _stream(
-        orchestrator,
-        intent="remaining_budget",
-        content="What's for dinner?",
-    )
-    completed = next(event for event in events if event.event == "message.completed")
-    assert next_meals.calls == []
-    assert completed.data["intent"] == "remaining_budget"
-    assert completed.data["suggestions"] == []
-
-
-@pytest.mark.asyncio
-async def test_unrelated_typed_text_does_not_fetch_next_meals():
-    next_meals = _FakeNextMeals(
-        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
-    )
-    repo = _FakeRepo(claim=_claim())
-    orchestrator = _orchestrator(repo, next_meals=next_meals)
-
-    events = await _stream(orchestrator, content="Cite protein guidance")
-    completed = next(event for event in events if event.event == "message.completed")
-    assert next_meals.calls == []
-    assert "intent" not in completed.data
 
 
 @pytest.mark.asyncio
@@ -801,27 +791,7 @@ async def test_nutrition_free_text_still_streams_an_answer():
     assert "Protein stays" in repo.completed["content"]
 
 
-@pytest.mark.asyncio
-async def test_off_topic_typed_text_rejects_without_llm():
-    completion = _FakeCompletion(["I should never answer coding. "])
-    follow_ups = _FakeFollowUps([{"label": "unused", "action": "remaining_budget"}])
-    next_meals = _FakeNextMeals(
-        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
-    )
-    repo = _FakeRepo(claim=_claim())
-    orchestrator = _orchestrator(
-        repo, completion=completion, next_meals=next_meals, follow_ups=follow_ups
-    )
 
-    events = await _stream(orchestrator, content="Write a Python function")
-    completed = next(event for event in events if event.event == "message.completed")
-    assert completion.stream_calls == 0
-    assert next_meals.calls == []
-    assert follow_ups.calls == []
-    assert "intent" not in completed.data
-    assert completed.data["suggestions"] == []
-    assert completed.data["follow_ups"][0]["action"] == "remaining_budget"
-    assert repo.completed["content"] == out_of_scope_message("en")
 
 
 @pytest.mark.asyncio
@@ -833,7 +803,7 @@ async def test_remaining_budget_never_calls_discover():
     orchestrator = _orchestrator(repo, next_meals=next_meals)
 
     events = await _stream(
-        orchestrator, intent="remaining_budget", content="What's left?"
+        orchestrator, intent=None, content="What's left?"
     )
     completed = next(event for event in events if event.event == "message.completed")
     assert next_meals.calls == []

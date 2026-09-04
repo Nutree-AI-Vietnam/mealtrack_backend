@@ -93,6 +93,21 @@ def test_from_settings_keeps_queue_id_required(monkeypatch) -> None:
         publisher._validate_configuration()
 
 
+@pytest.mark.asyncio
+async def test_publish_skips_when_credentials_are_missing() -> None:
+    client = AsyncMock()
+    publisher = CloudflareQueuePublisher(
+        account_id="",
+        queue_id="",
+        api_token="",
+        client=client,
+    )
+
+    await publisher.publish({"event_id": "event-1"})
+
+    client.post.assert_not_called()
+
+
 def test_validate_configuration_rejects_queue_name_in_id_field() -> None:
     publisher = CloudflareQueuePublisher(
         account_id="account",

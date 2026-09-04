@@ -40,9 +40,12 @@ def test_user_text_overrides_clock_slot() -> None:
     assert slot_from_user_text("More breakfast ideas") == "breakfast"
     assert slot_from_user_text("bữa trưa nhanh") == "lunch"
     assert slot_from_user_text("breakfast then dinner") == "dinner"
+    assert slot_from_user_text("ăn gì tối nay") == "dinner"
+    assert slot_from_user_text("Tối nay ăn gì?") == "dinner"
     assert slot_from_user_text("just macros") is None
     assert resolve_meal_slot("breakfast", "I want dinner") == "dinner"
     assert resolve_meal_slot("lunch", "what's next") == "lunch"
+    assert resolve_meal_slot("lunch", "ăn gì tối nay") == "dinner"
 
 
 def test_invalid_clock_raises() -> None:

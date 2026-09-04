@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from src.domain.model.chat import (
@@ -25,6 +26,7 @@ from src.domain.services.chat.follow_up_schema import (
     ChatFollowUpList,
     sanitize_follow_ups,
 )
+from src.infra.services.ai.langchain_openai_adapter import _openai_json_schema
 from src.infra.services.ai.schemas import ChatMealRecipeBatch
 
 logger = logging.getLogger(__name__)
@@ -81,6 +83,7 @@ class OpenAIChatCompletionAdapter(
         history: list[ChatHistoryTurn],
         user_message: str,
         max_output_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
         cache_kwargs: dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatCompletionDelta]:
         messages: list[Any] = [
@@ -89,19 +92,44 @@ class OpenAIChatCompletionAdapter(
         ]
         for turn in history:
             if turn.role == ChatMessageRole.USER:
-                messages.append(HumanMessage(content=turn.content))
+                messages.append(HumanMessage(content=turn.content or ""))
+            elif turn.role == "tool" and turn.tool_call_id:
+                messages.append(ToolMessage(content=turn.content or "", tool_call_id=turn.tool_call_id, name=turn.name or ""))
             else:
-                messages.append(AIMessage(content=turn.content))
-        messages.append(HumanMessage(content=user_message))
+                cleaned_tool_calls = None
+                if turn.tool_calls:
+                    cleaned_tool_calls = [
+                        {
+                            "name": tc.get("name", ""),
+                            "args": tc.get("args") or {},
+                            "id": tc.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "tool_call",
+                        }
+                        for tc in turn.tool_calls
+                        if isinstance(tc, dict) and tc.get("name")
+                    ]
+                messages.append(AIMessage(content=turn.content or "", tool_calls=cleaned_tool_calls or []))
+        if user_message:
+            messages.append(HumanMessage(content=user_message))
 
         invocation = dict(cache_kwargs or {})
         invocation["max_tokens"] = max_output_tokens
         invocation["store"] = False
 
         llm = self._llm(model)
+        if tools:
+            llm = llm.bind_tools(tools)
+            
         provider_response_id: str | None = None
         usage = ChatUsage(model=model)
+        full_chunk = None
+        
         async for chunk in llm.astream(messages, **invocation):
+            if full_chunk is None:
+                full_chunk = chunk
+            else:
+                full_chunk += chunk
+                
             text = _chunk_text(chunk)
             provider_response_id = _response_id(chunk) or provider_response_id
             chunk_usage = _chunk_usage(chunk, model)
@@ -112,11 +140,19 @@ class OpenAIChatCompletionAdapter(
                     text=text,
                     provider_response_id=provider_response_id,
                 )
+                
+        # At the very end, yield the accumulated tool calls if any
+        tool_calls = getattr(full_chunk, "tool_calls", None)
+        if tool_calls:
+            # Langchain parses them into dicts: {"name": str, "args": dict, "id": str}
+            pass
+            
         yield ChatCompletionDelta(
             text="",
             provider_response_id=provider_response_id,
             usage=usage,
             done=True,
+            tool_calls=tool_calls if tool_calls else None,
         )
 
     def _structured_llm(self, model: str) -> ChatOpenAI:
@@ -175,7 +211,7 @@ class OpenAIChatCompletionAdapter(
             ensure_ascii=False,
         )
         structured = self._structured_llm(model).with_structured_output(
-            ChatFollowUpList,
+            _openai_json_schema(ChatFollowUpList),
             method="json_schema",
             strict=True,
         )
@@ -191,9 +227,10 @@ class OpenAIChatCompletionAdapter(
                 ),
                 timeout=FOLLOW_UP_TIMEOUT_SECONDS,
             )
+            return sanitize_follow_ups(_structured_payload(parsed))
         except Exception:
+            logger.info("chat follow-up structured output failed")
             return []
-        return sanitize_follow_ups(parsed)
 
     async def generate_next_meal_recipes(
         self,
@@ -224,7 +261,7 @@ class OpenAIChatCompletionAdapter(
             ensure_ascii=False,
         )
         structured = self._recipe_llm(model).with_structured_output(
-            ChatMealRecipeBatch,
+            _openai_json_schema(ChatMealRecipeBatch),
             method="json_schema",
             strict=True,
         )
@@ -240,12 +277,16 @@ class OpenAIChatCompletionAdapter(
                 ),
                 timeout=NEXT_MEAL_RECIPE_TIMEOUT_SECONDS,
             )
+            batch = _structured_payload(parsed)
+            if isinstance(batch, ChatMealRecipeBatch):
+                return [meal.model_dump() for meal in batch.meals]
+            if isinstance(batch, dict):
+                validated = ChatMealRecipeBatch.model_validate(batch)
+                return [meal.model_dump() for meal in validated.meals]
+            return []
         except Exception:
             logger.warning("chat next-meal structured recipes failed", exc_info=True)
             return []
-        if not isinstance(parsed, ChatMealRecipeBatch):
-            return []
-        return [meal.model_dump() for meal in parsed.meals]
 
 
 _FOLLOW_UP_INSTRUCTIONS = """Author 2-3 short Nutree Coach follow-up chips.
@@ -266,6 +307,12 @@ One sitting only — not a full day's food. Portion roughly 400-700 kcal of food
 Honor allergies and dietary_preferences.
 Do not claim a meal was saved or logged.
 """
+
+
+def _structured_payload(parsed: Any) -> Any:
+    if isinstance(parsed, dict) and "parsed" in parsed:
+        return parsed.get("parsed")
+    return parsed
 
 
 def _chunk_text(chunk: Any) -> str:

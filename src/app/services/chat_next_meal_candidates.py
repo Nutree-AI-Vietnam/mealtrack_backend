@@ -12,6 +12,7 @@ from src.app.services.discovery_meal_images import attach_food_images
 from src.domain.model.chat import ChatMessage, ChatUserContext
 from src.domain.ports.chat_discover_port import ChatDiscoverBatch, ChatDiscoverPort
 from src.domain.services.chat.meal_slot import resolve_meal_slot
+from src.domain.services.chat.next_meal_targets import next_meal_discover_targets
 from src.domain.services.chat.policy import filter_meals_for_allergies
 
 _OPTIONAL_CARD_STRINGS = (
@@ -67,10 +68,13 @@ class ChatNextMealCandidates:
                 extra={"user_id": user_id, "meal_slot": slot},
             )
             return NextMealCandidateResult(meal_slot=slot)
-        calorie_target = (
-            int(context.remaining_calories)
-            if context.remaining_calories is not None
-            else None
+        targets = next_meal_discover_targets(
+            meal_slot=slot,
+            remaining_calories=context.remaining_calories,
+            remaining_protein_g=context.remaining_protein_g,
+            remaining_carbs_g=context.remaining_carbs_g,
+            remaining_fat_g=context.remaining_fat_g,
+            daily_target_calories=context.target_calories,
         )
         try:
             batch = await self._discover.discover_meals(
@@ -78,10 +82,10 @@ class ChatNextMealCandidates:
                 meal_type=slot,
                 meal_portion_type="snack" if slot == "snack" else "main",
                 language=locale,
-                calorie_target=calorie_target,
-                protein_target=context.remaining_protein_g,
-                carbs_target=context.remaining_carbs_g,
-                fat_target=context.remaining_fat_g,
+                calorie_target=targets.calorie_target,
+                protein_target=targets.protein_target,
+                carbs_target=targets.carbs_target,
+                fat_target=targets.fat_target,
                 session_id=session_id,
                 count=DISCOVER_COUNT,
             )

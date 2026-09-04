@@ -185,8 +185,11 @@ class ChatMealSummary:
 
 @dataclass(frozen=True, slots=True)
 class ChatHistoryTurn:
-    role: ChatMessageRole
-    content: str
+    role: ChatMessageRole | str
+    content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +289,7 @@ class ChatCompletionDelta:
     provider_response_id: str | None = None
     usage: ChatUsage | None = None
     done: bool = False
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 @dataclass

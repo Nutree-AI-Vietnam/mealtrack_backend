@@ -95,7 +95,10 @@ async def test_fetch_maps_discover_cards_and_keeps_session() -> None:
     assert discover.calls[0]["session_id"] == "sess-keep"
     assert discover.calls[0]["meal_type"] == "breakfast"
     assert discover.calls[0]["meal_portion_type"] == "main"
-    assert discover.calls[0]["calorie_target"] == 650
+    assert discover.calls[0]["calorie_target"] == 450
+    assert discover.calls[0]["protein_target"] == 34.6
+    assert discover.calls[0]["carbs_target"] == 55.4
+    assert discover.calls[0]["fat_target"] == 13.8
 
 
 @pytest.mark.asyncio
@@ -293,6 +296,35 @@ async def test_adapter_keeps_meals_when_image_search_fails() -> None:
     )
     assert batch.meals[0]["name"] == "Pho"
     assert "thumbnail_url" not in batch.meals[0]
+
+
+@pytest.mark.asyncio
+async def test_fetch_does_not_pass_remaining_day_as_lunch_target() -> None:
+    discover = _FakeDiscover(
+        ChatDiscoverBatch(session_id="sess-lunch", meals=(_meal("Chicken Rice Bowl"),))
+    )
+    service = ChatNextMealCandidates(discover)
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(
+            suggested_meal_slot="lunch",
+            target_calories=1932,
+            remaining_calories=1932,
+            remaining_protein_g=119,
+            remaining_carbs_g=222,
+            remaining_fat_g=63,
+        ),
+        user_text="Trưa nay tôi nên ăn gì",
+        locale="vi",
+        session_id=None,
+    )
+    assert result.meal_slot == "lunch"
+    call = discover.calls[0]
+    assert call["calorie_target"] == 724
+    assert call["calorie_target"] != 1932
+    assert call["protein_target"] == 44.6
+    assert call["carbs_target"] == 83.2
+    assert call["fat_target"] == 23.6
 
 
 def test_map_drops_meals_without_calories() -> None:

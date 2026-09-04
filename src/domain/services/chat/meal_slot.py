@@ -50,7 +50,7 @@ _TEXT_SLOT_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "dinner",
-        ("dinner", "supper", "bữa tối", "bua toi"),
+        ("dinner", "supper", "bữa tối", "bua toi", "tối nay", "toi nay"),
     ),
     (
         "snack",

@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
-from src.app.services.chat_intent_classifier import ChatIntentClassifier
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
     last_discover_session_id,
@@ -31,6 +31,7 @@ from src.domain.model.chat import (
     ChatHistoryTurn,
     ChatIntent,
     ChatMessage,
+    ChatMessageRole,
     ChatSseEvent,
     ChatTurnClaim,
     ChatUsage,
@@ -63,7 +64,6 @@ from src.domain.services.chat.policy import (
     safe_fallback_message,
     stable_system_instructions,
 )
-from src.domain.services.chat.topic_scope import SCOPE_OUT
 from src.domain.utils.timezone_utils import utc_now
 from src.observability import distribution_metric, increment_metric, log_event
 
@@ -129,7 +129,6 @@ class ChatTurnOrchestrator:
         circuit_breaker: CircuitBreaker | None = None,
         next_meals: ChatNextMealCandidates | None = None,
         follow_ups: ChatFollowUpPort | None = None,
-        intent_classifier: ChatIntentClassifier | None = None,
     ) -> None:
         self._completion = completion
         self._embedding = embedding
@@ -145,7 +144,6 @@ class ChatTurnOrchestrator:
         self._circuit = circuit_breaker
         self._next_meals = next_meals
         self._follow_ups = follow_ups
-        self._intent_classifier = intent_classifier or ChatIntentClassifier(embedding)
 
     async def prepare_turn(
         self,
@@ -264,17 +262,6 @@ class ChatTurnOrchestrator:
                 locale=resolved_locale,
                 header_timezone=header_timezone,
             )
-            if intent is None:
-                decision = await self._intent_classifier.classify(
-                    trimmed, query_embedding=query_embedding
-                )
-                intent = decision.intent
-            out_of_scope = False
-            if intent is None:
-                scope = await self._intent_classifier.classify_scope(
-                    trimmed, query_embedding=query_embedding
-                )
-                out_of_scope = scope.scope == SCOPE_OUT
             history_messages = await self._completed_history(
                 claim.thread.id, exclude_message_id=claim.user_message.id
             )
@@ -282,49 +269,44 @@ class ChatTurnOrchestrator:
             suggestions: list[dict[str, Any]] = []
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
-            if (
-                not out_of_scope
-                and intent == ChatIntent.NEXT_MEAL.value
-                and self._next_meals is not None
-            ):
-                batch = await self._next_meals.fetch(
-                    user_id=user_id,
-                    context=context,
-                    user_text=trimmed,
-                    locale=resolved_locale,
-                    session_id=discover_session_id,
-                )
-                suggestions = batch.suggestions
-                discover_session_id = batch.session_id or discover_session_id
-                meal_slot = batch.meal_slot
+            
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "suggest_next_meal",
+                        "description": "Suggest meals to the user for their next sitting.",
+                        "parameters": {"type": "object", "properties": {}, "required": []},
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "check_daily_progress",
+                        "description": "Check the user's daily progress and remaining macro budget.",
+                        "parameters": {"type": "object", "properties": {}, "required": []},
+                    },
+                }
+            ]
 
             generation = {
                 "text": "",
                 "usage": ChatUsage(model=self._model),
                 "provider_response_id": None,
                 "blocked": False,
+                "tools": tools,
             }
             sentences: list[str] = []
-            if out_of_scope:
-                final_text = out_of_scope_message(resolved_locale)
-                yield ChatSseEvent(
-                    event="message.delta",
-                    data={
-                        "assistant_message_id": claim.assistant_message.id,
-                        "delta": final_text,
-                    },
-                )
-                usage = generation["usage"]
-                provider_response_id = None
-                blocked = False
-                citations = []
-                follow_ups = out_of_scope_follow_ups(resolved_locale)
-            else:
+            
+            # Keep streaming until no tool calls are emitted
+            current_user_message = trimmed
+            while True:
+                tool_calls_emitted = False
                 async for delta_text in self._iter_validated_sentences(
                     context=context,
                     chunks=chunks,
                     history=history,
-                    user_message=trimmed,
+                    user_message=current_user_message,
                     generation=generation,
                     intent=intent,
                     meal_candidates=suggestions,
@@ -339,31 +321,108 @@ class ChatTurnOrchestrator:
                             "delta": delta_text,
                         },
                     )
+                
+                tool_calls = generation.get("tool_calls")
+                if tool_calls:
+                    # Move user message into history before assistant's tool call turn
+                    if current_user_message:
+                        history.append(ChatHistoryTurn(
+                            role=ChatMessageRole.USER,
+                            content=current_user_message,
+                        ))
+                        current_user_message = ""
 
-                final_text = "".join(sentences).strip()
-                usage = generation["usage"]
-                provider_response_id = generation["provider_response_id"]
-                blocked = bool(generation["blocked"])
-                if not final_text:
-                    blocked = True
-                    final_text = safe_fallback_message(resolved_locale)
-                    yield ChatSseEvent(
-                        event="message.delta",
-                        data={
-                            "assistant_message_id": claim.assistant_message.id,
-                            "delta": final_text,
-                        },
-                    )
+                    # Add assistant's tool call turn to history
+                    history.append(ChatHistoryTurn(
+                        role=ChatMessageRole.ASSISTANT,
+                        content=generation.get("text") or "",
+                        tool_calls=tool_calls
+                    ))
+                    
+                    for call in tool_calls:
+                        name = call.get("name")
+                        call_id = call.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+                        result = "Executed successfully."
+                        if name == "suggest_next_meal":
+                            intent = ChatIntent.NEXT_MEAL.value
+                            if self._next_meals is not None:
+                                try:
+                                    batch = await self._next_meals.fetch(
+                                        user_id=user_id,
+                                        context=context,
+                                        user_text=trimmed,
+                                        locale=resolved_locale,
+                                        session_id=discover_session_id,
+                                    )
+                                    suggestions = batch.suggestions
+                                    discover_session_id = batch.session_id or discover_session_id
+                                    meal_slot = batch.meal_slot
+                                    if suggestions:
+                                        result = (
+                                            f"Found {len(suggestions)} meal options for {meal_slot}: "
+                                            + ", ".join(
+                                                f"{m.get('name')} ({m.get('calories')} kcal, {m.get('protein_g')}g protein)"
+                                                for m in suggestions
+                                            )
+                                        )
+                                    else:
+                                        result = f"No meal options found for {meal_slot} matching current criteria."
+                                except Exception as exc:
+                                    logger.warning("Failed to fetch next meal candidates: %s", exc)
+                                    result = "Meal catalog service is temporarily unavailable."
+                            else:
+                                result = "Meal candidate service not configured."
+                        elif name == "check_daily_progress":
+                            intent = ChatIntent.REMAINING_BUDGET.value
+                            result = (
+                                f"Daily progress: consumed {context.consumed_calories} kcal "
+                                f"({context.consumed_protein_g}g P, {context.consumed_carbs_g}g C, {context.consumed_fat_g}g F). "
+                                f"Remaining: {context.remaining_calories} kcal "
+                                f"({context.remaining_protein_g}g P, {context.remaining_carbs_g}g C, {context.remaining_fat_g}g F)."
+                            )
+                        else:
+                            result = f"Tool '{name}' is not recognized."
+                        
+                        history.append(ChatHistoryTurn(
+                            role="tool",
+                            tool_call_id=call_id,
+                            name=name,
+                            content=result
+                        ))
+                    
+                    # Clear generation tool calls so we don't loop forever
+                    generation["tool_calls"] = None
+                    # Disable further tools for subsequent iterations
+                    generation["tools"] = None
+                    # Continue streaming the final response
+                    continue
+                else:
+                    break
 
-                citations = _citations_for(final_text, chunks)
-                follow_ups = await self._generate_follow_ups(
-                    locale=resolved_locale,
-                    intent=intent,
-                    slot=meal_slot,
-                    user_message=trimmed,
-                    assistant_text=final_text,
-                    has_suggestions=bool(suggestions),
+            final_text = "".join(sentences).strip()
+            usage = generation["usage"]
+            provider_response_id = generation["provider_response_id"]
+            blocked = bool(generation["blocked"])
+            if not final_text:
+                blocked = True
+                final_text = safe_fallback_message(resolved_locale)
+                yield ChatSseEvent(
+                    event="message.delta",
+                    data={
+                        "assistant_message_id": claim.assistant_message.id,
+                        "delta": final_text,
+                    },
                 )
+
+            citations = _citations_for(final_text, chunks)
+            follow_ups = await self._generate_follow_ups(
+                locale=resolved_locale,
+                intent=intent,
+                slot=meal_slot,
+                user_message=trimmed,
+                assistant_text=final_text,
+                has_suggestions=bool(suggestions),
+            )
             completed = await self._complete(
                 claim.assistant_message,
                 content=final_text,
@@ -734,11 +793,14 @@ class ChatTurnOrchestrator:
                     user_message=user_message,
                     max_output_tokens=self._max_output_tokens,
                     cache_kwargs=cache_kwargs,
+                    tools=generation.get("tools"),
                 ):
                     if delta.provider_response_id:
                         generation["provider_response_id"] = delta.provider_response_id
                     if delta.usage is not None:
                         generation["usage"] = delta.usage
+                    if delta.tool_calls is not None:
+                        generation["tool_calls"] = delta.tool_calls
                     if delta.text:
                         if first_token_at is None:
                             first_token_at = time.perf_counter()
@@ -788,7 +850,7 @@ class ChatTurnOrchestrator:
         if last_error is not None:
             raise ChatProviderUnavailableError(retryable=True) from last_error
 
-        if not generation["text"].strip():
+        if not generation["text"].strip() and not generation.get("tool_calls"):
             fallback = (
                 no_evidence_message(context.locale)
                 if not chunks and not generation["blocked"]

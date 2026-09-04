@@ -22,6 +22,7 @@ class ChatCompletionPort(ABC):
         history: list[ChatHistoryTurn],
         user_message: str,
         max_output_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
         cache_kwargs: dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatCompletionDelta]:
         """Yield text deltas then a terminal usage delta."""
