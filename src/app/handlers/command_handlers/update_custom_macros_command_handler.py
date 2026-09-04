@@ -15,6 +15,7 @@ from src.domain.ports.integration_event_publisher_port import (
     require_event_publisher,
 )
 from src.infra.database.models.user.profile import UserProfile
+from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,9 @@ class UpdateCustomMacrosCommandHandler(EventHandler[UpdateCustomMacrosCommand, N
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow_factory: Any = uow_factory if uow_factory is not None else (
+            (lambda: uow) if uow is not None else AsyncUnitOfWork
+        )
         self.event_publisher = event_publisher
         self.environment = environment
 
