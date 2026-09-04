@@ -947,7 +947,7 @@ def get_configured_event_bus() -> EventBus:
     )
     event_bus.register_handler(
         GetBodyFatVisualProfileQuery,
-        GetBodyFatVisualProfileQueryHandler(uow=AsyncUnitOfWork()),
+        GetBodyFatVisualProfileQueryHandler(uow_factory=AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetUserTimezoneQuery, GetUserTimezoneQueryHandler(AsyncUnitOfWork)
@@ -1021,7 +1021,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         GetJourneyProgressQuery,
         GetJourneyProgressQueryHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             cache_service=cache_service,
         ),
     )
