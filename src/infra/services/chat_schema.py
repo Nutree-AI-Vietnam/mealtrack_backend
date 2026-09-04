@@ -17,6 +17,7 @@ _REQUIRED_CHAT_COLUMNS = {
         "idempotency_key",
         "citation_source_keys",
         "generation_lease_expires_at",
+        "generation_id",
         "reply_payload",
     },
 }
@@ -51,7 +52,8 @@ async def chat_schema_is_ready() -> bool:
                     OR (table_name = 'chat_message' AND column_name IN (
                       'id', 'thread_id', 'role', 'status', 'content',
                       'idempotency_key', 'citation_source_keys',
-                      'generation_lease_expires_at', 'reply_payload'
+                      'generation_lease_expires_at', 'generation_id',
+                      'reply_payload'
                     ))
                   )
                 """

@@ -29,8 +29,9 @@ def _make_pg_engine():
     elif url.startswith("postgresql://") and "+psycopg2" not in url:
         url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
-    # Neon requires SSL — inject if not already present
-    if "sslmode" not in url:
+    # Neon requires SSL. Local Postgres usually does not.
+    host_is_local = any(token in url for token in ("localhost", "127.0.0.1"))
+    if "sslmode" not in url and not host_is_local:
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}sslmode=require"
 

@@ -111,15 +111,16 @@ class AsyncChatRepository(ChatRepositoryPort):
             in_reply_to_id=user_row.id,
             citation_source_keys=[],
             generation_lease_expires_at=lease_expires_at,
+            generation_id=str(uuid.uuid4()),
             created_at=now,
             updated_at=now,
         )
         self.session.add(user_row)
         self.session.add(assistant_row)
         try:
-            await self.session.flush()
+            async with self.session.begin_nested():
+                await self.session.flush()
         except IntegrityError as exc:
-            await self.session.rollback()
             raced = await self._user_message_for_key(thread.id, idempotency_key)
             if raced is not None:
                 thread = await self.get_or_create_thread(user_id)
@@ -218,13 +219,18 @@ class AsyncChatRepository(ChatRepositoryPort):
         citation_source_keys: tuple[str, ...],
         provider_response_id: str | None,
         reply_payload: dict[str, Any] | None = None,
-    ) -> ChatMessage:
+        generation_id: str | None = None,
+    ) -> ChatMessage | None:
+        if not generation_id:
+            return None
         now = utc_now()
-        await self.session.execute(
+        result = await self.session.execute(
             update(ChatMessageORM)
             .where(
                 ChatMessageORM.id == message_id,
                 ChatMessageORM.role == ChatMessageRole.ASSISTANT.value,
+                ChatMessageORM.status == ChatMessageStatus.GENERATING.value,
+                ChatMessageORM.generation_id == generation_id,
             )
             .values(
                 status=ChatMessageStatus.COMPLETED.value,
@@ -244,9 +250,11 @@ class AsyncChatRepository(ChatRepositoryPort):
                 reply_payload=reply_payload or empty_reply_payload(),
             )
         )
+        if result.rowcount == 0:
+            return None
         row = await self.session.get(ChatMessageORM, message_id)
         if row is None:
-            raise RuntimeError("assistant message missing after completion")
+            return None
         await self._touch_thread(row.thread_id, now)
         return _to_message(row)
 
@@ -256,6 +264,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         message_id: str,
         error_code: str,
         content: str | None = None,
+        generation_id: str | None = None,
     ) -> ChatMessage | None:
         now = utc_now()
         values: dict[str, object] = {
@@ -266,26 +275,41 @@ class AsyncChatRepository(ChatRepositoryPort):
         }
         if content is not None:
             values["content"] = content
-        await self.session.execute(
-            update(ChatMessageORM)
-            .where(ChatMessageORM.id == message_id)
-            .values(**values)
+        filters = [
+            ChatMessageORM.id == message_id,
+            ChatMessageORM.status == ChatMessageStatus.GENERATING.value,
+        ]
+        if generation_id:
+            filters.append(ChatMessageORM.generation_id == generation_id)
+        result = await self.session.execute(
+            update(ChatMessageORM).where(*filters).values(**values)
         )
+        if result.rowcount == 0:
+            return None
         row = await self.session.get(ChatMessageORM, message_id)
         return _to_message(row) if row else None
 
-    async def count_user_turns_since(self, *, user_id: str, since: datetime) -> int:
+    async def count_user_turns_since(
+        self,
+        *,
+        user_id: str,
+        since: datetime,
+        exclude_idempotency_key: str | None = None,
+    ) -> int:
         thread = await self._get_thread_row(user_id)
         if thread is None:
             return 0
-        result = await self.session.execute(
-            select(func.count())
-            .select_from(ChatMessageORM)
-            .where(
-                ChatMessageORM.thread_id == thread.id,
-                ChatMessageORM.role == ChatMessageRole.USER.value,
-                ChatMessageORM.created_at >= since,
+        filters = [
+            ChatMessageORM.thread_id == thread.id,
+            ChatMessageORM.role == ChatMessageRole.USER.value,
+            ChatMessageORM.created_at >= since,
+        ]
+        if exclude_idempotency_key:
+            filters.append(
+                ChatMessageORM.idempotency_key.is_distinct_from(exclude_idempotency_key)
             )
+        result = await self.session.execute(
+            select(func.count()).select_from(ChatMessageORM).where(*filters)
         )
         return int(result.scalar_one())
 
@@ -364,6 +388,7 @@ class AsyncChatRepository(ChatRepositoryPort):
             in_reply_to_id=user_row.id,
             citation_source_keys=[],
             generation_lease_expires_at=lease_expires_at,
+            generation_id=str(uuid.uuid4()),
             created_at=now,
             updated_at=now,
         )
@@ -475,6 +500,7 @@ def _to_message(row: ChatMessageORM) -> ChatMessage:
         output_tokens=row.output_tokens,
         cached_tokens=row.cached_tokens,
         generation_lease_expires_at=row.generation_lease_expires_at,
+        generation_id=row.generation_id,
         error_code=row.error_code,
         completed_at=row.completed_at,
         reply_payload=getattr(row, "reply_payload", None),

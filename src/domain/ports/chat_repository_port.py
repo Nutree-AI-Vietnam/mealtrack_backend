@@ -82,8 +82,9 @@ class ChatRepositoryPort(ABC):
         citation_source_keys: tuple[str, ...],
         provider_response_id: str | None,
         reply_payload: dict[str, Any] | None = None,
-    ) -> ChatMessage:
-        """Mark a generating assistant message completed."""
+        generation_id: str | None = None,
+    ) -> ChatMessage | None:
+        """Complete the generating assistant only if the fencing token still owns it."""
 
     @abstractmethod
     async def fail_assistant_message(
@@ -92,8 +93,9 @@ class ChatRepositoryPort(ABC):
         message_id: str,
         error_code: str,
         content: str | None = None,
+        generation_id: str | None = None,
     ) -> ChatMessage | None:
-        """Mark a generating assistant message failed."""
+        """Fail the generating assistant only if it is still the active generation."""
 
     @abstractmethod
     async def count_user_turns_since(
@@ -101,6 +103,7 @@ class ChatRepositoryPort(ABC):
         *,
         user_id: str,
         since: datetime,
+        exclude_idempotency_key: str | None = None,
     ) -> int:
         """Count user messages created at or after *since*."""
 

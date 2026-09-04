@@ -150,6 +150,56 @@ def test_nutrition_numbers_must_come_from_context():
     assert nutrition_numbers_are_traceable(bad, context=context, chunks=[]) is False
 
 
+def test_nutrition_number_is_not_a_substring_match():
+    context = _context(
+        remaining_protein_g=140,
+        consumed_protein_g=10,
+        target_protein_g=140,
+        remaining_calories=600,
+        consumed_calories=1200,
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "Eat 50 g protein tonight.",
+            context=context,
+            chunks=[],
+        )
+        is False
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "Stay at 140 g protein.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+
+
+def test_hydrate_citations_keeps_stored_labels():
+    citations = hydrate_citations(
+        ["fiber-guide"],
+        {"fiber-guide": ("Fiber", None)},
+        labels=["[K2]"],
+    )
+    assert citations[0]["label"] == "[K2]"
+    assert citations[0]["source_key"] == "fiber-guide"
+
+
+def test_allergen_meals_are_dropped():
+    from src.domain.services.chat.policy import filter_meals_for_allergies
+
+    kept = filter_meals_for_allergies(
+        [
+            {"name": "Thai satay", "ingredients": [{"name": "peanut butter"}]},
+            {"name": "Rice bowl", "ingredients": [{"name": "rice"}]},
+            {"name": "Safe-looking bowl"},
+        ],
+        ["peanut"],
+    )
+    assert [meal["name"] for meal in kept] == ["Rice bowl"]
+
+
 def test_candidate_macros_are_traceable():
     context = _context()
     candidates = [{"name": "Egg rice bowl", "calories": 420, "protein_g": 28}]

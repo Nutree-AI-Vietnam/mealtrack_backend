@@ -1,134 +1,86 @@
-import asyncio
-from types import SimpleNamespace
-
 import pytest
 
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
     SuggestionChatDiscoverAdapter,
-    map_chat_recipe_meals,
     map_discover_meals,
 )
 from src.domain.model.chat import ChatUserContext
+from src.domain.ports.chat_discover_port import ChatDiscoverBatch
 
 
-class _FakeRecipes:
-    def __init__(self, meals=None, delay=0.0, error=None):
-        self.meals = meals or []
-        self.delay = delay
+class _FakeDiscover:
+    def __init__(self, batch=None, error=None):
+        self.batch = batch or ChatDiscoverBatch(session_id=None, meals=())
         self.error = error
         self.calls: list[dict] = []
 
-    async def generate_next_meal_recipes(self, **kwargs):
+    async def discover_meals(self, **kwargs):
         self.calls.append(kwargs)
-        if self.delay:
-            await asyncio.sleep(self.delay)
         if self.error is not None:
             raise self.error
-        return self.meals
+        return self.batch
 
 
-class _FakeLookup:
-    def __init__(self, error=None):
-        self.error = error
-        self.calls: list[list] = []
-
-    async def calculate_meal_macros(self, ingredients):
-        self.calls.append(ingredients)
-        if self.error is not None:
-            raise self.error
-        breakdown = [
-            SimpleNamespace(name=ing["name"], calories=120 + index * 10)
-            for index, ing in enumerate(ingredients)
-        ]
-        return SimpleNamespace(
-            calories=420,
-            protein=28,
-            carbs=45,
-            fat=12,
-            ingredients=breakdown,
-        )
-
-
-def _recipe(name: str = "Egg rice bowl") -> dict:
-    return {
+def _meal(name: str = "Egg rice bowl", **extra) -> dict:
+    card = {
+        "id": f"d-{name}",
         "name": name,
-        "english_name": name,
-        "emoji": "🍳",
-        "prep_time_minutes": 18,
-        "ingredients": [
-            {"name": "eggs", "amount": 2, "unit": "pcs"},
-            {"name": "rice", "amount": 150, "unit": "g"},
-            {"name": "spinach", "amount": 40, "unit": "g"},
-        ],
-        "recipe_steps": [
-            {"step": 1, "instruction": "Cook rice.", "duration_minutes": 12},
-            {"step": 2, "instruction": "Scramble eggs.", "duration_minutes": 6},
-        ],
+        "english_name": extra.pop("english_name", name),
+        "calories": extra.pop("calories", 420),
+        "protein": 28,
+        "carbs": 45,
+        "fat": 12,
     }
+    card.update(extra)
+    return card
 
 
-def _context() -> ChatUserContext:
-    return ChatUserContext(
-        context_version="chat_context_v1",
-        as_of="2026-09-01T00:00:00+00:00",
-        locale="en",
-        timezone="UTC",
-        allergies=[],
-        health_conditions=[],
-        dietary_preferences=[],
-        goal="cutting",
-        tdee=2200,
-        target_calories=1800,
-        target_protein_g=140,
-        target_carbs_g=180,
-        target_fat_g=60,
-        consumed_calories=1150,
-        consumed_protein_g=90,
-        consumed_carbs_g=100,
-        consumed_fat_g=40,
-        remaining_calories=650,
-        remaining_protein_g=50,
-        remaining_carbs_g=80,
-        remaining_fat_g=20,
-        remaining_days=4,
-        local_hour=8,
-        local_minute=12,
-        suggested_meal_slot="breakfast",
-    )
-
-
-@pytest.mark.asyncio
-async def test_fetch_maps_three_recipe_cards() -> None:
-    recipes = _FakeRecipes([_recipe(), _recipe("Yogurt cup"), _recipe("Tofu scramble")])
-    lookup = _FakeLookup()
-    service = ChatNextMealCandidates(recipes, lookup, model="gpt-test")
-    result = await service.fetch(
-        user_id="u1",
-        context=_context(),
-        user_text="What should I eat?",
-        locale="en",
-        session_id="sess-ignored",
-    )
-    assert result.session_id is None
-    assert result.meal_slot == "breakfast"
-    assert len(result.suggestions) == 3
-    assert result.suggestions[0]["protein_g"] == 28
-    assert result.suggestions[0]["emoji"] == "🍳"
-    assert result.suggestions[0]["ingredients"][0]["name"] == "eggs"
-    assert result.suggestions[0]["ingredients"][0]["calories"] == 120
-    assert result.suggestions[0]["recipe_steps"][0]["instruction"] == "Cook rice."
-    assert result.suggestions[0]["id"].startswith("chat_")
-    assert recipes.calls[0]["slot"] == "breakfast"
-    assert recipes.calls[0]["remaining_calories"] == 650
-    assert recipes.calls[0]["model"] == "gpt-test"
-    assert len(lookup.calls) == 3
+def _context(**overrides) -> ChatUserContext:
+    values = {
+        "context_version": "chat_context_v1",
+        "as_of": "2026-09-01T00:00:00+00:00",
+        "locale": "en",
+        "timezone": "UTC",
+        "allergies": [],
+        "health_conditions": [],
+        "dietary_preferences": [],
+        "goal": "cutting",
+        "tdee": 2200,
+        "target_calories": 1800,
+        "target_protein_g": 140,
+        "target_carbs_g": 180,
+        "target_fat_g": 60,
+        "consumed_calories": 1150,
+        "consumed_protein_g": 90,
+        "consumed_carbs_g": 100,
+        "consumed_fat_g": 40,
+        "remaining_calories": 650,
+        "remaining_protein_g": 50,
+        "remaining_carbs_g": 80,
+        "remaining_fat_g": 20,
+        "remaining_days": 4,
+        "local_hour": 8,
+        "local_minute": 12,
+        "suggested_meal_slot": "breakfast",
+    }
+    values.update(overrides)
+    return ChatUserContext(**values)
 
 
 @pytest.mark.asyncio
-async def test_slow_recipe_call_still_returns_cards() -> None:
-    recipes = _FakeRecipes([_recipe("Oats")], delay=0.05)
-    service = ChatNextMealCandidates(recipes, _FakeLookup(), model="gpt-test")
+async def test_fetch_maps_discover_cards_and_keeps_session() -> None:
+    discover = _FakeDiscover(
+        ChatDiscoverBatch(
+            session_id="sess-keep",
+            meals=(
+                _meal(),
+                _meal("Yogurt cup"),
+                _meal("Tofu scramble"),
+            ),
+        )
+    )
+    service = ChatNextMealCandidates(discover)
     result = await service.fetch(
         user_id="u1",
         context=_context(),
@@ -136,16 +88,63 @@ async def test_slow_recipe_call_still_returns_cards() -> None:
         locale="en",
         session_id="sess-keep",
     )
-    assert result.suggestions[0]["name"] == "Oats"
-    assert result.session_id is None
+    assert result.session_id == "sess-keep"
+    assert result.meal_slot == "breakfast"
+    assert len(result.suggestions) == 3
+    assert result.suggestions[0]["protein_g"] == 28
+    assert discover.calls[0]["session_id"] == "sess-keep"
+    assert discover.calls[0]["meal_type"] == "breakfast"
+    assert discover.calls[0]["meal_portion_type"] == "main"
+    assert discover.calls[0]["calorie_target"] == 650
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_skips_recipe_call() -> None:
-    recipes = _FakeRecipes([])
-    service = ChatNextMealCandidates(
-        recipes, _FakeLookup(), model="gpt-test", max_per_minute=1
+async def test_fetch_drops_allergen_cards() -> None:
+    discover = _FakeDiscover(
+        ChatDiscoverBatch(
+            session_id="sess-1",
+            meals=(
+                _meal("Thai satay", ingredients=[{"name": "peanut butter"}]),
+                _meal("Rice bowl", ingredients=[{"name": "rice"}]),
+                _meal("Unverified bowl"),
+            ),
+        )
     )
+    service = ChatNextMealCandidates(discover)
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(allergies=["peanut"]),
+        user_text="What should I eat?",
+        locale="en",
+        session_id=None,
+    )
+    assert [card["name"] for card in result.suggestions] == ["Rice bowl"]
+    assert "ingredients" not in result.suggestions[0]
+
+
+@pytest.mark.asyncio
+async def test_fetch_hides_unverified_cards_when_user_has_allergies() -> None:
+    discover = _FakeDiscover(
+        ChatDiscoverBatch(
+            session_id="sess-1",
+            meals=(_meal("Egg rice bowl"), _meal("Yogurt cup")),
+        )
+    )
+    service = ChatNextMealCandidates(discover)
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(allergies=["peanut"]),
+        user_text="What should I eat?",
+        locale="en",
+        session_id=None,
+    )
+    assert result.suggestions == []
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_skips_discover_call() -> None:
+    discover = _FakeDiscover()
+    service = ChatNextMealCandidates(discover, max_per_minute=1)
     await service.fetch(
         user_id="u1",
         context=_context(),
@@ -160,28 +159,23 @@ async def test_rate_limit_skips_recipe_call() -> None:
         locale="en",
         session_id="sess-keep",
     )
-    assert len(recipes.calls) == 1
+    assert len(discover.calls) == 1
     assert second.suggestions == []
 
 
 @pytest.mark.asyncio
-async def test_lookup_failure_drops_card() -> None:
-    cards = await map_chat_recipe_meals(
-        [_recipe()],
-        "lunch",
-        _FakeLookup(error=RuntimeError("lookup down")),
+async def test_discover_failure_returns_empty_cards() -> None:
+    discover = _FakeDiscover(error=RuntimeError("discover down"))
+    service = ChatNextMealCandidates(discover)
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat?",
+        locale="en",
+        session_id="sess-keep",
     )
-    assert cards == []
-
-
-@pytest.mark.asyncio
-async def test_zero_calories_drops_card() -> None:
-    class _ZeroLookup:
-        async def calculate_meal_macros(self, ingredients):
-            return SimpleNamespace(calories=0, protein=0, carbs=0, fat=0)
-
-    cards = await map_chat_recipe_meals([_recipe()], "lunch", _ZeroLookup())
-    assert cards == []
+    assert result.suggestions == []
+    assert result.session_id is None
 
 
 def test_map_keeps_photos_and_english_name() -> None:

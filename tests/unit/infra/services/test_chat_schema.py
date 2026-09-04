@@ -13,6 +13,7 @@ def test_chat_schema_ready_when_required_columns_exist():
         ("chat_message", "idempotency_key"),
         ("chat_message", "citation_source_keys"),
         ("chat_message", "generation_lease_expires_at"),
+        ("chat_message", "generation_id"),
         ("chat_message", "reply_payload"),
     ]
     assert _chat_schema_is_ready(rows)

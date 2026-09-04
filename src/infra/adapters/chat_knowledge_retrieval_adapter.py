@@ -101,21 +101,7 @@ class ChatKnowledgeRetrievalAdapter(ChatKnowledgeRetrievalPort):
                 continue
             if not _passes_threshold(chunk):
                 continue
-            fused.append(
-                RetrievedKnowledgeChunk(
-                    chunk_id=chunk.chunk_id,
-                    document_id=chunk.document_id,
-                    source_key=chunk.source_key,
-                    title=chunk.title,
-                    content=chunk.content,
-                    locale=chunk.locale,
-                    canonical_uri=chunk.canonical_uri,
-                    label=chunk.label,
-                    vector_score=chunk.vector_score,
-                    fts_rank=chunk.fts_rank,
-                    fused_score=scores.get(chunk_id, 0.0),
-                )
-            )
+            fused.append(_with_fused_score(chunk, scores.get(chunk_id, 0.0)))
 
         deduped: list[RetrievedKnowledgeChunk] = []
         for chunk in fused:
@@ -204,6 +190,25 @@ def _passes_threshold(chunk: RetrievedKnowledgeChunk) -> bool:
     if chunk.fts_rank is not None and chunk.fts_rank >= _MIN_FTS_RANK:
         return True
     return False
+
+
+def _with_fused_score(
+    chunk: RetrievedKnowledgeChunk, fused_score: float
+) -> RetrievedKnowledgeChunk:
+    return RetrievedKnowledgeChunk(
+        chunk_id=chunk.chunk_id,
+        document_id=chunk.document_id,
+        source_key=chunk.source_key,
+        title=chunk.title,
+        content=chunk.content,
+        locale=chunk.locale,
+        canonical_uri=chunk.canonical_uri,
+        label=chunk.label,
+        vector_score=chunk.vector_score,
+        fts_rank=chunk.fts_rank,
+        fused_score=fused_score,
+        safety_tags=chunk.safety_tags,
+    )
 
 
 def _to_chunk(

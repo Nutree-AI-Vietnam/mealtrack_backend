@@ -4,7 +4,6 @@ import pytest
 
 from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
-from src.domain.services.chat.policy import out_of_scope_message
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatProviderUnavailableError,
@@ -21,15 +20,17 @@ from src.domain.model.chat import (
     ChatUsage,
     ChatUserContext,
 )
+from src.domain.services.chat.policy import out_of_scope_message
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
 
 
 class _FakeRepo:
-    def __init__(self, claim=None, history=None, turns_used=0):
+    def __init__(self, claim=None, history=None, turns_used=0, counted_keys=None):
         self.claim = claim
         self.history = history or []
         self.turns_used = turns_used
+        self.counted_keys = set(counted_keys or ())
         self.completed = None
         self.failed = None
         self.cleared = False
@@ -79,7 +80,11 @@ class _FakeRepo:
         return self.claim.assistant_message
 
     async def count_user_turns_since(self, **kwargs):
-        return self.turns_used
+        used = self.turns_used
+        excluded = kwargs.get("exclude_idempotency_key")
+        if excluded and excluded in self.counted_keys:
+            return max(0, used - 1)
+        return used
 
     async def clear_thread(self, user_id: str):
         self.cleared = True
@@ -190,6 +195,7 @@ def _claim(
     assistant_content=None,
     status=ChatMessageStatus.GENERATING,
     citation_source_keys=(),
+    reply_payload=None,
 ):
     now = utc_now()
     thread = ChatThread(id="t1", user_id="u1", created_at=now, updated_at=now)
@@ -215,6 +221,8 @@ def _claim(
         in_reply_to_id="m-user",
         model="gpt-5.6-luna",
         citation_source_keys=citation_source_keys,
+        generation_id="gen-1",
+        reply_payload=reply_payload,
     )
     return ChatTurnClaim(
         kind=kind, thread=thread, user_message=user, assistant_message=assistant
@@ -340,7 +348,7 @@ async def test_new_turn_streams_sentence_and_persists():
 
 
 @pytest.mark.asyncio
-async def test_deltas_are_streamed_before_generation_finishes():
+async def test_partial_chunks_are_buffered_until_sentence_boundary():
     completion = _GatedCompletion(
         first="Nutree has ",
         second="650 calories remaining. ",
@@ -359,19 +367,18 @@ async def test_deltas_are_streamed_before_generation_finishes():
             user_language="en",
         ):
             events.append(event)
-            if event.event == "message.delta" and "Nutree has " in event.data.get(
-                "delta", ""
-            ):
-                completion.release.set()
 
-    await asyncio.wait_for(consume(), timeout=2)
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.05)
+    assert not any(event.event == "message.delta" for event in events)
+    completion.release.set()
+    await asyncio.wait_for(task, timeout=2)
     deltas = [
         event.data.get("delta", "")
         for event in events
         if event.event == "message.delta"
     ]
-    assert deltas[0] == "Nutree has "
-    assert "650 calories remaining. " in deltas
+    assert deltas == ["Nutree has 650 calories remaining. "]
     assert events[-1].event == "message.completed"
 
 
@@ -450,6 +457,52 @@ async def test_daily_budget_raises_before_generation():
 
 
 @pytest.mark.asyncio
+async def test_daily_budget_allows_replay_of_last_turn():
+    claim = _claim(
+        kind=ChatClaimKind.REPLAY,
+        assistant_content="Nutree has 650 remaining.",
+        status=ChatMessageStatus.COMPLETED,
+    )
+    repo = _FakeRepo(claim=claim, turns_used=40, counted_keys={"key-1"})
+    orchestrator = _orchestrator(repo, turns_used=40)
+    prepared = await orchestrator.prepare_turn(
+        user_id="u1",
+        content="How much is left?",
+        idempotency_key="key-1",
+        locale="en",
+        header_timezone="UTC",
+        user_language="en",
+    )
+    assert prepared.claim.kind == ChatClaimKind.REPLAY
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_does_not_emit_completed():
+    class _StaleRepo(_FakeRepo):
+        async def complete_assistant_message(self, **kwargs):
+            self.completed = kwargs
+            return None
+
+    repo = _StaleRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="How much is left?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    assert events[-1].event == "message.error"
+    assert events[-1].data["code"] == "CHAT_TURN_FAILED"
+    assert repo.completed is not None
+    assert repo.completed["generation_id"] == "gen-1"
+
+
+@pytest.mark.asyncio
 async def test_busy_error_surfaces_from_prepare():
     repo = _FakeRepo(claim=ChatBusyError())
     orchestrator = _orchestrator(repo)
@@ -512,6 +565,44 @@ async def test_replay_hydrates_citation_titles():
             "source_key": "protein-guide",
             "title": "Protein",
             "canonical_uri": "https://nutree.app/protein",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_replay_keeps_original_citation_label():
+    claim = _claim(
+        kind=ChatClaimKind.REPLAY,
+        assistant_content="Stay at fiber [K2].",
+        status=ChatMessageStatus.COMPLETED,
+        citation_source_keys=("fiber-guide",),
+        reply_payload={
+            "suggestions": [],
+            "follow_ups": [],
+            "citation_refs": [{"label": "[K2]", "source_key": "fiber-guide"}],
+        },
+    )
+    repo = _FakeRepo(claim=claim)
+    repo.citation_metadata = {"fiber-guide": ("Fiber", None)}
+    orchestrator = _orchestrator(repo)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="How much is left?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    completed = next(event for event in events if event.event == "message.completed")
+    assert completed.data["citations"] == [
+        {
+            "label": "[K2]",
+            "source_key": "fiber-guide",
+            "title": "Fiber",
+            "canonical_uri": None,
         }
     ]
 
@@ -713,9 +804,7 @@ async def test_nutrition_free_text_still_streams_an_answer():
 @pytest.mark.asyncio
 async def test_off_topic_typed_text_rejects_without_llm():
     completion = _FakeCompletion(["I should never answer coding. "])
-    follow_ups = _FakeFollowUps(
-        [{"label": "unused", "action": "remaining_budget"}]
-    )
+    follow_ups = _FakeFollowUps([{"label": "unused", "action": "remaining_budget"}])
     next_meals = _FakeNextMeals(
         NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
     )

@@ -92,6 +92,7 @@ class ChatMessage:
     output_tokens: int | None = None
     cached_tokens: int | None = None
     generation_lease_expires_at: datetime | None = None
+    generation_id: str | None = None
     error_code: str | None = None
     completed_at: datetime | None = None
     reply_payload: dict[str, Any] | None = None
@@ -117,6 +118,23 @@ class ChatMessage:
         if value in CHAT_INTENTS:
             return str(value)
         return None
+
+    def citation_refs(self) -> list[tuple[str, str]]:
+        """Return stored (label, source_key) pairs so replay keeps original [Kn]."""
+        if not self.reply_payload:
+            return []
+        raw = self.reply_payload.get("citation_refs")
+        if not isinstance(raw, list):
+            return []
+        refs: list[tuple[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()
+            source_key = str(item.get("source_key") or "").strip()
+            if label and source_key:
+                refs.append((label, source_key))
+        return refs
 
 
 @dataclass(frozen=True, slots=True)

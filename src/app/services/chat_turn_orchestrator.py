@@ -164,7 +164,9 @@ class ChatTurnOrchestrator:
         if len(trimmed) > CHAT_MAX_USER_MESSAGE_CHARS:
             trimmed = trimmed[:CHAT_MAX_USER_MESSAGE_CHARS]
         fingerprint = request_fingerprint(trimmed, resolved_locale, intent)
-        await self._enforce_daily_budget(user_id)
+        await self._enforce_daily_budget(
+            user_id, exclude_idempotency_key=idempotency_key
+        )
         claim = await self._claim(
             user_id=user_id,
             content=trimmed,
@@ -175,7 +177,9 @@ class ChatTurnOrchestrator:
         if claim.kind != ChatClaimKind.REPLAY:
             if self._circuit_is_open():
                 await self._fail(
-                    claim.assistant_message.id, "CHAT_PROVIDER_UNAVAILABLE"
+                    claim.assistant_message.id,
+                    "CHAT_PROVIDER_UNAVAILABLE",
+                    generation_id=claim.assistant_message.generation_id,
                 )
                 raise ChatProviderUnavailableError(
                     retry_after_seconds=30, retryable=True
@@ -183,7 +187,9 @@ class ChatTurnOrchestrator:
             slot_acquired = await self._try_acquire_slot()
             if not slot_acquired:
                 await self._fail(
-                    claim.assistant_message.id, "CHAT_PROVIDER_UNAVAILABLE"
+                    claim.assistant_message.id,
+                    "CHAT_PROVIDER_UNAVAILABLE",
+                    generation_id=claim.assistant_message.generation_id,
                 )
                 raise ChatProviderUnavailableError(
                     retry_after_seconds=5, retryable=True
@@ -359,7 +365,7 @@ class ChatTurnOrchestrator:
                     has_suggestions=bool(suggestions),
                 )
             completed = await self._complete(
-                claim.assistant_message.id,
+                claim.assistant_message,
                 content=final_text,
                 usage=usage,
                 citations=citations,
@@ -369,8 +375,23 @@ class ChatTurnOrchestrator:
                     follow_ups=follow_ups,
                     discover_session_id=discover_session_id,
                     intent=intent,
+                    citations=citations,
                 ),
             )
+            if completed is None:
+                increment_metric(
+                    "chat.turn.stale_generation",
+                    attributes={"locale": resolved_locale},
+                )
+                yield ChatSseEvent(
+                    event="message.error",
+                    data={
+                        "code": "CHAT_TURN_FAILED",
+                        "retryable": True,
+                        "assistant_message_id": claim.assistant_message.id,
+                    },
+                )
+                return
             if blocked:
                 increment_metric(
                     "chat.turn.safety_block", attributes={"locale": resolved_locale}
@@ -416,7 +437,11 @@ class ChatTurnOrchestrator:
                 },
             )
         except ChatProviderUnavailableError as exc:
-            await self._fail(claim.assistant_message.id, "CHAT_PROVIDER_UNAVAILABLE")
+            await self._fail(
+                claim.assistant_message.id,
+                "CHAT_PROVIDER_UNAVAILABLE",
+                generation_id=claim.assistant_message.generation_id,
+            )
             increment_metric(
                 "chat.turn.failed", attributes={"code": "CHAT_PROVIDER_UNAVAILABLE"}
             )
@@ -439,7 +464,11 @@ class ChatTurnOrchestrator:
                 },
                 exc_info=True,
             )
-            await self._fail(claim.assistant_message.id, "CHAT_TURN_FAILED")
+            await self._fail(
+                claim.assistant_message.id,
+                "CHAT_TURN_FAILED",
+                generation_id=claim.assistant_message.generation_id,
+            )
             yield ChatSseEvent(
                 event="message.error",
                 data={
@@ -498,7 +527,7 @@ class ChatTurnOrchestrator:
             "messages": [
                 _public_message(
                     message,
-                    hydrate_citations(message.citation_source_keys, citation_metadata),
+                    _hydrate_message_citations(message, citation_metadata),
                 )
                 for message in chronological
             ],
@@ -513,11 +542,20 @@ class ChatTurnOrchestrator:
         increment_metric("chat.thread.cleared")
         return {"thread_id": thread.id, "cleared": True}
 
-    async def _enforce_daily_budget(self, user_id: str) -> None:
+    async def _enforce_daily_budget(
+        self,
+        user_id: str,
+        *,
+        exclude_idempotency_key: str | None = None,
+    ) -> None:
         start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
-            used = await repo.count_user_turns_since(user_id=user_id, since=start)
+            used = await repo.count_user_turns_since(
+                user_id=user_id,
+                since=start,
+                exclude_idempotency_key=exclude_idempotency_key,
+            )
         if used >= self._daily_turn_budget:
             raise ChatRateLimitedError(retry_after_seconds=3600, daily=True)
 
@@ -574,12 +612,14 @@ class ChatTurnOrchestrator:
     async def _citations_for_message(
         self, message: ChatMessage
     ) -> list[dict[str, str | None]]:
-        keys = list(message.citation_source_keys)
+        refs = message.citation_refs()
+        keys = [key for _, key in refs] if refs else list(message.citation_source_keys)
+        labels = [label for label, _ in refs] if refs else None
         if not keys:
             return []
         async with self._uow_factory() as uow:
             metadata = await _chat_repo(uow).list_citation_metadata(keys)
-        return hydrate_citations(keys, metadata)
+        return hydrate_citations(keys, metadata, labels=labels)
 
     async def _ground(
         self,
@@ -683,6 +723,7 @@ class ChatTurnOrchestrator:
         for attempt in range(2):
             kept: list[str] = []
             pending = ""
+            buffer = SentenceBuffer()
             generation["blocked"] = False
             try:
                 async for delta in self._completion.stream(
@@ -717,11 +758,16 @@ class ChatTurnOrchestrator:
                         )
                         if next_pending is None:
                             generation["blocked"] = True
-                            continue
+                            break
                         kept.append(delta.text)
                         pending = next_pending
-                        yielded_any = True
-                        yield delta.text
+                        for sentence in buffer.push(delta.text):
+                            yielded_any = True
+                            yield sentence
+                leftover = buffer.flush()
+                if leftover:
+                    yielded_any = True
+                    yield leftover
                 self._record_circuit_success()
                 last_error = None
                 generation["text"] = "".join(kept)
@@ -754,18 +800,18 @@ class ChatTurnOrchestrator:
 
     async def _complete(
         self,
-        message_id: str,
+        message: ChatMessage,
         *,
         content: str,
         usage: ChatUsage,
         citations: list[ChatCitation],
         provider_response_id: str | None,
         reply_payload: dict[str, Any] | None = None,
-    ) -> ChatMessage:
+    ) -> ChatMessage | None:
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
             return await repo.complete_assistant_message(
-                message_id=message_id,
+                message_id=message.id,
                 content=content,
                 model=self._model,
                 usage=usage,
@@ -774,6 +820,7 @@ class ChatTurnOrchestrator:
                 citation_source_keys=tuple(item.source_key for item in citations),
                 provider_response_id=provider_response_id,
                 reply_payload=reply_payload or empty_reply_payload(),
+                generation_id=message.generation_id,
             )
 
     async def _generate_follow_ups(
@@ -805,12 +852,20 @@ class ChatTurnOrchestrator:
             logger.info("chat follow-up generation failed", extra={"intent": intent})
             return []
 
-    async def _fail(self, message_id: str, error_code: str) -> None:
+    async def _fail(
+        self,
+        message_id: str,
+        error_code: str,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
         try:
             async with self._uow_factory() as uow:
                 repo = _chat_repo(uow)
                 await repo.fail_assistant_message(
-                    message_id=message_id, error_code=error_code
+                    message_id=message_id,
+                    error_code=error_code,
+                    generation_id=generation_id,
                 )
         except Exception:
             logger.warning(
@@ -874,6 +929,7 @@ def _reply_payload(
     follow_ups: list[dict[str, str]],
     discover_session_id: str | None,
     intent: str | None,
+    citations: list[ChatCitation] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "suggestions": suggestions,
@@ -883,7 +939,21 @@ def _reply_payload(
         payload["discover_session_id"] = discover_session_id
     if intent:
         payload["intent"] = intent
+    if citations:
+        payload["citation_refs"] = [
+            {"label": item.label, "source_key": item.source_key} for item in citations
+        ]
     return payload
+
+
+def _hydrate_message_citations(
+    message: ChatMessage,
+    metadata: dict[str, tuple[str | None, str | None]] | None = None,
+) -> list[dict[str, str | None]]:
+    refs = message.citation_refs()
+    keys = [key for _, key in refs] if refs else list(message.citation_source_keys)
+    labels = [label for label, _ in refs] if refs else None
+    return hydrate_citations(keys, metadata or {}, labels=labels)
 
 
 def _public_message(
@@ -898,7 +968,7 @@ def _public_message(
         "created_at": message.created_at.isoformat(),
         "model": message.model,
         "citation_source_keys": list(message.citation_source_keys),
-        "citations": citations or hydrate_citations(message.citation_source_keys, {}),
+        "citations": citations or _hydrate_message_citations(message),
         **reply_sidecar(message),
     }
 

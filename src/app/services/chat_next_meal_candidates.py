@@ -1,19 +1,18 @@
-"""Next-meal cards from one chat structured recipe call."""
+"""Next-meal cards from Discover, with a deterministic allergy gate."""
 
 from __future__ import annotations
 
 import logging
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 from src.app.services.discovery_meal_images import attach_food_images
 from src.domain.model.chat import ChatMessage, ChatUserContext
 from src.domain.ports.chat_discover_port import ChatDiscoverBatch, ChatDiscoverPort
-from src.domain.ports.chat_next_meal_recipe_port import ChatNextMealRecipePort
 from src.domain.services.chat.meal_slot import resolve_meal_slot
+from src.domain.services.chat.policy import filter_meals_for_allergies
 
 _OPTIONAL_CARD_STRINGS = (
     "english_name",
@@ -32,10 +31,6 @@ DISCOVER_COUNT = 3
 DISCOVER_MAX_PER_MINUTE = 5
 
 
-class MealMacroLookup(Protocol):
-    async def calculate_meal_macros(self, ingredients: list[dict[str, Any]]) -> Any: ...
-
-
 @dataclass(frozen=True, slots=True)
 class NextMealCandidateResult:
     suggestions: list[dict[str, Any]] = field(default_factory=list)
@@ -44,19 +39,15 @@ class NextMealCandidateResult:
 
 
 class ChatNextMealCandidates:
-    """5/min. Recipes from chat structured output; calories from nutrition lookup."""
+    """5/min. Cards come from Discover; Luna only writes the surrounding prose."""
 
     def __init__(
         self,
-        recipes: ChatNextMealRecipePort,
-        nutrition_lookup: MealMacroLookup,
+        discover: ChatDiscoverPort,
         *,
-        model: str,
         max_per_minute: int = DISCOVER_MAX_PER_MINUTE,
     ) -> None:
-        self._recipes = recipes
-        self._nutrition_lookup = nutrition_lookup
-        self._model = model
+        self._discover = discover
         self._max_per_minute = max_per_minute
         self._hits: dict[str, list[float]] = {}
 
@@ -69,40 +60,48 @@ class ChatNextMealCandidates:
         locale: str,
         session_id: str | None,
     ) -> NextMealCandidateResult:
-        del session_id
         slot = resolve_meal_slot(context.suggested_meal_slot, user_text)
         if not self._allow(user_id):
             logger.info(
-                "chat next-meal recipes skipped: 5/min",
+                "chat next-meal discover skipped: 5/min",
                 extra={"user_id": user_id, "meal_slot": slot},
             )
             return NextMealCandidateResult(meal_slot=slot)
+        calorie_target = (
+            int(context.remaining_calories)
+            if context.remaining_calories is not None
+            else None
+        )
         try:
-            meals = await self._recipes.generate_next_meal_recipes(
-                model=self._model,
-                locale=locale,
-                slot=slot,
-                user_message=user_text,
-                remaining_calories=context.remaining_calories,
-                remaining_protein_g=context.remaining_protein_g,
-                remaining_carbs_g=context.remaining_carbs_g,
-                remaining_fat_g=context.remaining_fat_g,
-                allergies=list(context.allergies or []),
-                dietary_preferences=list(context.dietary_preferences or []),
+            batch = await self._discover.discover_meals(
+                user_id=user_id,
+                meal_type=slot,
+                meal_portion_type="snack" if slot == "snack" else "main",
+                language=locale,
+                calorie_target=calorie_target,
+                protein_target=context.remaining_protein_g,
+                carbs_target=context.remaining_carbs_g,
+                fat_target=context.remaining_fat_g,
+                session_id=session_id,
+                count=DISCOVER_COUNT,
             )
         except Exception:
             logger.warning(
-                "chat next-meal recipes failed",
+                "chat next-meal discover failed",
                 extra={"user_id": user_id, "meal_slot": slot},
                 exc_info=True,
             )
             return NextMealCandidateResult(meal_slot=slot)
-        suggestions = await map_chat_recipe_meals(
-            meals,
-            slot,
-            self._nutrition_lookup,
+        safe = filter_meals_for_allergies(
+            list(batch.meals),
+            context.allergies or [],
         )
-        return NextMealCandidateResult(suggestions=suggestions, meal_slot=slot)
+        suggestions = map_discover_meals(safe, slot)
+        return NextMealCandidateResult(
+            suggestions=suggestions,
+            session_id=batch.session_id,
+            meal_slot=slot,
+        )
 
     def _allow(self, user_id: str) -> bool:
         now = time.monotonic()
@@ -157,117 +156,6 @@ def map_discover_meals(
         if len(cards) >= DISCOVER_COUNT:
             break
     return cards
-
-
-async def map_chat_recipe_meals(
-    meals: list[dict[str, Any]] | tuple[dict[str, Any], ...],
-    meal_type: str,
-    nutrition_lookup: MealMacroLookup,
-) -> list[dict[str, Any]]:
-    cards: list[dict[str, Any]] = []
-    for meal in meals:
-        name = str(meal.get("name") or "").strip()
-        ingredients = _recipe_ingredients(meal.get("ingredients"))
-        steps = _recipe_steps(meal.get("recipe_steps"))
-        if not name or not ingredients or not steps:
-            continue
-        try:
-            macros = await nutrition_lookup.calculate_meal_macros(ingredients)
-        except Exception:
-            logger.warning(
-                "chat next-meal nutrition lookup failed",
-                extra={"meal_name": name},
-                exc_info=True,
-            )
-            continue
-        calories = _number_or_none(getattr(macros, "calories", None))
-        if calories is None or calories <= 0:
-            logger.warning(
-                "chat next-meal zero calories dropped",
-                extra={
-                    "meal_name": name,
-                    "ingredient_names": [item["name"] for item in ingredients],
-                },
-            )
-            continue
-        card: dict[str, Any] = {
-            "id": f"chat_{uuid.uuid4().hex[:12]}",
-            "name": name,
-            "meal_type": meal_type,
-            "calories": calories,
-            "protein_g": _number_or_none(getattr(macros, "protein", None)),
-            "carbs_g": _number_or_none(getattr(macros, "carbs", None)),
-            "fat_g": _number_or_none(getattr(macros, "fat", None)),
-            "ingredients": _ingredients_with_calories(ingredients, macros),
-            "recipe_steps": steps,
-        }
-        english_name = str(meal.get("english_name") or "").strip()
-        if english_name:
-            card["english_name"] = english_name
-        emoji = str(meal.get("emoji") or "").strip()
-        if emoji:
-            card["emoji"] = emoji
-        prep = _number_or_none(meal.get("prep_time_minutes"))
-        if prep is not None:
-            card["prep_time_minutes"] = int(round(float(prep)))
-        cards.append(card)
-        if len(cards) >= DISCOVER_COUNT:
-            break
-    return cards
-
-
-def _ingredients_with_calories(
-    ingredients: list[dict[str, Any]], macros: Any
-) -> list[dict[str, Any]]:
-    breakdown = getattr(macros, "ingredients", None) or []
-    if len(breakdown) != len(ingredients):
-        return ingredients
-    enriched: list[dict[str, Any]] = []
-    for ing, ing_macro in zip(ingredients, breakdown, strict=False):
-        item = dict(ing)
-        cal = _number_or_none(getattr(ing_macro, "calories", None))
-        if cal is not None and cal > 0:
-            item["calories"] = cal
-        enriched.append(item)
-    return enriched
-
-
-def _recipe_ingredients(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
-    items: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        amount = _number_or_none(item.get("amount"))
-        unit = str(item.get("unit") or "").strip()
-        if not name or amount is None or amount <= 0 or not unit:
-            continue
-        items.append({"name": name, "amount": amount, "unit": unit})
-    return items
-
-
-def _recipe_steps(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
-    steps: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        instruction = str(item.get("instruction") or "").strip()
-        step = _number_or_none(item.get("step"))
-        if not instruction or step is None:
-            continue
-        mapped: dict[str, Any] = {
-            "step": int(step),
-            "instruction": instruction,
-        }
-        duration = _number_or_none(item.get("duration_minutes"))
-        if duration is not None:
-            mapped["duration_minutes"] = int(duration)
-        steps.append(mapped)
-    return steps
 
 
 def _number_or_none(value: Any) -> float | int | None:

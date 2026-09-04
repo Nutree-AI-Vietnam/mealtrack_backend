@@ -237,14 +237,17 @@ def request_fingerprint(content: str, locale: str, intent: str | None = None) ->
 def hydrate_citations(
     source_keys: Sequence[str],
     metadata: Mapping[str, tuple[str | None, str | None]],
+    *,
+    labels: Sequence[str] | None = None,
 ) -> list[dict[str, str | None]]:
     """Rebuild public citation objects from stored keys and document metadata."""
     citations: list[dict[str, str | None]] = []
     for index, source_key in enumerate(source_keys, start=1):
         title, canonical_uri = metadata.get(source_key, (None, None))
+        stored = labels[index - 1] if labels and index - 1 < len(labels) else ""
         citations.append(
             {
-                "label": f"[K{index}]",
+                "label": stored or f"[K{index}]",
                 "source_key": source_key,
                 "title": title,
                 "canonical_uri": canonical_uri,
@@ -387,9 +390,14 @@ def nutrition_numbers_are_traceable(
         if not unit:
             continue
         number = match.group("num")
-        if number not in source:
+        if not _source_contains_number(source, number):
             return False
     return True
+
+
+def _source_contains_number(source: str, number: str) -> bool:
+    """Match whole numbers only so '50' is not accepted because '150' exists."""
+    return re.search(rf"(?<![\d.]){re.escape(number)}(?![\d.])", source) is not None
 
 
 def _trace_source_text(
@@ -406,6 +414,54 @@ def _trace_source_text(
 
 def cited_labels(text: str) -> tuple[str, ...]:
     return tuple(f"[K{num}]" for num in _CITATION_RE.findall(text))
+
+
+def _ingredient_names(meal: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for item in meal.get("ingredients") or []:
+        if isinstance(item, str) and item.strip():
+            names.append(item)
+        elif isinstance(item, Mapping):
+            name = str(item.get("name") or "").strip()
+            if name:
+                names.append(name)
+    for item in meal.get("ingredient_names") or []:
+        if isinstance(item, str) and item.strip():
+            names.append(item)
+    return names
+
+
+def meal_conflicts_with_allergies(
+    meal: Mapping[str, Any],
+    allergies: Iterable[str],
+) -> bool:
+    """True when a meal mentions a known allergen, or cannot be checked."""
+    tokens = {item.strip().casefold() for item in allergies if item and item.strip()}
+    if not tokens:
+        return False
+    ingredient_names = _ingredient_names(meal)
+    haystacks = [
+        str(meal.get("name") or ""),
+        str(meal.get("english_name") or ""),
+        *ingredient_names,
+    ]
+    blob = " ".join(haystacks).casefold()
+    if any(token in blob for token in tokens):
+        return True
+    # Lightweight Discover cards are names+macros only. Do not show them when
+    # the user has allergies and ingredients were never returned to inspect.
+    return not ingredient_names
+
+
+def filter_meals_for_allergies(
+    meals: Sequence[Mapping[str, Any]],
+    allergies: Iterable[str],
+) -> list[dict[str, Any]]:
+    return [
+        dict(meal)
+        for meal in meals
+        if not meal_conflicts_with_allergies(meal, allergies)
+    ]
 
 
 def filter_chunks_for_allergies(

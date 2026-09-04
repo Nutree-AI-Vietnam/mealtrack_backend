@@ -88,6 +88,7 @@ class ChatMessageORM(Base, BaseMixin):
     output_tokens = Column(Integer, nullable=True)
     cached_tokens = Column(Integer, nullable=True)
     generation_lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    generation_id = Column(String(36), nullable=True)
     error_code = Column(String(64), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     reply_payload = Column(JSON, nullable=True)

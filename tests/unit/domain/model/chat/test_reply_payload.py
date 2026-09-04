@@ -48,6 +48,17 @@ def test_sidecar_includes_intent() -> None:
     assert reply_sidecar(message)["intent"] == "remaining_budget"
 
 
+def test_citation_refs_preserve_labels() -> None:
+    message = _message(
+        {
+            "suggestions": [],
+            "follow_ups": [],
+            "citation_refs": [{"label": "[K2]", "source_key": "fiber-guide"}],
+        }
+    )
+    assert message.citation_refs() == [("[K2]", "fiber-guide")]
+
+
 def test_malformed_payload_is_ignored() -> None:
     message = _message({"suggestions": "nope", "follow_ups": [1, {"label": "More"}]})
     assert message.suggestions() == []
