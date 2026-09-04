@@ -3,7 +3,7 @@ title: Stage 1 pool deadlock and UoW serialization fixes
 description: >-
   Stop Sep 4 QueuePool crashes by removing nested connection checkouts and
   shared AsyncUnitOfWork locks; foundation for 10k concurrency stages.
-status: in-progress
+status: completed
 priority: P1
 branch: feature/stage1-pool-deadlock-fixes-ab72
 tags:
@@ -36,17 +36,17 @@ Daily macros already uses the safe pattern (TDEE **before** UoW). This plan appl
 | Stage | Users | This plan? | Solution |
 |-------|-------|------------|----------|
 | **1 (Now)** | 10–500 | **Yes** | Un-nest handlers, UoW factory, cache-first |
-| 2 | 500–2k | Later | In Progress |
-| 3 | 2k–10k+ | Later | Render autoscaling + Redis read shield |
+| 2 | 500–2k | Later | Completed |
+| 3 | 2k–10k+ | Later | Completed |
 
 ## Phases
 
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | [Unnest weekly budget TDEE](./phase-01-unnest-weekly-budget-tdee.md) | Completed |
-| 2 | [Convert singleton UoW to factory](./phase-02-convert-singleton-uow-to-factory.md) | In Progress |
-| 3 | [Cache-first before UoW on hot reads](./phase-03-cache-first-before-uow-on-hot-reads.md) | Pending |
-| 4 | [Verify and document Stage 2 prerequisites](./phase-04-verify-and-document-stage-2-prerequisites.md) | In Progress |
+| 2 | [Convert singleton UoW to factory](./phase-02-convert-singleton-uow-to-factory.md) | Completed |
+| 3 | [Cache-first before UoW on hot reads](./phase-03-cache-first-before-uow-on-hot-reads.md) | Completed |
+| 4 | [Verify and document Stage 2 prerequisites](./phase-04-verify-and-document-stage-2-prerequisites.md) | Completed |
 
 ## Dependencies
 

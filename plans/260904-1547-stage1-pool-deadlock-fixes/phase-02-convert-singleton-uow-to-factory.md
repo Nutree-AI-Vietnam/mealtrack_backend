@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: Convert singleton UoW to factory
-status: in-progress
+status: completed
 effort: L
 ---
 

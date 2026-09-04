@@ -1,8 +1,8 @@
 ---
 phase: 4
-title: "Verify and document Stage 2 prerequisites"
-status: in-progress
-effort: "S"
+title: Verify and document Stage 2 prerequisites
+status: completed
+effort: S
 ---
 
 # Phase 4: Verify and document Stage 2 prerequisites

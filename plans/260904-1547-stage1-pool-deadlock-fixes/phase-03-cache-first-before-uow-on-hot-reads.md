@@ -1,8 +1,8 @@
 ---
 phase: 3
-title: "Cache-first before UoW on hot reads"
-status: pending
-effort: "M"
+title: Cache-first before UoW on hot reads
+status: completed
+effort: M
 ---
 
 # Phase 3: Cache-first before UoW on hot reads
