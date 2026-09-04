@@ -18,6 +18,7 @@ from src.domain.ports.integration_event_publisher_port import (
     require_event_publisher,
 )
 from src.domain.utils.timezone_utils import utc_now
+from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +32,17 @@ class CompleteOnboardingCommandHandler(
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort | None = None,
-        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, command: CompleteOnboardingCommand) -> dict[str, Any]:
         """Mark user onboarding as completed if not already completed."""
-        async with self.uow_factory() as uow:
+        uow = self.uow or AsyncUnitOfWork()
+        async with uow:
             # Find user by firebase_uid
             user = await uow.users.find_by_firebase_uid(command.firebase_uid)
 

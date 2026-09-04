@@ -31,17 +31,16 @@ class AttachMealPhotoCommandHandler(
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort | None = None,
-        uow_factory: Any = None,
+        uow: AsyncUnitOfWorkPort,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, command: AttachMealPhotoCommand) -> dict[str, Any]:
-        async with self.uow_factory() as uow:
+        async with self.uow as uow:
             try:
                 meal = await uow.meals.find_by_id(
                     command.meal_id, projection=MealProjection.FULL

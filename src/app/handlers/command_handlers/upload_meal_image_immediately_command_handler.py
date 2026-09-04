@@ -59,8 +59,8 @@ class UploadMealImageImmediatelyHandler(
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort | None = None,
-        event_bus: Any = None,
+        uow: AsyncUnitOfWorkPort,
+        event_bus: Any,
         image_store: ImageStorePort = None,
         vision_service: VisionAIServicePort = None,
         gpt_parser: GPTResponseParser = None,
@@ -70,10 +70,8 @@ class UploadMealImageImmediatelyHandler(
         environment: str = "development",
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
-        uow_factory=None,
     ):
         self.uow = uow
-        self.uow_factory = uow_factory if uow_factory is not None else (lambda: uow)
         self.event_bus = event_bus
         self.event_publisher = event_publisher
         self.environment = environment
@@ -327,7 +325,7 @@ class UploadMealImageImmediatelyHandler(
         )
 
         # Step 6: NOW create meal record with verified image URL
-        async with self.uow_factory() as uow:
+        async with self.uow as uow:
             user_timezone = await uow.users.get_user_timezone(command.user_id)
             if not user_timezone or not is_valid_timezone(user_timezone):
                 user_timezone = "UTC"
@@ -413,7 +411,7 @@ class UploadMealImageImmediatelyHandler(
                     image_store=self.image_store,
                     vision_service=self.vision_service,
                     gpt_parser=self.gpt_parser,
-                    uow=self.uow_factory(),
+                    uow=self.uow,
                     event_publisher=self.event_publisher,
                     environment=self.environment,
                     event_bus=self.event_bus,

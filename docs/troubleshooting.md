@@ -277,7 +277,7 @@ See related: `code-standards.md`, `testing-standards.md`, `system-architecture.m
 ### asyncpg prepared statement error in pooler mode
 **Symptom:** `asyncpg.exceptions.InvalidSQLStatementNameError: prepared statement ... does not exist`  
 **Cause:** Using a Neon `-pooler` URL without `DB_CONNECTION_MODE=neon_pooler`. PgBouncer transaction mode invalidates prepared statements between connections.  
-**Fix:** Set `DB_CONNECTION_MODE=neon_pooler` and ensure `APP_DATABASE_URL` points to a `-pooler` endpoint. Full cutover steps: `docs/runbooks/neon-pooler-cutover.md`.
+**Fix:** Set `DB_CONNECTION_MODE=neon_pooler` and ensure `APP_DATABASE_URL` points to a `-pooler` endpoint.
 
 ### direct_pool startup error: pooler URL rejected
 **Symptom:** `ConnectionPolicyError: DB_CONNECTION_MODE=direct_pool requires a direct (non-pooler) Neon URL`  
@@ -286,12 +286,7 @@ See related: `code-standards.md`, `testing-standards.md`, `system-architecture.m
 
 ### DB connection exhaustion (direct_pool)
 **Symptom:** `QueuePool limit ... connection timed out`, request latency spikes, or Neon `max_connections` limit hit.
-
-**Common software causes (check before raising pool size):**
-1. **Nested UoW checkout** — Handler A holds a connection, then calls Handler B which opens another `AsyncUnitOfWork`. Under concurrency the pool fills with holders waiting for a second connection (classic deadlock). Fix: resolve nested work (e.g. TDEE) *before* opening the outer UoW; never open a second session while one is held. See `get_daily_macros_query_handler` / `get_weekly_budget_query_handler`.
-2. **Shared singleton UoW** — `event_bus` wired with `uow=AsyncUnitOfWork()` reuses one instance and its `asyncio.Lock`, serializing all requests for that handler. Fix: wire `uow_factory=AsyncUnitOfWork` so each request gets a fresh UoW.
-
-**Capacity fixes:** If SQLAlchemy pool utilization is high but Neon has spare capacity, increase `ASYNC_POOL_SIZE_PER_WORKER` or `ASYNC_POOL_MAX_OVERFLOW` and keep DB work in short unit-of-work scopes. If Neon `max_connections` is the bottleneck, reduce `UVICORN_WORKERS` or per-worker pool settings, then follow `docs/runbooks/neon-pooler-cutover.md` (Stage 2). Monitor `/v1/health/db-pool` for checked-out connections and total capacity.
+**Fix:** If SQLAlchemy pool utilization is high but Neon has spare capacity, increase `ASYNC_POOL_SIZE_PER_WORKER` or `ASYNC_POOL_MAX_OVERFLOW` and keep DB work in short unit-of-work scopes. If Neon `max_connections` is the bottleneck, reduce `UVICORN_WORKERS` or per-worker pool settings, then consider switching to `neon_pooler` mode. Monitor `/v1/health/db-pool` for checked-out connections and total capacity.
 
 ### Migration fails but app works (or vice versa)
 **Symptom:** `alembic upgrade head` fails / succeeds independently of the app.  

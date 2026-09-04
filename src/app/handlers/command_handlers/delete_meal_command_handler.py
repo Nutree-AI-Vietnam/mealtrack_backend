@@ -37,12 +37,11 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort | None = None,
-        uow_factory: Any = None,
+        uow: AsyncUnitOfWorkPort,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
 
@@ -51,7 +50,7 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
         deleted_kind = "meal"
         hydration_delete_event = None
         meal_delete_event = None
-        async with self.uow_factory() as uow:
+        async with self.uow as uow:
             meal = await uow.meals.find_by_id(command.meal_id)
             if meal is not None:
                 if meal.user_id != command.user_id:

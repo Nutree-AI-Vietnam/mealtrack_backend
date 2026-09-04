@@ -56,16 +56,6 @@ total_connections = UVICORN_WORKERS × (ASYNC_POOL_SIZE_PER_WORKER + ASYNC_POOL_
 - Set `APP_DATABASE_URL` to the `-pooler` endpoint and `DB_CONNECTION_MODE=neon_pooler`.
 - PgBouncer runs in transaction mode — prepared statements are disabled automatically.
 - `ASYNC_POOL_SIZE_PER_WORKER` and related settings are ignored in pooler mode.
-- **Cutover runbook:** [`runbooks/neon-pooler-cutover.md`](./runbooks/neon-pooler-cutover.md) (Stage 2).
-- After cutover, `/v1/health/db-pool` reports `pool_type=NullPool` plus `worker_count` (no SQLAlchemy checkout gauges).
-
-### Scale-up order (do not skip Stage 1)
-
-1. **Stage 1 (app bugs):** no nested UoW checkouts; no shared singleton `AsyncUnitOfWork` in `event_bus`; cache-first on hot reads. Required before adding capacity — more workers make nested deadlocks worse.
-2. **Stage 2 (500–2k):** Neon `-pooler` + `DB_CONNECTION_MODE=neon_pooler`; raise workers; monitor `/v1/health/db-pool`.
-3. **Stage 3 (2k–10k+):** Render autoscaling + Redis read shield for app-open paths; queue non-critical writes.
-
-See `plans/260904-1547-stage1-pool-deadlock-fixes/` and `docs/troubleshooting.md` (QueuePool / nested UoW).
 
 ---
 

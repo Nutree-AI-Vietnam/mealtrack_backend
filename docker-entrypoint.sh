@@ -53,9 +53,7 @@ fi
 # Start the application
 log "🚀 Starting FastAPI application on port ${PORT}..."
 WORKERS="${UVICORN_WORKERS:-4}"
-DB_MODE="${DB_CONNECTION_MODE:-auto}"
 log "Uvicorn workers: ${WORKERS}"
-log "DB_CONNECTION_MODE: ${DB_MODE} (empty/auto = detect from APP_DATABASE_URL host)"
 exec uvicorn src.api.main:app \
     --host 0.0.0.0 \
     --port "$PORT" \
