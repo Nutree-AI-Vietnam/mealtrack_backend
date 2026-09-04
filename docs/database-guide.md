@@ -56,6 +56,8 @@ total_connections = UVICORN_WORKERS × (ASYNC_POOL_SIZE_PER_WORKER + ASYNC_POOL_
 - Set `APP_DATABASE_URL` to the `-pooler` endpoint and `DB_CONNECTION_MODE=neon_pooler`.
 - PgBouncer runs in transaction mode — prepared statements are disabled automatically.
 - `ASYNC_POOL_SIZE_PER_WORKER` and related settings are ignored in pooler mode.
+- **Cutover runbook:** [`runbooks/neon-pooler-cutover.md`](./runbooks/neon-pooler-cutover.md) (Stage 2).
+- After cutover, `/v1/health/db-pool` reports `pool_type=NullPool` plus `worker_count` (no SQLAlchemy checkout gauges).
 
 ### Scale-up order (do not skip Stage 1)
 
