@@ -121,6 +121,64 @@ class TestGetWeeklyBudgetQueryHandlerCache:
     """Cache behaviour for GetWeeklyBudgetQueryHandler."""
 
     @pytest.mark.asyncio
+    async def test_header_timezone_cache_hit_skips_uow(self):
+        """Non-UTC X-Timezone + Redis hit must not open AsyncUnitOfWork."""
+        import zoneinfo
+        from datetime import date
+
+        from src.app.handlers.query_handlers.get_weekly_budget_query_handler import (
+            GetWeeklyBudgetQueryHandler,
+        )
+        from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
+
+        cached_payload = {
+            "week_start_date": "2024-01-01",
+            "target_calories": 14000.0,
+            "profile_target_revision": 1,
+            "weekly_auto_adjust": True,
+        }
+        cache_service = MagicMock()
+        cache_service.get_json = AsyncMock(return_value=cached_payload)
+        cache_service.set_json = AsyncMock()
+
+        handler = GetWeeklyBudgetQueryHandler(cache_service=cache_service)
+        target_date = date(2024, 1, 2)
+        query = GetWeeklyBudgetQuery(
+            user_id="u1",
+            target_date=target_date,
+            header_timezone="Asia/Ho_Chi_Minh",
+        )
+
+        with (
+            patch(
+                "src.app.handlers.query_handlers.get_weekly_budget_query_handler.AsyncUnitOfWork"
+            ) as async_uow_cls,
+            patch(
+                "src.app.handlers.query_handlers.get_weekly_budget_query_handler.get_user_monday",
+                return_value=date(2024, 1, 1),
+            ),
+            patch.object(
+                handler,
+                "_resolve_tdee",
+                AsyncMock(
+                    return_value={
+                        "profile_target_revision": 1,
+                        "macro_preset": "standard",
+                        "is_custom": False,
+                        "bmr": 1800,
+                        "macros": {"protein": 70, "carbs": 200, "fat": 70},
+                    }
+                ),
+            ),
+        ):
+            result = await handler.handle(query)
+
+        assert result == cached_payload
+        async_uow_cls.assert_not_called()
+        expected_key, _ = CacheKeys.weekly_budget("u1", date(2024, 1, 1), target_date)
+        cache_service.get_json.assert_awaited_once_with(expected_key)
+
+    @pytest.mark.asyncio
     async def test_uses_injected_uow_on_cache_hit(self):
         """When a UoW is injected, handler should use it instead of creating a new one."""
         import zoneinfo

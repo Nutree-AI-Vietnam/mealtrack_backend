@@ -21,6 +21,8 @@ from src.domain.services.weekly_budget_service import WeeklyBudgetService
 from src.domain.utils.timezone_utils import (
     get_user_monday,
     get_zone_info,
+    is_valid_timezone,
+    normalize_timezone,
     resolve_user_timezone_async,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -50,6 +52,14 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
         )
         profile_revision = int(tdee_result["profile_target_revision"])
         target_policy = self._policy_from_tdee(tdee_result)
+
+        # Cache-first when X-Timezone is usable: week_start needs no DB.
+        # auto_adjust flips publish UserProfileUpdated which wipes
+        # weekly_budget Redis keys, so a revision-matched hit is safe
+        # without opening a SQLAlchemy session.
+        cached_hit = await self._try_cache_before_uow(query, profile_revision)
+        if cached_hit is not None:
+            return cached_hit
 
         uow = self.uow or AsyncUnitOfWork()
         async with uow:
@@ -335,6 +345,35 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 "Authoritative target calculation is unavailable",
                 "target_unavailable" if persist else "target_service_unavailable",
             ) from exc
+
+    async def _try_cache_before_uow(
+        self, query: GetWeeklyBudgetQuery, profile_revision: int
+    ) -> dict[str, Any] | None:
+        """Return cached weekly budget without opening a DB session when possible."""
+        if self.cache_service is None:
+            return None
+        header_tz = query.header_timezone
+        if (
+            not header_tz
+            or header_tz == "UTC"
+            or not is_valid_timezone(header_tz)
+        ):
+            return None
+
+        user_tz_str = normalize_timezone(header_tz)
+        user_tz = get_zone_info(user_tz_str)
+        target_date = query.target_date or datetime.now(user_tz).date()
+        week_start = get_user_monday(target_date, query.user_id)
+        cache_key, _ttl = CacheKeys.weekly_budget(
+            query.user_id, week_start, target_date
+        )
+        cached = await self.cache_service.get_json(cache_key)
+        if (
+            cached is not None
+            and cached.get("profile_target_revision") == profile_revision
+        ):
+            return cached
+        return None
 
     @staticmethod
     def _policy_from_tdee(tdee_result: dict[str, Any]) -> tuple[MacroPreset, bool]:
