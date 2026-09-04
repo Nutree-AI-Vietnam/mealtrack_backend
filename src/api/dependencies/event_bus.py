@@ -503,7 +503,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UploadMealImageImmediatelyCommand,
         UploadMealImageImmediatelyHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             event_bus=event_bus,
             image_store=image_store,
             vision_service=vision_service,
@@ -527,7 +527,7 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         ScanByUrlCommand,
         ScanByUrlCommandHandler(
-            uow=AsyncUnitOfWork(),
+            uow_factory=AsyncUnitOfWork,
             event_bus=event_bus,
             vision_service=vision_service,
             gpt_parser=gpt_parser,
@@ -545,7 +545,6 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         EditMealCommand,
         EditMealCommandHandler(
-            uow=AsyncUnitOfWork(),
             uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
             event_bus=event_bus,
@@ -627,7 +626,6 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         CreateManualMealCommand,
         CreateManualMealCommandHandler(
-            uow=AsyncUnitOfWork(),
             uow_factory=AsyncUnitOfWork,
             event_publisher=queue_publisher,
             event_bus=event_bus,

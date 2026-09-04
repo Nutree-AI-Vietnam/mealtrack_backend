@@ -48,7 +48,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
+        uow: AsyncUnitOfWorkPort | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         event_bus: Any | None = None,
         nutrition_resolver: ManualMealNutritionResolver | None = None,
@@ -59,7 +59,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
         environment: str = "development",
     ):
         self.uow = uow
-        self.uow_factory = uow_factory
+        self.uow_factory = uow_factory if callable(uow_factory) else (lambda: uow)
         self.event_publisher = event_publisher
         self.event_bus = event_bus
         self.environment = environment
@@ -74,7 +74,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
         """Handle meal editing operations."""
         if command.nutrition_contract_version == 2 and self.uow_factory is not None:
             return await self._handle_v2(command)
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             try:
                 # 1. Validate meal exists
                 meal = await uow.meals.find_by_id(
@@ -304,7 +304,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     resolved_items_out=resolved_items,
                 )
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 meal = await self._reload_v2_meal_for_commit(
                     preflight_meal, command, uow
                 )
