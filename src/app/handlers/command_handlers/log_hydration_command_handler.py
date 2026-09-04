@@ -1,6 +1,7 @@
 """Command handler for logging a hydration (non-caloric) drink entry."""
 
 import logging
+from typing import Any
 from uuid import uuid4
 
 from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
@@ -31,11 +32,12 @@ logger = logging.getLogger(__name__)
 class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
     def __init__(
         self,
-        uow: AsyncUnitOfWork,
+        uow: AsyncUnitOfWork | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.environment = environment
         self.event_publisher = event_publisher
 
@@ -46,7 +48,7 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
         if drink.category != DrinkCategory.HYDRATION:
             raise ValueError("Drink is not a hydration drink")
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             now = utc_now()
             if cmd.target_date:
                 user_tz = await resolve_user_timezone_async(

@@ -2,6 +2,7 @@
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from src.api.exceptions import ValidationException
 from src.app.commands.movement import LogMovementCommand
@@ -72,18 +73,19 @@ def _validate_log_movement(cmd: LogMovementCommand) -> None:
 class LogMovementCommandHandler(EventHandler[LogMovementCommand, dict]):
     def __init__(
         self,
-        uow: AsyncUnitOfWork,
+        uow: AsyncUnitOfWork | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, cmd: LogMovementCommand) -> dict:
         _validate_log_movement(cmd)
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             user_tz = await resolve_user_timezone_async(
                 cmd.user_id, uow, cmd.header_timezone
             )
