@@ -16,17 +16,13 @@ class GetBodyFatVisualProfileQueryHandler(
 ):
     """Return immutable selection history when a selection exists."""
 
-    def __init__(
-        self,
-        uow: AsyncUnitOfWorkPort | None = None,
-        uow_factory: Any = None,
-    ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+    def __init__(self, uow: AsyncUnitOfWorkPort):
+        self.uow = uow
 
     async def handle(
         self, query: GetBodyFatVisualProfileQuery
     ) -> dict[str, Any] | None:
-        async with self.uow_factory() as uow:
+        async with self.uow as uow:
             history = [
                 self._serialize(record)
                 for record in await uow.body_fat_visual_profiles.find_history_by_user(

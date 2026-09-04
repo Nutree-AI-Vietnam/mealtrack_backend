@@ -21,8 +21,6 @@ from src.domain.services.weekly_budget_service import WeeklyBudgetService
 from src.domain.utils.timezone_utils import (
     get_user_monday,
     get_zone_info,
-    is_valid_timezone,
-    normalize_timezone,
     resolve_user_timezone_async,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -44,23 +42,6 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
 
     async def handle(self, query: GetWeeklyBudgetQuery) -> dict[str, Any]:
         """Handle getting weekly budget status."""
-        # TDEE FIRST — behind Redis cache, opens its own short-lived UoW(s).
-        # Must complete before the weekly-budget UoW below so we never nest
-        # connection checkouts (pool deadlock under concurrent app opens).
-        tdee_result = await self._resolve_tdee(
-            query.user_id, persist=not query.read_only
-        )
-        profile_revision = int(tdee_result["profile_target_revision"])
-        target_policy = self._policy_from_tdee(tdee_result)
-
-        # Cache-first when X-Timezone is usable: week_start needs no DB.
-        # auto_adjust flips publish UserProfileUpdated which wipes
-        # weekly_budget Redis keys, so a revision-matched hit is safe
-        # without opening a SQLAlchemy session.
-        cached_hit = await self._try_cache_before_uow(query, profile_revision)
-        if cached_hit is not None:
-            return cached_hit
-
         uow = self.uow or AsyncUnitOfWork()
         async with uow:
             try:
@@ -84,6 +65,9 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 cache_key, ttl = CacheKeys.weekly_budget(
                     query.user_id, week_start, target_date
                 )
+                profile_revision = await self._profile_target_revision(
+                    uow, query.user_id
+                )
                 auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                     await uow.users.get_weekly_auto_adjust(query.user_id)
                 )
@@ -105,13 +89,12 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 )
 
                 if not weekly_budget:
-                    # Lazy init: create weekly budget from pre-resolved TDEE
+                    # Lazy init: create weekly budget
                     weekly_budget, bmr = await self._create_weekly_budget(
                         uow,
                         query.user_id,
                         week_start,
                         target_date,
-                        tdee_result=tdee_result,
                         persist=not query.read_only,
                     )
                 else:
@@ -120,7 +103,6 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                         uow,
                         weekly_budget,
                         query.user_id,
-                        tdee_result=tdee_result,
                         persist=not query.read_only,
                     )
                 if weekly_budget.target_revision != profile_revision:
@@ -128,7 +110,6 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                         uow,
                         weekly_budget,
                         query.user_id,
-                        tdee_result=tdee_result,
                         persist=not query.read_only,
                     )
 
@@ -167,7 +148,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 adjusted = effective.adjusted
                 adjusted = self._apply_target_policy(
                     adjusted,
-                    target_policy,
+                    await self._current_target_policy(query.user_id),
                 )
                 consumed_before_today = effective.consumed_before_today
                 consumed = effective.consumed_total
@@ -236,7 +217,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                         bmr=bmr,
                         remaining_days=tomorrow_remaining,
                     )
-                    policy = target_policy
+                    policy = await self._current_target_policy(query.user_id)
                     tomorrow_adjusted = self._apply_target_policy(
                         tomorrow_adjusted, policy
                     )
@@ -329,55 +310,25 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
             except Exception:
                 raise
 
-    async def _resolve_tdee(self, user_id: str, *, persist: bool) -> dict[str, Any]:
-        """Resolve authoritative TDEE outside any caller-held UoW."""
-        try:
-            from src.app.handlers.query_handlers.get_user_tdee_query_handler import (
-                GetUserTdeeQueryHandler,
-            )
-            from src.app.queries.tdee import GetUserTdeeQuery
-
-            return await GetUserTdeeQueryHandler(
-                cache_service=self.cache_service
-            ).handle(GetUserTdeeQuery(user_id=user_id))
-        except Exception as exc:
-            raise ExternalServiceException(
-                "Authoritative target calculation is unavailable",
-                "target_unavailable" if persist else "target_service_unavailable",
-            ) from exc
-
-    async def _try_cache_before_uow(
-        self, query: GetWeeklyBudgetQuery, profile_revision: int
-    ) -> dict[str, Any] | None:
-        """Return cached weekly budget without opening a DB session when possible."""
-        if self.cache_service is None:
-            return None
-        header_tz = query.header_timezone
-        if (
-            not header_tz
-            or header_tz == "UTC"
-            or not is_valid_timezone(header_tz)
-        ):
-            return None
-
-        user_tz_str = normalize_timezone(header_tz)
-        user_tz = get_zone_info(user_tz_str)
-        target_date = query.target_date or datetime.now(user_tz).date()
-        week_start = get_user_monday(target_date, query.user_id)
-        cache_key, _ttl = CacheKeys.weekly_budget(
-            query.user_id, week_start, target_date
-        )
-        cached = await self.cache_service.get_json(cache_key)
-        if (
-            cached is not None
-            and cached.get("profile_target_revision") == profile_revision
-        ):
-            return cached
-        return None
-
     @staticmethod
-    def _policy_from_tdee(tdee_result: dict[str, Any]) -> tuple[MacroPreset, bool]:
-        return MacroPreset(tdee_result["macro_preset"]), bool(tdee_result["is_custom"])
+    async def _profile_target_revision(uow: AsyncUnitOfWorkPort, user_id: str) -> int:
+        profile = await uow.users.get_profile(user_id)
+        if profile is None:
+            raise ExternalServiceException(
+                "Authoritative target profile is unavailable", "target_unavailable"
+            )
+        return profile.profile_target_revision
+
+    async def _current_target_policy(self, user_id: str) -> tuple[MacroPreset, bool]:
+        from src.app.handlers.query_handlers.get_user_tdee_query_handler import (
+            GetUserTdeeQueryHandler,
+        )
+        from src.app.queries.tdee import GetUserTdeeQuery
+
+        target = await GetUserTdeeQueryHandler(cache_service=self.cache_service).handle(
+            GetUserTdeeQuery(user_id=user_id)
+        )
+        return MacroPreset(target["macro_preset"]), bool(target["is_custom"])
 
     @staticmethod
     def _apply_target_policy(adjusted, policy: tuple[MacroPreset, bool]):
@@ -408,16 +359,32 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
         week_start: date,
         target_date: date,
         *,
-        tdee_result: dict[str, Any],
         persist: bool = True,
     ) -> tuple[WeeklyMacroBudget, float]:
         """Create a new weekly budget for the user. Returns (budget, bmr)."""
         import uuid
 
-        daily_macros = tdee_result["macros"]
-        bmr = tdee_result["bmr"]
-        target_revision = tdee_result.get("profile_target_revision", 1)
-        weekly_targets = self._weekly_targets_from_daily_macros(daily_macros)
+        # Get TDEE-based macros using GetUserTdeeQueryHandler (correct pattern)
+        try:
+            from src.app.handlers.query_handlers.get_user_tdee_query_handler import (
+                GetUserTdeeQueryHandler,
+            )
+            from src.app.queries.tdee import GetUserTdeeQuery
+
+            tdee_handler = GetUserTdeeQueryHandler(cache_service=self.cache_service)
+            tdee_query = GetUserTdeeQuery(user_id=user_id)
+            tdee_result = await tdee_handler.handle(tdee_query)
+
+            daily_macros = tdee_result["macros"]
+            bmr = tdee_result["bmr"]
+            target_revision = tdee_result.get("profile_target_revision", 1)
+
+            weekly_targets = self._weekly_targets_from_daily_macros(daily_macros)
+        except Exception as exc:
+            raise ExternalServiceException(
+                "Authoritative target calculation is unavailable",
+                "target_unavailable" if persist else "target_service_unavailable",
+            ) from exc
 
         # Create domain object
         budget = WeeklyMacroBudget(
@@ -440,45 +407,58 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
         weekly_budget: WeeklyMacroBudget,
         user_id: str,
         *,
-        tdee_result: dict[str, Any],
         persist: bool = True,
     ) -> tuple[WeeklyMacroBudget, float]:
         """Check if weekly targets match current TDEE; update if stale. Returns (budget, bmr)."""
-        daily_macros = tdee_result["macros"]
-        bmr = tdee_result["bmr"]
-        target_revision = tdee_result.get(
-            "profile_target_revision", weekly_budget.target_revision
-        )
+        try:
+            from src.app.handlers.query_handlers.get_user_tdee_query_handler import (
+                GetUserTdeeQueryHandler,
+            )
+            from src.app.queries.tdee import GetUserTdeeQuery
 
-        if daily_macros is None:
+            tdee_handler = GetUserTdeeQueryHandler(cache_service=self.cache_service)
+            tdee_result = await tdee_handler.handle(GetUserTdeeQuery(user_id=user_id))
+
+            daily_macros = tdee_result["macros"]
+            bmr = tdee_result["bmr"]
+            target_revision = tdee_result.get(
+                "profile_target_revision", weekly_budget.target_revision
+            )
+
+            if daily_macros is None:
+                return weekly_budget, bmr
+
+            expected_targets = self._weekly_targets_from_daily_macros(daily_macros)
+            current_targets = {
+                "target_calories": weekly_budget.target_calories,
+                "target_protein": weekly_budget.target_protein,
+                "target_carbs": weekly_budget.target_carbs,
+                "target_fat": weekly_budget.target_fat,
+            }
+
+            targets_changed = any(
+                abs(expected_targets[key] - current_targets[key])
+                / max(abs(current_targets[key]), 1)
+                > 0.01
+                for key in expected_targets
+            )
+
+            if targets_changed or weekly_budget.target_revision != target_revision:
+                weekly_budget.target_calories = expected_targets["target_calories"]
+                weekly_budget.target_protein = expected_targets["target_protein"]
+                weekly_budget.target_carbs = expected_targets["target_carbs"]
+                weekly_budget.target_fat = expected_targets["target_fat"]
+                weekly_budget.target_revision = target_revision
+                if persist:
+                    await uow.weekly_budgets.update(weekly_budget)
+                logger.info("Updated stale weekly nutrition targets for user")
+
             return weekly_budget, bmr
-
-        expected_targets = self._weekly_targets_from_daily_macros(daily_macros)
-        current_targets = {
-            "target_calories": weekly_budget.target_calories,
-            "target_protein": weekly_budget.target_protein,
-            "target_carbs": weekly_budget.target_carbs,
-            "target_fat": weekly_budget.target_fat,
-        }
-
-        targets_changed = any(
-            abs(expected_targets[key] - current_targets[key])
-            / max(abs(current_targets[key]), 1)
-            > 0.01
-            for key in expected_targets
-        )
-
-        if targets_changed or weekly_budget.target_revision != target_revision:
-            weekly_budget.target_calories = expected_targets["target_calories"]
-            weekly_budget.target_protein = expected_targets["target_protein"]
-            weekly_budget.target_carbs = expected_targets["target_carbs"]
-            weekly_budget.target_fat = expected_targets["target_fat"]
-            weekly_budget.target_revision = target_revision
-            if persist:
-                await uow.weekly_budgets.update(weekly_budget)
-            logger.info("Updated stale weekly nutrition targets for user")
-
-        return weekly_budget, bmr
+        except Exception as exc:
+            raise ExternalServiceException(
+                "Authoritative target calculation is unavailable",
+                "target_unavailable" if persist else "target_service_unavailable",
+            ) from exc
 
     @staticmethod
     def _weekly_targets_from_daily_macros(

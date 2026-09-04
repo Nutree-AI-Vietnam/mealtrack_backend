@@ -23,26 +23,25 @@ class SaveSuggestionCommandHandler(EventHandler[SaveSuggestionCommand, dict[str,
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort | None = None,
-        uow_factory: Any = None,
+        uow: AsyncUnitOfWorkPort,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, command: SaveSuggestionCommand) -> dict[str, Any]:
         published_needed = False
-        async with self.uow_factory() as uow:
+        async with self.uow:
             # Check if already saved (idempotent)
-            existing = await uow.saved_suggestions.find_by_user_and_suggestion(
+            existing = await self.uow.saved_suggestions.find_by_user_and_suggestion(
                 command.user_id, command.suggestion_id
             )
             if existing:
                 return existing
 
-            result = await uow.saved_suggestions.save(
+            result = await self.uow.saved_suggestions.save(
                 user_id=command.user_id,
                 suggestion_id=command.suggestion_id,
                 meal_type=command.meal_type,

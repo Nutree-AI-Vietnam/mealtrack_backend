@@ -54,9 +54,8 @@ class LogCatalogMealCommandHandler(
 ):
     def __init__(
         self,
-        uow=None,
-        uow_factory: Any = None,
-        browse_service=None,
+        uow,
+        browse_service,
         *,
         log_service: CatalogMealLogService | None = None,
         meal_translation_service: MealTranslationService | None = None,
@@ -65,7 +64,7 @@ class LogCatalogMealCommandHandler(
         environment: str = "development",
         recalculator: RemainingRecommendationRecalculator | None = None,
     ) -> None:
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow = uow
         self.browse_service = browse_service
         self.log_service = log_service or CatalogMealLogService()
         self.meal_translation_service = meal_translation_service
@@ -120,7 +119,7 @@ class LogCatalogMealCommandHandler(
         return result
 
     async def _write(self, command, catalog_meal) -> LogCatalogMealResult:
-        async with self.uow_factory() as uow:
+        async with self.uow as uow:
             reservation = await uow.meal_write_operations.reserve(
                 user_id=command.user_id,
                 operation="catalog_meal_log",

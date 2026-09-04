@@ -84,15 +84,9 @@ class TestSaveUserOnboardingCommandHandler:
         )
 
         handler = event_bus._async_handlers.get(CmdType)
-        if handler and hasattr(handler, "uow_factory"):
-            original_factory = handler.uow_factory
-            handler.uow_factory = lambda: TestUnitOfWork(session=test_session)
-            try:
-                result = await event_bus.send(command)
-            finally:
-                handler.uow_factory = original_factory
-        elif handler and hasattr(handler, "uow"):
+        if handler:
             original_uow = handler.uow
+            # Create UoW with test_session - repository verified it can find user
             test_uow = TestUnitOfWork(session=test_session)
             handler.uow = test_uow
             try:
@@ -246,14 +240,7 @@ class TestSaveUserOnboardingCommandHandler:
         )
 
         handler = event_bus._async_handlers.get(CmdType)
-        if handler and hasattr(handler, "uow_factory"):
-            original_factory = handler.uow_factory
-            handler.uow_factory = lambda: TestUnitOfWork(session=test_session)
-            try:
-                result = await event_bus.send(command)
-            finally:
-                handler.uow_factory = original_factory
-        elif handler and hasattr(handler, "uow"):
+        if handler:
             original_uow = handler.uow
             test_uow = TestUnitOfWork(session=test_session)
             handler.uow = test_uow

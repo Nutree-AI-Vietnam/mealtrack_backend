@@ -7,7 +7,6 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from src.app.commands.meal_recommendation import (
     CreateThreeDayMealRecommendationCommand,
@@ -46,13 +45,12 @@ class CreateThreeDayMealRecommendationCommandHandler(
 
     def __init__(
         self,
-        uow=None,
-        uow_factory: Any = None,
+        uow,
         optimizer: ThreeDayPlanOptimizer | None = None,
         history_projector: MealRecommendationHistoryProjector | None = None,
         catalog_snapshot_service=None,
     ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow = uow
         self.optimizer = optimizer or ThreeDayPlanOptimizer()
         self.history_projector = history_projector or MealRecommendationHistoryProjector()
         self.catalog_snapshot_service = catalog_snapshot_service
@@ -62,7 +60,7 @@ class CreateThreeDayMealRecommendationCommandHandler(
         command: CreateThreeDayMealRecommendationCommand,
     ) -> PersistedMealRecommendationPlan:
         fingerprint = _request_fingerprint(command)
-        async with self.uow_factory() as uow:
+        async with self.uow as uow:
             await uow.meal_recommendation_plans.lock_generation_for_user(
                 user_id=command.user_id
             )

@@ -4,7 +4,6 @@ Auto-extracted for better maintainability.
 """
 
 import logging
-from typing import Any
 from uuid import UUID
 
 from src.api.exceptions import ResourceNotFoundException, ValidationException
@@ -20,6 +19,7 @@ from src.domain.ports.integration_event_publisher_port import (
     require_event_publisher,
 )
 from src.domain.utils.timezone_utils import utc_now
+from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,10 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
     def __init__(
         self,
         uow: AsyncUnitOfWorkPort | None = None,
-        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.uow = uow
         self.event_publisher = event_publisher
         self.environment = environment
 
@@ -51,7 +50,10 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
         if command.height_cm <= 0:
             raise ValidationException("Height must be greater than 0")
 
-        async with self.uow_factory() as uow:
+        # Use provided UoW or create default
+        uow = self.uow or AsyncUnitOfWork()
+
+        async with uow:
             try:
                 # Get existing user
                 user = await uow.users.find_by_id(UUID(command.user_id))

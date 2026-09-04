@@ -1,7 +1,5 @@
 """Handler for recommendation slot skips."""
 
-from typing import Any
-
 from src.app.commands.meal_recommendation import SkipMealRecommendationSlotCommand
 from src.app.events.base import EventHandler, handles
 from src.domain.model.meal_recommendation import (
@@ -16,13 +14,13 @@ class SkipMealRecommendationSlotCommandHandler(
         PersistedMealRecommendationSlotMutationResult,
     ]
 ):
-    def __init__(self, uow=None, uow_factory: Any = None):
-        self.uow_factory: Any = uow_factory or (lambda: uow)
+    def __init__(self, uow):
+        self.uow = uow
 
     async def handle(
         self, command: SkipMealRecommendationSlotCommand
     ) -> PersistedMealRecommendationSlotMutationResult:
-        async with self.uow_factory() as uow:
+        async with self.uow as uow:
             return await uow.meal_recommendation_plans.skip_slot(
                 user_id=command.user_id,
                 plan_id=command.plan_id,
