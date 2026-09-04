@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
-
 from src.app.events.integration_event import IntegrationEvent
+from src.app.events.meal.meal_insight_snapshot import (
+    MealInsightSnapshot,
+    compact_insight_user_context,
+    insight_language_code,
+    meal_insight_occurred_at,
+)
 from src.domain.model.meal import Meal
 from src.domain.ports.integration_event_publisher_port import require_event_publisher
-from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
+
+LocalInsightHook = Callable[[str, dict[str, Any], datetime], None]
+_local_insight_hook: LocalInsightHook | None = None
 
 
 class MealCreatedEvent(IntegrationEvent):
@@ -37,100 +44,43 @@ class MealDeletedEvent(IntegrationEvent):
     aggregate_type: Literal["meal"] = "meal"
 
 
-class MealInsightNutrition(BaseModel):
-    """Nutrition snapshot embedded in a meal integration event."""
-
-    calories: float
-    protein_g: float
-    carbs_g: float
-    fat_g: float
-    fiber_g: float
-    sugar_g: float
-    confidence_score: float | None = None
+def register_local_insight_hook(hook: LocalInsightHook | None) -> None:
+    """Register the optional local-Redis insight writer used in development."""
+    global _local_insight_hook
+    _local_insight_hook = hook
 
 
-class MealInsightIngredient(BaseModel):
-    """Ingredient snapshot embedded in a meal integration event."""
+async def _insight_user_context(
+    event_bus: Any | None, user_id: str
+) -> dict[str, Any] | None:
+    if event_bus is None or not user_id:
+        return None
+    try:
+        from src.app.queries.user import GetUserProfileQuery
 
-    id: str
-    name: str
-    quantity: float
-    unit: str
-    calories: float
-    protein_g: float
-    carbs_g: float
-    fat_g: float
-    fiber_g: float
-    sugar_g: float
-    confidence: float | None = None
+        result = await event_bus.send(GetUserProfileQuery(user_id=user_id))
+    except Exception:
+        logger.info("meal insight skipped profile context user_id=%s", user_id)
+        return None
+    return compact_insight_user_context(result)
 
 
-class MealInsightSnapshot(BaseModel):
-    """Bounded meal snapshot consumed by the Worker business handler."""
-
-    dish_name: str | None = None
-    language: str = "en"
-    nutrition: MealInsightNutrition
-    ingredients: list[MealInsightIngredient] = Field(default_factory=list)
-    user_context: dict[str, Any] | None = None
-    tokens: list[str] | None = None
-
-    @classmethod
-    def from_meal(
-        cls,
-        meal: Meal,
-        *,
-        language: str = "en",
-        user_context: dict[str, Any] | None = None,
-        tokens: list[str] | None = None,
-    ) -> MealInsightSnapshot:
-        """Build the bounded Worker input from the authoritative meal."""
-        if meal.nutrition is None:
-            raise ValueError("Meal insight events require nutrition")
-
-        nutrition = meal.nutrition
-        macros = nutrition.effective_macros
-        ingredients = [
-            MealInsightIngredient(
-                id=str(item.id),
-                name=item.name,
-                quantity=float(item.quantity),
-                unit=item.unit,
-                calories=float(item.calories),
-                protein_g=float(item.effective_macros.protein),
-                carbs_g=float(item.effective_macros.carbs),
-                fat_g=float(item.effective_macros.fat),
-                fiber_g=float(item.effective_macros.fiber),
-                sugar_g=float(item.effective_macros.sugar),
-                confidence=float(item.confidence),
-            )
-            for item in (nutrition.food_items or [])[:8]
-        ]
-        return cls(
-            dish_name=meal.dish_name,
-            language=(language or "en").split("-")[0].lower(),
-            nutrition=MealInsightNutrition(
-                calories=float(nutrition.calories),
-                protein_g=float(macros.protein),
-                carbs_g=float(macros.carbs),
-                fat_g=float(macros.fat),
-                fiber_g=float(macros.fiber),
-                sugar_g=float(macros.sugar),
-                confidence_score=float(nutrition.confidence_score),
-            ),
-            ingredients=ingredients,
+def _insight_payload(
+    meal: Meal,
+    *,
+    language: str,
+    user_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if getattr(meal, "nutrition", None) is None:
+        return None
+    try:
+        return MealInsightSnapshot.from_meal(
+            meal,
+            language=language,
             user_context=user_context,
-            tokens=tokens,
-        )
-
-
-def meal_insight_occurred_at(meal: Meal) -> datetime:
-    """Return the stable meal snapshot timestamp shared by both Queue events."""
-    for attribute in ("updated_at", "ready_at", "created_at"):
-        value = getattr(meal, attribute, None)
-        if isinstance(value, datetime):
-            return value
-    return utc_now()
+        ).model_dump(mode="json", exclude_none=True)
+    except ValueError:
+        return None
 
 
 async def publish_meal_event(
@@ -148,21 +98,41 @@ async def publish_meal_event(
 ) -> bool:
     """Publish one committed meal integration event to the external Queue consumer."""
     publisher = require_event_publisher(publisher)
+    logger.debug("publishing meal event source=%s", source)
+    resolved_user_id = str(user_id or getattr(meal, "user_id", "") or "")
+    user_context = await _insight_user_context(event_bus, resolved_user_id)
+    preferred_language = None
+    if isinstance(user_context, dict):
+        preferred_language = user_context.get("language_code")
+    resolved_language = insight_language_code(
+        language or preferred_language or getattr(meal, "language", None)
+    )
     data: dict[str, Any] = {
-        "user_id": str(user_id or getattr(meal, "user_id", "")),
+        "user_id": resolved_user_id,
         "meal_id": str(meal.meal_id),
         "meal_date": meal_date.isoformat(),
-        "language": language or getattr(meal, "language", "en") or "en",
+        "language": resolved_language,
     }
     if old_meal_date is not None and old_meal_date != meal_date:
         data["old_meal_date"] = old_meal_date.isoformat()
 
+    insight = _insight_payload(
+        meal,
+        language=resolved_language,
+        user_context=user_context,
+    )
+    if insight is not None:
+        data["insight"] = insight
+
     event_class = MealCreatedEvent if event_type == "created" else MealUpdatedEvent
+    occurred_at = meal_insight_occurred_at(meal)
     event = event_class(
         environment=environment,
         aggregate_id=str(meal.meal_id),
-        occurred_at=meal_insight_occurred_at(meal),
+        occurred_at=occurred_at,
         data=data,
     )
     await publisher.publish(event.to_payload())
+    if insight is not None and _local_insight_hook is not None:
+        _local_insight_hook(str(meal.meal_id), insight, occurred_at)
     return True

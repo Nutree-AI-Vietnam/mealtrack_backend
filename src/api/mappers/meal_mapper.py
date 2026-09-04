@@ -9,6 +9,7 @@ from src.api.mappers.food_reference_display_name import (
     resolve_food_reference_display_name,
 )
 from src.api.mappers.meal_mapper_micros import (
+    daily_micro_targets,
     micros_from_nutrition_payload,
     micros_map_for_response,
 )
@@ -981,4 +982,5 @@ class MealMapper:
             potassium_mg=daily_macros_data.get("potassium_mg"),
             sodium_mg=daily_macros_data.get("sodium_mg"),
             added_sugar_g=daily_macros_data.get("added_sugar_g"),
+            micro_targets=daily_micro_targets(daily_macros_data, target_calories),
         )

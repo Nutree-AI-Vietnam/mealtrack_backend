@@ -70,6 +70,67 @@ async def test_local_reference_ignores_client_nutrition_and_units():
 
 
 @pytest.mark.asyncio
+async def test_local_reference_snapshot_keeps_extra_nutrients():
+    class _Refs:
+        async def get_nutrition_projection(self, food_reference_id):
+            return _reference(
+                extra_nutrients={
+                    "iron_mg": 1.8,
+                    "sodium_mg": 230,
+                    "potassium_mg": 80,
+                    "added_sugar_g": 2,
+                }
+            )
+
+    resolved = await ManualMealNutritionResolver().resolve_items(
+        [
+            ManualMealItem(
+                name="Rice",
+                quantity=150,
+                unit="g",
+                origin="local",
+                food_reference_id=42,
+            )
+        ],
+        _Refs(),
+        contract_version=2,
+    )
+
+    extras = resolved[0].source_snapshot["extra_nutrients"]
+    assert extras["iron_mg"] == 1.8
+    assert extras["sodium_mg"] == 230
+    nutrition, _ = NutritionCalculationService().aggregate_from_command_items(resolved)
+    assert nutrition.micros is not None
+    assert nutrition.micros.iron == pytest.approx(2.7)
+    assert nutrition.micros.sodium == pytest.approx(345)
+    assert nutrition.food_items[0].micros is not None
+    assert nutrition.food_items[0].micros.added_sugar == pytest.approx(3)
+
+
+@pytest.mark.asyncio
+async def test_local_reference_keeps_incoming_snapshot_extras_when_catalog_empty():
+    item = ManualMealItem(
+        name="Rice",
+        quantity=100,
+        unit="g",
+        origin="local",
+        food_reference_id=42,
+        source_snapshot={
+            "basis": "100g",
+            "extra_nutrients": {"iron_mg": 1.8, "sodium_mg": 230},
+        },
+    )
+
+    resolved = await ManualMealNutritionResolver().resolve_items(
+        [item], _References(), contract_version=2
+    )
+
+    extras = resolved[0].source_snapshot["extra_nutrients"]
+    assert extras["iron_mg"] == 1.8
+    assert extras["sodium_mg"] == 230
+
+
+@pytest.mark.asyncio
 async def test_local_reference_canonicalizes_unknown_unit_to_grams():
     resolved = await ManualMealNutritionResolver().resolve_items(
         [

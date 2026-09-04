@@ -231,10 +231,10 @@ WORKED EXAMPLE 1 — Chicken rice bowl image:
   "dish_name": "Grilled Chicken Rice Bowl",
   "emoji": "🍚",
   "foods": [
-    {"name": "cooked white rice", "quantity_g": 180.0, "macros": {"protein_g": 4.3, "carbs_g": 51.0, "fat_g": 0.4, "fiber_g": 0.6, "sugar_g": 0.1}, "confidence": 0.93},
-    {"name": "grilled chicken breast", "quantity_g": 150.0, "macros": {"protein_g": 46.5, "carbs_g": 0.0, "fat_g": 5.4, "fiber_g": 0.0, "sugar_g": 0.0}, "confidence": 0.95},
-    {"name": "steamed broccoli", "quantity_g": 80.0, "macros": {"protein_g": 2.8, "carbs_g": 5.6, "fat_g": 0.3, "fiber_g": 2.6, "sugar_g": 1.4}, "confidence": 0.9},
-    {"name": "soy sauce", "quantity_g": 10.0, "macros": {"protein_g": 1.0, "carbs_g": 0.8, "fat_g": 0.0, "fiber_g": 0.0, "sugar_g": 0.1}, "confidence": 0.74}
+    {"name": "cooked white rice", "quantity_g": 180.0, "macros": {"protein_g": 4.3, "carbs_g": 51.0, "fat_g": 0.4, "fiber_g": 0.6, "sugar_g": 0.1}, "micros": {"iron": 0.4, "potassium": 63, "sodium": 2}, "confidence": 0.93},
+    {"name": "grilled chicken breast", "quantity_g": 150.0, "macros": {"protein_g": 46.5, "carbs_g": 0.0, "fat_g": 5.4, "fiber_g": 0.0, "sugar_g": 0.0}, "micros": {"iron": 0.7, "potassium": 384, "sodium": 111}, "confidence": 0.95},
+    {"name": "steamed broccoli", "quantity_g": 80.0, "macros": {"protein_g": 2.8, "carbs_g": 5.6, "fat_g": 0.3, "fiber_g": 2.6, "sugar_g": 1.4}, "micros": {"iron": 0.6, "potassium": 253, "sodium": 26}, "confidence": 0.9},
+    {"name": "soy sauce", "quantity_g": 10.0, "macros": {"protein_g": 1.0, "carbs_g": 0.8, "fat_g": 0.0, "fiber_g": 0.0, "sugar_g": 0.1}, "micros": {"iron": 0.2, "potassium": 21, "sodium": 549}, "confidence": 0.74}
   ],
   "confidence": 0.88,
   "beverage_metadata": null
@@ -246,7 +246,7 @@ WORKED EXAMPLE 2 — Coca-Cola 330ml can:
   "dish_name": "Coca-Cola 330ml Can",
   "emoji": "🥤",
   "foods": [
-    {"name": "Coca-Cola", "quantity_g": 330.0, "macros": {"protein_g": 0.0, "carbs_g": 35.0, "fat_g": 0.0, "fiber_g": 0.0, "sugar_g": 35.0}, "confidence": 0.9}
+    {"name": "Coca-Cola", "quantity_g": 330.0, "macros": {"protein_g": 0.0, "carbs_g": 35.0, "fat_g": 0.0, "fiber_g": 0.0, "sugar_g": 35.0}, "micros": {"sodium": 15, "added_sugar": 35}, "confidence": 0.9}
   ],
   "confidence": 0.9,
   "beverage_metadata": null

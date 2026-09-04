@@ -171,6 +171,13 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 query.user_id, week_start
             )
 
+            user_profile = None
+            try:
+                user_profile = await uow.users.get_profile(UUID(query.user_id))
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch profile for user %s: %s", query.user_id, exc
+                )
             # Fetch hydration summary
             try:
                 consumed_water_ml = await uow.hydration_entries.sum_ml_for_date(
@@ -184,7 +191,6 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                         user_id=query.user_id,
                         user_timezone=user_tz_str,
                     )
-                user_profile = await uow.users.get_profile(UUID(query.user_id))
                 water_goal_ml = (
                     resolve_hydration_goal_ml(user_profile) if user_profile else 2000
                 )
@@ -248,6 +254,9 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             "weekly_auto_adjust": auto_adjust,
             **highlight_amounts(day_micros),
         }
+        if user_profile is not None:
+            result["gender"] = user_profile.gender
+            result["age"] = user_profile.age
 
         if target_calories is not None:
             result["target_calories"] = target_calories

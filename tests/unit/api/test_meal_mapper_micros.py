@@ -140,3 +140,25 @@ def test_daily_nutrition_highlights_preserve_zero():
     assert result.potassium_mg is None
     assert result.sodium_mg == 105.0
     assert result.added_sugar_g == 0.0
+
+
+def test_daily_nutrition_includes_dri_targets_from_profile():
+    result = MealMapper.to_daily_nutrition_response(
+        {
+            "date": "2025-01-15",
+            "target_calories": 1947.0,
+            "target_macros": {"protein": 150.0, "carbs": 250.0, "fat": 67.0},
+            "total_calories": 500.0,
+            "total_protein": 30.0,
+            "total_carbs": 40.0,
+            "total_fat": 10.0,
+            "gender": "male",
+            "age": 34,
+        }
+    )
+    assert result.micro_targets is not None
+    assert result.micro_targets.iron_mg == 8.0
+    assert result.micro_targets.potassium_mg == 3400.0
+    assert result.micro_targets.sodium_mg == 2300.0
+    assert result.micro_targets.fiber_g == 27.3
+    assert result.micro_targets.added_sugar_g == 48.7

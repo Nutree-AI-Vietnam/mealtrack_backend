@@ -43,6 +43,16 @@ class WeeklyContextResponse(BaseModel):
     remaining_days: int = Field(..., description="Days remaining in the week")
 
 
+class MicronutrientTargetsResponse(BaseModel):
+    """Individual DRI daily goals for Home / Progress beakers."""
+
+    iron_mg: float
+    fiber_g: float
+    potassium_mg: float
+    sodium_mg: float
+    added_sugar_g: float
+
+
 class DailyNutritionResponse(BaseModel):
     """Response DTO for daily nutrition summary - matches Flutter frontend expectations."""
 
@@ -86,4 +96,7 @@ class DailyNutritionResponse(BaseModel):
     )
     added_sugar_g: float | None = Field(
         None, description="Logged added sugar; null if not logged"
+    )
+    micro_targets: MicronutrientTargetsResponse | None = Field(
+        None, description="DRI daily goals for the five Home highlight nutrients"
     )

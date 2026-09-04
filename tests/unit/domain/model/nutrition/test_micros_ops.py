@@ -1,4 +1,12 @@
-from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
+from types import SimpleNamespace
+
+import pytest
+
+from src.domain.model.nutrition.extra_nutrients import (
+    extra_nutrients_to_micros,
+    food_item_effective_micros,
+    merge_meal_micros,
+)
 from src.domain.model.nutrition.micros_ops import merge_micros, scale_micros
 
 
@@ -28,3 +36,53 @@ def test_merge_and_scale_skip_empty():
     scaled = scale_micros(merged, 2)
     assert scaled is not None
     assert scaled.iron == 10
+
+
+def test_food_item_effective_micros_scales_snapshot_extras():
+    item = SimpleNamespace(
+        micros=None,
+        quantity=150,
+        unit="g",
+        allowed_units=None,
+        source_snapshot={
+            "extra_nutrients": {
+                "iron_mg": 2.0,
+                "sodium_mg": 400,
+                "potassium_mg": 200,
+                "added_sugar_g": 8,
+            }
+        },
+    )
+    micros = food_item_effective_micros(item)
+    assert micros is not None
+    assert micros.iron == 3.0
+    assert micros.sodium == 600
+    assert micros.potassium == 300
+    assert micros.added_sugar == 12
+
+
+def test_extras_from_portion_micros_scales_to_100g():
+    from src.domain.model.nutrition.extra_nutrients import extras_from_portion_micros
+
+    extras = extras_from_portion_micros(
+        {"iron": 1.5, "sodium": 230, "added_sugar": 6},
+        150,
+    )
+    assert extras is not None
+    assert extras["iron"] == pytest.approx(1.0)
+    assert extras["sodium"] == pytest.approx(230 * 100 / 150)
+    assert extras["added_sugar"] == pytest.approx(4)
+
+
+def test_merge_meal_micros_reads_snapshot_when_item_micros_missing():
+    item = SimpleNamespace(
+        micros=None,
+        quantity=100,
+        unit="g",
+        allowed_units=None,
+        source_snapshot={"extra_nutrients": {"iron_mg": 1.8, "sodium_mg": 230}},
+    )
+    merged = merge_meal_micros(None, [item])
+    assert merged is not None
+    assert merged.iron == 1.8
+    assert merged.sodium == 230

@@ -2,6 +2,7 @@
 
 import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 from src.domain.model.meal.meal import Meal as DomainMeal
@@ -22,7 +23,10 @@ from src.domain.model.nutrition import (
 from src.domain.model.nutrition import (
     Nutrition as DomainNutrition,
 )
-from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
+from src.domain.model.nutrition.extra_nutrients import (
+    food_item_effective_micros,
+    merge_meal_micros,
+)
 from src.domain.model.nutrition.micros_ops import (
     mapping_from_micros,
     micros_from_mapping,
@@ -88,7 +92,15 @@ def food_item_orm_to_domain(orm: FoodItemORM) -> DomainFoodItem:
             fiber=orm.fiber or 0.0,
             sugar=orm.sugar or 0.0,
         ),
-        micros=micros_from_mapping(getattr(orm, "micros", None)),
+        micros=food_item_effective_micros(
+            SimpleNamespace(
+                micros=micros_from_mapping(getattr(orm, "micros", None)),
+                quantity=orm.quantity,
+                unit=orm.unit,
+                allowed_units=orm.allowed_units,
+                source_snapshot=getattr(orm, "source_snapshot", None),
+            )
+        ),
         confidence=orm.confidence,
         fdc_id=orm.fdc_id,
         food_reference_id=orm.food_reference_id,
