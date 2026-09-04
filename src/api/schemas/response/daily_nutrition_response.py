@@ -2,7 +2,6 @@
 Daily nutrition summary response DTO.
 """
 
-from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -55,7 +54,7 @@ class DailyNutritionResponse(BaseModel):
         description="NET calories consumed (food intake minus movement burn). "
         "Clients must NOT subtract burn again from this value.",
     )
-    food_calories: Optional[float] = Field(
+    food_calories: float | None = Field(
         None,
         description="GROSS food calories consumed, before subtracting movement "
         "burn. Clients that apply burn themselves should use this to avoid "
@@ -69,12 +68,22 @@ class DailyNutritionResponse(BaseModel):
     remaining_macros: MacrosResponse = Field(
         ..., description="Remaining macros for the day"
     )
-    completion_percentage: Dict[str, float] = Field(
+    completion_percentage: dict[str, float] = Field(
         ..., description="Completion percentage for calories and macros"
     )
-    weekly_context: Optional[WeeklyContextResponse] = Field(
+    weekly_context: WeeklyContextResponse | None = Field(
         None, description="Weekly budget context"
     )
-    hydration: Optional[HydrationSummaryResponse] = Field(
+    hydration: HydrationSummaryResponse | None = Field(
         None, description="Daily hydration summary"
+    )
+    iron_mg: float | None = Field(None, description="Logged iron; null if not logged")
+    potassium_mg: float | None = Field(
+        None, description="Logged potassium; null if not logged"
+    )
+    sodium_mg: float | None = Field(
+        None, description="Logged sodium; null if not logged"
+    )
+    added_sugar_g: float | None = Field(
+        None, description="Logged added sugar; null if not logged"
     )

@@ -16,14 +16,18 @@ from src.domain.services.hydration_catalog_service import (
     localized_name_for_catalog_name,
 )
 from src.domain.services.meal_calorie_service import effective_meal_calories
-from src.domain.utils.timezone_utils import (
-    format_iso_utc,
-    get_zone_info,
-    resolve_user_timezone_async,
+from src.domain.services.meal_nrf_fields import (
+    hydration_entry_nrf_fields,
+    meal_nrf_fields,
 )
 from src.domain.services.movement_catalog_service import (
     localized_activity_name,
     localized_activity_name_for_snapshot,
+)
+from src.domain.utils.timezone_utils import (
+    format_iso_utc,
+    get_zone_info,
+    resolve_user_timezone_async,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -168,13 +172,10 @@ class GetDailyActivitiesQueryHandler(
 
     def _build_movement_activity(self, entry, language: str = "en") -> dict[str, Any]:
         title = (
-            (
-                localized_activity_name(entry.activity_id, language)
-                if entry.activity_id and entry.activity_id != "custom"
-                else localized_activity_name_for_snapshot(entry.activity_name, language)
-            )
-            or entry.activity_name
-        )
+            localized_activity_name(entry.activity_id, language)
+            if entry.activity_id and entry.activity_id != "custom"
+            else localized_activity_name_for_snapshot(entry.activity_name, language)
+        ) or entry.activity_name
         return {
             "id": entry.id,
             "type": "movement",
@@ -228,6 +229,7 @@ class GetDailyActivitiesQueryHandler(
             "status": meal.status.value if meal.status else "unknown",
             "image_url": image_url,
             "source": getattr(meal, "source", None),
+            **meal_nrf_fields(meal),
         }
 
     def _build_hydration_activity(
@@ -254,6 +256,8 @@ class GetDailyActivitiesQueryHandler(
             "status": "completed",
             "image_url": None,
             "source": meal.source or "hydration",
+            **meal_nrf_fields(meal),
+            "meal_id": meal.meal_id,
         }
 
     def _build_hydration_entry_activity(
@@ -285,6 +289,8 @@ class GetDailyActivitiesQueryHandler(
             "status": "completed",
             "image_url": entry.image_url,
             "source": entry.source,
+            **hydration_entry_nrf_fields(entry),
+            "meal_id": entry.legacy_meal_id,
         }
 
     def _estimate_meal_weight(self, meal) -> float:

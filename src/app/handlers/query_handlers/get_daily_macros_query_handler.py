@@ -13,11 +13,14 @@ from src.app.queries.meal import GetDailyMacrosQuery
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
+from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros_ops import merge_micros
 from src.domain.model.user import MacroPreset, MacroTargets
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.hydration_goal_service import resolve_hydration_goal_ml
 from src.domain.services.meal_calorie_service import effective_meal_calories
+from src.domain.services.nrf_score import highlight_amounts
 from src.domain.services.tdee_service import TdeeCalculationService
 from src.domain.services.weekly_budget_service import WeeklyBudgetService
 from src.domain.utils.timezone_utils import (
@@ -114,6 +117,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             meal_count = 0
             meals_with_nutrition = 0
             has_legacy_hydration = False
+            day_micros = None
 
             for meal in meals:
                 if meal.status == MealStatus.INACTIVE:
@@ -131,6 +135,13 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                         total_carbs += meal.nutrition.macros.carbs or 0
                         total_fat += meal.nutrition.macros.fat or 0
                         total_calories += effective_meal_calories(meal)
+                    day_micros = merge_micros(
+                        day_micros,
+                        merge_meal_micros(
+                            getattr(meal.nutrition, "micros", None),
+                            getattr(meal.nutrition, "food_items", None),
+                        ),
+                    )
 
             if not has_legacy_hydration:
                 hydration_entries = await uow.hydration_entries.find_by_date(
@@ -150,6 +161,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                         fat=entry.fat_g or 0,
                         fiber=entry.fiber_g or 0,
                     ).total_calories
+                    day_micros = merge_micros(day_micros, entry.micros)
 
             # Pre-fetch weekly budget eagerly here (must be inside this UoW — fetching it
             # later would require a second connection open). Only consumed when target_calories
@@ -234,6 +246,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             "meal_count": meal_count,
             "meals_with_nutrition": meals_with_nutrition,
             "weekly_auto_adjust": auto_adjust,
+            **highlight_amounts(day_micros),
         }
 
         if target_calories is not None:

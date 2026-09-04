@@ -2,8 +2,6 @@
 Response schemas for activity endpoints.
 """
 
-from typing import Optional
-
 from pydantic import BaseModel
 
 
@@ -24,13 +22,13 @@ class MealActivityResponse(BaseModel):
     type: str = "meal"
     timestamp: str
     title: str
-    emoji: Optional[str] = None
+    emoji: str | None = None
     meal_type: str
     calories: float
     macros: MacrosResponse
     quantity: float
     status: str
-    image_url: Optional[str] = None
-
-
-
+    image_url: str | None = None
+    nrf_quality: float | None = None
+    nrf_coverage: int = 0
+    meal_id: str | None = None
