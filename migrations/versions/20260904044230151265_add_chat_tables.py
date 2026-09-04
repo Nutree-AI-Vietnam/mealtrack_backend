@@ -1,4 +1,8 @@
-"""Create Nutree-owned chat thread, message, and reviewed knowledge tables."""
+"""Create Nutree-owned chat thread, message, and reviewed knowledge tables.
+
+Revision ID: 20260904044230151265
+Revises: 20260903000001
+"""
 
 from collections.abc import Sequence
 
@@ -7,7 +11,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
-revision: str = "20260904000001"
+revision: str = "20260904044230151265"
 down_revision: str | None = "20260903000001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
