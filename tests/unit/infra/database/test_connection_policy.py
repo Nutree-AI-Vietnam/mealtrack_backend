@@ -70,11 +70,31 @@ def test_neon_pooler_mode_uses_null_pool_and_prepared_statement_cache_zero():
         {
             "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
             "DB_CONNECTION_MODE": "neon_pooler",
+            "UVICORN_WORKERS": "6",
         }
     )
     assert policy.mode == "neon_pooler"
     assert policy.pool_class is NullPool
     assert policy.connect_args.get("prepared_statement_cache_size") == 0
+    assert policy.worker_count == 6
+    assert policy.total_capacity == 0  # NullPool: PgBouncer owns capacity
+
+
+def test_neon_pooler_total_capacity_is_zero_even_with_pool_env_set():
+    """ASYNC_POOL_* knobs must not invent a SQLAlchemy capacity under NullPool."""
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
+            "DB_CONNECTION_MODE": "neon_pooler",
+            "UVICORN_WORKERS": "8",
+            "ASYNC_POOL_SIZE_PER_WORKER": "20",
+            "ASYNC_POOL_MAX_OVERFLOW": "10",
+        }
+    )
+    assert policy.total_capacity == 0
+    assert policy.worker_count == 8
+    assert policy.pool_size == 0
+    assert policy.max_overflow == 0
 
 
 def test_auto_detect_neon_pooler_from_url():
