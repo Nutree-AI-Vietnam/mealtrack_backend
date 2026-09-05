@@ -701,9 +701,9 @@ class AsyncMealRepository(MealRepositoryPort):
         )
 
         # food_items pre-loaded via selectinload in save() — safe to iterate.
-        # Sort by id to acquire row locks in a consistent order across concurrent
-        # transactions, preventing circular-wait deadlocks on DELETE.
-        for item in sorted(db_nutrition.food_items, key=lambda x: x.id):
+        # Flush sorts persistent deletes by PK (_sort_states), so concurrent
+        # txs lock food_item rows in a consistent order without sorting here.
+        for item in db_nutrition.food_items:
             await self.session.delete(item)
         await self.session.flush()
 
