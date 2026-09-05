@@ -206,12 +206,13 @@ class AsyncMealRepository(MealRepositoryPort):
         nutrition_result = await self.session.execute(
             select(NutritionORM).where(NutritionORM.meal_id == meal_id)
         )
-        nutrition = nutrition_result.scalars().first()
+        nutritions = nutrition_result.scalars().all()
+        nutrition_ids = [n.id for n in nutritions]
 
-        if nutrition:
+        if nutrition_ids:
             await self.session.execute(
                 update(FoodItemORM)
-                .where(FoodItemORM.nutrition_id == nutrition.id)
+                .where(FoodItemORM.nutrition_id.in_(nutrition_ids))
                 .values(is_deleted=True, nutrition_id=None)
             )
 
@@ -699,7 +700,9 @@ class AsyncMealRepository(MealRepositoryPort):
             else None
         )
 
-        # food_items pre-loaded via selectinload in save() — safe to iterate
+        # food_items pre-loaded via selectinload in save() — safe to iterate.
+        # Flush sorts persistent deletes by PK (_sort_states), so concurrent
+        # txs lock food_item rows in a consistent order without sorting here.
         for item in db_nutrition.food_items:
             await self.session.delete(item)
         await self.session.flush()

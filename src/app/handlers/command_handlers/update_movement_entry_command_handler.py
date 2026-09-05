@@ -31,11 +31,12 @@ class UpdateMovementEntryCommandHandler(
 ):
     def __init__(
         self,
-        uow: AsyncUnitOfWork,
+        uow: AsyncUnitOfWork | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.environment = environment
 
@@ -60,7 +61,7 @@ class UpdateMovementEntryCommandHandler(
         if cmd.intensity not in {item.value for item in MovementIntensity}:
             raise ValidationException("Invalid movement intensity", "INVALID_INTENSITY")
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             entry = await uow.movement_entries.find_by_id(cmd.user_id, cmd.entry_id)
             if not entry:
                 raise ResourceNotFoundException(

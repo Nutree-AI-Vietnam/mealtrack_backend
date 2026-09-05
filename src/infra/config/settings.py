@@ -163,8 +163,8 @@ class Settings(BaseSettings):
         description="Primary OpenAI Luna model for parse-text.",
     )
     PARSE_TEXT_PURE_AI_ENABLED: bool = Field(
-        default=True,
-        description="Enable pure AI parsing for meal text without blocking on external provider lookups.",
+        default=False,
+        description="Skip catalog/FatSecret lookups and keep AI macros only.",
     )
     OPENAI_TRANSLATION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
@@ -351,7 +351,7 @@ class Settings(BaseSettings):
         description="Meal analysis graph version emitted in workflow state.",
     )
     PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED: bool = Field(
-        default=False,
+        default=True,
         description="Enable structured local/FatSecret resolution for parse-text.",
     )
     PARSE_TEXT_FATSECRET_TIMEOUT_SECONDS: float = Field(

@@ -25,6 +25,7 @@ from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any]):
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
+        uow: AsyncUnitOfWorkPort | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         event_bus: Any | None = None,
         meal_repository: MealRepositoryPort | None = None,
@@ -57,11 +58,13 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         environment: str = "development",
     ):
         self.uow = uow
-        self.event_publisher = event_publisher
+        # Publish paths always require a publisher; fail at wiring time instead of
+        # constructing a handler that crashes on the first successful save.
+        self.event_publisher = require_event_publisher(event_publisher)
         self.event_bus = event_bus
         self.environment = environment
         self.meal_repository = meal_repository
-        self.uow_factory = uow_factory
+        self.uow_factory = uow_factory if callable(uow_factory) else (lambda: uow)
         self.nutrition_service = nutrition_service or NutritionCalculationService()
         self.nutrition_resolver = nutrition_resolver or ManualMealNutritionResolver(
             provider=provider,
@@ -93,7 +96,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             _t_start = time.perf_counter()
 
             _t_db_start = time.perf_counter()
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 reservation = await self._reserve_v2_write(event, uow)
                 cache_event_needed = False
                 if reservation and reservation.state == "replay":
@@ -208,7 +211,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                 for item in resolved_items
             ]
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 if items_needing_resolution:
                     await self.nutrition_resolver.revalidate_local_items(
                         resolved_source_items, uow.food_references
@@ -323,7 +326,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             if uow is not None:
                 user_tz = await resolve_user_timezone_async(event.user_id, uow)
             else:
-                async with self.uow as _uow:
+                async with self.uow_factory() as _uow:
                     user_tz = await resolve_user_timezone_async(event.user_id, _uow)
             meal_datetime = noon_utc_for_date(meal_date, user_tz)
         else:

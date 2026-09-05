@@ -1,6 +1,7 @@
 """Command handler for soft-deleting a hydration log entry."""
 
 import logging
+from typing import Any
 
 from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.hydration.delete_hydration_entry_command import (
@@ -35,16 +36,17 @@ class DeleteHydrationEntryCommandHandler(
 ):
     def __init__(
         self,
-        uow: AsyncUnitOfWork,
+        uow: AsyncUnitOfWork | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, cmd: DeleteHydrationEntryCommand) -> dict:
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             entry = await uow.hydration_entries.find_by_id_or_legacy_meal_id(
                 cmd.user_id,
                 cmd.entry_id,

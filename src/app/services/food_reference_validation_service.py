@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from src.domain.model.meal import Meal
+from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
+from src.domain.model.nutrition.micros_ops import is_empty, merge_micros
 from src.domain.ports.nutrition_reference_provider_port import (
     NutritionReferenceProviderPort,
 )
@@ -86,6 +88,11 @@ class FoodReferenceValidationService:
                 if details:
                     self._apply_reference_if_close(item, details)
 
+        if meal.nutrition is not None:
+            meal.nutrition.micros = merge_micros(
+                *(item.micros for item in meal.nutrition.food_items or [])
+            )
+
     def _select_candidate(
         self,
         candidates: list[dict[str, Any]],
@@ -150,7 +157,26 @@ class FoodReferenceValidationService:
 
         if integrity.serving_options:
             item.allowed_units = list(integrity.serving_options)
+        self._attach_reference_micros(item, reference)
         return True
+
+    def _attach_reference_micros(self, item: Any, reference: dict[str, Any]) -> None:
+        extras = reference.get("extra_nutrients")
+        if not isinstance(extras, dict) or not extras:
+            return
+        try:
+            quantity_g = float(item.quantity or 0)
+        except (TypeError, ValueError):
+            return
+        micros = extra_nutrients_to_micros(extras, factor=quantity_g / 100.0)
+        if micros is None:
+            return
+        if is_empty(getattr(item, "micros", None)):
+            item.micros = micros
+        snapshot = dict(getattr(item, "source_snapshot", None) or {})
+        snapshot.setdefault("basis", "100g")
+        snapshot["extra_nutrients"] = extras
+        item.source_snapshot = snapshot
 
     def _is_macro_close(self, item: Any, reference: dict[str, Any]) -> bool:
         quantity = float(item.quantity)

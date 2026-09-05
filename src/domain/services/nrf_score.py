@@ -32,9 +32,7 @@ _COVERAGE_FIELDS: tuple[str, ...] = tuple(
 def nrf_coverage(micros: Micros | None) -> int:
     if micros is None:
         return 0
-    return sum(
-        1 for name in _COVERAGE_FIELDS if getattr(micros, name) is not None
-    )
+    return sum(1 for name in _COVERAGE_FIELDS if getattr(micros, name) is not None)
 
 
 def nrf_quality(
@@ -73,6 +71,23 @@ def nrf_progress_fields(
         ),
         "nrf_coverage": coverage,
     }
+
+
+_HIGHLIGHT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("iron", "iron_mg"),
+    ("potassium", "potassium_mg"),
+    ("sodium", "sodium_mg"),
+    ("added_sugar", "added_sugar_g"),
+)
+
+
+def highlight_amounts(micros: Micros | None) -> dict[str, float | None]:
+    """Daily totals for score-detail highlights. None means the nutrient was not logged."""
+    amounts: dict[str, float | None] = {}
+    for attr, key in _HIGHLIGHT_FIELDS:
+        value = None if micros is None else getattr(micros, attr)
+        amounts[key] = None if value is None else round(float(value), 1)
+    return amounts
 
 
 def _capped_pct(actual: float, daily_value: float) -> float:

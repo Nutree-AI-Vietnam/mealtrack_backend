@@ -38,12 +38,13 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
+        uow: AsyncUnitOfWorkPort | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         event_bus: Any | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.event_bus = event_bus
         self.environment = environment
@@ -63,7 +64,7 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
         meal_date = datetime.strptime(command.meal_date, "%Y-%m-%d").date()
         if meal_date != now.date():
             # Past/future date: use noon to avoid date-boundary issues
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user_tz = await resolve_user_timezone_async(command.user_id, uow)
             meal_datetime = noon_utc_for_date(meal_date, user_tz)
         else:
@@ -98,7 +99,7 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
             url=command.image_url,
         )
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             meal_id = await resolve_client_meal_id(
                 requested_meal_id=_reusable_meal_id(command),
                 user_id=command.user_id,

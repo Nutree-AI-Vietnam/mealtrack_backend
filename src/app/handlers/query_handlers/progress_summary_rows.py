@@ -11,7 +11,7 @@ from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import merge_micros
 from src.domain.services.fiber_target import fiber_daily_target_g
 from src.domain.services.meal_calorie_service import effective_meal_calories
-from src.domain.services.nrf_score import nrf_progress_fields
+from src.domain.services.nrf_score import highlight_amounts, nrf_progress_fields
 from src.domain.services.progress_summary_window import logged_status_for_meal_count
 
 
@@ -87,4 +87,5 @@ def build_progress_day_row(
         "is_cheat_day": is_cheat_day,
         "nrf_quality": nrf["nrf_quality"],
         "nrf_coverage": nrf["nrf_coverage"],
+        **highlight_amounts(day_micros),
     }

@@ -26,16 +26,17 @@ class DeleteMealPhotoCommandHandler(
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
+        uow: AsyncUnitOfWorkPort | None = None,
+        uow_factory: Any = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.event_publisher = event_publisher
         self.environment = environment
 
     async def handle(self, command: DeleteMealPhotoCommand) -> dict[str, Any]:
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             try:
                 meal = await uow.meals.find_by_id(
                     command.meal_id, projection=MealProjection.FULL

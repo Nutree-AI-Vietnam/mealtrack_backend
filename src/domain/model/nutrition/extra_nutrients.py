@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from src.domain.model.nutrition.micros import Micros
-from src.domain.model.nutrition.micros_ops import is_empty, merge_micros, scale_micros
+from src.domain.model.nutrition.micros_ops import (
+    is_empty,
+    mapping_from_micros,
+    merge_micros,
+    scale_micros,
+)
 
 _ALIASES: dict[str, str] = {
     "vitamin_a": "vitamin_a",
@@ -34,6 +39,22 @@ _ALIASES: dict[str, str] = {
     "added_sugars": "added_sugar",
     "added_sugar_g": "added_sugar",
 }
+
+
+def first_nonempty_extras(*candidates: Any) -> dict[str, Any] | None:
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+    return None
+
+
+def extras_from_portion_micros(micros: Any, quantity_g: float) -> dict[str, float] | None:
+    """Convert portion-level AI micros into a per-100g extra_nutrients blob."""
+    if quantity_g <= 0:
+        return None
+    return mapping_from_micros(
+        extra_nutrients_to_micros(micros, factor=100.0 / quantity_g)
+    )
 
 
 def extra_nutrients_to_micros(
@@ -78,18 +99,55 @@ def micros_for_portion(
     return scale_micros(fallback, scale_factor)
 
 
+def food_item_effective_micros(item: Any) -> Micros | None:
+    """Prefer stored item micros; otherwise scale snapshot extras by portion grams."""
+    stored = getattr(item, "micros", None)
+    if not is_empty(stored):
+        return stored
+    return micros_from_snapshot(
+        getattr(item, "source_snapshot", None),
+        _portion_grams(item),
+    )
+
+
 def merge_meal_micros(
     nutrition_micros: Micros | None,
     food_items: list | None,
 ) -> Micros | None:
     from_items = merge_micros(
-        *(getattr(item, "micros", None) for item in food_items or [])
+        *(food_item_effective_micros(item) for item in food_items or [])
     )
     if not is_empty(from_items):
         return from_items
     if not is_empty(nutrition_micros):
         return nutrition_micros
     return None
+
+
+def _portion_grams(item: Any) -> float:
+    try:
+        quantity = float(getattr(item, "quantity", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if quantity <= 0:
+        return 0.0
+    unit = str(getattr(item, "unit", "") or "g").strip().lower()
+    if unit in {"g", "gram", "grams", "gramme", "grammes"}:
+        return quantity
+    options = list(getattr(item, "allowed_units", None) or [])
+    snapshot = getattr(item, "source_snapshot", None)
+    if isinstance(snapshot, dict) and not options:
+        options = list(snapshot.get("allowed_units") or [])
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        if str(option.get("unit") or "").strip().lower() != unit:
+            continue
+        try:
+            return quantity * float(option.get("gram_weight") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
 
 
 def _amount(raw: Any) -> float | None:

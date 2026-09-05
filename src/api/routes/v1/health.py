@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 
 from src.api.dependencies.auth import require_monitoring_access
 from src.infra.database.config_async import (
@@ -19,7 +19,6 @@ from src.infra.database.config_async import (
     CONNECTION_MODE,
     async_engine,
 )
-from src.infra.database.uow_async import AsyncUnitOfWork
 
 router = APIRouter(prefix="/v1", tags=["Health"])
 root_router = APIRouter(tags=["Health"])
@@ -87,7 +86,13 @@ async def database_pool_status(_monitor=Depends(require_monitoring_access)):
             "status": "healthy",
             "connection_mode": CONNECTION_MODE,
             "pool_type": "NullPool",
-            "note": "Neon pooler (PgBouncer) handles connection reuse",
+            "worker_count": _UVICORN_WORKERS,
+            "prepared_statement_cache_size": 0,
+            "total_capacity": _ASYNC_POOL_TOTAL_CAPACITY,
+            "note": (
+                "Neon pooler (PgBouncer) handles connection reuse; "
+                "SQLAlchemy checkout metrics are unavailable under NullPool"
+            ),
         }
 
     try:

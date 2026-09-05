@@ -8,6 +8,11 @@ from typing import Any
 from src.api.mappers.food_reference_display_name import (
     resolve_food_reference_display_name,
 )
+from src.api.mappers.meal_mapper_micros import (
+    daily_micro_targets,
+    micros_from_nutrition_payload,
+    micros_map_for_response,
+)
 from src.api.schemas.response import (
     DetailedMealResponse,
     FoodItemResponse,
@@ -28,7 +33,7 @@ from src.domain.model.meal.meal_response_localization import (
 from src.domain.model.meal.meal_translation_domain_models import (
     CURRENT_MEAL_TRANSLATION_VERSION,
 )
-from src.domain.model.nutrition import FoodItem, Macros, Micros, Nutrition
+from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
@@ -37,6 +42,7 @@ from src.domain.services.meal_calorie_service import (
     effective_food_item_calories,
     effective_meal_calories,
 )
+from src.domain.services.meal_nrf_fields import meal_nrf_fields
 from src.domain.services.meal_value_insight_contract import MealValueInsights
 from src.domain.services.nutrition_calculation_service import (
     quantity_to_grams,
@@ -220,6 +226,9 @@ class MealMapper:
                             fat_g=item.macros.fat,
                             fiber_g=item.macros.fiber,
                             sugar_g=item.macros.sugar,
+                            micros=micros_map_for_response(
+                                getattr(item, "micros", None)
+                            ),
                         )
 
                     custom_nutrition_dto = (
@@ -445,6 +454,7 @@ class MealMapper:
             cook_time_min=getattr(meal, "cook_time_min", None),
             cuisine_type=getattr(meal, "cuisine_type", None),
             origin_country=getattr(meal, "origin_country", None),
+            **meal_nrf_fields(meal),
         )
 
     @staticmethod
@@ -801,9 +811,7 @@ class MealMapper:
             fat=nutrition_dict.get("fat_g", 0),
         )
 
-        micros = None
-        if "sodium_mg" in nutrition_dict:
-            micros = Micros(sodium=nutrition_dict.get("sodium_mg", 0))
+        micros = micros_from_nutrition_payload(nutrition_dict)
 
         return Nutrition(macros=macros, micros=micros, food_items=[])
 
@@ -829,8 +837,7 @@ class MealMapper:
                 carbs=nutrition_data.get("carbs_g", 0),
                 fat=nutrition_data.get("fat_g", 0),
             )
-            if "sodium_mg" in nutrition_data:
-                micros = Micros(sodium=nutrition_data.get("sodium_mg", 0))
+            micros = micros_from_nutrition_payload(nutrition_data)
 
         return FoodItem(
             id=item_dict.get("id", ""),
@@ -971,4 +978,9 @@ class MealMapper:
             completion_percentage=completion_percentage,
             weekly_context=weekly_context,
             hydration=hydration,
+            iron_mg=daily_macros_data.get("iron_mg"),
+            potassium_mg=daily_macros_data.get("potassium_mg"),
+            sodium_mg=daily_macros_data.get("sodium_mg"),
+            added_sugar_g=daily_macros_data.get("added_sugar_g"),
+            micro_targets=daily_micro_targets(daily_macros_data, target_calories),
         )

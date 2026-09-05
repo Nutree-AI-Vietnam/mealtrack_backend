@@ -1,18 +1,26 @@
 # Render CD Flow
 
+> **Superseded (migrations):** Schema upgrades are **not** owned by Render
+> pre-deploy anymore. Use GitHub Actions → **Migrate Database** and follow
+> [`docs/runbooks/schema-migration.md`](../../runbooks/schema-migration.md).
+> This archive page is kept for historical Render CD context only.
+
 ## Production Flow
 
-Render should run database migrations before starting the new web service:
+Render deploys application images only:
 
 1. Build Docker image.
-2. Run pre-deploy command.
-3. Start web service only if pre-deploy succeeds.
-4. Health check `/health`.
+2. Start web service (no Alembic in pre-deploy).
+3. Health check `/health`.
+
+Apply pending Alembic revisions **before** deploying code that requires them,
+via Actions migrate (dry run → apply).
 
 For meal catalog releases, use
-[Meal Catalog Release Runbook](../runbooks/meal-catalog-release.md) after the
-Render pre-deploy migration succeeds. That runbook covers manifest digest,
-staging import/replay counts, smoke requests, load gates, and rollback order.
+[Meal Catalog Release Runbook](../../runbooks/meal-catalog-release.md) after
+schema migrate (if needed) and image deploy. That runbook covers manifest
+digest, staging import/replay counts, smoke requests, load gates, and
+rollback order.
 
 ## Render Settings
 
@@ -21,7 +29,7 @@ Production service:
 ```text
 Branch: main
 Runtime: Docker
-Pre-deploy command: python migrations/run.py
+Pre-deploy command: (empty — do not run migrations here)
 Docker command: /app/docker-entrypoint.sh
 Health check path: /health
 ```
@@ -31,7 +39,7 @@ Staging service:
 ```text
 Branch: delivery
 Runtime: Docker
-Pre-deploy command: python migrations/run.py
+Pre-deploy command: (empty — do not run migrations here)
 Docker command: /app/docker-entrypoint.sh
 Health check path: /health
 ```
@@ -46,40 +54,34 @@ MIGRATION_LOCK_TIMEOUT_MS=10000
 MIGRATION_STATEMENT_TIMEOUT_MS=240000
 ```
 
-`docker-entrypoint.sh` skips migrations when `ENV=production` because the
-pre-deploy step owns them. Non-production containers run `python
-migrations/run.py` before Uvicorn starts.
+`docker-entrypoint.sh` skips migrations when `RENDER=true` or
+`ENV`/`ENVIRONMENT=production`. Schema apply is via Actions
+(`DATABASE_URL_DIRECT` on GitHub Environments). Local non-Render containers
+may still run `python migrations/run.py` at startup when `AUTO_MIGRATE` is
+enabled.
 
-## Why
+## Why (historical)
 
-Migrations in startup can make the web container fail to bind to Render's port.
-Render then restarts the container and repeats the migration attempt. Running
-migrations as a pre-deploy command fails the deploy before promotion and keeps
-the previous healthy service running.
+Migrations in startup can make the web container fail to bind to Render's
+port. Render then restarts the container and repeats the migration attempt.
+The old mitigation was pre-deploy migrate. That blocked safe **code** image
+rollback once schema had advanced, so migrate moved to a separate Actions
+pipeline.
 
 ## Emergency Recovery
 
-If a migration is blocking production startup:
+If a bad **code** deploy is live and schema is already compatible with the
+previous image:
 
-1. Temporarily set pre-deploy command to:
+1. Restore the previous GHCR SHA on Render.
+2. Do **not** re-enable Render pre-deploy migrations as a permanent fix.
 
-```bash
-echo "Skipping migrations for prod recovery"
-```
-
-2. Deploy the current production branch.
-3. Fix Alembic/database state.
-4. Restore pre-deploy command:
-
-```bash
-python migrations/run.py
-```
-
-Do not downgrade production schema during an incident unless the migration is
-known to be destructive and data ownership has been reviewed.
+If schema itself is broken, use the schema migration runbook break-glass
+section and a reviewed manual repair — do not Alembic-downgrade production
+unless data ownership has been reviewed.
 
 For catalog-specific incidents, use
-[Meal Catalog Incident Runbook](../runbooks/meal-catalog-incident.md). Prefer
-client entry-point disablement, previous GHCR SHA restore, or reviewed
+[Meal Catalog Incident Runbook](../../runbooks/meal-catalog-incident.md).
+Prefer client entry-point disablement, previous GHCR SHA restore, or reviewed
 `is_active=false` catalog-row deactivation before considering a production
 schema downgrade.

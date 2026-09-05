@@ -23,6 +23,7 @@ from src.infra.repositories.food_reference_integrity_repository import (
     FoodReferenceIntegrityRepository,
 )
 from src.infra.repositories.food_reference_projection import (
+    build_food_reference_nutrient_rows,
     build_food_reference_serving_rows,
     food_reference_model_to_dict,
 )
@@ -179,6 +180,14 @@ class FoodReferenceAdoptRepository:
             model.name = clean_name
         for field, value in macros.items():
             setattr(model, field, value)
+        extras = per_100g.get("extra_nutrients")
+        if isinstance(extras, dict) and extras:
+            model.extra_nutrients = extras
+            _replace_relationship_collection(
+                model,
+                "nutrient_rows",
+                build_food_reference_nutrient_rows(extras),
+            )
         existing_servings = _loaded_collection(model, "serving_size_rows")
         if servings:
             incoming = _preserve_serving_locale(

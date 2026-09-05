@@ -32,6 +32,7 @@ class FoodReferenceNutritionProjection:
     name_normalized: str | None = None
     source_namespace: str | None = None
     source_food_id: str | None = None
+    extra_nutrients: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,7 @@ from src.app.commands.meal.create_manual_meal_command import (
     CustomNutrition,
     ManualMealItem,
 )
+from src.domain.model.nutrition.extra_nutrients import first_nonempty_extras
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
 from src.domain.services.nutrition_calculation_service import (
     canonicalize_authoritative_quantity,
@@ -278,6 +279,9 @@ class ManualMealNutritionResolver:
                 source_id,
                 allowed_units,
                 canonical_name=reference.name,
+                extra_nutrients=self._extras_for_snapshot(
+                    getattr(reference, "extra_nutrients", None), item
+                ),
             ),
         )
 
@@ -322,6 +326,9 @@ class ManualMealNutritionResolver:
                 source_id,
                 allowed_units,
                 canonical_name=canonical_name,
+                extra_nutrients=self._extras_for_snapshot(
+                    reference.get("extra_nutrients"), item
+                ),
             ),
         )
 
@@ -376,7 +383,12 @@ class ManualMealNutritionResolver:
         ).strip()
         food_reference_id, result, allowed_units, english_name = (
             await self._adopt_provider_identity(
-                namespace, source_id, english_name, result, allowed_units
+                namespace,
+                source_id,
+                english_name,
+                result,
+                allowed_units,
+                extra_nutrients=details.get("extra_nutrients"),
             )
         )
         return replace(
@@ -394,6 +406,9 @@ class ManualMealNutritionResolver:
                 source_id,
                 allowed_units,
                 canonical_name=english_name,
+                extra_nutrients=self._extras_for_snapshot(
+                    details.get("extra_nutrients"), item
+                ),
             ),
         )
 
@@ -404,6 +419,7 @@ class ManualMealNutritionResolver:
         english_name: str,
         result: Any,
         allowed_units: list[dict[str, Any]],
+        extra_nutrients: Any = None,
     ) -> tuple[int | None, Any, list[dict[str, Any]], str]:
         """Materialize a provider identity into the catalog before save.
 
@@ -422,6 +438,8 @@ class ManualMealNutritionResolver:
             "fiber_100g": result.fiber_100g,
             "sugar_100g": result.sugar_100g,
         }
+        if isinstance(extra_nutrients, dict) and extra_nutrients:
+            per_100g["extra_nutrients"] = extra_nutrients
         try:
             async with self.uow_factory() as uow:
                 adopted = await uow.food_references.adopt_provider_food(
@@ -563,8 +581,22 @@ class ManualMealNutritionResolver:
         )
 
     @staticmethod
+    def _extras_for_snapshot(primary: Any, item: Any) -> dict[str, Any] | None:
+        incoming = None
+        snapshot = getattr(item, "source_snapshot", None)
+        if isinstance(snapshot, dict):
+            incoming = snapshot.get("extra_nutrients")
+        return first_nonempty_extras(primary, incoming)
+
+    @staticmethod
     def _snapshot(
-        result, origin, namespace, source_id, allowed_units=None, canonical_name=None
+        result,
+        origin,
+        namespace,
+        source_id,
+        allowed_units=None,
+        canonical_name=None,
+        extra_nutrients=None,
     ):
         snapshot = {
             "origin": origin,
@@ -583,4 +615,6 @@ class ManualMealNutritionResolver:
         clean_name = str(canonical_name or "").strip()
         if clean_name:
             snapshot["canonical_name"] = clean_name
+        if isinstance(extra_nutrients, dict) and extra_nutrients:
+            snapshot["extra_nutrients"] = extra_nutrients
         return snapshot
