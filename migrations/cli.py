@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 from alembic.runtime.migration import MigrationContext
+from alembic.script import Script, ScriptDirectory
 
 # Configure logging
 logging.basicConfig(
@@ -201,12 +201,36 @@ def cmd_test(args) -> int:
             logger.info("Migration test PASSED")
             return 0
         else:
-            logger.error(f"Migration test FAILED: expected {head_revision}, got {final_rev}")
+            logger.error(
+                f"Migration test FAILED: expected {head_revision}, got {final_rev}"
+            )
             return 1
 
     except Exception as e:
         logger.error(f"Migration test FAILED: {e}")
         return 1
+
+
+def pending_upgrade_revisions(
+    script_dir: ScriptDirectory,
+    current_revision: str | None,
+    head_revision: str,
+) -> list[Script]:
+    """Revisions ``upgrade head`` would apply from ``current_revision``.
+
+    Uses the same merge-aware iterator as Alembic's upgrade command.
+    ``walk_revisions(head, current)`` raises when current is an ancestor
+    through multiple merge paths, which is a normal state for this graph.
+    """
+    lower = "base" if current_revision is None else current_revision
+    return list(
+        script_dir.iterate_revisions(
+            head_revision,
+            lower,
+            implicit_base=True,
+            assert_relative_length=False,
+        )
+    )
 
 
 def cmd_status(args) -> int:
@@ -219,8 +243,15 @@ def cmd_status(args) -> int:
         alembic_cfg = get_alembic_config()
         script_dir = ScriptDirectory.from_config(alembic_cfg)
 
-        # Get head revision
-        head_revision = script_dir.get_current_head()
+        heads = script_dir.get_heads()
+        if len(heads) > 1:
+            logger.error(
+                "Multiple heads detected: %s. Create a merge migration before upgrading.",
+                ", ".join(heads),
+            )
+            return 1
+
+        head_revision = heads[0] if heads else None
 
         # Get current revision from database
         with engine.connect() as conn:
@@ -230,15 +261,25 @@ def cmd_status(args) -> int:
         logger.info(f"Current revision: {current_revision or '<none>'}")
         logger.info(f"Head revision:    {head_revision or '<none>'}")
 
+        if head_revision is None:
+            logger.info("No migration revisions found in versions/")
+            return 0
+
         if current_revision == head_revision:
             logger.info("Database is up to date")
         elif current_revision is None:
+            pending = pending_upgrade_revisions(script_dir, None, head_revision)
             logger.info("Database has no migrations applied")
+            logger.info(f"Pending migrations: {len(pending)}")
+            for rev in reversed(pending):
+                logger.info(f"  -> {rev.revision}")
         else:
-            # Count pending migrations
-            revisions = list(script_dir.walk_revisions(head_revision, current_revision))
-            pending_count = len(revisions)
-            logger.info(f"Pending migrations: {pending_count}")
+            pending = pending_upgrade_revisions(
+                script_dir, current_revision, head_revision
+            )
+            logger.info(f"Pending migrations: {len(pending)}")
+            for rev in reversed(pending):
+                logger.info(f"  -> {rev.revision}")
 
         return 0
 
