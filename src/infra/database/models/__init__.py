@@ -85,6 +85,14 @@ BarcodeProductModel = FoodReferenceModel
 # AI Handshake guest trial quota
 from .ai_handshake_guest_trial_quota import AiHandshakeGuestTrialQuota
 
+# Chat coach
+from .chat import (
+    ChatKnowledgeChunkORM,
+    ChatKnowledgeDocumentORM,
+    ChatMessageORM,
+    ChatThreadORM,
+)
+
 # Durable mutation replay
 from .durable_write_record import DurableWriteRecordORM
 
@@ -184,6 +192,10 @@ __all__ = [
     # AI Handshake guest trial quota
     "AiHandshakeGuestTrialQuota",
     "WebFunnelLead",
+    "ChatThreadORM",
+    "ChatMessageORM",
+    "ChatKnowledgeDocumentORM",
+    "ChatKnowledgeChunkORM",
     "WebFunnelClaim",
     "WebFunnelOutbox",
     "WebFunnelProviderEvent",

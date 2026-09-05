@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from src.domain.ports.body_fat_visual_profile_repository_port import (
         BodyFatVisualProfileRepositoryPort,
     )
+    from src.domain.ports.chat_repository_port import ChatRepositoryPort
     from src.domain.ports.favorite_meal_repository_port import (
         FavoriteMealRepositoryPort,
     )
@@ -52,6 +53,7 @@ class AsyncUnitOfWorkPort(ABC):
     promo_codes: Any
     referrals: Any
     meal_write_operations: Any
+    chat: ChatRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:

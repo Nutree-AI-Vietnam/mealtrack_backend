@@ -5,11 +5,12 @@ SaveMealSuggestionCommandHandler - Handler for saving meal suggestions as regula
 import logging
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from src.app.commands.meal_suggestion import IngredientItem, SaveMealSuggestionCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
+from src.app.handlers.command_handlers.client_resource_id import resolve_client_meal_id
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
@@ -53,7 +54,7 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
         Save meal suggestion as a regular meal in the meals table.
 
         Args:
-            command: SaveMealSuggestionCommand with meal suggestion data
+            command: SaveMealSuggestionCommand containing suggestion details
 
         Returns:
             meal_id: ID of the created meal
@@ -98,45 +99,56 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
             url=command.image_url,
         )
 
-        meal = Meal(
-            meal_id=str(uuid4()),
-            user_id=command.user_id,
-            status=MealStatus.READY,
-            created_at=meal_datetime,
-            image=image,
-            dish_name=command.name,
-            nutrition=nutrition,
-            ready_at=meal_datetime,
-            error_message=None,
-            raw_gpt_json=None,
-            updated_at=meal_datetime,
-            last_edited_at=None,
-            edit_count=0,
-            is_manually_edited=False,
-            meal_type=command.meal_type,
-            translations=None,
-            source="ai_suggestion",
-            description=command.description,
-            instructions=command.instructions if command.instructions else None,
-            cook_time_min=command.estimated_cook_time_minutes,
-            cuisine_type=command.cuisine_type,
-            origin_country=command.origin_country,
-            emoji=command.emoji,
-        )
-
         async with self.uow_factory() as uow:
+            meal_id = await resolve_client_meal_id(
+                requested_meal_id=_reusable_meal_id(command),
+                user_id=command.user_id,
+                meal_repo=uow.meals,
+            )
+            meal = Meal(
+                meal_id=meal_id,
+                user_id=command.user_id,
+                status=MealStatus.READY,
+                created_at=meal_datetime,
+                image=image,
+                dish_name=command.name,
+                nutrition=nutrition,
+                ready_at=meal_datetime,
+                error_message=None,
+                raw_gpt_json=None,
+                updated_at=meal_datetime,
+                last_edited_at=None,
+                edit_count=0,
+                is_manually_edited=False,
+                meal_type=command.meal_type,
+                translations=None,
+                source="ai_suggestion",
+                description=command.description,
+                instructions=command.instructions if command.instructions else None,
+                cook_time_min=command.estimated_cook_time_minutes,
+                cuisine_type=command.cuisine_type,
+                origin_country=command.origin_country,
+                emoji=command.emoji,
+            )
             saved_meal = await uow.meals.save(meal)
 
-        await publish_meal_event(
-            self.event_publisher,
-            saved_meal,
-            event_type="created",
-            environment=self.environment,
-            meal_date=meal_date,
-            language=command.language or "en",
-            event_bus=self.event_bus,
-            source="saved_meal_suggestion",
-        )
+        try:
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                language=command.language or "en",
+                event_bus=self.event_bus,
+                source="saved_meal_suggestion",
+            )
+        except Exception:
+            logger.warning(
+                "saved meal suggestion; insight queue publish failed",
+                extra={"meal_id": saved_meal.meal_id},
+                exc_info=True,
+            )
 
         logger.info(
             f"Saved meal suggestion {command.suggestion_id} as meal {saved_meal.meal_id} "
@@ -259,3 +271,15 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
                 )
             )
         return distributed
+
+
+def _reusable_meal_id(command: SaveMealSuggestionCommand) -> str | None:
+    """Prefer an explicit client meal UUID, else a UUID suggestion_id."""
+    for raw in (command.meal_id, command.suggestion_id):
+        if not raw or not str(raw).strip():
+            continue
+        try:
+            return str(UUID(str(raw).strip()))
+        except ValueError:
+            continue
+    return None

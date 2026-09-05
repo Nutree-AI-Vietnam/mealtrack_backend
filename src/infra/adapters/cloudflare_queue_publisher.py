@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
 import httpx
 
 from src.infra.http import get_shared_http_client
+
+logger = logging.getLogger(__name__)
 
 
 class CloudflareQueueError(Exception):
@@ -102,8 +105,11 @@ class CloudflareQueuePublisher:
             f"{self._account_id}/queues/{self._queue_id}/messages"
         )
 
+    def _has_credentials(self) -> bool:
+        return bool(self._account_id and self._queue_id and self._api_token)
+
     def _validate_configuration(self) -> None:
-        if not self._account_id or not self._queue_id or not self._api_token:
+        if not self._has_credentials():
             raise CloudflareQueueConfigurationError(
                 "Cloudflare Queue account, ID, and token are required"
             )
@@ -114,6 +120,9 @@ class CloudflareQueuePublisher:
 
     async def publish(self, payload: dict[str, Any]) -> None:
         """Publish payload and raise a classified error when it is not accepted."""
+        if not self._has_credentials():
+            logger.warning("cloudflare queue skipped: missing account, ID, or token")
+            return
         self._validate_configuration()
         headers = {
             "Authorization": f"Bearer {self._api_token}",

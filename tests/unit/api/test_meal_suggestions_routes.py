@@ -99,6 +99,7 @@ def test_save_meal_suggestion_ok(ms_client):
                 assert msg.ingredients[0].fiber == 3
                 assert msg.fiber == 4
                 assert msg.calories == 157
+                assert msg.meal_id == meal_id
                 return meal_id
             if isinstance(msg, GetMealByIdQuery):
                 return Meal(
@@ -119,6 +120,7 @@ def test_save_meal_suggestion_ok(ms_client):
 
     payload = {
         "suggestion_id": "s1",
+        "meal_id": meal_id,
         "name": "Saved",
         "meal_type": "lunch",
         "protein": 10.0,
@@ -146,6 +148,25 @@ def test_save_meal_suggestion_ok(ms_client):
     assert data["meal_id"] == meal_id
     assert data["meal_detail"]["meal_id"] == meal_id
     assert data["meal_detail"]["food_items"]
+
+
+def test_save_meal_suggestion_rejects_invalid_meal_id(ms_client):
+    client, _bus = ms_client
+    payload = {
+        "suggestion_id": "s1",
+        "meal_id": "not-a-uuid",
+        "name": "Saved",
+        "meal_type": "lunch",
+        "protein": 10.0,
+        "carbs": 20.0,
+        "fat": 5.0,
+        "fiber": 4.0,
+        "ingredients": [],
+        "instructions": [],
+        "meal_date": "2026-04-11",
+    }
+    r = client.post("/v1/meal-suggestions/save", json=payload)
+    assert r.status_code == 422
 
 
 def test_discover_meals_sends_cqrs_command(ms_client, monkeypatch):
@@ -332,8 +353,8 @@ def test_generate_recipes_generation_failure_returns_503(ms_client):
                 details={"requested": 3, "generated": 0},
             )
 
-    client.app.dependency_overrides[get_configured_event_bus] = (
-        lambda: _BusRecipeFailure()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _BusRecipeFailure()
     )
 
     payload = {

@@ -4,13 +4,16 @@ from src.domain.ports.affiliate_service_port import AffiliateServicePort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
+from src.infra.adapters.best_effort_integration_event_publisher import (
+    BestEffortIntegrationEventPublisher,
+)
 from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.config.settings import get_settings
 
 
 def get_integration_event_publisher() -> IntegrationEventPublisherPort:
-    """Build the required environment-specific integration-event publisher."""
-    return CloudflareQueuePublisher.from_settings()
+    """Build the Queue publisher; transport failures must not fail business writes."""
+    return BestEffortIntegrationEventPublisher(CloudflareQueuePublisher.from_settings())
 
 
 def get_affiliate_service(

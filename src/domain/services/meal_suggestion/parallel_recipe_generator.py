@@ -28,7 +28,9 @@ from src.domain.services.meal_suggestion.nutrition_lookup_service import (
     NutritionLookupService,
 )
 from src.domain.services.meal_suggestion.recipe_attempt_builder import (
+    SELECTED_RECIPE_ATTEMPT_TIMEOUT,
     attempt_recipe_generation,
+    fallback_selected_recipe,
 )
 from src.domain.services.meal_suggestion.suggestion_translation_service import (
     SuggestionTranslationService,
@@ -289,7 +291,8 @@ class ParallelRecipeGenerator:
         """Generate full recipes for discovery selections without scale rejection.
 
         2-pass retry: pass 1 generates all slots in parallel; pass 2 retries any
-        None slots. Raises RuntimeError if any slot still fails after retry.
+        None slots. Slots that still fail get a Discover-macro fallback recipe
+        so the client can show ingredients and steps.
         """
         from src.domain.services.meal_suggestion.suggestion_prompt_builder import (
             build_recipe_details_prompt,
@@ -318,6 +321,7 @@ class ParallelRecipeGenerator:
                 recipe_session,
                 reject_on_scale_out_of_range=False,
                 fill_missing_steps=True,
+                timeout=SELECTED_RECIPE_ATTEMPT_TIMEOUT,
             )
             localized_name = selected.get("name")
             if (
@@ -352,15 +356,14 @@ class ParallelRecipeGenerator:
                 if not isinstance(result, Exception) and result is not None:
                     results[i] = result
 
-        failures = [
-            selected_meals[i].get("id", str(i))
-            for i, r in enumerate(results)
-            if r is None
-        ]
-        if failures:
-            raise RuntimeError(
-                "Failed to generate all selected recipes: " + ", ".join(failures)
-            )
+        for i, result in enumerate(results):
+            if result is None:
+                logger.warning(
+                    "[PHASE-2-SELECTED-FALLBACK] index=%s | meal_id=%s",
+                    i,
+                    selected_meals[i].get("id"),
+                )
+                results[i] = fallback_selected_recipe(selected_meals[i], session)
 
         return [r for r in results if r is not None]
 
@@ -526,6 +529,7 @@ class ParallelRecipeGenerator:
         session: SuggestionSession,
         reject_on_scale_out_of_range: bool = True,
         fill_missing_steps: bool = False,
+        timeout: float | None = None,
     ) -> Optional[MealSuggestion]:
         """Try recipe model; retry on failure."""
         result = await attempt_recipe_generation(
@@ -541,6 +545,7 @@ class ParallelRecipeGenerator:
             reject_on_scale_out_of_range=reject_on_scale_out_of_range,
             fill_missing_steps=fill_missing_steps,
             recipe_schema=self._recipe_details_schema,
+            timeout=timeout,
         )
         if result is not None:
             return result
@@ -559,6 +564,7 @@ class ParallelRecipeGenerator:
             reject_on_scale_out_of_range=reject_on_scale_out_of_range,
             fill_missing_steps=fill_missing_steps,
             recipe_schema=self._recipe_details_schema,
+            timeout=timeout,
         )
 
     async def _translate_single(

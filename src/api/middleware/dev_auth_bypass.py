@@ -3,10 +3,10 @@ import os
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Optional
 
 from fastapi import FastAPI, Request
-from sqlalchemy import select, func
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from src.infra.database.config_async import AsyncSessionLocal
 from src.infra.database.models.enums import MealStatusEnum
@@ -19,7 +19,7 @@ from src.infra.database.models.user.user import User
 logger = logging.getLogger(__name__)
 
 
-async def _ensure_dev_user_async() -> Optional[User]:
+async def _ensure_dev_user_async() -> User | None:
     """Create or fetch the single development user and profile (async).
 
     This is safe to call multiple times. Returns the persisted SQLAlchemy User instance
@@ -36,11 +36,9 @@ async def _ensure_dev_user_async() -> Optional[User]:
 
     session = AsyncSessionLocal()
     try:
-        result = await session.execute(
-            select(User).where(User.firebase_uid == firebase_uid)
+        user = await _load_existing_dev_user(
+            session, firebase_uid=firebase_uid, email=email, username=username
         )
-        user: Optional[User] = result.scalars().first()
-
         if user:
             return user
 
@@ -85,12 +83,42 @@ async def _ensure_dev_user_async() -> Optional[User]:
 
         logger.info("Created development user '%s' (%s)", username, user.id)
         return user
+    except IntegrityError:
+        await session.rollback()
+        # Another request (or a previous Firebase login) already created this
+        # email/uid. Reuse that row instead of failing the bypass.
+        user = await _load_existing_dev_user(
+            session, firebase_uid=firebase_uid, email=email, username=username
+        )
+        if user:
+            return user
+        logger.warning(
+            "Failed to ensure dev user after unique conflict for email=%s uid=%s",
+            email,
+            firebase_uid,
+        )
+        return None
     except Exception as exc:
         await session.rollback()
         logger.warning("Failed to ensure dev user (database may not be ready): %s", exc)
         return None
     finally:
         await session.close()
+
+
+async def _load_existing_dev_user(
+    session, *, firebase_uid: str, email: str, username: str
+) -> User | None:
+    result = await session.execute(
+        select(User).where(User.firebase_uid == firebase_uid)
+    )
+    user = result.scalars().first()
+    if user:
+        return user
+    result = await session.execute(
+        select(User).where(or_(User.email == email, User.username == username))
+    )
+    return result.scalars().first()
 
 
 def add_dev_auth_bypass(app: FastAPI) -> None:

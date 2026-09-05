@@ -7,6 +7,7 @@ from src.app.commands.meal_suggestion import (
     DiscoverMealsCommand,
     GenerateMealRecipesCommand,
     IngredientItem,
+    SaveMealSuggestionCommand,
 )
 from src.app.handlers.command_handlers.meal_suggestion import (
     DiscoverMealsCommandHandler,
@@ -21,6 +22,7 @@ from src.domain.model.meal_suggestion.meal_suggestion import (
     MealType,
     RecipeStep,
 )
+from src.domain.utils.timezone_utils import utc_now
 
 
 @pytest.mark.asyncio
@@ -352,7 +354,11 @@ async def test_generate_meal_recipes_handler_returns_three_recipes_for_three_sel
     )
 
     assert len(recipes) == 3
-    assert [r.meal_name for r in recipes] == ["Chicken Rice", "Grilled Salmon", "Beef Stew"]
+    assert [r.meal_name for r in recipes] == [
+        "Chicken Rice",
+        "Grilled Salmon",
+        "Beef Stew",
+    ]
     _, selected = service._recipe_generator.generate_selected_recipes.await_args.args
     assert [m["id"] for m in selected] == ["disc_1", "disc_2", "disc_3"]
     assert [m["calories"] for m in selected] == [500, 600, 550]
@@ -382,6 +388,159 @@ async def test_generate_meal_recipes_handler_legacy_meal_names_uses_phase2():
     assert [r.meal_name for r in recipes] == ["Grilled Chicken", "Pasta Primavera"]
     service._recipe_generator._phase2_generate_recipes.assert_awaited_once()
     service._recipe_generator.generate_selected_recipes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_meal_suggestion_returns_id_when_queue_publish_fails() -> None:
+    class _Meals:
+        def __init__(self) -> None:
+            self.saved = None
+
+        async def find_by_id(self, meal_id, projection=None):
+            del meal_id, projection
+            return None
+
+        async def save(self, meal):
+            self.saved = meal
+            return meal
+
+    class _Uow:
+        def __init__(self) -> None:
+            self.meals = _Meals()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            del exc_type, exc, traceback
+            return False
+
+    publisher = AsyncMock()
+    publisher.publish.side_effect = RuntimeError(
+        "Cloudflare Queue account, ID, and token are required"
+    )
+    uow = _Uow()
+    handler = SaveMealSuggestionCommandHandler(
+        uow=uow,
+        event_publisher=publisher,
+        environment="development",
+    )
+
+    meal_id = await handler.handle(
+        SaveMealSuggestionCommand(
+            user_id="11111111-1111-1111-1111-111111111111",
+            suggestion_id="sug-1",
+            name="Rice Bean Plate",
+            meal_type="lunch",
+            calories=500,
+            protein=30,
+            carbs=50,
+            fat=10,
+            fiber=8,
+            description="Lunch bowl",
+            estimated_cook_time_minutes=20,
+            ingredients=[IngredientItem(name="rice", amount=100, unit="g")],
+            instructions=["Cook"],
+            portion_multiplier=1,
+            meal_date=utc_now().date().isoformat(),
+        )
+    )
+
+    assert meal_id == uow.meals.saved.meal_id
+    publisher.publish.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_meal_suggestion_reuses_client_uuid() -> None:
+    client_id = "0ce027f4-679c-493f-a042-3099b8d976b2"
+
+    class _Meals:
+        async def find_by_id(self, meal_id, projection=None):
+            del meal_id, projection
+            return None
+
+        async def save(self, meal):
+            return meal
+
+    class _Uow:
+        def __init__(self) -> None:
+            self.meals = _Meals()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            del exc_type, exc, traceback
+            return False
+
+    handler = SaveMealSuggestionCommandHandler(uow=_Uow(), environment="development")
+    meal_id = await handler.handle(
+        SaveMealSuggestionCommand(
+            user_id="11111111-1111-1111-1111-111111111111",
+            suggestion_id="disc_not_a_uuid",
+            name="Rice Bean Plate",
+            meal_type="lunch",
+            calories=500,
+            protein=30,
+            carbs=50,
+            fat=10,
+            fiber=8,
+            description="Lunch bowl",
+            estimated_cook_time_minutes=20,
+            ingredients=[IngredientItem(name="rice", amount=100, unit="g")],
+            instructions=["Cook"],
+            portion_multiplier=1,
+            meal_date=utc_now().date().isoformat(),
+            meal_id=client_id,
+        )
+    )
+    assert meal_id == client_id
+
+
+@pytest.mark.asyncio
+async def test_save_meal_suggestion_reuses_uuid_suggestion_id() -> None:
+    suggestion_id = "9f6009fb-d51a-46e8-882a-1d03c7611863"
+
+    class _Meals:
+        async def find_by_id(self, meal_id, projection=None):
+            del meal_id, projection
+            return None
+
+        async def save(self, meal):
+            return meal
+
+    class _Uow:
+        def __init__(self) -> None:
+            self.meals = _Meals()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            del exc_type, exc, traceback
+            return False
+
+    handler = SaveMealSuggestionCommandHandler(uow=_Uow(), environment="development")
+    meal_id = await handler.handle(
+        SaveMealSuggestionCommand(
+            user_id="11111111-1111-1111-1111-111111111111",
+            suggestion_id=suggestion_id,
+            name="Rice Bean Plate",
+            meal_type="lunch",
+            calories=500,
+            protein=30,
+            carbs=50,
+            fat=10,
+            fiber=8,
+            description="Lunch bowl",
+            estimated_cook_time_minutes=20,
+            ingredients=[IngredientItem(name="rice", amount=100, unit="g")],
+            instructions=["Cook"],
+            portion_multiplier=1,
+            meal_date=utc_now().date().isoformat(),
+        )
+    )
+    assert meal_id == suggestion_id
 
 
 def test_save_meal_suggestion_handler_preserves_food_reference_id_in_items():

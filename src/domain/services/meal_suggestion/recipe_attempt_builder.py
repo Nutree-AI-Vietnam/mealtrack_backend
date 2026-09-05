@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 PARALLEL_SINGLE_MEAL_TOKENS = 1200  # was 4000; worst-case output ~600 tokens, 2x safety margin
 PARALLEL_SINGLE_MEAL_TIMEOUT = 20  # was 35
+# User-tapped /recipes: one meal, worth waiting. Discovery stays on the short timeout.
+SELECTED_RECIPE_ATTEMPT_TIMEOUT = 40
 
 
 async def attempt_recipe_generation(
@@ -44,6 +46,7 @@ async def attempt_recipe_generation(
     reject_on_scale_out_of_range: bool = True,
     fill_missing_steps: bool = False,
     recipe_schema: type | None = None,
+    timeout: float | None = None,
 ) -> MealSuggestion | None:
     """
     Single AI call to generate one recipe. Returns MealSuggestion on success, None on failure.
@@ -74,7 +77,7 @@ async def attempt_recipe_generation(
                 recipe_schema,
                 model_purpose,
             ),
-            timeout=PARALLEL_SINGLE_MEAL_TIMEOUT,
+            timeout=timeout or PARALLEL_SINGLE_MEAL_TIMEOUT,
         )
 
         ingredients: list[dict] = raw.get("ingredients", [])
@@ -207,6 +210,81 @@ def _log_ingredient_coverage(
             f"[PHASE-2-INGREDIENT-MISMATCH]{marker} index={index} | "
             f"missing={missing} | meal_name={meal_name}"
         )
+
+
+_FALLBACK_NAME_SKIP = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "baked",
+        "bowl",
+        "fried",
+        "garden",
+        "grilled",
+        "lemon",
+        "marinara",
+        "of",
+        "plate",
+        "power",
+        "skillet",
+        "steamed",
+        "teriyaki",
+        "the",
+        "with",
+    }
+)
+
+
+def fallback_selected_recipe(
+    selected: dict,
+    session: SuggestionSession,
+) -> MealSuggestion:
+    """Last-resort recipe so /recipes can still show ingredients and steps.
+
+    Calories and macros stay on the selected Discover meal. Do not recompute.
+    """
+    localized = str(selected.get("name") or selected.get("english_name") or "").strip()
+    english = str(selected.get("english_name") or selected.get("name") or localized).strip()
+    meal_name = localized or english or "Meal"
+    ingredients = [
+        Ingredient(name=name, amount=0, unit="")
+        for name in _ingredient_names_from_meal(english or meal_name)
+    ]
+    raw_steps = _fallback_recipe_steps(
+        meal_name,
+        [{"name": ing.name} for ing in ingredients],
+        session.cooking_time_minutes or 20,
+    )
+    return MealSuggestion(
+        id=f"sug_{uuid.uuid4().hex[:16]}",
+        session_id=session.id,
+        user_id=session.user_id,
+        meal_name=meal_name,
+        description="",
+        meal_type=MealType(session.meal_type),
+        macros=MacroEstimate(
+            calories=int(round(float(selected.get("calories") or session.target_calories or 0))),
+            protein=float(selected.get("protein") or session.protein_target or 0),
+            carbs=float(selected.get("carbs") or session.carbs_target or 0),
+            fat=float(selected.get("fat") or session.fat_target or 0),
+        ),
+        ingredients=ingredients,
+        recipe_steps=[RecipeStep(**step) for step in raw_steps],
+        prep_time_minutes=session.cooking_time_minutes or 20,
+        confidence_score=0.35,
+        cuisine_type="International",
+        english_name=english or meal_name,
+    )
+
+
+def _ingredient_names_from_meal(meal_name: str) -> list[str]:
+    tokens = [
+        token
+        for raw in meal_name.replace("-", " ").split()
+        if (token := raw.strip().title()) and raw.lower() not in _FALLBACK_NAME_SKIP
+    ]
+    return tokens or [meal_name.strip() or "Meal"]
 
 
 def _fallback_recipe_steps(

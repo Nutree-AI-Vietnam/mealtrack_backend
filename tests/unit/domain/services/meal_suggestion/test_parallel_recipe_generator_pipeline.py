@@ -134,6 +134,7 @@ async def test_selected_recipe_preserves_localized_name_and_english_identity():
     assert recipes[0].meal_name == "Com ga"
     assert recipes[0].english_name == "Chicken Rice"
     assert gen._generate_with_retry.await_args.args[1] == "Chicken Rice"
+    assert gen._generate_with_retry.await_args.kwargs["timeout"] == 40
 
 
 @pytest.mark.asyncio

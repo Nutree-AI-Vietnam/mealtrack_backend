@@ -285,6 +285,7 @@ async def save_meal_suggestion(
         emoji=body.emoji,
         language=language,
         image_url=body.image_url,
+        meal_id=body.meal_id,
     )
 
     meal_id = await event_bus.send(command)
@@ -296,7 +297,9 @@ async def save_meal_suggestion(
         try:
             await UnsplashImageAdapter.trigger_download(body.unsplash_download_location)
         except Exception as exc:
-            logger.debug("unsplash_download.trigger_failed error=%s", type(exc).__name__)
+            logger.debug(
+                "unsplash_download.trigger_failed error=%s", type(exc).__name__
+            )
 
     meal = await event_bus.send(GetMealByIdQuery(meal_id=meal_id, user_id=user_id))
     display_projections = await load_food_reference_display_projections(

@@ -1,0 +1,38 @@
+[
+  {
+    "source_key": "coach.allergies.hard-constraint.vi",
+    "title": "Dị ứng là ràng buộc bắt buộc",
+    "locale": "vi",
+    "canonical_uri": "https://nutree.app/knowledge/allergies",
+    "content_version": "1",
+    "reviewer_id": "nutree-nutrition",
+    "safety_tags": [],
+    "topic_tags": ["allergies", "safety"],
+    "audience_tags": ["general"],
+    "content": "Nutree coi dị ứng thực phẩm là ràng buộc bắt buộc. Coach không được gợi ý món, nước sốt hoặc nguyên liệu nằm trong danh sách dị ứng của người dùng, kể cả khi họ yêu cầu trong hội thoại.\n\nNếu gợi ý có thể chứa chất gây dị ứng, hãy nói Nutree không thể gợi ý món đó và đề xuất lựa chọn an toàn từ dữ liệu Nutree. Không đưa lời khuyên điều trị y tế cho phản ứng dị ứng."
+  },
+  {
+    "source_key": "coach.calories.authoritative.vi",
+    "title": "Calo và macro của Nutree là giá trị chuẩn",
+    "locale": "vi",
+    "canonical_uri": "https://nutree.app/knowledge/authoritative-nutrition",
+    "content_version": "1",
+    "reviewer_id": "nutree-nutrition",
+    "safety_tags": [],
+    "topic_tags": ["calories", "macros"],
+    "audience_tags": ["general"],
+    "content": "Calo, đạm, carbo và fat hiển thị trong Nutree do backend tính. Coach phải dùng lượng còn lại và đã ăn trong ngữ cảnh người dùng, không được tính lại.\n\nNếu thiếu một giá trị, hãy hỏi lại thay vì bịa số. Số ngày còn lại trong tuần có tính hôm nay."
+  },
+  {
+    "source_key": "coach.read-only.vi",
+    "title": "Coach giải thích và gợi ý, không thay đổi dữ liệu",
+    "locale": "vi",
+    "canonical_uri": "https://nutree.app/knowledge/coach-read-only",
+    "content_version": "1",
+    "reviewer_id": "nutree-nutrition",
+    "safety_tags": [],
+    "topic_tags": ["coach", "logging"],
+    "audience_tags": ["general"],
+    "content": "Nutree Coach có thể giải thích ngân sách còn lại, bữa đã ghi và gợi ý món. Coach không thể ghi bữa, đổi mục tiêu calo, sửa hồ sơ hay đổi gói đăng ký.\n\nKhi gợi ý bữa tiếp theo, hãy bảo người dùng chạm thẻ trong ứng dụng để xem công thức và tự ghi bữa."
+  }
+]

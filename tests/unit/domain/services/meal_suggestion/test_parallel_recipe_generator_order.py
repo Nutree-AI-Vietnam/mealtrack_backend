@@ -333,6 +333,7 @@ async def test_selected_recipes_retry_failed_slot_and_return_full_batch_in_order
         session: SuggestionSession,
         reject_on_scale_out_of_range: bool = True,
         fill_missing_steps: bool = False,
+        timeout: float | None = None,
     ) -> Optional[MealSuggestion]:
         calls[meal_name] = calls.get(meal_name, 0) + 1
         if meal_name == "Lemon Salmon Bowl" and calls[meal_name] == 1:
@@ -357,7 +358,7 @@ async def test_selected_recipes_retry_failed_slot_and_return_full_batch_in_order
 
 
 @pytest.mark.asyncio
-async def test_selected_recipes_raise_when_any_slot_still_fails():
+async def test_selected_recipes_use_fallback_when_slot_still_fails():
     selected_meals = [
         {
             "id": "disc_a",
@@ -389,6 +390,7 @@ async def test_selected_recipes_raise_when_any_slot_still_fails():
         session: SuggestionSession,
         reject_on_scale_out_of_range: bool = True,
         fill_missing_steps: bool = False,
+        timeout: float | None = None,
     ) -> Optional[MealSuggestion]:
         if meal_name == "Lemon Salmon Bowl":
             return None
@@ -402,11 +404,17 @@ async def test_selected_recipes_raise_when_any_slot_still_fails():
             ".build_recipe_details_prompt",
             return_value="mock-prompt",
         ):
-            with pytest.raises(RuntimeError) as exc:
-                await generator.generate_selected_recipes(session, selected_meals)
+            results = await generator.generate_selected_recipes(session, selected_meals)
 
-    assert "Failed to generate all selected recipes" in str(exc.value)
-    assert "disc_b" in str(exc.value)
+    assert [r.meal_name for r in results] == [
+        "Ginger Chicken Rice",
+        "Lemon Salmon Bowl",
+    ]
+    fallback = results[1]
+    assert fallback.macros.calories == 520
+    assert fallback.macros.protein == 38
+    assert any(ing.name.lower() == "salmon" for ing in fallback.ingredients)
+    assert fallback.recipe_steps
 
 
 @pytest.mark.asyncio

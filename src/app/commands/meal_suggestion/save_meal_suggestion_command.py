@@ -51,6 +51,7 @@ class SaveMealSuggestionCommand(Command):
     emoji: str | None = None
     language: str = "en"  # ISO 639-1 code; used to persist meal_translation on save
     image_url: str | None = None
+    meal_id: str | None = None
 
     def __post_init__(self):
         """Validate command data."""

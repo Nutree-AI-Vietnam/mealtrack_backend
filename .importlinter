@@ -219,6 +219,13 @@ ignore_imports =
     src.api.dependencies.meal_image_cache -> src.infra.repositories.pgvector_meal_image_cache_repository
     src.api.dependencies.meal_image_cache -> src.infra.repositories.pgvector_meal_image_cache_repository_async
     src.api.dependencies.meal_image_cache -> src.infra.services.pending_image_enqueue_service
+    src.api.dependencies.chat -> src.infra.adapters.chat_knowledge_retrieval_adapter
+    src.api.dependencies.chat -> src.infra.adapters.openai_chat_completion_adapter
+    src.api.dependencies.chat -> src.infra.adapters.openai_chat_embedding_adapter
+    src.api.dependencies.chat -> src.infra.config.settings
+    src.api.dependencies.chat -> src.infra.database.uow_async
+    src.api.dependencies.chat -> src.infra.services.ai.openai_prompt_cache_policy
+    src.api.dependencies.chat -> src.infra.services.chat_concurrency
     src.api.main -> src.infra.config.settings
     src.api.main -> src.infra.database.config
     src.api.main -> src.infra.database.config_async
@@ -251,7 +258,9 @@ ignore_imports =
     src.api.routes.v1.meals_manual_text -> src.infra.event_bus
     src.api.routes.v1.meals_manual_text -> src.infra.services.durable_write_service
     src.api.routes.v1.manual_meal_durable -> src.infra.services.durable_write_service
+    src.api.routes.v1.capabilities -> src.infra.services.chat_schema
     src.api.routes.v1.capabilities -> src.infra.services.durable_write_service
+    src.api.routes.v1.chat -> src.infra.services.durable_write_service
     src.api.routes.v1.meals_read -> src.infra.event_bus
     src.api.routes.v1.monitoring -> src.infra.cache.metrics
     src.api.routes.v1.movement -> src.infra.event_bus
