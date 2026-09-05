@@ -8,9 +8,12 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Run database migrations unless disabled or handled by the production pre-deploy.
-if [ "${ENV:-}" = "production" ] || [ "${ENVIRONMENT:-}" = "production" ]; then
-    log "⏭️ Skipping migrations (pre-deploy handles this)"
+# Schema upgrades on Render are owned by GitHub Actions (migrate.yml).
+# Skip auto-migrate on Render (any ENV) and when ENV is production.
+if [ "${RENDER:-}" = "true" ]; then
+    log "⏭️ Skipping migrations (Render; use GitHub Actions migrate workflow)"
+elif [ "${ENV:-}" = "production" ] || [ "${ENVIRONMENT:-}" = "production" ]; then
+    log "⏭️ Skipping migrations (production ENV; use GitHub Actions migrate workflow)"
 else
     AUTO_MIGRATE="${AUTO_MIGRATE:-true}"
     AUTO_MIGRATE_NORMALIZED="$(printf '%s' "$AUTO_MIGRATE" | tr '[:upper:]' '[:lower:]')"

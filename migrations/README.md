@@ -52,11 +52,16 @@ If this is a new database:
 python scripts/init_postgres_db.py
 ```
 
-## Production Deployment
+## Production / Staging Deployment
 
-For production, use the deployment runner which includes retry logic:
+Do **not** run migrations from Render pre-deploy. Use the GitHub Actions
+**Migrate Database** workflow (see `docs/runbooks/schema-migration.md`).
+
+Locally or break-glass (direct Neon URL):
 
 ```bash
+export DATABASE_URL_DIRECT='postgresql://...'
+python migrations/cli.py status
 python migrations/run.py
 ```
 

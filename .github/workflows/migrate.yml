@@ -1,0 +1,73 @@
+name: Migrate Database
+
+# Separate schema pipeline — not coupled to Render deploys or release-pipeline.
+# Code rollback stays safe because Alembic only runs when this workflow is dispatched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target GitHub Environment (staging | production)
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      dry_run:
+        description: If true, only print migration status (no upgrade)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    name: Migrate (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      PYTHON_VERSION: "3.13.2"
+      DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔐 Require DATABASE_URL_DIRECT
+        run: |
+          if [ -z "${DATABASE_URL_DIRECT}" ]; then
+            echo "::error::DATABASE_URL_DIRECT is empty. Set it on the GitHub Environment '${{ inputs.environment }}' (Neon direct host, not pooler)."
+            exit 1
+          fi
+
+      - name: 🧭 Migration status (dry run)
+        if: ${{ inputs.dry_run }}
+        run: python migrations/cli.py status
+
+      - name: ⏩ Apply migrations
+        if: ${{ !inputs.dry_run }}
+        run: python migrations/run.py
+
+      - name: 📊 Summary
+        if: always()
+        run: |
+          {
+            echo "## Database migrate"
+            echo ""
+            echo "- Environment: \`${{ inputs.environment }}\`"
+            echo "- Mode: \`$( [ '${{ inputs.dry_run }}' = 'true' ] && echo dry_run/status || echo apply )\`"
+            echo "- Outcome: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
