@@ -22,9 +22,6 @@ class MealAnalyzeGraphState(TypedDict, total=False):
     reference_validated: bool
     reference_validation_pending: bool
     meal_id: str
-    cache_invalidated: bool
-    meal_value_insight_scheduled: bool
-    meal_value_insight_source: str
     completed: bool
     result: Any
     error: str | None

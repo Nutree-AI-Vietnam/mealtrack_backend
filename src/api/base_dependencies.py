@@ -47,7 +47,6 @@ from src.infra.repositories.catalog_recipe_repository_async import (
 from src.infra.repositories.food_reference_repository_async import (
     AsyncFoodReferenceRepository,
 )
-from src.infra.services.firebase_service import FirebaseService
 
 if TYPE_CHECKING:
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
@@ -96,12 +95,16 @@ async def initialize_cache_layer() -> None:
         monitor=_cache_monitor,
         enabled=settings.CACHE_ENABLED,
     )
+    _register_local_insight_hook()
 
 
 async def shutdown_cache_layer() -> None:
     """Gracefully close Redis connections."""
     global _redis_client, _cache_service
 
+    from src.app.events.meal.meal_events import register_local_insight_hook
+
+    register_local_insight_hook(None)
     if _cache_service:
         _cache_service = None
     if _redis_client:
@@ -173,6 +176,16 @@ def get_food_cache_service() -> FoodCacheServicePort:
 def get_cache_service() -> CacheService | None:
     """Expose cache service for dependency injection."""
     return _cache_service
+
+
+def _register_local_insight_hook() -> None:
+    """Write meal insights to Docker Redis when the Worker cannot reach it."""
+    from src.api.services.local_meal_insight_cache import LocalMealInsightWriter
+    from src.app.events.meal.meal_events import register_local_insight_hook
+
+    register_local_insight_hook(
+        LocalMealInsightWriter(get_cache_service, get_ai_model_manager).schedule
+    )
 
 
 def get_cache_monitor() -> CacheMonitor:
@@ -334,10 +347,10 @@ def get_parse_text_settings() -> dict[str, bool]:
     current_settings = get_settings()
     return {
         "structured_reference_enabled": bool(
-            getattr(current_settings, "PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED", False)
+            getattr(current_settings, "PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED", True)
         ),
         "pure_ai_mode": bool(
-            getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", True)
+            getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", False)
         ),
     }
 
@@ -370,32 +383,6 @@ def get_async_food_reference_repository():
 # Backward-compatible aliases for older callers; runtime receives async adapter.
 get_food_reference_repository = get_async_food_reference_repository
 get_barcode_product_repository = get_food_reference_repository
-
-
-# Firebase Service (singleton pattern - create once and reuse)
-_firebase_service = None
-
-
-def get_firebase_service() -> FirebaseService:
-    """
-    Get the Firebase service instance (singleton).
-
-    Returns:
-        FirebaseService: The Firebase service
-    """
-    global _firebase_service
-    if _firebase_service is None:
-        _firebase_service = FirebaseService()
-    return _firebase_service
-
-
-def get_daily_context_precompute_service():
-    """Get daily context precompute service for notification rescheduling."""
-    from src.infra.services.daily_context_precompute_service import (
-        DailyContextPrecomputeService,
-    )
-
-    return DailyContextPrecomputeService()
 
 
 # Phase 06: Meal Suggestion Dependencies
@@ -630,6 +617,7 @@ def get_nutrition_lookup_service():
             ingredient_nutrition_resolver=get_ingredient_nutrition_resolver(),
             generation_service=MealGenerationService(),
             redis_client=_redis_client,
+            cache_service=get_cache_service(),
         )
     return _nutrition_lookup_service
 

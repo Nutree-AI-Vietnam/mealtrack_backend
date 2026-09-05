@@ -7,8 +7,9 @@ facade, with safe low-cardinality attributes and no user/meal/resource IDs.
 from __future__ import annotations
 
 from contextlib import nullcontext
+from datetime import date
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -79,12 +80,11 @@ async def test_manual_meal_save_emits_db_and_cache_latency_metrics():
     mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
     mock_uow.__aexit__ = AsyncMock(return_value=False)
 
-    mock_cache = AsyncMock()
-    mock_cache.after_meal_write = AsyncMock()
-
-    handler = CreateManualMealCommandHandler(uow=mock_uow, cache_invalidation=mock_cache)
+    handler = CreateManualMealCommandHandler(
+        uow=mock_uow, event_publisher=MagicMock(publish=AsyncMock())
+    )
     # Patch _process_meal so we don't need a real DB / domain object
-    handler._process_meal = AsyncMock(return_value=(MagicMock(), "2026-06-13"))
+    handler._process_meal = AsyncMock(return_value=(MagicMock(), date(2026, 6, 13)))
 
     # Minimal command — exact fields don't matter since _process_meal is mocked
     command = MagicMock()
@@ -93,14 +93,20 @@ async def test_manual_meal_save_emits_db_and_cache_latency_metrics():
     await handler.handle(command)
 
     dist_names = [c[1] for c in rec.calls if c[0] == "distribution_metric"]
-    assert "meal.manual_save.db_ms" in dist_names, f"missing db_ms metric, got {dist_names}"
-    assert "meal.manual_save.cache_ms" in dist_names, f"missing cache_ms metric, got {dist_names}"
+    assert "meal.manual_save.db_ms" in dist_names, (
+        f"missing db_ms metric, got {dist_names}"
+    )
+    assert "meal.manual_save.cache_ms" in dist_names, (
+        f"missing cache_ms metric, got {dist_names}"
+    )
 
     # No high-cardinality IDs in attributes
     for call in rec.calls:
         if call[0] == "distribution_metric":
             attrs = call[4] or {}
-            assert "user_id" not in attrs, "user_id must not appear in metric attributes"
+            assert "user_id" not in attrs, (
+                "user_id must not appear in metric attributes"
+            )
             assert "meal_id" not in attrs
 
 
@@ -149,8 +155,7 @@ async def test_ai_all_models_fail_emits_provider_failure_log_event():
         )
 
     failure_events = [
-        c for c in rec.calls
-        if c[0] == "log_event" and c[2] == "ai.provider.failure"
+        c for c in rec.calls if c[0] == "log_event" and c[2] == "ai.provider.failure"
     ]
     assert len(failure_events) >= 1, "expected ai.provider.failure log_event"
 
@@ -160,65 +165,3 @@ async def test_ai_all_models_fail_emits_provider_failure_log_event():
         attrs = ev[3] or {}
         assert "user_id" not in attrs
         assert "model" not in attrs  # model name per-request is high-cardinality
-
-
-# ---------------------------------------------------------------------------
-# Affiliate outbox permanent failure — increment_metric("affiliate.outbox.failure")
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_affiliate_outbox_permanent_failure_emits_metric():
-    from src.infra.services.affiliate_outbox_dispatch_service import (
-        dispatch_affiliate_outbox,
-    )
-
-    rec = _Rec()
-    set_observability_connector_for_test(rec)
-
-    mock_row = MagicMock()
-    mock_row.id = "row-1"
-    mock_row.event_id = "evt-1"
-    mock_row.event_type = "purchase"
-    mock_row.payload = {}
-
-    mock_repo = AsyncMock()
-    mock_repo.claim_pending = AsyncMock(return_value=[mock_row])
-    mock_repo.mark_sent = AsyncMock()
-    mock_repo.mark_failed = AsyncMock(return_value=True)  # is_terminal=True
-
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.begin = MagicMock(return_value=mock_session)
-
-    mock_adapter = MagicMock()
-    mock_adapter.send_event = AsyncMock(return_value=False)  # force failure
-
-    with (
-        patch(
-            "src.infra.services.affiliate_outbox_dispatch_service.AsyncSessionLocal",
-            return_value=mock_session,
-        ),
-        patch(
-            "src.infra.services.affiliate_outbox_dispatch_service.AffiliateEventOutboxRepository",
-            return_value=mock_repo,
-        ),
-        patch(
-            "src.infra.services.affiliate_outbox_dispatch_service.AffiliateServiceAdapter",
-            return_value=mock_adapter,
-        ),
-    ):
-        await dispatch_affiliate_outbox()
-
-    failure_metrics = [
-        c for c in rec.calls
-        if c[0] == "increment_metric" and c[1] == "affiliate.outbox.failure"
-    ]
-    assert len(failure_metrics) >= 1, "expected affiliate.outbox.failure metric"
-
-    for m in failure_metrics:
-        attrs = m[4] or {}
-        assert "row_id" not in attrs, "row_id is high-cardinality, must not be a metric tag"
-        assert "event_id" not in attrs, "event_id is high-cardinality"
-        assert attrs.get("status") == "permanent"

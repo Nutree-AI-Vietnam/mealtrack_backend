@@ -9,6 +9,7 @@ class FakeUserRepository(UserRepositoryPort):
     def __init__(self):
         self.users = {}  # id -> user
         self.profiles = {}  # user_id -> profile
+        self.weekly_auto_adjust = {}  # user_id str -> bool
 
     async def save(self, user: UserDomainModel) -> UserDomainModel:
         self.users[user.id] = user
@@ -74,3 +75,11 @@ class FakeUserRepository(UserRepositoryPort):
         """Update user's language preference."""
         if user_id in self.users:
             self.users[user_id].language_code = language_code
+
+    async def get_weekly_auto_adjust(self, user_id: UUID) -> bool:
+        return self.weekly_auto_adjust.get(str(user_id), True)
+
+    async def update_user_weekly_auto_adjust(
+        self, user_id: UUID, enabled: bool
+    ) -> None:
+        self.weekly_auto_adjust[str(user_id)] = enabled

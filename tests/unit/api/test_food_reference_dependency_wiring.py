@@ -15,6 +15,7 @@ def test_nutrition_singletons_use_async_food_reference_adapter(monkeypatch):
             ingredient_nutrition_resolver,
             generation_service,
             redis_client=None,
+            cache_service=None,
         ):
             self.food_ref_repo = food_ref_repo
             self.ingredient_nutrition_resolver = ingredient_nutrition_resolver

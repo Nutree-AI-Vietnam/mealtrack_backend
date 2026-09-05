@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: mealtrack-backend
+    runtime: docker
+    # Schema upgrades are owned by GitHub Actions (.github/workflows/migrate.yml).
+    # Do not re-add a preDeployCommand that runs migrations — that blocks safe
+    # code-image rollback (new schema + old image).
+    # Stage 2 Neon pooler cutover — set these in the Render dashboard (do not
+    # commit secrets). See docs/runbooks/neon-pooler-cutover.md
+    #   APP_DATABASE_URL     = Neon pooled URL (...-pooler....neon.tech...)
+    #   DB_CONNECTION_MODE   = neon_pooler
+    #   DATABASE_URL_DIRECT  = Neon direct URL (break-glass / local migrate only)
+    #   UVICORN_WORKERS      = 4..6 canary after pooler is healthy
+    envVars:
+      - key: DB_CONNECTION_MODE
+        sync: false
+      - key: APP_DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_DIRECT
+        sync: false
+      - key: UVICORN_WORKERS
+        sync: false

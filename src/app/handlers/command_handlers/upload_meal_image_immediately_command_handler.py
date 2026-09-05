@@ -10,8 +10,8 @@ from uuid import uuid4
 from src.api.exceptions import ValidationException
 from src.app.commands.meal import UploadMealImageImmediatelyCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.graphs.meal_analyze.runtime import MealAnalyzeRuntime
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 from src.app.services.meal_analyze_workflow import MealAnalyzeWorkflow
 from src.domain.exceptions.ai_exceptions import (
     AIVisionError,
@@ -27,9 +27,10 @@ from src.domain.parsers.vision_response_parser import (
     VisionResponseParser as GPTResponseParser,
 )
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.ports.cache_port import CachePort
 from src.domain.ports.image_store_port import ImageStorePort
-from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.meal_analysis.fast_path_policy import MealAnalyzeFastPathPolicy
 from src.domain.services.meal_analysis.meal_translation_service import (
@@ -58,30 +59,28 @@ class UploadMealImageImmediatelyHandler(
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
-        event_bus: Any,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_bus: Any = None,
         image_store: ImageStorePort = None,
         vision_service: VisionAIServicePort = None,
         gpt_parser: GPTResponseParser = None,
         meal_translation_service: MealTranslationService | None = None,
         fast_path_policy: MealAnalyzeFastPathPolicy | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
-        meal_value_insight_task_manager: Any | None = None,
-        meal_value_insight_cache: CachePort | None = None,
-        meal_value_insight_ai_manager: MealInsightAIPort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
+        uow_factory=None,
     ):
         self.uow = uow
+        self.uow_factory = uow_factory if uow_factory is not None else (lambda: uow)
         self.event_bus = event_bus
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.environment = environment
         self.image_store = image_store
         self.vision_service = vision_service
         self.gpt_parser = gpt_parser
         self.meal_translation_service = meal_translation_service
-        self.meal_value_insight_task_manager = meal_value_insight_task_manager
-        self.meal_value_insight_cache = meal_value_insight_cache
-        self.meal_value_insight_ai_manager = meal_value_insight_ai_manager
         self.meal_analyze_workflow = meal_analyze_workflow
         self.meal_analyze_graph_enabled = meal_analyze_graph_enabled
         if fast_path_policy is None:
@@ -174,8 +173,13 @@ class UploadMealImageImmediatelyHandler(
         """Reject incomplete same-call locale output before meal persistence."""
         if language == "en" or not isinstance(result, dict):
             return
-        structured_data = result.get("structured_data") if isinstance(result, dict) else None
-        if isinstance(structured_data, dict) and structured_data.get("is_food") is False:
+        structured_data = (
+            result.get("structured_data") if isinstance(result, dict) else None
+        )
+        if (
+            isinstance(structured_data, dict)
+            and structured_data.get("is_food") is False
+        ):
             return
         parse_meal_response_localization(
             structured_data,
@@ -323,7 +327,7 @@ class UploadMealImageImmediatelyHandler(
         )
 
         # Step 6: NOW create meal record with verified image URL
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             user_timezone = await uow.users.get_user_timezone(command.user_id)
             if not user_timezone or not is_valid_timezone(user_timezone):
                 user_timezone = "UTC"
@@ -363,8 +367,17 @@ class UploadMealImageImmediatelyHandler(
             saved_meal = await uow.meals.save(meal)
             await uow.commit()
 
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_meal_write(command.user_id, meal_date)
+        if meal_date is not None:
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                language=command.language,
+                event_bus=self.event_bus,
+                source="upload_meal",
+            )
 
         total_elapsed = time.time() - start
         logger.info(
@@ -400,11 +413,9 @@ class UploadMealImageImmediatelyHandler(
                     image_store=self.image_store,
                     vision_service=self.vision_service,
                     gpt_parser=self.gpt_parser,
-                    uow=self.uow,
-                    cache_invalidation=self.cache_invalidation,
-                    meal_value_insight_task_manager=self.meal_value_insight_task_manager,
-                    meal_value_insight_cache=self.meal_value_insight_cache,
-                    meal_value_insight_ai_manager=self.meal_value_insight_ai_manager,
+                    uow=self.uow_factory(),
+                    event_publisher=self.event_publisher,
+                    environment=self.environment,
                     event_bus=self.event_bus,
                     meal_translation_service=self.meal_translation_service,
                     max_vision_attempts=max(1, self._fast_path_policy.max_attempts),

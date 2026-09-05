@@ -8,6 +8,7 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 
 from src.domain.utils.timezone_utils import utc_now
+
 from ..common.auth_enums import AuthProviderEnum
 
 
@@ -145,9 +146,15 @@ class UserDeleteResponse(BaseModel):
     deleted: bool = Field(..., description="Whether deletion was successful")
     firebase_deleted: bool = Field(
         True,
-        description="Whether the Firebase auth account was deleted; false means an orphaned account remains and a retry is pending",
+        description=(
+            "Whether the Firebase auth account was deleted; false means an "
+            "orphaned account remains and a retry is pending"
+        ),
     )
     tokens_revoked: bool = Field(
         True, description="Whether Firebase refresh tokens were revoked"
+    )
+    firebase_cleanup_queued: bool = Field(
+        False, description="Whether Firebase revoke/delete work was queued"
     )
     message: str = Field(..., description="Operation result message")

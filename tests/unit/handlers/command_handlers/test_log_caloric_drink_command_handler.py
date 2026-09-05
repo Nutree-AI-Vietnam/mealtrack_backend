@@ -1,4 +1,5 @@
 from datetime import date
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -46,7 +47,9 @@ class _Uow:
 
 @pytest.mark.asyncio
 async def test_log_caloric_drink_response_exposes_calories_alias():
-    handler = LogCaloricDrinkCommandHandler(uow=_Uow())
+    handler = LogCaloricDrinkCommandHandler(
+        uow=_Uow(), event_publisher=MagicMock(publish=AsyncMock())
+    )
 
     result = await handler.handle(
         LogCaloricDrinkCommand(
@@ -67,7 +70,9 @@ async def test_log_caloric_drink_response_exposes_calories_alias():
 @pytest.mark.asyncio
 async def test_log_caloric_drink_credits_hydration_weight_and_localizes_name():
     uow = _Uow()
-    handler = LogCaloricDrinkCommandHandler(uow=uow)
+    handler = LogCaloricDrinkCommandHandler(
+        uow=uow, event_publisher=MagicMock(publish=AsyncMock())
+    )
 
     result = await handler.handle(
         LogCaloricDrinkCommand(
@@ -86,3 +91,33 @@ async def test_log_caloric_drink_credits_hydration_weight_and_localizes_name():
     assert result["credited_ml"] == 333  # hydration-weighted amount stored
     assert result["drink_name"] == "Nước ép"
     assert result["meal_id"] == uow.hydration_entries.saved.id  # backward-compat alias
+
+
+@pytest.mark.asyncio
+async def test_log_caloric_drink_publishes_integration_event_post_commit():
+
+    event_publisher = AsyncMock()
+    uow = _Uow()
+    handler = LogCaloricDrinkCommandHandler(
+        uow=uow, event_publisher=event_publisher, environment="staging"
+    )
+
+    await handler.handle(
+        LogCaloricDrinkCommand(
+            user_id="user-1",
+            drink_id="coke",
+            volume_ml=330,
+            target_date=date(2026, 5, 26),
+        )
+    )
+
+    event_publisher.publish.assert_awaited_once()
+    payload = event_publisher.publish.await_args.args[0]
+    assert payload["event_type"] == "hydration.caloric_created.v1"
+    assert payload["environment"] == "staging"
+    assert payload["aggregate_type"] == "hydration"
+    assert payload["aggregate_id"] == uow.hydration_entries.saved.id
+    assert payload["data"] == {
+        "user_id": "user-1",
+        "log_date": "2026-05-26",
+    }

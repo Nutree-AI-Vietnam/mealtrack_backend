@@ -3,17 +3,13 @@ Global pytest configuration and fixtures.
 """
 
 from collections.abc import Generator
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import and_, create_engine, func, or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, noload, selectinload, sessionmaker
-from tests.fixtures.database.test_config import (
-    create_test_engine,
-    get_test_database_url,
-)
-from tests.fixtures.mock_image_store import MockImageStore
 
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.model.meal_projection import MealProjection
@@ -48,6 +44,11 @@ from src.infra.mappers.user_mapper import (
     UserProfileMapper,
     build_profile_preference_entries,
 )
+from tests.fixtures.database.test_config import (
+    create_test_engine,
+    get_test_database_url,
+)
+from tests.fixtures.mock_image_store import MockImageStore
 
 TEST_MEAL_PROJECTION_OPTS: dict = {
     MealProjection.MACROS_ONLY: (
@@ -213,10 +214,10 @@ class TestMealRepository:
         user_timezone: str | None = None,
         projection: MealProjection = MealProjection.FULL,
     ) -> list[Meal]:
-        tz = get_zone_info(user_timezone) if user_timezone else timezone.utc
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
         start_dt = datetime.combine(
             date_obj, datetime.min.time(), tzinfo=tz
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         end_dt = start_dt + timedelta(days=1)
         query = (
             self.db.query(MealORM)
@@ -243,14 +244,14 @@ class TestMealRepository:
         user_timezone: str | None = None,
         projection: MealProjection = MealProjection.FULL,
     ) -> list[Meal]:
-        tz = get_zone_info(user_timezone) if user_timezone else timezone.utc
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
         start_dt = datetime.combine(
             start_date, datetime.min.time(), tzinfo=tz
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         end_dt = (
             datetime.combine(end_date, datetime.min.time(), tzinfo=tz)
             + timedelta(days=1)
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         rows = (
             self.db.query(MealORM)
             .options(*TEST_MEAL_PROJECTION_OPTS[projection])
@@ -267,10 +268,10 @@ class TestMealRepository:
     def sum_hydration_ml_for_date(
         self, date_obj: date, user_id: str, user_timezone: str | None = None
     ) -> int:
-        tz = get_zone_info(user_timezone) if user_timezone else timezone.utc
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
         start_dt = datetime.combine(
             date_obj, datetime.min.time(), tzinfo=tz
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         end_dt = start_dt + timedelta(days=1)
         return (
             self.db.query(func.coalesce(func.sum(MealORM.quantity), 0))
@@ -291,14 +292,14 @@ class TestMealRepository:
         end_date: date,
         user_timezone: str | None = None,
     ) -> dict[date, int]:
-        tz = get_zone_info(user_timezone) if user_timezone else timezone.utc
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
         start_dt = datetime.combine(
             start_date, datetime.min.time(), tzinfo=tz
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         end_dt = (
             datetime.combine(end_date, datetime.min.time(), tzinfo=tz)
             + timedelta(days=1)
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         date_expr = func.date(MealORM.created_at)
         rows = (
             self.db.query(date_expr, func.coalesce(func.sum(MealORM.quantity), 0))
@@ -326,14 +327,14 @@ class TestMealRepository:
         end_date: date,
         user_timezone: str | None = None,
     ) -> dict[date, int]:
-        tz = get_zone_info(user_timezone) if user_timezone else timezone.utc
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
         start_dt = datetime.combine(
             start_date, datetime.min.time(), tzinfo=tz
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         end_dt = (
             datetime.combine(end_date, datetime.min.time(), tzinfo=tz)
             + timedelta(days=1)
-        ).astimezone(timezone.utc)
+        ).astimezone(UTC)
         date_expr = func.date(MealORM.created_at)
         rows = (
             self.db.query(date_expr, func.count())
@@ -528,6 +529,22 @@ class TestUserRepository:
         )
         return entity.timezone if entity else None
 
+    def get_weekly_auto_adjust(self, user_id) -> bool:
+        entity = (
+            self.db.query(User)
+            .filter(User.id == str(user_id), User.is_active.is_(True))
+            .first()
+        )
+        if entity is None:
+            return True
+        return bool(getattr(entity, "weekly_auto_adjust", True))
+
+    def update_user_weekly_auto_adjust(self, user_id, enabled: bool) -> None:
+        self.db.query(User).filter(User.id == str(user_id)).update(
+            {"weekly_auto_adjust": enabled}
+        )
+        self.db.commit()
+
 
 class AsyncTestMealRepository:
     """Explicit async test facade for legacy sync-session handler tests."""
@@ -602,6 +619,12 @@ class AsyncTestUserRepository:
     async def get_user_timezone(self, *args, **kwargs):
         return self._repo.get_user_timezone(*args, **kwargs)
 
+    async def get_weekly_auto_adjust(self, *args, **kwargs):
+        return self._repo.get_weekly_auto_adjust(*args, **kwargs)
+
+    async def update_user_weekly_auto_adjust(self, *args, **kwargs):
+        return self._repo.update_user_weekly_auto_adjust(*args, **kwargs)
+
 
 class TestUnitOfWork:
     """Test-friendly UoW that doesn't close the session on exit.
@@ -645,6 +668,7 @@ def _is_db_available() -> bool:
     """Check if the test database is available."""
     try:
         from sqlalchemy import create_engine, text
+
         from tests.fixtures.database.test_config import get_test_database_url
 
         url = get_test_database_url()
@@ -955,12 +979,14 @@ def event_bus(
 
     # Create test UoW using the test session (doesn't close session on exit)
     test_uow = TestUnitOfWork(session=test_session)
+    event_publisher = MagicMock(publish=AsyncMock())
 
     # Register meal edit command handlers
     event_bus.register_handler(
         EditMealCommand,
         EditMealCommandHandler(
             uow=test_uow,  # Use test UoW with test session
+            event_publisher=event_publisher,
         ),
     )
 
@@ -968,6 +994,7 @@ def event_bus(
         AddCustomIngredientCommand,
         AddCustomIngredientCommandHandler(
             uow=test_uow,  # Use test UoW with test session
+            event_publisher=event_publisher,
         ),
     )
 
@@ -976,7 +1003,9 @@ def event_bus(
 
     event_bus.register_handler(
         DeleteMealCommand,
-        DeleteMealCommandHandler(uow=test_uow),  # Use test UoW
+        DeleteMealCommandHandler(
+            uow=test_uow, event_publisher=event_publisher
+        ),  # Use test UoW
     )
 
     event_bus.register_handler(
@@ -987,6 +1016,7 @@ def event_bus(
             image_store=mock_image_store,
             vision_service=mock_vision_service,
             gpt_parser=gpt_parser,
+            event_publisher=event_publisher,
         ),
     )
 
@@ -1000,7 +1030,9 @@ def event_bus(
 
     # Register user handlers
     # Note: Handlers now use UnitOfWork internally instead of receiving db in constructor
-    save_user_handler = SaveUserOnboardingCommandHandler(cache_service=None)
+    save_user_handler = SaveUserOnboardingCommandHandler(
+        uow=test_uow, event_publisher=event_publisher
+    )
     event_bus.register_handler(SaveUserOnboardingCommand, save_user_handler)
 
     # GetUserProfileQueryHandler resolves dependencies through the async UoW.
@@ -1011,7 +1043,10 @@ def event_bus(
         DeleteUserCommandHandler,
     )
 
-    event_bus.register_handler(DeleteUserCommand, DeleteUserCommandHandler())
+    event_bus.register_handler(
+        DeleteUserCommand,
+        DeleteUserCommandHandler(event_publisher=event_publisher),
+    )
 
     return event_bus
 

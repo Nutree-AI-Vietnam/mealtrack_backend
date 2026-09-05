@@ -36,6 +36,8 @@ async def get_daily_activities(
     Returns a unified list of activities including:
     - Meal activities with nutrition data
     - Workout activities (placeholder for future implementation)
+    - Hydration entries: localized ``title`` plus optional ``drink_id`` for
+      catalog matching independent of the stored display name
 
     Activities are sorted by timestamp in descending order (newest first).
 

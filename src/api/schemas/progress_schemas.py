@@ -73,3 +73,39 @@ class JourneyProgressResponse(BaseModel):
     breakdown: JourneyProgressBreakdown
     latest_action: JourneyProgressAction | None = None
     is_week_over_budget: bool = False
+
+
+class ProgressSummaryDay(BaseModel):
+    """One calendar day in GET /v1/progress/summary."""
+
+    date: str  # YYYY-MM-DD
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+    fiber_g: float = 0.0
+    fiber_target_g: float = 0.0
+    calories: float
+    target_calories: float
+    target_source: str  # adjusted_live | snapshot | base
+    burned_calories: float
+    hydration_ml: int
+    hydration_goal_ml: int
+    protein_target_g: float
+    meal_count: int
+    logged_status: str  # full | partial | none
+    is_cheat_day: bool
+    nrf_quality: float = 0.0
+    nrf_coverage: int = 0
+    iron_mg: float | None = None
+    potassium_mg: float | None = None
+    sodium_mg: float | None = None
+    added_sugar_g: float | None = None
+
+
+class ProgressSummaryResponse(BaseModel):
+    """Server-defined window plus one row per served day."""
+
+    effective_start: str
+    effective_end: str
+    cap_days: int
+    days: list[ProgressSummaryDay]

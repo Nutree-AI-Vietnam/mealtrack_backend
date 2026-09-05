@@ -31,6 +31,7 @@ from src.app.commands.user import (
     DeleteUserCommand,
     UpdateLanguageCommand,
     UpdateTimezoneCommand,
+    UpdateWeeklyAutoAdjustCommand,
 )
 from src.app.commands.user.sync_user_command import (
     SyncUserCommand,
@@ -41,6 +42,9 @@ from src.app.queries.user.get_user_by_firebase_uid_query import (
 )
 from src.app.queries.user.get_user_onboarding_status_query import (
     GetUserOnboardingStatusQuery,
+)
+from src.app.queries.user.get_weekly_auto_adjust_query import (
+    GetWeeklyAutoAdjustQuery,
 )
 from src.domain.exceptions.firebase_identity_exceptions import (
     FirebaseIdentityConflictError,
@@ -61,6 +65,12 @@ class UpdateTimezoneRequest(BaseModel):
     """Request body for timezone update."""
 
     timezone: str
+
+
+class UpdateWeeklyAutoAdjustRequest(BaseModel):
+    """Request body for leftover-split daily adjustment."""
+
+    enabled: bool
 
 
 @router.post("/sync", response_model=UserSyncResponse)
@@ -279,18 +289,42 @@ async def update_language(
     return result
 
 
+@router.get("/weekly-auto-adjust")
+async def get_weekly_auto_adjust(
+    user_id: str = Depends(get_current_user_id),
+    event_bus: EventBus = Depends(get_configured_event_bus),
+):
+    """Return whether leftover calories auto-adjust today's target."""
+    result = await event_bus.send(GetWeeklyAutoAdjustQuery(user_id=user_id))
+    return result
+
+
+@router.patch("/weekly-auto-adjust")
+async def update_weekly_auto_adjust(
+    request: UpdateWeeklyAutoAdjustRequest,
+    user_id: str = Depends(get_current_user_id),
+    event_bus: EventBus = Depends(get_configured_event_bus),
+):
+    """Enable or disable leftover-split daily targets. Enabled by default."""
+    command = UpdateWeeklyAutoAdjustCommand(
+        user_id=user_id, enabled=request.enabled
+    )
+    result = await event_bus.send(command)
+    return result
+
+
 @router.delete("/firebase/{firebase_uid}", response_model=UserDeleteResponse)
 async def delete_user_account(
     firebase_uid: str = Depends(verify_firebase_uid_ownership),
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """
-    Delete user account (soft delete in DB, hard delete in Firebase).
+    Delete user account and queue Firebase cleanup.
 
     Performs complete account deletion:
     - Soft deletes user in database (sets is_active=False)
     - Anonymizes user data for GDPR compliance
-    - Hard deletes user from Firebase Authentication
+    - Queues Firebase token revocation and account deletion after the SQL commit
 
     This action cannot be undone. All user data will be anonymized and
     the account will be marked as inactive.

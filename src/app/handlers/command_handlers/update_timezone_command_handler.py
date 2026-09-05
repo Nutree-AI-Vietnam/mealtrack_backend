@@ -5,11 +5,15 @@ from typing import Any
 
 from src.app.commands.user.update_timezone_command import UpdateTimezoneCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.user.user_profile_updated_event import (
+    UserProfileUpdatedEvent,
+)
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.utils.timezone_utils import is_valid_timezone, normalize_timezone
 from src.infra.database.uow_async import AsyncUnitOfWork
-from src.infra.services.daily_context_precompute_service import (
-    DailyContextPrecomputeService,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +22,19 @@ logger = logging.getLogger(__name__)
 class UpdateTimezoneCommandHandler(EventHandler[UpdateTimezoneCommand, dict[str, Any]]):
     """Handler for updating user timezone."""
 
-    def __init__(self, precompute_service: DailyContextPrecomputeService | None = None):
-        self.precompute_service = precompute_service
+    def __init__(
+        self,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
+        **kwargs: Any,
+    ):
+        self.event_publisher = event_publisher
+        self.environment = environment
 
     def set_dependencies(self, **kwargs):
         """Set dependencies for dependency injection."""
-        if "precompute_service" in kwargs:
-            self.precompute_service = kwargs["precompute_service"]
+        if "event_publisher" in kwargs:
+            self.event_publisher = kwargs["event_publisher"]
 
     async def handle(self, command: UpdateTimezoneCommand) -> dict[str, Any]:
         """Handle timezone update command. Skips DB write if timezone is unchanged."""
@@ -60,22 +70,14 @@ class UpdateTimezoneCommandHandler(EventHandler[UpdateTimezoneCommand, dict[str,
 
         logger.info(f"Updated timezone for user {command.user_id}: {canonical_tz}")
 
-        if self.precompute_service:
-            try:
-                scheduled_count = (
-                    await self.precompute_service.reschedule_user_notifications(
-                        str(command.user_id)
-                    )
-                )
-                logger.info(
-                    "Rescheduled %s notifications after timezone update for user %s",
-                    scheduled_count,
-                    command.user_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to reschedule notifications after timezone update: %s",
-                    exc,
-                )
+        event = UserProfileUpdatedEvent(
+            environment=self.environment,
+            aggregate_id=str(command.user_id),
+            data={
+                "user_id": str(command.user_id),
+                "timezone": canonical_tz,
+            },
+        )
+        await require_event_publisher(self.event_publisher).publish(event.to_payload())
 
         return {"success": True, "timezone": canonical_tz}

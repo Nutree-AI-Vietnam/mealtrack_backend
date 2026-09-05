@@ -4,10 +4,14 @@ High-level cache service that handles serialization and metrics.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -21,6 +25,7 @@ from src.infra.cache.redis_client import RedisClient
 _LEGACY_OFFSET_Z_RE = re.compile(r"([+-]\d{2}:\d{2})Z")
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 class CacheService(CachePort):
@@ -30,7 +35,7 @@ class CacheService(CachePort):
         self,
         redis_client: RedisClient,
         default_ttl: int = 3600,
-        monitor: Optional[CacheMonitor] = None,
+        monitor: CacheMonitor | None = None,
         enabled: bool = True,
     ):
         self.redis = redis_client
@@ -38,7 +43,7 @@ class CacheService(CachePort):
         self.monitor = monitor
         self.enabled = enabled
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """Implement CachePort.get — delegates to get_json."""
         return await self.get_json(key)
 
@@ -46,7 +51,7 @@ class CacheService(CachePort):
         """Implement CachePort.set — delegates to set_json."""
         await self.set_json(key, value, ttl_seconds)
 
-    async def get_json(self, key: str) -> Optional[Any]:
+    async def get_json(self, key: str) -> Any | None:
         """Retrieve and deserialize a cached JSON payload."""
         if not self.enabled:
             return None
@@ -68,8 +73,28 @@ class CacheService(CachePort):
         except json.JSONDecodeError:
             return None
 
-    async def set_json(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
-        """Serialize and cache a value."""
+    async def set_json(
+        self,
+        key: str,
+        value: Any,
+        ttl: int | None = None,
+        *,
+        revision_field: str | None = None,
+    ) -> bool:
+        """Write a cached value asynchronously."""
+        return await self.set_json_now(
+            key, value, ttl, revision_field=revision_field
+        )
+
+    async def set_json_now(
+        self,
+        key: str,
+        value: Any,
+        ttl: int | None = None,
+        *,
+        revision_field: str | None = None,
+    ) -> bool:
+        """Write directly to Redis from a background cache job."""
         if not self.enabled:
             return False
 
@@ -79,14 +104,26 @@ class CacheService(CachePort):
         else:
             payload = json.dumps(value, default=_json_serializer)
 
-        return await self.redis.set(key, payload, ttl or self.default_ttl)
+        effective_ttl = ttl or self.default_ttl
+        if revision_field and isinstance(value, dict):
+            revision = value.get(revision_field)
+            if isinstance(revision, int) and not isinstance(revision, bool):
+                return await self.redis.set_if_revision_newer(
+                    key, payload, revision, effective_ttl
+                )
+        return await self.redis.set(key, payload, effective_ttl)
+
+    @staticmethod
+    def _key_hash(key: str) -> str:
+        """Keep Redis keys out of task names and operational logs."""
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     async def get_or_set(
         self,
         key: str,
         factory: Callable[[], Awaitable[T]],
-        ttl: Optional[int] = None,
-    ) -> Optional[T]:
+        ttl: int | None = None,
+    ) -> T | None:
         """
         Cache-aside helper that fetches data from cache or executes the factory.
         """
@@ -101,12 +138,24 @@ class CacheService(CachePort):
 
     async def invalidate(self, key: str) -> bool:
         """Remove a cached value."""
+        return await self.invalidate_now(key)
+
+    async def invalidate_now(self, key: str) -> bool:
+        """Remove a cached value directly."""
         if not self.enabled:
             return False
-        return await self.redis.delete(key)
+        deleted, _ = await asyncio.gather(
+            self.redis.delete(key),
+            self.redis.delete(f"{key}:__revision"),
+        )
+        return bool(deleted)
 
     async def invalidate_pattern(self, pattern: str) -> int:
-        """Remove all cache keys matching a pattern."""
+        """Remove all cache keys matching a glob pattern."""
+        return await self.invalidate_pattern_now(pattern)
+
+    async def invalidate_pattern_now(self, pattern: str) -> int:
+        """Remove matching keys from inside a background cache job."""
         if not self.enabled:
             return 0
         return await self.redis.delete_pattern(pattern)

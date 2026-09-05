@@ -24,6 +24,7 @@ class NutritionORM(Base, SecondaryEntityMixin):
     fat = Column(Float, default=0, nullable=False)
     fiber = Column(Float, default=0, nullable=False)
     sugar = Column(Float, default=0, nullable=False)
+    micros = Column(JSON, nullable=True)
 
     # Relationships
     food_items = relationship(

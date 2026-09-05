@@ -12,6 +12,10 @@ from src.domain.services.hydration_catalog_service import (
     localized_name_for_catalog_name,
 )
 from src.domain.services.meal_calorie_service import effective_meal_calories
+from src.domain.services.meal_nrf_fields import (
+    hydration_entry_nrf_fields,
+    meal_nrf_fields,
+)
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
     get_zone_info,
@@ -49,6 +53,7 @@ def _build_meal_activity(meal: Meal, language: str = "en") -> dict[str, Any]:
         "status": meal.status.value if meal.status else "unknown",
         "image_url": image_url,
         "source": meal.source,
+        **meal_nrf_fields(meal),
     }
 
 
@@ -73,6 +78,8 @@ def _build_hydration_activity(meal: Meal, language: str = "en") -> dict[str, Any
         "status": "completed",
         "image_url": None,
         "source": meal.source or "hydration",
+        **meal_nrf_fields(meal),
+        "meal_id": meal.meal_id,
     }
 
 
@@ -81,9 +88,14 @@ def _build_hydration_entry_activity(entry, language: str = "en") -> dict[str, An
         "id": entry.id,
         "type": "hydration",
         "timestamp": format_iso_utc(entry.logged_at),
-        "title": localized_name_for_catalog_name(entry.drink_name_snapshot, language)
+        "title": localized_name_for_catalog_name(
+            entry.drink_name_snapshot,
+            language,
+            drink_id=entry.drink_id,
+        )
         or entry.drink_name_snapshot
         or "Water",
+        "drink_id": entry.drink_id,
         "emoji": entry.emoji_snapshot or "💧",
         "meal_type": "hydration",
         "calories": round(entry.calories, 1),
@@ -97,6 +109,8 @@ def _build_hydration_entry_activity(entry, language: str = "en") -> dict[str, An
         "status": "completed",
         "image_url": entry.image_url,
         "source": entry.source,
+        **hydration_entry_nrf_fields(entry),
+        "meal_id": entry.legacy_meal_id,
     }
 
 

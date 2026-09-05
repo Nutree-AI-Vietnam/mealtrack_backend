@@ -67,6 +67,41 @@ await event_bus.publish(MealCreatedEvent(...))           # fire-and-forget
 
 Background subscriber tasks are owned by `BackgroundTaskManager` (`src/infra/event_bus/background_task_manager.py`), which replaces bare `asyncio.create_task` in the event bus and routes; it exposes `spawn`, `drain`, and `shutdown` so subscriber failures are observable and app shutdown can cancel outstanding tasks cleanly.
 
+Process-local cron jobs have been completely eliminated (see `docs/decisions/ADR-cron-jobs-removal.md`). Cache invalidation, Firebase account cleanup, and subscription lifecycle dispatch are modeled as versioned `IntegrationEvent` payloads published to Cloudflare Queue and processed asynchronously by `nutreeai_async`. Affiliate attribution remains a separate optional integration.
+
+### Durable Integration Events
+
+Mutations (Meal, Hydration, Movement, User Profile/Settings, Cheat Day, Saved Suggestions, Affiliate) use direct asynchronous event dispatch:
+
+1. Handlers commit their authoritative database transaction, and then publish one versioned `IntegrationEvent` envelope directly to the required environment-specific Cloudflare Queue.
+2. The backend always injects a Queue publisher. Missing account, queue-name, or token configuration is an integration error; mutations do not silently skip publication.
+3. The Cloudflare Worker (`nutreeai_async`) validates the common envelope and its in-process router invokes every registered handler for that event type (e.g. cache invalidation, external API calls).
+4. The Worker ACKs only after all handlers succeed. A failure retries the message with backoff and eventually routes it to the DLQ.
+
+This MVP accepts the post-commit Queue loss window for hydration. If the SQL
+transaction commits and the direct publish fails before Cloudflare accepts the
+message, the hydration row remains durable but the integration event can be
+lost. There is no automatic transactional fallback for that hydration publish.
+
+Handlers are intentionally in code for the MVP. This path does not use HMAC,
+local-vs-Cloudflare dual routing, percentage canaries, cache-value writes, D1
+delivery state, or dynamic subscriptions. Separate staging and production
+deployments use separate ingress queues and environment values.
+
+The Worker has cache-invalidation, insight, recommendation, Firebase cleanup,
+and subscription-receipt handlers. Notification and email handlers are
+intentionally out of scope. Live staging proof remains pending.
+
+Queries may still read Redis as an optimization on the read path. Existing
+cache-aside population behavior is unchanged; the Worker owns deletes for the
+generic compatibility cache path. Meal value insights use the same committed
+`meal.created.v1` / `meal.updated.v1` event as cache invalidation. When the
+event contains its bounded `data.insight` snapshot, the Worker fans it out to
+the cache invalidation handler and the meal insight business handler. The
+business handler owns AI generation and writes the validated result to
+`meal_insight:{meal_id}` before ACK, while the backend insight reader remains
+cache-only.
+
 ### Repository Pattern
 Async SQLAlchemy repositories are accessed through `AsyncUnitOfWork`. The UoW owns commit/rollback boundaries; repositories flush only when generated IDs or relationship state are needed.
 
@@ -229,9 +264,9 @@ new scans must not create them.
 2. Route creates `UploadMealImageImmediatelyCommand`.
 3. `EventBus.send()` calls `UploadMealImageImmediatelyHandler`.
 4. Handler uploads to Cloudinary, runs `VisionAIService`, parses nutrition, and persists a READY `Meal(source="scanner")` with **no hydration side effects**.
-5. If `AI_MEAL_ANALYZE_GRAPH_ENABLED=true`, the handler enters `MealAnalyzeWorkflow`; the app-layer graph owns image acquisition, vision parsing, persistence, cache invalidation, and meal value insight scheduling.
+5. If `AI_MEAL_ANALYZE_GRAPH_ENABLED=true`, the handler enters `MealAnalyzeWorkflow`; the app-layer graph owns image acquisition, vision parsing, persistence, generic cache invalidation publication, and Worker insight-event publication.
 6. If `AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED=true`, optional reference validation may run after meal creation. Provider timeout or mismatch keeps the original meal result.
-7. Meal value insight scheduling is best-effort after persistence and cache invalidation. It stores only safe state fields such as `meal_value_insight_scheduled` and never blocks the READY meal response.
+7. Meal value insight publication is best-effort after persistence. The Worker generates and caches the result under `meal_insight:{meal_id}`; the backend only reads that cache and never blocks the READY meal response on AI completion.
 8. Handler returns `DetailedMealResponse` synchronously.
 
 `POST /v1/meals/scan-by-url` follows the same synchronous workflow after
@@ -254,7 +289,7 @@ downloading Cloudinary bytes. Graph nodes must not import provider SDKs,
 2. The plan-level response is compact: it includes only the selected slots, with ingredients for each selected meal. Alternatives, scores, and full meal-detail fields stay out of the summary payload.
 3. `GET /v1/meal-recommendations/{plan_id}/slots/{slot_id}` hydrates one selected slot and its alternatives when the client needs drill-down data.
 4. `swap`, `log`, and `skip` return the changed-slot detail shape so the mobile client can patch its cached plan without reloading everything.
-5. Recommendation analytics are scheduled through `BackgroundTaskManager` when available. Catalog meals are read from the process-local snapshot service with revision-aware TTL, single-flight refresh, and last-good fallback. Meal-history affinity is projected from aggregate linked ingredient buckets instead of loading the full meal graph, and logging a recommended meal reuses the already loaded selected catalog projection without fabricating image data.
+5. Recommendation analytics are scheduled through `BackgroundTaskManager` when available. Catalog meals are read from the process-local snapshot service with revision-aware TTL, single-flight refresh, and last-good fallback. Meal-history affinity is projected from aggregate linked ingredient buckets instead of loading the full meal graph, and logging a recommended meal reuses the already loaded selected catalog projection without fabricating image data. Translation persistence and remaining-slot recalculation are post-commit secondary jobs. The current plan-creation endpoint still returns generated content synchronously; moving generation itself to a durable job requires a status/accepted-response contract.
 6. Candidate rows retain `seen_at` and `retired_at`. Swap locks only the requested slot, consumes unseen active candidates, and when exhausted retires that slot's inactive pool before inserting five deterministic fresh alternatives. Replenishment never mutates another slot or changes the response contract; daily jobs remain out of scope.
 
 ---

@@ -4,13 +4,17 @@ SaveMealSuggestionCommandHandler - Handler for saving meal suggestions as regula
 
 import logging
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from src.app.commands.meal_suggestion import IngredientItem, SaveMealSuggestionCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.meal.meal_events import publish_meal_event
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.utils.timezone_utils import (
     noon_utc_for_date,
     resolve_user_timezone_async,
@@ -33,11 +37,16 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
-        cache_invalidation: CacheInvalidationService | None = None,
+        uow: AsyncUnitOfWorkPort | None = None,
+        uow_factory: Any = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
+        environment: str = "development",
     ):
-        self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.event_publisher = event_publisher
+        self.event_bus = event_bus
+        self.environment = environment
 
     async def handle(self, command: SaveMealSuggestionCommand) -> str:
         """
@@ -54,7 +63,7 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
         meal_date = datetime.strptime(command.meal_date, "%Y-%m-%d").date()
         if meal_date != now.date():
             # Past/future date: use noon to avoid date-boundary issues
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user_tz = await resolve_user_timezone_async(command.user_id, uow)
             meal_datetime = noon_utc_for_date(meal_date, user_tz)
         else:
@@ -115,11 +124,19 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
             emoji=command.emoji,
         )
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             saved_meal = await uow.meals.save(meal)
 
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_meal_write(command.user_id, meal_date)
+        await publish_meal_event(
+            self.event_publisher,
+            saved_meal,
+            event_type="created",
+            environment=self.environment,
+            meal_date=meal_date,
+            language=command.language or "en",
+            event_bus=self.event_bus,
+            source="saved_meal_suggestion",
+        )
 
         logger.info(
             f"Saved meal suggestion {command.suggestion_id} as meal {saved_meal.meal_id} "

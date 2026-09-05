@@ -10,6 +10,7 @@ from .base import BaseMixin, PrimaryEntityMixin, SecondaryEntityMixin, Timestamp
 
 # Cheat days
 from .cheat_day.cheat_day import CheatDayORM
+from .daily_target_snapshot import DailyTargetSnapshotORM
 
 # Enums
 from .enums import (
@@ -30,8 +31,8 @@ from .feature_flag import FeatureFlag
 from .food_reference_model import FoodReferenceModel
 from .food_reference_nutrient import FoodReferenceNutrientModel
 from .food_reference_serving_size import FoodReferenceServingSizeModel
-from .serving_phrase_translation import ServingPhraseTranslationModel
 from .hydration_entry import HydrationEntryORM
+from .meal.favorite_meal import FavoriteMealORM
 from .meal.food_item_translation_model import FoodItemTranslationORM
 
 # Meal models
@@ -51,7 +52,7 @@ from .meal_recommendation import (
 from .meal_write_operation import MealWriteOperationORM
 
 # Notification models
-from .notification import NotificationORM, NotificationPreferencesORM, UserFcmTokenORM
+from .notification import NotificationPreferencesORM
 from .nutrition.food_item import FoodItemORM
 
 # Nutrition models
@@ -66,6 +67,7 @@ from .pending_meal_image_resolution import PendingMealImageResolutionModel
 from .saved_suggestion import SavedSuggestionModel
 from .saved_suggestion_item import SavedSuggestionItemModel
 from .saved_suggestion_step import SavedSuggestionStepModel
+from .serving_phrase_translation import ServingPhraseTranslationModel
 from .subscription import Subscription
 from .user.body_fat_visual_profile import BodyFatVisualProfile
 from .user.profile import UserProfile
@@ -81,16 +83,10 @@ from .weekly.weekly_macro_budget import WeeklyMacroBudgetORM
 BarcodeProductModel = FoodReferenceModel
 
 # AI Handshake guest trial quota
-# Affiliate outbox
-from .affiliate_event_outbox import AffiliateEventOutbox
 from .ai_handshake_guest_trial_quota import AiHandshakeGuestTrialQuota
 
 # Durable mutation replay
 from .durable_write_record import DurableWriteRecordORM
-
-# Referral system
-# Email log
-from .email_log import EmailLog
 
 # Movement tracking
 from .movement_entry import MovementEntryORM
@@ -137,14 +133,13 @@ __all__ = [
     "MealORM",
     "MealImageORM",
     "MealInstructionStepORM",
+    "FavoriteMealORM",
     "MealWriteOperationORM",
     "MealTranslationORM",
     "FoodItemTranslationORM",
     # Test models
     # Notification models
-    "NotificationORM",
     "NotificationPreferencesORM",
-    "UserFcmTokenORM",
     # Feature flags
     "FeatureFlag",
     # Saved suggestions
@@ -155,6 +150,7 @@ __all__ = [
     "WeeklyMacroBudgetORM",
     # Cheat days
     "CheatDayORM",
+    "DailyTargetSnapshotORM",
     # Food reference (evolved from barcode_products)
     "FoodReferenceModel",
     "FoodReferenceNutrientModel",
@@ -182,13 +178,9 @@ __all__ = [
     "DurableWriteRecordORM",
     # Movement tracking
     "MovementEntryORM",
-    # Email log
-    "EmailLog",
     # Promo codes
     "PromoCode",
     "PromoCodeRedemption",
-    # Affiliate outbox
-    "AffiliateEventOutbox",
     # AI Handshake guest trial quota
     "AiHandshakeGuestTrialQuota",
     "WebFunnelLead",

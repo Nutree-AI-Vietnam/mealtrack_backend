@@ -111,6 +111,29 @@ async def test_update_user_timezone(async_db_session):
 
 
 @pytest.mark.asyncio
+async def test_weekly_auto_adjust_defaults_enabled(async_db_session):
+    user = await _insert_user(async_db_session, "firebase-uid-t09")
+    user_id = uuid.UUID(user.id)
+
+    repo = AsyncUserRepository(async_db_session)
+    enabled = await repo.get_weekly_auto_adjust(user_id)
+    assert enabled is True
+
+
+@pytest.mark.asyncio
+async def test_update_weekly_auto_adjust(async_db_session):
+    user = await _insert_user(async_db_session, "firebase-uid-t10")
+    user_id = uuid.UUID(user.id)
+
+    repo = AsyncUserRepository(async_db_session)
+    await repo.update_user_weekly_auto_adjust(user_id, False)
+    await async_db_session.flush()
+
+    enabled = await repo.get_weekly_auto_adjust(user_id)
+    assert enabled is False
+
+
+@pytest.mark.asyncio
 async def test_update_profile_reuses_existing_preference_rows(async_db_session):
     user = await _insert_user(async_db_session, "firebase-uid-t08")
     repo = AsyncUserRepository(async_db_session)

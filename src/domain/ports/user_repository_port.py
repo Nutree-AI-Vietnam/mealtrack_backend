@@ -80,3 +80,15 @@ class UserRepositoryPort(ABC):
     async def update_user_language(self, user_id: UUID, language_code: str) -> None:
         """Update user's preferred language."""
         pass
+
+    @abstractmethod
+    async def get_weekly_auto_adjust(self, user_id: UUID) -> bool:
+        """Return whether leftover-split daily adjustment is enabled."""
+        pass
+
+    @abstractmethod
+    async def update_user_weekly_auto_adjust(
+        self, user_id: UUID, enabled: bool
+    ) -> None:
+        """Persist leftover-split daily adjustment preference."""
+        pass

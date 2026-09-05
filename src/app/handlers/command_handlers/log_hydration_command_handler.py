@@ -1,15 +1,20 @@
 """Command handler for logging a hydration (non-caloric) drink entry."""
 
 import logging
+from typing import Any
 from uuid import uuid4
 
 from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.hydration.hydration_created_event import HydrationCreatedEvent
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.nutrition import Nutrition
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.services.hydration_catalog_service import find_by_id, localized_name
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
@@ -27,11 +32,14 @@ logger = logging.getLogger(__name__)
 class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
     def __init__(
         self,
-        uow: AsyncUnitOfWork,
-        cache_invalidation: CacheInvalidationService | None = None,
+        uow: AsyncUnitOfWork | None = None,
+        uow_factory: Any = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
     ):
-        self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        self.uow_factory: Any = uow_factory or (lambda: uow)
+        self.environment = environment
+        self.event_publisher = event_publisher
 
     async def handle(self, cmd: LogHydrationCommand) -> dict:
         drink = find_by_id(cmd.drink_id)
@@ -40,7 +48,7 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
         if drink.category != DrinkCategory.HYDRATION:
             raise ValueError("Drink is not a hydration drink")
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             now = utc_now()
             if cmd.target_date:
                 user_tz = await resolve_user_timezone_async(
@@ -116,10 +124,19 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                     legacy_meal_id=saved.meal_id,
                 )
             )
+            integration_event = HydrationCreatedEvent(
+                environment=self.environment,
+                aggregate_id=hydration_entry.id,
+            )
 
-        # Synchronous invalidation guarantees Redis is cleared before the response returns
-        if self.cache_invalidation:
-            await self.cache_invalidation.after_hydration_write(cmd.user_id, log_date)
+        await require_event_publisher(self.event_publisher).publish(
+            integration_event.to_payload()
+        )
+        logger.info(
+            "Published hydration integration event event_id=%s aggregate_id=%s",
+            integration_event.event_id,
+            integration_event.aggregate_id,
+        )
 
         kcal = round(saved.nutrition.calories if saved.nutrition else 0.0, 1)
         return {

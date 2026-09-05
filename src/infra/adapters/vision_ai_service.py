@@ -1,12 +1,9 @@
 import asyncio
 import json
 import logging
-from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
-
-from PIL import Image
 
 from src.domain.exceptions.ai_exceptions import (
     AIOutputValidationError,
@@ -26,6 +23,7 @@ from src.domain.strategies.meal_analysis_strategy import (
     IngredientIdentificationStrategy,
     MealAnalysisStrategy,
 )
+from src.domain.utils.image_compression import compress_image
 from src.infra.adapters.ai_json_utils import extract_json
 from src.infra.config.settings import get_settings
 from src.infra.services.ai.ai_model_manager import AIModelManager, ModelPurpose
@@ -52,34 +50,8 @@ class VisionAIService(VisionAIServicePort):
         )
 
     def _compress_image(self, image_bytes: bytes) -> bytes:
-        """Compress image for faster upload."""
-        try:
-            img: Image.Image = Image.open(BytesIO(image_bytes))
-            w, h = img.size
-
-            if (
-                img.format == "JPEG"
-                and max(w, h) <= 768
-                and len(image_bytes) < 200 * 1024
-            ):  # already small JPEG
-                return image_bytes
-
-            if max(w, h) > 768:
-                ratio = 768 / max(w, h)
-                img = img.resize(
-                    (int(w * ratio), int(h * ratio)),
-                    Image.Resampling.LANCZOS,
-                )
-
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-
-            buf = BytesIO()
-            img.save(buf, format="JPEG", quality=85)
-            return buf.getvalue()
-        except Exception as exc:
-            logger.warning("Image compression failed, using original: %s", exc)
-            return image_bytes
+        """Fallback compression and format normalization using shared utility."""
+        return compress_image(image_bytes)
 
     async def analyze_with_strategy(
         self, image_bytes: bytes, strategy: MealAnalysisStrategy

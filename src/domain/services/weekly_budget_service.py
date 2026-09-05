@@ -15,6 +15,7 @@ from src.domain.constants import WeeklyBudgetConstants
 from src.domain.model.meal import MealStatus
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly import WeeklyMacroBudget
+from src.domain.services.daily_target_snapshot_service import maybe_write_today_snapshot
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
 
@@ -57,6 +58,11 @@ class WeeklyEffectivePreload:
 
 class WeeklyBudgetService:
     """Service for weekly budget calculations."""
+
+    @staticmethod
+    def auto_adjust_enabled(value: object) -> bool:
+        """Treat missing/unknown as enabled. Only explicit False disables."""
+        return value is not False
 
     @staticmethod
     async def calculate_weekly_consumed_async(
@@ -341,6 +347,7 @@ class WeeklyBudgetService:
         consumed_total: dict[str, float],
         consumed_before_today: dict[str, float],
         consumed_for_redistribution: dict[str, float],
+        auto_adjust: bool = True,
     ) -> EffectiveAdjustedResult:
         """Shared effective-adjusted policy for async and batch-preloaded callers."""
         calc = WeeklyBudgetService
@@ -359,6 +366,23 @@ class WeeklyBudgetService:
                 and past_days_count >= 3
             ):
                 show_logging_prompt = True
+
+        if not calc.auto_adjust_enabled(auto_adjust):
+            return EffectiveAdjustedResult(
+                adjusted=AdjustedDailyTargets(
+                    calories=round(base_daily_cal, 1),
+                    carbs=round(base_daily_carbs, 1),
+                    fat=round(base_daily_fat, 1),
+                    protein=round(base_daily_protein, 1),
+                    bmr_floor_active=False,
+                    remaining_days=remaining_days,
+                ),
+                consumed_before_today=consumed_before_today,
+                consumed_total=consumed_total,
+                logged_past_days=logged_past_days,
+                skipped_days=skipped_days,
+                show_logging_prompt=False,
+            )
 
         redistribution_logged_days = max(0, logged_past_days - past_cheat_count)
 
@@ -436,6 +460,7 @@ class WeeklyBudgetService:
         user_timezone: str = "UTC",
         cheat_dates: list[date] | None = None,
         weekly_preload: WeeklyEffectivePreload | None = None,
+        auto_adjust: bool = True,
     ) -> EffectiveAdjustedResult:
         """Async version of get_effective_adjusted_daily for AsyncUnitOfWork."""
         calc = WeeklyBudgetService
@@ -449,7 +474,7 @@ class WeeklyBudgetService:
             all_cheat_dates = cheat_dates
 
         if weekly_preload is not None:
-            return calc._apply_effective_adjusted_policy(
+            result = calc._apply_effective_adjusted_policy(
                 weekly_budget=weekly_budget,
                 week_start=week_start,
                 target_date=target_date,
@@ -463,7 +488,12 @@ class WeeklyBudgetService:
                 consumed_total=weekly_preload.consumed_total,
                 consumed_before_today=weekly_preload.consumed_before_today,
                 consumed_for_redistribution=weekly_preload.consumed_for_redistribution,
+                auto_adjust=auto_adjust,
             )
+            await maybe_write_today_snapshot(
+                uow, user_id, target_date, result.adjusted.calories, user_timezone
+            )
+            return result
 
         past_end = target_date - timedelta(days=1)
         past_days_count = (target_date - week_start).days
@@ -503,7 +533,7 @@ class WeeklyBudgetService:
         else:
             consumed_for_redistribution = consumed_before_today
 
-        return calc._apply_effective_adjusted_policy(
+        result = calc._apply_effective_adjusted_policy(
             weekly_budget=weekly_budget,
             week_start=week_start,
             target_date=target_date,
@@ -517,7 +547,12 @@ class WeeklyBudgetService:
             consumed_total=consumed_total,
             consumed_before_today=consumed_before_today,
             consumed_for_redistribution=consumed_for_redistribution,
+            auto_adjust=auto_adjust,
         )
+        await maybe_write_today_snapshot(
+            uow, user_id, target_date, result.adjusted.calories, user_timezone
+        )
+        return result
 
     @staticmethod
     def calculate_adjusted_daily(

@@ -143,6 +143,16 @@ def test_food_reference_nutrition_projection_uses_normalized_serving_rows():
     assert result.servings[0].milliliters == 15
 
 
+def test_food_reference_nutrition_projection_copies_extra_nutrients():
+    model = _make_food_reference_model("spinach")
+    model.extra_nutrients = {"iron_mg": 2.7, "sodium_mg": 79}
+    model.nutrient_rows = []
+
+    result = food_reference_model_to_nutrition_projection(model)
+
+    assert result.extra_nutrients == {"iron_mg": 2.7, "sodium_mg": 79}
+
+
 def test_food_reference_nutrition_projection_supports_legacy_serving_json():
     model = _make_food_reference_model("rice")
     model.serving_size_rows = []

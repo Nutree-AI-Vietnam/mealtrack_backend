@@ -480,6 +480,38 @@ def test_parse_text_exposes_portion_density_for_confirmed_save():
     assert item["source_snapshot"]["canonical_name"] == "Pork rib"
 
 
+def test_parse_text_snapshot_keeps_ai_portion_micros():
+    handler = ParseMealTextHandler(meal_generation_service=_FakeMealGenerationService())
+    items = handler._to_flat_parse_text_items(
+        {
+            "items": [
+                {
+                    "name": "Beef steak",
+                    "lookup_name": "Beef steak",
+                    "quantity": 150,
+                    "unit": "g",
+                    "quantity_g": 150,
+                    "macros": {
+                        "protein_g": 39,
+                        "carbs_g": 0,
+                        "fat_g": 15,
+                        "fiber_g": 0,
+                        "sugar_g": 0,
+                    },
+                    "micros": {"iron": 3.0, "sodium": 90, "potassium": 450},
+                }
+            ]
+        },
+        {"items": []},
+    )
+    handler._attach_per_100g_snapshot(items[0])
+
+    extras = items[0]["source_snapshot"]["extra_nutrients"]
+    assert extras["iron"] == pytest.approx(2.0)
+    assert extras["sodium"] == pytest.approx(60)
+    assert extras["potassium"] == pytest.approx(300)
+
+
 @pytest.mark.asyncio
 async def test_parse_text_keeps_local_reference_beside_fatsecret():
     async def local_lookup(names):

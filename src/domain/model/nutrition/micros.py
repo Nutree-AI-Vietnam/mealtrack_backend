@@ -32,6 +32,10 @@ class Micros:
     zinc: Optional[float] = None
     selenium: Optional[float] = None
 
+    # NRF limit nutrients, stored with micros (grams)
+    saturated_fat: Optional[float] = None
+    added_sugar: Optional[float] = None
+
     def __post_init__(self):
         """Validate all micronutrients are non-negative."""
         for field_name, value in self.__dict__.items():

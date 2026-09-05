@@ -6,13 +6,11 @@ import time
 from typing import Any
 from uuid import uuid4
 
-import httpx
-
 from src.api.exceptions import ValidationException
 from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.graphs.meal_analyze.runtime import MealAnalyzeRuntime
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 from src.app.services.food_label_localizer import localize_food_label_display
 from src.app.services.meal_analyze_workflow import MealAnalyzeWorkflow
 from src.domain.constants import MealDefaults
@@ -25,8 +23,9 @@ from src.domain.parsers.vision_response_parser import (
     VisionResponseParser as GPTResponseParser,
 )
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.ports.cache_port import CachePort
-from src.domain.ports.meal_insight_ai_port import MealInsightAIPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.meal_analysis.meal_translation_service import (
     MealTranslationService,
@@ -37,7 +36,10 @@ from src.domain.services.meal_type_determination_service import (
 from src.domain.strategies.meal_analysis_strategy import (
     FoodLabelImageAnalysisStrategy,
 )
-from src.domain.utils.image_compression import compress_image
+from src.domain.utils.image_compression import (
+    compress_image,
+    to_compressed_cloudinary_url,
+)
 from src.domain.utils.timezone_utils import (
     get_zone_info,
     is_valid_timezone,
@@ -55,31 +57,31 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
-        event_bus: Any,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_bus: Any = None,
         vision_service: VisionAIServicePort = None,
         gpt_parser: GPTResponseParser = None,
         meal_translation_service: MealTranslationService | None = None,
         text_translation_service: Any | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
-        meal_value_insight_task_manager: Any | None = None,
-        meal_value_insight_cache: CachePort | None = None,
-        meal_value_insight_ai_manager: MealInsightAIPort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        environment: str = "development",
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
+        download_image_bytes: Any | None = None,
+        uow_factory=None,
     ):
         self.uow = uow
+        self.uow_factory = uow_factory if uow_factory is not None else (lambda: uow)
         self.event_bus = event_bus
         self.vision_service = vision_service
         self.gpt_parser = gpt_parser
         self.meal_translation_service = meal_translation_service
         self.text_translation_service = text_translation_service
-        self.cache_invalidation = cache_invalidation
-        self.meal_value_insight_task_manager = meal_value_insight_task_manager
-        self.meal_value_insight_cache = meal_value_insight_cache
-        self.meal_value_insight_ai_manager = meal_value_insight_ai_manager
+        self.event_publisher = event_publisher
+        self.environment = environment
         self.meal_analyze_workflow = meal_analyze_workflow
         self.meal_analyze_graph_enabled = meal_analyze_graph_enabled
+        self._download_image_bytes_fn = download_image_bytes
 
     def _record_food_label_metric(
         self,
@@ -121,6 +123,10 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         )
 
     async def _download_image_bytes(self, image_url: str) -> bytes:
+        if self._download_image_bytes_fn is not None:
+            return await self._download_image_bytes_fn(image_url)
+        import httpx
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(image_url)
             resp.raise_for_status()
@@ -168,11 +174,18 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         image_id = command.public_id.split("/")[-1]
 
         try:
-            # Download from Cloudinary and compress off the event loop
-            raw_bytes = await self._download_image_bytes(command.image_url)
+            # For meal scans, fetch edge-compressed Cloudinary URL to avoid local PIL resizing
+            download_url = (
+                to_compressed_cloudinary_url(command.image_url)
+                if command.scan_mode != "food_label"
+                else command.image_url
+            )
+            raw_bytes = await self._download_image_bytes(download_url)
             image_bytes: bytes | None = None
             if command.scan_mode != "food_label":
-                image_bytes = await asyncio.to_thread(compress_image, raw_bytes)
+                image_bytes = raw_bytes
+                if len(image_bytes) > 200 * 1024:
+                    image_bytes = await asyncio.to_thread(compress_image, raw_bytes)
                 logger.info(
                     "[SCAN-BY-URL] image_id=%s raw=%d compressed=%d bytes",
                     image_id,
@@ -187,7 +200,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 )
 
             # Determine timezone-aware datetime
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user_timezone = await uow.users.get_user_timezone(command.user_id)
             if not user_timezone or not is_valid_timezone(user_timezone):
                 user_timezone = "UTC"
@@ -295,9 +308,21 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     nutrition=nutrition,
                 )
 
-                async with self.uow as uow:
+                async with self.uow_factory() as uow:
                     saved_meal = await uow.meals.save(meal)
                     await uow.commit()
+
+                if meal_date is not None:
+                    await publish_meal_event(
+                        self.event_publisher,
+                        saved_meal,
+                        event_type="created",
+                        environment=self.environment,
+                        meal_date=meal_date,
+                        language=command.language,
+                        event_bus=self.event_bus,
+                        source="scan_food_label",
+                    )
 
                 logger.info(
                     "[SCAN-BY-URL-FOOD-LABEL-COMPLETE] meal=%s vision=%.2fs total=%.2fs",
@@ -305,11 +330,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     vision_elapsed,
                     time.time() - start,
                 )
-
-                if self.cache_invalidation:
-                    await self.cache_invalidation.after_meal_write(
-                        command.user_id, meal_date
-                    )
 
                 return saved_meal
 
@@ -371,13 +391,20 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             )
             meal = persist_meal_response_localization(meal, localization)
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 saved_meal = await uow.meals.save(meal)
                 await uow.commit()
 
-            if self.cache_invalidation:
-                await self.cache_invalidation.after_meal_write(
-                    command.user_id, meal_date
+            if meal_date is not None:
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="created",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=command.language,
+                    event_bus=self.event_bus,
+                    source="scan_by_url",
                 )
 
             logger.info(
@@ -407,11 +434,9 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     compress_image=compress_image,
                     vision_service=self.vision_service,
                     gpt_parser=self.gpt_parser,
-                    uow=self.uow,
-                    cache_invalidation=self.cache_invalidation,
-                    meal_value_insight_task_manager=self.meal_value_insight_task_manager,
-                    meal_value_insight_cache=self.meal_value_insight_cache,
-                    meal_value_insight_ai_manager=self.meal_value_insight_ai_manager,
+                    uow=self.uow_factory(),
+                    event_publisher=self.event_publisher,
+                    environment=self.environment,
                     event_bus=self.event_bus,
                     meal_translation_service=self.meal_translation_service,
                     text_translation_service=self.text_translation_service,

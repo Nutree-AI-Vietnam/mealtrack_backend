@@ -395,26 +395,27 @@ class FatSecretService:
                 "allowed_units": self._extract_serving_units(food),
             }
 
-        return self._apply_integrity_policy(
-            {
-                "metric_serving_amount": metric_amount,
-                "calories_100g": self._calc_per_100g(
-                    serving.get("calories"), metric_amount
-                ),
-                "protein_100g": self._calc_per_100g(
-                    serving.get("protein"), metric_amount
-                ),
-                "carbs_100g": self._calc_per_100g(
-                    serving.get("carbohydrate"), metric_amount
-                ),
-                "fat_100g": self._calc_per_100g(serving.get("fat"), metric_amount),
-                "fiber_100g": self._calc_per_100g(serving.get("fiber"), metric_amount),
-                "sugar_100g": self._calc_per_100g(serving.get("sugar"), metric_amount),
-                "serving_description": serving.get("serving_description"),
-                "allowed_units": self._extract_serving_units(food),
-            },
-            require_metric_basis=True,
-        )
+        payload = {
+            "metric_serving_amount": metric_amount,
+            "calories_100g": self._calc_per_100g(
+                serving.get("calories"), metric_amount
+            ),
+            "protein_100g": self._calc_per_100g(
+                serving.get("protein"), metric_amount
+            ),
+            "carbs_100g": self._calc_per_100g(
+                serving.get("carbohydrate"), metric_amount
+            ),
+            "fat_100g": self._calc_per_100g(serving.get("fat"), metric_amount),
+            "fiber_100g": self._calc_per_100g(serving.get("fiber"), metric_amount),
+            "sugar_100g": self._calc_per_100g(serving.get("sugar"), metric_amount),
+            "serving_description": serving.get("serving_description"),
+            "allowed_units": self._extract_serving_units(food),
+        }
+        extras = self._extra_nutrients_from_serving(serving, metric_amount)
+        if extras:
+            payload["extra_nutrients"] = extras
+        return self._apply_integrity_policy(payload, require_metric_basis=True)
 
     def _default_allowed_units(self) -> list[dict]:
         """Return default allowed units when none are provided."""
@@ -457,29 +458,30 @@ class FatSecretService:
             }
         # Use metric_serving_amount for accurate per-100g calculation
         metric_amount = self._safe_float(serving.get("metric_serving_amount")) or 100
-        return self._apply_integrity_policy(
-            {
-                "name": food.get("food_name", ""),
-                "brand": food.get("brand_name"),
-                "barcode": barcode,
-                **provider_identity,
-                "calories_100g": self._calc_per_100g(
-                    serving.get("calories"), metric_amount
-                ),
-                "protein_100g": self._calc_per_100g(
-                    serving.get("protein"), metric_amount
-                ),
-                "carbs_100g": self._calc_per_100g(
-                    serving.get("carbohydrate"), metric_amount
-                ),
-                "fat_100g": self._calc_per_100g(serving.get("fat"), metric_amount),
-                "serving_size": serving.get("serving_description"),
-                "image_url": food.get("food_url"),
-                "allowed_units": self._extract_serving_units(food),
-                "metric_serving_amount": metric_amount,
-            },
-            require_metric_basis=True,
-        )
+        payload = {
+            "name": food.get("food_name", ""),
+            "brand": food.get("brand_name"),
+            "barcode": barcode,
+            **provider_identity,
+            "calories_100g": self._calc_per_100g(
+                serving.get("calories"), metric_amount
+            ),
+            "protein_100g": self._calc_per_100g(
+                serving.get("protein"), metric_amount
+            ),
+            "carbs_100g": self._calc_per_100g(
+                serving.get("carbohydrate"), metric_amount
+            ),
+            "fat_100g": self._calc_per_100g(serving.get("fat"), metric_amount),
+            "serving_size": serving.get("serving_description"),
+            "image_url": food.get("food_url"),
+            "allowed_units": self._extract_serving_units(food),
+            "metric_serving_amount": metric_amount,
+        }
+        extras = self._extra_nutrients_from_serving(serving, metric_amount)
+        if extras:
+            payload["extra_nutrients"] = extras
+        return self._apply_integrity_policy(payload, require_metric_basis=True)
 
     def _apply_integrity_policy(
         self,
@@ -496,6 +498,7 @@ class FatSecretService:
         payload["allowed_units"] = list(result.serving_options)
         if not result.accepted:
             payload["nutrition_integrity_reason"] = result.reason_code
+            payload.pop("extra_nutrients", None)
             for field in (
                 "calories_100g",
                 "protein_100g",
@@ -518,6 +521,26 @@ class FatSecretService:
             }
         )
         return payload
+
+    def _extra_nutrients_from_serving(
+        self, serving: dict[str, Any], metric_amount: float
+    ) -> dict[str, float]:
+        extras: dict[str, float] = {}
+        for source_key, dest_key in (
+            ("iron", "iron_mg"),
+            ("sodium", "sodium_mg"),
+            ("potassium", "potassium_mg"),
+            ("calcium", "calcium_mg"),
+            ("added_sugars", "added_sugar_g"),
+            ("saturated_fat", "saturated_fat_g"),
+            ("vitamin_c", "vitamin_c_mg"),
+            ("vitamin_a", "vitamin_a_mcg"),
+        ):
+            amount = self._calc_per_100g(serving.get(source_key), metric_amount)
+            if amount is None:
+                continue
+            extras[dest_key] = amount
+        return extras
 
     def _calc_per_100g(self, value: Any, metric_amount: float) -> float | None:
         """Calculate nutrition value per 100g using metric_serving_amount."""

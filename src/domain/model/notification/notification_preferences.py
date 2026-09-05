@@ -36,7 +36,7 @@ class NotificationPreferences:
     lunch_time_minutes: int | None = None
     dinner_time_minutes: int | None = None
     daily_summary_time_minutes: int | None = 1260  # 9:00 PM default
-    language: str = "en"  # ISO 639-1: 'en', 'vi'. TODO: add more locales
+    language: str = "en"  # ISO 639-1; must be in ENABLED_APP_LOCALES
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

@@ -1,13 +1,11 @@
 """
 Tests for timing instrumentation in CreateManualMealCommandHandler.
-Verifies that handler awaits cache invalidation (not fire-and-forget) and
-that timing log messages are emitted.
+Verifies that cache maintenance is queued after the business write and that
+timing log messages are emitted.
 """
 
-import asyncio
 import logging
 import time
-from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -23,7 +21,6 @@ from src.app.commands.meal.create_manual_meal_command import (
 from src.app.handlers.command_handlers.create_manual_meal_command_handler import (
     CreateManualMealCommandHandler,
 )
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 
 # ---------------------------------------------------------------------------
 # Minimal fakes (no mocking framework dependency for simple objects)
@@ -92,11 +89,33 @@ class _PreparedV2Uow:
         return False
 
 
+class _FakeTaskManager:
+    def __init__(self):
+        self.spawned = []
+
+    def spawn(self, name, coro):
+        self.spawned.append((name, coro))
+        return None
+
+
 def _make_meal():
     m = MagicMock()
     m.meal_id = "test-meal-id"
     m.created_at = None
     return m
+
+
+def _publisher():
+    return MagicMock(publish=AsyncMock())
+
+
+def test_handler_requires_event_publisher_at_construction():
+    from src.domain.ports.integration_event_publisher_port import (
+        IntegrationEventPublisherRequiredError,
+    )
+
+    with pytest.raises(IntegrationEventPublisherRequiredError):
+        CreateManualMealCommandHandler(meal_repository=MagicMock())
 
 
 _UUID_1 = "550e8400-e29b-41d4-a716-446655440001"
@@ -132,32 +151,22 @@ def _make_command(user_id: str = _UUID_1) -> CreateManualMealCommand:
 
 
 # ---------------------------------------------------------------------------
-# Test A: slow cache delay is visible in elapsed time (handler awaits it)
+# Test A: cache publication is isolated from the business response
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_handler_timing_logs_show_cache_delay(caplog):
-    """Handler must await cache invalidation; a slow cache inflates elapsed time."""
+async def test_handler_timing_logs_do_not_wait_for_redis(caplog):
+    """A slow Redis implementation must not inflate the business response time."""
     DELAY_S = 0.05  # 50 ms per operation
 
-    slow_cache = MagicMock()
-
-    async def slow_invalidate(key):
-        await asyncio.sleep(DELAY_S)
-
-    async def slow_invalidate_pattern(pattern):
-        await asyncio.sleep(DELAY_S)
-
-    slow_cache.invalidate = slow_invalidate
-    slow_cache.invalidate_pattern = slow_invalidate_pattern
-
-    cache_svc = CacheInvalidationService(cache=slow_cache)
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
     fake_meal = _make_meal()
     uow = _FakeUow(fake_meal)
     handler = CreateManualMealCommandHandler(
         uow=uow,
-        cache_invalidation=cache_svc,
+        event_publisher=publisher,
     )
 
     cmd = _make_command()
@@ -167,11 +176,11 @@ async def test_handler_timing_logs_show_cache_delay(caplog):
         result = await handler.handle(cmd)
     elapsed = time.perf_counter() - t_start
 
-    # If handler awaits cache, elapsed must be ≥ one slow operation delay
-    assert elapsed >= DELAY_S, (
-        f"Handler returned in {elapsed * 1000:.0f}ms — expected ≥{DELAY_S * 1000:.0f}ms. "
-        "Cache invalidation may not be awaited."
+    assert elapsed < DELAY_S, (
+        f"Handler returned in {elapsed * 1000:.0f}ms — cache work is still on the business path."
     )
+
+    publisher.publish.assert_awaited_once()
 
     timing_logs = [
         r.message for r in caplog.records if "manual_save handler timing" in r.message
@@ -188,7 +197,7 @@ async def test_handler_timing_logs_show_cache_delay(caplog):
 @pytest.mark.asyncio
 async def test_create_persists_client_meal_and_item_ids():
     uow = _FakeUow(_make_meal())
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -219,7 +228,7 @@ async def test_create_persists_client_meal_and_item_ids():
 @pytest.mark.asyncio
 async def test_create_without_client_ids_mints_valid_uuids():
     uow = _FakeUow(_make_meal())
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = _make_command()
 
     meal = await handler.handle(cmd)
@@ -236,7 +245,7 @@ async def test_create_rejects_other_users_meal_id():
     existing.user_id = _OTHER_USER_ID
     uow = _FakeUow(_make_meal())
     uow.meals._existing_by_id[_CLIENT_MEAL_ID] = existing
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -255,7 +264,7 @@ async def test_create_rejects_existing_same_user_meal_id_without_replay():
     existing.user_id = _UUID_1
     uow = _FakeUow(_make_meal())
     uow.meals._existing_by_id[_CLIENT_MEAL_ID] = existing
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -276,7 +285,7 @@ async def test_create_insert_integrity_error_maps_to_conflict():
         raise IntegrityError("INSERT", {}, Exception("duplicate meal_id"))
 
     uow.meals.insert = _insert
-    handler = CreateManualMealCommandHandler(uow=uow)
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         meal_id=_CLIENT_MEAL_ID,
@@ -292,7 +301,9 @@ async def test_create_insert_integrity_error_maps_to_conflict():
 
 @pytest.mark.asyncio
 async def test_create_rejects_duplicate_item_ids_in_command():
-    handler = CreateManualMealCommandHandler(uow=_FakeUow(_make_meal()))
+    handler = CreateManualMealCommandHandler(
+        uow=_FakeUow(_make_meal()), event_publisher=_publisher()
+    )
     cmd = CreateManualMealCommand(
         user_id=_UUID_1,
         items=[
@@ -340,6 +351,7 @@ async def test_v2_idempotent_replay_returns_existing_meal_without_conflict():
         uow=_PreparedV2Uow(),
         uow_factory=lambda: replay_uow,
         nutrition_resolver=MagicMock(),
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(
@@ -395,6 +407,7 @@ async def test_v2_prepared_custom_nutrition_is_saved_without_resolution():
         uow=uow,
         uow_factory=object(),
         nutrition_resolver=resolver,
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")
@@ -451,6 +464,7 @@ async def test_v2_prepared_nutrition_uses_confirmed_food_specific_unit():
         uow=uow,
         uow_factory=object(),
         nutrition_resolver=resolver,
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")
@@ -526,6 +540,7 @@ async def test_v2_prepared_mixed_sources_keep_confirmed_display_names():
         uow=uow,
         uow_factory=object(),
         nutrition_resolver=resolver,
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")
@@ -574,6 +589,7 @@ async def test_v2_item_missing_identity_is_rejected_with_validation_error():
     handler = CreateManualMealCommandHandler(
         uow=_PreparedV2Uow(),
         uow_factory=lambda: _ResolveUow(),
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")
@@ -588,21 +604,16 @@ async def test_v2_item_missing_identity_is_rejected_with_validation_error():
 
 # ---------------------------------------------------------------------------
 # Test B: fast (no-op) cache emits timing log without bloating elapsed time
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_handler_timing_logs_fast_cache(caplog):
-    """Fast (no-op) cache completes quickly and still emits a timing log."""
-    fast_cache = MagicMock()
-    fast_cache.invalidate = AsyncMock()
-    fast_cache.invalidate_pattern = AsyncMock()
-    cache_svc = CacheInvalidationService(cache=fast_cache)
+async def test_handler_timing_logs(caplog):
+    """Handler completes and emits a timing log."""
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
 
     fake_meal = _make_meal()
     handler = CreateManualMealCommandHandler(
         uow=_FakeUow(fake_meal),
-        cache_invalidation=cache_svc,
+        event_publisher=publisher,
     )
 
     cmd = _make_command(user_id=_UUID_2)
@@ -618,32 +629,3 @@ async def test_handler_timing_logs_fast_cache(caplog):
     )
 
     assert result.meal_id is not None
-
-
-# ---------------------------------------------------------------------------
-# Test C: cache_invalidation_service emits per-family timing log
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_cache_invalidation_service_emits_timing_log(caplog):
-    """after_meal_write emits a cache_invalidation timing log with critical/secondary/total."""
-    fast_cache = MagicMock()
-    fast_cache.invalidate = AsyncMock()
-    fast_cache.invalidate_pattern = AsyncMock()
-    svc = CacheInvalidationService(cache=fast_cache)
-
-    with caplog.at_level(logging.INFO):
-        await svc.after_meal_write(
-            "550e8400-e29b-41d4-a716-446655440003", date(2026, 6, 10)
-        )
-
-    timing_logs = [
-        r.message for r in caplog.records if "cache_invalidation timing" in r.message
-    ]
-    assert timing_logs, (
-        "No 'cache_invalidation timing' log found in CacheInvalidationService."
-    )
-    assert "critical_ms" in timing_logs[0]
-    assert "secondary_ms" in timing_logs[0]
-    assert "total_ms" in timing_logs[0]

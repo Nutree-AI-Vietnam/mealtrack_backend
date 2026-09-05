@@ -1,0 +1,14 @@
+# Windsurf Rules — MealTrack Backend
+
+Process memory for AI agents. See `AGENTS.md` and `README.md`.
+
+## MUST-Follow Rules for DB Migrations
+
+- **Always use CLI generator**:
+  `./scripts/development/migrate.sh generate "<msg>"` or `python migrations/cli.py generate "<msg>"`
+- **Never hand-craft** migration files, revision IDs, or filenames.
+- **Always implement** a valid `downgrade()`.
+
+## Other Core Rules
+
+- See `AGENTS.md` for calories, weekly budget, architecture, and test commands.

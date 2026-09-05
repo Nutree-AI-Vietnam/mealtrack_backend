@@ -7,6 +7,9 @@ from collections.abc import Iterable
 DEFAULT_LANGUAGE = "en"
 SUPPORTED_TRANSLATION_LANGUAGES = frozenset({"en", "vi", "es", "fr", "de", "ja", "zh"})
 
+# Locales exposed in the mobile language picker and used for notification copy.
+ENABLED_APP_LOCALES = SUPPORTED_TRANSLATION_LANGUAGES
+
 
 def normalize_language(language: str | None) -> str:
     """Normalize a language tag to its ISO-639-1 primary subtag."""
@@ -15,6 +18,12 @@ def normalize_language(language: str | None) -> str:
     return (
         language.strip().lower().replace("_", "-").split("-", 1)[0] or DEFAULT_LANGUAGE
     )
+
+
+def resolve_app_locale(language: str | None) -> str:
+    """Return an enabled picker locale, defaulting to English."""
+    code = normalize_language(language)
+    return code if code in ENABLED_APP_LOCALES else DEFAULT_LANGUAGE
 
 
 def is_supported_language(language: str | None) -> bool:

@@ -157,6 +157,36 @@ class RedisClient:
 
         return await self._with_client("SET", operation, False, key)
 
+    async def set_if_revision_newer(
+        self, key: str, value: str, revision: int, ttl: int
+    ) -> bool:
+        """Atomically keep the newest revision for a projection cache entry."""
+
+        revision_key = f"{key}:__revision"
+        script = """
+        local current = redis.call('GET', KEYS[2])
+        if current and tonumber(current) > tonumber(ARGV[1]) then
+            return 0
+        end
+        redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[3])
+        redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+        return 1
+        """
+
+        async def operation(client: redis.Redis) -> bool:
+            result = await client.eval(
+                script,
+                2,
+                key,
+                revision_key,
+                str(revision),
+                value,
+                str(ttl),
+            )
+            return bool(result)
+
+        return await self._with_client("SET_IF_REVISION_NEWER", operation, False, key)
+
     async def delete(self, key: str) -> bool:
         """Delete a cached key."""
 

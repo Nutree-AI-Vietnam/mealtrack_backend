@@ -1,17 +1,10 @@
 """
-Notification response schemas for push notification management.
+Notification response schemas for notification preferences management.
 """
 
 from typing import Optional
 
 from pydantic import BaseModel, Field
-
-
-class FcmTokenResponse(BaseModel):
-    """Response for FCM token operations."""
-
-    success: bool = Field(..., description="Whether the operation was successful")
-    message: str = Field(..., description="Response message")
 
 
 class NotificationPreferencesResponse(BaseModel):

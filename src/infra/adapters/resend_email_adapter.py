@@ -1,20 +1,31 @@
 """Resend email adapter implementation."""
 
+from __future__ import annotations
+
 import asyncio
+from dataclasses import dataclass
 import logging
 
 import resend
 
-from src.domain.ports.email_service_port import EmailResult, EmailServicePort
 from src.infra.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 
-class ResendEmailAdapter(EmailServicePort):
+@dataclass
+class EmailResult:
+    """Result of an email send operation."""
+
+    success: bool
+    message_id: str | None = None
+    error: str | None = None
+
+
+class ResendEmailAdapter:
     """Resend SDK wrapper for sending emails."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         settings = get_settings()
         self._api_key = settings.RESEND_API_KEY
         self._from_email = settings.EMAIL_FROM

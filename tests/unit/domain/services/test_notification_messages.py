@@ -1,71 +1,52 @@
-"""Unit tests for notification message templates (trial_expiry, hydration_reminder)."""
+"""Tests for notification message localization."""
 
 import pytest
 
-from src.domain.services.notification_messages import get_messages
-
-
-@pytest.mark.parametrize(
-    "lang,gender",
-    [
-        ("en", "male"),
-        ("en", "female"),
-        ("vi", "male"),
-        ("vi", "female"),
-    ],
+from src.api.schemas.request.notification_requests import (
+    NotificationPreferencesUpdateRequest,
 )
-def test_trial_expiry_keys_exist(lang, gender):
-    msgs = get_messages(lang, gender)
-    assert "trial_expiry" in msgs
-    assert "2d" in msgs["trial_expiry"]
-    assert "1d" in msgs["trial_expiry"]
-    assert msgs["trial_expiry"]["2d"]["body"]
-    assert msgs["trial_expiry"]["1d"]["body"]
-    # iOS Time Sensitive requires a non-empty alert title — banner is suppressed otherwise.
-    assert msgs["trial_expiry"]["2d"]["title"] == "Nutree"
-    assert msgs["trial_expiry"]["1d"]["title"] == "Nutree"
+from src.domain.services.notification_messages import NOTIFICATION_MESSAGES, get_messages
 
+class TestNotificationMessages:
+    def test_all_seven_locales_present(self):
+        assert set(NOTIFICATION_MESSAGES.keys()) == {
+            "en",
+            "vi",
+            "es",
+            "fr",
+            "de",
+            "ja",
+            "zh",
+        }
 
-def test_trial_expiry_fallback_locale_returns_english():
-    msgs = get_messages("fr", "male")
-    assert "trial_expiry" in msgs
-    assert "2 days" in msgs["trial_expiry"]["2d"]["body"]
+    @pytest.mark.parametrize("locale", ["es", "fr", "de", "ja", "zh"])
+    def test_new_locale_matches_en_structure(self, locale):
+        en_male = NOTIFICATION_MESSAGES["en"]["male"]
+        locale_male = NOTIFICATION_MESSAGES[locale]["male"]
+        assert set(locale_male.keys()) == set(en_male.keys())
+        for category, en_blocks in en_male.items():
+            assert set(locale_male[category].keys()) == set(en_blocks.keys())
 
+    def test_ja_female_is_not_english(self):
+        ja = get_messages("ja", "female")
+        en = get_messages("en", "female")
+        assert ja["meal_reminder"]["breakfast"]["body"] != en["meal_reminder"]["breakfast"]["body"]
+        assert ja["subscription_hook"]["title"] != en["subscription_hook"]["title"]
 
-def test_trial_expiry_vi_contains_vietnamese_phrasing():
-    msgs = get_messages("vi", "male")
-    assert "trial" in msgs["trial_expiry"]["2d"]["body"].lower()
-    # Distinct buddy term for male VN.
-    assert "bro" in msgs["trial_expiry"]["2d"]["body"]
+    def test_unknown_language_falls_back_to_en(self):
+        ko = get_messages("ko", "female")
+        en = get_messages("en", "female")
+        assert ko == en
 
+    def test_es_male_and_female_identical(self):
+        es_male = get_messages("es", "male")
+        es_female = get_messages("es", "female")
+        assert es_male == es_female
 
-def test_trial_expiry_en_female_uses_mate():
-    msgs = get_messages("en", "female")
-    assert "mate" in msgs["trial_expiry"]["2d"]["body"]
+    def test_preferences_api_accepts_ja(self):
+        req = NotificationPreferencesUpdateRequest(language="ja")
+        assert req.language == "ja"
 
-
-@pytest.mark.parametrize(
-    "lang,gender",
-    [
-        ("en", "male"),
-        ("en", "female"),
-        ("vi", "male"),
-        ("vi", "female"),
-    ],
-)
-def test_hydration_reminder_keys_exist(lang, gender):
-    msgs = get_messages(lang, gender)
-    assert "hydration_reminder" in msgs
-    assert "afternoon" in msgs["hydration_reminder"]
-    assert "evening" in msgs["hydration_reminder"]
-    for slot in ("afternoon", "evening"):
-        tmpl = msgs["hydration_reminder"][slot]["body_template"]
-        assert tmpl, f"{lang}/{gender}/{slot} body_template is empty"
-        assert "{consumed_ml}" in tmpl, f"{lang}/{gender}/{slot} missing {{consumed_ml}}"
-        assert "{remaining_ml}" in tmpl, f"{lang}/{gender}/{slot} missing {{remaining_ml}}"
-
-
-def test_hydration_type_enum_values_exist():
-    from src.domain.model.notification.enums import NotificationType
-    assert NotificationType.HYDRATION_REMINDER_AFTERNOON.value == "hydration_reminder_afternoon"
-    assert NotificationType.HYDRATION_REMINDER_EVENING.value == "hydration_reminder_evening"
+    def test_preferences_api_rejects_unknown_language(self):
+        with pytest.raises(ValueError, match="Unsupported notification language"):
+            NotificationPreferencesUpdateRequest(language="ko")

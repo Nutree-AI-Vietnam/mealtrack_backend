@@ -46,7 +46,9 @@ async def test_scan_by_url_rejects_non_food_before_meal_creation(monkeypatch):
         async def get(self, url):
             return FakeResponse()
 
-    monkeypatch.setattr(module.httpx, "AsyncClient", lambda timeout: FakeClient())
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 
     uow = _uow_with_timezone()
@@ -91,7 +93,9 @@ async def test_scan_by_url_malformed_localization_container_is_non_retryable(mon
         async def get(self, url):
             return FakeResponse()
 
-    monkeypatch.setattr(module.httpx, "AsyncClient", lambda timeout: FakeClient())
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 
     uow = _uow_with_timezone()
@@ -138,7 +142,9 @@ async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
             return FakeResponse()
 
     capture_message = MagicMock()
-    monkeypatch.setattr(module.httpx, "AsyncClient", lambda timeout: FakeClient())
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
     monkeypatch.setattr(module, "capture_message", capture_message)
 

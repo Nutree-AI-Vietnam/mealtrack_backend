@@ -186,10 +186,9 @@ async def test_create_three_day_recommendations_snapshots_target_and_timezone():
 
 
 @pytest.mark.asyncio
-async def test_create_three_day_recommendations_enqueues_analytics_when_task_manager_exists():
+async def test_create_three_day_recommendations_captures_analytics():
     event_bus = _EventBus()
     analytics = _Analytics()
-    task_manager = _TaskManager()
 
     response = await create_three_day_recommendations(
         request=_request(),
@@ -197,12 +196,13 @@ async def test_create_three_day_recommendations_enqueues_analytics_when_task_man
         user_id="user-1",
         event_bus=event_bus,
         analytics_service=analytics,
-        task_manager=task_manager,
     )
 
     assert response.id == "plan-1"
-    assert analytics.events == []
-    assert [name for name, _ in task_manager.tasks] == ["meal_recommendation_analytics"]
+    assert [item[1] for item in analytics.events] == [
+        "plan_shown",
+        "alternatives_shown",
+    ]
 
 
 @pytest.mark.asyncio

@@ -32,10 +32,10 @@ class User(Base, BaseMixin):
     display_name = Column(String(100), nullable=True)
     photo_url = Column(Text, nullable=True)
     provider = Column(
-        Enum(AuthProviderEnum, native_enum=False),
+        Enum(AuthProviderEnum, native_enum=False, length=32),
         nullable=False,
         default=AuthProviderEnum.GOOGLE,
-    )  # phone, google
+    )  # google, apple, email_link, anonymous — VARCHAR must fit EMAIL_LINK
 
     # Status & Activity
     is_active = Column(Boolean, default=True, nullable=False)
@@ -48,6 +48,12 @@ class User(Base, BaseMixin):
 
     # Preferred language (ISO 639-1: 'en', 'vi', 'es', 'fr', 'de', 'ja', 'zh')
     language_code = Column(String(5), nullable=False, default="en", server_default="en")
+
+    # When true, leftover weekly calories are split across remaining days.
+    # When false, daily targets stay at the fixed base (weekly / 7).
+    weekly_auto_adjust = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
 
     # Email preferences
     welcome_email_sent_at = Column(DateTime(timezone=True), nullable=True)
@@ -74,9 +80,6 @@ class User(Base, BaseMixin):
     referral_code = relationship("ReferralCode", back_populates="user", uselist=False)
     referral_wallet = relationship(
         "ReferralWallet", back_populates="user", uselist=False
-    )
-    email_logs = relationship(
-        "EmailLog", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
 
     @property

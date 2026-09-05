@@ -4,7 +4,6 @@ Handler for editing meal ingredients.
 
 import logging
 from dataclasses import replace
-from datetime import timedelta
 from typing import Any
 
 from src.api.exceptions import (
@@ -17,7 +16,9 @@ from src.app.commands.meal import EditMealCommand
 from src.app.commands.meal.create_manual_meal_command import ManualMealItem
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal import MealEditedEvent
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.meal.meal_events import (
+    publish_meal_event,
+)
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
@@ -25,6 +26,9 @@ from src.domain.model.meal import FoodItemTranslation, MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition import Macros, NutritionOverride
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+)
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
@@ -44,17 +48,21 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
-        cache_invalidation: CacheInvalidationService | None = None,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
         nutrition_resolver: ManualMealNutritionResolver | None = None,
         provider=None,
         provider_budget: ProviderBudgetPort | None = None,
         provider_rpm: int | None = None,
         uow_factory=None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.uow_factory = uow_factory
-        self.cache_invalidation = cache_invalidation
+        self.uow_factory = uow_factory if callable(uow_factory) else (lambda: uow)
+        self.event_publisher = event_publisher
+        self.event_bus = event_bus
+        self.environment = environment
         self.nutrition_resolver = nutrition_resolver or ManualMealNutritionResolver(
             provider=provider,
             provider_budget=provider_budget,
@@ -66,7 +74,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
         """Handle meal editing operations."""
         if command.nutrition_contract_version == 2 and self.uow_factory is not None:
             return await self._handle_v2(command)
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             try:
                 # 1. Validate meal exists
                 meal = await uow.meals.find_by_id(
@@ -205,25 +213,29 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                             },
                         },
                     )
-                await uow.commit()
 
                 old_meal_date = (meal.created_at or utc_now()).date()
                 meal_date = (saved_meal.created_at or utc_now()).date()
-                if self.cache_invalidation:
-                    if old_meal_date != meal_date:
-                        await self.cache_invalidation.after_meal_write(
-                            saved_meal.user_id, old_meal_date
-                        )
-                    await self.cache_invalidation.after_meal_write(
-                        saved_meal.user_id, meal_date
-                    )
+                await uow.commit()
+
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="updated",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=command.language,
+                    event_bus=self.event_bus,
+                    old_meal_date=old_meal_date,
+                    source="edit_meal",
+                )
 
                 # 6. Calculate nutrition delta for event
                 nutrition_delta = self._calculate_nutrition_delta(
                     meal.nutrition, updated_nutrition
                 )
 
-                return {
+                response = {
                     "success": True,
                     "meal_id": saved_meal.meal_id,
                     "message": f"Meal updated successfully. {changes_summary}",
@@ -262,6 +274,8 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 await uow.rollback()
                 raise
 
+        return response
+
     async def _handle_v2(self, command: EditMealCommand) -> dict[str, Any]:
         """Keep lease reservation and provider/reference resolution out of the write UoW."""
         preflight_meal = await self._preflight_v2_meal(command)
@@ -290,7 +304,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     resolved_items_out=resolved_items,
                 )
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 meal = await self._reload_v2_meal_for_commit(
                     preflight_meal, command, uow
                 )
@@ -388,18 +402,22 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     target_meal_id=saved_meal.meal_id,
                     response=replay_response,
                 )
+                old_meal_date = (meal.created_at or utc_now()).date()
+                meal_date = (saved_meal.created_at or utc_now()).date()
                 await uow.commit()
 
-            old_meal_date = (meal.created_at or utc_now()).date()
-            meal_date = (saved_meal.created_at or utc_now()).date()
-            if self.cache_invalidation:
-                if old_meal_date != meal_date:
-                    await self.cache_invalidation.after_meal_write(
-                        saved_meal.user_id, old_meal_date
-                    )
-                await self.cache_invalidation.after_meal_write(
-                    saved_meal.user_id, meal_date
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="updated",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=command.language,
+                    event_bus=self.event_bus,
+                    old_meal_date=old_meal_date,
+                    source="edit_meal_v2",
                 )
+
             replay_response["events"] = [
                 MealEditedEvent(
                     aggregate_id=saved_meal.meal_id,
@@ -439,12 +457,6 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
 
     async def _reserve_v2_write_short(self, command):
         async with self.uow_factory() as uow:
-            cleanup = getattr(uow.meal_write_operations, "cleanup_finished", None)
-            if cleanup is not None:
-                await cleanup(
-                    older_than=utc_now() - timedelta(days=30),
-                    limit=100,
-                )
             return await self._reserve_v2_write(command, uow)
 
     async def _release_v2_write(self, reservation):
@@ -603,7 +615,9 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 return replace(change, unit=existing_unit)
             return change
         snapshot = existing_item.source_snapshot or {}
-        allowed_units = snapshot.get("allowed_units") or existing_item.allowed_units or []
+        allowed_units = (
+            snapshot.get("allowed_units") or existing_item.allowed_units or []
+        )
         if not allowed_units:
             raise ValueError("v2 quantity updates require an immutable source snapshot")
         quantity = (

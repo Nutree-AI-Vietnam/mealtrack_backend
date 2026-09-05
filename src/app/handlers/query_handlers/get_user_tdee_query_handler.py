@@ -47,7 +47,9 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                 return cached
         result = await self._compute_tdee(query)
         if self.cache_service:
-            await self.cache_service.set_json(cache_key, result, ttl)
+            await self.cache_service.set_json(
+                cache_key, result, ttl, revision_field="profile_target_revision"
+            )
         return result
 
     async def _current_profile_revision(self, user_id: str) -> int:

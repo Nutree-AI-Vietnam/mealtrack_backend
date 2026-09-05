@@ -5,23 +5,22 @@ from src.domain.services.hydration_catalog_service import (
 )
 
 
-def test_coke_zero_canonical_name_stays_english():
-    drink = find_by_id("coke-zero")
+def test_localized_name_water_japanese_is_not_english():
+    drink = find_by_id("water")
     assert drink is not None
-    assert drink.name == "Coke Zero"
+    assert localized_name(drink, "ja") == "水"
+    assert localized_name(drink, "ja") != "Water"
 
 
-def test_coke_zero_vietnamese_uses_coca_pepsi_zero():
-    drink = find_by_id("coke-zero")
-    assert localized_name(drink, "vi") == "Coca/Pepsi Zero"
+def test_localized_name_water_vietnamese_unchanged():
+    drink = find_by_id("water")
+    assert drink is not None
+    assert localized_name(drink, "vi") == "Nước lọc"
 
 
-def test_sparkling_vietnamese_uses_co_ga():
-    drink = find_by_id("sparkling")
-    assert localized_name(drink, "vi") == "Nước có ga"
+def test_localized_name_for_catalog_name_resolves_vietnamese_snapshot():
+    assert localized_name_for_catalog_name("Nước lọc", "ja") == "水"
 
 
-def test_legacy_snapshots_still_localizes():
-    assert localized_name_for_catalog_name("Coke Zero", "vi") == "Coca/Pepsi Zero"
-    assert localized_name_for_catalog_name("Coca/Pepsi Zero", "en") == "Coke Zero"
-    assert localized_name_for_catalog_name("Coke Zero", "en") == "Coke Zero"
+def test_localized_name_for_catalog_name_prefers_drink_id():
+    assert localized_name_for_catalog_name("Water", "ja", drink_id="water") == "水"

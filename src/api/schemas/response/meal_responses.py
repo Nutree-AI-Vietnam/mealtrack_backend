@@ -180,6 +180,9 @@ class NutritionResponse(BaseModel):
     fat_g: float = Field(..., description="Fat in grams")
     fiber_g: float = Field(0, description="Fiber in grams")
     sugar_g: float = Field(0, description="Sugar in grams")
+    micros: dict[str, float] | None = Field(
+        None, description="Logged micros for this item; omitted keys are unknown"
+    )
 
 
 class NutritionOverrideResponse(BaseModel):
@@ -279,9 +282,7 @@ class FoodItemResponse(BaseModel):
     canonical_name: str | None = Field(
         None, description="Canonical source food item name"
     )
-    name_vi: str | None = Field(
-        None, description="Persisted Vietnamese catalog name"
-    )
+    name_vi: str | None = Field(None, description="Persisted Vietnamese catalog name")
     category: str | None = Field(None, description="Food category")
     quantity: float = Field(..., description="Quantity")
     unit: str = Field(..., description="Unit of measurement")
@@ -372,6 +373,14 @@ class DetailedMealResponse(SimpleMealResponse):
     cook_time_min: int | None = Field(None, description="Cook time in minutes")
     cuisine_type: str | None = Field(None, description="Cuisine type")
     origin_country: str | None = Field(None, description="Country of origin")
+    is_favorite: bool = Field(False, description="Whether the meal is favorited")
+    favorited_at: datetime | None = Field(
+        None, description="Timestamp when the meal was favorited"
+    )
+    nrf_quality: float | None = Field(
+        None, description="Per-item nutrient quality when coverage >= 1"
+    )
+    nrf_coverage: int = Field(0, description="Count of logged NRF micro/limit fields")
 
 
 class MealListResponse(BaseModel):
@@ -431,3 +440,35 @@ class ManualMealCreationResponse(BaseModel):
     )
 
     model_config = ConfigDict(json_encoders={datetime: _serialize_datetime_utc})
+
+
+class FavoriteMealActionResponse(BaseModel):
+    """Response DTO for favorite/unfavorite meal actions."""
+
+    meal_id: str = Field(..., description="Meal ID")
+    is_favorite: bool = Field(
+        ..., description="Whether the meal is currently a favorite"
+    )
+    favorited_at: datetime | None = Field(
+        None, description="Timestamp when the meal was favorited"
+    )
+
+    model_config = ConfigDict(json_encoders={datetime: _serialize_datetime_utc})
+
+
+class RecentMealsListResponse(BaseModel):
+    """Response DTO for listing recent deduplicated meals."""
+
+    items: list[DetailedMealResponse] = Field(
+        default_factory=list, description="Recent meals"
+    )
+    total: int = Field(..., ge=0, description="Total items returned")
+
+
+class FavoriteMealsListResponse(BaseModel):
+    """Response DTO for listing favorite meals."""
+
+    items: list[DetailedMealResponse] = Field(
+        default_factory=list, description="Favorite meals"
+    )
+    total: int = Field(..., ge=0, description="Total items returned")

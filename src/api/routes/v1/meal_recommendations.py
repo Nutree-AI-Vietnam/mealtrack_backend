@@ -14,7 +14,6 @@ from src.api.base_dependencies import (
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.api.dependencies.task_manager import get_optional_task_manager
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.meal_recommendation_route_support import (
@@ -69,7 +68,6 @@ async def create_three_day_recommendations(
     analytics_service: MealRecommendationAnalyticsService = Depends(
         get_meal_recommendation_analytics_service
     ),
-    task_manager=Depends(get_optional_task_manager),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationPlanSummaryResponse:
     """Create or replay a durable three-day catalog recommendation plan."""
@@ -135,7 +133,6 @@ async def create_three_day_recommendations(
             user_id=user_id,
             plan=plan,
             events=("plan_shown", "alternatives_shown"),
-            task_manager=task_manager,
         )
         metric_status = "success"
         return response
@@ -161,7 +158,6 @@ async def swap_meal_recommendation_slot(
     analytics_service: MealRecommendationAnalyticsService = Depends(
         get_meal_recommendation_analytics_service
     ),
-    task_manager=Depends(get_optional_task_manager),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     started = perf_counter()
@@ -194,7 +190,6 @@ async def swap_meal_recommendation_slot(
         user_id=user_id,
         event="swap_selected",
         plan_id=result.plan_id,
-        task_manager=task_manager,
     )
     metric_status = "success"
     record_operation_latency(
@@ -218,7 +213,6 @@ async def log_recommended_meal(
     analytics_service: MealRecommendationAnalyticsService = Depends(
         get_meal_recommendation_analytics_service
     ),
-    task_manager=Depends(get_optional_task_manager),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     started = perf_counter()
@@ -249,7 +243,6 @@ async def log_recommended_meal(
         user_id=user_id,
         event="meal_logged",
         plan_id=result.plan_id,
-        task_manager=task_manager,
     )
     metric_status = "success"
     record_operation_latency("log", started, metric_status)
@@ -271,7 +264,6 @@ async def skip_meal_recommendation_slot(
     analytics_service: MealRecommendationAnalyticsService = Depends(
         get_meal_recommendation_analytics_service
     ),
-    task_manager=Depends(get_optional_task_manager),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     started = perf_counter()
@@ -301,7 +293,6 @@ async def skip_meal_recommendation_slot(
         user_id=user_id,
         event="meal_skipped",
         plan_id=result.plan_id,
-        task_manager=task_manager,
     )
     metric_status = "success"
     record_operation_latency("skip", started, metric_status)
@@ -317,7 +308,6 @@ async def get_meal_recommendation_plan(
     analytics_service: MealRecommendationAnalyticsService = Depends(
         get_meal_recommendation_analytics_service
     ),
-    task_manager=Depends(get_optional_task_manager),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationPlanSummaryResponse:
     """Read an owner-scoped durable recommendation plan."""
@@ -343,7 +333,6 @@ async def get_meal_recommendation_plan(
         user_id=user_id,
         plan=plan,
         events=("plan_shown", "alternatives_shown"),
-        task_manager=task_manager,
     )
     metric_status = "success"
     record_operation_latency("read", started, metric_status)
@@ -363,7 +352,6 @@ async def get_meal_recommendation_slot_detail(
     analytics_service: MealRecommendationAnalyticsService = Depends(
         get_meal_recommendation_analytics_service
     ),
-    task_manager=Depends(get_optional_task_manager),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     """Read one owner-scoped recommendation slot with alternatives."""
@@ -394,7 +382,6 @@ async def get_meal_recommendation_slot_detail(
         user_id=user_id,
         event="slot_detail_shown",
         plan_id=plan_id,
-        task_manager=task_manager,
     )
     metric_status = "success"
     record_operation_latency("slot_detail", started, metric_status)
@@ -407,7 +394,6 @@ async def _capture_mutation_slot_event(
     user_id: str,
     event: str,
     plan_id: str,
-    task_manager=None,
 ) -> None:
     try:
         await capture_slot_event(
@@ -415,7 +401,6 @@ async def _capture_mutation_slot_event(
             user_id=user_id,
             event=event,
             plan_id=plan_id,
-            task_manager=task_manager,
         )
     except Exception:
         logger.warning(

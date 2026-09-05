@@ -121,10 +121,9 @@ class TestDomainLayerBoundaries:
             ["src.api", "api."],
         )
 
-        assert (
-            not violations
-        ), f"Domain layer imports API in {len(violations)} places:\n" + "\n".join(
-            f"  {f}: {i}" for f, i in violations[:10]
+        assert not violations, (
+            f"Domain layer imports API in {len(violations)} places:\n"
+            + "\n".join(f"  {f}: {i}" for f, i in violations[:10])
         )
 
     def test_domain_does_not_import_sqlalchemy(self):
@@ -146,10 +145,9 @@ class TestDomainLayerBoundaries:
             ["redis", "aioredis"],
         )
 
-        assert (
-            not violations
-        ), f"Domain layer imports Redis in {len(violations)} places:\n" + "\n".join(
-            f"  {f}: {i}" for f, i in violations[:10]
+        assert not violations, (
+            f"Domain layer imports Redis in {len(violations)} places:\n"
+            + "\n".join(f"  {f}: {i}" for f, i in violations[:10])
         )
 
 

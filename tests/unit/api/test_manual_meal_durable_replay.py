@@ -93,9 +93,6 @@ async def test_manual_meal_replays_stored_response():
             payload=_payload(),
             user_id="user-1",
             event_bus=AsyncMock(),
-            cache_service=None,
-            task_manager=None,
-            ai_manager=AsyncMock(),
             idempotency_key_header="op-1",
         )
     assert response.meal_id == "meal-1"
@@ -121,9 +118,6 @@ async def test_manual_meal_conflict_returns_409():
                 payload=_payload(),
                 user_id="user-1",
                 event_bus=AsyncMock(),
-                cache_service=None,
-                task_manager=None,
-                ai_manager=AsyncMock(),
                 idempotency_key_header="op-1",
             )
     assert exc.value.status_code == 409
@@ -151,9 +145,6 @@ async def test_manual_meal_in_progress_returns_409_without_create():
                 payload=_payload(),
                 user_id="user-1",
                 event_bus=event_bus,
-                cache_service=None,
-                task_manager=None,
-                ai_manager=AsyncMock(),
                 idempotency_key_header="op-1",
             )
     assert exc.value.status_code == 409
@@ -197,9 +188,6 @@ async def test_manual_meal_persists_durable_write_on_first_create():
             new=complete,
         ),
         patch(
-            "src.api.routes.v1.meals_manual_text.schedule_value_insight_generation",
-        ),
-        patch(
             "src.api.routes.v1.meals_manual_text.MealMapper.to_detailed_response",
             return_value=None,
         ),
@@ -213,9 +201,6 @@ async def test_manual_meal_persists_durable_write_on_first_create():
             payload=_payload(),
             user_id="user-1",
             event_bus=event_bus,
-            cache_service=None,
-            task_manager=None,
-            ai_manager=AsyncMock(),
             idempotency_key_header="op-2",
         )
     assert response.meal_id == "meal-new"
@@ -234,9 +219,6 @@ async def test_manual_meal_route_forwards_prepared_nutrition_contract():
     event_bus.send = AsyncMock(return_value=meal)
     with (
         patch(
-            "src.api.routes.v1.meals_manual_text.schedule_value_insight_generation"
-        ),
-        patch(
             "src.api.routes.v1.meals_manual_text.MealMapper.to_detailed_response",
             return_value=None,
         ),
@@ -250,9 +232,6 @@ async def test_manual_meal_route_forwards_prepared_nutrition_contract():
             payload=_prepared_v2_payload(),
             user_id="user-1",
             event_bus=event_bus,
-            cache_service=None,
-            task_manager=None,
-            ai_manager=AsyncMock(),
             x_nutrition_contract_version=2,
             x_app_version="1.0.0",
             x_platform="ios",
@@ -293,9 +272,6 @@ async def test_manual_meal_abandons_claim_when_create_fails():
                 payload=_payload(),
                 user_id="user-1",
                 event_bus=event_bus,
-                cache_service=None,
-                task_manager=None,
-                ai_manager=AsyncMock(),
                 idempotency_key_header="op-3",
             )
     assert exc.value.status_code == 500

@@ -5,7 +5,6 @@ All items must provide their own nutrition (via custom_nutrition).
 
 import logging
 import time
-from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -14,16 +13,20 @@ from sqlalchemy.exc import IntegrityError
 from src.api.exceptions import ConflictException, ValidationException
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.events.base import EventHandler
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.handlers.command_handlers.client_resource_id import (
     assert_unique_command_item_ids,
     resolve_client_meal_id,
 )
-from src.app.services.cache_invalidation_service import CacheInvalidationService
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
+    require_event_publisher,
+)
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
 from src.domain.services.nutrition_calculation_service import (
@@ -42,8 +45,9 @@ logger = logging.getLogger(__name__)
 class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any]):
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
-        cache_invalidation: CacheInvalidationService | None = None,
+        uow: AsyncUnitOfWorkPort | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
         meal_repository: MealRepositoryPort | None = None,
         nutrition_service: NutritionCalculationService | None = None,
         nutrition_resolver: ManualMealNutritionResolver | None = None,
@@ -51,11 +55,16 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         provider_budget: ProviderBudgetPort | None = None,
         provider_rpm: int | None = None,
         uow_factory=None,
+        environment: str = "development",
     ):
         self.uow = uow
-        self.cache_invalidation = cache_invalidation
+        # Publish paths always require a publisher; fail at wiring time instead of
+        # constructing a handler that crashes on the first successful save.
+        self.event_publisher = require_event_publisher(event_publisher)
+        self.event_bus = event_bus
+        self.environment = environment
         self.meal_repository = meal_repository
-        self.uow_factory = uow_factory
+        self.uow_factory = uow_factory if callable(uow_factory) else (lambda: uow)
         self.nutrition_service = nutrition_service or NutritionCalculationService()
         self.nutrition_resolver = nutrition_resolver or ManualMealNutritionResolver(
             provider=provider,
@@ -67,15 +76,29 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
     async def handle(self, event: CreateManualMealCommand):
         if event.nutrition_contract_version == 2 and self.uow_factory is not None:
             return await self._handle_v2(event)
-        # Use provided meal_repository or create UnitOfWork with context manager
+        # Use provided meal_repository for legacy callers while preserving the
+        # same committed-write publication contract as the UoW path.
         if self.meal_repository:
-            return await self._process_meal(event, self.meal_repository, uow=None)
+            saved_meal = await self._process_meal(event, self.meal_repository, uow=None)
+            meal_date = (saved_meal.created_at or utc_now()).date()
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                language=event.language,
+                event_bus=self.event_bus,
+                source="manual_meal_legacy_repository",
+            )
+            return saved_meal
         else:
             _t_start = time.perf_counter()
 
             _t_db_start = time.perf_counter()
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 reservation = await self._reserve_v2_write(event, uow)
+                cache_event_needed = False
                 if reservation and reservation.state == "replay":
                     saved_meal = await uow.meals.find_by_id(reservation.target_meal_id)
                     if saved_meal is None:
@@ -89,6 +112,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                         saved_meal, meal_date = await self._process_meal(
                             event, uow.meals, uow=uow
                         )
+                        cache_event_needed = True
                         if reservation:
                             await uow.meal_write_operations.complete(
                                 reservation,
@@ -99,12 +123,21 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                         if reservation:
                             await uow.meal_write_operations.release(reservation)
                         raise
+            if cache_event_needed:
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="created",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=event.language,
+                    event_bus=self.event_bus,
+                    source="manual_meal_v2",
+                )
             _db_ms = (time.perf_counter() - _t_db_start) * 1000
 
-            # Invalidate after commit so a concurrent read can't repopulate from a pre-commit snapshot.
+            # Queue consumer work remains asynchronous after publication succeeds.
             _t_cache_start = time.perf_counter()
-            if self.cache_invalidation:
-                await self.cache_invalidation.after_meal_write(event.user_id, meal_date)
             _cache_ms = (time.perf_counter() - _t_cache_start) * 1000
 
             _total_ms = (time.perf_counter() - _t_start) * 1000
@@ -178,7 +211,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                 for item in resolved_items
             ]
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 if items_needing_resolution:
                     await self.nutrition_resolver.revalidate_local_items(
                         resolved_source_items, uow.food_references
@@ -195,9 +228,17 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                     target_meal_id=saved_meal.meal_id,
                     response={"meal_id": saved_meal.meal_id},
                 )
+            await publish_meal_event(
+                self.event_publisher,
+                saved_meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=meal_date,
+                language=event.language,
+                event_bus=self.event_bus,
+                source="manual_meal",
+            )
 
-            if self.cache_invalidation:
-                await self.cache_invalidation.after_meal_write(event.user_id, meal_date)
             return saved_meal
         except ValueError as exc:
             await self._release_v2_write(reservation)
@@ -211,19 +252,13 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
     def _is_prepared_nutrition(item: Any) -> bool:
         """Recognize only the versioned nutrition payload as save-ready."""
         return (
-            item.nutrition_contract_version == "2"
+            str(item.nutrition_contract_version or "") == "2"
             and item.custom_nutrition is not None
             and (item.origin == "custom" or item.source_snapshot is not None)
         )
 
     async def _reserve_v2_write_short(self, event):
         async with self.uow_factory() as uow:
-            cleanup = getattr(uow.meal_write_operations, "cleanup_finished", None)
-            if cleanup is not None:
-                await cleanup(
-                    older_than=utc_now() - timedelta(days=30),
-                    limit=100,
-                )
             return await self._reserve_v2_write(event, uow)
 
     async def _release_v2_write(self, reservation):
@@ -291,7 +326,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             if uow is not None:
                 user_tz = await resolve_user_timezone_async(event.user_id, uow)
             else:
-                async with self.uow as _uow:
+                async with self.uow_factory() as _uow:
                     user_tz = await resolve_user_timezone_async(event.user_id, _uow)
             meal_datetime = noon_utc_for_date(meal_date, user_tz)
         else:
@@ -340,9 +375,5 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                 error_code="CLIENT_RESOURCE_ID_CONFLICT",
             ) from exc
         if uow is None:
-            # injected meal_repository path: invalidate here as there is no outer UoW block
-            if self.cache_invalidation:
-                await self.cache_invalidation.after_meal_write(event.user_id, meal_date)
             return saved_meal
-        # UoW path: return (saved_meal, meal_date) so handle() can invalidate after commit
         return saved_meal, meal_date

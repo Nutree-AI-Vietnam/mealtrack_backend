@@ -16,6 +16,14 @@ from src.domain.services.hydration_catalog_service import (
     localized_name_for_catalog_name,
 )
 from src.domain.services.meal_calorie_service import effective_meal_calories
+from src.domain.services.meal_nrf_fields import (
+    hydration_entry_nrf_fields,
+    meal_nrf_fields,
+)
+from src.domain.services.movement_catalog_service import (
+    localized_activity_name,
+    localized_activity_name_for_snapshot,
+)
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
     get_zone_info,
@@ -77,7 +85,7 @@ class GetDailyActivitiesQueryHandler(
                 query, user_tz_str, local_date
             )
             workout_activities = await self._get_workout_activities(
-                query, tz, local_date
+                query, tz, local_date, query.language or "en"
             )
             fetch_ok = True
         except Exception as e:
@@ -149,6 +157,7 @@ class GetDailyActivitiesQueryHandler(
         query: GetDailyActivitiesQuery,
         tz,
         local_date,
+        language: str,
     ) -> list[dict[str, Any]]:
         """Fetch movement entries using a short-lived UoW."""
         from datetime import time, timedelta
@@ -159,14 +168,19 @@ class GetDailyActivitiesQueryHandler(
             entries = await uow.movement_entries.find_by_user_and_logged_range(
                 query.user_id, start_utc, end_utc
             )
-        return [self._build_movement_activity(entry) for entry in entries]
+        return [self._build_movement_activity(entry, language) for entry in entries]
 
-    def _build_movement_activity(self, entry) -> dict[str, Any]:
+    def _build_movement_activity(self, entry, language: str = "en") -> dict[str, Any]:
+        title = (
+            localized_activity_name(entry.activity_id, language)
+            if entry.activity_id and entry.activity_id != "custom"
+            else localized_activity_name_for_snapshot(entry.activity_name, language)
+        ) or entry.activity_name
         return {
             "id": entry.id,
             "type": "movement",
             "timestamp": format_iso_utc(entry.logged_at),
-            "title": entry.activity_name,
+            "title": title,
             "activity_id": entry.activity_id,
             "intensity": entry.intensity,
             "duration_min": entry.duration_min,
@@ -215,6 +229,7 @@ class GetDailyActivitiesQueryHandler(
             "status": meal.status.value if meal.status else "unknown",
             "image_url": image_url,
             "source": getattr(meal, "source", None),
+            **meal_nrf_fields(meal),
         }
 
     def _build_hydration_activity(
@@ -241,6 +256,8 @@ class GetDailyActivitiesQueryHandler(
             "status": "completed",
             "image_url": None,
             "source": meal.source or "hydration",
+            **meal_nrf_fields(meal),
+            "meal_id": meal.meal_id,
         }
 
     def _build_hydration_entry_activity(
@@ -252,10 +269,13 @@ class GetDailyActivitiesQueryHandler(
             "type": "hydration",
             "timestamp": format_iso_utc(entry.logged_at),
             "title": localized_name_for_catalog_name(
-                entry.drink_name_snapshot, language
+                entry.drink_name_snapshot,
+                language,
+                drink_id=entry.drink_id,
             )
             or entry.drink_name_snapshot
             or "Water",
+            "drink_id": entry.drink_id,
             "emoji": entry.emoji_snapshot or "💧",
             "meal_type": "hydration",
             "calories": round(entry.calories, 1),
@@ -269,6 +289,8 @@ class GetDailyActivitiesQueryHandler(
             "status": "completed",
             "image_url": entry.image_url,
             "source": entry.source,
+            **hydration_entry_nrf_fields(entry),
+            "meal_id": entry.legacy_meal_id,
         }
 
     def _estimate_meal_weight(self, meal) -> float:

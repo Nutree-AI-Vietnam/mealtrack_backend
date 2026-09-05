@@ -42,6 +42,7 @@ def test_get_parse_text_settings_reads_structured_reference_flag(monkeypatch):
 
     class _Settings:
         PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED = True
+        PARSE_TEXT_PURE_AI_ENABLED = False
 
     import src.infra.config.settings as settings_module
 
@@ -49,7 +50,7 @@ def test_get_parse_text_settings_reads_structured_reference_flag(monkeypatch):
 
     assert dependencies.get_parse_text_settings() == {
         "structured_reference_enabled": True,
-        "pure_ai_mode": True,
+        "pure_ai_mode": False,
     }
 
 

@@ -48,6 +48,10 @@ def _make_mock_uow(profile=None):
     return mock_uow
 
 
+def _publisher():
+    return MagicMock(publish=AsyncMock())
+
+
 class TestUpdateUserMetricsCommand:
     """Test UpdateUserMetricsCommand data class."""
 
@@ -102,7 +106,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile()
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(user_id="test_user", weight_kg=75.0)
 
         await handler.handle(command)
@@ -120,9 +126,9 @@ class TestUpdateUserMetricsCommandHandler:
         cache = MagicMock()
         cache.invalidate = AsyncMock(side_effect=RuntimeError("redis unavailable"))
 
-        await UpdateUserMetricsCommandHandler(mock_uow, cache).handle(
-            UpdateUserMetricsCommand(user_id="test_user", weight_kg=75.0)
-        )
+        await UpdateUserMetricsCommandHandler(
+            mock_uow, event_publisher=_publisher()
+        ).handle(UpdateUserMetricsCommand(user_id="test_user", weight_kg=75.0))
 
         assert profile.profile_target_revision == 2
         mock_uow.users.update_profile.assert_awaited_once_with(profile)
@@ -131,9 +137,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile(profile_target_revision=1)
         mock_uow = _make_mock_uow(profile)
 
-        await UpdateUserMetricsCommandHandler(mock_uow).handle(
-            UpdateUserMetricsCommand(user_id="test_user", weight_kg=70.0)
-        )
+        await UpdateUserMetricsCommandHandler(
+            mock_uow, event_publisher=_publisher()
+        ).handle(UpdateUserMetricsCommand(user_id="test_user", weight_kg=70.0))
 
         assert profile.profile_target_revision == 1
 
@@ -142,7 +148,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile()
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(
             user_id="test_user",
             job_type="on_feet",
@@ -162,7 +170,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile(training_days_per_week=4)
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(
             user_id="test_user",
             training_days_per_week=0,
@@ -181,7 +191,9 @@ class TestUpdateUserMetricsCommandHandler:
         )
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(
             user_id="test_user",
             training_days_per_week=0,
@@ -198,7 +210,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile(fitness_goal="recomp", is_current=True)
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(user_id="test_user", fitness_goal="cut")
 
         await handler.handle(command)
@@ -212,7 +226,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile(body_fat_percentage=20.0)
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(
             user_id="test_user",
             age=35,
@@ -255,9 +271,9 @@ class TestUpdateUserMetricsCommandHandler:
             return_value=[visual_profile]
         )
 
-        await UpdateUserMetricsCommandHandler(mock_uow).handle(
-            UpdateUserMetricsCommand(user_id="test_user", biological_sex="female")
-        )
+        await UpdateUserMetricsCommandHandler(
+            mock_uow, event_publisher=_publisher()
+        ).handle(UpdateUserMetricsCommand(user_id="test_user", biological_sex="female"))
 
         remapped = mock_uow.body_fat_visual_profiles.append.await_args.args[0]
         assert profile.gender == "female"
@@ -270,7 +286,9 @@ class TestUpdateUserMetricsCommandHandler:
     async def test_unchanged_sex_or_missing_visual_history_does_not_append(self):
         profile = _make_profile(gender="male")
         mock_uow = _make_mock_uow(profile)
-        handler = UpdateUserMetricsCommandHandler(mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            mock_uow, event_publisher=_publisher()
+        )
 
         await handler.handle(
             UpdateUserMetricsCommand(user_id="test_user", biological_sex="male")
@@ -291,7 +309,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile(body_fat_percentage=20.0)
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(
             user_id="test_user",
             body_fat_percent=None,
@@ -307,7 +327,9 @@ class TestUpdateUserMetricsCommandHandler:
         """Test error when user profile doesn't exist."""
         mock_uow = _make_mock_uow(profile=None)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(user_id="nonexistent_user", weight_kg=75.0)
 
         with pytest.raises(ResourceNotFoundException) as exc_info:
@@ -319,7 +341,9 @@ class TestUpdateUserMetricsCommandHandler:
         """Test error when no metrics are provided."""
         mock_uow = _make_mock_uow()
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(user_id="test_user")
 
         with pytest.raises(ValidationException) as exc_info:
@@ -332,7 +356,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile()
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(user_id="test_user", weight_kg=-5.0)
 
         with pytest.raises(ValidationException) as exc_info:
@@ -427,7 +453,9 @@ class TestUpdateUserMetricsCommandHandler:
         profile = _make_profile()
         mock_uow = _make_mock_uow(profile)
 
-        handler = UpdateUserMetricsCommandHandler(uow=mock_uow)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
         command = UpdateUserMetricsCommand(user_id="test_user", target_weight_kg=65.0)
 
         await handler.handle(command)

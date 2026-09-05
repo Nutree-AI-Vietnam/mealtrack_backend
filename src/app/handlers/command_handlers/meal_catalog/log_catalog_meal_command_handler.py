@@ -6,14 +6,15 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Coroutine
 from datetime import date
 from typing import Any
 
 from src.api.exceptions import ConflictException, ResourceNotFoundException
-from src.app.commands.meal_catalog import LogCatalogMealCommand
+from src.app.commands.meal_catalog.log_catalog_meal_command import (
+    LogCatalogMealCommand,
+)
 from src.app.events.base import EventHandler, handles
-from src.app.services.cache_invalidation_service import CacheInvalidationService
+from src.app.events.meal.meal_events import publish_meal_event
 from src.app.services.catalog_meal_log_service import (
     CatalogMealLogService,
     LogCatalogMealResult,
@@ -21,6 +22,9 @@ from src.app.services.catalog_meal_log_service import (
 from src.app.services.meal_translation_persistence import persist_meal_translation
 from src.app.services.remaining_recommendation_recalculator import (
     RemainingRecommendationRecalculator,
+)
+from src.domain.ports.integration_event_publisher_port import (
+    IntegrationEventPublisherPort,
 )
 from src.domain.services.meal_analysis.meal_translation_service import (
     MealTranslationService,
@@ -30,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 
 def catalog_log_fingerprint(
-    catalog_meal_id: str, meal_date: date, meal_type: str
+    catalog_meal_id: str,
+    meal_date: date,
+    meal_type: str | None = None,
 ) -> str:
     payload = {
         "catalog_meal_id": catalog_meal_id,
@@ -48,24 +54,25 @@ class LogCatalogMealCommandHandler(
 ):
     def __init__(
         self,
-        uow,
-        browse_service,
+        uow=None,
+        uow_factory: Any = None,
+        browse_service=None,
         *,
         log_service: CatalogMealLogService | None = None,
         meal_translation_service: MealTranslationService | None = None,
-        cache_invalidation: CacheInvalidationService | None = None,
+        event_publisher: IntegrationEventPublisherPort | None = None,
+        event_bus: Any | None = None,
+        environment: str = "development",
         recalculator: RemainingRecommendationRecalculator | None = None,
-        insight_scheduler=None,
-        task_manager=None,
     ) -> None:
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.browse_service = browse_service
         self.log_service = log_service or CatalogMealLogService()
         self.meal_translation_service = meal_translation_service
-        self.cache_invalidation = cache_invalidation
+        self.event_publisher = event_publisher
+        self.event_bus = event_bus
+        self.environment = environment
         self.recalculator = recalculator
-        self.insight_scheduler = insight_scheduler
-        self.task_manager = task_manager
 
     async def handle(self, command: LogCatalogMealCommand) -> LogCatalogMealResult:
         try:
@@ -76,44 +83,44 @@ class LogCatalogMealCommandHandler(
         write_started = time.perf_counter()
         result = await self._write(command, catalog_meal)
         write_ms = (time.perf_counter() - write_started) * 1000
-        await persist_meal_translation(
-            self.meal_translation_service, result.meal, command.language
-        )
-        if self.cache_invalidation is not None:
-            await self.cache_invalidation.after_meal_write(
-                command.user_id, command.meal_date
+        if not getattr(result.meal, "_is_replay", False):
+            await publish_meal_event(
+                self.event_publisher,
+                result.meal,
+                event_type="created",
+                environment=self.environment,
+                meal_date=command.meal_date,
+                user_id=command.user_id,
+                language=command.language or "en",
+                event_bus=self.event_bus,
+                source="catalog_meal_log",
             )
+        try:
+            await persist_meal_translation(
+                self.meal_translation_service, result.meal, command.language
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist catalog meal translation: %s", exc)
         if self.recalculator is not None:
-            await self._defer(
-                f"catalog-log-recalc:{command.request_id}",
-                self.recalculator.recalculate(
+            try:
+                await self.recalculator.recalculate(
                     user_id=command.user_id,
                     meal_date=command.meal_date,
                     logged_catalog_meal_id=command.catalog_meal_id,
                     logged_slot_id=result.slot_id,
                     request_id=command.request_id,
-                ),
-            )
-        if self.insight_scheduler is not None:
-            self.insight_scheduler(result.meal, command)
+                )
+            except Exception as exc:
+                logger.warning("Failed to recalculate recommendations: %s", exc)
         logger.info(
-            "catalog_log.timing meal_id=%s write_ms=%.0f background=%s",
+            "catalog_log.timing meal_id=%s write_ms=%.0f",
             result.meal_id,
             write_ms,
-            self.task_manager is not None,
         )
         return result
 
-    async def _defer(self, name: str, coro: Coroutine[Any, Any, Any]) -> None:
-        """Run isolated post-log work in the background when a task manager exists."""
-
-        if self.task_manager is not None:
-            self.task_manager.spawn(name, coro)
-            return
-        await coro
-
     async def _write(self, command, catalog_meal) -> LogCatalogMealResult:
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             reservation = await uow.meal_write_operations.reserve(
                 user_id=command.user_id,
                 operation="catalog_meal_log",
@@ -181,6 +188,7 @@ def _result_from_replay(payload: dict | None, catalog_meal) -> LogCatalogMealRes
             "meal_id": payload["meal_id"],
             "dish_name": getattr(catalog_meal, "name", None),
             "nutrition": None,
+            "_is_replay": True,
         },
     )()
     return LogCatalogMealResult(

@@ -49,6 +49,8 @@ def test_repository_ports_are_async_contracts():
             "update_user_timezone",
             "get_user_timezone",
             "update_user_language",
+            "get_weekly_auto_adjust",
+            "update_user_weekly_auto_adjust",
         ],
     )
     _assert_async_methods(
@@ -79,11 +81,6 @@ def test_repository_ports_are_async_contracts():
     _assert_async_methods(
         NotificationRepositoryPort,
         [
-            "save_fcm_token",
-            "find_fcm_token_by_token",
-            "find_active_fcm_tokens_by_user",
-            "deactivate_fcm_token",
-            "delete_fcm_token",
             "save_notification_preferences",
             "find_notification_preferences_by_user",
             "update_notification_preferences",

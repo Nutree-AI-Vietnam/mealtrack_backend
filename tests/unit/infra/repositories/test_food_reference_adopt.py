@@ -48,3 +48,25 @@ def test_apply_nutrition_writes_servings_when_collection_is_unloaded():
     assert model.name == "Banana"
     assert model.is_verified is True
     assert [row.name for row in model.serving_size_rows] == ["medium", "g"]
+
+
+def test_apply_nutrition_persists_extra_nutrients():
+    model = _unverified_model()
+    repo = FoodReferenceAdoptRepository(session=object())
+
+    repo._apply_nutrition(
+        model,
+        "Banana",
+        {
+            "protein_100g": 1.1,
+            "carbs_100g": 23.0,
+            "fat_100g": 0.3,
+            "extra_nutrients": {"iron_mg": 0.3, "potassium_mg": 358, "sodium_mg": 1},
+        },
+        [{"name": "g", "grams": 1.0}],
+    )
+
+    assert model.extra_nutrients["iron_mg"] == 0.3
+    assert model.extra_nutrients["potassium_mg"] == 358
+    keys = {row.nutrient_key for row in model.nutrient_rows}
+    assert keys == {"iron_mg", "potassium_mg", "sodium_mg"}

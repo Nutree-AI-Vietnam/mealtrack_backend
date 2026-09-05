@@ -101,6 +101,20 @@ class CacheKeys:
         )
 
     @staticmethod
+    def progress_summary(
+        user_id: str, start_date: date, end_date: date
+    ) -> tuple[str, int]:
+        """Cache key for a progress-summary date range. 5 min TTL.
+
+        Meal/movement/hydration/profile/cheat-day writes purge
+        `user:{id}:progress_summary:*` (see cache_invalidation_operations).
+        """
+        return (
+            f"user:{user_id}:progress_summary:{start_date.isoformat()}:{end_date.isoformat()}",
+            CacheKeys.TTL_5_MIN,
+        )
+
+    @staticmethod
     def food_search(
         query: str,
         *,
@@ -171,12 +185,8 @@ class CacheKeys:
         return (f"user:{user_id}:saved_suggestions", CacheKeys.TTL_1_HOUR)
 
     @staticmethod
-    def notification_prefs(user_id: str) -> tuple[str, int]:
-        """Cache key for notification preferences. 24h TTL."""
-        return (f"user:{user_id}:notification_prefs", CacheKeys.TTL_1_DAY)
-
-    @staticmethod
     def user_metrics(user_id: str) -> tuple[str, int]:
+
         """Cache key for user metrics (age, weight, height, goals). 24h TTL."""
         return (f"user:{user_id}:metrics", CacheKeys.TTL_1_DAY)
 

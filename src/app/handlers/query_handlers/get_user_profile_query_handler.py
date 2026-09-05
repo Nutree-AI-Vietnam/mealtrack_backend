@@ -39,12 +39,20 @@ class GetUserProfileQueryHandler(EventHandler[GetUserProfileQuery, dict[str, Any
         if self.cache_service:
             cached = await self.cache_service.get_json(cache_key)
             if cached is not None:
-                return cached
+                cached_revision = cached.get("profile_target_revision")
+                if (
+                    cached_revision is None
+                    or cached_revision
+                    == await self._current_profile_revision(query.user_id)
+                ):
+                    return cached
 
         result = await self._fetch_from_db(query)
 
         if self.cache_service:
-            await self.cache_service.set_json(cache_key, result, ttl)
+            await self.cache_service.set_json(
+                cache_key, result, ttl, revision_field="profile_target_revision"
+            )
 
         return result
 
@@ -114,4 +122,17 @@ class GetUserProfileQueryHandler(EventHandler[GetUserProfileQuery, dict[str, Any
                     ),
                 },
                 "tdee": tdee_result.to_dict(),
+                "profile_target_revision": profile.profile_target_revision,
+                "target_revision": profile.profile_target_revision,
             }
+
+    async def _current_profile_revision(self, user_id: str) -> int | None:
+        from sqlalchemy import select
+
+        async with AsyncUnitOfWork() as uow:
+            result = await uow.session.execute(
+                select(UserProfile.profile_target_revision).where(
+                    UserProfile.user_id == user_id, UserProfile.is_current.is_(True)
+                )
+            )
+            return result.scalar_one_or_none()

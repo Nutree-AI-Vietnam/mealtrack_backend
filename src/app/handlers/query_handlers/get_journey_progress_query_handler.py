@@ -40,21 +40,21 @@ class GetJourneyProgressQueryHandler(
 
     def __init__(
         self,
-        uow: AsyncUnitOfWorkPort,
+        uow: AsyncUnitOfWorkPort | None = None,
+        uow_factory: Any = None,
         cache_service: CachePort | None = None,
         now_fn: Callable[[], Any] = utc_now,
         target_loader: TargetLoader | None = None,
     ):
-        self.uow = uow
+        self.uow_factory: Any = uow_factory or (lambda: uow)
         self.cache_service = cache_service
         self.now_fn = now_fn
         self.target_loader = target_loader
 
     async def handle(self, query: GetJourneyProgressQuery) -> dict[str, Any]:
         now = ensure_utc(self.now_fn())
-        uow = self.uow
 
-        async with uow:
+        async with self.uow_factory() as uow:
             user_tz_str = await resolve_user_timezone_async(
                 query.user_id, uow, query.header_timezone
             )

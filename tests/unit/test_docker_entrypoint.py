@@ -22,6 +22,7 @@ def _run_entrypoint(
     *,
     auto_migrate: str | None = None,
     production_variable: str | None = None,
+    render: bool = False,
     migration_exit_code: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
@@ -49,12 +50,15 @@ def _run_entrypoint(
     )
     environment.pop("ENV", None)
     environment.pop("ENVIRONMENT", None)
+    environment.pop("RENDER", None)
     if auto_migrate is None:
         environment.pop("AUTO_MIGRATE", None)
     else:
         environment["AUTO_MIGRATE"] = auto_migrate
     if production_variable is not None:
         environment[production_variable] = "production"
+    if render:
+        environment["RENDER"] = "true"
 
     result = subprocess.run(
         ["bash", str(ENTRYPOINT)],
@@ -108,7 +112,28 @@ def test_production_skips_before_validating_toggle(
     )
 
     assert result.returncode == 0
-    assert "pre-deploy handles this" in result.stdout
+    assert "GitHub Actions migrate workflow" in result.stdout
+    assert not any(command.startswith("python ") for command in commands)
+
+
+def test_render_skips_migrations_even_when_auto_migrate_true(tmp_path: Path) -> None:
+    result, commands = _run_entrypoint(tmp_path, auto_migrate="true", render=True)
+
+    assert result.returncode == 0
+    assert "Render; use GitHub Actions migrate workflow" in result.stdout
+    assert not any(command.startswith("python ") for command in commands)
+    assert any(command.startswith("uvicorn ") for command in commands)
+
+
+def test_render_skips_before_validating_toggle(tmp_path: Path) -> None:
+    result, commands = _run_entrypoint(
+        tmp_path,
+        auto_migrate="not-a-boolean",
+        render=True,
+    )
+
+    assert result.returncode == 0
+    assert "Render; use GitHub Actions migrate workflow" in result.stdout
     assert not any(command.startswith("python ") for command in commands)
 
 

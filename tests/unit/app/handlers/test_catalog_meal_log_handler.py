@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -125,19 +125,18 @@ def _handler(
     uow,
     browse,
     log_service,
-    cache=None,
+    event_publisher=None,
     recalculator=None,
-    task_manager=None,
     translation=None,
 ):
+    event_publisher = event_publisher or MagicMock(publish=AsyncMock())
     return LogCatalogMealCommandHandler(
         uow=uow,
         browse_service=browse,
         log_service=log_service,
         meal_translation_service=translation,
-        cache_invalidation=cache,
+        event_publisher=event_publisher,
         recalculator=recalculator,
-        task_manager=task_manager,
     )
 
 
@@ -158,13 +157,15 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
     log_service.execute = AsyncMock(
         return_value=_result(logged_via="slot", plan_id="plan-1", slot_id="slot-1")
     )
-    cache = SimpleNamespace(after_meal_write=AsyncMock())
     recalculator = SimpleNamespace(recalculate=AsyncMock())
+
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
     handler = _handler(
         _Uow(),
         _Browse(),
         log_service,
-        cache=cache,
+        event_publisher=publisher,
         recalculator=recalculator,
     )
 
@@ -172,65 +173,51 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
 
     assert result.logged_via == "slot"
     assert result.plan_id == "plan-1"
-    cache.after_meal_write.assert_awaited_once_with("user-1", date(2026, 8, 18))
+    publisher.publish.assert_awaited_once()
     recalculator.recalculate.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_translates_before_cache_invalidation():
-    order: list[str] = []
+async def test_translation_is_called_when_language_provided():
+    translated: list[str] = []
     log_service = AsyncMock()
     log_service.execute = AsyncMock(return_value=_result())
 
     class _Translation:
         async def translate_meal(self, **kwargs):
-            order.append("translate")
-
-    class _Cache:
-        async def after_meal_write(self, user_id, meal_date):
-            order.append("cache")
+            translated.append("translate")
 
     handler = _handler(
         _Uow(),
         _Browse(),
         log_service,
-        cache=_Cache(),
         translation=_Translation(),
     )
 
     await handler.handle(_command(language="vi"))
 
-    assert order == ["translate", "cache"]
+    assert translated == ["translate"]
 
 
 @pytest.mark.asyncio
-async def test_recalculate_is_backgrounded_when_task_manager_present():
+async def test_recalculate_is_called_when_present():
     log_service = AsyncMock()
     log_service.execute = AsyncMock(
         return_value=_result(logged_via="slot", plan_id="plan-1", slot_id="slot-1")
     )
     recalculator = SimpleNamespace(recalculate=AsyncMock())
-    spawned: list[str] = []
-
-    class _Tasks:
-        def spawn(self, name, coro):
-            spawned.append(name)
-            coro.close()
 
     handler = _handler(
         _Uow(),
         _Browse(),
         log_service,
         recalculator=recalculator,
-        task_manager=_Tasks(),
     )
 
     result = await handler.handle(_command())
 
     assert result.meal_id == "meal-1"
-    assert spawned == ["catalog-log-recalc:req-1"]
-    recalculator.recalculate.assert_called_once()
-    recalculator.recalculate.assert_not_awaited()
+    recalculator.recalculate.assert_awaited_once()
 
 
 @pytest.mark.asyncio

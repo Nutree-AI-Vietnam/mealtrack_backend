@@ -146,6 +146,7 @@ def test_get_configured_event_bus_is_singleton(monkeypatch):
         "GetWeeklyBudgetQueryHandler",
         "GetStreakQueryHandler",
         "GetDailyBreakdownQueryHandler",
+        "GetProgressSummaryQueryHandler",
         "GetDailyActivitiesQueryHandler",
         "GenerateDailyMealSuggestionsCommandHandler",
         "GenerateSingleMealCommandHandler",
@@ -168,8 +169,6 @@ def test_get_configured_event_bus_is_singleton(monkeypatch):
         "GetUserMetricsQueryHandler",
         "GetUserTdeeQueryHandler",
         "PreviewTdeeQueryHandler",
-        "RegisterFcmTokenCommandHandler",
-        "DeleteFcmTokenCommandHandler",
         "UpdateNotificationPreferencesCommandHandler",
         "GetNotificationPreferencesQueryHandler",
         "RecognizeIngredientCommandHandler",
@@ -245,6 +244,10 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED = True
         AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS = 7.0
         AI_MEAL_ANALYZE_GRAPH_VERSION = "test-v2"
+        CLOUDFLARE_QUEUE_ACCOUNT_ID = "test-account"
+        CLOUDFLARE_QUEUE_ID = "testqueue"
+        CLOUDFLARE_QUEUE_API_TOKEN = "test-token"
+        CLOUDFLARE_QUEUE_TIMEOUT_SECONDS = 10.0
 
     import src.infra.config.settings as settings_mod
 
@@ -274,6 +277,7 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         "GetWeeklyBudgetQueryHandler",
         "GetStreakQueryHandler",
         "GetDailyBreakdownQueryHandler",
+        "GetProgressSummaryQueryHandler",
         "GetNutritionBulkQueryHandler",
         "GetActivitiesPresenceQueryHandler",
         "GetDailyActivitiesQueryHandler",
@@ -290,6 +294,7 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         "UpdateUserMetricsCommandHandler",
         "UpdateTimezoneCommandHandler",
         "UpdateLanguageCommandHandler",
+        "UpdateWeeklyAutoAdjustCommandHandler",
         "UpdateCustomMacrosCommandHandler",
         "GetUserProfileQueryHandler",
         "GetUserByFirebaseUidQueryHandler",
@@ -297,8 +302,6 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         "GetUserMetricsQueryHandler",
         "GetUserTdeeQueryHandler",
         "PreviewTdeeQueryHandler",
-        "RegisterFcmTokenCommandHandler",
-        "DeleteFcmTokenCommandHandler",
         "UpdateNotificationPreferencesCommandHandler",
         "GetNotificationPreferencesQueryHandler",
         "RecognizeIngredientCommandHandler",
@@ -317,7 +320,6 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         "UpdateMovementEntryCommandHandler",
         "LookupBarcodeQueryHandler",
         "AttachMealPhotoCommandHandler",
-        "DeleteFcmTokenCommandHandler",
     ]
 
     for name in handler_names:
@@ -399,6 +401,7 @@ async def test_configured_event_bus_can_send_movement_catalog_query(monkeypatch)
         "GetWeeklyBudgetQueryHandler",
         "GetStreakQueryHandler",
         "GetDailyBreakdownQueryHandler",
+        "GetProgressSummaryQueryHandler",
         "GetNutritionBulkQueryHandler",
         "GetActivitiesPresenceQueryHandler",
         "GetDailyActivitiesQueryHandler",
@@ -415,6 +418,7 @@ async def test_configured_event_bus_can_send_movement_catalog_query(monkeypatch)
         "UpdateUserMetricsCommandHandler",
         "UpdateTimezoneCommandHandler",
         "UpdateLanguageCommandHandler",
+        "UpdateWeeklyAutoAdjustCommandHandler",
         "UpdateCustomMacrosCommandHandler",
         "GetUserProfileQueryHandler",
         "GetUserByFirebaseUidQueryHandler",
@@ -422,8 +426,6 @@ async def test_configured_event_bus_can_send_movement_catalog_query(monkeypatch)
         "GetUserMetricsQueryHandler",
         "GetUserTdeeQueryHandler",
         "PreviewTdeeQueryHandler",
-        "RegisterFcmTokenCommandHandler",
-        "DeleteFcmTokenCommandHandler",
         "UpdateNotificationPreferencesCommandHandler",
         "GetNotificationPreferencesQueryHandler",
         "RecognizeIngredientCommandHandler",

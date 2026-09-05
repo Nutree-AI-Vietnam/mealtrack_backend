@@ -9,7 +9,6 @@ from .complete_onboarding_command_handler import CompleteOnboardingCommandHandle
 
 # Standalone handlers (already individual files)
 from .create_manual_meal_command_handler import CreateManualMealCommandHandler
-from .delete_fcm_token_command_handler import DeleteFcmTokenCommandHandler
 from .delete_hydration_entry_command_handler import DeleteHydrationEntryCommandHandler
 from .delete_meal_command_handler import DeleteMealCommandHandler
 from .delete_meal_photo_command_handler import DeleteMealPhotoCommandHandler
@@ -18,7 +17,11 @@ from .delete_user_command_handler import DeleteUserCommandHandler
 
 # Meal handlers (already extracted)
 from .edit_meal_command_handler import EditMealCommandHandler
+from .favorite_meal_command_handler import FavoriteMealCommandHandler
 from .log_caloric_drink_command_handler import LogCaloricDrinkCommandHandler
+from .repeat_meal_command_handler import RepeatMealCommandHandler
+from .unfavorite_meal_command_handler import UnfavoriteMealCommandHandler
+
 
 # Hydration handlers
 from .log_hydration_command_handler import LogHydrationCommandHandler
@@ -36,7 +39,6 @@ from .parse_meal_text_handler import ParseMealTextHandler
 from .recognize_ingredient_command_handler import RecognizeIngredientCommandHandler
 
 # Notification handlers
-from .register_fcm_token_command_handler import RegisterFcmTokenCommandHandler
 from .save_body_fat_visual_profile_command_handler import (
     SaveBodyFatVisualProfileCommandHandler,
 )
@@ -56,6 +58,9 @@ from .update_notification_preferences_command_handler import (
     UpdateNotificationPreferencesCommandHandler,
 )
 from .update_timezone_command_handler import UpdateTimezoneCommandHandler
+from .update_weekly_auto_adjust_command_handler import (
+    UpdateWeeklyAutoAdjustCommandHandler,
+)
 from .update_user_last_accessed_command_handler import (
     UpdateUserLastAccessedCommandHandler,
 )
@@ -71,6 +76,9 @@ __all__ = [
     "AttachMealPhotoCommandHandler",
     "DeleteMealPhotoCommandHandler",
     "DeleteMealCommandHandler",
+    "FavoriteMealCommandHandler",
+    "UnfavoriteMealCommandHandler",
+    "RepeatMealCommandHandler",
     # User handlers
     "SaveUserOnboardingCommandHandler",
     "SaveBodyFatVisualProfileCommandHandler",
@@ -82,6 +90,7 @@ __all__ = [
     "UpdateCustomMacrosCommandHandler",
     "UpdateLanguageCommandHandler",
     "UpdateTimezoneCommandHandler",
+    "UpdateWeeklyAutoAdjustCommandHandler",
     # Meal Suggestion handlers
     "DiscoverMealsCommandHandler",
     "GenerateMealRecipesCommandHandler",
@@ -92,8 +101,6 @@ __all__ = [
     "UploadMealImageImmediatelyHandler",
     "ScanByUrlCommandHandler",
     # Notification handlers
-    "RegisterFcmTokenCommandHandler",
-    "DeleteFcmTokenCommandHandler",
     "UpdateNotificationPreferencesCommandHandler",
     # Ingredient handlers
     "RecognizeIngredientCommandHandler",

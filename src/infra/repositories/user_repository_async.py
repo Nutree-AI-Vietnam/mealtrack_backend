@@ -263,3 +263,21 @@ class AsyncUserRepository(UserRepositoryPort):
             .where(User.id == str(user_id))
             .values(language_code=language_code)
         )
+
+    async def get_weekly_auto_adjust(self, user_id: UUID) -> bool:
+        result = await self.session.execute(
+            select(User.weekly_auto_adjust).where(
+                User.id == str(user_id), User.is_active.is_(True)
+            )
+        )
+        value = result.scalar_one_or_none()
+        return True if value is None else bool(value)
+
+    async def update_user_weekly_auto_adjust(
+        self, user_id: UUID, enabled: bool
+    ) -> None:
+        await self.session.execute(
+            update(User)
+            .where(User.id == str(user_id))
+            .values(weekly_auto_adjust=enabled)
+        )

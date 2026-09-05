@@ -3,7 +3,7 @@ Unit tests for CacheService JSON (de)serialization, including the
 datetime-with-offset fix that prevented '+HH:MMZ' malformed strings.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,7 +21,7 @@ def test_serializer_naive_datetime_appends_z():
 
 def test_serializer_tz_aware_datetime_no_double_z():
     """tz-aware datetimes must NOT get a trailing 'Z' (caused +00:00Z bug)."""
-    dt = datetime(2026, 4, 13, 10, 12, 43, 247633, tzinfo=timezone.utc)
+    dt = datetime(2026, 4, 13, 10, 12, 43, 247633, tzinfo=UTC)
     out = _json_serializer(dt)
     assert out == "2026-04-13T10:12:43.247633+00:00"
     assert not out.endswith("Z")
@@ -78,11 +78,58 @@ async def test_get_json_returns_none_on_invalid_json(service):
 
 @pytest.mark.asyncio
 async def test_set_json_writes_clean_offset(service):
-    """End-to-end: set_json with tz-aware dt produces no '+00:00Z'."""
+    """Direct cache writes with tz-aware dt produce no '+00:00Z'."""
     service.redis.set = AsyncMock(return_value=True)
-    dt = datetime(2026, 4, 13, 10, 12, 43, tzinfo=timezone.utc)
-    await service.set_json("k", {"updated_at": dt})
+    dt = datetime(2026, 4, 13, 10, 12, 43, tzinfo=UTC)
+    assert await service.set_json("k", {"updated_at": dt}) is True
+    service.redis.set.assert_awaited_once()
     args, _ = service.redis.set.call_args
     payload = args[1]
     assert "+00:00" in payload
     assert "+00:00Z" not in payload
+
+
+@pytest.mark.asyncio
+async def test_set_json_disabled_does_not_write_redis():
+    redis = AsyncMock()
+    service = CacheService(redis_client=redis, enabled=False)
+
+    assert await service.set_json("k", {"value": 1}) is False
+    redis.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalidate_deletes_key_and_revision(service):
+    service.redis.delete = AsyncMock(return_value=True)
+
+    assert await service.invalidate("user:u:daily") is True
+    assert service.redis.delete.await_count == 2
+    service.redis.delete.assert_any_await("user:u:daily")
+    service.redis.delete.assert_any_await("user:u:daily:__revision")
+
+
+@pytest.mark.asyncio
+async def test_revision_write_keeps_newest_payload(service):
+    service.redis.set_if_revision_newer = AsyncMock(return_value=True)
+
+    assert (
+        await service.set_json(
+            "user:u:metrics",
+            {"profile_target_revision": 4},
+            revision_field="profile_target_revision",
+        )
+        is True
+    )
+
+    service.redis.set_if_revision_newer.assert_awaited_once()
+    args = service.redis.set_if_revision_newer.await_args.args
+    assert args[0] == "user:u:metrics"
+    assert args[2] == 4
+
+
+@pytest.mark.asyncio
+async def test_invalidate_pattern_deletes_pattern(service):
+    service.redis.delete_pattern = AsyncMock(return_value=3)
+
+    assert await service.invalidate_pattern("user:u:activities:*") == 3
+    service.redis.delete_pattern.assert_awaited_once_with("user:u:activities:*")

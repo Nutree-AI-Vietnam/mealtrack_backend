@@ -22,11 +22,15 @@ from .get_provider_food_details_query_handler import (
 )
 from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
 from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
+from .get_progress_summary_query_handler import GetProgressSummaryQueryHandler
 
 # Meal handlers
+from .get_favorite_meals_query_handler import GetFavoriteMealsQueryHandler
 from .get_meal_by_id_query_handler import GetMealByIdQueryHandler
 from .get_meals_by_date_query_handler import GetMealsByDateQueryHandler
 from .get_movement_catalog_query_handler import GetMovementCatalogQueryHandler
+from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
+
 
 # Notification handlers
 from .get_notification_preferences_query_handler import (
@@ -46,6 +50,7 @@ from .get_user_profile_query_handler import GetUserProfileQueryHandler
 # TDEE handlers
 from .get_user_tdee_query_handler import GetUserTdeeQueryHandler
 from .get_user_timezone_query_handler import GetUserTimezoneQueryHandler
+from .get_weekly_auto_adjust_query_handler import GetWeeklyAutoAdjustQueryHandler
 from .get_weekly_budget_query_handler import GetWeeklyBudgetQueryHandler
 from .get_weekly_hydration_query_handler import GetWeeklyHydrationQueryHandler
 
@@ -67,9 +72,12 @@ __all__ = [
     # Meal
     "GetMealByIdQueryHandler",
     "GetDailyMacrosQueryHandler",
+    "GetRecentMealsQueryHandler",
+    "GetFavoriteMealsQueryHandler",
     # User
     "GetUserProfileQueryHandler",
     "GetUserTimezoneQueryHandler",
+    "GetWeeklyAutoAdjustQueryHandler",
     "GetBodyFatVisualProfileQueryHandler",
     "GetUserByFirebaseUidQueryHandler",
     "GetUserOnboardingStatusQueryHandler",
@@ -94,4 +102,5 @@ __all__ = [
     "GetDrinkCatalogQueryHandler",
     "GetWeeklyHydrationQueryHandler",
     "GetJourneyProgressQueryHandler",
+    "GetProgressSummaryQueryHandler",
 ]

@@ -43,11 +43,11 @@ async def test_lookup_checks_redis_before_db():
 
 
 @pytest.mark.asyncio
-async def test_lookup_caches_result_in_redis_on_miss():
-    """Verify successful lookup is cached in Redis."""
+async def test_lookup_schedules_cache_population_on_miss():
+    """Verify successful lookup uses the cache port for population."""
     redis_mock = AsyncMock()
     redis_mock.get = AsyncMock(return_value=None)  # Cache miss
-    redis_mock.set = AsyncMock(return_value=True)
+    cache_mock = AsyncMock()
 
     repo_mock = MagicMock()
     repo_mock.find_by_normalized_name = MagicMock(
@@ -66,11 +66,46 @@ async def test_lookup_caches_result_in_redis_on_miss():
         ingredient_nutrition_resolver=MagicMock(),
         generation_service=MagicMock(),
         redis_client=redis_mock,
+        cache_service=cache_mock,
     )
 
     await svc._lookup_ingredient("chicken breast", 100.0)
 
-    redis_mock.set.assert_called_once()
-    call_args = redis_mock.set.call_args
-    assert "nutrition:" in call_args[0][0]  # Key contains prefix
-    assert call_args.kwargs["ttl"] == 86400  # TTL is 24 hours
+    cache_mock.set.assert_awaited_once()
+    call_args = cache_mock.set.call_args
+    assert "nutrition:" in call_args.args[0]  # Key contains prefix
+    assert call_args.args[2] == 86400  # TTL is 24 hours
+    redis_mock.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_lookup_uses_cache_port_for_background_population():
+    """Application wiring sends cache writes through the async cache port."""
+    cache_mock = AsyncMock()
+    redis_mock = AsyncMock()
+    redis_mock.get = AsyncMock(return_value=None)
+
+    repo_mock = MagicMock()
+    repo_mock.find_by_normalized_name = MagicMock(
+        return_value={
+            "id": 1,
+            "protein_100g": 31.0,
+            "carbs_100g": 0.0,
+            "fat_100g": 3.6,
+            "fiber_100g": 0.0,
+            "sugar_100g": 0.0,
+        }
+    )
+
+    svc = NutritionLookupService(
+        food_ref_repo=repo_mock,
+        ingredient_nutrition_resolver=MagicMock(),
+        generation_service=MagicMock(),
+        redis_client=redis_mock,
+        cache_service=cache_mock,
+    )
+
+    await svc._lookup_ingredient("chicken breast", 100.0)
+
+    cache_mock.set.assert_awaited_once()
+    redis_mock.set.assert_not_awaited()

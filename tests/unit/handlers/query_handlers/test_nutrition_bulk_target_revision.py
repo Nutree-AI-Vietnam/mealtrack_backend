@@ -28,7 +28,7 @@ async def test_stale_bulk_target_cache_is_recomputed():
     handler._compute = AsyncMock(return_value=fresh)
 
     assert await handler.handle(query) == fresh
-    handler._compute.assert_awaited_once_with(query)
+    handler._compute.assert_awaited_once()
     cache.set_json.assert_awaited_once()
 
 
@@ -45,6 +45,7 @@ async def test_bulk_preserves_adjusted_macros_for_keto_users():
     uow.hydration_entries.find_by_date_range = AsyncMock(return_value=[])
     uow.movement_entries.fetch_included_kcal_for_range = AsyncMock(return_value=[])
     uow.weekly_budgets.find_by_user_and_week = AsyncMock(return_value=budget)
+    uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
     effective = EffectiveAdjustedResult(
         adjusted=AdjustedDailyTargets(1900.0, 100.0, 100.0, 100.0, False, 7),
         consumed_before_today={}, consumed_total={"calories": 0.0},

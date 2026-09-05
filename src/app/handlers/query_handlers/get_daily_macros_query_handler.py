@@ -13,11 +13,14 @@ from src.app.queries.meal import GetDailyMacrosQuery
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
+from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros_ops import merge_micros
 from src.domain.model.user import MacroPreset, MacroTargets
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.hydration_goal_service import resolve_hydration_goal_ml
 from src.domain.services.meal_calorie_service import effective_meal_calories
+from src.domain.services.nrf_score import highlight_amounts
 from src.domain.services.tdee_service import TdeeCalculationService
 from src.domain.services.weekly_budget_service import WeeklyBudgetService
 from src.domain.utils.timezone_utils import (
@@ -87,12 +90,15 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             )
             user_tz = get_zone_info(user_tz_str)
             target_date = query.target_date or datetime.now(user_tz).date()
+            auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
+                await uow.users.get_weekly_auto_adjust(query.user_id)
+            )
 
             # Cache-aside BEFORE meal aggregation. Returning a Redis hit after
             # computing fresh totals discarded those totals and could leave
             # clients with stale consumed=0 while meals already existed.
             cached_result = await self._try_get_cached_result(
-                query.user_id, target_date, target_revision
+                query.user_id, target_date, target_revision, auto_adjust
             )
             if cached_result is not None:
                 return cached_result
@@ -111,6 +117,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             meal_count = 0
             meals_with_nutrition = 0
             has_legacy_hydration = False
+            day_micros = None
 
             for meal in meals:
                 if meal.status == MealStatus.INACTIVE:
@@ -128,6 +135,13 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                         total_carbs += meal.nutrition.macros.carbs or 0
                         total_fat += meal.nutrition.macros.fat or 0
                         total_calories += effective_meal_calories(meal)
+                    day_micros = merge_micros(
+                        day_micros,
+                        merge_meal_micros(
+                            getattr(meal.nutrition, "micros", None),
+                            getattr(meal.nutrition, "food_items", None),
+                        ),
+                    )
 
             if not has_legacy_hydration:
                 hydration_entries = await uow.hydration_entries.find_by_date(
@@ -147,6 +161,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                         fat=entry.fat_g or 0,
                         fiber=entry.fiber_g or 0,
                     ).total_calories
+                    day_micros = merge_micros(day_micros, entry.micros)
 
             # Pre-fetch weekly budget eagerly here (must be inside this UoW — fetching it
             # later would require a second connection open). Only consumed when target_calories
@@ -156,6 +171,13 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 query.user_id, week_start
             )
 
+            user_profile = None
+            try:
+                user_profile = await uow.users.get_profile(UUID(query.user_id))
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch profile for user %s: %s", query.user_id, exc
+                )
             # Fetch hydration summary
             try:
                 consumed_water_ml = await uow.hydration_entries.sum_ml_for_date(
@@ -169,11 +191,8 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                         user_id=query.user_id,
                         user_timezone=user_tz_str,
                     )
-                user_profile = await uow.users.get_profile(UUID(query.user_id))
                 water_goal_ml = (
-                    resolve_hydration_goal_ml(user_profile)
-                    if user_profile
-                    else 2000
+                    resolve_hydration_goal_ml(user_profile) if user_profile else 2000
                 )
             except Exception as exc:
                 logger.warning(
@@ -218,6 +237,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                     macro_preset,
                     is_custom,
                     target_revision,
+                    auto_adjust,
                 )
 
         result = {
@@ -231,7 +251,12 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             "total_fat": round(total_fat, 1),
             "meal_count": meal_count,
             "meals_with_nutrition": meals_with_nutrition,
+            "weekly_auto_adjust": auto_adjust,
+            **highlight_amounts(day_micros),
         }
+        if user_profile is not None:
+            result["gender"] = user_profile.gender
+            result["age"] = user_profile.age
 
         if target_calories is not None:
             result["target_calories"] = target_calories
@@ -277,6 +302,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
         macro_preset: MacroPreset = MacroPreset.STANDARD,
         is_custom: bool = False,
         target_revision: int | None = None,
+        auto_adjust: bool = True,
     ) -> dict[str, Any] | None:
         """Get weekly budget context using the weekly-budget adjustment path.
 
@@ -312,6 +338,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 base_daily_fat=standard_daily_fat,
                 bmr=bmr,
                 user_timezone=user_timezone,
+                auto_adjust=auto_adjust,
             )
             adjusted = effective.adjusted
             policy_targets = TdeeCalculationService.apply_adjusted_macro_policy(
@@ -338,13 +365,27 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             logger.warning(f"Could not fetch weekly budget context: {e}")
             return None
 
-    async def _try_get_cached_result(self, user_id: str, target_date: date, revision: int | None):
+    async def _try_get_cached_result(
+        self,
+        user_id: str,
+        target_date: date,
+        revision: int | None,
+        auto_adjust: bool,
+    ):
         if not self.cache_service:
             return None
         cache_key, _ = CacheKeys.daily_macros(user_id, target_date)
         try:
             cached = await self.cache_service.get_json(cache_key)
-            if revision is not None and cached and cached.get("target_revision") == revision:
+            if (
+                revision is not None
+                and cached
+                and cached.get("target_revision") == revision
+                and WeeklyBudgetService.auto_adjust_enabled(
+                    cached.get("weekly_auto_adjust", True)
+                )
+                == auto_adjust
+            ):
                 return cached
             return None
         except Exception as exc:
@@ -358,7 +399,9 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             return
         cache_key, ttl = CacheKeys.daily_macros(user_id, target_date)
         try:
-            await self.cache_service.set_json(cache_key, payload, ttl)
+            await self.cache_service.set_json(
+                cache_key, payload, ttl, revision_field="target_revision"
+            )
         except Exception as exc:
             logger.warning(
                 "Failed to write daily macros cache for %s: %s", user_id, exc
