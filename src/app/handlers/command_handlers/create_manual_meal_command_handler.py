@@ -25,6 +25,7 @@ from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
+    require_event_publisher,
 )
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
@@ -57,7 +58,9 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         environment: str = "development",
     ):
         self.uow = uow
-        self.event_publisher = event_publisher
+        # Publish paths always require a publisher; fail at wiring time instead of
+        # constructing a handler that crashes on the first successful save.
+        self.event_publisher = require_event_publisher(event_publisher)
         self.event_bus = event_bus
         self.environment = environment
         self.meal_repository = meal_repository

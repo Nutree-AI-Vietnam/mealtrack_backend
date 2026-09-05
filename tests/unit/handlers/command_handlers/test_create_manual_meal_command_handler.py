@@ -109,6 +109,15 @@ def _publisher():
     return MagicMock(publish=AsyncMock())
 
 
+def test_handler_requires_event_publisher_at_construction():
+    from src.domain.ports.integration_event_publisher_port import (
+        IntegrationEventPublisherRequiredError,
+    )
+
+    with pytest.raises(IntegrationEventPublisherRequiredError):
+        CreateManualMealCommandHandler(meal_repository=MagicMock())
+
+
 _UUID_1 = "550e8400-e29b-41d4-a716-446655440001"
 _UUID_2 = "550e8400-e29b-41d4-a716-446655440002"
 _CLIENT_MEAL_ID = "550e8400-e29b-41d4-a716-446655440010"
@@ -580,6 +589,7 @@ async def test_v2_item_missing_identity_is_rejected_with_validation_error():
     handler = CreateManualMealCommandHandler(
         uow=_PreparedV2Uow(),
         uow_factory=lambda: _ResolveUow(),
+        event_publisher=_publisher(),
     )
     handler._reserve_v2_write_short = AsyncMock(
         return_value=SimpleNamespace(state="claimed")
