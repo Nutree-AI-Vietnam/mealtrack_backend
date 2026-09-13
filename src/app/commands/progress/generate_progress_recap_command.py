@@ -5,6 +5,7 @@ from datetime import date
 
 from src.app.events.base import Command
 from src.domain.services.progress_recap_facts import HORIZONS
+from src.domain.services.progress_recap_i18n import recap_locale
 
 
 @dataclass
@@ -22,9 +23,4 @@ class GenerateProgressRecapCommand(Command):
         if horizon not in HORIZONS:
             raise ValueError("horizon must be day, week, month, or year")
         self.horizon = horizon
-        self.locale = _locale(self.locale)
-
-
-def _locale(value: str) -> str:
-    token = (value or "en").split(",")[0].split(";")[0].strip()
-    return (token.split("-")[0] or "en")[:8]
+        self.locale = recap_locale(self.locale)

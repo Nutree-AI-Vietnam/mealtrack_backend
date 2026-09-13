@@ -14,6 +14,7 @@ from src.app.queries.progress.get_progress_summary_query import GetProgressSumma
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.progress_recap_contract import missing_recap
+from src.domain.services.progress_recap_facts import build_recap_facts
 
 
 @handles(GetProgressRecapQuery)
@@ -39,9 +40,20 @@ class GetProgressRecapQueryHandler(EventHandler[GetProgressRecapQuery, dict[str,
         )
         start = date.fromisoformat(summary["effective_start"])
         end = date.fromisoformat(summary["effective_end"])
+        facts = build_recap_facts(
+            list(summary.get("days") or []),
+            horizon=query.horizon,
+            start=start,
+            end=end,
+        )
         if self.cache_service is not None:
             key, _ = CacheKeys.progress_recap(
-                query.user_id, query.horizon, start, end, query.locale
+                query.user_id,
+                query.horizon,
+                start,
+                end,
+                query.locale,
+                facts.stamp(),
             )
             cached = await self.cache_service.get(key)
             if isinstance(cached, dict) and cached.get("status"):

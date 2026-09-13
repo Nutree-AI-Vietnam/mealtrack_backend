@@ -207,8 +207,10 @@ async def test_cache_hit_skips_compute():
         ),
         cache=cache,
     )
-    assert result is cached
+    assert result["effective_start"] == "2026-09-01"
+    assert result["target_revision"] == 3
     uow.meals.find_by_date_range.assert_not_awaited()
+    uow.hydration_entries.sum_ml_by_date_range.assert_awaited()
 
 
 @pytest.mark.asyncio

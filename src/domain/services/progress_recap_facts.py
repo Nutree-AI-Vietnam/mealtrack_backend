@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date
 from statistics import mean
 from typing import Any
+
+from src.domain.services.progress_recap_fact_buckets import (
+    best_bucket,
+    best_day,
+    calorie_cv,
+    iso_week,
+    weekend_gap,
+    year_month,
+)
 
 HORIZONS = frozenset({"day", "week", "month", "year"})
 
@@ -26,6 +34,12 @@ class RecapFacts:
     protein_avg: float
     protein_target_avg: float
     protein_hit_days: int
+    carbs_avg: float
+    fat_avg: float
+    fiber_avg: float
+    fiber_target_avg: float
+    sodium_avg: float | None
+    sugar_avg: float | None
     hydration_avg: float
     hydration_goal_avg: float
     hydration_hit_days: int
@@ -40,6 +54,15 @@ class RecapFacts:
 
     def to_prompt_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def stamp(self) -> str:
+        return (
+            f"{self.logged_days}-"
+            f"{int(self.hydration_avg)}-"
+            f"{int(self.protein_avg)}-"
+            f"{int(self.calorie_avg)}-"
+            f"{int(self.sodium_avg or 0)}"
+        )
 
 
 def build_recap_facts(
@@ -56,6 +79,8 @@ def build_recap_facts(
     protein_targets = [_num(row, "protein_target_g") for row in logged]
     hydrations = [_num(row, "hydration_ml") for row in logged]
     hydration_goals = [_num(row, "hydration_goal_ml") for row in logged]
+    sodiums = [_opt(row, "sodium_mg") for row in logged]
+    sugars = [_opt(row, "added_sugar_g") for row in logged]
     quality_vals = [
         _num(row, "nrf_quality")
         for row in logged
@@ -63,7 +88,7 @@ def build_recap_facts(
     ]
     cal_sum = sum(calories)
     tgt_sum = sum(targets)
-    best = _best_day(logged)
+    best = best_day(logged)
     return RecapFacts(
         horizon=horizon,
         start=start.isoformat(),
@@ -83,6 +108,12 @@ def build_recap_facts(
             if _num(row, "protein_target_g") > 0
             and _num(row, "protein_g") >= 0.9 * _num(row, "protein_target_g")
         ),
+        carbs_avg=_mean_key(logged, "carbs_g"),
+        fat_avg=_mean_key(logged, "fat_g"),
+        fiber_avg=_mean_key(logged, "fiber_g"),
+        fiber_target_avg=_mean_key(logged, "fiber_target_g"),
+        sodium_avg=_mean_opt(sodiums),
+        sugar_avg=_mean_opt(sugars),
         hydration_avg=round(mean(hydrations), 1) if hydrations else 0.0,
         hydration_goal_avg=round(mean(hydration_goals), 1) if hydration_goals else 0.0,
         hydration_hit_days=sum(
@@ -95,10 +126,10 @@ def build_recap_facts(
         quality_avg=round(mean(quality_vals), 2) if quality_vals else None,
         best_day=best[0],
         best_day_balance_kcal=best[1],
-        swing_cv=_calorie_cv(calories),
-        weekend_gap_kcal=_weekend_gap(logged),
-        best_week=_best_bucket(logged, _iso_week),
-        best_month=_best_bucket(logged, _year_month),
+        swing_cv=calorie_cv(calories),
+        weekend_gap_kcal=weekend_gap(logged),
+        best_week=best_bucket(logged, iso_week),
+        best_month=best_bucket(logged, year_month),
     )
 
 
@@ -115,74 +146,23 @@ def _num(row: dict[str, Any], key: str) -> float:
         return 0.0
 
 
-def _best_day(logged: list[dict[str, Any]]) -> tuple[str | None, float | None]:
-    best_key: str | None = None
-    best_abs = float("inf")
-    best_balance: float | None = None
-    for row in logged:
-        target = _num(row, "target_calories")
-        if target <= 0:
-            continue
-        balance = _num(row, "calories") - target
-        if abs(balance) < best_abs:
-            best_abs = abs(balance)
-            best_key = str(row.get("date") or "") or None
-            best_balance = round(balance, 1)
-    return best_key, best_balance
-
-
-def _calorie_cv(values: list[float]) -> float | None:
-    if len(values) < 3:
-        return None
-    avg = mean(values)
-    if avg <= 0:
-        return None
-    variance = mean(abs(value - avg) for value in values)
-    return round(variance / avg, 3)
-
-
-def _weekend_gap(logged: list[dict[str, Any]]) -> float | None:
-    weekday: list[float] = []
-    weekend: list[float] = []
-    for row in logged:
-        day = _parse_date(row.get("date"))
-        if day is None:
-            continue
-        bucket = weekend if day.weekday() >= 5 else weekday
-        bucket.append(_num(row, "calories"))
-    if not weekday or not weekend:
-        return None
-    return round(mean(weekend) - mean(weekday), 1)
-
-
-def _best_bucket(logged: list[dict[str, Any]], key_fn: Any) -> str | None:
-    buckets: dict[str, list[float]] = defaultdict(list)
-    for row in logged:
-        day = _parse_date(row.get("date"))
-        target = _num(row, "target_calories")
-        if day is None or target <= 0:
-            continue
-        buckets[key_fn(day)].append(abs(_num(row, "calories") / target - 1))
-    if not buckets:
-        return None
-    return min(buckets, key=lambda key: mean(buckets[key]))
-
-
-def _iso_week(value: date) -> str:
-    iso = value.isocalendar()
-    return f"{iso.year}-W{iso.week:02d}"
-
-
-def _year_month(value: date) -> str:
-    return f"{value.year}-{value.month:02d}"
-
-
-def _parse_date(value: Any) -> date | None:
-    if isinstance(value, date):
-        return value
-    if not isinstance(value, str):
+def _opt(row: dict[str, Any], key: str) -> float | None:
+    if row.get(key) is None:
         return None
     try:
-        return date.fromisoformat(value[:10])
-    except ValueError:
+        return float(row[key])
+    except (TypeError, ValueError):
         return None
+
+
+def _mean_key(rows: list[dict[str, Any]], key: str) -> float:
+    if not rows:
+        return 0.0
+    return round(mean(_num(row, key) for row in rows), 1)
+
+
+def _mean_opt(values: list[float | None]) -> float | None:
+    present = [v for v in values if v is not None]
+    if not present:
+        return None
+    return round(mean(present), 1)

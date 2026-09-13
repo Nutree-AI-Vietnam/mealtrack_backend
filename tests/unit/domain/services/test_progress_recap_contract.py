@@ -64,11 +64,65 @@ def test_parse_ai_recap_keeps_horizon_kinds_only() -> None:
     assert kinds == ["pace", "best_day"]
 
 
+def test_ai_hydration_win_at_zero_ml_becomes_watch() -> None:
+    facts = build_recap_facts(
+        [
+            {
+                "date": "2026-09-07",
+                "calories": 2000,
+                "target_calories": 2000,
+                "protein_g": 130,
+                "protein_target_g": 130,
+                "hydration_ml": 0,
+                "hydration_goal_ml": 2000,
+                "meal_count": 3,
+                "logged_status": "full",
+            }
+        ],
+        horizon="week",
+        start=date(2026, 9, 7),
+        end=date(2026, 9, 13),
+    )
+    payload = parse_ai_recap(
+        {
+            "headline": "Protein looks fine.",
+            "body": "From 1 of 7 days you logged.",
+            "next_move": "Drink water on the days you log.",
+            "highlights": [
+                {
+                    "kind": "hydration",
+                    "polarity": "win",
+                    "title": "Water",
+                    "detail": "0 ml of 2000 ml.",
+                },
+                {
+                    "kind": "best_day",
+                    "polarity": "win",
+                    "title": "Closest day",
+                    "detail": "Monday",
+                },
+            ],
+        },
+        facts,
+    )
+    assert payload is not None
+    water = next(item for item in payload["highlights"] if item["kind"] == "hydration")
+    assert water["polarity"] == "watch"
+
+
 def test_fallback_recap_uses_fact_numbers() -> None:
     payload = fallback_recap(_facts())
     assert payload["status"] == "ready"
-    assert "100" in payload["headline"]
+    assert "140" in payload["headline"] or "balanced" in payload["headline"]
     assert len(payload["highlights"]) == 3
+
+
+def test_fallback_recap_uses_vietnamese() -> None:
+    payload = fallback_recap(_facts(), locale="vi-VN")
+    assert payload["status"] == "ready"
+    assert "over the" not in payload["headline"]
+    assert "Thiếu 100" not in payload["headline"]
+    assert any("Đạm" in item["title"] for item in payload["highlights"])
 
 
 def test_fallback_recap_kinds_match_each_horizon() -> None:
@@ -102,5 +156,13 @@ def test_fallback_recap_kinds_match_each_horizon() -> None:
         kinds = tuple(item["kind"] for item in payload["highlights"])
         assert kinds
         assert all(kind in ALLOWED_KINDS[horizon] for kind in kinds)
+        if horizon == "day":
+            assert "today's meals" in payload["body"].lower()
+        else:
+            assert (
+                f"{facts.logged_days} of {facts.total_days} days you logged"
+                in payload["body"]
+            )
+        assert "next meal" not in payload["next_move"].lower()
         seen.add(kinds)
     assert len(seen) == 4

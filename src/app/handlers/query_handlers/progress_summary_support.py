@@ -122,6 +122,30 @@ async def load_tdee_targets(
         return 2000.0, 70.0, 200.0, 70.0, None, 1800.0
 
 
+async def overlay_live_hydration(
+    uow: Any,
+    user_id: str,
+    start: date,
+    end: date,
+    user_tz_str: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    totals = await uow.hydration_entries.sum_ml_by_date_range(
+        user_id, start, end, user_timezone=user_tz_str
+    )
+    days = []
+    for row in payload.get("days") or []:
+        day = dict(row)
+        try:
+            parsed = date.fromisoformat(str(day.get("date") or "")[:10])
+        except ValueError:
+            days.append(day)
+            continue
+        day["hydration_ml"] = int(totals.get(parsed, 0))
+        days.append(day)
+    return {**payload, "days": days}
+
+
 async def read_summary_cache(
     cache: CachePort | None,
     user_id: str,

@@ -52,7 +52,7 @@ def test_detailed_response_emits_item_micros_and_per_item_nrf():
     assert result.nrf_quality == expected
     assert result.nrf_quality != 0
     progress = nrf_progress_fields(34, 8.8, Micros(iron=7.6, sodium=1400))
-    assert progress["nrf_quality"] == 0.0
+    assert progress["nrf_quality"] == expected
     assert meal_nrf_fields(meal)["nrf_quality"] == expected
 
 

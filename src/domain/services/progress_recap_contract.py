@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from src.domain.services.progress_recap_facts import RecapFacts
 from src.domain.services.progress_recap_fallback import fallback_copy
+from src.domain.services.progress_recap_health import water_is_low
 from src.domain.services.progress_recap_prompt import ALLOWED_KINDS
 
 _POLARITIES = frozenset({"win", "watch", "next"})
@@ -53,7 +54,7 @@ def parse_ai_recap(raw: Any, facts: RecapFacts) -> dict[str, Any] | None:
         return None
     allowed = ALLOWED_KINDS[facts.horizon]
     highlights = [
-        item
+        _correct_polarity(facts, item)
         for item in parsed.highlights
         if item.kind in allowed and item.polarity in _POLARITIES
     ][:3]
@@ -69,10 +70,10 @@ def parse_ai_recap(raw: Any, facts: RecapFacts) -> dict[str, Any] | None:
     )
 
 
-def fallback_recap(facts: RecapFacts) -> dict[str, Any]:
+def fallback_recap(facts: RecapFacts, locale: str = "en") -> dict[str, Any]:
     if facts.logged_days == 0:
         return empty_recap(facts)
-    headline, body, next_move, highlights = fallback_copy(facts)
+    headline, body, next_move, highlights = fallback_copy(facts, locale)
     return _payload(
         facts,
         status="ready",
@@ -86,7 +87,7 @@ def fallback_recap(facts: RecapFacts) -> dict[str, Any]:
                 "title": _clip(item["title"], 28),
                 "detail": _clip(item["detail"], 90),
             }
-            for item in highlights
+            for item in _correct_polarity_dicts(facts, highlights)
         ],
     )
 
@@ -100,6 +101,23 @@ def _coerce(raw: Any) -> RecapAiOutput | None:
         return None
 
 
+def _correct_polarity(facts: RecapFacts, item: RecapHighlightModel) -> RecapHighlightModel:
+    if item.kind == "hydration" and water_is_low(facts) and item.polarity == "win":
+        return item.model_copy(update={"polarity": "watch"})
+    return item
+
+
+def _correct_polarity_dicts(
+    facts: RecapFacts, highlights: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    return [
+        {**item, "polarity": "watch"}
+        if item["kind"] == "hydration" and water_is_low(facts) and item["polarity"] == "win"
+        else item
+        for item in highlights
+    ]
+
+
 def _highlight(item: RecapHighlightModel) -> dict[str, str]:
     return {
         "kind": item.kind,
@@ -111,6 +129,8 @@ def _highlight(item: RecapHighlightModel) -> dict[str, str]:
 
 def _clip(value: str, max_length: int) -> str:
     text = " ".join((value or "").split())
+    if text:
+        text = text[0].upper() + text[1:]
     return text[:max_length].rstrip()
 
 

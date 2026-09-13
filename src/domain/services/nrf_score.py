@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from src.domain.model.nutrition.micros import Micros
 
-NRF_MIN_COVERAGE = 4
-
 _ENCOURAGE_MICRO_DVS: tuple[tuple[str, float], ...] = (
     ("vitamin_a", 900.0),
     ("vitamin_c", 90.0),
@@ -62,14 +60,10 @@ def nrf_progress_fields(
     fiber_g: float,
     micros: Micros | None,
 ) -> dict[str, float | int]:
-    coverage = nrf_coverage(micros)
+    """Progress days always get the NRF blend. Missing micros are skipped."""
     return {
-        "nrf_quality": (
-            nrf_quality(protein_g, fiber_g, micros)
-            if coverage >= NRF_MIN_COVERAGE
-            else 0.0
-        ),
-        "nrf_coverage": coverage,
+        "nrf_quality": nrf_quality(protein_g, fiber_g, micros),
+        "nrf_coverage": nrf_coverage(micros),
     }
 
 

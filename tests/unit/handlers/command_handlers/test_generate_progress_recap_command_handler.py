@@ -137,3 +137,34 @@ async def test_generate_falls_back_when_ai_fails() -> None:
     )
     assert result["status"] == "ready"
     assert result["highlights"]
+
+
+@pytest.mark.asyncio
+async def test_generate_asks_ai_for_user_language() -> None:
+    cache = AsyncMock()
+    cache.get.return_value = None
+    summary = AsyncMock()
+    summary.handle.return_value = _summary()
+    captured: dict[str, str] = {}
+
+    async def generate(prompt: str, system: str) -> dict:
+        captured["prompt"] = prompt
+        captured["system"] = system
+        raise RuntimeError("model down")
+
+    result = await GenerateProgressRecapCommandHandler(
+        cache_service=cache,
+        summary_handler=summary,
+        generate=generate,
+    ).handle(
+        GenerateProgressRecapCommand(
+            user_id="user-1",
+            horizon="week",
+            start_date=date(2026, 9, 7),
+            end_date=date(2026, 9, 13),
+            locale="vi-VN,vi;q=0.9",
+        )
+    )
+    assert "Vietnamese" in captured["system"]
+    assert "Vietnamese" in captured["prompt"]
+    assert "Đạm" in result["headline"]

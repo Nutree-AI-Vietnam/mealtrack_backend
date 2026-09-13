@@ -24,7 +24,10 @@ from src.domain.services.progress_recap_contract import (
     parse_ai_recap,
 )
 from src.domain.services.progress_recap_facts import build_recap_facts
-from src.domain.services.progress_recap_prompt import SYSTEM_PROMPT, build_user_prompt
+from src.domain.services.progress_recap_prompt import (
+    build_system_prompt,
+    build_user_prompt,
+)
 
 GenerateFn = Callable[[str, str], Awaitable[dict[str, Any]]]
 
@@ -63,7 +66,12 @@ class GenerateProgressRecapCommandHandler(
             end=end,
         )
         key, ttl = CacheKeys.progress_recap(
-            command.user_id, command.horizon, start, end, command.locale
+            command.user_id,
+            command.horizon,
+            start,
+            end,
+            command.locale,
+            facts.stamp(),
         )
         if not command.force:
             cached = await self._read(key)
@@ -80,20 +88,21 @@ class GenerateProgressRecapCommandHandler(
     async def _write_copy(self, facts: Any, locale: str) -> dict[str, Any]:
         try:
             raw = await self._call_ai(facts, locale)
-            return parse_ai_recap(raw, facts) or fallback_recap(facts)
+            return parse_ai_recap(raw, facts) or fallback_recap(facts, locale)
         except Exception:
-            return fallback_recap(facts)
+            return fallback_recap(facts, locale)
 
     async def _call_ai(self, facts: Any, locale: str) -> dict[str, Any]:
         prompt = build_user_prompt(facts, locale)
+        system = build_system_prompt(locale)
         if self._generate is not None:
-            return await self._generate(prompt, SYSTEM_PROMPT)
+            return await self._generate(prompt, system)
         from src.infra.services.ai.ai_model_manager import AIModelManager
 
         return await AIModelManager.get_instance().generate(
             purpose=ModelPurpose.GENERAL,
             prompt=prompt,
-            system_message=SYSTEM_PROMPT,
+            system_message=system,
             response_type="json",
             max_tokens=700,
             schema=RecapAiOutput,

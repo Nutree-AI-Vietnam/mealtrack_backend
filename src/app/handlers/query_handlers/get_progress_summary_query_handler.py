@@ -14,6 +14,7 @@ from src.app.handlers.query_handlers.progress_summary_support import (
     hydration_goal_ml,
     load_tdee_targets,
     local_meal_date,
+    overlay_live_hydration,
     read_summary_cache,
     resolve_day_target,
     resolve_today_live_target,
@@ -62,7 +63,9 @@ class GetProgressSummaryQueryHandler(
                 self.cache_service, query.user_id, start, end, targets[4]
             )
             if cached is not None:
-                return cached
+                return await overlay_live_hydration(
+                    uow, query.user_id, start, end, user_tz_str, cached
+                )
             result = await self._compute(
                 uow, query.user_id, start, end, today, user_tz_str, user_tz, targets
             )
