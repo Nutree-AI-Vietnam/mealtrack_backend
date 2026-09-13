@@ -87,7 +87,10 @@ def resolve_day_target(
     live_cal: float | None,
     snapshots: dict[date, float],
     base_cal: float,
+    auto_adjust: bool = True,
 ) -> tuple[str, float]:
+    if not WeeklyBudgetService.auto_adjust_enabled(auto_adjust):
+        return "base", base_cal
     if day == today and live_cal is not None:
         return "adjusted_live", live_cal
     if day in snapshots:
@@ -152,12 +155,20 @@ async def read_summary_cache(
     start: date,
     end: date,
     revision: int | None,
+    auto_adjust: bool = True,
 ) -> dict[str, Any] | None:
     if cache is None or revision is None:
         return None
     key, _ = CacheKeys.progress_summary(user_id, start, end)
     cached = await cache.get_json(key)
-    if cached and cached.get("target_revision") == revision:
+    if (
+        cached
+        and cached.get("target_revision") == revision
+        and WeeklyBudgetService.auto_adjust_enabled(
+            cached.get("weekly_auto_adjust", True)
+        )
+        == auto_adjust
+    ):
         return cached
     return None
 
