@@ -39,7 +39,9 @@ def test_meal_nrf_shows_quality_below_day_coverage_gate():
     fields = meal_nrf_fields(_Meal(nutrition))
     assert fields["nrf_coverage"] == 1
     assert fields["nrf_quality"] == nrf_quality(34, 8.8, micros)
-    assert nrf_progress_fields(34, 8.8, micros)["nrf_quality"] == 0.0
+    assert nrf_progress_fields(34, 8.8, micros)["nrf_quality"] == nrf_quality(
+        34, 8.8, micros
+    )
 
 
 def test_water_entry_has_no_quality():

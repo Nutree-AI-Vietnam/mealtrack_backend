@@ -217,7 +217,11 @@ from src.app.queries.meal_recommendation import (
 from src.app.queries.movement import GetDailyMovementQuery, GetMovementCatalogQuery
 from src.app.queries.notification import GetNotificationPreferencesQuery
 from src.app.queries.nutrition import GetActivitiesPresenceQuery, GetNutritionBulkQuery
-from src.app.queries.progress import GetJourneyProgressQuery, GetProgressSummaryQuery
+from src.app.queries.progress import (
+    GetJourneyProgressQuery,
+    GetProgressRecapQuery,
+    GetProgressSummaryQuery,
+)
 from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
@@ -426,6 +430,7 @@ def get_configured_event_bus() -> EventBus:
 
     # Get singleton services (these are safe to reuse)
     from src.api.base_dependencies import (
+        get_ai_model_manager,
         get_cache_service,
         get_fat_secret_service_instance,
         get_food_cache_service,
@@ -1026,6 +1031,37 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         GetProgressSummaryQuery,
         GetProgressSummaryQueryHandler(cache_service=cache_service),
+    )
+    from src.app.commands.progress import GenerateProgressRecapCommand
+    from src.app.handlers.command_handlers.generate_progress_recap_command_handler import (
+        GenerateProgressRecapCommandHandler,
+    )
+    from src.app.handlers.query_handlers.get_progress_recap_query_handler import (
+        GetProgressRecapQueryHandler,
+    )
+    from src.domain.model.ai.model_purpose import ModelPurpose
+    from src.domain.services.progress_recap_contract import RecapAiOutput
+
+    async def generate_progress_recap(prompt: str, system: str):
+        return await get_ai_model_manager().generate(
+            purpose=ModelPurpose.GENERAL,
+            prompt=prompt,
+            system_message=system,
+            response_type="json",
+            max_tokens=700,
+            schema=RecapAiOutput,
+        )
+
+    event_bus.register_handler(
+        GenerateProgressRecapCommand,
+        GenerateProgressRecapCommandHandler(
+            cache_service=cache_service,
+            generate=generate_progress_recap,
+        ),
+    )
+    event_bus.register_handler(
+        GetProgressRecapQuery,
+        GetProgressRecapQueryHandler(cache_service=cache_service),
     )
 
     # Register hydration handlers

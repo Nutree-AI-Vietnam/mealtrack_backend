@@ -109,3 +109,26 @@ class ProgressSummaryResponse(BaseModel):
     effective_end: str
     cap_days: int
     days: list[ProgressSummaryDay]
+
+
+class ProgressRecapHighlight(BaseModel):
+    """One numbered recap beat for the selected timeline."""
+
+    kind: str
+    polarity: str
+    title: str
+    detail: str
+
+
+class ProgressRecapResponse(BaseModel):
+    """AI recap for one Progress timeline window."""
+
+    status: str
+    horizon: str
+    effective_start: str
+    effective_end: str
+    headline: str = ""
+    body: str = ""
+    next_move: str = ""
+    highlights: list[ProgressRecapHighlight] = []
+    generated_at: str | None = None

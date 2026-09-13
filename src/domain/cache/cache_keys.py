@@ -115,6 +115,27 @@ class CacheKeys:
         )
 
     @staticmethod
+    def progress_recap(
+        user_id: str,
+        horizon: str,
+        start_date: date,
+        end_date: date,
+        locale: str,
+        stamp: str,
+    ) -> tuple[str, int]:
+        """Cached AI recap for one timeline window. 6 hour TTL.
+
+        v8: named beats + capitalized copy.
+        """
+        return (
+            (
+                f"user:{user_id}:progress_recap:v8:{horizon}:"
+                f"{start_date.isoformat()}:{end_date.isoformat()}:{locale}:{stamp}"
+            ),
+            CacheKeys.TTL_1_HOUR * 6,
+        )
+
+    @staticmethod
     def food_search(
         query: str,
         *,
@@ -186,7 +207,6 @@ class CacheKeys:
 
     @staticmethod
     def user_metrics(user_id: str) -> tuple[str, int]:
-
         """Cache key for user metrics (age, weight, height, goals). 24h TTL."""
         return (f"user:{user_id}:metrics", CacheKeys.TTL_1_DAY)
 

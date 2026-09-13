@@ -1,5 +1,5 @@
 from src.domain.model.nutrition.micros import Micros
-from src.domain.services.nrf_score import nrf_coverage, nrf_quality
+from src.domain.services.nrf_score import nrf_coverage, nrf_progress_fields, nrf_quality
 
 
 def test_quality_maps_full_encourage_and_no_limits_to_100():
@@ -27,3 +27,10 @@ def test_coverage_ignores_protein_and_fiber():
     assert nrf_coverage(None) == 0
     assert nrf_coverage(Micros()) == 0
     assert nrf_quality(0, 0, None) == 50.0
+
+
+def test_progress_fields_keep_quality_without_micro_coverage():
+    assert nrf_progress_fields(10, 8, None) == {
+        "nrf_quality": 63.0,
+        "nrf_coverage": 0,
+    }

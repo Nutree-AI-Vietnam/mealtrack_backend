@@ -141,7 +141,7 @@ def test_legacy_hydration_meals_skip_drink_macros():
     assert row["fiber_g"] == 1.0
 
 
-def test_nrf_fields_stay_off_without_micro_coverage():
+def test_nrf_quality_uses_protein_and_fiber_without_micros():
     row = build_progress_day_row(
         date(2026, 9, 1),
         meals=[_meal(10.0, 20.0, 5.0, fiber=8.0)],
@@ -154,7 +154,7 @@ def test_nrf_fields_stay_off_without_micro_coverage():
         is_cheat_day=False,
     )
     assert row["nrf_coverage"] == 0
-    assert row["nrf_quality"] == 0.0
+    assert row["nrf_quality"] == 63.0
 
 
 def test_nrf_quality_turns_on_with_four_logged_micros():
