@@ -92,6 +92,42 @@ async def test_generate_uses_ai_and_caches_by_horizon() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_reuses_cached_empty_window() -> None:
+    cache = AsyncMock()
+    cache.get.return_value = {
+        "status": "empty",
+        "horizon": "week",
+        "headline": "",
+        "highlights": [],
+    }
+    summary = AsyncMock()
+    summary.handle.return_value = {
+        "effective_start": "2026-09-07",
+        "effective_end": "2026-09-13",
+        "cap_days": 400,
+        "days": [],
+    }
+
+    async def generate(_prompt: str, _system: str) -> dict:
+        raise AssertionError("cached empty windows must not call the model")
+
+    result = await GenerateProgressRecapCommandHandler(
+        cache_service=cache,
+        summary_handler=summary,
+        generate=generate,
+    ).handle(
+        GenerateProgressRecapCommand(
+            user_id="user-1",
+            horizon="week",
+            start_date=date(2026, 9, 7),
+            end_date=date(2026, 9, 13),
+        )
+    )
+    assert result["status"] == "empty"
+    cache.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_returns_missing_when_cache_empty() -> None:
     cache = AsyncMock()
     cache.get.return_value = None

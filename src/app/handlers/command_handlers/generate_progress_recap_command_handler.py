@@ -28,6 +28,7 @@ from src.domain.services.progress_recap_prompt import (
 )
 
 GenerateFn = Callable[[str, str], Awaitable[dict[str, Any]]]
+_REUSABLE_STATUSES = frozenset({"ready", "empty"})
 
 
 @handles(GenerateProgressRecapCommand)
@@ -73,7 +74,7 @@ class GenerateProgressRecapCommandHandler(
         )
         if not command.force:
             cached = await self._read(key)
-            if cached and cached.get("status") == "ready":
+            if cached and cached.get("status") in _REUSABLE_STATUSES:
                 return cached
         if facts.logged_days == 0:
             payload = empty_recap(facts)
