@@ -158,6 +158,56 @@ async def test_snapshot_and_base_target_sources():
 
 
 @pytest.mark.asyncio
+async def test_auto_adjust_off_uses_base_for_every_day():
+    yesterday = date(2026, 8, 31)
+    older = date(2026, 8, 30)
+    uow = _uow(snapshots={yesterday: 1777.0, older: 1650.0})
+    uow.users.get_weekly_auto_adjust = AsyncMock(return_value=False)
+    result = await _handle(
+        uow,
+        GetProgressSummaryQuery(
+            user_id=USER_ID, start_date=older, end_date=date(2026, 9, 1)
+        ),
+    )
+    by_date = {row["date"]: row for row in result["days"]}
+    assert result["weekly_auto_adjust"] is False
+    assert by_date["2026-08-30"]["target_source"] == "base"
+    assert by_date["2026-08-30"]["target_calories"] == 2000.0
+    assert by_date["2026-08-31"]["target_source"] == "base"
+    assert by_date["2026-08-31"]["target_calories"] == 2000.0
+    assert by_date["2026-09-01"]["target_source"] == "base"
+    assert by_date["2026-09-01"]["target_calories"] == 2000.0
+
+
+@pytest.mark.asyncio
+async def test_cache_miss_when_auto_adjust_differs():
+    cache = MagicMock()
+    cache.get_json = AsyncMock(
+        return_value={
+            "effective_start": "2026-09-01",
+            "days": [{"date": "2026-09-01", "target_calories": 1850.0}],
+            "target_revision": 3,
+            "weekly_auto_adjust": True,
+        }
+    )
+    cache.set_json = AsyncMock()
+    uow = _uow()
+    uow.users.get_weekly_auto_adjust = AsyncMock(return_value=False)
+    result = await _handle(
+        uow,
+        GetProgressSummaryQuery(
+            user_id=USER_ID,
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 1),
+        ),
+        cache=cache,
+    )
+    assert result["weekly_auto_adjust"] is False
+    assert result["days"][0]["target_calories"] == 2000.0
+    uow.meals.find_by_date_range.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_clamps_pre_created_at_and_oversize_window():
     uow = _uow(created_on=date(2026, 8, 20))
     result = await _handle(
