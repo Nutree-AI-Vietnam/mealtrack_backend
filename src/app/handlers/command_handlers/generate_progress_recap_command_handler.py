@@ -15,10 +15,8 @@ from src.app.handlers.query_handlers.get_progress_summary_query_handler import (
 )
 from src.app.queries.progress.get_progress_summary_query import GetProgressSummaryQuery
 from src.domain.cache.cache_keys import CacheKeys
-from src.domain.model.ai.model_purpose import ModelPurpose
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.progress_recap_contract import (
-    RecapAiOutput,
     empty_recap,
     fallback_recap,
     parse_ai_recap,
@@ -86,6 +84,8 @@ class GenerateProgressRecapCommandHandler(
         return payload
 
     async def _write_copy(self, facts: Any, locale: str) -> dict[str, Any]:
+        if self._generate is None:
+            return fallback_recap(facts, locale)
         try:
             raw = await self._call_ai(facts, locale)
             return parse_ai_recap(raw, facts) or fallback_recap(facts, locale)
@@ -93,20 +93,11 @@ class GenerateProgressRecapCommandHandler(
             return fallback_recap(facts, locale)
 
     async def _call_ai(self, facts: Any, locale: str) -> dict[str, Any]:
+        if self._generate is None:
+            raise RuntimeError("progress recap generate is not wired")
         prompt = build_user_prompt(facts, locale)
         system = build_system_prompt(locale)
-        if self._generate is not None:
-            return await self._generate(prompt, system)
-        from src.infra.services.ai.ai_model_manager import AIModelManager
-
-        return await AIModelManager.get_instance().generate(
-            purpose=ModelPurpose.GENERAL,
-            prompt=prompt,
-            system_message=system,
-            response_type="json",
-            max_tokens=700,
-            schema=RecapAiOutput,
-        )
+        return await self._generate(prompt, system)
 
     async def _read(self, key: str) -> dict[str, Any] | None:
         if self.cache_service is None:

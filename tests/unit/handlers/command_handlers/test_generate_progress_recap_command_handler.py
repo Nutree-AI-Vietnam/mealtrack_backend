@@ -114,6 +114,28 @@ async def test_get_returns_missing_when_cache_empty() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_falls_back_when_ai_is_not_wired() -> None:
+    cache = AsyncMock()
+    cache.get.return_value = None
+    summary = AsyncMock()
+    summary.handle.return_value = _summary()
+
+    result = await GenerateProgressRecapCommandHandler(
+        cache_service=cache,
+        summary_handler=summary,
+    ).handle(
+        GenerateProgressRecapCommand(
+            user_id="user-1",
+            horizon="day",
+            start_date=date(2026, 9, 7),
+            end_date=date(2026, 9, 7),
+        )
+    )
+    assert result["status"] == "ready"
+    assert result["highlights"]
+
+
+@pytest.mark.asyncio
 async def test_generate_falls_back_when_ai_fails() -> None:
     cache = AsyncMock()
     cache.get.return_value = None
