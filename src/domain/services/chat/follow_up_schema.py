@@ -22,19 +22,37 @@ class ChatFollowUpList(BaseModel):
 
 
 def sanitize_follow_ups(raw: Any) -> list[dict[str, str]]:
-    """Keep 2–3 chips whose action is a known ChatIntent. Drop the rest."""
+    """Keep 2–3 chips whose action is a known alias (or registry function name).
+
+    Function names are mapped to their preferred chip alias before emit so
+    mobile `CoachIntent` parsing stays stable.
+    """
+    from src.domain.services.chat.coach_functions import (
+        preferred_alias,
+        resolve_coach_function,
+    )
+
     items = _coerce_items(raw)
     cleaned: list[dict[str, str]] = []
     seen: set[str] = set()
     for item in items:
         label = " ".join(str(item.get("label") or "").split())
         action = str(item.get("action") or "").strip()
-        if not label or action not in CHAT_INTENTS:
+        if not label or not action:
             continue
-        if action in seen:
+        if action in CHAT_INTENTS:
+            alias = action
+        else:
+            resolved = resolve_coach_function(action)
+            if resolved is None:
+                continue
+            alias = preferred_alias(resolved.name, resolved.args)
+            if alias is None or alias not in CHAT_INTENTS:
+                continue
+        if alias in seen:
             continue
-        seen.add(action)
-        cleaned.append({"label": label[:_MAX_LABEL_CHARS], "action": action})
+        seen.add(alias)
+        cleaned.append({"label": label[:_MAX_LABEL_CHARS], "action": alias})
         if len(cleaned) >= _MAX_FOLLOW_UPS:
             break
     return cleaned

@@ -32,6 +32,7 @@ def test_async_url_rewrite_psycopg2_to_asyncpg(monkeypatch):
     monkeypatch.setenv("APP_DATABASE_URL", "postgresql+psycopg2://user:pw@host/db")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL_DIRECT", raising=False)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "")
 
     import src.infra.database.config_async as cfg
 
@@ -44,6 +45,7 @@ def test_async_url_rewrite_plain_postgresql(monkeypatch):
     monkeypatch.setenv("APP_DATABASE_URL", "postgresql://user:pw@host/db")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL_DIRECT", raising=False)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "")
 
     import src.infra.database.config_async as cfg
 
@@ -55,6 +57,7 @@ def test_async_url_rewrite_postgres_shorthand(monkeypatch):
     monkeypatch.setenv("APP_DATABASE_URL", "postgres://user:pw@host/db")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL_DIRECT", raising=False)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "")
 
     import src.infra.database.config_async as cfg
 
@@ -66,6 +69,7 @@ def test_app_database_url_takes_priority_over_database_url(monkeypatch):
     monkeypatch.setenv("APP_DATABASE_URL", "postgresql://app-host/appdb")
     monkeypatch.setenv("DATABASE_URL", "postgresql://other-host/otherdb")
     monkeypatch.delenv("DATABASE_URL_DIRECT", raising=False)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "")
 
     import src.infra.database.config_async as cfg
 
@@ -81,6 +85,7 @@ def test_database_url_direct_not_used_for_app_runtime(monkeypatch):
     # cannot re-add APP_DATABASE_URL from the .env file (override=False skips
     # vars already present in os.environ; "" is falsy in the or-chain).
     monkeypatch.setenv("APP_DATABASE_URL", "")
+    monkeypatch.setenv("DB_CONNECTION_MODE", "")
 
     import src.infra.database.config_async as cfg
 

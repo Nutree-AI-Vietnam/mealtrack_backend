@@ -33,3 +33,18 @@ def test_sanitize_drops_unknown_and_blank() -> None:
         }
     )
     assert cleaned == [{"label": "What can you do?", "action": "limits"}]
+
+
+def test_sanitize_maps_function_name_to_chip_alias() -> None:
+    cleaned = sanitize_follow_ups(
+        {
+            "follow_ups": [
+                {"label": "More ideas", "action": "suggest_next_meal"},
+                {"label": "What's left?", "action": "check_daily_progress"},
+            ]
+        }
+    )
+    assert cleaned == [
+        {"label": "More ideas", "action": "next_meal"},
+        {"label": "What's left?", "action": "remaining_budget"},
+    ]

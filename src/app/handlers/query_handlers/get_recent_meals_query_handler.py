@@ -66,7 +66,7 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
                 user_id=query.user_id,
                 start_dt=start_dt,
                 end_dt=end_dt,
-                limit=500,
+                limit=80,
                 projection=MealProjection.FULL_WITH_TRANSLATIONS,
             )
             deduped = deduplicate_recent_meals(raw_meals, limit=limit)

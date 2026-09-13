@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from src.domain.constants.languages import DEFAULT_LANGUAGE, normalize_language
@@ -15,6 +17,7 @@ from src.domain.model.chat import (
     ChatUserContext,
     RetrievedKnowledgeChunk,
 )
+from src.domain.services.chat.coach_functions import output_contract_for
 
 PROMPT_VERSION = CHAT_PROMPT_VERSION
 
@@ -32,7 +35,11 @@ Authority and precedence, highest to lowest:
 4. Recent conversation.
 5. General model knowledge, which is never a Nutree source.
 
-Calories and macros are authoritative server values. Never recalculate them. Never invent a missing Nutree value; ask a clarifying question instead.
+Calories and macros are authoritative server values. Never recalculate them. In the
+daily context, `food_calories` is the gross food eaten, `movement_kcal_burned`
+is included activity, and `consumed_calories` is the net accounting value used
+for the remaining budget. Do not describe net calories as food eaten. Never
+invent a missing Nutree value; ask a clarifying question instead.
 
 You may explain and recommend. You cannot change a meal, target, profile, or subscription. Never claim that you wrote, updated, logged, or saved Nutree data.
 
@@ -79,16 +86,42 @@ _SUGGEST_RE = re.compile(
     re.IGNORECASE,
 )
 
-_NUTRITION_NUMBER_RE = re.compile(
-    r"(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>kcal|calories?|cal|"
-    r"g(?:rams?)?\s*(?:of\s+)?(?:protein|carb(?:s|ohydrate)?s?|fat)|"
-    r"(?:protein|carb(?:s|ohydrate)?s?|fat)\s*(?:of\s+)?)?",
+# Accept plain decimals (117.7 / 117,7) and thousands grouping (1.821 / 1,821).
+# When both thousands and a fraction appear, separators must differ (1.821,5 / 1,821.5).
+# Same-separator hybrids like 1.821.5 are rejected so float() never sees them.
+_LOCAL_NUMBER = (
+    r"\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?"  # 1.821 / 1.821,5
+    r"|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?"  # 1,821 / 1,821.5
+    r"|\d+[.,]\d{1,2}"  # 117.7 / 117,7
+    r"|\d+"
+)
+
+_CALORIE_CLAIM_RE = re.compile(
+    rf"(?P<num>{_LOCAL_NUMBER})\s*(?:kcal|calories?|cal)\b",
+    re.IGNORECASE,
+)
+_MACRO_CLAIM_RE = re.compile(
+    rf"(?:"
+    rf"(?P<prefix_macro>protein|carb(?:s|ohydrate(?:s)?)?|fat|p|c|f)"
+    rf"\s*(?:is|:)?\s*(?P<prefix_num>{_LOCAL_NUMBER})\s*g(?:rams?)?\b"
+    rf"|"
+    rf"(?P<suffix_num>{_LOCAL_NUMBER})\s*g(?:rams?)?\s*(?:of\s+)?"
+    rf"(?P<suffix_macro>protein|carb(?:s|ohydrate(?:s)?)?|fat|p|c|f)\b"
+    rf")",
     re.IGNORECASE,
 )
 
 _CITATION_RE = re.compile(r"\[K(\d+)\]")
 
 _SENTENCE_END_RE = re.compile(r"(?s)(.+?(?:[.!?…][\"')\]]*|\n{2,})\s+)")
+
+
+@dataclass(frozen=True, slots=True)
+class _NutritionClaim:
+    metric: str
+    number: float
+    decimal_places: int
+
 
 _SAFE_FALLBACK_EN = (
     "I can only use Nutree's recorded values and reviewed Nutree guidance. "
@@ -192,36 +225,6 @@ def build_grounding_message(
     )
 
 
-_INTENT_TEMPLATES = {
-    "remaining_budget": (
-        "COACH INTENT remaining_budget. The user text is only the localized label.\n"
-        "The app already shows remaining kcal and P/C/F as beakers from Nutree. "
-        "Write 1-2 short sentences about what is left. Do not repeat the leftover "
-        "numbers. Do not list meals. Do not claim you logged anything."
-    ),
-    "day_progress": (
-        "COACH INTENT day_progress. The user text is only the localized label.\n"
-        "The app already shows remaining beakers from Nutree. Write 1-2 short "
-        "sentences about how the day is going (nothing logged yet, on track, or "
-        "over) using USER CONTEXT only. Do not repeat every macro number."
-    ),
-    "next_meal": (
-        "COACH INTENT next_meal.\n"
-        "The app displays the recommended meal card below with photo and macros. "
-        "Write 1-2 short sentences: introduce the recommended meal warmly in the user's language and explain why it fits their remaining budget. "
-        "Do not repeat exact kcal or gram numbers. "
-        "Tell the user they can tap the card to see the full ingredients, recipe steps, and log it. "
-        "Never claim you logged or saved a meal."
-    ),
-    "limits": (
-        "COACH INTENT limits. The user text is only the localized label.\n"
-        "The app already shows a can/can't card. Write at most two sentences: "
-        "you explain the log and suggest meals; you cannot log meals, change "
-        "targets, or give medical advice. Do not include nutrition numbers."
-    ),
-}
-
-
 def intent_template(intent: str | None) -> str:
     """Per-intent output contract. Missing intent → free-text nutrition answer."""
     if not intent:
@@ -232,11 +235,42 @@ def intent_template(intent: str | None) -> str:
             "nutrition, meals, or Nutree, refuse in 1-2 sentences and offer a "
             "Coach topic instead."
         )
-    return _INTENT_TEMPLATES.get(intent, "")
+    return output_contract_for(intent)
 
 
-def request_fingerprint(content: str, locale: str, intent: str | None = None) -> str:
-    payload = {"content": content, "intent": intent, "locale": locale}
+def request_fingerprint(
+    content: str,
+    locale: str,
+    intent: str | None = None,
+    *,
+    function_name: str | None = None,
+    function_args: dict | None = None,
+) -> str:
+    """Idempotency identity for a chat turn.
+
+    Prefer resolved function+args when available so chip alias and tool name
+    with the same focus collide. Falls back to legacy `{content,intent,locale}`
+    when nothing resolves.
+    """
+    from src.domain.services.chat.coach_functions import resolve_coach_function
+
+    resolved_name = function_name
+    resolved_args = dict(function_args or {})
+    if resolved_name is None and intent:
+        resolved = resolve_coach_function(intent)
+        if resolved is not None:
+            resolved_name = resolved.name
+            resolved_args = dict(resolved.args)
+
+    if resolved_name:
+        payload = {
+            "content": content,
+            "locale": locale,
+            "function": resolved_name,
+            "args": resolved_args,
+        }
+    else:
+        payload = {"content": content, "intent": intent, "locale": locale}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -390,33 +424,232 @@ def nutrition_numbers_are_traceable(
     chunks: Sequence[RetrievedKnowledgeChunk],
     meal_candidates: Sequence[Mapping[str, Any]] | None = None,
 ) -> bool:
-    """Require calorie/macro numbers to appear in context or cited chunks."""
-    source = _trace_source_text(context, chunks, meal_candidates)
-    for match in _NUTRITION_NUMBER_RE.finditer(text):
-        unit = match.group("unit")
-        if not unit:
-            continue
-        number = match.group("num")
-        if not _source_contains_number(source, number):
-            return False
+    """Require each calorie/macro number to match its own source field.
+
+    Malformed locale numbers return False (block the stream) instead of raising,
+    so stream safety never surfaces as a provider/circuit failure.
+    """
+    try:
+        claims = list(_nutrition_claims(text))
+    except ValueError:
+        return False
+    for claim in claims:
+        if not _claim_matches_context(claim, context):
+            if not _claim_matches_candidates(
+                claim, meal_candidates
+            ) and not _claim_matches_chunks(claim, chunks):
+                return False
     return True
 
 
-def _source_contains_number(source: str, number: str) -> bool:
-    """Match whole numbers only so '50' is not accepted because '150' exists."""
-    return re.search(rf"(?<![\d.]){re.escape(number)}(?![\d.])", source) is not None
+def _nutrition_claims(text: str) -> Iterable[_NutritionClaim]:
+    seen: set[_NutritionClaim] = set()
+    for match in _CALORIE_CLAIM_RE.finditer(text):
+        number, decimal_places = _parse_localized_number(match.group("num"))
+        claim = _NutritionClaim(
+            metric="calories",
+            number=number,
+            decimal_places=decimal_places,
+        )
+        if claim not in seen:
+            seen.add(claim)
+            yield claim
+    for match in _MACRO_CLAIM_RE.finditer(text):
+        macro = _normalize_macro_name(
+            match.group("prefix_macro") or match.group("suffix_macro")
+        )
+        raw_number = match.group("prefix_num") or match.group("suffix_num")
+        if not macro or not raw_number:
+            continue
+        number, decimal_places = _parse_localized_number(raw_number)
+        claim = _NutritionClaim(
+            metric=macro,
+            number=number,
+            decimal_places=decimal_places,
+        )
+        if claim not in seen:
+            seen.add(claim)
+            yield claim
 
 
-def _trace_source_text(
+def _parse_localized_number(raw: str) -> tuple[float, int]:
+    """Parse coach display numbers across en/vi thousand and decimal separators.
+
+    Examples: ``1821``, ``1.821``, ``1,821``, ``117.7``, ``117,7``, ``1.821,5``.
+    """
+    value = raw.strip()
+    if not value:
+        raise ValueError("empty nutrition number")
+
+    if "," in value and "." in value:
+        if value.rfind(",") > value.rfind("."):
+            # European: 1.821,50
+            normalized = value.replace(".", "").replace(",", ".")
+        else:
+            # US: 1,821.50
+            normalized = value.replace(",", "")
+        return float(normalized), _decimal_places(normalized)
+
+    if "," in value:
+        if re.fullmatch(r"\d{1,3}(?:,\d{3})+", value):
+            normalized = value.replace(",", "")
+            return float(normalized), 0
+        if re.fullmatch(r"\d+,\d{1,2}", value):
+            normalized = value.replace(",", ".")
+            return float(normalized), _decimal_places(normalized)
+        raise ValueError(f"unsupported nutrition number: {raw}")
+
+    if "." in value:
+        if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", value):
+            # Vietnamese/EU thousands: 1.821 → 1821
+            return float(value.replace(".", "")), 0
+        if re.fullmatch(r"\d+\.\d{1,2}", value):
+            return float(value), _decimal_places(value)
+        raise ValueError(f"unsupported nutrition number: {raw}")
+
+    return float(value), 0
+
+
+def sanitize_incomplete_assistant_text(text: str) -> str:
+    """Drop trailing cut-off fragments left when stream safety blocks mid-token."""
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+
+    # Unclosed markdown bold usually means the model was cut before finishing.
+    if cleaned.count("**") % 2 == 1:
+        cleaned = cleaned[: cleaned.rfind("**")].rstrip()
+
+    # Drop a trailing bare number/unit stump like "khoảng 1.821" with no closer.
+    cleaned = re.sub(
+        rf"(?:^|\s)(?:khoảng|about|around)?\s*(?:{_LOCAL_NUMBER})\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).rstrip(" :,-–—")
+    # Number may already have been removed with the unclosed bold marker.
+    cleaned = re.sub(
+        r"(?:^|\s)(?:khoảng|about|around)\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).rstrip(" :,-–—")
+    return cleaned.strip()
+
+
+def _claim_matches_context(
+    claim: _NutritionClaim,
     context: ChatUserContext,
+) -> bool:
+    fields = {
+        "calories": (
+            context.target_calories,
+            context.consumed_calories,
+            context.remaining_calories,
+            context.food_calories,
+            context.movement_kcal_burned,
+        ),
+        "protein": (
+            context.target_protein_g,
+            context.consumed_protein_g,
+            context.remaining_protein_g,
+        ),
+        "carbs": (
+            context.target_carbs_g,
+            context.consumed_carbs_g,
+            context.remaining_carbs_g,
+        ),
+        "fat": (
+            context.target_fat_g,
+            context.consumed_fat_g,
+            context.remaining_fat_g,
+        ),
+    }
+    return any(
+        _numbers_equal(
+            claim.number,
+            value,
+            decimal_places=claim.decimal_places,
+        )
+        for value in fields.get(claim.metric, ())
+    )
+
+
+def _claim_matches_candidates(
+    claim: _NutritionClaim,
+    meal_candidates: Sequence[Mapping[str, Any]] | None,
+) -> bool:
+    if not meal_candidates:
+        return False
+    field = {
+        "calories": "calories",
+        "protein": "protein_g",
+        "carbs": "carbs_g",
+        "fat": "fat_g",
+    }.get(claim.metric)
+    if field is None:
+        return False
+    return any(
+        _numbers_equal(
+            claim.number,
+            item.get(field),
+            decimal_places=claim.decimal_places,
+        )
+        for item in meal_candidates
+        if isinstance(item, Mapping)
+    )
+
+
+def _claim_matches_chunks(
+    claim: _NutritionClaim,
     chunks: Sequence[RetrievedKnowledgeChunk],
-    meal_candidates: Sequence[Mapping[str, Any]] | None = None,
-) -> str:
-    parts = [json.dumps(context.to_prompt_dict(), default=str)]
-    if meal_candidates:
-        parts.append(json.dumps(list(meal_candidates), default=str))
-    parts.extend(chunk.content for chunk in chunks)
-    return "\n".join(parts)
+) -> bool:
+    return any(
+        source_claim.metric == claim.metric
+        and _numbers_equal(
+            claim.number,
+            source_claim.number,
+            decimal_places=claim.decimal_places,
+        )
+        for chunk in chunks
+        for source_claim in _nutrition_claims(chunk.content)
+    )
+
+
+def _normalize_macro_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    lowered = value.casefold()
+    if lowered in {"protein", "p"}:
+        return "protein"
+    if lowered == "c" or lowered.startswith("carb"):
+        return "carbs"
+    if lowered in {"fat", "f"}:
+        return "fat"
+    return None
+
+
+def _decimal_places(value: str) -> int:
+    return len(value.partition(".")[2])
+
+
+def _numbers_equal(
+    left: float,
+    right: Any,
+    *,
+    decimal_places: int = 2,
+) -> bool:
+    try:
+        right_number = float(right)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not math.isfinite(left) or not math.isfinite(right_number):
+        return False
+    if abs(left - right_number) <= 0.05:
+        return True
+    if decimal_places == 0 and right_number >= 0:
+        return left == math.floor(right_number + 0.5)
+    return False
 
 
 def cited_labels(text: str) -> tuple[str, ...]:

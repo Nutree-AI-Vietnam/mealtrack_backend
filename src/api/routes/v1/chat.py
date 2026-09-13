@@ -27,6 +27,10 @@ from src.domain.exceptions.chat_exceptions import (
     ChatRateLimitedError,
 )
 from src.domain.model.chat import ChatSseEvent
+from src.domain.services.chat.coach_functions import (
+    preferred_alias,
+    resolve_coach_function,
+)
 from src.infra.services.durable_write_service import normalize_idempotency_key
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,32 @@ async def post_chat_message(
     locale = payload.locale or get_request_language(request)
     header_timezone = request.headers.get("X-Timezone")
 
+    intent_value = payload.intent.value if payload.intent else None
+    function_name: str | None = None
+    function_args: dict | None = None
+    if payload.tool is not None:
+        resolved = resolve_coach_function(payload.tool.name, args=payload.tool.args)
+        if resolved is None:
+            raise ValidationException(
+                f"Unknown tool '{payload.tool.name}'",
+                error_code="CHAT_UNKNOWN_TOOL",
+            )
+        # Tool wins over intent when both are present.
+        if intent_value is not None and intent_value != preferred_alias(
+            resolved.name, resolved.args
+        ):
+            logger.info(
+                "chat tool overrides intent",
+                extra={
+                    "tool": resolved.name,
+                    "ignored_intent": intent_value,
+                    "user_id": user_id,
+                },
+            )
+        function_name = resolved.name
+        function_args = resolved.args
+        intent_value = preferred_alias(resolved.name, resolved.args)
+
     try:
         prepared = await orchestrator.prepare_turn(
             user_id=user_id,
@@ -90,7 +120,9 @@ async def post_chat_message(
             locale=locale,
             header_timezone=header_timezone,
             user_language=locale,
-            intent=payload.intent.value if payload.intent else None,
+            intent=intent_value,
+            function_name=function_name,
+            function_args=function_args,
         )
     except ChatBusyError as exc:
         return _error_response(

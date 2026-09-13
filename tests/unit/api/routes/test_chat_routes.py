@@ -145,6 +145,56 @@ def test_get_chat_defaults_empty_suggestions_and_follow_ups():
     message = response.json()["messages"][0]
     assert message["suggestions"] == []
     assert message["follow_ups"] == []
+    assert message["intent"] is None
+    assert message["discover_session_id"] is None
+    assert message["nutrition_snapshot"] is None
+
+
+def test_get_chat_keeps_intent_and_nutrition_snapshot():
+    snapshot = {
+        "version": "chat_nutrition_v1",
+        "as_of": "2026-09-11T12:48:00+00:00",
+        "local_date": "2026-09-11",
+        "timezone": "Asia/Ho_Chi_Minh",
+        "target_calories": 1932,
+        "food_calories": 0,
+        "movement_kcal_burned": 0,
+        "remaining_calories": 1932,
+        "remaining_days": 5,
+        "macros": {
+            "protein": {"consumed_g": 0, "target_g": 140, "remaining_g": 140},
+            "carbs": {"consumed_g": 0, "target_g": 250, "remaining_g": 250},
+            "fat": {"consumed_g": 0, "target_g": 70, "remaining_g": 70},
+        },
+    }
+    orchestrator = _StubOrchestrator(
+        thread_payload={
+            "thread": {
+                "id": "t1",
+                "created_at": "2026-09-01T00:00:00+00:00",
+                "updated_at": "2026-09-01T00:00:00+00:00",
+            },
+            "messages": [
+                {
+                    "id": "m1",
+                    "role": "assistant",
+                    "content": "You have 1932 remaining.",
+                    "created_at": "2026-09-11T12:48:00+00:00",
+                    "status": "completed",
+                    "intent": "remaining_budget",
+                    "nutrition_snapshot": snapshot,
+                }
+            ],
+            "has_more": False,
+        }
+    )
+    client = TestClient(_app(orchestrator))
+    response = client.get("/v1/chat")
+    assert response.status_code == 200
+    message = response.json()["messages"][0]
+    assert message["intent"] == "remaining_budget"
+    assert message["nutrition_snapshot"]["food_calories"] == 0
+    assert message["nutrition_snapshot"]["remaining_calories"] == 1932
 
 
 def test_delete_chat_clears_messages():
@@ -260,6 +310,32 @@ def test_chat_capabilities_advertise_single_thread_contract():
         "day_progress",
         "limits",
     ]
+    assert body["functions"] == [
+        {
+            "name": "check_daily_progress",
+            "aliases": ["remaining_budget", "day_progress"],
+            "direct_invoke": True,
+            "needs_retrieval": False,
+        },
+        {
+            "name": "suggest_next_meal",
+            "aliases": ["next_meal"],
+            "direct_invoke": True,
+            "needs_retrieval": False,
+        },
+        {
+            "name": "explain_limits_and_guidelines",
+            "aliases": ["limits"],
+            "direct_invoke": True,
+            "needs_retrieval": False,
+        },
+        {
+            "name": "search_nutrition_knowledge",
+            "aliases": [],
+            "direct_invoke": True,
+            "needs_retrieval": True,
+        },
+    ]
     assert "CHAT_BUSY" in body["error_codes"]
     assert "CHAT_UNAVAILABLE" in body["error_codes"]
 
@@ -292,6 +368,71 @@ def test_post_forwards_structured_intent():
     )
     assert response.status_code == 200
     assert orchestrator.prepare_kwargs["intent"] == "remaining_budget"
+    assert orchestrator.prepare_kwargs["function_name"] is None
+
+
+def test_post_forwards_tool_and_preferred_alias():
+    orchestrator = _StubOrchestrator(
+        events=[
+            ChatSseEvent(
+                event="message.started",
+                data={"thread_id": "t1"},
+            )
+        ]
+    )
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/messages",
+        json={
+            "content": "What's left?",
+            "tool": {
+                "name": "check_daily_progress",
+                "args": {"focus": "remaining_budget"},
+            },
+        },
+        headers={"Idempotency-Key": "k1"},
+    )
+    assert response.status_code == 200
+    assert orchestrator.prepare_kwargs["intent"] == "remaining_budget"
+    assert orchestrator.prepare_kwargs["function_name"] == "check_daily_progress"
+    assert orchestrator.prepare_kwargs["function_args"] == {
+        "focus": "remaining_budget"
+    }
+
+
+def test_post_tool_wins_over_conflicting_intent():
+    orchestrator = _StubOrchestrator(
+        events=[
+            ChatSseEvent(
+                event="message.started",
+                data={"thread_id": "t1"},
+            )
+        ]
+    )
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/messages",
+        json={
+            "content": "Suggest something",
+            "intent": "limits",
+            "tool": {"name": "suggest_next_meal"},
+        },
+        headers={"Idempotency-Key": "k1"},
+    )
+    assert response.status_code == 200
+    assert orchestrator.prepare_kwargs["intent"] == "next_meal"
+    assert orchestrator.prepare_kwargs["function_name"] == "suggest_next_meal"
+
+
+def test_post_rejects_unknown_tool():
+    client = TestClient(_app(_StubOrchestrator()))
+    response = client.post(
+        "/v1/chat/messages",
+        json={"content": "Search", "tool": {"name": "web_search_recipes"}},
+        headers={"Idempotency-Key": "k1"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["error_code"] == "CHAT_UNKNOWN_TOOL"
 
 
 def test_post_rejects_unknown_intent():

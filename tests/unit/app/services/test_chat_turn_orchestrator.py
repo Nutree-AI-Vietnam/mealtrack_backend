@@ -149,17 +149,29 @@ class _GatedCompletion:
 
 
 class _FakeEmbedding:
+    def __init__(self):
+        self.calls: list[str] = []
+
     async def embed_query(self, text: str) -> list[float]:
+        self.calls.append(text)
         return [0.1, 0.2]
 
 
 class _FakeRetrieval:
+    def __init__(self):
+        self.calls: list[dict] = []
+
     async def retrieve(self, **kwargs):
+        self.calls.append(kwargs)
         return []
 
 
 class _FakeContext:
+    def __init__(self):
+        self.calls: list[dict] = []
+
     async def build(self, **kwargs) -> ChatUserContext:
+        self.calls.append(kwargs)
         return ChatUserContext(
             context_version="chat_context_v1",
             as_of="2026-09-01T00:00:00+00:00",
@@ -174,6 +186,9 @@ class _FakeContext:
             target_protein_g=140,
             target_carbs_g=180,
             target_fat_g=60,
+            food_calories=1150,
+            movement_kcal_burned=0,
+            local_date="2026-09-01",
             consumed_calories=1150,
             consumed_protein_g=90,
             consumed_carbs_g=100,
@@ -276,16 +291,22 @@ def _orchestrator(
     circuit_breaker=None,
     next_meals=None,
     follow_ups=None,
+    embedding=None,
+    retrieval=None,
+    context_builder=None,
 ):
     repo.turns_used = turns_used
     uow = _FakeUow(repo)
+    embedding = embedding or _FakeEmbedding()
+    retrieval = retrieval or _FakeRetrieval()
+    context_builder = context_builder or _FakeContext()
 
-    return ChatTurnOrchestrator(
+    orchestrator = ChatTurnOrchestrator(
         completion=completion
         or _FakeCompletion(["Nutree has 650 calories remaining. "]),
-        embedding=_FakeEmbedding(),
-        retrieval=_FakeRetrieval(),
-        context_builder=_FakeContext(),
+        embedding=embedding,
+        retrieval=retrieval,
+        context_builder=context_builder,
         uow_factory=lambda: uow,
         model="gpt-5.6-luna",
         daily_turn_budget=40,
@@ -295,6 +316,10 @@ def _orchestrator(
         next_meals=next_meals,
         follow_ups=follow_ups,
     )
+    orchestrator.test_embedding = embedding  # type: ignore[attr-defined]
+    orchestrator.test_retrieval = retrieval  # type: ignore[attr-defined]
+    orchestrator.test_context = context_builder  # type: ignore[attr-defined]
+    return orchestrator
 
 
 @pytest.mark.asyncio
@@ -353,6 +378,12 @@ async def test_new_turn_streams_sentence_and_persists():
     completed = next(event for event in events if event.event == "message.completed")
     assert completed.data["suggestions"] == []
     assert completed.data["follow_ups"] == []
+    assert completed.data["nutrition_snapshot"]["food_calories"] == 1150
+    assert completed.data["nutrition_snapshot"]["movement_kcal_burned"] == 0
+    assert (
+        repo.completed["reply_payload"]["nutrition_snapshot"]["remaining_calories"]
+        == 650
+    )
 
 
 @pytest.mark.asyncio
@@ -631,6 +662,16 @@ async def test_get_thread_includes_in_flight_and_citations():
         content="Stay at protein [K1].",
         citation_source_keys=("protein-guide",),
         model="gpt-5.6-luna",
+        reply_payload={
+            "suggestions": [],
+            "follow_ups": [],
+            "intent": "remaining_budget",
+            "nutrition_snapshot": {
+                "version": "chat_nutrition_v1",
+                "food_calories": 0,
+                "remaining_calories": 1932,
+            },
+        },
     )
     repo = _FakeRepo(claim=claim, history=[completed])
     repo.generating_turn = (claim.user_message, claim.assistant_message)
@@ -645,6 +686,45 @@ async def test_get_thread_includes_in_flight_and_citations():
     assert payload["messages"][0]["citations"][0]["label"] == "[K1]"
     assert payload["messages"][0]["suggestions"] == []
     assert payload["messages"][0]["follow_ups"] == []
+    assert payload["messages"][0]["intent"] == "remaining_budget"
+    assert payload["messages"][0]["nutrition_snapshot"]["remaining_calories"] == 1932
+
+
+@pytest.mark.asyncio
+async def test_get_thread_orders_equal_timestamp_user_before_assistant():
+    """Turn pairs share claim-time created_at; UUID reverse must not flip them."""
+    now = utc_now()
+    # Assistant UUID sorts after user UUID under id.desc → reversed(page) would
+    # put assistant first — the staging bug for "View today's progress".
+    assistant = ChatMessage(
+        id="aeb4c7f8-e3d6-4e2a-bd52-c1fd6d446569",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="You're on track today.",
+        reply_payload={"intent": "day_progress"},
+    )
+    user = ChatMessage(
+        id="0223f710-f7ee-41e1-8c5c-156d752819a1",
+        thread_id="t1",
+        role=ChatMessageRole.USER,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="View today's progress",
+    )
+    claim = _claim()
+    # Fake repo returns newest-first (assistant then user when id.desc).
+    repo = _FakeRepo(claim=claim, history=[user, assistant])
+    orchestrator = _orchestrator(repo)
+
+    payload = await orchestrator.get_thread(user_id="u1", limit=50, before=None)
+
+    assert [m["role"] for m in payload["messages"]] == ["user", "assistant"]
+    assert payload["messages"][0]["content"] == "View today's progress"
+    assert payload["messages"][1]["content"] == "You're on track today."
 
 
 def _three_cards() -> list[dict]:
@@ -818,6 +898,7 @@ async def test_follow_up_failure_persists_empty_chips():
 
 def test_chat_orchestrator_tools_contains_suggest_next_meal():
     from src.app.services.chat_turn_orchestrator import CHAT_ORCHESTRATOR_TOOLS
+    from src.domain.services.chat.coach_functions import openai_tools
 
     tool_names = [tool["function"]["name"] for tool in CHAT_ORCHESTRATOR_TOOLS]
     assert "suggest_next_meal" in tool_names
@@ -827,6 +908,72 @@ def test_chat_orchestrator_tools_contains_suggest_next_meal():
         "search_nutrition_knowledge",
         "explain_limits_and_guidelines",
     }
+    assert CHAT_ORCHESTRATOR_TOOLS == openai_tools()
+
+
+@pytest.mark.asyncio
+async def test_remaining_budget_chip_skips_embed_and_retrieve():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    await _stream(orchestrator, intent="remaining_budget", content="What's left?")
+
+    assert orchestrator.test_embedding.calls == []
+    assert orchestrator.test_retrieval.calls == []
+    assert orchestrator.test_context.calls
+
+
+@pytest.mark.asyncio
+async def test_day_progress_chip_skips_embed_and_retrieve():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    await _stream(orchestrator, intent="day_progress", content="Day progress")
+
+    assert orchestrator.test_embedding.calls == []
+    assert orchestrator.test_retrieval.calls == []
+
+
+@pytest.mark.asyncio
+async def test_limits_chip_skips_embed_and_retrieve():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    events = await _stream(orchestrator, intent="limits", content="What can you do?")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert orchestrator.test_embedding.calls == []
+    assert orchestrator.test_retrieval.calls == []
+    assert completed.data["intent"] == "limits"
+
+
+@pytest.mark.asyncio
+async def test_next_meal_chip_skips_retrieve_but_prefetches_card():
+    cards = _three_cards()
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=cards, meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals)
+
+    events = await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert orchestrator.test_embedding.calls == []
+    assert orchestrator.test_retrieval.calls == []
+    assert next_meals.calls
+    assert completed.data["suggestions"] == cards
+
+
+@pytest.mark.asyncio
+async def test_free_text_still_embeds_and_retrieves():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    await _stream(orchestrator, intent=None, content="Cite protein guidance")
+
+    assert orchestrator.test_embedding.calls
+    assert orchestrator.test_retrieval.calls
 
 
 @pytest.mark.asyncio
@@ -855,4 +1002,3 @@ async def test_meal_recommendation_generates_upfront_with_intent_chip():
     assert completed.data["intent"] == "next_meal"
     assert completed.data["suggestions"] == cards
     assert repo.completed["reply_payload"]["suggestions"] == cards
-

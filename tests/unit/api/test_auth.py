@@ -5,6 +5,7 @@ Tests cover Firebase token verification, user ID extraction,
 email extraction, and optional authentication.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -19,6 +20,12 @@ from src.api.dependencies.auth import (
     resolve_current_user_id,
     verify_firebase_token,
 )
+
+
+def _auth_request() -> SimpleNamespace:
+    request = SimpleNamespace()
+    request.state = SimpleNamespace()
+    return request
 
 
 class TestVerifyFirebaseToken:
@@ -253,7 +260,7 @@ class TestGetCurrentUserId:
 
         # Act & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user_id(mock_token)
+            await get_current_user_id(_auth_request(), mock_token)
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert "missing user identifier" in exc_info.value.detail.lower()
@@ -269,7 +276,7 @@ class TestGetCurrentUserId:
 
         # Act & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user_id(mock_token)
+            await get_current_user_id(_auth_request(), mock_token)
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -382,6 +389,7 @@ class TestGetCurrentUserId:
                 return_value=mock_context,
             ):
                 result = await get_current_user_id(
+                    _auth_request(),
                     {"uid": firebase_uid},
                     cache_service=None,
                 )

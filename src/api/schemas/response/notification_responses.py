@@ -7,6 +7,11 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class FcmTokenActionResponse(BaseModel):
+    success: bool
+    message: str
+
+
 class NotificationPreferencesResponse(BaseModel):
     """Response containing notification preferences."""
 

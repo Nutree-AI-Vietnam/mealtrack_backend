@@ -159,6 +159,29 @@ async def test_publish_meal_event_success(sample_meal):
 
 
 @pytest.mark.asyncio
+async def test_publish_meal_event_purges_local_daily_macros_cache(sample_meal):
+    from src.app.events.meal.meal_events import (
+        register_local_cache_invalidation_hook,
+    )
+
+    publisher = AsyncMock()
+    hook = AsyncMock()
+    register_local_cache_invalidation_hook(hook)
+    try:
+        await publish_meal_event(
+            publisher,
+            sample_meal,
+            event_type="created",
+            environment="development",
+            meal_date=date(2026, 9, 11),
+            language="en",
+        )
+        hook.assert_awaited_once_with(sample_meal.user_id, date(2026, 9, 11), None)
+    finally:
+        register_local_cache_invalidation_hook(None)
+
+
+@pytest.mark.asyncio
 async def test_publish_meal_event_skips_insight_when_nutrition_is_incomplete():
     publisher = AsyncMock()
     food_item = type("FoodItem", (), {"id": "food-1", "name": "Rice"})()

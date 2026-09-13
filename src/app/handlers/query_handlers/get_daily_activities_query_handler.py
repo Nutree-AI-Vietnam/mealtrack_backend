@@ -93,7 +93,12 @@ class GetDailyActivitiesQueryHandler(
 
         activities = meal_activities + workout_activities
         logger.info(
-            f"Retrieved {len(activities)} activities for user {query.user_id} on {local_date}"
+            "Retrieved %s diary items (%s meals, %s workouts) for user %s on %s",
+            len(activities),
+            len(meal_activities),
+            len(workout_activities),
+            query.user_id,
+            local_date,
         )
         # Only cache a fully-successful fetch. Caching on the error path would
         # pin an empty/partial feed for the whole TTL after a transient DB blip.

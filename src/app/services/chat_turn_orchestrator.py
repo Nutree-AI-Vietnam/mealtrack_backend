@@ -38,6 +38,7 @@ from src.domain.model.chat import (
     ChatUsage,
     ChatUserContext,
     RetrievedKnowledgeChunk,
+    chronological_chat_messages,
     empty_reply_payload,
     reply_sidecar,
 )
@@ -47,6 +48,16 @@ from src.domain.ports.chat_embedding_port import ChatEmbeddingPort
 from src.domain.ports.chat_follow_up_port import ChatFollowUpPort
 from src.domain.ports.chat_knowledge_retrieval_port import ChatKnowledgeRetrievalPort
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
+from src.domain.services.chat.coach_functions import (
+    FUNCTION_CHECK_DAILY_PROGRESS,
+    FUNCTION_EXPLAIN_LIMITS,
+    FUNCTION_SEARCH_KNOWLEDGE,
+    FUNCTION_SUGGEST_NEXT_MEAL,
+    needs_retrieval,
+    openai_tools,
+    preferred_alias,
+    resolve_coach_function,
+)
 from src.domain.services.chat.meal_slot import resolve_meal_slot
 from src.domain.services.chat.policy import (
     SentenceBuffer,
@@ -61,6 +72,7 @@ from src.domain.services.chat.policy import (
     request_fingerprint,
     resolve_chat_locale,
     safe_fallback_message,
+    sanitize_incomplete_assistant_text,
     stable_system_instructions,
 )
 from src.domain.utils.timezone_utils import utc_now
@@ -106,99 +118,12 @@ class PreparedChatTurn:
     header_timezone: str | None
     started: float
     intent: str | None = None
+    function_name: str | None = None
+    function_args: dict[str, Any] | None = None
     slot_acquired: bool = False
 
 
-CHAT_ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "suggest_next_meal",
-            "description": (
-                "Generate a personalised meal recommendation that fits the user's remaining calorie and macro budget. "
-                "Call this when the user asks for a meal idea, recipe, dinner/lunch/breakfast suggestion, "
-                "or says they are hungry — in any language."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "slot": {
-                        "type": "string",
-                        "enum": [
-                            "breakfast",
-                            "lunch",
-                            "dinner",
-                            "snack",
-                        ],
-                        "description": "Which meal slot this suggestion targets.",
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Optional user preference or dietary constraint for this suggestion.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "check_daily_progress",
-            "description": (
-                "Check the user's daily progress and remaining calorie and macro budget for today. "
-                "Call this when the user asks about remaining calories, daily progress, how much they've eaten, or how much is left."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "focus": {
-                        "type": "string",
-                        "enum": ["remaining_budget", "day_progress"],
-                        "description": "Whether the user specifically asked for remaining budget vs overall daily progress.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_nutrition_knowledge",
-            "description": (
-                "Search Nutree's reviewed and verified nutrition and food knowledge base. "
-                "Call this when the user asks specific questions about nutrition science, food safety, ingredient benefits, "
-                "vitamins, or dietary guidelines."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query for nutrition knowledge.",
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "explain_limits_and_guidelines",
-            "description": (
-                "Explain Nutree Coach capabilities, guidelines, boundaries, and medical disclaimers. "
-                "Call this when the user asks what Nutree Coach can or cannot do, asks for medical advice, or inquires about app capabilities."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-]
+CHAT_ORCHESTRATOR_TOOLS: list[dict[str, Any]] = openai_tools()
 
 
 def _merge_retrieved_chunks(
@@ -274,13 +199,21 @@ class ChatTurnOrchestrator:
         header_timezone: str | None,
         user_language: str | None,
         intent: str | None = None,
+        function_name: str | None = None,
+        function_args: dict[str, Any] | None = None,
     ) -> PreparedChatTurn:
         started = time.perf_counter()
         resolved_locale = resolve_chat_locale(locale, user_language)
         trimmed = content.strip()
         if len(trimmed) > CHAT_MAX_USER_MESSAGE_CHARS:
             trimmed = trimmed[:CHAT_MAX_USER_MESSAGE_CHARS]
-        fingerprint = request_fingerprint(trimmed, resolved_locale, intent)
+        fingerprint = request_fingerprint(
+            trimmed,
+            resolved_locale,
+            intent,
+            function_name=function_name,
+            function_args=function_args,
+        )
         await self._enforce_daily_budget(
             user_id, exclude_idempotency_key=idempotency_key
         )
@@ -322,6 +255,8 @@ class ChatTurnOrchestrator:
             header_timezone=header_timezone,
             started=started,
             intent=intent,
+            function_name=function_name,
+            function_args=function_args,
             slot_acquired=slot_acquired,
         )
 
@@ -375,12 +310,28 @@ class ChatTurnOrchestrator:
 
             yield _started_event(claim)
 
-            context, chunks, query_embedding = await self._ground(
-                user_id=user_id,
-                query=trimmed,
-                locale=resolved_locale,
-                header_timezone=header_timezone,
-            )
+            if prepared.function_name:
+                resolved = resolve_coach_function(
+                    prepared.function_name, args=prepared.function_args
+                )
+            else:
+                resolved = resolve_coach_function(intent)
+            direct_invoke = resolved is not None and not needs_retrieval(resolved.name)
+            if direct_invoke:
+                context = await self._context_builder.build(
+                    user_id=user_id,
+                    locale=resolved_locale,
+                    header_timezone=header_timezone,
+                )
+                chunks: list[RetrievedKnowledgeChunk] = []
+                query_embedding = None
+            else:
+                context, chunks, query_embedding = await self._ground(
+                    user_id=user_id,
+                    query=trimmed,
+                    locale=resolved_locale,
+                    header_timezone=header_timezone,
+                )
             history_messages = await self._completed_history(
                 claim.thread.id, exclude_message_id=claim.user_message.id
             )
@@ -389,30 +340,31 @@ class ChatTurnOrchestrator:
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
 
-            # When the client sends a next_meal intent chip, pre-fetch candidates
-            # so the LLM can immediately reference the card in its response.
-            if intent == ChatIntent.NEXT_MEAL.value:
-                if self._next_meals is not None:
-                    try:
-                        batch = await self._next_meals.fetch(
-                            user_id=user_id,
-                            context=context,
-                            user_text=trimmed,
-                            locale=resolved_locale,
-                            session_id=discover_session_id,
-                            slot=meal_slot,
-                        )
-                        suggestions = batch.suggestions
-                        discover_session_id = batch.session_id or discover_session_id
-                        meal_slot = batch.meal_slot
-                    except Exception:
-                        logger.warning(
-                            "Upfront next meal candidate generation failed",
-                            extra={"user_id": user_id, "meal_slot": meal_slot},
-                            exc_info=True,
-                        )
+            # Chip or direct suggest_next_meal: prefetch recipe cards; skip knowledge retrieve.
+            should_prefetch_next_meal = intent == ChatIntent.NEXT_MEAL.value or (
+                resolved is not None and resolved.name == FUNCTION_SUGGEST_NEXT_MEAL
+            )
+            if should_prefetch_next_meal and self._next_meals is not None:
+                try:
+                    batch = await self._next_meals.fetch(
+                        user_id=user_id,
+                        context=context,
+                        user_text=trimmed,
+                        locale=resolved_locale,
+                        session_id=discover_session_id,
+                        slot=meal_slot,
+                    )
+                    suggestions = batch.suggestions
+                    discover_session_id = batch.session_id or discover_session_id
+                    meal_slot = batch.meal_slot
+                except Exception:
+                    logger.warning(
+                        "Upfront next meal candidate generation failed",
+                        extra={"user_id": user_id, "meal_slot": meal_slot},
+                        exc_info=True,
+                    )
 
-            tools = list(CHAT_ORCHESTRATOR_TOOLS)
+            tools = [] if direct_invoke else list(openai_tools())
 
             generation: dict[str, Any] = {
                 "text": "",
@@ -423,9 +375,61 @@ class ChatTurnOrchestrator:
             }
             sentences: list[str] = []
 
-            # Keep streaming until no tool calls are emitted (max 2 iterations)
+            # Direct invoke: run the known function once, then one tool-free synthesis.
             current_user_message = trimmed
-            max_tool_iterations = 2
+            if direct_invoke and resolved is not None:
+                call_id = f"direct_{uuid.uuid4().hex[:8]}"
+                (
+                    result,
+                    intent,
+                    suggestions,
+                    discover_session_id,
+                    meal_slot,
+                    chunks,
+                ) = await self._execute_coach_function(
+                    name=resolved.name,
+                    args=resolved.args,
+                    user_id=user_id,
+                    trimmed=trimmed,
+                    resolved_locale=resolved_locale,
+                    context=context,
+                    chunks=chunks,
+                    suggestions=suggestions,
+                    discover_session_id=discover_session_id,
+                    meal_slot=meal_slot,
+                )
+                history.append(
+                    ChatHistoryTurn(
+                        role=ChatMessageRole.USER,
+                        content=current_user_message,
+                    )
+                )
+                history.append(
+                    ChatHistoryTurn(
+                        role=ChatMessageRole.ASSISTANT,
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": call_id,
+                                "name": resolved.name,
+                                "args": resolved.args,
+                            }
+                        ],
+                    )
+                )
+                history.append(
+                    ChatHistoryTurn(
+                        role="tool",
+                        tool_call_id=call_id,
+                        name=resolved.name,
+                        content=result,
+                    )
+                )
+                current_user_message = ""
+                generation["tools"] = None
+
+            # Keep streaming until no tool calls are emitted (max 2 iterations)
+            max_tool_iterations = 1 if direct_invoke else 2
             iteration = 0
             while iteration < max_tool_iterations:
                 iteration += 1
@@ -484,128 +488,25 @@ class ChatTurnOrchestrator:
                         else:
                             args = {}
 
-                        result: str | None = None
-                        if name == "suggest_next_meal":
-                            intent = ChatIntent.NEXT_MEAL.value
-                            slot_arg = args.get("slot")
-                            query_arg = args.get("query")
-                            target_slot = slot_arg or meal_slot
-                            fetch_text = query_arg or trimmed
-                            if not suggestions and self._next_meals is not None:
-                                try:
-                                    batch = await self._next_meals.fetch(
-                                        user_id=user_id,
-                                        context=context,
-                                        user_text=fetch_text,
-                                        locale=resolved_locale,
-                                        session_id=discover_session_id,
-                                        slot=target_slot,
-                                    )
-                                    suggestions = batch.suggestions
-                                    discover_session_id = (
-                                        batch.session_id or discover_session_id
-                                    )
-                                    meal_slot = batch.meal_slot
-                                except Exception as exc:
-                                    logger.warning(
-                                        "Failed to fetch next meal candidates: %s", exc
-                                    )
-                                    result = "Meal catalog service is temporarily unavailable."
-                            if result:
-                                pass
-                            elif suggestions:
-                                primary = suggestions[0]
-                                primary_name = primary.get("name", "")
-                                primary_cal = primary.get("calories", "")
-                                primary_p = primary.get("protein_g", "")
-                                primary_c = primary.get("carbs_g", "")
-                                primary_f = primary.get("fat_g", "")
-                                prep_m = primary.get("prep_time_minutes")
-                                ingredients_summary = ""
-                                raw_ings = primary.get("ingredients")
-                                if raw_ings and isinstance(raw_ings, list):
-                                    ingredients_summary = ", ".join(
-                                        f"{ing.get('name')} ({ing.get('amount')}{ing.get('unit')})"
-                                        if isinstance(ing, dict)
-                                        else str(ing)
-                                        for ing in raw_ings[:5]
-                                    )
-                                lines = [
-                                    f"Found 1 meal options for {meal_slot}: {primary_name}.",
-                                    f"Portion: {primary_cal} kcal ({primary_p}g protein, {primary_c}g carbs, {primary_f}g fat).",
-                                ]
-                                if prep_m:
-                                    lines.append(f"Prep time: {prep_m} minutes.")
-                                if ingredients_summary:
-                                    lines.append(
-                                        f"Key ingredients: {ingredients_summary}."
-                                    )
-                                lines.append(
-                                    "Note: The user will see this meal recipe card directly in the chat UI where they can tap to view cooking instructions and log it."
-                                )
-                                result = "\n".join(lines)
-                            elif self._next_meals is None:
-                                result = "Meal candidate service not configured."
-                            else:
-                                result = f"No meal options found for {meal_slot} matching current criteria."
-
-                        elif name == "check_daily_progress":
-                            focus = args.get("focus")
-                            if focus == "day_progress" or (
-                                not focus
-                                and (
-                                    "tiến độ" in trimmed.casefold()
-                                    or "progress" in trimmed.casefold()
-                                )
-                            ):
-                                intent = ChatIntent.DAY_PROGRESS.value
-                            else:
-                                intent = ChatIntent.REMAINING_BUDGET.value
-                            result = (
-                                f"Daily progress: consumed {context.consumed_calories} kcal "
-                                f"({context.consumed_protein_g}g P, {context.consumed_carbs_g}g C, {context.consumed_fat_g}g F). "
-                                f"Remaining: {context.remaining_calories} kcal "
-                                f"({context.remaining_protein_g}g P, {context.remaining_carbs_g}g C, {context.remaining_fat_g}g F). "
-                                f"Daily targets: {context.target_calories} kcal ({context.target_protein_g}g P, {context.target_carbs_g}g C, {context.target_fat_g}g F). "
-                                f"Remaining days: {context.remaining_days}."
-                            )
-
-                        elif name == "search_nutrition_knowledge":
-                            query_arg = args.get("query") or trimmed
-                            try:
-                                retrieved_chunks, _ = await self._retrieve(
-                                    query_arg, resolved_locale
-                                )
-                                filtered = filter_chunks_for_allergies(
-                                    retrieved_chunks, context.allergies or []
-                                )
-                                chunks = _merge_retrieved_chunks(chunks, filtered)
-                                if filtered:
-                                    result = (
-                                        "Retrieved Nutree knowledge:\n"
-                                        + "\n".join(
-                                            f"{c.label}: {c.title} - {c.content}"
-                                            for c in filtered
-                                        )
-                                    )
-                                else:
-                                    result = "No verified Nutree knowledge found for this query."
-                            except Exception as exc:
-                                logger.warning(
-                                    "Failed to search nutrition knowledge: %s", exc
-                                )
-                                result = "Nutrition knowledge retrieval is temporarily unavailable."
-
-                        elif name == "explain_limits_and_guidelines":
-                            intent = ChatIntent.LIMITS.value
-                            result = (
-                                "Nutree Coach capabilities and limits:\n"
-                                "- Can help with: logging meals, calculating calories and macros, suggesting balanced recipes fitting daily goals, tracking daily/weekly nutritional progress, and providing evidence-based dietary guidance.\n"
-                                "- Cannot help with: medical diagnoses, medical prescriptions or medication advice, replacing licensed physicians or dietitians, or diagnosing eating disorders."
-                            )
-
-                        else:
-                            result = f"Tool '{name}' is not recognized."
+                        (
+                            result,
+                            intent,
+                            suggestions,
+                            discover_session_id,
+                            meal_slot,
+                            chunks,
+                        ) = await self._execute_coach_function(
+                            name=name,
+                            args=args,
+                            user_id=user_id,
+                            trimmed=trimmed,
+                            resolved_locale=resolved_locale,
+                            context=context,
+                            chunks=chunks,
+                            suggestions=suggestions,
+                            discover_session_id=discover_session_id,
+                            meal_slot=meal_slot,
+                        )
 
                         history.append(
                             ChatHistoryTurn(
@@ -628,6 +529,11 @@ class ChatTurnOrchestrator:
             usage = generation["usage"]
             provider_response_id = generation["provider_response_id"]
             blocked = bool(generation["blocked"])
+            if blocked:
+                # Mid-token safety cuts leave truncated locale numbers / unclosed
+                # markdown (e.g. "còn khoảng **1.821"). Prefer a clean sentence.
+                final_text = sanitize_incomplete_assistant_text(final_text)
+                generation["text"] = final_text
             if not final_text:
                 blocked = True
                 final_text = safe_fallback_message(resolved_locale)
@@ -660,6 +566,11 @@ class ChatTurnOrchestrator:
                     discover_session_id=discover_session_id,
                     intent=intent,
                     citations=citations,
+                    nutrition_snapshot=(
+                        context.to_nutrition_snapshot()
+                        if context.has_complete_nutrition
+                        else None
+                    ),
                 ),
             )
             if completed is None:
@@ -801,7 +712,9 @@ class ChatTurnOrchestrator:
             citation_metadata = await repo.list_citation_metadata(source_keys)
         has_more = len(messages) > limit
         page = messages[:limit]
-        chronological = list(reversed(page))
+        # Newest-first page → oldest-first; tie-break user before assistant when
+        # both rows share the same claim-time created_at.
+        chronological = chronological_chat_messages(page)
         return {
             "thread": {
                 "id": thread.id,
@@ -892,6 +805,156 @@ class ChatTurnOrchestrator:
                 **reply_sidecar(claim.assistant_message),
             },
         )
+
+    async def _execute_coach_function(
+        self,
+        *,
+        name: str | None,
+        args: dict[str, Any],
+        user_id: str,
+        trimmed: str,
+        resolved_locale: str,
+        context: ChatUserContext,
+        chunks: list[RetrievedKnowledgeChunk],
+        suggestions: list[dict[str, Any]],
+        discover_session_id: str | None,
+        meal_slot: str,
+    ) -> tuple[
+        str,
+        str | None,
+        list[dict[str, Any]],
+        str | None,
+        str,
+        list[RetrievedKnowledgeChunk],
+    ]:
+        """Run a registry function. Shared by direct invoke and model tool calls."""
+        intent: str | None = preferred_alias(name or "", args)
+        result: str
+
+        if name == FUNCTION_SUGGEST_NEXT_MEAL:
+            intent = ChatIntent.NEXT_MEAL.value
+            slot_arg = args.get("slot")
+            query_arg = args.get("query")
+            target_slot = slot_arg or meal_slot
+            fetch_text = query_arg or trimmed
+            if not suggestions and self._next_meals is not None:
+                try:
+                    batch = await self._next_meals.fetch(
+                        user_id=user_id,
+                        context=context,
+                        user_text=fetch_text,
+                        locale=resolved_locale,
+                        session_id=discover_session_id,
+                        slot=target_slot,
+                    )
+                    suggestions = batch.suggestions
+                    discover_session_id = batch.session_id or discover_session_id
+                    meal_slot = batch.meal_slot
+                except Exception as exc:
+                    logger.warning("Failed to fetch next meal candidates: %s", exc)
+                    result = "Meal catalog service is temporarily unavailable."
+                    return (
+                        result,
+                        intent,
+                        suggestions,
+                        discover_session_id,
+                        meal_slot,
+                        chunks,
+                    )
+            if suggestions:
+                primary = suggestions[0]
+                primary_name = primary.get("name", "")
+                primary_cal = primary.get("calories", "")
+                primary_p = primary.get("protein_g", "")
+                primary_c = primary.get("carbs_g", "")
+                primary_f = primary.get("fat_g", "")
+                prep_m = primary.get("prep_time_minutes")
+                ingredients_summary = ""
+                raw_ings = primary.get("ingredients")
+                if raw_ings and isinstance(raw_ings, list):
+                    ingredients_summary = ", ".join(
+                        f"{ing.get('name')} ({ing.get('amount')}{ing.get('unit')})"
+                        if isinstance(ing, dict)
+                        else str(ing)
+                        for ing in raw_ings[:5]
+                    )
+                lines = [
+                    f"Found 1 meal options for {meal_slot}: {primary_name}.",
+                    f"Portion: {primary_cal} kcal ({primary_p}g protein, {primary_c}g carbs, {primary_f}g fat).",
+                ]
+                if prep_m:
+                    lines.append(f"Prep time: {prep_m} minutes.")
+                if ingredients_summary:
+                    lines.append(f"Key ingredients: {ingredients_summary}.")
+                lines.append(
+                    "Note: The user will see this meal recipe card directly in the chat UI where they can tap to view cooking instructions and log it."
+                )
+                result = "\n".join(lines)
+            elif self._next_meals is None:
+                result = "Meal candidate service not configured."
+            else:
+                result = (
+                    f"No meal options found for {meal_slot} matching current criteria."
+                )
+
+        elif name == FUNCTION_CHECK_DAILY_PROGRESS:
+            focus = args.get("focus")
+            if focus == "day_progress" or (
+                not focus
+                and (
+                    "tiến độ" in trimmed.casefold() or "progress" in trimmed.casefold()
+                )
+            ):
+                intent = ChatIntent.DAY_PROGRESS.value
+            else:
+                intent = ChatIntent.REMAINING_BUDGET.value
+            if not context.has_complete_nutrition:
+                result = _daily_progress_unavailable(resolved_locale)
+            else:
+                result = (
+                    f"Daily progress: food consumed {context.food_calories} kcal; "
+                    f"activity burned {context.movement_kcal_burned} kcal. "
+                    f"Macros consumed: {context.consumed_protein_g}g P, {context.consumed_carbs_g}g C, {context.consumed_fat_g}g F. "
+                    f"Remaining: {context.remaining_calories} kcal "
+                    f"({context.remaining_protein_g}g P, {context.remaining_carbs_g}g C, {context.remaining_fat_g}g F). "
+                    f"Daily targets: {context.target_calories} kcal ({context.target_protein_g}g P, {context.target_carbs_g}g C, {context.target_fat_g}g F). "
+                    f"Remaining days: {context.remaining_days}."
+                )
+
+        elif name == FUNCTION_SEARCH_KNOWLEDGE:
+            query_arg = args.get("query") or trimmed
+            try:
+                retrieved_chunks, _ = await self._retrieve(query_arg, resolved_locale)
+                filtered = filter_chunks_for_allergies(
+                    retrieved_chunks, context.allergies or []
+                )
+                chunks = _merge_retrieved_chunks(chunks, filtered)
+                if filtered:
+                    result = "Retrieved Nutree knowledge:\n" + "\n".join(
+                        f"{c.label}: {c.title} - {c.content}" for c in filtered
+                    )
+                else:
+                    result = "No verified Nutree knowledge found for this query."
+            except Exception as exc:
+                logger.warning("Failed to search nutrition knowledge: %s", exc)
+                result = "Nutrition knowledge retrieval is temporarily unavailable."
+
+        elif name == FUNCTION_EXPLAIN_LIMITS:
+            intent = ChatIntent.LIMITS.value
+            result = (
+                "Nutree Coach capabilities and limits:\n"
+                "- Can help with: explaining your log, suggesting meals that fit remaining "
+                "budget, tracking daily/weekly nutritional progress, and providing "
+                "evidence-based dietary guidance.\n"
+                "- Cannot help with: logging meals for you, changing calorie or macro "
+                "targets, medical diagnoses, prescriptions or medication advice, "
+                "replacing licensed physicians or dietitians, or diagnosing eating disorders."
+            )
+
+        else:
+            result = f"Tool '{name}' is not recognized."
+
+        return result, intent, suggestions, discover_session_id, meal_slot, chunks
 
     async def _citations_for_message(
         self, message: ChatMessage
@@ -1217,6 +1280,7 @@ def _reply_payload(
     discover_session_id: str | None,
     intent: str | None,
     citations: list[ChatCitation] | None = None,
+    nutrition_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "suggestions": suggestions,
@@ -1230,7 +1294,21 @@ def _reply_payload(
         payload["citation_refs"] = [
             {"label": item.label, "source_key": item.source_key} for item in citations
         ]
+    if nutrition_snapshot is not None:
+        payload["nutrition_snapshot"] = nutrition_snapshot
     return payload
+
+
+def _daily_progress_unavailable(locale: str) -> str:
+    if locale == "vi":
+        return (
+            "Nutree chưa thể tải đủ số liệu hôm nay. "
+            "Vui lòng thử lại sau khi dữ liệu được đồng bộ."
+        )
+    return (
+        "Nutree cannot load complete nutrition data for today yet. "
+        "Please try again after your data finishes syncing."
+    )
 
 
 def _hydrate_message_citations(

@@ -2,11 +2,23 @@
 Notification request schemas for notification preferences management.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from src.domain.constants.languages import ENABLED_APP_LOCALES
+
+
+class FcmTokenRegisterRequest(BaseModel):
+    """Client push-token registration (local and remote)."""
+
+    fcm_token: str = Field(..., min_length=1, max_length=4096)
+    device_type: Literal["ios", "android"]
+    timezone: str | None = Field(default=None, max_length=64)
+
+
+class FcmTokenDeleteRequest(BaseModel):
+    fcm_token: str = Field(..., min_length=1, max_length=4096)
 
 
 class NotificationPreferencesUpdateRequest(BaseModel):

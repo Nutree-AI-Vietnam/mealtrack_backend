@@ -15,6 +15,10 @@ from src.app.handlers.query_handlers.get_user_profile_query_handler import (
 from src.app.handlers.query_handlers.get_user_tdee_query_handler import (
     GetUserTdeeQueryHandler,
 )
+from src.app.handlers.query_handlers.get_weekly_budget_query_handler import (
+    GetWeeklyBudgetQueryHandler,
+)
+from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 from src.app.queries.meal import GetDailyMacrosQuery
 from src.app.queries.tdee import GetUserTdeeQuery
 from src.app.queries.user import GetUserProfileQuery
@@ -53,6 +57,7 @@ class ChatContextBuilder:
         self._profile_handler = GetUserProfileQueryHandler(cache_service=cache_service)
         self._tdee_handler = GetUserTdeeQueryHandler(cache_service=cache_service)
         self._daily_handler = GetDailyMacrosQueryHandler(cache_service=cache_service)
+        self._weekly_handler = GetWeeklyBudgetQueryHandler(cache_service=cache_service)
 
     async def build(
         self,
@@ -86,6 +91,11 @@ class ChatContextBuilder:
         goal = (profile or {}).get("profile", {}).get("fitness_goal")
 
         weekly = (daily or {}).get("weekly_context") or {}
+        weekly_budget = await self._safe_weekly_budget(user_id, today, header_timezone)
+        if weekly_budget:
+            weekly = _weekly_context_from_budget(weekly_budget)
+        elif not _weekly_context_is_complete(weekly):
+            missing.append("weekly_budget")
         target_calories = weekly.get("adjusted_target_calories")
         target_protein = weekly.get("daily_protein")
         target_carbs = weekly.get("adjusted_target_carbs")
@@ -99,9 +109,17 @@ class ChatContextBuilder:
             target_fat = macros.get("fat")
 
         consumed_calories = (daily or {}).get("total_calories")
+        food_calories = (daily or {}).get("food_calories")
+        movement_kcal_burned = (daily or {}).get("movement_kcal_burned")
         consumed_protein = (daily or {}).get("total_protein")
         consumed_carbs = (daily or {}).get("total_carbs")
         consumed_fat = (daily or {}).get("total_fat")
+        # Weekly `remaining_calories` is leftover for the whole week, not today.
+        # Coach cards and Nutrition home both show today's food vs daily target.
+        eaten_today = (
+            food_calories if food_calories is not None else consumed_calories
+        )
+        remaining_calories = _remaining(target_calories, eaten_today)
 
         return ChatUserContext(
             context_version=CHAT_CONTEXT_VERSION,
@@ -121,7 +139,7 @@ class ChatContextBuilder:
             consumed_protein_g=_num(consumed_protein),
             consumed_carbs_g=_num(consumed_carbs),
             consumed_fat_g=_num(consumed_fat),
-            remaining_calories=_remaining(target_calories, consumed_calories),
+            remaining_calories=remaining_calories,
             remaining_protein_g=_remaining(target_protein, consumed_protein),
             remaining_carbs_g=_remaining(target_carbs, consumed_carbs),
             remaining_fat_g=_remaining(target_fat, consumed_fat),
@@ -131,6 +149,9 @@ class ChatContextBuilder:
             suggested_meal_slot=suggested_slot,
             recent_meals=tuple(recent_meals),
             missing=tuple(dict.fromkeys(missing)),
+            food_calories=_num(food_calories),
+            movement_kcal_burned=_num(movement_kcal_burned),
+            local_date=today.isoformat(),
         )
 
     async def _recent_meals(
@@ -212,6 +233,24 @@ class ChatContextBuilder:
             missing.append("daily_progress")
             return None
 
+    async def _safe_weekly_budget(
+        self,
+        user_id: str,
+        today: date,
+        header_timezone: str | None,
+    ) -> dict[str, Any] | None:
+        try:
+            return await self._weekly_handler.handle(
+                GetWeeklyBudgetQuery(
+                    user_id=user_id,
+                    target_date=today,
+                    header_timezone=header_timezone,
+                    read_only=True,
+                )
+            )
+        except Exception:
+            return None
+
 
 def _list_or_none(value: Any) -> list[str] | None:
     if value is None:
@@ -236,3 +275,26 @@ def _remaining(target: Any, consumed: Any) -> float | None:
     if target_n is None or consumed_n is None:
         return None
     return round(target_n - consumed_n, 1)
+
+
+def _weekly_context_is_complete(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    required = (
+        "adjusted_target_calories",
+        "adjusted_target_carbs",
+        "adjusted_target_fat",
+        "daily_protein",
+        "remaining_days",
+    )
+    return all(value.get(key) is not None for key in required)
+
+
+def _weekly_context_from_budget(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "adjusted_target_calories": value.get("adjusted_daily_calories"),
+        "adjusted_target_carbs": value.get("adjusted_daily_carbs"),
+        "adjusted_target_fat": value.get("adjusted_daily_fat"),
+        "daily_protein": value.get("daily_protein"),
+        "remaining_days": value.get("remaining_days"),
+    }

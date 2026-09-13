@@ -96,15 +96,20 @@ async def initialize_cache_layer() -> None:
         enabled=settings.CACHE_ENABLED,
     )
     _register_local_insight_hook()
+    _register_local_cache_invalidation_hook()
 
 
 async def shutdown_cache_layer() -> None:
     """Gracefully close Redis connections."""
     global _redis_client, _cache_service
 
-    from src.app.events.meal.meal_events import register_local_insight_hook
+    from src.app.events.meal.meal_events import (
+        register_local_cache_invalidation_hook,
+        register_local_insight_hook,
+    )
 
     register_local_insight_hook(None)
+    register_local_cache_invalidation_hook(None)
     if _cache_service:
         _cache_service = None
     if _redis_client:
@@ -186,6 +191,21 @@ def _register_local_insight_hook() -> None:
     register_local_insight_hook(
         LocalMealInsightWriter(get_cache_service, get_ai_model_manager).schedule
     )
+
+
+def _register_local_cache_invalidation_hook() -> None:
+    """Purge daily-macros Redis keys locally when Cloudflare Queue is not configured."""
+    from src.api.services.local_meal_cache_invalidation import (
+        apply_meal_write_cache_invalidation,
+    )
+    from src.app.events.meal.meal_events import register_local_cache_invalidation_hook
+
+    async def _invalidate(user_id, meal_date, old_meal_date=None):
+        await apply_meal_write_cache_invalidation(
+            get_cache_service(), user_id, meal_date, old_meal_date
+        )
+
+    register_local_cache_invalidation_hook(_invalidate)
 
 
 def get_cache_monitor() -> CacheMonitor:

@@ -28,7 +28,10 @@ from src.app.services.food_display_name import (
 from src.app.services.parse_text_custom_estimate import apply_custom_estimate
 from src.domain.model.nutrition.extra_nutrients import extras_from_portion_micros
 from src.app.services.serving_label_localizer import localize_item_servings
-from src.domain.exceptions.ai_exceptions import AIOutputValidationError
+from src.domain.exceptions.ai_exceptions import (
+    AIOutputValidationError,
+    AIUnavailableError,
+)
 from src.domain.model.ai.nutrition_contracts import (
     MealTextNutritionResponse,
 )
@@ -484,6 +487,11 @@ class ParseMealTextHandler(
                         attempt,
                     )
                 return validated_payload, raw_payload
+            except (ConnectionError, TimeoutError) as exc:
+                raise AIUnavailableError(
+                    "Upstream connection failed during parse_text",
+                    last_error=type(exc).__name__,
+                ) from exc
             except AIOutputValidationError as exc:
                 logger.warning(
                     "[AI-OUTPUT-VALIDATION-FAILED] purpose=%s attempt=%s details=%s",

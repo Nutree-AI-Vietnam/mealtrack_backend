@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -20,7 +20,11 @@ from src.domain.ports.integration_event_publisher_port import require_event_publ
 logger = logging.getLogger(__name__)
 
 LocalInsightHook = Callable[[str, dict[str, Any], datetime], None]
+LocalCacheInvalidationHook = Callable[
+    [str, date | datetime, date | datetime | None], Awaitable[None]
+]
 _local_insight_hook: LocalInsightHook | None = None
+_local_cache_invalidation_hook: LocalCacheInvalidationHook | None = None
 
 
 class MealCreatedEvent(IntegrationEvent):
@@ -48,6 +52,14 @@ def register_local_insight_hook(hook: LocalInsightHook | None) -> None:
     """Register the optional local-Redis insight writer used in development."""
     global _local_insight_hook
     _local_insight_hook = hook
+
+
+def register_local_cache_invalidation_hook(
+    hook: LocalCacheInvalidationHook | None,
+) -> None:
+    """Register the process-local Redis purge used when the Queue worker is absent."""
+    global _local_cache_invalidation_hook
+    _local_cache_invalidation_hook = hook
 
 
 async def _insight_user_context(
@@ -137,6 +149,10 @@ async def publish_meal_event(
         data=data,
     )
     await publisher.publish(event.to_payload())
+    if _local_cache_invalidation_hook is not None:
+        await _local_cache_invalidation_hook(
+            resolved_user_id, meal_date, old_meal_date
+        )
     if insight is not None and _local_insight_hook is not None:
         _local_insight_hook(str(meal.meal_id), insight, occurred_at)
     return True

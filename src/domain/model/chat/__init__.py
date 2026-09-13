@@ -11,6 +11,7 @@ from src.domain.model.chat.models import (
     CHAT_INTENTS,
     CHAT_MAX_OUTPUT_TOKENS,
     CHAT_MAX_USER_MESSAGE_CHARS,
+    CHAT_NUTRITION_SNAPSHOT_VERSION,
     CHAT_PROMPT_VERSION,
     CHAT_RECENT_MEAL_DAYS,
     CHAT_RECENT_MEAL_LIMIT,
@@ -33,6 +34,7 @@ from src.domain.model.chat.models import (
     ChatUsage,
     ChatUserContext,
     RetrievedKnowledgeChunk,
+    chronological_chat_messages,
     empty_reply_payload,
     reply_sidecar,
 )
@@ -48,6 +50,7 @@ __all__ = [
     "CHAT_INTENTS",
     "CHAT_MAX_OUTPUT_TOKENS",
     "CHAT_MAX_USER_MESSAGE_CHARS",
+    "CHAT_NUTRITION_SNAPSHOT_VERSION",
     "CHAT_PROMPT_VERSION",
     "CHAT_RECENT_MEAL_DAYS",
     "CHAT_RECENT_MEAL_LIMIT",
@@ -70,6 +73,7 @@ __all__ = [
     "ChatUsage",
     "ChatUserContext",
     "RetrievedKnowledgeChunk",
+    "chronological_chat_messages",
     "empty_reply_payload",
     "reply_sidecar",
 ]

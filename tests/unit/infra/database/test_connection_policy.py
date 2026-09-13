@@ -135,6 +135,33 @@ def test_unknown_mode_raises_error():
         )
 
 
+def test_development_environment_uses_larger_direct_pool_defaults():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@localhost:5432/nutree",
+            "DB_CONNECTION_MODE": "direct_pool",
+            "ENVIRONMENT": "development",
+            "UVICORN_WORKERS": "1",
+        }
+    )
+    assert policy.pool_size == 20
+    assert policy.max_overflow == 20
+    assert policy.pool_timeout == 30
+    assert policy.worker_count == 1
+
+
+def test_localhost_url_uses_dev_pool_when_environment_unset():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@localhost:5432/nutree",
+            "DB_CONNECTION_MODE": "direct_pool",
+            "UVICORN_WORKERS": "1",
+        }
+    )
+    assert policy.pool_size == 20
+    assert policy.max_overflow == 20
+
+
 def test_direct_pool_capacity_uses_workers_and_pool_size():
     policy = resolve_connection_policy(
         {

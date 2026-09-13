@@ -18,6 +18,7 @@ from src.domain.services.chat.policy import (
     request_fingerprint,
     resolve_chat_locale,
     safe_fallback_message,
+    sanitize_incomplete_assistant_text,
     stable_system_instructions,
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     "request_fingerprint",
     "resolve_chat_locale",
     "safe_fallback_message",
+    "sanitize_incomplete_assistant_text",
     "stable_system_instructions",
 ]

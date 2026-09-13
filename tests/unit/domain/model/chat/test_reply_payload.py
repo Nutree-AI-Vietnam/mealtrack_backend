@@ -48,6 +48,21 @@ def test_sidecar_includes_intent() -> None:
     assert reply_sidecar(message)["intent"] == "remaining_budget"
 
 
+def test_sidecar_includes_persisted_nutrition_snapshot() -> None:
+    snapshot = {
+        "target_calories": 1800,
+        "food_calories": 1150,
+        "movement_kcal_burned": 250,
+        "remaining_calories": 900,
+    }
+    message = _message(
+        {"suggestions": [], "follow_ups": [], "nutrition_snapshot": snapshot}
+    )
+
+    assert message.nutrition_snapshot() == snapshot
+    assert reply_sidecar(message)["nutrition_snapshot"] == snapshot
+
+
 def test_citation_refs_preserve_labels() -> None:
     message = _message(
         {

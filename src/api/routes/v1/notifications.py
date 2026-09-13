@@ -7,9 +7,12 @@ from fastapi import APIRouter, Depends
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.schemas.request.notification_requests import (
+    FcmTokenDeleteRequest,
+    FcmTokenRegisterRequest,
     NotificationPreferencesUpdateRequest,
 )
 from src.api.schemas.response.notification_responses import (
+    FcmTokenActionResponse,
     NotificationPreferencesResponse,
     NotificationPreferencesUpdateResponse,
 )
@@ -20,6 +23,29 @@ from src.app.queries.notification import GetNotificationPreferencesQuery
 from src.infra.event_bus import EventBus
 
 router = APIRouter(prefix="/v1/notifications", tags=["Notifications"])
+
+
+@router.post("/tokens", response_model=FcmTokenActionResponse)
+async def register_fcm_token(
+    request: FcmTokenRegisterRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Accept a device token so local clients do not 404 on register.
+
+    Push delivery is still owned by the notification worker; this endpoint
+    acknowledges the token so boot is not treated as a missing API.
+    """
+    del request, user_id
+    return FcmTokenActionResponse(success=True, message="Token registered")
+
+
+@router.delete("/tokens", response_model=FcmTokenActionResponse)
+async def delete_fcm_token(
+    request: FcmTokenDeleteRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    del request, user_id
+    return FcmTokenActionResponse(success=True, message="Token deleted")
 
 
 @router.get("/preferences", response_model=NotificationPreferencesResponse)

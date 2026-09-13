@@ -223,6 +223,38 @@ def handle_exception(exc: Exception) -> HTTPException:
         # Expected domain error — pure conversion, no log (it is not an error)
         return create_http_exception(exc)
 
+    if isinstance(
+        exc,
+        (
+            ConnectionError,
+            ConnectionResetError,
+            BrokenPipeError,
+            TimeoutError,
+        ),
+    ) or type(exc).__name__ in {
+        "ConnectError",
+        "ReadError",
+        "RemoteProtocolError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "RequestError",
+    }:
+        logger.warning(
+            "Upstream connection failed: %s",
+            type(exc).__name__,
+            extra={"error_code": "AI_UNAVAILABLE", "error_type": type(exc).__name__},
+        )
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "AI_UNAVAILABLE",
+                "message": "AI meal generation is temporarily unavailable",
+                "details": {},
+            },
+        )
+
     if isinstance(exc, HTTPException):
         # Already an HTTP exception — pass through
         return exc

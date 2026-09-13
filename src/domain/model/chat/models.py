@@ -33,6 +33,7 @@ class ChatIntent(StrEnum):
 
 CHAT_PROMPT_VERSION = "chat_prompt_v3"
 CHAT_CONTEXT_VERSION = "chat_context_v1"
+CHAT_NUTRITION_SNAPSHOT_VERSION = "chat_nutrition_v1"
 CHAT_RETRIEVAL_VERSION = "chat_retrieval_v1"
 CHAT_EVAL_VERSION = "chat_eval_v1"
 CHAT_DEFAULT_MODEL = "gpt-5.6-luna"
@@ -136,6 +137,26 @@ class ChatMessage:
                 refs.append((label, source_key))
         return refs
 
+    def nutrition_snapshot(self) -> dict[str, Any] | None:
+        if not self.reply_payload:
+            return None
+        value = self.reply_payload.get("nutrition_snapshot")
+        return value if isinstance(value, dict) else None
+
+
+def chronological_chat_messages(
+    messages: list[ChatMessage],
+) -> list[ChatMessage]:
+    """Oldest first. Equal created_at: user before assistant (turn pairs share now)."""
+    return sorted(
+        messages,
+        key=lambda message: (
+            message.created_at,
+            0 if message.role == ChatMessageRole.USER else 1,
+            message.id,
+        ),
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class ChatCitation:
@@ -223,6 +244,31 @@ class ChatUserContext:
     suggested_meal_slot: str | None = None
     recent_meals: tuple[ChatMealSummary, ...] = ()
     missing: tuple[str, ...] = ()
+    food_calories: float | None = None
+    movement_kcal_burned: float | None = None
+    local_date: str | None = None
+
+    @property
+    def has_complete_nutrition(self) -> bool:
+        values = (
+            self.target_calories,
+            self.target_protein_g,
+            self.target_carbs_g,
+            self.target_fat_g,
+            self.food_calories,
+            self.movement_kcal_burned,
+            self.consumed_calories,
+            self.consumed_protein_g,
+            self.consumed_carbs_g,
+            self.consumed_fat_g,
+            self.remaining_calories,
+            self.remaining_protein_g,
+            self.remaining_carbs_g,
+            self.remaining_fat_g,
+            self.remaining_days,
+            self.local_date,
+        )
+        return all(value is not None for value in values)
 
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
@@ -244,7 +290,9 @@ class ChatUserContext:
                 "fat_g": self.target_fat_g,
             },
             "today": {
+                "food_calories": self.food_calories,
                 "consumed_calories": self.consumed_calories,
+                "movement_kcal_burned": self.movement_kcal_burned,
                 "consumed_protein_g": self.consumed_protein_g,
                 "consumed_carbs_g": self.consumed_carbs_g,
                 "consumed_fat_g": self.consumed_fat_g,
@@ -272,6 +320,41 @@ class ChatUserContext:
                 for meal in self.recent_meals
             ],
             "missing": list(self.missing),
+        }
+
+    def to_nutrition_snapshot(self) -> dict[str, Any]:
+        """Return only the bounded nutrition facts needed to render a reply."""
+        return {
+            "version": CHAT_NUTRITION_SNAPSHOT_VERSION,
+            "as_of": self.as_of,
+            "local_date": self.local_date,
+            "timezone": self.timezone,
+            "target_calories": self.target_calories,
+            "food_calories": (
+                self.food_calories
+                if self.food_calories is not None
+                else self.consumed_calories
+            ),
+            "movement_kcal_burned": self.movement_kcal_burned,
+            "remaining_calories": self.remaining_calories,
+            "remaining_days": self.remaining_days,
+            "macros": {
+                "protein": {
+                    "consumed_g": self.consumed_protein_g,
+                    "target_g": self.target_protein_g,
+                    "remaining_g": self.remaining_protein_g,
+                },
+                "carbs": {
+                    "consumed_g": self.consumed_carbs_g,
+                    "target_g": self.target_carbs_g,
+                    "remaining_g": self.remaining_carbs_g,
+                },
+                "fat": {
+                    "consumed_g": self.consumed_fat_g,
+                    "target_g": self.target_fat_g,
+                    "remaining_g": self.remaining_fat_g,
+                },
+            },
         }
 
 
@@ -313,6 +396,9 @@ def reply_sidecar(message: ChatMessage) -> dict[str, Any]:
     intent = message.intent()
     if intent:
         payload["intent"] = intent
+    snapshot = message.nutrition_snapshot()
+    if snapshot is not None:
+        payload["nutrition_snapshot"] = snapshot
     return payload
 
 

@@ -13,9 +13,9 @@ def compute_meal_content_fingerprint(meal: Meal) -> str:
     """Generate deterministic hash of a meal's food content identity.
 
     Two meals are the same when they contain the same foods in the same
-    amounts (AC: same foods + grams). Identity per food item is its
-    canonical reference (food_reference_id / source_food_id) or normalized
-    name, plus quantity and unit. Excludes dish name, macros, nutrition
+    amounts (AC: same foods + grams). Identity per food item is normalized
+    name, quantity, and unit so catalog vs custom rows of the same portion
+    do not appear twice. Excludes dish name, macros, nutrition
     overrides, meal IDs, timestamps, images, translations, and source
     metadata.
     """
@@ -23,16 +23,12 @@ def compute_meal_content_fingerprint(meal: Meal) -> str:
     food_items = getattr(getattr(meal, "nutrition", None), "food_items", None) or []
     for item in food_items:
         item_name = (getattr(item, "name", "") or "").strip().lower()
-        food_ref_id = getattr(item, "food_reference_id", None)
-        source_food_id = getattr(item, "source_food_id", None)
         quantity = round(float(getattr(item, "quantity", 0.0) or 0.0), 3)
         unit = (getattr(item, "unit", "") or "").strip().lower()
 
         items_data.append(
             {
                 "name": item_name,
-                "food_reference_id": food_ref_id,
-                "source_food_id": source_food_id,
                 "quantity": quantity,
                 "unit": unit,
             }
@@ -42,8 +38,6 @@ def compute_meal_content_fingerprint(meal: Meal) -> str:
     items_data.sort(
         key=lambda x: (
             x["name"],
-            str(x["food_reference_id"]),
-            str(x["source_food_id"]),
             x["quantity"],
             x["unit"],
         )

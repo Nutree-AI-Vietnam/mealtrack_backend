@@ -24,6 +24,7 @@ from src.domain.model.chat import (
     ChatThread,
     ChatTurnClaim,
     ChatUsage,
+    chronological_chat_messages,
     empty_reply_payload,
 )
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
@@ -177,7 +178,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         limit: int,
     ) -> list[ChatMessage]:
         recent = await self.list_completed_messages(thread_id=thread_id, limit=limit)
-        return list(reversed(recent))
+        return chronological_chat_messages(recent)
 
     async def get_generating_turn(
         self, thread_id: str

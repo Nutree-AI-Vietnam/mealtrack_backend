@@ -1158,6 +1158,25 @@ async def test_parse_text_does_not_retry_provider_outage():
 
 
 @pytest.mark.asyncio
+async def test_parse_text_maps_connection_reset_to_ai_unavailable():
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[ConnectionResetError("peer closed")]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_FakeFatSecretService(),
+    )
+
+    with pytest.raises(AIUnavailableError) as exc_info:
+        await handler.handle(
+            ParseMealTextCommand(text="1 qua cam", user_id="user-1", language="vi")
+        )
+
+    assert exc_info.value.last_error == "ConnectionResetError"
+    assert len(meal_generation_service.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_parse_text_consumes_structured_fatsecret_macros_without_description():
     """Expected red: the current handler still parses only food_description."""
     meal_generation_service = _FakeMealGenerationService(

@@ -22,6 +22,7 @@ def _context(**overrides) -> ChatUserContext:
     values = {
         "context_version": "chat_context_v1",
         "as_of": "2026-09-01T00:00:00+00:00",
+        "local_date": "2026-09-01",
         "locale": "en",
         "timezone": "UTC",
         "allergies": ["peanut"],
@@ -58,6 +59,33 @@ def test_prompt_dict_includes_local_meal_slot() -> None:
     assert payload["today"]["suggested_meal_slot"] == "breakfast"
 
 
+def test_nutrition_snapshot_preserves_gross_food_and_activity_semantics() -> None:
+    context = _context(food_calories=1150, movement_kcal_burned=250)
+
+    assert context.has_complete_nutrition is True
+    assert context.to_nutrition_snapshot() == {
+        "version": "chat_nutrition_v1",
+        "as_of": "2026-09-01T00:00:00+00:00",
+        "local_date": "2026-09-01",
+        "timezone": "UTC",
+        "target_calories": 1800,
+        "food_calories": 1150,
+        "movement_kcal_burned": 250,
+        "remaining_calories": 650,
+        "remaining_days": 4,
+        "macros": {
+            "protein": {"consumed_g": 90, "target_g": 140, "remaining_g": 50},
+            "carbs": {"consumed_g": 100, "target_g": 180, "remaining_g": 80},
+            "fat": {"consumed_g": 40, "target_g": 60, "remaining_g": 20},
+        },
+    }
+
+
+def test_nutrition_snapshot_falls_back_to_consumed_when_food_calories_missing() -> None:
+    snapshot = _context(consumed_calories=111).to_nutrition_snapshot()
+    assert snapshot["food_calories"] == 111
+
+
 def test_locale_prefers_supported_request_then_profile():
     assert resolve_chat_locale("vi", "en") == "vi"
     assert resolve_chat_locale("fr", "vi") == "vi"
@@ -73,6 +101,17 @@ def test_fingerprint_changes_with_body_or_locale():
     assert request_fingerprint(
         "hello", "en", "remaining_budget"
     ) == request_fingerprint("hello", "en", "remaining_budget")
+
+
+def test_fingerprint_alias_matches_resolved_tool():
+    alias_fp = request_fingerprint("hello", "en", "remaining_budget")
+    tool_fp = request_fingerprint(
+        "hello",
+        "en",
+        function_name="check_daily_progress",
+        function_args={"focus": "remaining_budget"},
+    )
+    assert alias_fp == tool_fp
 
 
 def test_hydrate_citations_rebuilds_labels_and_titles():
@@ -150,6 +189,94 @@ def test_nutrition_numbers_must_come_from_context():
     assert nutrition_numbers_are_traceable(bad, context=context, chunks=[]) is False
 
 
+def test_nutrition_numbers_accept_localized_thousands_separators():
+    context = _context(
+        remaining_calories=1821,
+        consumed_calories=111,
+        target_calories=1932,
+        food_calories=111,
+        remaining_protein_g=117.7,
+        remaining_carbs_g=195.2,
+        remaining_fat_g=62.6,
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "Hôm nay bạn còn khoảng 1.821 kcal.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have about 1,821 kcal left.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "About 1.821,5 kcal left.",
+            context=_context(remaining_calories=1821.5),
+            chunks=[],
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "About 1,821.5 kcal left.",
+            context=_context(remaining_calories=1821.5),
+            chunks=[],
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "Còn 117,7 g protein và 195,2 g carbs.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+
+
+def test_malformed_same_separator_number_blocks_without_raising():
+    """Same-separator hybrids must not crash the chat turn as a provider error."""
+    context = _context(remaining_calories=1821)
+    assert (
+        nutrition_numbers_are_traceable(
+            "Hôm nay còn 1.821.5 kcal.",
+            context=context,
+            chunks=[],
+        )
+        is False
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have 1,821,5 kcal left.",
+            context=context,
+            chunks=[],
+        )
+        is False
+    )
+
+
+def test_sanitize_incomplete_assistant_text_strips_cut_off_vn_budget_line():
+    from src.domain.services.chat.policy import sanitize_incomplete_assistant_text
+
+    assert (
+        sanitize_incomplete_assistant_text("Hôm nay bạn còn khoảng **1.821")
+        == "Hôm nay bạn còn"
+    )
+    assert (
+        sanitize_incomplete_assistant_text(
+            "You still have room for a balanced dinner."
+        )
+        == "You still have room for a balanced dinner."
+    )
+
+
 def test_nutrition_number_is_not_a_substring_match():
     context = _context(
         remaining_protein_g=140,
@@ -173,6 +300,96 @@ def test_nutrition_number_is_not_a_substring_match():
             chunks=[],
         )
         is True
+    )
+
+
+def test_nutrition_number_must_match_the_named_macro():
+    context = _context(remaining_protein_g=50, remaining_carbs_g=80)
+
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have 50 g protein remaining.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have 80 g protein remaining.",
+            context=context,
+            chunks=[],
+        )
+        is False
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have 80 g P remaining.",
+            context=context,
+            chunks=[],
+        )
+        is False
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have 80 g C remaining.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+
+
+def test_nutrition_numbers_accept_display_rounding_without_widening_exact_match():
+    context = _context(target_calories=1875.6)
+
+    assert (
+        nutrition_numbers_are_traceable(
+            "Your daily target is 1876 kcal.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "Your daily target is 1877 kcal.",
+            context=context,
+            chunks=[],
+        )
+        is False
+    )
+
+
+def test_compact_macro_claims_are_scanned_once_in_order():
+    assert (
+        nutrition_numbers_are_traceable(
+            "P: 90g C: 100g",
+            context=_context(remaining_protein_g=90, remaining_carbs_g=100),
+            chunks=[],
+        )
+        is True
+    )
+
+
+def test_carbohydrates_plural_is_traceable():
+    context = _context(remaining_carbs_g=100)
+
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have 100 g carbohydrates remaining.",
+            context=context,
+            chunks=[],
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "You have 101 g carbohydrates remaining.",
+            context=context,
+            chunks=[],
+        )
+        is False
     )
 
 

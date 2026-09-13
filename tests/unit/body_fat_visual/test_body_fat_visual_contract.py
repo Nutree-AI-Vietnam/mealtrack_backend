@@ -141,6 +141,11 @@ async def test_get_returns_404_when_no_selection_exists():
         await get_body_fat_visual_profile(user_id="user-1", event_bus=event_bus)
 
     assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == {
+        "error_code": "BODY_FAT_VISUAL_UNSET",
+        "message": "No visual body-fat selection has been saved",
+        "details": {},
+    }
     assert event_bus.send.await_args.args[0] == GetBodyFatVisualProfileQuery("user-1")
 
 

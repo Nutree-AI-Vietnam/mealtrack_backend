@@ -13,6 +13,13 @@ from src.domain.model.chat import (
     CHAT_PROMPT_VERSION,
     CHAT_SUPPORTED_LOCALES,
 )
+from src.domain.services.chat.coach_functions import (
+    FUNCTION_CHECK_DAILY_PROGRESS,
+    FUNCTION_EXPLAIN_LIMITS,
+    FUNCTION_SEARCH_KNOWLEDGE,
+    FUNCTION_SUGGEST_NEXT_MEAL,
+    needs_retrieval,
+)
 from src.infra.services.chat_schema import chat_schema_is_ready
 from src.infra.services.durable_write_service import (
     RETENTION_DAYS,
@@ -95,6 +102,32 @@ async def chat_capabilities() -> dict[str, object]:
         "exact_replay": True,
         "locales": sorted(CHAT_SUPPORTED_LOCALES),
         "intents": list(CHAT_INTENTS),
+        "functions": [
+            {
+                "name": FUNCTION_CHECK_DAILY_PROGRESS,
+                "aliases": ["remaining_budget", "day_progress"],
+                "direct_invoke": True,
+                "needs_retrieval": needs_retrieval(FUNCTION_CHECK_DAILY_PROGRESS),
+            },
+            {
+                "name": FUNCTION_SUGGEST_NEXT_MEAL,
+                "aliases": ["next_meal"],
+                "direct_invoke": True,
+                "needs_retrieval": needs_retrieval(FUNCTION_SUGGEST_NEXT_MEAL),
+            },
+            {
+                "name": FUNCTION_EXPLAIN_LIMITS,
+                "aliases": ["limits"],
+                "direct_invoke": True,
+                "needs_retrieval": needs_retrieval(FUNCTION_EXPLAIN_LIMITS),
+            },
+            {
+                "name": FUNCTION_SEARCH_KNOWLEDGE,
+                "aliases": [],
+                "direct_invoke": True,
+                "needs_retrieval": needs_retrieval(FUNCTION_SEARCH_KNOWLEDGE),
+            },
+        ],
         "error_codes": list(CHAT_ERROR_CODES),
         "max_user_message_chars": CHAT_MAX_USER_MESSAGE_CHARS,
         "daily_turn_budget": CHAT_DAILY_TURN_BUDGET,

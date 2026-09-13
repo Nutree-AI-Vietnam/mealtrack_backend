@@ -166,6 +166,19 @@ handler/schema when implementing; the bullets below are the durable WHY.
   returns 503 for temporary provider capacity loss, and other integrity rejects
   return 422 `NUTRITION_INTEGRITY_REJECTED`.
 
+### Coach nutrition snapshots
+
+- Coach live completions, idempotent replays, and `GET /v1/chat` expose the
+  additive `nutrition_snapshot` sidecar for completed replies. It is versioned
+  as `chat_nutrition_v1` and scoped by `local_date`, `timezone`, and `as_of`.
+- The snapshot is the backend-owned rendering input: `food_calories` is gross
+  intake, `movement_kcal_burned` is activity credit, and `remaining_calories`
+  is the authoritative net-budget result. Clients must not replace a
+  historical snapshot with current-day data or recompute its values.
+- If authoritative context is incomplete, the sidecar is omitted. Consumers
+  must render the reply text without nutrition cards rather than inventing
+  defaults.
+
 ### Meal recommendations (catalog)
 
 - Catalog recommendations are separate from `/v1/meal-suggestions` (AI session

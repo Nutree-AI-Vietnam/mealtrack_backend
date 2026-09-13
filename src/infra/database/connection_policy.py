@@ -103,13 +103,30 @@ def resolve_connection_policy(env: dict | None = None) -> DatabaseConnectionPoli
         )
 
     workers = _int_env(env, "UVICORN_WORKERS", default=4)
+    environment = (env.get("ENVIRONMENT") or env.get("APP_ENV") or "").strip().lower()
+    hostname = (urlsplit(raw_url).hostname or "").lower()
+    host_is_local = hostname in {"localhost", "127.0.0.1", "::1"}
+    is_dev = environment in {"development", "local", "dev"} or (
+        not environment and host_is_local
+    )
+    # Local uvicorn is one worker with many parallel /v1 calls. The production
+    # defaults (3+2) serialize those behind pool_timeout and look like 10–60s
+    # "API latency" during QA.
+    default_pool = 20 if is_dev else 3
+    default_overflow = 20 if is_dev else 2
+    default_timeout = 30 if is_dev else 10
     pool_size_per_worker = _int_env(
-        env, "ASYNC_POOL_SIZE_PER_WORKER", "POOL_SIZE_PER_WORKER", default=3
+        env,
+        "ASYNC_POOL_SIZE_PER_WORKER",
+        "POOL_SIZE_PER_WORKER",
+        default=default_pool,
     )
     max_overflow = _int_env(
-        env, "ASYNC_POOL_MAX_OVERFLOW", "POOL_MAX_OVERFLOW", default=2
+        env, "ASYNC_POOL_MAX_OVERFLOW", "POOL_MAX_OVERFLOW", default=default_overflow
     )
-    pool_timeout = _int_env(env, "ASYNC_POOL_TIMEOUT", "POOL_TIMEOUT", default=10)
+    pool_timeout = _int_env(
+        env, "ASYNC_POOL_TIMEOUT", "POOL_TIMEOUT", default=default_timeout
+    )
     pool_recycle = _int_env(env, "ASYNC_POOL_RECYCLE", default=120)
 
     if mode == "neon_pooler":

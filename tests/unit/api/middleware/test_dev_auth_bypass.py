@@ -80,3 +80,10 @@ async def test_ensure_dev_user_recovers_from_email_unique_violation(monkeypatch)
 
     assert user is existing
     session.rollback.assert_awaited()
+
+
+def test_health_and_docs_skip_dev_user_lookup():
+    assert dev_auth_bypass._should_skip_dev_user_lookup("/health") is True
+    assert dev_auth_bypass._should_skip_dev_user_lookup("/v1/health") is True
+    assert dev_auth_bypass._should_skip_dev_user_lookup("/openapi.json") is True
+    assert dev_auth_bypass._should_skip_dev_user_lookup("/v1/meals/recent") is False

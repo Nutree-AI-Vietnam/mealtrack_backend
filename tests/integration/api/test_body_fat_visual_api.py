@@ -123,7 +123,13 @@ class TestBodyFatVisualApi:
         response = client.get("/v1/user-profiles/body-fat-visual")
 
         assert response.status_code == 404
-        assert response.json() == {"detail": "Visual body-fat profile not found"}
+        assert response.json() == {
+            "detail": {
+                "error_code": "BODY_FAT_VISUAL_UNSET",
+                "message": "No visual body-fat selection has been saved",
+                "details": {},
+            }
+        }
 
     def test_put_persists_nullable_target_without_changing_measured_value_or_tdee(
         self, real_handler_client, test_session

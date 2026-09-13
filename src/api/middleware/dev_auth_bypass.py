@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -17,6 +18,27 @@ from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.models.user.user import User
 
 logger = logging.getLogger(__name__)
+
+_DEV_USER_CACHE_TTL_SECONDS = 30.0
+_cached_dev_user: SimpleNamespace | None = None
+_cached_dev_user_at = 0.0
+
+_SKIP_DEV_USER_PATHS = frozenset(
+    {
+        "/",
+        "/health",
+        "/v1/health",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/favicon.ico",
+    }
+)
+
+
+def _should_skip_dev_user_lookup(path: str) -> bool:
+    normalized = path.rstrip("/") or "/"
+    return normalized in _SKIP_DEV_USER_PATHS
 
 
 async def _ensure_dev_user_async() -> User | None:
@@ -142,17 +164,28 @@ def add_dev_auth_bypass(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def dev_user_injector(request: Request, call_next):  # type: ignore[override]
-        # Load fresh per request to avoid cross-session ORM usage
+        global _cached_dev_user, _cached_dev_user_at
+        if _should_skip_dev_user_lookup(request.url.path):
+            return await call_next(request)
+
+        now = time.monotonic()
+        cached = _cached_dev_user
+        if cached is not None and (now - _cached_dev_user_at) < _DEV_USER_CACHE_TTL_SECONDS:
+            request.state.user = cached
+            return await call_next(request)
+
         user = await _ensure_dev_user_async()
         if user is not None:
-            # Provide only what downstream code expects
-            request.state.user = SimpleNamespace(
+            injected = SimpleNamespace(
                 id=user.id,
                 firebase_uid=user.firebase_uid,
                 email=user.email,
                 username=user.username,
                 has_active_subscription=lambda: True,
             )
+            _cached_dev_user = injected
+            _cached_dev_user_at = now
+            request.state.user = injected
 
         return await call_next(request)
 

@@ -187,6 +187,7 @@ async def verify_firebase_uid_ownership(
 
 
 async def get_current_user_id(
+    request: Request,
     token: dict = Depends(verify_firebase_token),
     cache_service: CachePort | None = Depends(get_cache_service),
 ) -> str:
@@ -219,6 +220,14 @@ async def get_current_user_id(
         ):
             return {"user_id": user_id}
     """
+    if (
+        os.getenv("ENVIRONMENT") == "development"
+        and os.getenv("ENABLE_DEV_AUTH_BYPASS") == "1"
+    ):
+        injected = getattr(request.state, "user", None)
+        injected_id = getattr(injected, "id", None)
+        if injected_id:
+            return str(injected_id)
     return await resolve_current_user_id(token, cache_service=cache_service)
 
 

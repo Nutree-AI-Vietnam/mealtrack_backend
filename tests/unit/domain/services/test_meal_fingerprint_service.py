@@ -126,6 +126,19 @@ def test_itemless_meals_fall_back_to_dish_name_identity():
 
 
 @pytest.mark.unit
+def test_same_foods_match_despite_different_catalog_ids():
+    items = [("Banana", 1.0, "quả", 1.0, 27.0, 0.3)]
+    meal1 = _make_sample_meal("1 quả chuối", items)
+    meal2 = _make_sample_meal("1 quả chuối", items)
+    meal1.nutrition.food_items[0].food_reference_id = 111
+    meal2.nutrition.food_items[0].food_reference_id = None
+    meal2.nutrition.food_items[0].source_food_id = "fs-banana"
+    assert compute_meal_content_fingerprint(meal1) == compute_meal_content_fingerprint(
+        meal2
+    )
+
+
+@pytest.mark.unit
 def test_deduplicate_recent_meals_preserves_newest_and_limits():
     m1_id = str(uuid4())
     m2_id = str(uuid4())

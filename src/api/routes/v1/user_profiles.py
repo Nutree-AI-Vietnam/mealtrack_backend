@@ -42,7 +42,14 @@ async def get_body_fat_visual_profile(
     """Get the latest visual body-fat selection and append-only history."""
     profile = await event_bus.send(GetBodyFatVisualProfileQuery(user_id=user_id))
     if profile is None:
-        raise HTTPException(status_code=404, detail="Visual body-fat profile not found")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "BODY_FAT_VISUAL_UNSET",
+                "message": "No visual body-fat selection has been saved",
+                "details": {},
+            },
+        )
     return profile
 
 

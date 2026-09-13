@@ -124,6 +124,14 @@ def test_handle_exception_provider_failure_returns_503_without_internal_details(
     }
 
 
+def test_handle_exception_connection_reset_returns_503():
+    exc = handle_exception(ConnectionResetError("peer closed"))
+    assert isinstance(exc, HTTPException)
+    assert exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert exc.detail["error_code"] == "AI_UNAVAILABLE"
+    assert "peer closed" not in str(exc.detail)
+
+
 def test_handle_exception_integrity_rejection_hides_internal_reason_code():
     exc = handle_exception(
         NutritionIntegrityError(
