@@ -882,6 +882,21 @@ class ChatTurnOrchestrator:
                     f"Found 1 meal options for {meal_slot}: {primary_name}.",
                     f"Portion: {primary_cal} kcal ({primary_p}g protein, {primary_c}g carbs, {primary_f}g fat).",
                 ]
+                primary_fiber = primary.get("fiber_g")
+                if primary_fiber:
+                    lines.append(f"Fiber: {primary_fiber}g.")
+                score = primary.get("nrf_quality")
+                if score is not None:
+                    lines.append(f"Nutrient quality score: {score}/100.")
+                micros = primary.get("micros")
+                if isinstance(micros, dict) and micros:
+                    notable = [
+                        f"{k.replace('_', ' ')}: {v}"
+                        for k, v in micros.items()
+                        if v is not None and v > 0
+                    ][:4]
+                    if notable:
+                        lines.append(f"Notable micronutrients: {', '.join(notable)}.")
                 if prep_m:
                     lines.append(f"Prep time: {prep_m} minutes.")
                 if ingredients_summary:

@@ -10,11 +10,13 @@ from typing import Any
 
 from src.app.services.discovery_meal_images import attach_food_images
 from src.domain.model.chat import ChatMessage, ChatUserContext
+from src.domain.model.nutrition.micros import Micros
 from src.domain.ports.chat_discover_port import ChatDiscoverBatch, ChatDiscoverPort
 from src.domain.ports.chat_next_meal_recipe_port import ChatNextMealRecipePort
 from src.domain.services.chat.meal_slot import resolve_meal_slot
 from src.domain.services.chat.next_meal_targets import next_meal_discover_targets
 from src.domain.services.chat.policy import filter_meals_for_allergies
+from src.domain.services.nrf_score import nrf_coverage, nrf_quality
 
 _OPTIONAL_CARD_STRINGS = (
     "english_name",
@@ -216,6 +218,38 @@ def map_discover_meals(
             "carbs_g": _number_or_none(meal.get("carbs_g", meal.get("carbs"))),
             "fat_g": _number_or_none(meal.get("fat_g", meal.get("fat"))),
         }
+        fiber_g = _number_or_none(meal.get("fiber_g", meal.get("fiber")))
+        if fiber_g is not None:
+            card["fiber_g"] = fiber_g
+
+        # Extract and compute micronutrient score & coverage
+        raw_micros = meal.get("micros")
+        micros_dict: dict[str, float] = {}
+        if isinstance(raw_micros, dict):
+            for k, v in raw_micros.items():
+                num = _number_or_none(v)
+                if num is not None and num >= 0:
+                    micros_dict[k] = float(num)
+        elif hasattr(raw_micros, "model_dump"):
+            dumped = raw_micros.model_dump()
+            for k, v in dumped.items():
+                num = _number_or_none(v)
+                if num is not None and num >= 0:
+                    micros_dict[k] = float(num)
+
+        micros_obj = Micros.from_dict(micros_dict) if micros_dict else None
+        coverage = nrf_coverage(micros_obj)
+        card["nrf_coverage"] = coverage
+        if coverage >= 1 and micros_obj is not None:
+            protein_val = float(card.get("protein_g") or 0.0)
+            fiber_val = float(card.get("fiber_g") or 0.0)
+            card["nrf_quality"] = nrf_quality(protein_val, fiber_val, micros_obj)
+            card["micros"] = micros_obj.to_dict()
+        else:
+            card["nrf_quality"] = None
+            if micros_dict:
+                card["micros"] = micros_dict
+
         english_name = str(meal.get("english_name") or "").strip()
         if english_name:
             card["english_name"] = english_name
@@ -327,6 +361,15 @@ def _fallback_meals_for_slot(
                 "protein_g": 14.0,
                 "carbs_g": 62.0,
                 "fat_g": 8.0,
+                "fiber_g": 7.0,
+                "micros": {
+                    "calcium": 180.0,
+                    "iron": 2.5,
+                    "potassium": 450.0,
+                    "magnesium": 85.0,
+                    "sodium": 75.0,
+                    "vitamin_c": 10.0,
+                },
                 "prep_time_minutes": 10,
                 "ingredients": [
                     {"name": "rolled oats", "amount": 60, "unit": "g"},
@@ -361,6 +404,16 @@ def _fallback_meals_for_slot(
                 "protein_g": 20.0,
                 "carbs_g": 35.0,
                 "fat_g": 14.0,
+                "fiber_g": 4.5,
+                "micros": {
+                    "vitamin_a": 160.0,
+                    "vitamin_c": 15.0,
+                    "calcium": 70.0,
+                    "iron": 2.8,
+                    "potassium": 320.0,
+                    "sodium": 280.0,
+                    "saturated_fat": 3.5,
+                },
                 "prep_time_minutes": 10,
                 "ingredients": [
                     {"name": "eggs", "amount": 2, "unit": "piece"},
@@ -399,6 +452,17 @@ def _fallback_meals_for_slot(
                 "protein_g": 42.0,
                 "carbs_g": 56.0,
                 "fat_g": 12.0,
+                "fiber_g": 6.0,
+                "micros": {
+                    "vitamin_a": 45.0,
+                    "vitamin_c": 70.0,
+                    "calcium": 65.0,
+                    "iron": 2.2,
+                    "potassium": 680.0,
+                    "magnesium": 95.0,
+                    "sodium": 340.0,
+                    "saturated_fat": 2.0,
+                },
                 "prep_time_minutes": 25,
                 "ingredients": [
                     {"name": "chicken breast", "amount": 180, "unit": "g"},
@@ -441,6 +505,18 @@ def _fallback_meals_for_slot(
                 "protein_g": 38.0,
                 "carbs_g": 45.0,
                 "fat_g": 18.0,
+                "fiber_g": 7.5,
+                "micros": {
+                    "vitamin_a": 720.0,
+                    "vitamin_c": 35.0,
+                    "vitamin_e": 3.0,
+                    "calcium": 85.0,
+                    "iron": 2.4,
+                    "potassium": 820.0,
+                    "magnesium": 65.0,
+                    "sodium": 190.0,
+                    "saturated_fat": 3.0,
+                },
                 "prep_time_minutes": 20,
                 "ingredients": [
                     {"name": "salmon fillet", "amount": 160, "unit": "g"},
@@ -479,6 +555,16 @@ def _fallback_meals_for_slot(
             "protein_g": 17.0,
             "carbs_g": 22.0,
             "fat_g": 7.0,
+            "fiber_g": 3.5,
+            "micros": {
+                "vitamin_c": 8.0,
+                "calcium": 180.0,
+                "iron": 0.8,
+                "potassium": 260.0,
+                "magnesium": 45.0,
+                "sodium": 65.0,
+                "saturated_fat": 2.0,
+            },
             "prep_time_minutes": 5,
             "ingredients": [
                 {"name": "plain greek yogurt", "amount": 150, "unit": "g"},

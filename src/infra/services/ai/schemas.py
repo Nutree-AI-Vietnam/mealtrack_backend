@@ -3,7 +3,6 @@ Pydantic schemas for structured meal generation output.
 Used with LangChain's with_structured_output() for guaranteed valid responses.
 """
 
-
 from pydantic import BaseModel, Field
 
 
@@ -103,9 +102,7 @@ class RecipeDetailsResponse(BaseModel):
     protein: float | None = Field(
         default=None, description="AI-reported protein (ignored)"
     )
-    carbs: float | None = Field(
-        default=None, description="AI-reported carbs (ignored)"
-    )
+    carbs: float | None = Field(default=None, description="AI-reported carbs (ignored)")
     fat: float | None = Field(default=None, description="AI-reported fat (ignored)")
     # Metadata fields surfaced by the AI for UX enrichment
     origin_country: str | None = Field(
@@ -117,6 +114,23 @@ class RecipeDetailsResponse(BaseModel):
     emoji: str | None = Field(
         default=None, description="Single emoji representing the dish"
     )
+
+
+class ChatMealMicros(BaseModel):
+    """Estimated portion micronutrients for this meal sitting.
+    Omit/null if unknown; do not invent.
+    """
+
+    vitamin_a: float | None = Field(default=None, description="Vitamin A in mcg RAE")
+    vitamin_c: float | None = Field(default=None, description="Vitamin C in mg")
+    vitamin_e: float | None = Field(default=None, description="Vitamin E in mg")
+    calcium: float | None = Field(default=None, description="Calcium in mg")
+    iron: float | None = Field(default=None, description="Iron in mg")
+    magnesium: float | None = Field(default=None, description="Magnesium in mg")
+    potassium: float | None = Field(default=None, description="Potassium in mg")
+    sodium: float | None = Field(default=None, description="Sodium in mg")
+    saturated_fat: float | None = Field(default=None, description="Saturated fat in g")
+    added_sugar: float | None = Field(default=None, description="Added sugar in g")
 
 
 class ChatMealRecipeItem(BaseModel):
@@ -157,6 +171,16 @@ class ChatMealRecipeItem(BaseModel):
     )
     fat_g: float = Field(
         description="Estimated fat in grams for this meal sitting", ge=0, le=180
+    )
+    fiber_g: float = Field(
+        default=0.0,
+        description="Estimated dietary fiber in grams for this meal sitting",
+        ge=0,
+        le=100,
+    )
+    micros: ChatMealMicros | None = Field(
+        default=None,
+        description="Estimated portion micronutrients (vitamins, minerals, limits) for this meal sitting",
     )
 
 
