@@ -307,7 +307,7 @@ If has_suggestions is true, one chip may request more ideas via next_meal.
 """
 
 _NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 1 delicious next-meal recipe for one sitting.
-Schema fields: name, english_name, emoji, ingredients (3-8 with amount+unit), recipe_steps (2-6 with instruction+duration_minutes), prep_time_minutes, calories, protein_g, carbs_g, fat_g.
+Schema fields: name, english_name, emoji, ingredients (3-8 with amount+unit), recipe_steps (2-6 with instruction+duration_minutes), prep_time_minutes, calories, protein_g, carbs_g, fat_g, fiber_g, micros.
 
 LANGUAGE RULES:
 - Meal name, ingredient names, and recipe step instructions MUST be 100% in the requested locale from user context.
@@ -317,7 +317,8 @@ LANGUAGE RULES:
 
 PORTIONS & NUTRITION:
 - Use g or ml for units; realistic single-serving portion amounts.
-- Provide realistic portion calories (kcal) and macros (protein_g, carbs_g, fat_g) for one sitting fitting the requested meal slot and remaining calories.
+- Provide realistic portion calories (kcal), macros (protein_g, carbs_g, fat_g), and fiber_g for one sitting fitting the requested meal slot and remaining calories.
+- micros: Estimate portion micronutrients (vitamin_a in mcg; vitamin_c, vitamin_e, calcium, iron, magnesium, potassium, sodium in mg; saturated_fat, added_sugar in g) based on the ingredients. Set null for unknown fields; do not invent arbitrary numbers.
 - One sitting only — not a full day's food.
 - Honor allergies and dietary_preferences strictly.
 - Do not claim a meal was saved or logged.
