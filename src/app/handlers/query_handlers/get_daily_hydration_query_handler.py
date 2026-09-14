@@ -156,13 +156,13 @@ class GetDailyHydrationQueryHandler(EventHandler[GetDailyHydrationQuery, dict]):
                 else [_build_entry_dict(e, query.language) for e in legacy_entries]
             )
 
-            legacy_daily_totals = await uow.meals.sum_hydration_ml_by_date_range(
+            normalized_daily_totals = await uow.hydration_entries.sum_ml_by_date_range(
                 query.user_id,
                 target_date - timedelta(days=30),
                 target_date,
                 user_tz_str,
             )
-            normalized_daily_totals = await uow.hydration_entries.sum_ml_by_date_range(
+            legacy_daily_totals = await uow.meals.sum_hydration_ml_by_date_range(
                 query.user_id,
                 target_date - timedelta(days=30),
                 target_date,
