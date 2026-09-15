@@ -9,7 +9,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy import and_, create_engine, func, or_, text, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload, noload, selectinload, sessionmaker
+from sqlalchemy.orm import (
+    Session,
+    defer,
+    joinedload,
+    noload,
+    selectinload,
+    sessionmaker,
+)
 
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.model.meal_projection import MealProjection
@@ -55,6 +62,9 @@ TEST_MEAL_PROJECTION_OPTS: dict = {
         noload(MealORM.image),
         selectinload(MealORM.nutrition).selectinload(NutritionORM.food_items),
         selectinload(MealORM.instruction_steps),
+        defer(MealORM.raw_ai_response),
+        defer(MealORM.instructions),
+        defer(MealORM.food_label_metadata),
     ),
     MealProjection.FULL: (
         joinedload(MealORM.image),
