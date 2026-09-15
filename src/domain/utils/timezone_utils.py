@@ -240,13 +240,6 @@ async def resolve_user_timezone_async(
     header_timezone: str | None = None,
 ) -> str:
     """Async version of resolve_user_timezone for use with AsyncUnitOfWork."""
-    if (
-        header_timezone
-        and header_timezone != "UTC"
-        and is_valid_timezone(header_timezone)
-    ):
-        return normalize_timezone(header_timezone)
-
     db_tz = "UTC"
     try:
         user = await uow.users.find_by_id(user_id)
@@ -256,6 +249,13 @@ async def resolve_user_timezone_async(
             db_tz = user.timezone
     except Exception:
         pass
+
+    if (
+        header_timezone
+        and header_timezone != "UTC"
+        and is_valid_timezone(header_timezone)
+    ):
+        return normalize_timezone(header_timezone)
 
     return db_tz
 
@@ -293,8 +293,7 @@ def resolve_user_timezone(
             try:
                 uow.users.update_user_timezone(user_id, canonical_tz)
                 logger.info(
-                    f"Opportunistic timezone update for {user_id}: "
-                    f"UTC → {canonical_tz}"
+                    f"Opportunistic timezone update for {user_id}: UTC → {canonical_tz}"
                 )
             except Exception:
                 pass
