@@ -13,6 +13,7 @@ from typing import Any
 
 from src.domain.constants import WeeklyBudgetConstants
 from src.domain.model.meal import MealStatus
+from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly import WeeklyMacroBudget
 from src.domain.services.daily_target_snapshot_service import maybe_write_today_snapshot
@@ -65,26 +66,16 @@ class WeeklyBudgetService:
         return value is not False
 
     @staticmethod
-    async def calculate_weekly_consumed_async(
-        uow: Any,
-        user_id: str,
-        week_start: date,
+    def _aggregate_meals_consumed(
+        meals: list[Any],
+        *,
         end_date: date | None = None,
         exclude_date: date | None = None,
         exclude_dates: list[date] | None = None,
         user_timezone: str | None = None,
     ) -> dict[str, float]:
-        """Async version of calculate_weekly_consumed for AsyncUnitOfWork."""
-        week_end = end_date or week_start + timedelta(days=6)
+        """Aggregate consumed macros and calories from in-memory meals."""
         tz = get_zone_info(user_timezone) if user_timezone else None
-
-        meals = await uow.meals.find_by_date_range(
-            user_id,
-            week_start,
-            week_end,
-            user_timezone=user_timezone,
-        )
-
         total_calories = 0.0
         total_protein = 0.0
         total_carbs = 0.0
@@ -110,6 +101,50 @@ class WeeklyBudgetService:
                 total_fat += macros.fat or 0
                 total_calories += effective_meal_calories(meal)
 
+        return {
+            "calories": total_calories,
+            "protein": total_protein,
+            "carbs": total_carbs,
+            "fat": total_fat,
+        }
+
+    @staticmethod
+    async def calculate_weekly_consumed_async(
+        uow: Any,
+        user_id: str,
+        week_start: date,
+        end_date: date | None = None,
+        exclude_date: date | None = None,
+        exclude_dates: list[date] | None = None,
+        user_timezone: str | None = None,
+    ) -> dict[str, float]:
+        """Async version of calculate_weekly_consumed for AsyncUnitOfWork."""
+        week_end = end_date or week_start + timedelta(days=6)
+
+        try:
+            meals = await uow.meals.find_by_date_range(
+                user_id,
+                week_start,
+                week_end,
+                user_timezone=user_timezone,
+                projection=MealProjection.MACROS_ONLY,
+            )
+        except TypeError:
+            meals = await uow.meals.find_by_date_range(
+                user_id,
+                week_start,
+                week_end,
+                user_timezone=user_timezone,
+            )
+
+        consumed = WeeklyBudgetService._aggregate_meals_consumed(
+            meals,
+            end_date=end_date,
+            exclude_date=exclude_date,
+            exclude_dates=exclude_dates,
+            user_timezone=user_timezone,
+        )
+
         movement_kcal = await WeeklyBudgetService._calculate_movement_kcal_async(
             uow=uow,
             user_id=user_id,
@@ -119,14 +154,9 @@ class WeeklyBudgetService:
             exclude_dates=exclude_dates,
             user_timezone=user_timezone,
         )
-        total_calories -= movement_kcal
+        consumed["calories"] -= movement_kcal
 
-        return {
-            "calories": total_calories,
-            "protein": total_protein,
-            "carbs": total_carbs,
-            "fat": total_fat,
-        }
+        return consumed
 
     @staticmethod
     async def _calculate_movement_kcal_async(
@@ -227,9 +257,7 @@ class WeeklyBudgetService:
 
         for created_at, protein, carbs, fat, fiber in meal_rows:
             aware_dt = ensure_utc(created_at)
-            meal_local_date = (
-                aware_dt.astimezone(tz).date() if tz else aware_dt.date()
-            )
+            meal_local_date = aware_dt.astimezone(tz).date() if tz else aware_dt.date()
             if meal_local_date < week_start:
                 continue
             if end_date and meal_local_date > end_date:
@@ -288,11 +316,7 @@ class WeeklyBudgetService:
         logged_past_days = 0
         if past_days_count > 0:
             logged_past_days = len(
-                {
-                    d
-                    for d in hydratable_dates
-                    if week_start <= d <= past_end
-                }
+                {d for d in hydratable_dates if week_start <= d <= past_end}
             )
 
         consumed_total = WeeklyBudgetService.aggregate_weekly_consumed_from_meal_rows(
@@ -507,29 +531,77 @@ class WeeklyBudgetService:
             )
             logged_past_days = len(daily_counts)
 
-        consumed_total = await calc.calculate_weekly_consumed_async(
-            uow,
-            user_id,
-            week_start,
+        week_end = week_start + timedelta(days=6)
+        try:
+            all_week_meals = await uow.meals.find_by_date_range(
+                user_id,
+                week_start,
+                week_end,
+                user_timezone=user_timezone,
+                projection=MealProjection.MACROS_ONLY,
+            )
+        except TypeError:
+            all_week_meals = await uow.meals.find_by_date_range(
+                user_id,
+                week_start,
+                week_end,
+                user_timezone=user_timezone,
+            )
+
+        food_total = calc._aggregate_meals_consumed(
+            all_week_meals,
             user_timezone=user_timezone,
         )
-        consumed_before_today = await calc.calculate_weekly_consumed_async(
-            uow,
-            user_id,
-            week_start,
+        movement_total = await calc._calculate_movement_kcal_async(
+            uow=uow,
+            user_id=user_id,
+            week_start=week_start,
+            end_date=week_end,
+            user_timezone=user_timezone,
+        )
+        consumed_total = {
+            **food_total,
+            "calories": food_total["calories"] - movement_total,
+        }
+
+        food_before_today = calc._aggregate_meals_consumed(
+            all_week_meals,
             end_date=past_end,
             user_timezone=user_timezone,
         )
+        movement_before_today = await calc._calculate_movement_kcal_async(
+            uow=uow,
+            user_id=user_id,
+            week_start=week_start,
+            end_date=past_end,
+            user_timezone=user_timezone,
+        )
+        consumed_before_today = {
+            **food_before_today,
+            "calories": food_before_today["calories"] - movement_before_today,
+        }
+
         past_cheat_dates = [d for d in all_cheat_dates if d < target_date]
         if past_cheat_dates:
-            consumed_for_redistribution = await calc.calculate_weekly_consumed_async(
-                uow,
-                user_id,
-                week_start,
+            food_for_redistribution = calc._aggregate_meals_consumed(
+                all_week_meals,
                 end_date=past_end,
                 exclude_dates=past_cheat_dates,
                 user_timezone=user_timezone,
             )
+            movement_redistribution = await calc._calculate_movement_kcal_async(
+                uow=uow,
+                user_id=user_id,
+                week_start=week_start,
+                end_date=past_end,
+                exclude_dates=past_cheat_dates,
+                user_timezone=user_timezone,
+            )
+            consumed_for_redistribution = {
+                **food_for_redistribution,
+                "calories": food_for_redistribution["calories"]
+                - movement_redistribution,
+            }
         else:
             consumed_for_redistribution = consumed_before_today
 
@@ -697,9 +769,7 @@ class WeeklyBudgetService:
         if adjusted.calories <= leftover_daily:
             return adjusted
 
-        floor = WeeklyBudgetService.calorie_safety_floor(
-            standard_daily_calories, bmr
-        )
+        floor = WeeklyBudgetService.calorie_safety_floor(standard_daily_calories, bmr)
         capped = max(leftover_daily, floor)
         if capped >= adjusted.calories:
             return adjusted
