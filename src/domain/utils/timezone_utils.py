@@ -293,8 +293,7 @@ def resolve_user_timezone(
             try:
                 uow.users.update_user_timezone(user_id, canonical_tz)
                 logger.info(
-                    f"Opportunistic timezone update for {user_id}: "
-                    f"UTC → {canonical_tz}"
+                    f"Opportunistic timezone update for {user_id}: UTC → {canonical_tz}"
                 )
             except Exception:
                 pass

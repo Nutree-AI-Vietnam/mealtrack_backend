@@ -149,7 +149,6 @@ class ParseMealTextHandler(
         self,
         meal_generation_service: MealGenerationServicePort,
         fat_secret_service: Any | None = None,
-        translation_service: Any | None = None,
         food_reference_batch_lookup: Any | None = None,
         structured_reference_enabled: bool = True,
         cache_service: Any | None = None,
@@ -159,7 +158,6 @@ class ParseMealTextHandler(
     ):
         self._meal_generation_service = meal_generation_service
         self._fat_secret_service = fat_secret_service
-        self._translation_service = translation_service
         self._food_reference_batch_lookup = food_reference_batch_lookup
         self._structured_reference_enabled = structured_reference_enabled
         self._cache_service = cache_service

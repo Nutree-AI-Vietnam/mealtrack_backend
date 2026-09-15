@@ -6,13 +6,15 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.domain.utils.timezone_utils import (
-    get_zone_info,
-    utc_to_local_minutes,
-    is_valid_timezone,
-    is_in_quiet_hours,
-    DEFAULT_TIMEZONE,
-    DEFAULT_SLEEP_TIME_MINUTES,
     DEFAULT_BREAKFAST_TIME_MINUTES,
+    DEFAULT_SLEEP_TIME_MINUTES,
+    DEFAULT_TIMEZONE,
+    get_zone_info,
+    is_in_quiet_hours,
+    is_valid_timezone,
+    resolve_user_timezone,
+    resolve_user_timezone_async,
+    utc_to_local_minutes,
 )
 
 
@@ -177,3 +179,81 @@ class TestIsInQuietHours:
     def test_afternoon_not_in_quiet(self):
         """User at 15:00 (900 minutes) → not in quiet"""
         assert is_in_quiet_hours(900, 1320, 480) is False
+
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+
+class TestResolveUserTimezoneAsync:
+    """Test resolve_user_timezone_async precedence (DB -> Header -> UTC)."""
+
+    @pytest.mark.asyncio
+    async def test_prefers_stored_db_timezone_over_header(self):
+        uow = MagicMock()
+        mock_user = MagicMock()
+        mock_user.timezone = "America/New_York"
+        uow.users.find_by_id = AsyncMock(return_value=mock_user)
+
+        tz = await resolve_user_timezone_async(
+            user_id="user-123",
+            uow=uow,
+            header_timezone="Asia/Tokyo",
+        )
+        assert tz == "America/New_York"
+
+    @pytest.mark.asyncio
+    async def test_uses_header_when_db_is_utc(self):
+        uow = MagicMock()
+        mock_user = MagicMock()
+        mock_user.timezone = "UTC"
+        uow.users.find_by_id = AsyncMock(return_value=mock_user)
+
+        tz = await resolve_user_timezone_async(
+            user_id="user-123",
+            uow=uow,
+            header_timezone="Asia/Tokyo",
+        )
+        assert tz == "Asia/Tokyo"
+
+    @pytest.mark.asyncio
+    async def test_uses_header_when_user_not_found(self):
+        uow = MagicMock()
+        uow.users.find_by_id = AsyncMock(return_value=None)
+
+        tz = await resolve_user_timezone_async(
+            user_id="user-123",
+            uow=uow,
+            header_timezone="Europe/London",
+        )
+        assert tz == "Europe/London"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_utc_when_header_invalid_and_db_none(self):
+        uow = MagicMock()
+        uow.users.find_by_id = AsyncMock(return_value=None)
+
+        tz = await resolve_user_timezone_async(
+            user_id="user-123",
+            uow=uow,
+            header_timezone="Invalid/Timezone",
+        )
+        assert tz == "UTC"
+
+
+class TestResolveUserTimezone:
+    """Test synchronous resolve_user_timezone precedence (DB -> Header -> UTC)."""
+
+    def test_prefers_stored_db_timezone_over_header(self):
+        uow = MagicMock()
+        mock_user = MagicMock()
+        mock_user.timezone = "America/New_York"
+        uow.users.find_by_id = MagicMock(return_value=mock_user)
+
+        tz = resolve_user_timezone(
+            user_id="user-123",
+            uow=uow,
+            header_timezone="Asia/Tokyo",
+        )
+        assert tz == "America/New_York"
