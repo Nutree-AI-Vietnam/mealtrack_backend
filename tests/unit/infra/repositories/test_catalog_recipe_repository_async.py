@@ -141,6 +141,21 @@ async def test_list_popular_page_orders_by_shuffle_seed_when_provided():
 
 
 @pytest.mark.asyncio
+async def test_get_active_catalog_revision_includes_imaged_count():
+    session = _AsyncSession(
+        [_Result(one=(180, None, None, 100))],
+    )
+    repo = AsyncCatalogMealRepository(session)
+
+    revision = await repo.get_active_catalog_revision()
+
+    assert revision.active_count == 180
+    assert revision.imaged_count == 100
+    statement = str(session.statement)
+    assert "meal_catalog.image_url" in statement
+
+
+@pytest.mark.asyncio
 async def test_get_meal_scopes_to_active_catalog_row():
     session = _AsyncSession([_Result(one=_meal_row())])
     repo = AsyncCatalogMealRepository(session)

@@ -125,17 +125,29 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
                 func.count(func.distinct(MealCatalogORM.id)),
                 func.max(MealCatalogORM.updated_at),
                 func.max(FoodReferenceModel.updated_at),
+                func.count(func.distinct(MealCatalogORM.id)).filter(
+                    and_(
+                        MealCatalogORM.image_url.is_not(None),
+                        func.trim(MealCatalogORM.image_url) != "",
+                    )
+                ),
             )
             .select_from(MealCatalogORM)
             .outerjoin(MealCatalogIngredientORM)
             .outerjoin(FoodReferenceModel)
             .where(MealCatalogORM.is_active.is_(True))
         )
-        active_count, catalog_updated_at, food_reference_updated_at = result.one()
+        (
+            active_count,
+            catalog_updated_at,
+            food_reference_updated_at,
+            imaged_count,
+        ) = result.one()
         return CatalogMealRevision(
             active_count=int(active_count or 0),
             catalog_updated_at=catalog_updated_at,
             food_reference_updated_at=food_reference_updated_at,
+            imaged_count=int(imaged_count or 0),
         )
 
     async def get_meal(self, catalog_meal_id: str) -> CatalogMeal | None:

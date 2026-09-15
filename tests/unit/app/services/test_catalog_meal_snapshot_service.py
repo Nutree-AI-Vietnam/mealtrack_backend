@@ -120,6 +120,28 @@ async def test_snapshot_refreshes_when_revision_changes_after_ttl():
 
 
 @pytest.mark.asyncio
+async def test_snapshot_refreshes_when_imaged_count_changes_after_ttl():
+    clock = _Clock()
+    catalog = _CatalogRepo()
+    service = CatalogMealSnapshotService(ttl_seconds=10, clock=clock)
+
+    first = await service.get_snapshot(_Uow(catalog))
+    clock.value += 11
+    catalog.meals = [_meal("meal-1-with-image")]
+    catalog.revision = CatalogMealRevision(
+        active_count=1,
+        catalog_updated_at=datetime(2026, 7, 1, tzinfo=UTC),
+        food_reference_updated_at=datetime(2026, 7, 1, tzinfo=UTC),
+        imaged_count=1,
+    )
+    second = await service.get_snapshot(_Uow(catalog))
+
+    assert first is not second
+    assert second.revision.imaged_count == 1
+    assert catalog.load_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_snapshot_extends_ttl_when_revision_is_unchanged():
     clock = _Clock()
     catalog = _CatalogRepo()
