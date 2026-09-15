@@ -40,11 +40,6 @@ class AsyncMealTranslationRepository(MealTranslationRepositoryPort):
             existing.meal_ingredients = translation.meal_ingredients
             existing.translation_version = translation.translation_version
             if existing.food_items:
-                await self._session.execute(
-                    delete(FoodItemTranslationORM).where(
-                        FoodItemTranslationORM.meal_translation_id == existing.id
-                    )
-                )
                 existing.food_items.clear()
                 await self._session.flush()
 
