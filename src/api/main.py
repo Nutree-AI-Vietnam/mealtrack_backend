@@ -30,6 +30,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from firebase_admin import credentials
+from starlette.middleware.gzip import GZipMiddleware
 
 from src.api.base_dependencies import (
     initialize_cache_layer,
@@ -286,6 +287,10 @@ app.add_middleware(RequestLoggerMiddleware)
 
 # Accept-Language header parsing
 app.add_middleware(AcceptLanguageMiddleware)
+
+# Response compression — reduces JSON payload sizes by 60-80% for mobile clients.
+# Minimum 500 bytes avoids compressing tiny health-check responses.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Rate limiting
 from slowapi.errors import RateLimitExceeded

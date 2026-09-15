@@ -39,19 +39,26 @@ class AsyncMealTranslationRepository(MealTranslationRepositoryPort):
             existing.meal_instruction = translation.meal_instruction
             existing.meal_ingredients = translation.meal_ingredients
             existing.translation_version = translation.translation_version
-            for food_item in list(existing.food_items):
-                await self._session.delete(food_item)
-            await self._session.flush()
-
-            for food_item in translation.food_items:
-                self._session.add(
-                    FoodItemTranslationORM(
-                        meal_translation_id=existing.id,
-                        food_item_id=str(food_item.food_item_id),
-                        name=food_item.name,
-                        description=food_item.description,
+            if existing.food_items:
+                await self._session.execute(
+                    delete(FoodItemTranslationORM).where(
+                        FoodItemTranslationORM.meal_translation_id == existing.id
                     )
                 )
+                existing.food_items.clear()
+                await self._session.flush()
+
+            new_items = [
+                FoodItemTranslationORM(
+                    meal_translation_id=existing.id,
+                    food_item_id=str(food_item.food_item_id),
+                    name=food_item.name,
+                    description=food_item.description,
+                )
+                for food_item in translation.food_items
+            ]
+            if new_items:
+                self._session.add_all(new_items)
             await self._session.flush()
             await self._session.refresh(existing)
             return meal_translation_orm_to_domain(existing)
