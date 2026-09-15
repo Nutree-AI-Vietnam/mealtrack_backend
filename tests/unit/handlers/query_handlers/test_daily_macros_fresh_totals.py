@@ -50,6 +50,7 @@ async def test_cache_hit_short_circuits_before_meal_query():
         "meal_count": 0,
         "target_revision": 3,
         "profile_target_revision": 3,
+        "weekly_auto_adjust": True,
     }
     cache.get_json = AsyncMock(return_value=cached)
     cache.set_json = AsyncMock()
@@ -65,6 +66,8 @@ async def test_cache_hit_short_circuits_before_meal_query():
         fake_user = MagicMock()
         fake_user.timezone = "UTC"
         mock_uow.users.find_by_id = AsyncMock(return_value=fake_user)
+        mock_uow.users.get_user_timezone = AsyncMock(return_value="UTC")
+        mock_uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
         mock_uow.meals.find_by_date = AsyncMock(return_value=[])
         mock_cls.return_value = mock_uow
 
@@ -85,7 +88,68 @@ async def test_cache_hit_short_circuits_before_meal_query():
 
     assert result["total_calories"] == 0.0
     mock_uow.meals.find_by_date.assert_not_called()
-    assert mock_cls.call_count == 0, "AsyncUnitOfWork should not be opened on cache hit"
+
+
+@pytest.mark.asyncio
+async def test_auto_adjust_mismatch_rejects_cache_and_queries_meals():
+    """If weekly_auto_adjust changed, cached result with old setting must be rejected."""
+    cache = MagicMock()
+    cached = {
+        "date": "2026-08-11",
+        "user_id": "u1",
+        "total_calories": 0.0,
+        "food_calories": 0.0,
+        "total_protein": 0.0,
+        "total_carbs": 0.0,
+        "total_fat": 0.0,
+        "meal_count": 0,
+        "target_revision": 3,
+        "weekly_auto_adjust": True,
+    }
+    cache.get_json = AsyncMock(return_value=cached)
+    cache.set_json = AsyncMock()
+    handler = GetDailyMacrosQueryHandler(cache_service=cache)
+    query = GetDailyMacrosQuery(user_id="u1", target_date=date(2026, 8, 11))
+
+    with patch(
+        "src.app.handlers.query_handlers.get_daily_macros_query_handler.AsyncUnitOfWork"
+    ) as mock_cls:
+        mock_uow = AsyncMock()
+        mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
+        mock_uow.__aexit__ = AsyncMock(return_value=False)
+        fake_user = MagicMock()
+        fake_user.timezone = "UTC"
+        mock_uow.users.find_by_id = AsyncMock(return_value=fake_user)
+        mock_uow.users.get_user_timezone = AsyncMock(return_value="UTC")
+        # User toggled weekly_auto_adjust to False:
+        mock_uow.users.get_weekly_auto_adjust = AsyncMock(return_value=False)
+        mock_uow.meals.find_by_date = AsyncMock(return_value=[])
+        mock_uow.meals.sum_hydration_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.hydration_entries.find_by_date = AsyncMock(return_value=[])
+        mock_uow.hydration_entries.sum_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.movement_entries.sum_included_kcal_for_range = AsyncMock(
+            return_value=0
+        )
+        mock_uow.weekly_budgets.find_by_user_and_week = AsyncMock(return_value=None)
+        mock_cls.return_value = mock_uow
+
+        with patch(
+            "src.app.handlers.query_handlers.get_user_tdee_query_handler.GetUserTdeeQueryHandler"
+        ) as mock_tdee_cls:
+            mock_tdee = MagicMock()
+            mock_tdee.handle = AsyncMock(
+                return_value={
+                    "target_calories": 1728,
+                    "macros": {"protein": 147, "carbs": 140, "fat": 64},
+                    "bmr": 1400,
+                    "profile_target_revision": 3,
+                }
+            )
+            mock_tdee_cls.return_value = mock_tdee
+            await handler.handle(query)
+
+    # Because auto_adjust differed, cache was rejected and meals were fetched fresh
+    mock_uow.meals.find_by_date.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -142,3 +206,55 @@ async def test_cache_miss_returns_fresh_meal_totals():
     assert result["total_fat"] == 2.0
     assert result["food_calories"] == pytest.approx(45 * 4 + 2 * 9, rel=0.01)
     cache.set_json.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_timezone_resolution_prefers_database_over_header_timezone():
+    """Database user.timezone takes precedence over header_timezone for target_date."""
+    cache = MagicMock()
+    cache.get_json = AsyncMock(return_value=None)
+    cache.set_json = AsyncMock()
+    handler = GetDailyMacrosQueryHandler(cache_service=cache)
+    # Client passes Asia/Tokyo header, but user DB timezone is America/Los_Angeles
+    query = GetDailyMacrosQuery(user_id="u1", header_timezone="Asia/Tokyo")
+
+    with patch(
+        "src.app.handlers.query_handlers.get_daily_macros_query_handler.AsyncUnitOfWork"
+    ) as mock_cls:
+        mock_uow = AsyncMock()
+        mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
+        mock_uow.__aexit__ = AsyncMock(return_value=False)
+        fake_user = MagicMock()
+        fake_user.timezone = "America/Los_Angeles"
+        mock_uow.users.find_by_id = AsyncMock(return_value=fake_user)
+        mock_uow.users.get_user_timezone = AsyncMock(return_value="America/Los_Angeles")
+        mock_uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
+        mock_uow.meals.find_by_date = AsyncMock(return_value=[])
+        mock_uow.meals.sum_hydration_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.hydration_entries.find_by_date = AsyncMock(return_value=[])
+        mock_uow.hydration_entries.sum_ml_for_date = AsyncMock(return_value=0)
+        mock_uow.movement_entries.sum_included_kcal_for_range = AsyncMock(
+            return_value=0.0
+        )
+        mock_uow.weekly_budgets.find_by_user_and_week = AsyncMock(return_value=None)
+        mock_cls.return_value = mock_uow
+
+        with patch(
+            "src.app.handlers.query_handlers.get_user_tdee_query_handler.GetUserTdeeQueryHandler"
+        ) as mock_tdee_cls:
+            mock_tdee = MagicMock()
+            mock_tdee.handle = AsyncMock(
+                return_value={
+                    "target_calories": 2000,
+                    "macros": {"protein": 150, "carbs": 200, "fat": 65},
+                    "bmr": 1600,
+                    "profile_target_revision": 1,
+                }
+            )
+            mock_tdee_cls.return_value = mock_tdee
+            await handler.handle(query)
+
+    # Verify meals.find_by_date was queried with user_timezone="America/Los_Angeles"
+    mock_uow.meals.find_by_date.assert_awaited_once()
+    _, kwargs = mock_uow.meals.find_by_date.call_args
+    assert kwargs.get("user_timezone") == "America/Los_Angeles"

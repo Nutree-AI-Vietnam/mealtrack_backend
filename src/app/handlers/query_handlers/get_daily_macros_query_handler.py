@@ -84,29 +84,6 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 exc_info=True,
             )
 
-        # Early cache-aside check BEFORE acquiring DB connection. If target_date is
-        # explicitly provided (or estimable via header_timezone) and Redis has a valid
-        # cache entry matching target_revision, avoid checking out a DB session entirely.
-        candidate_target_date = query.target_date
-        if candidate_target_date is None and query.header_timezone:
-            try:
-                candidate_tz = get_zone_info(query.header_timezone)
-                if candidate_tz:
-                    candidate_target_date = datetime.now(candidate_tz).date()
-            except Exception:
-                pass
-
-        if (
-            candidate_target_date is not None
-            and self.cache_service is not None
-            and target_revision is not None
-        ):
-            cached_result = await self._try_get_cached_result_early(
-                query.user_id, candidate_target_date, target_revision
-            )
-            if cached_result is not None:
-                return cached_result
-
         # One UoW for all DB reads: timezone, meals, weekly budget, and (when
         # a calorie target resolved above) the weekly effective-adjusted call.
         weekly_context: dict[str, Any] | None = None
@@ -398,26 +375,6 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             }
         except Exception as e:
             logger.warning(f"Could not fetch weekly budget context: {e}")
-            return None
-
-    async def _try_get_cached_result_early(
-        self,
-        user_id: str,
-        target_date: date,
-        revision: int | None,
-    ) -> dict[str, Any] | None:
-        if not self.cache_service or revision is None:
-            return None
-        cache_key, _ = CacheKeys.daily_macros(user_id, target_date)
-        try:
-            cached = await self.cache_service.get_json(cache_key)
-            if cached and cached.get("target_revision") == revision:
-                return cached
-            return None
-        except Exception as exc:
-            logger.warning(
-                "Failed to read early daily macros cache for %s: %s", user_id, exc
-            )
             return None
 
     async def _try_get_cached_result(
