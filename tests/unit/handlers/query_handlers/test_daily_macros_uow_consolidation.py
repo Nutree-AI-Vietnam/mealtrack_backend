@@ -78,7 +78,7 @@ async def test_weekly_budget_fetched_in_shared_uow():
     uow_instances = []
 
     class TrackingUow:
-        def __init__(self):
+        def __init__(self, *args, **kwargs):
             self.users = AsyncMock()
             fake_user = MagicMock()
             fake_user.timezone = "UTC"
@@ -156,7 +156,7 @@ async def test_weekly_budget_present_matching_revision_locks_weekly_context():
     uow_instances = []
 
     class TrackingUow:
-        def __init__(self):
+        def __init__(self, *args, **kwargs):
             self.users = AsyncMock()
             fake_user = MagicMock()
             fake_user.timezone = "UTC"

@@ -64,3 +64,35 @@ async def test_async_uow_raises_clear_error_when_session_factory_missing():
         with pytest.raises(RuntimeError, match="AsyncSessionLocal is not initialized"):
             async with AsyncUnitOfWork():
                 pass
+
+
+@pytest.mark.asyncio
+async def test_async_uow_read_only_rolls_back_and_skips_commit():
+    mock_session = AsyncMock()
+
+    with patch("src.infra.database.uow_async.AsyncSessionLocal") as mock_factory:
+        mock_factory.return_value = mock_session
+        async with AsyncUnitOfWork(read_only=True) as uow:
+            assert uow.is_read_only is True
+
+    mock_session.rollback.assert_awaited_once()
+    mock_session.commit.assert_not_awaited()
+    mock_session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_async_uow_read_only_factory_creates_read_only_instance():
+    uow = AsyncUnitOfWork.read_only()
+    assert uow.is_read_only is True
+
+
+@pytest.mark.asyncio
+async def test_async_uow_read_only_commit_raises():
+    mock_session = AsyncMock()
+
+    with patch("src.infra.database.uow_async.AsyncSessionLocal") as mock_factory:
+        mock_factory.return_value = mock_session
+        async with AsyncUnitOfWork(read_only=True) as uow:
+            with pytest.raises(RuntimeError, match="Cannot commit a read-only"):
+                await uow.commit()
+

@@ -12,7 +12,8 @@ from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 class FakeUnitOfWork(AsyncUnitOfWorkPort):
     """Fake UnitOfWork that supports both sync (legacy tests) and async (new handlers)."""
 
-    def __init__(self):
+    def __init__(self, *args, read_only: bool = False, **kwargs):
+        self.read_only = read_only
         self.users = FakeUserRepository()
         self.notifications = FakeNotificationRepository()
         self.subscriptions = FakeSubscriptionRepository()

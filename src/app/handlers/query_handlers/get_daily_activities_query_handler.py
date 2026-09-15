@@ -108,7 +108,7 @@ class GetDailyActivitiesQueryHandler(
 
     async def _resolve_user_timezone(self, query: GetDailyActivitiesQuery) -> str:
         """Resolve timezone in its own UoW so later reads do not hold its checkout."""
-        async with AsyncUnitOfWork() as uow:
+        async with AsyncUnitOfWork(read_only=True) as uow:
             return await resolve_user_timezone_async(
                 query.user_id, uow, query.header_timezone
             )
@@ -120,7 +120,7 @@ class GetDailyActivitiesQueryHandler(
         local_date,
     ) -> list[dict[str, Any]]:
         """Fetch meals and hydration logs using a short-lived UoW."""
-        async with AsyncUnitOfWork() as uow:
+        async with AsyncUnitOfWork(read_only=True) as uow:
             items = await uow.meals.find_by_date(
                 local_date,
                 user_id=query.user_id,
@@ -169,7 +169,7 @@ class GetDailyActivitiesQueryHandler(
 
         start_utc = datetime.combine(local_date, time.min, tzinfo=tz).astimezone(UTC)
         end_utc = start_utc + timedelta(days=1)
-        async with AsyncUnitOfWork() as uow:
+        async with AsyncUnitOfWork(read_only=True) as uow:
             entries = await uow.movement_entries.find_by_user_and_logged_range(
                 query.user_id, start_utc, end_utc
             )

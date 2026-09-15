@@ -110,7 +110,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
         # One UoW for all DB reads: timezone, meals, weekly budget, and (when
         # a calorie target resolved above) the weekly effective-adjusted call.
         weekly_context: dict[str, Any] | None = None
-        async with AsyncUnitOfWork() as uow:
+        async with AsyncUnitOfWork(read_only=True) as uow:
             user_tz_str = await resolve_user_timezone_async(
                 query.user_id, uow, query.header_timezone
             )
