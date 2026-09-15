@@ -16,7 +16,6 @@ from src.domain.exceptions.ai_exceptions import (
 )
 from src.domain.model.ai.nutrition_contracts import MealTextNutritionResponse
 from src.domain.model.nutrition.macros import Macros
-from src.domain.model.translation_result import TranslationOutcome, TranslationResult
 from src.domain.services.nutrition_calculation_service import (
     _convert_with_allowed_units,
     convert_quantity_to_grams,
@@ -102,22 +101,6 @@ class _AllowedUnitsFatSecretService:
                 ],
             }
         ]
-
-
-class _NeutralTranslator:
-    def __init__(self, value="Gà", mapping=None):
-        self.value = value
-        self.mapping = mapping or {}
-        self.calls = []
-
-    async def translate_texts(self, texts, source_language, target_language):
-        self.calls.append((list(texts), source_language, target_language))
-        return TranslationResult(
-            tuple(self.mapping.get(text, self.value) for text in texts),
-            TranslationOutcome.TRANSLATED,
-            source_language,
-            target_language,
-        )
 
 
 class _StructuredFatSecretService:
@@ -672,7 +655,7 @@ async def test_parse_text_countable_unit_survives_provider_outage():
 
 
 @pytest.mark.asyncio
-async def test_parse_text_translates_only_structurally_identified_english_name():
+async def test_parse_text_glossary_localizes_leaked_english_name():
     generation = _FakeMealGenerationService(
         responses=[
             {
@@ -690,11 +673,9 @@ async def test_parse_text_translates_only_structurally_identified_english_name()
             }
         ]
     )
-    translator = _NeutralTranslator()
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
-        translation_service=translator,
         food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
@@ -703,7 +684,6 @@ async def test_parse_text_translates_only_structurally_identified_english_name()
     )
 
     assert response.items[0].name == "Gà"
-    assert translator.calls == []
 
 
 @pytest.mark.asyncio
@@ -725,11 +705,9 @@ async def test_parse_text_ascii_display_name_is_localized():
             }
         ]
     )
-    translator = _NeutralTranslator()
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
-        translation_service=translator,
         food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
@@ -738,7 +716,6 @@ async def test_parse_text_ascii_display_name_is_localized():
     )
 
     assert response.items[0].name == "Gà"
-    assert translator.calls == []
 
 
 @pytest.mark.asyncio
@@ -787,11 +764,9 @@ async def test_parse_text_keeps_localized_names_and_translates_ascii_leftovers()
             }
         ]
     )
-    translator = _NeutralTranslator()
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
-        translation_service=translator,
         food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
@@ -806,7 +781,6 @@ async def test_parse_text_keeps_localized_names_and_translates_ascii_leftovers()
         "Giò heo",
         "Nước dùng Bún bò Huế",
     ]
-    assert translator.calls == []
 
 
 @pytest.mark.asyncio
@@ -828,11 +802,9 @@ async def test_parse_text_force_localizes_english_when_translator_leaves_origina
             },
         ]
     )
-    translator = _NeutralTranslator(value="Shredded pork skin and pork")
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
-        translation_service=translator,
         food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
@@ -842,20 +814,6 @@ async def test_parse_text_force_localizes_english_when_translator_leaves_origina
 
     assert response.items[0].name == "Bì heo"
     assert len(generation.calls) == 1
-
-
-class _IdentityTranslator:
-    def __init__(self):
-        self.calls = []
-
-    async def translate_texts(self, texts, source_language, target_language):
-        self.calls.append((list(texts), source_language, target_language))
-        return TranslationResult(
-            tuple(texts),
-            TranslationOutcome.TRANSLATED,
-            source_language,
-            target_language,
-        )
 
 
 def _localized_item(name: str, lookup_name: str) -> dict:
@@ -887,11 +845,9 @@ async def test_parse_text_fail_closes_leaked_english_and_mixed_slash_names():
             }
         ]
     )
-    translator = _IdentityTranslator()
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
-        translation_service=translator,
         food_reference_batch_lookup=_survivable_local_lookup(),
     )
 
@@ -908,7 +864,6 @@ async def test_parse_text_fail_closes_leaked_english_and_mixed_slash_names():
         "Dưa Leo Chua",
         "Nguyên liệu",
     ]
-    assert translator.calls == []
 
 
 @pytest.mark.asyncio
@@ -979,7 +934,6 @@ async def test_parse_text_prefers_localized_side_of_bilingual_pate_name():
     handler = ParseMealTextHandler(
         meal_generation_service=generation,
         fat_secret_service=_FakeFatSecretService(),
-        translation_service=_IdentityTranslator(),
         food_reference_batch_lookup=_survivable_local_lookup(),
     )
 

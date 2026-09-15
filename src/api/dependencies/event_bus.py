@@ -643,7 +643,6 @@ def get_configured_event_bus() -> EventBus:
         ParseMealTextHandler(
             meal_generation_service=meal_generation_service,
             fat_secret_service=fat_secret_service,
-            translation_service=text_translation_service,
             food_reference_batch_lookup=find_food_references_by_normalized_names,
             structured_reference_enabled=parse_text_settings[
                 "structured_reference_enabled"
