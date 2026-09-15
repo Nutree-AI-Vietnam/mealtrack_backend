@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.app.services.catalog_meal_image_prompt_service import (
     build_catalog_meal_image_prompt,
 )
+from src.infra.adapters.cloudflare_images_store import CloudflareImagesStore
 from src.infra.adapters.cloudflare_workers_image_generator import (
     CloudflareWorkersImageGenerator,
 )
-from src.infra.adapters.cloudinary_image_store import CloudinaryImageStore
 from src.infra.database.models.meal_recommendation import MealCatalogORM
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -67,7 +67,7 @@ async def _run(args) -> dict[str, int]:
             api_token=os.getenv("CLOUDFLARE_API_TOKEN", ""),
             model=args.model,
             timeout=args.timeout,
-            image_store=CloudinaryImageStore(),
+            image_store=CloudflareImagesStore.from_env(),
         )
     selected = updated = skipped = failed = 0
     async with AsyncUnitOfWork() as uow:
@@ -154,8 +154,11 @@ async def _persist_image_url(
 
 def _error_code(exc: Exception) -> str:
     """Return an actionable error category without exposing provider details."""
-    if "invalid signature" in str(exc).lower():
+    message = str(exc).lower()
+    if "invalid signature" in message:
         return "cloudinary_signature_invalid"
+    if "cloudflare images upload failed" in message:
+        return "cloudflare_images_upload_failed"
     return type(exc).__name__
 
 

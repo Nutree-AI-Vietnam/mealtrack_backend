@@ -294,6 +294,16 @@ class Settings(BaseSettings):
     CLOUDFLARE_API_TOKEN: str = Field(
         default="", description="Cloudflare API token with Workers AI permission"
     )
+    CLOUDFLARE_IMAGES_API_TOKEN: str = Field(
+        default="",
+        description=(
+            "Optional Cloudflare Images token; falls back to CLOUDFLARE_API_TOKEN"
+        ),
+    )
+    CLOUDFLARE_IMAGES_VARIANT: str = Field(
+        default="public",
+        description="Cloudflare Images delivery variant for catalog meal URLs",
+    )
     CLOUDFLARE_AI_GATEWAY_ID: str = Field(
         default="",
         description="AI Gateway ID for routing Workers AI requests (optional)",

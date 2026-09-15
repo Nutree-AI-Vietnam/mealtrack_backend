@@ -22,6 +22,7 @@ from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
 from src.domain.ports.image_store_port import ImageStorePort
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.food_mapping_service import FoodMappingService
+from src.infra.adapters.cloudflare_images_store import CloudflareImagesStore
 from src.infra.adapters.cloudflare_workers_image_generator import (
     CloudflareWorkersImageGenerator,
 )
@@ -281,8 +282,21 @@ def get_catalog_food_reference_review_service(
     return CatalogFoodReferenceReviewService(AsyncFoodReferenceRepository(db))
 
 
+def get_catalog_image_store() -> CloudflareImagesStore:
+    """Return the catalog-only Cloudflare Images store."""
+
+    return CloudflareImagesStore(
+        account_id=settings.CLOUDFLARE_ACCOUNT_ID,
+        api_token=(
+            settings.CLOUDFLARE_IMAGES_API_TOKEN or settings.CLOUDFLARE_API_TOKEN
+        ),
+        variant=settings.CLOUDFLARE_IMAGES_VARIANT,
+        timeout=settings.CLOUDFLARE_WORKERS_AI_TIMEOUT_SECONDS,
+    )
+
+
 def get_catalog_image_generator() -> CloudflareWorkersImageGenerator:
-    """Return catalog image generator configured with Cloudflare and Cloudinary."""
+    """Return catalog image generator configured with Cloudflare Images storage."""
 
     try:
         return CloudflareWorkersImageGenerator(
@@ -290,7 +304,7 @@ def get_catalog_image_generator() -> CloudflareWorkersImageGenerator:
             api_token=settings.CLOUDFLARE_API_TOKEN,
             model=settings.CLOUDFLARE_WORKERS_AI_IMAGE_MODEL,
             timeout=settings.CLOUDFLARE_WORKERS_AI_TIMEOUT_SECONDS,
-            image_store=CloudinaryImageStore(),
+            image_store=get_catalog_image_store(),
         )
     except ValueError as exc:
         raise HTTPException(
