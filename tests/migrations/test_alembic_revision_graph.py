@@ -47,3 +47,30 @@ def test_pending_upgrade_across_merge_graph_from_web_funnel_head() -> None:
     assert "20260829000001" in pending_ids  # merge to single head
     assert head in pending_ids
     assert "20260825000001" not in pending_ids
+
+
+def test_orphaned_staging_revision_is_ancestor_of_head() -> None:
+    """Staging is stamped 20260913160551428459; upgrade must resolve that id."""
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    orphan = "20260913160551428459"
+    head = script_dir.get_current_head()
+    assert head is not None
+
+    orphan_rev = script_dir.get_revision(orphan)
+    assert orphan_rev is not None
+    assert orphan_rev.down_revision == "20260904044230151265"
+
+    pending_ids = [
+        rev.revision
+        for rev in reversed(pending_upgrade_revisions(script_dir, orphan, head))
+    ]
+    assert pending_ids == ["20260915035556051174"]
+    assert head == "20260915035556051174"
+
+    from_chat = [
+        rev.revision
+        for rev in reversed(
+            pending_upgrade_revisions(script_dir, "20260904044230151265", head)
+        )
+    ]
+    assert from_chat == [orphan, "20260915035556051174"]
