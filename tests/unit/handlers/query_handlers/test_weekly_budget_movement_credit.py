@@ -326,3 +326,83 @@ def test_next_day_keto_cap_preserves_redistributed_macros():
 
     assert (result.protein, result.carbs, result.fat) == (150.0, 10.0, 200.0)
     assert result.calories == 1900.0
+
+
+@pytest.mark.asyncio
+async def test_uow_read_only_respects_query_read_only():
+    handler = GetWeeklyBudgetQueryHandler(cache_service=None)
+    with (
+        patch.object(
+            handler,
+            "_resolve_tdee",
+            new_callable=AsyncMock,
+            return_value={
+                "profile_target_revision": 1,
+                "macro_preset": "standard",
+                "is_custom": False,
+            },
+        ),
+        patch.object(
+            handler,
+            "_try_cache_before_uow",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_weekly_budget_query_handler.AsyncUnitOfWork"
+        ) as mock_uow_cls,
+    ):
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=None)
+        instance.weekly_budgets.find_by_user_and_week = AsyncMock(return_value=None)
+        instance.cheat_days.find_by_user_and_date_range = AsyncMock(return_value=[])
+        instance.users.get_weekly_auto_adjust = AsyncMock(return_value=False)
+        mock_uow_cls.return_value = instance
+
+        with (
+            patch(
+                "src.app.handlers.query_handlers.get_weekly_budget_query_handler.resolve_user_timezone_async",
+                new_callable=AsyncMock,
+                return_value="UTC",
+            ),
+            patch.object(
+                handler,
+                "_create_weekly_budget",
+                new_callable=AsyncMock,
+                return_value=(
+                    MagicMock(
+                        target_revision=1,
+                        target_calories=14000.0,
+                        target_protein=700.0,
+                        target_carbs=1750.0,
+                        target_fat=466.6,
+                    ),
+                    1800.0,
+                ),
+            ),
+            patch(
+                "src.domain.services.weekly_budget_service.WeeklyBudgetService.get_effective_adjusted_daily_async",
+                new_callable=AsyncMock,
+                return_value=MagicMock(
+                    adjusted=AdjustedDailyTargets(2000, 250, 66.7, 100, False, 7),
+                    consumed_before_today={
+                        "calories": 0,
+                        "protein": 0,
+                        "carbs": 0,
+                        "fat": 0,
+                    },
+                    consumed_total={"calories": 0, "protein": 0, "carbs": 0, "fat": 0},
+                    skipped_days=0,
+                    show_logging_prompt=False,
+                    logged_past_days=0,
+                ),
+            ),
+        ):
+            # Normal query (read_only=False) -> UoW must be read_only=False to allow writes
+            await handler.handle(GetWeeklyBudgetQuery(user_id="u1", read_only=False))
+            mock_uow_cls.assert_called_with(read_only=False)
+
+            # Browse query (read_only=True) -> UoW must be read_only=True
+            await handler.handle(GetWeeklyBudgetQuery(user_id="u1", read_only=True))
+            mock_uow_cls.assert_called_with(read_only=True)

@@ -61,7 +61,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
         if cached_hit is not None:
             return cached_hit
 
-        uow = self.uow or AsyncUnitOfWork(read_only=True)
+        uow = self.uow or AsyncUnitOfWork(read_only=query.read_only)
         async with uow:
             try:
                 # Resolve user timezone (DB → X-Timezone header → UTC)
@@ -353,11 +353,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
         if self.cache_service is None:
             return None
         header_tz = query.header_timezone
-        if (
-            not header_tz
-            or header_tz == "UTC"
-            or not is_valid_timezone(header_tz)
-        ):
+        if not header_tz or header_tz == "UTC" or not is_valid_timezone(header_tz):
             return None
 
         user_tz_str = normalize_timezone(header_tz)
