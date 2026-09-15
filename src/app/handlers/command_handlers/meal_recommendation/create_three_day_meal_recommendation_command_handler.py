@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -54,7 +55,9 @@ class CreateThreeDayMealRecommendationCommandHandler(
     ):
         self.uow_factory: Any = uow_factory or (lambda: uow)
         self.optimizer = optimizer or ThreeDayPlanOptimizer()
-        self.history_projector = history_projector or MealRecommendationHistoryProjector()
+        self.history_projector = (
+            history_projector or MealRecommendationHistoryProjector()
+        )
         self.catalog_snapshot_service = catalog_snapshot_service
 
     async def handle(
@@ -92,7 +95,8 @@ class CreateThreeDayMealRecommendationCommandHandler(
                 start_date=command.start_date,
                 timezone=command.timezone,
             )
-            result = self.optimizer.build_plan(
+            result = await asyncio.to_thread(
+                self.optimizer.build_plan,
                 catalog_meals,
                 user_id=command.user_id,
                 daily_calories=command.daily_calories,

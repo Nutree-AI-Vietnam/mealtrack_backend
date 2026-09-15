@@ -4,7 +4,7 @@ Food item translation database model.
 See meal-translation-model.py for full implementation.
 """
 
-from sqlalchemy import Column, String, Text, ForeignKey, Integer, Boolean
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from src.infra.database.base import Base
@@ -21,7 +21,10 @@ class FoodItemTranslationORM(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     meal_translation_id = Column(
-        Integer, ForeignKey("meal_translation.id", ondelete="CASCADE"), nullable=False
+        Integer,
+        ForeignKey("meal_translation.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     food_item_id = Column(
         String(36), nullable=False, index=True

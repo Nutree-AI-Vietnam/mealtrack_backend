@@ -112,8 +112,8 @@ def resolve_connection_policy(env: dict | None = None) -> DatabaseConnectionPoli
     # Local uvicorn is one worker with many parallel /v1 calls. The production
     # defaults (3+2) serialize those behind pool_timeout and look like 10–60s
     # "API latency" during QA.
-    default_pool = 20 if is_dev else 3
-    default_overflow = 20 if is_dev else 2
+    default_pool = 20 if is_dev else 10
+    default_overflow = 20 if is_dev else 5
     default_timeout = 30 if is_dev else 10
     pool_size_per_worker = _int_env(
         env,
@@ -130,9 +130,27 @@ def resolve_connection_policy(env: dict | None = None) -> DatabaseConnectionPoli
     pool_recycle = _int_env(env, "ASYNC_POOL_RECYCLE", default=120)
 
     if mode == "neon_pooler":
-        # NullPool: Neon PgBouncer manages connection reuse.
+        # Check if local queue pool is explicitly enabled for neon_pooler to avoid TLS handshake per checkout.
         # prepared_statement_cache_size=0 disables asyncpg caching, which is
         # required for PgBouncer transaction-mode compatibility.
+        use_queue_pool = (
+            env.get("NEON_POOLER_USE_QUEUE_POOL", "").strip().lower()
+            in {"1", "true", "yes"}
+        )
+        if use_queue_pool:
+            return DatabaseConnectionPolicy(
+                mode="neon_pooler",
+                app_url=raw_url,
+                pool_class=AsyncAdaptedQueuePool,
+                pool_size=pool_size_per_worker,
+                max_overflow=max_overflow,
+                pool_timeout=pool_timeout,
+                pool_recycle=pool_recycle,
+                connect_args={"prepared_statement_cache_size": 0},
+                worker_count=workers,
+            )
+
+        # NullPool: Neon PgBouncer manages connection reuse.
         return DatabaseConnectionPolicy(
             mode="neon_pooler",
             app_url=raw_url,

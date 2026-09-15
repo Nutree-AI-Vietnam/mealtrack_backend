@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     # backend REST publisher uses CLOUDFLARE_QUEUE_ID instead.
     CLOUDFLARE_QUEUE_NAME: str = Field(default="")
     CLOUDFLARE_QUEUE_API_TOKEN: str = Field(default="")
-    CLOUDFLARE_QUEUE_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
+    CLOUDFLARE_QUEUE_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
 
     # Firebase
     FIREBASE_CREDENTIALS: str | None = Field(default=None)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -77,9 +78,12 @@ class ChatContextBuilder:
             )
             recent_meals = await self._recent_meals(uow, user_id, today, timezone)
 
-        profile = await self._safe_profile(user_id, missing)
-        tdee = await self._safe_tdee(user_id, missing)
-        daily = await self._safe_daily(user_id, today, header_timezone, missing)
+        profile, tdee, daily, weekly_budget = await asyncio.gather(
+            self._safe_profile(user_id, missing),
+            self._safe_tdee(user_id, missing),
+            self._safe_daily(user_id, today, header_timezone, missing),
+            self._safe_weekly_budget(user_id, today, header_timezone),
+        )
 
         allergies = _list_or_none((profile or {}).get("profile", {}).get("allergies"))
         health = _list_or_none(
@@ -91,7 +95,6 @@ class ChatContextBuilder:
         goal = (profile or {}).get("profile", {}).get("fitness_goal")
 
         weekly = (daily or {}).get("weekly_context") or {}
-        weekly_budget = await self._safe_weekly_budget(user_id, today, header_timezone)
         if weekly_budget:
             weekly = _weekly_context_from_budget(weekly_budget)
         elif not _weekly_context_is_complete(weekly):
@@ -116,9 +119,7 @@ class ChatContextBuilder:
         consumed_fat = (daily or {}).get("total_fat")
         # Weekly `remaining_calories` is leftover for the whole week, not today.
         # Coach cards and Nutrition home both show today's food vs daily target.
-        eaten_today = (
-            food_calories if food_calories is not None else consumed_calories
-        )
+        eaten_today = food_calories if food_calories is not None else consumed_calories
         remaining_calories = _remaining(target_calories, eaten_today)
 
         return ChatUserContext(

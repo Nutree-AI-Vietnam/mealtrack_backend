@@ -34,5 +34,5 @@ class NutritionORM(Base, SecondaryEntityMixin):
         order_by="FoodItemORM.order_index",
         lazy="raise",
     )
-    meal_id = Column(String(36), ForeignKey("meal.meal_id"), nullable=False)
+    meal_id = Column(String(36), ForeignKey("meal.meal_id"), nullable=False, index=True)
     meal = relationship("MealORM", back_populates="nutrition")

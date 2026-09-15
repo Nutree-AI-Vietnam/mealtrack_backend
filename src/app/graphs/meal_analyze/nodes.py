@@ -1,5 +1,6 @@
 """Nodes for the meal image analysis graph."""
 
+import asyncio
 import logging
 
 from src.api.exceptions import ValidationException
@@ -125,11 +126,10 @@ async def _acquire_scan_by_url_image(
         source_url if is_food_label else to_compressed_cloudinary_url(source_url)
     )
     raw_bytes = await runtime.download_image_bytes(download_url)
-    analysis_bytes = (
-        raw_bytes
-        if (is_food_label or len(raw_bytes) <= 200 * 1024)
-        else runtime.compress_image(raw_bytes)
-    )
+    if is_food_label or len(raw_bytes) <= 200 * 1024:
+        analysis_bytes = raw_bytes
+    else:
+        analysis_bytes = await asyncio.to_thread(runtime.compress_image, raw_bytes)
     content_kind = "food_label_image" if is_food_label else "meal_image"
     image_id = source_public_id.split("/")[-1]
 

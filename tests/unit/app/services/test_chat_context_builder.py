@@ -107,3 +107,49 @@ async def test_build_uses_today_remaining_not_weekly_leftover() -> None:
     assert context.target_calories == 1932
     assert context.food_calories == 111
     assert context.remaining_calories == 1821
+
+
+@pytest.mark.asyncio
+async def test_build_gathers_context_concurrently() -> None:
+    builder = ChatContextBuilder(uow_factory=lambda: _Uow())
+    builder._recent_meals = AsyncMock(return_value=[])
+
+    execution_order = []
+
+    async def mock_profile(*args, **kwargs):
+        execution_order.append("profile_start")
+        return {"profile": {}}
+
+    async def mock_tdee(*args, **kwargs):
+        execution_order.append("tdee_start")
+        return {"tdee": 2000}
+
+    async def mock_daily(*args, **kwargs):
+        execution_order.append("daily_start")
+        return {}
+
+    async def mock_weekly(*args, **kwargs):
+        execution_order.append("weekly_start")
+        return {}
+
+    builder._safe_profile = mock_profile
+    builder._safe_tdee = mock_tdee
+    builder._safe_daily = mock_daily
+    builder._safe_weekly_budget = mock_weekly
+
+    with patch(
+        "src.app.services.chat_context_builder.resolve_user_timezone_async",
+        new=AsyncMock(return_value="UTC"),
+    ):
+        await builder.build(
+            user_id="u1",
+            locale="en",
+            header_timezone="UTC",
+        )
+
+    assert set(execution_order) == {
+        "profile_start",
+        "tdee_start",
+        "daily_start",
+        "weekly_start",
+    }

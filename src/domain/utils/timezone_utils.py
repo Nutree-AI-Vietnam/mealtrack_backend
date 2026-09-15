@@ -1,5 +1,6 @@
 """Timezone utilities for notification scheduling and datetime operations."""
 
+import inspect
 import logging
 from datetime import UTC, date, datetime, timedelta
 from datetime import timezone as datetime_timezone
@@ -239,14 +240,44 @@ async def resolve_user_timezone_async(
     uow,  # AsyncUnitOfWorkPort
     header_timezone: str | None = None,
 ) -> str:
-    """Async version of resolve_user_timezone for use with AsyncUnitOfWork."""
+    """Async version of resolve_user_timezone for use with AsyncUnitOfWork.
+
+    Optimized to use single-column get_user_timezone() query, avoiding
+    eager joins/selectinload across user profile, weights, preferences, and targets.
+    """
     db_tz = "UTC"
     try:
-        user = await uow.users.find_by_id(user_id)
-        if user and user.timezone and user.timezone != "UTC":
-            return user.timezone
-        if user and user.timezone:
-            db_tz = user.timezone
+        resolved = False
+        get_tz = getattr(uow.users, "get_user_timezone", None)
+        if callable(get_tz):
+            try:
+                res = get_tz(user_id)
+                if inspect.isawaitable(res):
+                    db_tz_val = await res
+                    if isinstance(db_tz_val, str):
+                        if db_tz_val != "UTC":
+                            return db_tz_val
+                        db_tz = db_tz_val
+                        resolved = True
+                    elif db_tz_val is None:
+                        resolved = True
+            except Exception:
+                pass
+
+        if not resolved:
+            find_user = getattr(uow.users, "find_by_id", None)
+            if callable(find_user):
+                res = find_user(user_id)
+                if inspect.isawaitable(res):
+                    user = await res
+                    if (
+                        user
+                        and getattr(user, "timezone", None)
+                        and user.timezone != "UTC"
+                    ):
+                        return user.timezone
+                    if user and getattr(user, "timezone", None):
+                        db_tz = user.timezone
     except Exception:
         pass
 

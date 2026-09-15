@@ -3,12 +3,13 @@ Unit tests for async methods in WeeklyBudgetService.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from src.domain.model.meal import MealStatus
+from src.domain.model.meal_projection import MealProjection
 from src.domain.model.weekly import WeeklyMacroBudget
 from src.domain.services.weekly_budget_service import WeeklyBudgetService
 
@@ -943,3 +944,48 @@ class TestGetEffectiveAdjustedDailyAsync:
         assert result.adjusted.bmr_floor_active is False
         assert result.show_logging_prompt is False
 
+    @pytest.mark.asyncio
+    async def test_queries_meals_exactly_once(self):
+        """Verify get_effective_adjusted_daily_async queries meals once instead of 3 times."""
+        week_start = date(2026, 3, 23)
+        wednesday = date(2026, 3, 25)
+        cheat_date = date(2026, 3, 24)
+
+        meal = FakeMeal(
+            status=MealStatus.READY,
+            nutrition=FakeNutrition(
+                calories=500,
+                macros=FakeNutritionMacros(protein=40, carbs=50, fat=15),
+            ),
+            created_at=datetime(2026, 3, 23, 12, 0, tzinfo=UTC),
+        )
+        mock_uow = Mock()
+        mock_uow.cheat_days.find_by_user_and_date_range = AsyncMock(return_value=[])
+        mock_uow.meals.get_daily_meal_counts = AsyncMock(
+            return_value={date(2026, 3, 23): 1}
+        )
+        mock_uow.meals.find_by_date_range = AsyncMock(return_value=[meal])
+        budget = _make_budget(week_start)
+
+        result = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=mock_uow,
+            user_id="user-1",
+            week_start=week_start,
+            target_date=wednesday,
+            weekly_budget=budget,
+            base_daily_cal=_BASE_CAL,
+            base_daily_protein=_BASE_P,
+            base_daily_carbs=_BASE_C,
+            base_daily_fat=_BASE_F,
+            bmr=_BMR,
+            cheat_dates=[cheat_date],
+        )
+
+        mock_uow.meals.find_by_date_range.assert_called_once_with(
+            "user-1",
+            week_start,
+            week_start + timedelta(days=6),
+            user_timezone="UTC",
+            projection=MealProjection.MACROS_ONLY,
+        )
+        assert result.adjusted.calories > 0
