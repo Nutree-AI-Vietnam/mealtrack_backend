@@ -10,6 +10,9 @@ from uuid import UUID
 
 from src.app.events.base import EventHandler, handles
 from src.app.queries.meal import GetDailyMacrosQuery
+from src.app.services.weekly_budget_target_sync import (
+    sync_weekly_budget_targets_if_stale,
+)
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
@@ -311,9 +314,20 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
         """
         if not weekly_budget:
             return None
-        if target_revision is None or weekly_budget.target_revision != target_revision:
-            logger.warning("Refusing stale weekly target row for user %s", user_id)
+        if target_revision is None:
             return None
+        if weekly_budget.target_revision != target_revision:
+            weekly_budget = await sync_weekly_budget_targets_if_stale(
+                uow,
+                weekly_budget,
+                daily_macros=target_macros,
+                profile_target_revision=target_revision,
+            )
+            if weekly_budget.target_revision != target_revision:
+                logger.warning(
+                    "Refusing stale weekly target row for user %s", user_id
+                )
+                return None
         try:
             week_start = get_user_monday(target_date, user_id)
 

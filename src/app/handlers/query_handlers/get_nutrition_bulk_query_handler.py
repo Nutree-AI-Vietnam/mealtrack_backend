@@ -9,6 +9,9 @@ from typing import Any
 
 from src.app.events.base import EventHandler, handles
 from src.app.queries.nutrition import GetNutritionBulkQuery
+from src.app.services.weekly_budget_target_sync import (
+    sync_weekly_budget_targets_if_stale,
+)
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
@@ -174,6 +177,13 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
             )
 
             weekly_summary = None
+            if weekly_budget and weekly_budget.target_revision != target_revision:
+                weekly_budget = await sync_weekly_budget_targets_if_stale(
+                    uow,
+                    weekly_budget,
+                    daily_macros=target_macros,
+                    profile_target_revision=target_revision,
+                )
             if weekly_budget and weekly_budget.target_revision == target_revision:
                 try:
                     base_daily = target_calories or (weekly_budget.target_calories / 7)

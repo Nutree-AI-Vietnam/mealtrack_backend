@@ -87,7 +87,10 @@ def resolve_day_target(
     live_cal: float | None,
     snapshots: dict[date, float],
     base_cal: float,
+    auto_adjust: bool = True,
 ) -> tuple[str, float]:
+    if not WeeklyBudgetService.auto_adjust_enabled(auto_adjust):
+        return "base", base_cal
     if day == today and live_cal is not None:
         return "adjusted_live", live_cal
     if day in snapshots:
@@ -122,18 +125,50 @@ async def load_tdee_targets(
         return 2000.0, 70.0, 200.0, 70.0, None, 1800.0
 
 
+async def overlay_live_hydration(
+    uow: Any,
+    user_id: str,
+    start: date,
+    end: date,
+    user_tz_str: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    totals = await uow.hydration_entries.sum_ml_by_date_range(
+        user_id, start, end, user_timezone=user_tz_str
+    )
+    days = []
+    for row in payload.get("days") or []:
+        day = dict(row)
+        try:
+            parsed = date.fromisoformat(str(day.get("date") or "")[:10])
+        except ValueError:
+            days.append(day)
+            continue
+        day["hydration_ml"] = int(totals.get(parsed, 0))
+        days.append(day)
+    return {**payload, "days": days}
+
+
 async def read_summary_cache(
     cache: CachePort | None,
     user_id: str,
     start: date,
     end: date,
     revision: int | None,
+    auto_adjust: bool = True,
 ) -> dict[str, Any] | None:
     if cache is None or revision is None:
         return None
     key, _ = CacheKeys.progress_summary(user_id, start, end)
     cached = await cache.get_json(key)
-    if cached and cached.get("target_revision") == revision:
+    if (
+        cached
+        and cached.get("target_revision") == revision
+        and WeeklyBudgetService.auto_adjust_enabled(
+            cached.get("weekly_auto_adjust", True)
+        )
+        == auto_adjust
+    ):
         return cached
     return None
 

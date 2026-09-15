@@ -272,10 +272,9 @@ async def test_weekly_budget_present_matching_revision_locks_weekly_context():
 
 
 @pytest.mark.asyncio
-async def test_stale_target_revision_skips_weekly_context():
-    """CHARACTERIZATION: weekly_budget present but target_revision MISMATCHES
-    the TDEE profile_target_revision → _get_weekly_context refuses the stale
-    row, returns None, and get_effective_adjusted_daily_async is never called.
+async def test_stale_target_revision_repairs_and_uses_weekly_context():
+    """Stale weekly_budget.target_revision is rewritten to the profile
+    revision, then Home uses the adjusted daily path instead of raw TDEE.
     """
     handler = _make_handler()
     week_start = date(2026, 4, 20)
@@ -290,7 +289,7 @@ async def test_stale_target_revision_skips_weekly_context():
         target_protein=700.0,
         target_carbs=1750.0,
         target_fat=466.6667,
-        target_revision=1,  # mismatches TDEE's profile_target_revision=3 below
+        target_revision=1,
     )
 
     mock_uow = AsyncMock()
@@ -307,6 +306,33 @@ async def test_stale_target_revision_skips_weekly_context():
     mock_uow.movement_entries.sum_included_kcal_for_range = AsyncMock(return_value=0)
     mock_uow.weekly_budgets.find_by_user_and_week = AsyncMock(
         return_value=weekly_budget
+    )
+    mock_uow.weekly_budgets.update = AsyncMock(return_value=weekly_budget)
+
+    effective = EffectiveAdjustedResult(
+        adjusted=AdjustedDailyTargets(
+            calories=2000.0,
+            carbs=250.0,
+            fat=66.7,
+            protein=100.0,
+            bmr_floor_active=False,
+            remaining_days=7,
+        ),
+        consumed_before_today={
+            "calories": 0.0,
+            "protein": 0.0,
+            "carbs": 0.0,
+            "fat": 0.0,
+        },
+        consumed_total={
+            "calories": 2100.0,
+            "protein": 100.0,
+            "carbs": 250.0,
+            "fat": 100.0,
+        },
+        logged_past_days=0,
+        skipped_days=0,
+        show_logging_prompt=False,
     )
 
     with (
@@ -335,11 +361,14 @@ async def test_stale_target_revision_skips_weekly_context():
             }
         )
         mock_tdee_cls.return_value = mock_tdee
+        mock_get_effective.return_value = effective
 
         result = await handler.handle(query)
 
-    mock_get_effective.assert_not_awaited()
-    assert "weekly_context" not in result
+    mock_uow.weekly_budgets.update.assert_awaited_once()
+    mock_get_effective.assert_awaited_once()
+    assert weekly_budget.target_revision == 3
+    assert "weekly_context" in result
 
 
 @pytest.mark.asyncio

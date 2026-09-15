@@ -14,6 +14,7 @@ from src.app.handlers.query_handlers.progress_summary_support import (
     hydration_goal_ml,
     load_tdee_targets,
     local_meal_date,
+    overlay_live_hydration,
     read_summary_cache,
     resolve_day_target,
     resolve_today_live_target,
@@ -27,6 +28,7 @@ from src.domain.services.progress_summary_window import (
     PROGRESS_SUMMARY_CAP_DAYS,
     clamp_progress_window,
 )
+from src.domain.services.weekly_budget_service import WeeklyBudgetService
 from src.domain.utils.timezone_utils import get_zone_info, resolve_user_timezone_async
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -58,13 +60,31 @@ class GetProgressSummaryQueryHandler(
                 query.start_date, query.end_date, created_on=created_on, today=today
             )
             targets = await load_tdee_targets(query.user_id, self.cache_service)
+            auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
+                await uow.users.get_weekly_auto_adjust(query.user_id)
+            )
             cached = await read_summary_cache(
-                self.cache_service, query.user_id, start, end, targets[4]
+                self.cache_service,
+                query.user_id,
+                start,
+                end,
+                targets[4],
+                auto_adjust,
             )
             if cached is not None:
-                return cached
+                return await overlay_live_hydration(
+                    uow, query.user_id, start, end, user_tz_str, cached
+                )
             result = await self._compute(
-                uow, query.user_id, start, end, today, user_tz_str, user_tz, targets
+                uow,
+                query.user_id,
+                start,
+                end,
+                today,
+                user_tz_str,
+                user_tz,
+                targets,
+                auto_adjust,
             )
             await write_summary_cache(
                 self.cache_service, query.user_id, start, end, result
@@ -81,6 +101,7 @@ class GetProgressSummaryQueryHandler(
         user_tz_str: str,
         user_tz: Any,
         targets: tuple,
+        auto_adjust: bool = True,
     ) -> dict[str, Any]:
         base_cal, protein_t, _c, _f, revision, bmr = targets
         meals = await uow.meals.find_by_date_range(
@@ -126,7 +147,12 @@ class GetProgressSummaryQueryHandler(
         current = start
         while current <= end:
             source, target_cal = resolve_day_target(
-                current, today, live_cal, snapshots, base_cal
+                current,
+                today,
+                live_cal,
+                snapshots,
+                base_cal,
+                auto_adjust,
             )
             days.append(
                 build_progress_day_row(
@@ -151,4 +177,5 @@ class GetProgressSummaryQueryHandler(
             "cap_days": PROGRESS_SUMMARY_CAP_DAYS,
             "days": days,
             "target_revision": revision,
+            "weekly_auto_adjust": auto_adjust,
         }
