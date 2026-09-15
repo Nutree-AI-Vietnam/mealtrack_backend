@@ -324,9 +324,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 profile_target_revision=target_revision,
             )
             if weekly_budget.target_revision != target_revision:
-                logger.warning(
-                    "Refusing stale weekly target row for user %s", user_id
-                )
+                logger.warning("Refusing stale weekly target row for user %s", user_id)
                 return None
         try:
             week_start = get_user_monday(target_date, user_id)

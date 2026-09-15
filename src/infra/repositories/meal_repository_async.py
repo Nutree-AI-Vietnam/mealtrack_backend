@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, noload, selectinload
+from sqlalchemy.orm import defer, joinedload, noload, selectinload
 
 from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.meal.meal_image import MealImage as DomainMealImage
@@ -47,6 +47,9 @@ _PROJECTION_OPTS: dict = {
         noload(MealORM.image),
         selectinload(MealORM.nutrition).selectinload(NutritionORM.food_items),
         selectinload(MealORM.instruction_steps),
+        defer(MealORM.raw_ai_response),
+        defer(MealORM.instructions),
+        defer(MealORM.food_label_metadata),
     ),
     MealProjection.FULL: (
         joinedload(MealORM.image),
@@ -689,9 +692,7 @@ class AsyncMealRepository(MealRepositoryPort):
         db_nutrition.fiber = domain_nutrition.macros.fiber
         db_nutrition.sugar = domain_nutrition.macros.sugar
         db_nutrition.micros = mapping_from_micros(
-            merge_meal_micros(
-                domain_nutrition.micros, domain_nutrition.food_items
-            )
+            merge_meal_micros(domain_nutrition.micros, domain_nutrition.food_items)
         )
         db_nutrition.confidence_score = domain_nutrition.confidence_score
         db_nutrition.nutrition_override = (

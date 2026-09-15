@@ -104,9 +104,19 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
             result = await uow.meals.find_by_id(meal_id)
     """
 
-    def __init__(self):
+    def __init__(self, read_only: bool = False):
         self.session: AsyncSession | None = None
         self._session_lock = asyncio.Lock()
+        self._read_only = read_only
+
+    @classmethod
+    def read_only(cls) -> "AsyncUnitOfWork":
+        """Factory for creating a read-only Unit of Work."""
+        return cls(read_only=True)
+
+    @property
+    def is_read_only(self) -> bool:
+        return self._read_only
 
     async def __aenter__(self) -> "AsyncUnitOfWork":
         await self._session_lock.acquire()
@@ -161,6 +171,14 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
                     logger.warning(
                         "Rollback failed; connection will be discarded", exc_info=True
                     )
+            elif self._read_only:
+                try:
+                    await self.rollback()
+                except Exception:
+                    logger.warning(
+                        "Rollback failed in read_only mode; connection will be discarded",
+                        exc_info=True,
+                    )
             else:
                 try:
                     await self.commit()
@@ -179,6 +197,8 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
             self._session_lock.release()
 
     async def commit(self) -> None:
+        if self._read_only:
+            raise RuntimeError("Cannot commit a read-only AsyncUnitOfWork")
         await self._require_session().commit()
 
     async def rollback(self) -> None:

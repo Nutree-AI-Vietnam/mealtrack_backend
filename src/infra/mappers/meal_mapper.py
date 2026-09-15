@@ -172,7 +172,7 @@ def meal_translation_orm_to_domain(orm: MealTranslationORM) -> DomainMealTransla
 def _instructions_from_rows(orm: MealORM) -> list | None:
     rows = getattr(orm, "instruction_steps", None)
     if not rows:
-        return orm.instructions
+        return orm.__dict__.get("instructions")
     return [
         {
             "instruction": row.instruction,
@@ -199,9 +199,9 @@ def meal_orm_to_domain(orm: MealORM) -> DomainMeal:
         meal_type=orm.meal_type,
         nutrition=nutrition_orm_to_domain(orm.nutrition) if orm.nutrition else None,
         ready_at=orm.ready_at,
-        error_message=orm.error_message,
-        raw_gpt_json=orm.raw_ai_response,
-        food_label_metadata=orm.food_label_metadata,
+        error_message=orm.__dict__.get("error_message"),
+        raw_gpt_json=orm.__dict__.get("raw_ai_response"),
+        food_label_metadata=orm.__dict__.get("food_label_metadata"),
         updated_at=orm.updated_at,
         last_edited_at=orm.last_edited_at,
         edit_count=orm.edit_count,
@@ -209,7 +209,7 @@ def meal_orm_to_domain(orm: MealORM) -> DomainMeal:
         translations=translations_dict,
         source=orm.source,
         catalog_meal_id=getattr(orm, "catalog_meal_id", None),
-        description=orm.description,
+        description=orm.__dict__.get("description"),
         instructions=_instructions_from_rows(orm),
         prep_time_min=orm.prep_time_min,
         cook_time_min=orm.cook_time_min,

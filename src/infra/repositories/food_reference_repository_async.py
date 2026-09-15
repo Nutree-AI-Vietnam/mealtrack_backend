@@ -102,9 +102,7 @@ class AsyncFoodReferenceRepository:
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)
-        return [
-            food_reference_model_to_dict(model) for model in result.scalars().all()
-        ]
+        return [food_reference_model_to_dict(model) for model in result.scalars().all()]
 
     async def get_by_source_identities(
         self, identities: list[tuple[str, str]]
@@ -131,9 +129,7 @@ class AsyncFoodReferenceRepository:
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         )
         result = await self._session.execute(stmt)
-        return [
-            food_reference_model_to_dict(model) for model in result.scalars().all()
-        ]
+        return [food_reference_model_to_dict(model) for model in result.scalars().all()]
 
     async def get_nutrition_projection(
         self,
@@ -293,13 +289,17 @@ class AsyncFoodReferenceRepository:
     async def search_by_name(
         self, query: str, region: str = "global", limit: int = 10
     ) -> list[dict[str, Any]]:
+        clean_query = str(query or "").strip()
+        if not clean_query:
+            return []
+        bounded_limit = min(max(limit, 1), 50)
         stmt = (
             select(FoodReferenceModel)
-            .where(FoodReferenceModel.name.ilike(f"%{query}%"))
+            .where(FoodReferenceModel.name.ilike(f"%{clean_query}%"))
             .where(FoodReferenceModel.region.in_([region, "global"]))
             .where(self._integrity_repository.public_eligibility_clause())
             .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
-            .limit(limit)
+            .limit(bounded_limit)
         )
         result = await self._session.execute(stmt)
         return [food_reference_model_to_dict(row) for row in result.scalars().all()]
@@ -334,7 +334,9 @@ class AsyncFoodReferenceRepository:
         if identity_query:
             key_match = func.lower(FoodReferenceModel.name_normalized) == identity_query
             match_clause = (
-                or_(display_match, key_match) if display_match is not None else key_match
+                or_(display_match, key_match)
+                if display_match is not None
+                else key_match
             )
             similarity_score = func.similarity(
                 FoodReferenceModel.name_normalized, identity_query
@@ -345,7 +347,9 @@ class AsyncFoodReferenceRepository:
                 FoodReferenceModel.name_normalized.notlike(identity_prefix),
             )
             match_clause = (
-                or_(display_match, key_match) if display_match is not None else key_match
+                or_(display_match, key_match)
+                if display_match is not None
+                else key_match
             )
             similarity_score = func.similarity(
                 FoodReferenceModel.name, normalized_query

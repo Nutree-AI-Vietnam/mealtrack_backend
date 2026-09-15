@@ -459,3 +459,27 @@ async def test_unverified_barcode_upsert_does_not_sync_children_on_verified_row(
     assert row.serving_size_rows == []
     assert row.nutrient_rows == []
     session.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_by_name_rejects_blank_query_before_db_access():
+    session = _AsyncSession([])
+    repo = AsyncFoodReferenceRepository(session)
+
+    result = await repo.search_by_name("   ")
+
+    assert result == []
+    assert session.statement is None
+
+
+@pytest.mark.asyncio
+async def test_search_by_name_bounds_limit_and_queries_ilike():
+    row = _food_row(verified=True)
+    session = _AsyncSession([_Result(rows=[row])])
+    repo = AsyncFoodReferenceRepository(session)
+
+    results = await repo.search_by_name("chicken", limit=100)
+
+    assert len(results) == 1
+    assert results[0]["id"] == row.id
+    assert session.statement is not None

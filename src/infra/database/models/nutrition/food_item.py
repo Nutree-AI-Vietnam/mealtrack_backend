@@ -29,7 +29,9 @@ class FoodItemORM(Base, PrimaryEntityMixin):
     fdc_id = Column(
         Integer, nullable=True
     )  # USDA FDC ID (legacy, use food_reference_id)
-    food_reference_id = Column(Integer, ForeignKey("food_reference.id"), nullable=True)
+    food_reference_id = Column(
+        Integer, ForeignKey("food_reference.id"), nullable=True, index=True
+    )
     is_custom = Column(
         Boolean, default=False, nullable=False
     )  # Whether this is a custom ingredient
@@ -44,7 +46,7 @@ class FoodItemORM(Base, PrimaryEntityMixin):
 
     # Foreign keys
     nutrition_id = Column(
-        Integer, ForeignKey("nutrition.id"), nullable=True
+        Integer, ForeignKey("nutrition.id"), nullable=True, index=True
     )  # Nullable for orphaned items
 
     # Soft delete

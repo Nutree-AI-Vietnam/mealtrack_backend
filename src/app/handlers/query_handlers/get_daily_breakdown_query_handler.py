@@ -37,7 +37,7 @@ class GetDailyBreakdownQueryHandler(
 
     async def handle(self, query: GetDailyBreakdownQuery) -> dict[str, Any]:
         """Return 7 DailyBreakdownEntry dicts for Mon–Sun of the requested week."""
-        async with AsyncUnitOfWork() as uow:
+        async with AsyncUnitOfWork(read_only=True) as uow:
             user_tz_str = await resolve_user_timezone_async(
                 query.user_id, uow, query.header_timezone
             )

@@ -230,16 +230,34 @@ class TestResolveUserTimezoneAsync:
         assert tz == "Europe/London"
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_utc_when_header_invalid_and_db_none(self):
+    async def test_uses_get_user_timezone_fast_path_when_available(self):
         uow = MagicMock()
-        uow.users.find_by_id = AsyncMock(return_value=None)
+        uow.users.get_user_timezone = AsyncMock(return_value="Asia/Bangkok")
+        uow.users.find_by_id = AsyncMock()
 
         tz = await resolve_user_timezone_async(
             user_id="user-123",
             uow=uow,
-            header_timezone="Invalid/Timezone",
+            header_timezone="Asia/Tokyo",
         )
-        assert tz == "UTC"
+        assert tz == "Asia/Bangkok"
+        uow.users.get_user_timezone.assert_awaited_once_with("user-123")
+        uow.users.find_by_id.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uses_get_user_timezone_utc_allows_header(self):
+        uow = MagicMock()
+        uow.users.get_user_timezone = AsyncMock(return_value="UTC")
+        uow.users.find_by_id = AsyncMock()
+
+        tz = await resolve_user_timezone_async(
+            user_id="user-123",
+            uow=uow,
+            header_timezone="Asia/Tokyo",
+        )
+        assert tz == "Asia/Tokyo"
+        uow.users.get_user_timezone.assert_awaited_once_with("user-123")
+        uow.users.find_by_id.assert_not_called()
 
 
 class TestResolveUserTimezone:
