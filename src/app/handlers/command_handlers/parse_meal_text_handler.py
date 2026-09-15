@@ -262,8 +262,8 @@ class ParseMealTextHandler(
             local_references = await self._find_local_references(
                 parsed_items, budget, command.language
             )
-            for item in parsed_items:
-                cascaded = await self._cascade_lookup(
+            async def _lookup_one(item: dict[str, Any]) -> dict[str, Any] | None:
+                return await self._cascade_lookup(
                     item,
                     budget=budget,
                     local_reference=local_references.get(
@@ -272,8 +272,20 @@ class ParseMealTextHandler(
                         )
                     ),
                 )
-                if cascaded is not None:
-                    enhanced_items.append(cascaded)
+
+            results = await asyncio.gather(
+                *(_lookup_one(item) for item in parsed_items),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.debug(
+                        "parse_text cascade lookup failed: %s",
+                        type(result).__name__,
+                    )
+                    continue
+                if result is not None:
+                    enhanced_items.append(result)
 
         # Clamp nutrition to physically plausible ranges
         for item in enhanced_items:

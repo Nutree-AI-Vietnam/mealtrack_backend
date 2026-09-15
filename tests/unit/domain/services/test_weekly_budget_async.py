@@ -45,6 +45,13 @@ class _FakeMovementEntries:
             if include and start_utc <= logged_at < end_utc
         )
 
+    async def fetch_included_kcal_for_range(self, user_id, start_utc, end_utc):
+        return [
+            (logged_at, kcal)
+            for logged_at, kcal, include in self.entries
+            if include and start_utc <= logged_at < end_utc
+        ]
+
 
 # --- Fakes ported from test_weekly_budget_service.py (sync I/O scenarios) ---
 # Plain async-repo fakes (no movement_entries attr) so
