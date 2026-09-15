@@ -1,6 +1,6 @@
 """daily_macros must not discard freshly computed meal totals for a stale Redis hit."""
 
-from datetime import date
+from datetime import UTC, date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,11 +14,13 @@ from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.nutrition import Nutrition
 
 
-def _meal_with_macros(*, meal_id: str, protein: float, carbs: float, fat: float) -> Meal:
-    from datetime import datetime, timezone
+def _meal_with_macros(
+    *, meal_id: str, protein: float, carbs: float, fat: float
+) -> Meal:
+    from datetime import datetime
 
     macros = Macros(protein=protein, carbs=carbs, fat=fat, fiber=0)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Meal(
         meal_id=meal_id,
         user_id="22222222-2222-2222-2222-222222222222",
@@ -83,6 +85,7 @@ async def test_cache_hit_short_circuits_before_meal_query():
 
     assert result["total_calories"] == 0.0
     mock_uow.meals.find_by_date.assert_not_called()
+    assert mock_cls.call_count == 0, "AsyncUnitOfWork should not be opened on cache hit"
 
 
 @pytest.mark.asyncio
