@@ -62,6 +62,7 @@ class CatalogMealRevision:
     active_count: int
     catalog_updated_at: datetime | None
     food_reference_updated_at: datetime | None
+    imaged_count: int = 0
 
 
 @dataclass(frozen=True)

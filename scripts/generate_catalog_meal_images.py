@@ -126,7 +126,12 @@ async def _run(args) -> dict[str, int]:
                 f"image_generation_skipped catalog_key={meal.catalog_key}: image_url already set",
                 file=sys.stderr,
             )
-    return {"selected": selected, "updated": updated, "skipped": skipped, "failed": failed}
+    return {
+        "selected": selected,
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
+    }
 
 
 async def _persist_image_url(
@@ -186,13 +191,17 @@ async def _set_image_url(
     stmt = update(MealCatalogORM).where(MealCatalogORM.id == catalog_id)
     if not include_existing:
         stmt = stmt.where(_missing_image_filter())
-    result = await session.execute(stmt.values(image_url=image_url))
+    result = await session.execute(
+        stmt.values(image_url=image_url, updated_at=func.now())
+    )
     await session.flush()
     return bool(result.rowcount)
 
 
 def _missing_image_filter():
-    return or_(MealCatalogORM.image_url.is_(None), func.trim(MealCatalogORM.image_url) == "")
+    return or_(
+        MealCatalogORM.image_url.is_(None), func.trim(MealCatalogORM.image_url) == ""
+    )
 
 
 if __name__ == "__main__":
