@@ -235,3 +235,37 @@ def test_async_db_use_queue_pool_env_var_is_silently_ignored():
     )
     assert policy.mode == "direct_pool"
     assert policy.pool_class is AsyncAdaptedQueuePool
+
+
+def test_neon_pooler_mode_with_queue_pool_enabled():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
+            "DB_CONNECTION_MODE": "neon_pooler",
+            "NEON_POOLER_USE_QUEUE_POOL": "true",
+            "UVICORN_WORKERS": "4",
+            "ASYNC_POOL_SIZE_PER_WORKER": "8",
+            "ASYNC_POOL_MAX_OVERFLOW": "4",
+        }
+    )
+    assert policy.mode == "neon_pooler"
+    assert policy.pool_class is AsyncAdaptedQueuePool
+    assert policy.pool_size == 8
+    assert policy.max_overflow == 4
+    assert policy.connect_args.get("prepared_statement_cache_size") == 0
+    assert policy.worker_count == 4
+    assert policy.total_capacity == 48
+
+
+def test_production_environment_default_pool_values():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx.neon.tech/db",
+            "DB_CONNECTION_MODE": "direct_pool",
+            "ENVIRONMENT": "production",
+            "UVICORN_WORKERS": "2",
+        }
+    )
+    assert policy.pool_size == 10
+    assert policy.max_overflow == 5
+    assert policy.pool_timeout == 10
