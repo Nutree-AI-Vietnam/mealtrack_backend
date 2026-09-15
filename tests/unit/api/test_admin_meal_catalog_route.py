@@ -154,7 +154,9 @@ class _Repository:
 
     async def list_meals(self, **kwargs):
         self.list_kwargs = kwargs
-        return AdminCatalogMealPage(items=tuple(self.page_items), total=len(self.page_items))
+        return AdminCatalogMealPage(
+            items=tuple(self.page_items), total=len(self.page_items)
+        )
 
     async def get_meal_row(self, catalog_id):
         return self.row
@@ -178,7 +180,9 @@ def _client(repository, *, generator=None, use_route_auth=False):
     if not use_route_auth:
         app.dependency_overrides[require_admin_or_local] = lambda: "admin@nutree.ai"
     if generator is not None:
-        app.dependency_overrides[get_catalog_image_generator_factory] = lambda: lambda: generator
+        app.dependency_overrides[get_catalog_image_generator_factory] = lambda: (
+            lambda: generator
+        )
     return TestClient(app, client=("127.0.0.1", 50000))
 
 
@@ -219,3 +223,21 @@ def _row(image_url: str | None = None):
         image_url=image_url,
         ingredients=[SimpleNamespace(display_name="Chicken breast")],
     )
+
+
+def test_catalog_image_generator_uses_cloudflare_images_store(monkeypatch):
+    from src.api import base_dependencies as deps
+    from src.infra.adapters.cloudflare_images_store import CloudflareImagesStore
+
+    monkeypatch.setattr(deps.settings, "CLOUDFLARE_ACCOUNT_ID", "account-1")
+    monkeypatch.setattr(deps.settings, "CLOUDFLARE_API_TOKEN", "token-1")
+    monkeypatch.setattr(deps.settings, "CLOUDFLARE_IMAGES_API_TOKEN", "")
+    monkeypatch.setattr(deps.settings, "CLOUDFLARE_IMAGES_VARIANT", "public")
+    monkeypatch.setattr(deps.settings, "CLOUDFLARE_WORKERS_AI_IMAGE_MODEL", "@cf/test")
+    monkeypatch.setattr(deps.settings, "CLOUDFLARE_WORKERS_AI_TIMEOUT_SECONDS", 30)
+
+    generator = deps.get_catalog_image_generator()
+
+    assert isinstance(generator._image_store, CloudflareImagesStore)
+    assert generator._image_store._account_id == "account-1"
+    assert generator._image_store._api_token == "token-1"

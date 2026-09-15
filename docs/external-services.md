@@ -63,7 +63,8 @@ durable.
 |---------|-------------|
 | Settings / env | `src/infra/config/settings.py` |
 | Firebase Auth + FCM | `src/infra/services/firebase_service.py`, `firebase_auth_service.py`, `src/infra/services/push/` |
-| Cloudinary images | `src/infra/adapters/cloudinary_image_store.py` |
+| Cloudinary images | `src/infra/adapters/cloudinary_image_store.py` (user meal uploads) |
+| Cloudflare Images | `src/infra/adapters/cloudflare_images_store.py` (catalog meal art) |
 | AI routing / circuit breaker | `src/infra/services/ai/` (`ai_model_manager.py`, providers, adapters) |
 | Vision analysis | `src/infra/adapters/vision_ai_service.py` |
 | OpenAI prompt-cache policy | `src/infra/services/ai/openai_prompt_cache_policy.py` |

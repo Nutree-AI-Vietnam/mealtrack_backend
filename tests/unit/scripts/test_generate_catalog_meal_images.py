@@ -18,6 +18,13 @@ _SPEC.loader.exec_module(_MODULE)
 build_catalog_meal_image_prompt = _MODULE.build_catalog_meal_image_prompt
 
 
+def test_error_code_maps_cloudflare_images_upload_failure():
+    assert (
+        _MODULE._error_code(RuntimeError("Cloudflare Images upload failed: HTTP 401"))
+        == "cloudflare_images_upload_failed"
+    )
+
+
 def test_build_catalog_meal_image_prompt_includes_meal_and_ingredients():
     meal = SimpleNamespace(
         name="Pho Ga",
@@ -99,7 +106,9 @@ async def test_run_closes_read_uow_before_remote_generation(monkeypatch):
     generator.generate_url.side_effect = generate
     monkeypatch.setattr(_MODULE, "_load_target_meals", load_targets)
     monkeypatch.setattr(_MODULE, "_persist_image_url", persist)
-    monkeypatch.setattr(_MODULE, "CloudinaryImageStore", lambda: object())
+    monkeypatch.setattr(
+        _MODULE, "CloudflareImagesStore", SimpleNamespace(from_env=lambda: object())
+    )
     monkeypatch.setattr(
         _MODULE, "CloudflareWorkersImageGenerator", lambda **kwargs: generator
     )
@@ -125,7 +134,9 @@ async def test_run_generation_failure_does_not_open_persistence_uow(
         "_load_target_meals",
         AsyncMock(return_value=[_meal()]),
     )
-    monkeypatch.setattr(_MODULE, "CloudinaryImageStore", lambda: object())
+    monkeypatch.setattr(
+        _MODULE, "CloudflareImagesStore", SimpleNamespace(from_env=lambda: object())
+    )
     monkeypatch.setattr(
         _MODULE, "CloudflareWorkersImageGenerator", lambda **kwargs: generator
     )
@@ -151,7 +162,9 @@ async def test_run_counts_lost_conditional_update_as_skipped(monkeypatch):
         "_load_target_meals",
         AsyncMock(return_value=[_meal()]),
     )
-    monkeypatch.setattr(_MODULE, "CloudinaryImageStore", lambda: object())
+    monkeypatch.setattr(
+        _MODULE, "CloudflareImagesStore", SimpleNamespace(from_env=lambda: object())
+    )
     monkeypatch.setattr(
         _MODULE, "CloudflareWorkersImageGenerator", lambda **kwargs: generator
     )
@@ -233,7 +246,9 @@ async def test_run_persistence_failure_exits_fresh_uow_and_counts_failure(monkey
         "_load_target_meals",
         AsyncMock(return_value=[_meal()]),
     )
-    monkeypatch.setattr(_MODULE, "CloudinaryImageStore", lambda: object())
+    monkeypatch.setattr(
+        _MODULE, "CloudflareImagesStore", SimpleNamespace(from_env=lambda: object())
+    )
     monkeypatch.setattr(
         _MODULE, "CloudflareWorkersImageGenerator", lambda **kwargs: generator
     )
