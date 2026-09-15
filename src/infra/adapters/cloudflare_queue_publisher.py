@@ -64,7 +64,7 @@ class CloudflareQueuePublisher:
         account_id: str,
         queue_id: str,
         api_token: str,
-        timeout_seconds: float = 10.0,
+        timeout_seconds: float = 3.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._account_id = account_id
