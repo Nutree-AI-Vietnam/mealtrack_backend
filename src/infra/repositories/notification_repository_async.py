@@ -40,6 +40,9 @@ class AsyncNotificationRepository:
         if existing:
             existing.meal_reminders_enabled = preferences.meal_reminders_enabled
             existing.daily_summary_enabled = preferences.daily_summary_enabled
+            existing.hydration_reminders_enabled = (
+                preferences.hydration_reminders_enabled
+            )
             existing.breakfast_time_minutes = preferences.breakfast_time_minutes
             existing.lunch_time_minutes = preferences.lunch_time_minutes
             existing.dinner_time_minutes = preferences.dinner_time_minutes
@@ -54,6 +57,7 @@ class AsyncNotificationRepository:
                 user_id=preferences.user_id,
                 meal_reminders_enabled=preferences.meal_reminders_enabled,
                 daily_summary_enabled=preferences.daily_summary_enabled,
+                hydration_reminders_enabled=preferences.hydration_reminders_enabled,
                 breakfast_time_minutes=preferences.breakfast_time_minutes,
                 lunch_time_minutes=preferences.lunch_time_minutes,
                 dinner_time_minutes=preferences.dinner_time_minutes,
