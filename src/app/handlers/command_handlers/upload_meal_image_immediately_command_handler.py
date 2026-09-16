@@ -33,9 +33,6 @@ from src.domain.ports.integration_event_publisher_port import (
 )
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.meal_analysis.fast_path_policy import MealAnalyzeFastPathPolicy
-from src.domain.services.meal_analysis.meal_translation_service import (
-    MealTranslationService,
-)
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
 )
@@ -64,7 +61,7 @@ class UploadMealImageImmediatelyHandler(
         image_store: ImageStorePort = None,
         vision_service: VisionAIServicePort = None,
         gpt_parser: GPTResponseParser = None,
-        meal_translation_service: MealTranslationService | None = None,
+        meal_translation_service: Any | None = None,
         fast_path_policy: MealAnalyzeFastPathPolicy | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",

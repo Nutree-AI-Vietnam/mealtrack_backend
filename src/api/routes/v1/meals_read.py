@@ -10,14 +10,9 @@ from src.api.base_dependencies import (
     get_async_food_reference_repository,
     get_cache_service,
     get_image_store,
-    get_meal_translation_service,
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.api.mappers.meal_locale_ensure import (
-    ensure_requested_meal_translation,
-    without_requested_meal_translation,
-)
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
 from src.api.routes.v1.meals_route_helpers import (
@@ -43,10 +38,6 @@ from src.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-_without_requested_meal_translation = without_requested_meal_translation
-_ensure_requested_meal_translation = ensure_requested_meal_translation
 
 
 async def _source_nutrition_by_food_reference(meal, food_reference_repository):
@@ -145,7 +136,6 @@ async def get_meal(
     image_store=Depends(get_image_store),
     cache_service: CachePort | None = Depends(get_cache_service),
     food_reference_repository=Depends(get_async_food_reference_repository),
-    meal_translation_service=Depends(get_meal_translation_service),
 ):
     """Get detailed information about a specific meal.
 
@@ -160,13 +150,6 @@ async def get_meal(
         image_url = meal.image.url or image_store.get_url(meal.image.image_id)
 
     language = get_request_language(request)
-    meal = await ensure_requested_meal_translation(
-        meal=meal,
-        language=language,
-        query=query,
-        event_bus=event_bus,
-        meal_translation_service=meal_translation_service,
-    )
     insight_service = MealValueInsightService()
     value_insights = await insight_service.get_cached_for_meal(
         meal_id=meal.meal_id,

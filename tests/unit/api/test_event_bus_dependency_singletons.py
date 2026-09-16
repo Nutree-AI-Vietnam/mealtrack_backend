@@ -120,7 +120,6 @@ def test_get_configured_event_bus_is_singleton(monkeypatch):
     monkeypatch.setattr(deps, "get_fat_secret_service_instance", lambda: object())
     monkeypatch.setattr(deps, "get_cache_service", lambda: _CacheStub())
     monkeypatch.setattr(deps, "get_suggestion_orchestration_service", lambda: object())
-    monkeypatch.setattr(deps, "get_meal_translation_service", lambda: object())
 
     class _MealGen:
         pass
@@ -236,7 +235,6 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     monkeypatch.setattr(deps, "get_fat_secret_service_instance", lambda: object())
     monkeypatch.setattr(deps, "get_cache_service", lambda: _CacheStub())
     monkeypatch.setattr(deps, "get_suggestion_orchestration_service", lambda: object())
-    monkeypatch.setattr(deps, "get_meal_translation_service", lambda: object())
     monkeypatch.setattr(deps, "get_text_translation_service", lambda: object())
 
     class _Settings:
@@ -373,7 +371,6 @@ async def test_configured_event_bus_can_send_movement_catalog_query(monkeypatch)
     monkeypatch.setattr(deps, "get_fat_secret_service_instance", lambda: object())
     monkeypatch.setattr(deps, "get_cache_service", lambda: _CacheStub())
     monkeypatch.setattr(deps, "get_suggestion_orchestration_service", lambda: object())
-    monkeypatch.setattr(deps, "get_meal_translation_service", lambda: object())
 
     class _MealGen:
         pass

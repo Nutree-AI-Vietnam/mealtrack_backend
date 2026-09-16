@@ -22,7 +22,7 @@ from src.app.events.meal.meal_events import (
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
-from src.domain.model.meal import FoodItemTranslation, MealStatus
+from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition import Macros, NutritionOverride
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -117,9 +117,6 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     food_item_changes,
                     food_reference_repository=getattr(uow, "food_references", None),
                 )
-                self._realign_translations_after_food_item_changes(
-                    meal, updated_food_items
-                )
 
                 # 3. Recalculate nutrition from current ingredients.
                 updated_nutrition = self._calculate_total_nutrition(updated_food_items)
@@ -186,7 +183,6 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
 
                 # 5. Persist changes
                 saved_meal = await uow.meals.save(updated_meal)
-                await self._save_realigned_translations(uow, updated_meal.translations)
                 changes_summary = self._generate_changes_summary(food_item_changes)
                 if reservation:
                     await uow.meal_write_operations.complete(
@@ -316,9 +312,6 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     prepared_changes,
                     food_reference_repository=getattr(uow, "food_references", None),
                 )
-                self._realign_translations_after_food_item_changes(
-                    meal, updated_food_items
-                )
                 updated_nutrition = self._calculate_total_nutrition(updated_food_items)
                 existing_override = (
                     meal.nutrition.nutrition_override if meal.nutrition else None
@@ -375,7 +368,6 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     ),
                 )
                 saved_meal = await uow.meals.save(updated_meal)
-                await self._save_realigned_translations(uow, updated_meal.translations)
                 changes_summary = self._generate_changes_summary(prepared_changes)
                 replay_response = {
                     "success": True,
@@ -703,72 +695,6 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                 logger.warning(f"Unknown action: {change.action}")
 
         return list(food_items_dict.values())
-
-    def _realign_translations_after_food_item_changes(self, meal, updated_food_items):
-        """Keep cached translations aligned to the edited food item order."""
-        if not meal.translations or not meal.nutrition or not meal.nutrition.food_items:
-            return
-
-        previous_food_items = meal.nutrition.food_items
-        for translation in meal.translations.values():
-            translated_names_by_id = self._translated_names_by_id(
-                translation, previous_food_items
-            )
-            if not translated_names_by_id:
-                continue
-
-            realigned_ingredients = []
-            realigned_food_items = []
-            missing_translation = False
-            for item in updated_food_items:
-                translated_name = translated_names_by_id.get(str(item.id))
-                if not translated_name:
-                    missing_translation = True
-                    break
-                realigned_ingredients.append(translated_name)
-                realigned_food_items.append(
-                    FoodItemTranslation(
-                        food_item_id=str(item.id),
-                        name=translated_name,
-                    )
-                )
-            if missing_translation:
-                continue
-
-            translation.meal_ingredients = realigned_ingredients
-            translation.food_items = realigned_food_items
-
-    def _translated_names_by_id(self, translation, previous_food_items):
-        translated_names_by_id = {
-            str(item.food_item_id): item.name
-            for item in translation.food_items
-            if item.name
-        }
-
-        if translation.meal_ingredients and len(translation.meal_ingredients) == len(
-            previous_food_items
-        ):
-            translated_names_by_id.update(
-                {
-                    str(item.id): translation.meal_ingredients[index]
-                    for index, item in enumerate(previous_food_items)
-                    if str(item.id) not in translated_names_by_id
-                    and translation.meal_ingredients[index]
-                }
-            )
-
-        return translated_names_by_id
-
-    async def _save_realigned_translations(self, uow, translations):
-        if not translations:
-            return
-
-        translation_repo = getattr(uow, "meal_translations", None)
-        if translation_repo is None:
-            return
-
-        for translation in translations.values():
-            await translation_repo.save(translation)
 
     def _calculate_total_nutrition(self, food_items):
         """Calculate total nutrition from food items using nutrition service."""

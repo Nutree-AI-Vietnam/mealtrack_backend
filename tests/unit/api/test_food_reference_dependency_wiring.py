@@ -69,42 +69,6 @@ def test_legacy_food_reference_getter_returns_async_adapter(monkeypatch):
     assert inspect.iscoroutinefunction(repo.find_batch_by_normalized_names)
 
 
-def test_meal_translation_singleton_uses_async_repository_adapter(monkeypatch):
-    import src.api.base_dependencies as deps
-
-    class _TextTranslationService:
-        pass
-
-    class _MealTranslationService:
-        def __init__(self, translation_repo, text_translation_service):
-            self.translation_repo = translation_repo
-            self.text_translation_service = text_translation_service
-
-    class _AsyncMealTranslationRepository:
-        async def get_by_meal_and_language(self, meal_id, language):
-            return None
-
-        async def save(self, translation):
-            return translation
-
-    deps._meal_translation_service = None
-    monkeypatch.setattr(
-        deps, "_async_meal_translation_repository", _AsyncMealTranslationRepository()
-    )
-    monkeypatch.setattr(deps, "get_text_translation_service", _TextTranslationService)
-
-    import src.domain.services.meal_analysis.meal_translation_service as service_mod
-
-    monkeypatch.setattr(service_mod, "MealTranslationService", _MealTranslationService)
-
-    service = deps.get_meal_translation_service()
-
-    assert service.translation_repo is deps._async_meal_translation_repository
-    assert inspect.iscoroutinefunction(
-        service.translation_repo.get_by_meal_and_language
-    )
-
-
 def test_text_translation_singleton_uses_openai_adapter(monkeypatch):
     import src.api.base_dependencies as deps
     from src.domain.services.translation.text_translation_service import (

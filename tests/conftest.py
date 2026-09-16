@@ -26,12 +26,8 @@ from src.infra.database.base import Base
 
 # Import all models to ensure they're registered with Base metadata
 from src.infra.database.models.enums import MealStatusEnum
-from src.infra.database.models.meal.food_item_translation_model import (
-    FoodItemTranslationORM,
-)
 from src.infra.database.models.meal.meal import MealORM
 from src.infra.database.models.meal.meal_image import MealImageORM
-from src.infra.database.models.meal.meal_translation_model import MealTranslationORM
 from src.infra.database.models.nutrition.food_item import FoodItemORM
 from src.infra.database.models.nutrition.nutrition import NutritionORM
 from src.infra.database.models.user.profile import UserProfile
@@ -75,7 +71,6 @@ TEST_MEAL_PROJECTION_OPTS: dict = {
         joinedload(MealORM.image),
         selectinload(MealORM.nutrition).selectinload(NutritionORM.food_items),
         selectinload(MealORM.instruction_steps),
-        joinedload(MealORM.translations),
     ),
 }
 
@@ -192,25 +187,6 @@ class TestMealRepository:
                 .values(is_deleted=True, nutrition_id=None)
             )
 
-        meal_translation_ids = [
-            mt.id
-            for mt in self.db.query(MealTranslationORM.id)
-            .filter(MealTranslationORM.meal_id == meal_id)
-            .all()
-        ]
-        self.db.execute(
-            update(MealTranslationORM)
-            .where(MealTranslationORM.meal_id == meal_id)
-            .values(is_deleted=True, meal_id=None)
-        )
-        if meal_translation_ids:
-            self.db.execute(
-                update(FoodItemTranslationORM)
-                .where(
-                    FoodItemTranslationORM.meal_translation_id.in_(meal_translation_ids)
-                )
-                .values(is_deleted=True)
-            )
         self.db.execute(
             NutritionORM.__table__.delete().where(NutritionORM.meal_id == meal_id)
         )

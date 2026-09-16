@@ -33,15 +33,11 @@ from .food_reference_nutrient import FoodReferenceNutrientModel
 from .food_reference_serving_size import FoodReferenceServingSizeModel
 from .hydration_entry import HydrationEntryORM
 from .meal.favorite_meal import FavoriteMealORM
-from .meal.food_item_translation_model import FoodItemTranslationORM
 
 # Meal models
 from .meal.meal import MealORM
 from .meal.meal_image import MealImageORM
 from .meal.meal_instruction_step import MealInstructionStepORM
-
-# Translation models (meals + food items)
-from .meal.meal_translation_model import MealTranslationORM
 from .meal_image_cache import MealImageCacheModel
 from .meal_recommendation import (
     MealCatalogIngredientORM,
@@ -143,8 +139,6 @@ __all__ = [
     "MealInstructionStepORM",
     "FavoriteMealORM",
     "MealWriteOperationORM",
-    "MealTranslationORM",
-    "FoodItemTranslationORM",
     # Test models
     # Notification models
     "NotificationPreferencesORM",

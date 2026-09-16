@@ -82,12 +82,6 @@ class MealORM(Base, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="raise",
     )
-    translations = relationship(
-        "MealTranslationORM",
-        back_populates="meal",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-    )
     instruction_steps = relationship(
         "MealInstructionStepORM",
         back_populates="meal",

@@ -20,7 +20,6 @@ from src.app.commands.meal import (
     UnfavoriteMealCommand,
     UploadMealImageImmediatelyCommand,
 )
-
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.commands.meal_catalog import LogCatalogMealCommand
@@ -97,7 +96,6 @@ from src.app.handlers.command_handlers import (
     SyncUserCommandHandler,
     UnfavoriteMealCommandHandler,
     UpdateCustomMacrosCommandHandler,
-
     UpdateLanguageCommandHandler,
     UpdateMovementEntryCommandHandler,
     UpdateNotificationPreferencesCommandHandler,
@@ -152,7 +150,6 @@ from src.app.handlers.query_handlers import (
     GetProviderFoodDetailsQueryHandler,
     GetRecentMealsQueryHandler,
     GetSavedSuggestionsQueryHandler,
-
     GetStreakQueryHandler,
     GetUserByFirebaseUidQueryHandler,
     GetUserMetricsQueryHandler,
@@ -208,7 +205,6 @@ from src.app.queries.meal import (
     GetRecentMealsQuery,
     GetStreakQuery,
 )
-
 from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_recommendation import (
     GetMealRecommendationPlanQuery,
@@ -439,7 +435,6 @@ def get_configured_event_bus() -> EventBus:
         get_gpt_parser,
         get_image_store,
         get_meal_analyze_graph_settings,
-        get_meal_translation_service,
         get_parse_text_settings,
         get_suggestion_orchestration_service,
         get_text_translation_service,
@@ -499,7 +494,6 @@ def get_configured_event_bus() -> EventBus:
 
     # Register meal command handlers
     # Handlers receive AsyncUnitOfWork (concrete) and event_bus at the composition root
-    meal_translation_service = get_meal_translation_service()
     text_translation_service = get_text_translation_service()
     from src.infra.adapters.meal_generation_service import MealGenerationService
 
@@ -513,7 +507,6 @@ def get_configured_event_bus() -> EventBus:
             image_store=image_store,
             vision_service=vision_service,
             gpt_parser=gpt_parser,
-            meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
             meal_analyze_workflow=meal_analyze_workflow,
@@ -536,7 +529,6 @@ def get_configured_event_bus() -> EventBus:
             event_bus=event_bus,
             vision_service=vision_service,
             gpt_parser=gpt_parser,
-            meal_translation_service=meal_translation_service,
             text_translation_service=text_translation_service,
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
@@ -640,7 +632,6 @@ def get_configured_event_bus() -> EventBus:
             provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
         ),
     )
-
 
     # Register meal text parsing command handler
     event_bus.register_handler(
@@ -805,7 +796,6 @@ def get_configured_event_bus() -> EventBus:
         LogRecommendedMealCommand,
         LogRecommendedMealCommandHandler(
             uow_factory=AsyncUnitOfWork,
-            meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
             event_bus=event_bus,
             environment=settings.ENVIRONMENT,
@@ -821,7 +811,6 @@ def get_configured_event_bus() -> EventBus:
         LogCatalogMealCommandHandler(
             uow_factory=AsyncUnitOfWork,
             browse_service=get_catalog_meal_browse_service(),
-            meal_translation_service=meal_translation_service,
             event_publisher=queue_publisher,
             event_bus=event_bus,
             environment=settings.ENVIRONMENT,

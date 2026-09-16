@@ -30,9 +30,6 @@ from src.domain.model.meal.meal_response_localization import (
     MealResponseLocalization,
     parse_meal_response_localization,
 )
-from src.domain.model.meal.meal_translation_domain_models import (
-    CURRENT_MEAL_TRANSLATION_VERSION,
-)
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
@@ -141,9 +138,7 @@ class MealMapper:
         """
         from src.api.schemas.response.meal_responses import (
             MacrosResponse,
-            MealTranslationResponse,
             NutritionOverrideResponse,
-            TranslatedFoodItemResponse,
         )
 
         if not image_url:
@@ -344,77 +339,8 @@ class MealMapper:
                     continue
                 food_item.name = localized_name
                 food_item.display_name = localized_name
-        elif (
-            not persisted_image_names
-            and requested_language
-            and requested_language != "en"
-            and meal.translations
-        ):
-            tr = meal.translations.get(requested_language)
-            if tr and tr.translation_version == CURRENT_MEAL_TRANSLATION_VERSION:
-                translation_language = requested_language
-                # Apply each translated field independently if it exists
-                # (lenient check - scanned meals may not have instructions)
-                if tr.dish_name and not keep_stored_display_name(
-                    stored=dish_name,
-                    translated=tr.dish_name,
-                    language=requested_language,
-                ):
-                    dish_name = tr.dish_name
-                if tr.meal_instruction:
-                    instructions = tr.meal_instruction
-                translated_names_by_id = {
-                    str(item.food_item_id): item.name
-                    for item in tr.food_items
-                    if item.name
-                }
-                legacy_names_by_id = {}
-                if tr.meal_ingredients and len(tr.meal_ingredients) == len(food_items):
-                    legacy_names_by_id = {
-                        str(fi.id): tr.meal_ingredients[index]
-                        for index, fi in enumerate(food_items)
-                        if tr.meal_ingredients[index]
-                    }
-                if translated_names_by_id:
-                    for fi in food_items:
-                        if fi.food_reference_id in tracked_food_reference_ids:
-                            continue
-                        translated_name = translated_names_by_id.get(
-                            str(fi.id)
-                        ) or legacy_names_by_id.get(str(fi.id))
-                        _apply_translated_food_name(
-                            fi, translated_name, requested_language
-                        )
-                elif legacy_names_by_id:
-                    for i, fi in enumerate(food_items):
-                        if fi.food_reference_id in tracked_food_reference_ids:
-                            continue
-                        _apply_translated_food_name(
-                            fi, tr.meal_ingredients[i], requested_language
-                        )
 
         value_insights_response = MealMapper._value_insights_response(value_insights)
-
-        # --- Build translations dict for the response ---
-        translations_response = None
-        if meal.translations:
-            translations_response = {}
-            for lang, tr in meal.translations.items():
-                translations_response[lang] = MealTranslationResponse(
-                    language=tr.language,
-                    dish_name=tr.dish_name,
-                    meal_instruction=tr.meal_instruction,
-                    meal_ingredients=tr.meal_ingredients,
-                    food_items=[
-                        TranslatedFoodItemResponse(
-                            id=fi.food_item_id,
-                            name=fi.name,
-                            description=fi.description,
-                        )
-                        for fi in tr.food_items
-                    ],
-                    translated_at=tr.translated_at,
-                )
 
         return DetailedMealResponse(
             meal_id=meal.meal_id,
@@ -444,7 +370,7 @@ class MealMapper:
                 if meal.nutrition and meal.nutrition.nutrition_override
                 else None
             ),
-            translations=translations_response,
+            translations=None,
             food_label_metadata=MealMapper._food_label_metadata(meal),
             value_insights=value_insights_response,
             translation_language=translation_language,

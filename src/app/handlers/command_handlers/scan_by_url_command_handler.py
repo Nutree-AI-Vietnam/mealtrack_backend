@@ -27,9 +27,6 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
-from src.domain.services.meal_analysis.meal_translation_service import (
-    MealTranslationService,
-)
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
 )
@@ -61,7 +58,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         event_bus: Any = None,
         vision_service: VisionAIServicePort = None,
         gpt_parser: GPTResponseParser = None,
-        meal_translation_service: MealTranslationService | None = None,
+        meal_translation_service: Any | None = None,
         text_translation_service: Any | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",

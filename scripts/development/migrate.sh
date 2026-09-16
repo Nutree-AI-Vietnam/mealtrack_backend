@@ -28,4 +28,12 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-python migrations/cli.py "$@"
+if [ -f "$PROJECT_ROOT/.venv/bin/python" ]; then
+    PYTHON_CMD="$PROJECT_ROOT/.venv/bin/python"
+elif command -v python &> /dev/null; then
+    PYTHON_CMD="python"
+else
+    PYTHON_CMD="python3"
+fi
+
+"$PYTHON_CMD" migrations/cli.py "$@"

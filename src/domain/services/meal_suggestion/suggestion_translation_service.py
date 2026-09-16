@@ -8,15 +8,19 @@ from src.domain.model.meal_suggestion import MealSuggestion
 from src.domain.model.meal_suggestion.suggestion_translation_result import (
     SuggestionTranslationResult,
 )
-from src.domain.model.translation_result import TranslationOutcome
-from src.domain.services.meal_analysis.meal_translation_service import (
-    _translate_texts,
-)
+from src.domain.model.translation_result import TranslationOutcome, TranslationResult
 from src.domain.services.translation.text_translation_service import (
     TextTranslationService,
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _translate_texts(
+    service: TextTranslationService, texts: list[str], target_language: str
+) -> TranslationResult:
+    """Translate an ordered batch from the canonical English source."""
+    return await service.translate_texts(texts, "en", target_language)
 
 
 class SuggestionTranslationService:

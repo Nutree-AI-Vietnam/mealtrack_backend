@@ -120,8 +120,8 @@ def test_meals_analyze_ai_unavailable_returns_503(client: TestClient):
                 last_error="503 UNAVAILABLE",
             )
 
-    client.app.dependency_overrides[get_configured_event_bus] = (
-        lambda: _UnavailableBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _UnavailableBus()
     )
 
     r = client.post(
@@ -141,8 +141,8 @@ def test_meals_analyze_localization_error_returns_controlled_422(client: TestCli
         async def send(self, msg):
             raise MealResponseLocalizationError("localized food item is missing")
 
-    client.app.dependency_overrides[get_configured_event_bus] = (
-        lambda: _LocalizationErrorBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _LocalizationErrorBus()
     )
 
     r = client.post(
@@ -200,8 +200,8 @@ def test_scan_by_url_localization_error_returns_controlled_422(client: TestClien
         async def send(self, msg):
             raise MealResponseLocalizationError("localized food item is missing")
 
-    client.app.dependency_overrides[get_configured_event_bus] = (
-        lambda: _LocalizationErrorBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _LocalizationErrorBus()
     )
 
     r = client.post(
@@ -377,7 +377,9 @@ def test_meals_manual_create_happy_path(client: TestClient):
                 ),
             )
 
-    client.app.dependency_overrides[get_configured_event_bus] = lambda: _ManualCreateBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _ManualCreateBus()
+    )
 
     payload = {
         "dish_name": "Chicken Rice",
@@ -581,7 +583,7 @@ def test_meals_edit_ingredients_v2_meal_detail_keeps_requested_locale(
 
     from src.api.dependencies.event_bus import get_configured_event_bus
     from src.app.commands.meal import EditMealCommand
-    from src.domain.model.meal import FoodItemTranslation, Meal, MealStatus, MealTranslation
+    from src.domain.model.meal import Meal, MealStatus
     from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 
     meal_id = str(uuid4())
@@ -593,12 +595,14 @@ def test_meals_edit_ingredients_v2_meal_detail_keeps_requested_locale(
         created_at=datetime(2026, 8, 22, 12, 0),
         ready_at=datetime(2026, 8, 22, 12, 0),
         image=None,
-        dish_name="Broken rice with grilled pork chop",
+        dish_name="Cơm tấm sườn, bì, chả",
         source="scanner",
         raw_gpt_json=json.dumps(
             {
                 "dish_name": "Broken rice with grilled pork chop",
-                "foods": [{"name": "Broken Rice"}],
+                "localized_language": "vi",
+                "localized_dish_name": "Cơm tấm sườn, bì, chả",
+                "foods": [{"name": "Broken Rice", "localized_name": "Cơm tấm"}],
             }
         ),
         nutrition=Nutrition(
@@ -606,24 +610,13 @@ def test_meals_edit_ingredients_v2_meal_detail_keeps_requested_locale(
             food_items=[
                 FoodItem(
                     id=food_id,
-                    name="Broken Rice",
+                    name="Cơm tấm",
                     quantity=200,
                     unit="g",
                     macros=Macros(protein=8, carbs=45, fat=1),
                 )
             ],
         ),
-        translations={
-            "vi": MealTranslation(
-                meal_id=meal_id,
-                language="vi",
-                dish_name="Cơm tấm sườn, bì, chả",
-                meal_ingredients=["Cơm tấm"],
-                food_items=[
-                    FoodItemTranslation(food_item_id=food_id, name="Cơm tấm"),
-                ],
-            )
-        },
     )
 
     sent = []
@@ -798,7 +791,9 @@ def test_meals_value_insights_unavailable_without_cache_service(client: TestClie
         async def send(self, msg):
             return meal
 
-    client.app.dependency_overrides[get_configured_event_bus] = lambda: _ValueInsightsBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _ValueInsightsBus()
+    )
 
     r = client.get(f"/v1/meals/{meal_id}/value-insights")
 
