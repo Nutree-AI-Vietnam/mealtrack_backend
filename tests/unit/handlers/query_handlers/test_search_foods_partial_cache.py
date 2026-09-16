@@ -483,6 +483,58 @@ async def test_detailed_fatsecret_hit_is_adopted_and_mapped_with_food_reference_
     assert locale == "en"
     assert locale_name == "Grilled Chicken Breast"
     assert result["results"][0]["food_reference_id"] == 777
+    assert uow_factory.created == 1
+
+
+@pytest.mark.asyncio
+async def test_two_adoptable_hits_share_one_uow():
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[
+            {
+                "description": "Chicken",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "1",
+                "food_id": "1",
+                "protein_100g": 31.0,
+                "carbs_100g": 0.0,
+                "fat_100g": 3.6,
+                "metric_serving_amount": 100.0,
+            },
+            {
+                "description": "Rice",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "2",
+                "food_id": "2",
+                "protein_100g": 2.7,
+                "carbs_100g": 28.0,
+                "fat_100g": 0.3,
+                "metric_serving_amount": 100.0,
+            },
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    repo = _FakeFoodReferenceRepo(adopted={"id": 501})
+    uow_factory = _FakeUowFactory(repo)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    await handler.handle(SearchFoodsQuery(query="dinner", language="en", limit=5))
+
+    assert len(repo.calls) == 2
+    assert uow_factory.created == 1
 
 
 @pytest.mark.asyncio
