@@ -71,7 +71,10 @@ async def _truncate_test_tables(session: AsyncSession) -> None:
               meal_catalog_ingredients,
               meal_catalog,
               food_reference,
+              food_item,
+              nutrition,
               meal,
+              mealimage,
               users
             RESTART IDENTITY CASCADE
             """

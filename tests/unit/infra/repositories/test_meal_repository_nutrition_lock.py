@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 
 from src.domain.model.meal import MealStatus
 from src.domain.model.nutrition import FoodItem, Nutrition
@@ -11,6 +13,24 @@ from src.domain.model.nutrition.macros import Macros
 from src.infra.database.models.meal.meal import MealORM
 from src.infra.database.models.nutrition.nutrition import NutritionORM
 from src.infra.repositories.meal_repository_async import AsyncMealRepository
+
+
+def _pg_sql(statement) -> str:
+    return str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+
+def _assert_postgres_for_update_is_legal(sql: str) -> None:
+    """Postgres rejects FOR UPDATE on the nullable side of an outer join."""
+    upper = sql.upper()
+    if "FOR UPDATE" in upper and "LEFT OUTER JOIN" in upper:
+        raise AssertionError(
+            f"FOR UPDATE on a LEFT OUTER JOIN is illegal on Postgres (PYTHON-HS): {sql}"
+        )
 
 
 def _macros() -> Macros:
@@ -81,8 +101,10 @@ async def test_lock_meal_row_uses_single_table_for_update():
 
     assert locked == "meal-1"
     stmt = repo.session.execute.await_args.args[0]
-    assert stmt._for_update_arg is not None
-    assert list(stmt.columns_clause_froms)[0].name == MealORM.__table__.name
+    sql = _pg_sql(stmt)
+    _assert_postgres_for_update_is_legal(sql)
+    assert "FOR UPDATE" in sql.upper()
+    assert "JOIN" not in sql.upper()
 
 
 @pytest.mark.asyncio
@@ -93,7 +115,7 @@ async def test_save_locks_meal_row_without_for_update_on_joined_image_load():
     load_result = MagicMock()
     existing = MagicMock()
     existing.nutrition = None
-    load_result.scalars.return_value.first.return_value = existing
+    load_result.unique.return_value.scalars.return_value.first.return_value = existing
     repo.session.execute = AsyncMock(side_effect=[lock_result, load_result])
     repo.session.flush = AsyncMock()
     repo._reload_meal_domain = AsyncMock(return_value=MagicMock())
@@ -110,9 +132,49 @@ async def test_save_locks_meal_row_without_for_update_on_joined_image_load():
 
     lock_stmt = repo.session.execute.await_args_list[0].args[0]
     load_stmt = repo.session.execute.await_args_list[1].args[0]
-    assert lock_stmt._for_update_arg is not None
-    assert list(lock_stmt.columns_clause_froms)[0].name == MealORM.__table__.name
-    assert load_stmt._for_update_arg is None
+    lock_sql = _pg_sql(lock_stmt)
+    load_sql = _pg_sql(load_stmt)
+    _assert_postgres_for_update_is_legal(lock_sql)
+    _assert_postgres_for_update_is_legal(load_sql)
+    assert "FOR UPDATE" in lock_sql.upper()
+    assert "JOIN" not in lock_sql.upper()
+    assert "FOR UPDATE" not in load_sql.upper()
+
+
+def test_select_meal_orm_for_update_emits_illegal_outer_join():
+    """Mapper trap: Meal.image is lazy=joined. save() must not emit this SQL."""
+    sql = _pg_sql(select(MealORM).where(MealORM.meal_id == "x").with_for_update())
+    with pytest.raises(AssertionError, match="PYTHON-HS"):
+        _assert_postgres_for_update_is_legal(sql)
+
+
+def test_nutrition_row_lock_sql_has_no_outer_join():
+    sql = _pg_sql(select(NutritionORM).where(NutritionORM.id == 1).with_for_update())
+    _assert_postgres_for_update_is_legal(sql)
+    assert "FOR UPDATE" in sql.upper()
+    assert "LEFT OUTER JOIN" not in sql.upper()
+
+
+@pytest.mark.asyncio
+async def test_save_inserts_when_lock_misses_without_joined_for_update():
+    repo = AsyncMealRepository(session=MagicMock())
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = None
+    repo.session.execute = AsyncMock(return_value=lock_result)
+    inserted = MagicMock()
+    repo.insert = AsyncMock(return_value=inserted)
+
+    meal = MagicMock()
+    meal.meal_id = "meal-new"
+
+    result = await repo.save(meal)
+
+    assert result is inserted
+    repo.insert.assert_awaited_once_with(meal)
+    assert repo.session.execute.await_count == 1
+    _assert_postgres_for_update_is_legal(
+        _pg_sql(repo.session.execute.await_args.args[0])
+    )
 
 
 @pytest.mark.asyncio

@@ -117,7 +117,8 @@ class AsyncMealRepository(MealRepositoryPort):
             )
             .where(MealORM.meal_id == meal.meal_id)
         )
-        existing_meal = result.scalars().first()
+        # lazy="joined" image needs unique() the same as find_by_id.
+        existing_meal = result.unique().scalars().first()
 
         if existing_meal:
             existing_meal.status = MealStatusMapper.to_db(meal.status)
