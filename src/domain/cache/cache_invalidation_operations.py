@@ -1,4 +1,9 @@
-"""Pure cache invalidation operation builders."""
+"""Cache delete lists used by the local Docker Redis hook.
+
+Hosted Redis deletes are built in nutreeai_async
+`src/domain/cache/cache-invalidation-builders.ts`. These Python builders are
+not the production invalidation path.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,15 @@ from src.domain.cache.cache_keys import CacheKeys
 
 DELETE_KEY = "delete_key"
 DELETE_PATTERN = "delete_pattern"
+
+# Supported languages from AcceptLanguageMiddleware — used to enumerate
+# language-suffixed cache keys deterministically instead of SCAN.
+SUPPORTED_LANGUAGES = ("en", "vi", "es", "fr", "de", "ja", "zh")
+
+
+def _expand_language_pattern(prefix: str) -> list[dict[str, str]]:
+    """Expand a language-suffixed pattern into deterministic key deletes."""
+    return [{"op": DELETE_KEY, "key": f"{prefix}{lang}"} for lang in SUPPORTED_LANGUAGES]
 
 
 def _week_start(value: date) -> date:
@@ -39,10 +53,7 @@ def build_meal_invalidation_operations(
     current_week_start = _week_start(current_date or date.today())
 
     operations: list[dict[str, str]] = [
-        {
-            "op": DELETE_PATTERN,
-            "pattern": f"user:{user_id}:activities:{meal_date.isoformat()}:*",
-        },
+        *_expand_language_pattern(f"user:{user_id}:activities:{meal_date.isoformat()}:"),
         {
             "op": DELETE_KEY,
             "key": CacheKeys.daily_macros(user_id, meal_date)[0],
@@ -105,14 +116,8 @@ def build_hydration_invalidation_operations(
     current_week_start = _week_start(current_date or date.today())
 
     operations: list[dict[str, str]] = [
-        {
-            "op": DELETE_PATTERN,
-            "pattern": f"user:{user_id}:activities:{log_date.isoformat()}:*",
-        },
-        {
-            "op": DELETE_PATTERN,
-            "pattern": f"user:{user_id}:hydration:{log_date.isoformat()}:*",
-        },
+        *_expand_language_pattern(f"user:{user_id}:activities:{log_date.isoformat()}:"),
+        *_expand_language_pattern(f"user:{user_id}:hydration:{log_date.isoformat()}:"),
         {
             "op": DELETE_KEY,
             "key": CacheKeys.daily_macros(user_id, log_date)[0],
@@ -179,10 +184,7 @@ def build_movement_invalidation_operations(
     current_week_start = _week_start(current_date or date.today())
 
     operations: list[dict[str, str]] = [
-        {
-            "op": DELETE_PATTERN,
-            "pattern": f"user:{user_id}:activities:{log_date.isoformat()}:*",
-        },
+        *_expand_language_pattern(f"user:{user_id}:activities:{log_date.isoformat()}:"),
         {
             "op": DELETE_KEY,
             "key": CacheKeys.daily_macros(user_id, log_date)[0],

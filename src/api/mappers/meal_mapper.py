@@ -151,6 +151,13 @@ class MealMapper:
             if persisted_image is not None:
                 image_url = getattr(persisted_image, "url", None)
 
+        parsed_raw_gpt = None
+        if meal.raw_gpt_json:
+            try:
+                parsed_raw_gpt = json.loads(meal.raw_gpt_json)
+            except (TypeError, ValueError):
+                pass
+
         # Map food items from nutrition if available
         food_items = []
         total_calories = 0
@@ -165,6 +172,7 @@ class MealMapper:
             expected_food_count=(
                 len(meal.nutrition.food_items or []) if meal.nutrition else 0
             ),
+            parsed_raw=parsed_raw_gpt,
         )
 
         if meal.nutrition:
@@ -318,6 +326,7 @@ class MealMapper:
                 meal,
                 requested_language,
                 expected_food_count=len(food_items),
+                parsed_raw=parsed_raw_gpt,
             )
         else:
             direct_localization = None
@@ -445,7 +454,7 @@ class MealMapper:
                 else None
             ),
             translations=translations_response,
-            food_label_metadata=MealMapper._food_label_metadata(meal),
+            food_label_metadata=MealMapper._food_label_metadata(meal, parsed_raw=parsed_raw_gpt),
             value_insights=value_insights_response,
             translation_language=translation_language,
             description=getattr(meal, "description", None),
@@ -463,13 +472,19 @@ class MealMapper:
         target_language: str | None,
         *,
         expected_food_count: int,
+        parsed_raw: dict | None = None,
     ) -> MealResponseLocalization | None:
         """Read validated same-call display fields from the stored AI payload."""
         language = normalize_language(target_language)
-        if language == "en" or not meal.raw_gpt_json:
+        if language == "en":
             return None
         try:
-            structured_data = json.loads(meal.raw_gpt_json)
+            if parsed_raw is not None:
+                structured_data = parsed_raw
+            else:
+                if not meal.raw_gpt_json:
+                    return None
+                structured_data = json.loads(meal.raw_gpt_json)
             return parse_meal_response_localization(
                 structured_data,
                 language,
@@ -483,14 +498,18 @@ class MealMapper:
         meal: Meal,
         *,
         expected_food_count: int,
+        parsed_raw: dict | None = None,
     ) -> tuple[str | None, tuple[str, ...]]:
         """Read canonical English names retained in the raw analysis payload."""
-        if not meal.raw_gpt_json:
-            return None, ()
-        try:
-            structured_data = json.loads(meal.raw_gpt_json)
-        except (TypeError, ValueError):
-            return None, ()
+        if parsed_raw is not None:
+            structured_data = parsed_raw
+        else:
+            if not meal.raw_gpt_json:
+                return None, ()
+            try:
+                structured_data = json.loads(meal.raw_gpt_json)
+            except (TypeError, ValueError):
+                return None, ()
         if not isinstance(structured_data, dict):
             return None, ()
 
@@ -699,7 +718,9 @@ class MealMapper:
         )
 
     @staticmethod
-    def _food_label_metadata(meal: Meal) -> FoodLabelMetadataResponse | None:
+    def _food_label_metadata(
+        meal: Meal, parsed_raw: dict | None = None
+    ) -> FoodLabelMetadataResponse | None:
         if meal.source != "food_label":
             return None
         metadata = getattr(meal, "food_label_metadata", None)
@@ -707,6 +728,8 @@ class MealMapper:
             response = MealMapper._food_label_metadata_from_dict(metadata)
             if response is not None:
                 return response
+        if parsed_raw is not None:
+            return MealMapper._food_label_metadata_from_dict(parsed_raw)
         if not meal.raw_gpt_json:
             return None
         try:
