@@ -448,6 +448,11 @@ class AsyncFoodReferenceRepository:
             food_reference_id, labels_by_unit
         )
 
+    async def apply_serving_name_vi_many(
+        self, labels_by_reference: dict[int, dict[str, str]]
+    ) -> None:
+        await self._locale_repository.apply_serving_name_vi_many(labels_by_reference)
+
     async def upsert(self, data: dict[str, Any]) -> None:
         """Insert or update a food reference by barcode without owning commit."""
         source_namespace, source_food_id = _source_identity_from_data(data)

@@ -233,32 +233,72 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         """
         if self.uow_factory is None:
             return
-        for item in items:
-            if not self._is_adoptable_provider_hit(item):
-                continue
-            display_name = str(item.get("description") or item.get("name") or "")
-            english_name = str(item.get("canonical_name") or display_name)
-            try:
-                async with self.uow_factory() as uow:
-                    adopted = await uow.food_references.adopt_provider_food(
-                        item.get("source_namespace") or "fatsecret",
-                        str(item.get("source_food_id") or item.get("food_id")),
-                        english_name,
-                        {
-                            "protein_100g": item.get("protein_100g"),
-                            "carbs_100g": item.get("carbs_100g"),
-                            "fat_100g": item.get("fat_100g"),
-                            "fiber_100g": item.get("fiber_100g") or 0,
-                            "sugar_100g": item.get("sugar_100g") or 0,
-                        },
-                        item.get("allowed_units"),
-                        locale,
-                        display_name,
+        adoptable = [
+            item for item in items if self._is_adoptable_provider_hit(item)
+        ]
+        if not adoptable:
+            return
+        try:
+            async with self.uow_factory() as uow:
+                for item in adoptable:
+                    display_name = str(
+                        item.get("description") or item.get("name") or ""
                     )
-            except Exception:
-                logger.warning("food search adopt failed", exc_info=True)
-                continue
-            item["food_reference_id"] = adopted.get("id")
+                    english_name = str(item.get("canonical_name") or display_name)
+                    try:
+                        adopted = await self._adopt_one_provider_hit(
+                            uow,
+                            item,
+                            english_name=english_name,
+                            locale=locale,
+                            display_name=display_name,
+                        )
+                    except Exception:
+                        logger.warning("food search adopt failed", exc_info=True)
+                        continue
+                    item["food_reference_id"] = adopted.get("id")
+        except Exception:
+            logger.warning("food search adopt failed", exc_info=True)
+
+    async def _adopt_one_provider_hit(
+        self,
+        uow: Any,
+        item: dict[str, Any],
+        *,
+        english_name: str,
+        locale: str,
+        display_name: str,
+    ) -> dict[str, Any]:
+        """Adopt one hit, rolling back only that write if it fails.
+
+        A shared UoW session is left unusable after an unhandled DB error.
+        A savepoint isolates one IntegrityError (or similar) so later hits
+        can still adopt.
+        """
+
+        async def _call() -> dict[str, Any]:
+            return await uow.food_references.adopt_provider_food(
+                item.get("source_namespace") or "fatsecret",
+                str(item.get("source_food_id") or item.get("food_id")),
+                english_name,
+                {
+                    "protein_100g": item.get("protein_100g"),
+                    "carbs_100g": item.get("carbs_100g"),
+                    "fat_100g": item.get("fat_100g"),
+                    "fiber_100g": item.get("fiber_100g") or 0,
+                    "sugar_100g": item.get("sugar_100g") or 0,
+                },
+                item.get("allowed_units"),
+                locale,
+                display_name,
+            )
+
+        session = getattr(uow, "session", None)
+        begin_nested = getattr(session, "begin_nested", None)
+        if begin_nested is None:
+            return await _call()
+        async with begin_nested():
+            return await _call()
 
     @staticmethod
     def _is_adoptable_provider_hit(item: dict[str, Any]) -> bool:
