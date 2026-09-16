@@ -55,7 +55,6 @@ async def test_async_uow_exposes_repos():
             assert hasattr(uow, "saved_suggestions")
             assert hasattr(uow, "food_references")
             assert hasattr(uow, "catalog_recipes")
-            assert hasattr(uow, "meal_translations")
 
 
 @pytest.mark.asyncio
@@ -95,4 +94,3 @@ async def test_async_uow_read_only_commit_raises():
         async with AsyncUnitOfWork(read_only=True) as uow:
             with pytest.raises(RuntimeError, match="Cannot commit a read-only"):
                 await uow.commit()
-

@@ -124,7 +124,6 @@ def test_async_unit_of_work_contract_declares_runtime_repositories():
         "weight_entries",
         "movement_entries",
         "food_references",
-        "meal_translations",
         "chat",
     }
 

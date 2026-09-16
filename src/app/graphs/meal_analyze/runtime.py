@@ -20,9 +20,6 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
-from src.domain.services.meal_analysis.meal_translation_service import (
-    MealTranslationService,
-)
 from src.domain.utils.image_compression import compress_image as default_compress_image
 
 
@@ -60,7 +57,7 @@ class MealAnalyzeRuntime:
     event_publisher: IntegrationEventPublisherPort | None = None
     event_bus: Any | None = None
     environment: str = "development"
-    meal_translation_service: MealTranslationService | None = None
+    meal_translation_service: Any | None = None
     text_translation_service: Any | None = None
     food_reference_validation_service: FoodReferenceValidationService | None = None
     fatsecret_validation_enabled: bool = False

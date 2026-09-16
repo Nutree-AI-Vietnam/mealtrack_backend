@@ -19,15 +19,11 @@ from src.app.services.catalog_meal_log_service import (
     CatalogMealLogService,
     LogCatalogMealResult,
 )
-from src.app.services.meal_translation_persistence import persist_meal_translation
 from src.app.services.remaining_recommendation_recalculator import (
     RemainingRecommendationRecalculator,
 )
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
-)
-from src.domain.services.meal_analysis.meal_translation_service import (
-    MealTranslationService,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,7 +55,7 @@ class LogCatalogMealCommandHandler(
         browse_service=None,
         *,
         log_service: CatalogMealLogService | None = None,
-        meal_translation_service: MealTranslationService | None = None,
+        meal_translation_service: Any | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         event_bus: Any | None = None,
         environment: str = "development",
@@ -68,7 +64,6 @@ class LogCatalogMealCommandHandler(
         self.uow_factory: Any = uow_factory or (lambda: uow)
         self.browse_service = browse_service
         self.log_service = log_service or CatalogMealLogService()
-        self.meal_translation_service = meal_translation_service
         self.event_publisher = event_publisher
         self.event_bus = event_bus
         self.environment = environment
@@ -95,12 +90,6 @@ class LogCatalogMealCommandHandler(
                 event_bus=self.event_bus,
                 source="catalog_meal_log",
             )
-        try:
-            await persist_meal_translation(
-                self.meal_translation_service, result.meal, command.language
-            )
-        except Exception as exc:
-            logger.warning("Failed to persist catalog meal translation: %s", exc)
         if self.recalculator is not None:
             try:
                 await self.recalculator.recalculate(

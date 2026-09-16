@@ -7,12 +7,6 @@ from uuid import uuid4
 
 from src.domain.model.meal.meal import Meal as DomainMeal
 from src.domain.model.meal.meal_image import MealImage as DomainMealImage
-from src.domain.model.meal.meal_translation_domain_models import (
-    FoodItemTranslation as DomainFoodItemTranslation,
-)
-from src.domain.model.meal.meal_translation_domain_models import (
-    MealTranslation as DomainMealTranslation,
-)
 from src.domain.model.nutrition import (
     FoodItem as DomainFoodItem,
 )
@@ -32,13 +26,9 @@ from src.domain.model.nutrition.micros_ops import (
     micros_from_mapping,
 )
 from src.domain.utils.timezone_utils import utc_now
-from src.infra.database.models.meal.food_item_translation_model import (
-    FoodItemTranslationORM,
-)
 from src.infra.database.models.meal.meal import MealORM
 from src.infra.database.models.meal.meal_image import MealImageORM
 from src.infra.database.models.meal.meal_instruction_step import MealInstructionStepORM
-from src.infra.database.models.meal.meal_translation_model import MealTranslationORM
 from src.infra.database.models.nutrition.food_item import FoodItemORM
 from src.infra.database.models.nutrition.nutrition import NutritionORM
 from src.infra.mappers.status_mapper import MealStatusMapper
@@ -146,29 +136,6 @@ def meal_image_orm_to_domain(orm: MealImageORM) -> DomainMealImage:
     )
 
 
-def food_item_translation_orm_to_domain(
-    orm: FoodItemTranslationORM,
-) -> DomainFoodItemTranslation:
-    return DomainFoodItemTranslation(
-        food_item_id=orm.food_item_id,
-        name=orm.name,
-        description=orm.description,
-    )
-
-
-def meal_translation_orm_to_domain(orm: MealTranslationORM) -> DomainMealTranslation:
-    return DomainMealTranslation(
-        meal_id=orm.meal_id,
-        language=orm.language,
-        dish_name=orm.dish_name,
-        food_items=[food_item_translation_orm_to_domain(fi) for fi in orm.food_items],
-        translated_at=orm.translated_at,
-        meal_instruction=orm.meal_instruction,
-        meal_ingredients=orm.meal_ingredients,
-        translation_version=getattr(orm, "translation_version", None),
-    )
-
-
 def _instructions_from_rows(orm: MealORM) -> list | None:
     rows = getattr(orm, "instruction_steps", None)
     if not rows:
@@ -183,12 +150,6 @@ def _instructions_from_rows(orm: MealORM) -> list | None:
 
 
 def meal_orm_to_domain(orm: MealORM) -> DomainMeal:
-    translations_dict: dict[str, DomainMealTranslation] | None = None
-    if orm.translations:
-        translations_dict = {
-            t.language: meal_translation_orm_to_domain(t) for t in orm.translations
-        }
-
     return DomainMeal(
         meal_id=orm.meal_id,
         user_id=orm.user_id,
@@ -206,7 +167,7 @@ def meal_orm_to_domain(orm: MealORM) -> DomainMeal:
         last_edited_at=orm.last_edited_at,
         edit_count=orm.edit_count,
         is_manually_edited=orm.is_manually_edited,
-        translations=translations_dict,
+        translations=None,
         source=orm.source,
         catalog_meal_id=getattr(orm, "catalog_meal_id", None),
         description=orm.__dict__.get("description"),
@@ -302,40 +263,6 @@ def meal_image_domain_to_orm(domain: DomainMealImage) -> MealImageORM:
         width=domain.width,
         height=domain.height,
     )
-
-
-def food_item_translation_domain_to_orm(
-    domain: DomainFoodItemTranslation, meal_translation_id: int
-) -> FoodItemTranslationORM:
-    return FoodItemTranslationORM(
-        meal_translation_id=meal_translation_id,
-        food_item_id=str(domain.food_item_id),
-        name=domain.name,
-        description=domain.description,
-    )
-
-
-def meal_translation_domain_to_orm(domain: DomainMealTranslation) -> MealTranslationORM:
-    now = utc_now()
-    translation = MealTranslationORM(
-        meal_id=domain.meal_id,
-        language=domain.language,
-        dish_name=domain.dish_name,
-        translated_at=_to_naive_utc(domain.translated_at or now),
-        created_at=_to_naive_utc(now),
-        meal_instruction=domain.meal_instruction,
-        meal_ingredients=domain.meal_ingredients,
-        translation_version=domain.translation_version,
-    )
-    for fi in domain.food_items:
-        translation.food_items.append(
-            FoodItemTranslationORM(
-                food_item_id=str(fi.food_item_id),
-                name=fi.name,
-                description=fi.description,
-            )
-        )
-    return translation
 
 
 def _instruction_steps_to_orm(
@@ -441,10 +368,3 @@ class FoodItemMapper:
     to_persistence = staticmethod(
         lambda domain, nutrition_id: food_item_domain_to_orm(domain, nutrition_id)
     )
-
-
-class MealTranslationMapper:
-    """Mapper for MealTranslation entity."""
-
-    to_domain = staticmethod(meal_translation_orm_to_domain)
-    to_persistence = staticmethod(meal_translation_domain_to_orm)

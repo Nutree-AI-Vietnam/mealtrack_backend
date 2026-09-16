@@ -151,15 +151,6 @@ def test_food_reference_request_dependencies_use_async_adapter() -> None:
     assert offenders == {}
 
 
-def test_meal_translation_dependency_uses_async_adapter() -> None:
-    """Meal translation service wiring must not instantiate the sync repository."""
-    path = SRC_ROOT / "api" / "base_dependencies.py"
-    text = path.read_text(encoding="utf-8")
-
-    assert "MealTranslationRepository()" not in text
-    assert "get_async_meal_translation_repository()" in text
-
-
 def test_promo_referral_runtime_handlers_use_uow_repositories() -> None:
     """Request/handler code should use AsyncUnitOfWork-owned repositories."""
     offenders: dict[str, list[str]] = {}

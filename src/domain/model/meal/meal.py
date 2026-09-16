@@ -8,7 +8,6 @@ from src.domain.utils.timezone_utils import format_iso_utc, utc_now
 
 from ..nutrition import Nutrition
 from .meal_image import MealImage
-from .meal_translation_domain_models import MealTranslation
 
 
 class MealStatus(Enum):
@@ -49,7 +48,7 @@ class Meal:
     edit_count: int = 0
     is_manually_edited: bool = False
     meal_type: str | None = None
-    translations: dict[str, MealTranslation] | None = None
+    translations: dict[str, Any] | None = None
     # Source tracking (scanner, prompt, food_search, manual)
     source: str | None = None
     catalog_meal_id: str | None = None
@@ -333,7 +332,8 @@ class Meal:
 
         if self.translations is not None:
             result["translations"] = {
-                lang: trans.to_dict() for lang, trans in self.translations.items()
+                lang: trans.to_dict() if hasattr(trans, "to_dict") else trans
+                for lang, trans in self.translations.items()
             }
 
         if self.description is not None:

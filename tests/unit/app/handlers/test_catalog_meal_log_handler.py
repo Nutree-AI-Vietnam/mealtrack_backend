@@ -178,28 +178,6 @@ async def test_prefer_slot_logs_matching_unlogged_slot():
 
 
 @pytest.mark.asyncio
-async def test_translation_is_called_when_language_provided():
-    translated: list[str] = []
-    log_service = AsyncMock()
-    log_service.execute = AsyncMock(return_value=_result())
-
-    class _Translation:
-        async def translate_meal(self, **kwargs):
-            translated.append("translate")
-
-    handler = _handler(
-        _Uow(),
-        _Browse(),
-        log_service,
-        translation=_Translation(),
-    )
-
-    await handler.handle(_command(language="vi"))
-
-    assert translated == ["translate"]
-
-
-@pytest.mark.asyncio
 async def test_recalculate_is_called_when_present():
     log_service = AsyncMock()
     log_service.execute = AsyncMock(

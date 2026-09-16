@@ -9,12 +9,10 @@ from fastapi import APIRouter, Depends, Header, Request
 
 from src.api.base_dependencies import (
     get_async_food_reference_repository,
-    get_meal_translation_service,
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import ValidationException
-from src.api.mappers.meal_locale_ensure import ensure_requested_meal_translation
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
@@ -78,7 +76,6 @@ async def update_meal_ingredients(
     x_app_version: str | None = Header(default=None, alias="X-App-Version"),
     x_platform: str | None = Header(default=None, alias="X-Platform"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    meal_translation_service=Depends(get_meal_translation_service),
     food_reference_repository=Depends(get_async_food_reference_repository),
 ):
     """
@@ -181,13 +178,6 @@ async def update_meal_ingredients(
     language = get_request_language(request)
     query = GetMealByIdQuery(meal_id=meal_id, user_id=user_id)
     meal = await event_bus.send(query)
-    meal = await ensure_requested_meal_translation(
-        meal=meal,
-        language=language,
-        query=query,
-        event_bus=event_bus,
-        meal_translation_service=meal_translation_service,
-    )
     if payload.nutrition_contract_version == 2:
         result = dict(result)
         image_url = getattr(getattr(meal, "image", None), "url", None)

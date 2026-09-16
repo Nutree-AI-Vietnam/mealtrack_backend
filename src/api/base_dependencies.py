@@ -495,47 +495,6 @@ def get_suggestion_orchestration_service():
 # The event bus configuration in event_bus.py handles all dependencies
 
 
-_meal_translation_service = None
-_async_meal_translation_repository = None
-
-
-def get_async_meal_translation_repository():
-    """Get the async meal translation repository adapter singleton."""
-    global _async_meal_translation_repository
-    if _async_meal_translation_repository is None:
-        from src.infra.repositories.meal_translation_uow_adapter import (
-            AsyncMealTranslationUowAdapter,
-        )
-
-        _async_meal_translation_repository = AsyncMealTranslationUowAdapter()
-    return _async_meal_translation_repository
-
-
-def get_meal_translation_service():
-    """Get the persisted meal translation service (singleton)."""
-    global _meal_translation_service
-
-    if _meal_translation_service is not None:
-        return _meal_translation_service
-
-    # Requires text translation service
-    text_service = get_text_translation_service()
-    if text_service is None:
-        logger.warning("OPENAI_API_KEY not set - meal translation will be skipped")
-        return None
-
-    from src.domain.services.meal_analysis.meal_translation_service import (
-        MealTranslationService,
-    )
-
-    _meal_translation_service = MealTranslationService(
-        translation_repo=get_async_meal_translation_repository(),
-        text_translation_service=text_service,
-    )
-    logger.info("OpenAI meal translation service initialised")
-    return _meal_translation_service
-
-
 _text_translation_service = None
 
 

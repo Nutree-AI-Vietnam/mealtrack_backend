@@ -20,12 +20,8 @@ from src.domain.services.meal_recommendation.ingredient_affinity_service import 
 )
 from src.domain.utils.timezone_utils import get_zone_info, utc_now
 from src.infra.database.models.enums import MealStatusEnum
-from src.infra.database.models.meal.food_item_translation_model import (
-    FoodItemTranslationORM,
-)
 from src.infra.database.models.meal.meal import MealORM
 from src.infra.database.models.meal.meal_image import MealImageORM
-from src.infra.database.models.meal.meal_translation_model import MealTranslationORM
 from src.infra.database.models.nutrition.food_item import FoodItemORM
 from src.infra.database.models.nutrition.nutrition import NutritionORM
 from src.infra.mappers import MealStatusMapper
@@ -60,7 +56,6 @@ _PROJECTION_OPTS: dict = {
         joinedload(MealORM.image),
         selectinload(MealORM.nutrition).selectinload(NutritionORM.food_items),
         selectinload(MealORM.instruction_steps),
-        joinedload(MealORM.translations),
     ),
 }
 
@@ -219,24 +214,6 @@ class AsyncMealRepository(MealRepositoryPort):
                 .values(is_deleted=True, nutrition_id=None)
             )
 
-        mt_result = await self.session.execute(
-            select(MealTranslationORM.id).where(MealTranslationORM.meal_id == meal_id)
-        )
-        meal_translation_ids = [row[0] for row in mt_result.all()]
-
-        await self.session.execute(
-            update(MealTranslationORM)
-            .where(MealTranslationORM.meal_id == meal_id)
-            .values(is_deleted=True, meal_id=None)
-        )
-        if meal_translation_ids:
-            await self.session.execute(
-                update(FoodItemTranslationORM)
-                .where(
-                    FoodItemTranslationORM.meal_translation_id.in_(meal_translation_ids)
-                )
-                .values(is_deleted=True)
-            )
         await self.session.execute(
             delete(NutritionORM).where(NutritionORM.meal_id == meal_id)
         )
