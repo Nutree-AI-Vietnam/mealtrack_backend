@@ -235,6 +235,42 @@ class WeeklyBudgetService:
         return total
 
     @staticmethod
+    async def _build_daily_movement_map_async(
+        uow: Any,
+        user_id: str,
+        week_start: date,
+        end_date: date,
+        user_timezone: str | None = None,
+    ) -> dict[date, float]:
+        """Fetch all movement kcal in one query and group by local date."""
+        if end_date < week_start:
+            return {}
+
+        movement_repo = vars(uow).get("movement_entries")
+        if movement_repo is None:
+            return {}
+
+        fetch_range = getattr(movement_repo, "fetch_included_kcal_for_range", None)
+        if fetch_range is None:
+            return {}
+
+        start_utc, end_utc = WeeklyBudgetService._local_date_range_to_utc(
+            week_start, end_date, user_timezone
+        )
+        entries = await fetch_range(user_id, start_utc, end_utc)
+        if not entries:
+            return {}
+
+        tz = get_zone_info(user_timezone or "UTC")
+        result: dict[date, float] = {}
+        for dt, kcal in entries:
+            aware_dt = ensure_utc(dt)
+            local_date = aware_dt.astimezone(tz).date()
+            result[local_date] = result.get(local_date, 0.0) + float(kcal)
+
+        return result
+
+    @staticmethod
     def aggregate_weekly_consumed_from_meal_rows(
         meal_rows: list[tuple[datetime, float, float, float, float]],
         *,
@@ -548,16 +584,22 @@ class WeeklyBudgetService:
                 user_timezone=user_timezone,
             )
 
-        food_total = calc._aggregate_meals_consumed(
-            all_week_meals,
-            user_timezone=user_timezone,
-        )
-        movement_total = await calc._calculate_movement_kcal_async(
+        movement_by_date = await calc._build_daily_movement_map_async(
             uow=uow,
             user_id=user_id,
             week_start=week_start,
             end_date=week_end,
             user_timezone=user_timezone,
+        )
+
+        food_total = calc._aggregate_meals_consumed(
+            all_week_meals,
+            user_timezone=user_timezone,
+        )
+        movement_total = calc._sum_movement_from_daily_map(
+            movement_by_date,
+            week_start=week_start,
+            end_date=week_end,
         )
         consumed_total = {
             **food_total,
@@ -569,12 +611,10 @@ class WeeklyBudgetService:
             end_date=past_end,
             user_timezone=user_timezone,
         )
-        movement_before_today = await calc._calculate_movement_kcal_async(
-            uow=uow,
-            user_id=user_id,
+        movement_before_today = calc._sum_movement_from_daily_map(
+            movement_by_date,
             week_start=week_start,
             end_date=past_end,
-            user_timezone=user_timezone,
         )
         consumed_before_today = {
             **food_before_today,
@@ -589,13 +629,11 @@ class WeeklyBudgetService:
                 exclude_dates=past_cheat_dates,
                 user_timezone=user_timezone,
             )
-            movement_redistribution = await calc._calculate_movement_kcal_async(
-                uow=uow,
-                user_id=user_id,
+            movement_redistribution = calc._sum_movement_from_daily_map(
+                movement_by_date,
                 week_start=week_start,
                 end_date=past_end,
                 exclude_dates=past_cheat_dates,
-                user_timezone=user_timezone,
             )
             consumed_for_redistribution = {
                 **food_for_redistribution,

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
+from src.domain.model.meal import MealStatus
 from src.domain.model.nutrition import FoodItem, Nutrition
 from src.domain.model.nutrition.macros import Macros
 from src.infra.database.models.meal.meal import MealORM
@@ -82,6 +83,36 @@ async def test_lock_meal_row_uses_single_table_for_update():
     stmt = repo.session.execute.await_args.args[0]
     assert stmt._for_update_arg is not None
     assert list(stmt.columns_clause_froms)[0].name == MealORM.__table__.name
+
+
+@pytest.mark.asyncio
+async def test_save_locks_meal_row_without_for_update_on_joined_image_load():
+    repo = AsyncMealRepository(session=MagicMock())
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = "meal-1"
+    load_result = MagicMock()
+    existing = MagicMock()
+    existing.nutrition = None
+    load_result.scalars.return_value.first.return_value = existing
+    repo.session.execute = AsyncMock(side_effect=[lock_result, load_result])
+    repo.session.flush = AsyncMock()
+    repo._reload_meal_domain = AsyncMock(return_value=MagicMock())
+
+    meal = MagicMock()
+    meal.meal_id = "meal-1"
+    meal.status = MealStatus.READY
+    meal.image = None
+    meal.nutrition = None
+    meal.instructions = None
+    meal.updated_at = None
+
+    await repo.save(meal)
+
+    lock_stmt = repo.session.execute.await_args_list[0].args[0]
+    load_stmt = repo.session.execute.await_args_list[1].args[0]
+    assert lock_stmt._for_update_arg is not None
+    assert list(lock_stmt.columns_clause_froms)[0].name == MealORM.__table__.name
+    assert load_stmt._for_update_arg is None
 
 
 @pytest.mark.asyncio
