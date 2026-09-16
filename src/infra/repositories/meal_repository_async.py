@@ -10,7 +10,7 @@ from sqlalchemy.orm import defer, joinedload, noload, selectinload
 from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.meal.meal_image import MealImage as DomainMealImage
 from src.domain.model.meal_projection import MealProjection
-from src.domain.model.nutrition import Nutrition
+from src.domain.model.nutrition import FoodItem, Nutrition
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import mapping_from_micros
@@ -31,6 +31,7 @@ from src.infra.database.models.nutrition.nutrition import NutritionORM
 from src.infra.mappers import MealStatusMapper
 from src.infra.mappers.meal_mapper import (
     _instruction_steps_to_orm,
+    apply_food_item_domain_to_orm,
     food_item_domain_to_orm,
     meal_domain_to_orm,
     meal_image_domain_to_orm,
@@ -90,7 +91,20 @@ class AsyncMealRepository(MealRepositoryPort):
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def _lock_meal_row(self, meal_id: str) -> str | None:
+        """Row-lock a meal without joins.
+
+        PostgreSQL forbids FOR UPDATE on the nullable side of an outer join,
+        so callers that need relations must lock first, then select separately.
+        """
+        lock_result = await self.session.execute(
+            select(MealORM.meal_id).where(MealORM.meal_id == meal_id).with_for_update()
+        )
+        return lock_result.scalar_one_or_none()
+
     async def save(self, meal: Meal) -> Meal:
+        # selectinload is a separate query, so FOR UPDATE here is only on meal.
+        # Do not add joinedload of nullable relations; Postgres rejects that.
         result = await self.session.execute(
             select(MealORM)
             .options(
@@ -98,6 +112,7 @@ class AsyncMealRepository(MealRepositoryPort):
                 selectinload(MealORM.instruction_steps),
             )
             .where(MealORM.meal_id == meal.meal_id)
+            .with_for_update()
         )
         existing_meal = result.scalars().first()
 
@@ -185,11 +200,7 @@ class AsyncMealRepository(MealRepositoryPort):
         load the full projection (which may include outer-joined relations) in a
         separate select within the same transaction.
         """
-        # Step 1: lock the meal row without any joins.
-        lock_result = await self.session.execute(
-            select(MealORM.meal_id).where(MealORM.meal_id == meal_id).with_for_update()
-        )
-        if lock_result.scalar_one_or_none() is None:
+        if await self._lock_meal_row(meal_id) is None:
             return None
 
         # Step 2: load the full projection (joins are safe without FOR UPDATE).
@@ -686,6 +697,10 @@ class AsyncMealRepository(MealRepositoryPort):
     async def _update_nutrition(
         self, db_nutrition: NutritionORM, domain_nutrition: Nutrition
     ) -> None:
+        # Lock the parent before touching children. Meal save() already holds
+        # the meal row; this keeps nutrition → food_item order if another
+        # writer reaches food_item without going through save().
+        await self.session.get(NutritionORM, db_nutrition.id, with_for_update=True)
         db_nutrition.protein = domain_nutrition.macros.protein
         db_nutrition.carbs = domain_nutrition.macros.carbs
         db_nutrition.fat = domain_nutrition.macros.fat
@@ -700,16 +715,35 @@ class AsyncMealRepository(MealRepositoryPort):
             if domain_nutrition.nutrition_override
             else None
         )
+        await self._sync_food_items(db_nutrition, domain_nutrition.food_items)
 
-        # food_items pre-loaded via selectinload in save() — safe to iterate.
-        # Flush sorts persistent deletes by PK (_sort_states), so concurrent
-        # txs lock food_item rows in a consistent order without sorting here.
-        for item in db_nutrition.food_items:
+    async def _sync_food_items(
+        self,
+        db_nutrition: NutritionORM,
+        domain_items: list[FoodItem] | None,
+    ) -> None:
+        # Update matching PKs in place. Delete+reinsert of the same id takes
+        # a unique-index ShareLock on the sibling transaction and deadlocks
+        # under concurrent edits (PYTHON-GR).
+        existing_by_id = {item.id: item for item in db_nutrition.food_items}
+        desired = list(domain_items or [])
+        desired_ids = {str(item.id) for item in desired if item.id}
+        for item in sorted(
+            (row for row in existing_by_id.values() if row.id not in desired_ids),
+            key=lambda row: row.id or "",
+        ):
             await self.session.delete(item)
-        await self.session.flush()
-
-        if domain_nutrition.food_items:
-            for idx, item in enumerate(domain_nutrition.food_items):
-                db_item = food_item_domain_to_orm(item, nutrition_id=db_nutrition.id)
-                db_item.order_index = idx
-                self.session.add(db_item)
+        for idx, domain_item in enumerate(desired):
+            existing = (
+                existing_by_id.get(str(domain_item.id)) if domain_item.id else None
+            )
+            if existing is not None:
+                apply_food_item_domain_to_orm(
+                    existing, domain_item, nutrition_id=db_nutrition.id
+                )
+                existing.order_index = idx
+                existing.is_deleted = False
+                continue
+            db_item = food_item_domain_to_orm(domain_item, nutrition_id=db_nutrition.id)
+            db_item.order_index = idx
+            self.session.add(db_item)

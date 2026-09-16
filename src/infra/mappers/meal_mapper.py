@@ -240,27 +240,29 @@ def meal_orm_to_domain_if_hydratable(orm: MealORM) -> DomainMeal | None:
 # ---------------------------------------------------------------------------
 
 
-def food_item_domain_to_orm(domain: DomainFoodItem, nutrition_id=None) -> FoodItemORM:
-    item = FoodItemORM(
-        name=domain.name,
-        quantity=domain.quantity,
-        unit=domain.unit,
-        confidence=domain.confidence,
-        nutrition_id=nutrition_id,
-        fdc_id=getattr(domain, "fdc_id", None),
-        food_reference_id=getattr(domain, "food_reference_id", None),
-        is_custom=getattr(domain, "is_custom", False),
-        allowed_units=getattr(domain, "allowed_units", None),
-        nutrition_override=(
-            domain.nutrition_override.to_dict() if domain.nutrition_override else None
-        ),
-        source_kind=getattr(domain, "source_kind", None),
-        source_food_id=getattr(domain, "source_food_id", None),
-        nutrition_contract_version=getattr(domain, "nutrition_contract_version", None),
-        source_snapshot=getattr(domain, "source_snapshot", None),
+def apply_food_item_domain_to_orm(
+    item: FoodItemORM, domain: DomainFoodItem, nutrition_id=None
+) -> FoodItemORM:
+    """Copy domain fields onto an existing ORM row without changing its PK."""
+    item.name = domain.name
+    item.quantity = domain.quantity
+    item.unit = domain.unit
+    item.confidence = domain.confidence
+    if nutrition_id is not None:
+        item.nutrition_id = nutrition_id
+    item.fdc_id = getattr(domain, "fdc_id", None)
+    item.food_reference_id = getattr(domain, "food_reference_id", None)
+    item.is_custom = getattr(domain, "is_custom", False)
+    item.allowed_units = getattr(domain, "allowed_units", None)
+    item.nutrition_override = (
+        domain.nutrition_override.to_dict() if domain.nutrition_override else None
     )
-    if hasattr(domain, "id") and domain.id:
-        item.id = str(domain.id)
+    item.source_kind = getattr(domain, "source_kind", None)
+    item.source_food_id = getattr(domain, "source_food_id", None)
+    item.nutrition_contract_version = getattr(
+        domain, "nutrition_contract_version", None
+    )
+    item.source_snapshot = getattr(domain, "source_snapshot", None)
     if domain.macros:
         item.protein = domain.macros.protein
         item.carbs = domain.macros.carbs
@@ -269,6 +271,13 @@ def food_item_domain_to_orm(domain: DomainFoodItem, nutrition_id=None) -> FoodIt
         item.sugar = domain.macros.sugar
     item.micros = mapping_from_micros(getattr(domain, "micros", None))
     return item
+
+
+def food_item_domain_to_orm(domain: DomainFoodItem, nutrition_id=None) -> FoodItemORM:
+    item = FoodItemORM()
+    if getattr(domain, "id", None):
+        item.id = str(domain.id)
+    return apply_food_item_domain_to_orm(item, domain, nutrition_id)
 
 
 def nutrition_domain_to_orm(domain: DomainNutrition, meal_id: str) -> NutritionORM:
