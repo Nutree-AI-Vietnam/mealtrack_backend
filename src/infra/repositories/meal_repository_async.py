@@ -103,8 +103,12 @@ class AsyncMealRepository(MealRepositoryPort):
         return lock_result.scalar_one_or_none()
 
     async def save(self, meal: Meal) -> Meal:
-        # selectinload is a separate query, so FOR UPDATE here is only on meal.
-        # Do not add joinedload of nullable relations; Postgres rejects that.
+        # Meal.image is lazy="joined", so a meal SELECT left-joins mealimage.
+        # Postgres rejects FOR UPDATE on that outer join; lock the meal row
+        # first, then load relations without FOR UPDATE.
+        if await self._lock_meal_row(meal.meal_id) is None:
+            return await self.insert(meal)
+
         result = await self.session.execute(
             select(MealORM)
             .options(
@@ -112,7 +116,6 @@ class AsyncMealRepository(MealRepositoryPort):
                 selectinload(MealORM.instruction_steps),
             )
             .where(MealORM.meal_id == meal.meal_id)
-            .with_for_update()
         )
         existing_meal = result.scalars().first()
 
