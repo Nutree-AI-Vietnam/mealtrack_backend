@@ -270,9 +270,21 @@ handler/schema when implementing; the bullets below are the durable WHY.
 
 - `/v1/web-funnel/*` lead creation fails closed until
   `WEB_FUNNEL_BFF_SHARED_SECRET` is configured.
-- Active path: RevenueCat redemption link → Firebase passwordless email-link
-  auth → hash-only preflight (SHA-256 of the link; raw link never stored) →
-  provider-alias correlation → backend RevenueCat verification before attach.
+- Hash-only identity: SHA-256 of the canonical redeem URL (web
+  `redemption-handoff.ts` and Dart `canonicalRedemptionLinkForHash` must match;
+  nested `url` as-is). Raw URLs are never stored.
+- Flag off (`WEB_FUNNEL_SILENT_LOGIN_ENABLED=false`, default): RevenueCat
+  redemption link → Firebase passwordless email-link →
+  `POST /redemptions/preflight` (Bearer ID token) → redeem-once →
+  `POST /redemptions/finalize`.
+- Flag on: signed-out app may call unauthenticated
+  `POST /redemptions/session` `{ redemption_link_hash }` with **no**
+  `Authorization`. Response `{ version, custom_token }` is one-time. Client
+  signs in via AuthFlow, then the same preflight → redeem → finalize chain.
+  Session is IP-rate-limited; it must not bind `preflight_uid`.
+- Preflight/finalize require verified email and
+  `sign_in_provider` in `{google.com, apple.com, password}` plus gated
+  `custom` with claim `wf_silent_login`.
 - Legacy magic-claim routes remain gated by `WEB_FUNNEL_LEGACY_CLAIM_ENABLED`
   and are not the active flow.
 

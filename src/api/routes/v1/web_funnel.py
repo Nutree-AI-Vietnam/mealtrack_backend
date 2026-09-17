@@ -15,6 +15,10 @@ from src.api.base_dependencies import (
 )
 from src.api.dependencies.auth import verify_firebase_token_revocation_checked
 from src.api.middleware.rate_limit import limiter
+from src.api.routes.v1.web_funnel_redemption_session import (
+    hydrate_custom_email,
+    silent_login_token_allowed,
+)
 from src.api.schemas.request.web_funnel_claim_requests import (
     WebFunnelClaimCompleteRequest,
     WebFunnelClaimExchangeRequest,
@@ -104,10 +108,8 @@ def _require_fresh_token(token: dict) -> None:
         )
 
 
-def _is_supported_redemption_provider(provider: object) -> bool:
-    # Firebase represents passwordless Email Link sign-in as the password
-    # provider. Email matching and email_verified remain mandatory below.
-    return provider in {"google.com", "apple.com", "password"}
+def _is_supported_redemption_provider(provider: object, token: dict | None = None) -> bool:
+    return silent_login_token_allowed(provider, token)
 
 
 def _require_legacy_claim_enabled() -> None:
@@ -317,13 +319,14 @@ async def preflight_revenuecat_redemption(
     if not settings.WEB_FUNNEL_REDEMPTION_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     _require_fresh_token(token)
+    token = await hydrate_custom_email(token)
     uid, email = token.get("uid"), token.get("email")
     provider = (token.get("firebase") or {}).get("sign_in_provider")
     if (
         not isinstance(uid, str)
         or not isinstance(email, str)
         or not token.get("email_verified")
-        or not _is_supported_redemption_provider(provider)
+        or not _is_supported_redemption_provider(provider, token)
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Verified email required"
@@ -358,11 +361,12 @@ async def finalize_revenuecat_redemption(
             detail="Purchase confirmation required",
         )
     _require_fresh_token(token)
+    token = await hydrate_custom_email(token)
     uid, email = token.get("uid"), token.get("email")
     provider = (token.get("firebase") or {}).get("sign_in_provider")
     if (
         not isinstance(uid, str)
-        or not _is_supported_redemption_provider(provider)
+        or not _is_supported_redemption_provider(provider, token)
         or not isinstance(email, str)
         or not token.get("email_verified")
     ):

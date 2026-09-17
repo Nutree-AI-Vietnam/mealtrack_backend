@@ -127,6 +127,10 @@ def test_password_firebase_provider_maps_to_email_link():
     assert _auth_provider("password") is AuthProvider.EMAIL_LINK
 
 
+def test_custom_firebase_provider_maps_to_email_link():
+    assert _auth_provider("custom") is AuthProvider.EMAIL_LINK
+
+
 @pytest.mark.asyncio
 async def test_preflight_binds_matching_verified_identity():
     binding = _binding()

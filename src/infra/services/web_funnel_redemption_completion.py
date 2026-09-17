@@ -64,6 +64,8 @@ def _auth_provider(firebase_provider: str | None) -> AuthProvider:
         return AuthProvider.APPLE
     if firebase_provider == "password":
         return AuthProvider.EMAIL_LINK
+    if firebase_provider == "custom":
+        return AuthProvider.EMAIL_LINK
     return AuthProvider.GOOGLE
 
 
