@@ -284,4 +284,9 @@ ignore_imports =
     src.api.routes.v1.web_funnel -> src.infra.config.settings
     src.api.routes.v1.web_funnel -> src.infra.database.config_async
     src.api.routes.v1.web_funnel -> src.infra.database.models.web_funnel_claim
+    src.api.routes.v1.web_funnel_redemption_session -> src.infra.config.settings
+    src.api.routes.v1.web_funnel_redemption_session -> src.infra.database.config_async
+    src.api.routes.v1.web_funnel_redemption_session -> src.infra.database.models.user.user
+    src.api.routes.v1.web_funnel_redemption_session -> src.infra.database.models.web_funnel_claim
+    src.api.routes.v1.web_funnel_redemption_session -> src.infra.services.web_funnel_redemption_identity
     src.api.services.guest_parse_quota -> src.infra.database.models.ai_handshake_guest_trial_quota

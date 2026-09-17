@@ -129,6 +129,8 @@ class WebFunnelRedemption(Base, BaseMixin):
     preflight_token_expires_at = Column(DateTime(timezone=True), nullable=True)
     preflight_uid = Column(String(128), nullable=True)
     preflight_at = Column(DateTime(timezone=True), nullable=True)
+    silent_login_minted_at = Column(DateTime(timezone=True), nullable=True)
+    silent_login_generation = Column(Integer, nullable=False, default=0, server_default=text("0"))
     finalization_key_hash = Column(String(64), nullable=True, unique=True)
     result = Column(JSON, nullable=True)
 

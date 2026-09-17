@@ -34,6 +34,11 @@ def get_user_id_or_ip(request):
     return get_remote_address(request)
 
 
+def get_ip_only_rate_limit_key(request):
+    """Ignore Authorization. Unauthenticated routes must not key on JWT `sub`."""
+    return get_remote_address(request)
+
+
 limiter = Limiter(key_func=get_user_id_or_ip)
 
 
