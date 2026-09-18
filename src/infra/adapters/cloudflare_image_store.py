@@ -71,14 +71,23 @@ class CloudflareImageStore(ImageStorePort):
                 "Missing Cloudflare configuration. Make sure CLOUDFLARE_ACCOUNT_ID "
                 "and CLOUDFLARE_API_TOKEN are set."
             )
+        if not self._account_hash and not self._custom_domain:
+            raise ValueError(
+                "Missing Cloudflare image delivery configuration. Make sure "
+                "CLOUDFLARE_ACCOUNT_HASH or CLOUDFLARE_CUSTOM_DOMAIN is set."
+            )
 
     def get_url(self, image_id: str, variant: str | None = None) -> str:
         """Construct delivery URL for a Cloudflare Images image."""
         v = variant or self._default_variant
         if self._custom_domain:
             return f"https://{self._custom_domain}/{image_id}/{v}"
-        account_ref = self._account_hash or self._account_id
-        return f"https://imagedelivery.net/{account_ref}/{image_id}/{v}"
+        if not self._account_hash:
+            raise ValueError(
+                "CLOUDFLARE_ACCOUNT_HASH (or CLOUDFLARE_CUSTOM_DOMAIN) is required "
+                "to construct Cloudflare Images delivery URLs."
+            )
+        return f"https://imagedelivery.net/{self._account_hash}/{image_id}/{v}"
 
     async def get_url_async(
         self, image_id: str, variant: str | None = None

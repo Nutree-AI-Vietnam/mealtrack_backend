@@ -17,6 +17,7 @@ from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
 from src.api.routes.v1.meals_route_helpers import (
     load_food_reference_display_projections,
+    validate_uploaded_image_url,
 )
 from src.api.schemas.response import DetailedMealResponse
 from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
@@ -25,8 +26,6 @@ from src.domain.services.prompts.input_sanitizer import sanitize_user_descriptio
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/meals", tags=["Meals"])
-
-_ALLOWED_HOSTS = frozenset({"res.cloudinary.com", "imagedelivery.net"})
 
 
 class ScanByUrlRequest(BaseModel):
@@ -46,38 +45,8 @@ class FoodLabelScanByUrlRequest(BaseModel):
     crop_metadata: dict[str, Any] | None = None
 
 
-def _validate_image_url(image_url: str, image_id: str) -> None:
-    from urllib.parse import urlparse
-
-    from src.infra.config.settings import get_settings
-
-    parsed = urlparse(image_url)
-    if parsed.scheme != "https":
-        raise ValidationException(
-            message="image_url must use https",
-            error_code="INVALID_IMAGE_URL",
-            details={"url": image_url},
-        )
-    allowed_hosts = set(_ALLOWED_HOSTS)
-    custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
-    if custom_domain:
-        allowed_hosts.add(custom_domain.strip().lower())
-    if parsed.netloc.lower() not in allowed_hosts:
-        raise ValidationException(
-            message="image_url must be an authorized image host URL",
-            error_code="INVALID_IMAGE_URL",
-            details={"url": image_url},
-        )
-
-    if image_id not in image_url:
-        raise ValidationException(
-            message="image_id does not match image_url",
-            error_code="IMAGE_ID_URL_MISMATCH",
-            details={"image_id": image_id},
-        )
-
-
-_validate_cloudinary_url = _validate_image_url
+_validate_image_url = validate_uploaded_image_url
+_validate_cloudinary_url = validate_uploaded_image_url
 
 
 def _parse_target_date(target_date: str | None):

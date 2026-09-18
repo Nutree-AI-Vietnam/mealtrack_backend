@@ -145,6 +145,17 @@ def get_image_store() -> ImageStorePort:
     return _image_store
 
 
+def get_allowed_image_hosts() -> frozenset[str]:
+    """Return authorized image hostnames for meal photo validation."""
+    from src.infra.config.settings import get_settings
+
+    hosts = {"res.cloudinary.com", "imagedelivery.net"}
+    custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
+    if custom_domain:
+        hosts.add(custom_domain.strip().lower())
+    return frozenset(hosts)
+
+
 # Vision Service (singleton pattern)
 def get_vision_service() -> VisionAIServicePort:
     """

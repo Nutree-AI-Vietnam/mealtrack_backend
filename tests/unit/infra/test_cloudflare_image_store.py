@@ -87,6 +87,30 @@ def test_get_url_with_imagedelivery_hash(mock_cf_settings, monkeypatch):
     assert url == "https://imagedelivery.net/myhash123/img-abc/public"
 
 
+def test_get_url_without_account_hash_or_custom_domain_raises():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="",
+        custom_domain="",
+    )
+    with pytest.raises(ValueError, match="CLOUDFLARE_ACCOUNT_HASH"):
+        store.get_url("img-abc")
+
+
+def test_ensure_configured_without_account_hash_or_custom_domain_raises():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="",
+        custom_domain="",
+    )
+    with pytest.raises(
+        ValueError, match="Missing Cloudflare image delivery configuration"
+    ):
+        store.save(b"test", "image/jpeg")
+
+
 @respx.mock
 def test_save_sync_success(cf_store):
     route = respx.post(

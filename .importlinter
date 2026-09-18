@@ -167,6 +167,7 @@ allow_indirect_imports = True
 unmatched_ignore_imports_alerting = none
 ignore_imports =
     src.api.base_dependencies -> src.infra.adapters.cloudinary_image_store
+    src.api.base_dependencies -> src.infra.adapters.cloudflare_image_store
     src.api.base_dependencies -> src.infra.adapters.cloudflare_workers_image_generator
     src.api.base_dependencies -> src.infra.adapters.fat_secret_service
     src.api.base_dependencies -> src.infra.adapters.food_cache_service

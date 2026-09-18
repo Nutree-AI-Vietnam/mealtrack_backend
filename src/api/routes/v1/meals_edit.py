@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, Request
 
@@ -21,6 +20,9 @@ from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.meals_route_helpers import (
     load_food_reference_display_projections,
 )
+from src.api.routes.v1.meals_route_helpers import (
+    validate_uploaded_image_url as _validate_uploaded_meal_photo_url,
+)
 from src.api.schemas.request.meal_requests import (
     AttachMealPhotoRequest,
     EditMealIngredientsRequest,
@@ -35,7 +37,6 @@ from src.app.commands.meal.attach_meal_photo_command import AttachMealPhotoComma
 from src.app.commands.meal.delete_meal_command import DeleteMealCommand
 from src.app.commands.meal.delete_meal_photo_command import DeleteMealPhotoCommand
 from src.app.queries.meal import GetMealByIdQuery
-from src.infra.config.settings import get_settings
 from src.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -43,24 +44,6 @@ router = APIRouter()
 
 # Ingredient PUTs are cheap writes. 60/minute is a backstop, not an AI cap.
 MEAL_INGREDIENTS_EDIT_LIMIT = "60/minute"
-
-_ALLOWED_PHOTO_HOSTS = frozenset({"res.cloudinary.com", "imagedelivery.net"})
-
-
-def _validate_uploaded_meal_photo_url(image_url: str, image_id: str) -> None:
-    parsed = urlparse(image_url)
-    if parsed.scheme != "https":
-        raise ValidationException("image_url must be a secure HTTPS URL")
-    allowed_hosts = set(_ALLOWED_PHOTO_HOSTS)
-    custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
-    if custom_domain:
-        allowed_hosts.add(custom_domain.strip().lower())
-    if parsed.netloc.lower() not in allowed_hosts:
-        raise ValidationException(
-            "image_url must be an authorized image host secure URL"
-        )
-    if image_id not in parsed.path:
-        raise ValidationException("image_id does not match image_url")
 
 
 @router.delete("/{meal_id}")
