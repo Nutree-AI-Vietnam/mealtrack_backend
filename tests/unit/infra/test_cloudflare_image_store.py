@@ -157,6 +157,32 @@ def test_save_unsupported_content_type(cf_store):
         cf_store.save(b"test", "text/plain")
 
 
+@respx.mock
+def test_save_normalizes_content_type_with_parameters_and_aliases(cf_store):
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-norm-1",
+                "variants": ["https://media.test.com/img-norm-1/public"],
+            },
+        },
+    )
+
+    # image/jpg alias and charset parameters should normalize to image/jpeg and succeed
+    url1 = cf_store.save(b"test-bytes", "image/jpg", image_id="img-norm-1")
+    assert url1 == "https://media.test.com/img-norm-1/public"
+
+    url2 = cf_store.save(
+        b"test-bytes", "image/jpeg; charset=utf-8", image_id="img-norm-2"
+    )
+    assert url2 == "https://media.test.com/img-norm-1/public"
+
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_load_async_success(cf_store):

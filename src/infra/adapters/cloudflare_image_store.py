@@ -95,6 +95,14 @@ class CloudflareImageStore(ImageStorePort):
         """Async version of get_url."""
         return self.get_url(image_id, variant)
 
+    @staticmethod
+    def _normalize_content_type(content_type: str) -> str:
+        """Normalize MIME type by stripping parameters and mapping common aliases."""
+        clean_type = content_type.split(";")[0].strip().lower()
+        if clean_type == "image/jpg":
+            return "image/jpeg"
+        return clean_type
+
     def save(
         self,
         image_bytes: bytes,
@@ -103,7 +111,8 @@ class CloudflareImageStore(ImageStorePort):
     ) -> str:
         """Synchronously upload image bytes to Cloudflare Images."""
         self._ensure_configured()
-        if content_type not in [
+        normalized_content_type = self._normalize_content_type(content_type)
+        if normalized_content_type not in [
             "image/jpeg",
             "image/png",
             "image/webp",
@@ -116,7 +125,7 @@ class CloudflareImageStore(ImageStorePort):
 
         url = f"{self._base_api_url}/v1"
         headers = {"Authorization": f"Bearer {self._api_token}"}
-        files = {"file": (f"{image_id}.jpg", image_bytes, content_type)}
+        files = {"file": (f"{image_id}.jpg", image_bytes, normalized_content_type)}
         data = {"id": image_id}
 
         client = self._sync_client or httpx.Client(timeout=self._timeout)
@@ -151,7 +160,8 @@ class CloudflareImageStore(ImageStorePort):
     ) -> str:
         """Asynchronously upload image bytes to Cloudflare Images."""
         self._ensure_configured()
-        if content_type not in [
+        normalized_content_type = self._normalize_content_type(content_type)
+        if normalized_content_type not in [
             "image/jpeg",
             "image/png",
             "image/webp",
@@ -164,7 +174,7 @@ class CloudflareImageStore(ImageStorePort):
 
         url = f"{self._base_api_url}/v1"
         headers = {"Authorization": f"Bearer {self._api_token}"}
-        files = {"file": (f"{image_id}.jpg", image_bytes, content_type)}
+        files = {"file": (f"{image_id}.jpg", image_bytes, normalized_content_type)}
         data = {"id": image_id}
 
         if self._client:

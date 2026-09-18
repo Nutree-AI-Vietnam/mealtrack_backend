@@ -87,11 +87,30 @@ async def migrate_images(
                         stats["failed"] += 1
                         continue
 
-                    # Determine content type
-                    content_type = (
+                    # Determine content type with robust normalization and fallback
+                    raw_content_type = (
                         resp.headers.get("content-type")
                         or f"image/{img.format or 'jpeg'}"
                     )
+                    content_type = raw_content_type.split(";")[0].strip().lower()
+                    if content_type == "image/jpg":
+                        content_type = "image/jpeg"
+
+                    valid_mime_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+                    if content_type not in valid_mime_types:
+                        db_fmt = (img.format or "").lower().strip(".")
+                        if db_fmt in ("jpg", "jpeg"):
+                            content_type = "image/jpeg"
+                        elif db_fmt in ("png", "webp", "gif"):
+                            content_type = f"image/{db_fmt}"
+                        else:
+                            content_type = "image/jpeg"
+                        logger.warning(
+                            "Non-standard Content-Type '%s' for image %s; normalized to '%s'",
+                            raw_content_type,
+                            image_id,
+                            content_type,
+                        )
 
                     # 2. Upload to Cloudflare
                     new_url = await cf_store.save_async(
@@ -117,7 +136,14 @@ async def migrate_images(
                         logger.info("Committed batch of %d images", idx)
 
                 except Exception as exc:
-                    logger.error("Failed to migrate image %s: %s", image_id, exc)
+                    logger.error(
+                        "Failed to migrate image %s (url=%s, content_type=%s): %s",
+                        image_id,
+                        old_url,
+                        content_type if "content_type" in locals() else "unknown",
+                        exc,
+                        exc_info=True,
+                    )
                     stats["failed"] += 1
 
         if not dry_run:
