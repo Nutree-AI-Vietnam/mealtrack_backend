@@ -80,19 +80,52 @@ CLOUDFLARE_CUSTOM_DOMAIN=""
 2. Create or verify a variant named `public`:
    - **Variant name**: `public`
    - **Resize rule**: `Scale down` (or `Fit`)
-   - **Maximum width**: `768px` (or `1024px`)
-   - **Format**: Auto (`f=auto` allows WebP/AVIF delivery depending on client browser/device)
+   - **Maximum width**: `1024px` (or `768px`)
+   - **Format**: Auto (`f=auto` delivers WebP or AVIF automatically depending on client device support)
+   - **Quality**: `85`
 3. Save the variant.
 
-### Step 4 (Optional): Custom Delivery Domain
-If you prefer URLs such as `https://images.nutree.ai/<image_id>/<variant>`:
-1. In Cloudflare Dashboard, go to **Images → Custom Domains**.
-2. Click **Connect Domain** and enter your desired subdomain (e.g., `images.nutree.ai`).
-3. Set `CLOUDFLARE_CUSTOM_DOMAIN="images.nutree.ai"` in your `.env`.
+### Step 4 (Optional): Custom Delivery Domain via URL Rewrite
+By default, Cloudflare serves images via `https://imagedelivery.net/<ACCOUNT_HASH>/<IMAGE_ID>/<VARIANT>`.
+
+If you prefer branded URLs such as `https://images.nutree.ai/<image_id>/<variant>`:
+1. **Ensure Domain Proxying**:
+   - In Cloudflare DNS, add a DNS record for your subdomain (e.g., `images.nutree.ai`) pointing to your zone origin or dummy IP (e.g. `192.0.2.1`).
+   - Ensure the Proxy Status is set to **Proxied** (orange cloud ☁️).
+2. **Configure URL Rewrite (Transform Rule)**:
+   - In the Cloudflare Dashboard, select your domain zone → **Rules** → **Transform Rules** → **URL Rewrite**.
+   - Click **Create rule**:
+     - **Rule name**: `Cloudflare Images Custom Domain Rewrite`
+     - **When incoming requests match**:
+       - Field: `Hostname` | Operator: `equals` | Value: `images.nutree.ai`
+     - **Path Rewrite**:
+       - Select: **Dynamic**
+       - Expression: `concat("/cdn-cgi/imagedelivery/<ACCOUNT_HASH>", http.request.uri.path)`
+         *(Replace `<ACCOUNT_HASH>` with your actual 22-character account hash)*
+   - Click **Deploy**.
+3. **Configure Environment**:
+   - Set `CLOUDFLARE_CUSTOM_DOMAIN="images.nutree.ai"` in `.env`.
+   - The backend and mobile app will now construct and accept `https://images.nutree.ai/<image_id>/public`.
 
 ---
 
-## 4. Mobile Client Implementation (`nutree_ai`)
+## 4. Cloudflare Images Best Practice Checklist
+
+| Category | Cloudflare Best Practice | MealTrack Implementation |
+|---|---|---|
+| **Security** | Never expose API tokens to mobile / browser clients | ✅ Presigned direct upload tokens (`/v2/direct_upload`) generated server-side |
+| **Token Scopes** | Least privilege API tokens | ✅ Scoped strictly to `Account → Cloudflare Images: Edit` |
+| **Single-Use URLs** | Direct upload URLs must be one-time use | ✅ New upload URL generated per scan via `/v1/meals/upload-token` |
+| **URL Expiry** | Bounded between 2 minutes (120s) and 6 hours (21,600s) | ✅ Set to 300s (5 minutes) with `max(120, ttl)` lower-bound |
+| **Custom Image IDs** | Use UUIDs to correlate uploads before client completes | ✅ Backend pre-assigns `uuid.uuid4()` as Cloudflare image `id` |
+| **File Constraints** | Max 10 MB per image; JPEG/PNG/WebP/GIF | ✅ Mobile compresses photos before upload; backend normalizes MIME types |
+| **Edge Optimization** | Use `f=auto` and `fit=scale-down` for CDN compression | ✅ `to_compressed_image_url` applies `w=768,fit=scale-down,f=auto` |
+| **Delivery Caching** | Cache variants at Cloudflare edge data centers | ✅ Immutable edge caching on variants; zero origin hits after first render |
+
+
+---
+
+## 5. Mobile Client Implementation (`nutree_ai`)
 
 The mobile client handles both providers transparently via `CloudinaryUploadService` (aliased as `ImageUploadService` in `lib/features/meal_scanner/data/services/cloudinary_upload_service.dart`):
 
@@ -104,7 +137,7 @@ The mobile client handles both providers transparently via `CloudinaryUploadServ
 
 ---
 
-## 5. Offline Database Migration
+## 6. Offline Database Migration
 
 To migrate historical meal photos from Cloudinary (`res.cloudinary.com`) to Cloudflare Images (`imagedelivery.net`), use `scripts/migrate_cloudinary_to_cloudflare.py`:
 
@@ -128,7 +161,7 @@ uv run python scripts/migrate_cloudinary_to_cloudflare.py --execute --batch-size
 
 ---
 
-## 6. Rollback & Troubleshooting
+## 7. Rollback & Troubleshooting
 
 ### Emergency Rollback
 If Cloudflare Images encounters an outage or configuration failure:
