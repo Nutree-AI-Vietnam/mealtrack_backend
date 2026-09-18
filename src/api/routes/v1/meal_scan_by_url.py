@@ -26,7 +26,7 @@ from src.domain.services.prompts.input_sanitizer import sanitize_user_descriptio
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/meals", tags=["Meals"])
 
-_ALLOWED_HOST = "res.cloudinary.com"
+_ALLOWED_HOSTS = frozenset({"res.cloudinary.com", "imagedelivery.net"})
 
 
 class ScanByUrlRequest(BaseModel):
@@ -46,10 +46,25 @@ class FoodLabelScanByUrlRequest(BaseModel):
     crop_metadata: dict[str, Any] | None = None
 
 
-def _validate_cloudinary_url(image_url: str, image_id: str) -> None:
-    if not image_url.startswith(f"https://{_ALLOWED_HOST}/"):
+def _validate_image_url(image_url: str, image_id: str) -> None:
+    from urllib.parse import urlparse
+
+    from src.infra.config.settings import get_settings
+
+    parsed = urlparse(image_url)
+    if parsed.scheme != "https":
         raise ValidationException(
-            message="image_url must be a Cloudinary res URL",
+            message="image_url must use https",
+            error_code="INVALID_IMAGE_URL",
+            details={"url": image_url},
+        )
+    allowed_hosts = set(_ALLOWED_HOSTS)
+    custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
+    if custom_domain:
+        allowed_hosts.add(custom_domain.strip().lower())
+    if parsed.netloc.lower() not in allowed_hosts:
+        raise ValidationException(
+            message="image_url must be an authorized image host URL",
             error_code="INVALID_IMAGE_URL",
             details={"url": image_url},
         )
@@ -60,6 +75,9 @@ def _validate_cloudinary_url(image_url: str, image_id: str) -> None:
             error_code="IMAGE_ID_URL_MISMATCH",
             details={"image_id": image_id},
         )
+
+
+_validate_cloudinary_url = _validate_image_url
 
 
 def _parse_target_date(target_date: str | None):

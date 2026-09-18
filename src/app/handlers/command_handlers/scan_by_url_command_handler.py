@@ -38,7 +38,7 @@ from src.domain.strategies.meal_analysis_strategy import (
 )
 from src.domain.utils.image_compression import (
     compress_image,
-    to_compressed_cloudinary_url,
+    to_compressed_image_url,
 )
 from src.domain.utils.timezone_utils import (
     get_zone_info,
@@ -174,9 +174,9 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         image_id = command.public_id.split("/")[-1]
 
         try:
-            # For meal scans, fetch edge-compressed Cloudinary URL to avoid local PIL resizing
+            # For meal scans, fetch edge-compressed URL (Cloudflare/Cloudinary) to avoid local PIL resizing
             download_url = (
-                to_compressed_cloudinary_url(command.image_url)
+                to_compressed_image_url(command.image_url)
                 if command.scan_mode != "food_label"
                 else command.image_url
             )

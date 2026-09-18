@@ -227,6 +227,24 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str | None = Field(default=None)
     CLOUDINARY_API_SECRET: str | None = Field(default=None)
 
+    # Image storage provider configuration
+    IMAGE_STORE_PROVIDER: str = Field(
+        default="cloudflare",
+        description="Image storage provider: 'cloudflare' or 'cloudinary'",
+    )
+    CLOUDFLARE_ACCOUNT_HASH: str = Field(
+        default="",
+        description="Cloudflare Images account hash used in imagedelivery.net URLs",
+    )
+    CLOUDFLARE_DEFAULT_VARIANT: str = Field(
+        default="public",
+        description="Default delivery variant for Cloudflare Images",
+    )
+    CLOUDFLARE_CUSTOM_DOMAIN: str = Field(
+        default="",
+        description="Optional custom delivery domain for Cloudflare Images",
+    )
+
     # CORS
     ALLOWED_ORIGINS: str = Field(
         default="", description="Comma-separated list of allowed CORS origins"

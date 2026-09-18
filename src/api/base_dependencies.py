@@ -22,6 +22,7 @@ from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
 from src.domain.ports.image_store_port import ImageStorePort
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.food_mapping_service import FoodMappingService
+from src.infra.adapters.cloudflare_image_store import CloudflareImageStore
 from src.infra.adapters.cloudflare_workers_image_generator import (
     CloudflareWorkersImageGenerator,
 )
@@ -134,7 +135,13 @@ def get_image_store() -> ImageStorePort:
     """
     global _image_store
     if _image_store is None:
-        _image_store = CloudinaryImageStore()
+        from src.infra.config.settings import get_settings
+
+        current_settings = get_settings()
+        if current_settings.IMAGE_STORE_PROVIDER.lower() == "cloudinary":
+            _image_store = CloudinaryImageStore()
+        else:
+            _image_store = CloudflareImageStore()
     return _image_store
 
 
@@ -290,7 +297,7 @@ def get_catalog_image_generator() -> CloudflareWorkersImageGenerator:
             api_token=settings.CLOUDFLARE_API_TOKEN,
             model=settings.CLOUDFLARE_WORKERS_AI_IMAGE_MODEL,
             timeout=settings.CLOUDFLARE_WORKERS_AI_TIMEOUT_SECONDS,
-            image_store=CloudinaryImageStore(),
+            image_store=get_image_store(),
         )
     except ValueError as exc:
         raise HTTPException(

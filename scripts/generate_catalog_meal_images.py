@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.app.services.catalog_meal_image_prompt_service import (
     build_catalog_meal_image_prompt,
 )
+from src.api.base_dependencies import get_image_store
 from src.infra.adapters.cloudflare_workers_image_generator import (
     CloudflareWorkersImageGenerator,
 )
-from src.infra.adapters.cloudinary_image_store import CloudinaryImageStore
 from src.infra.database.models.meal_recommendation import MealCatalogORM
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -67,7 +67,7 @@ async def _run(args) -> dict[str, int]:
             api_token=os.getenv("CLOUDFLARE_API_TOKEN", ""),
             model=args.model,
             timeout=args.timeout,
-            image_store=CloudinaryImageStore(),
+            image_store=get_image_store(),
         )
     selected = updated = skipped = failed = 0
     async with AsyncUnitOfWork() as uow:
