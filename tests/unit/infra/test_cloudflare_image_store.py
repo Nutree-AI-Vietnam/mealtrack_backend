@@ -87,15 +87,39 @@ def test_get_url_with_imagedelivery_hash(mock_cf_settings, monkeypatch):
     assert url == "https://imagedelivery.net/myhash123/img-abc/public"
 
 
-def test_get_url_without_account_hash_or_custom_domain_raises():
+def test_get_url_without_account_hash_or_custom_domain_returns_none():
     store = CloudflareImageStore(
         account_id="test-cf-account",
         api_token="test-cf-token",
         account_hash="",
         custom_domain="",
     )
-    with pytest.raises(ValueError, match="CLOUDFLARE_ACCOUNT_HASH"):
-        store.get_url("img-abc")
+    assert store.get_url("img-abc") is None
+    assert store.get_url("") is None
+
+
+@pytest.mark.asyncio
+async def test_get_url_async_without_account_hash_or_custom_domain_returns_none():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="",
+        custom_domain="",
+    )
+    assert await store.get_url_async("img-abc") is None
+
+
+def test_get_url_fallback_in_boolean_or_expression():
+    """Verify unconfigured store returns None in 'url or store.get_url(...)', matching route usage."""
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="",
+        custom_domain="",
+    )
+    meal_image_url = None
+    resolved_url = meal_image_url or store.get_url("image-123")
+    assert resolved_url is None
 
 
 def test_ensure_configured_without_account_hash_or_custom_domain_raises():

@@ -77,16 +77,19 @@ class CloudflareImageStore(ImageStorePort):
                 "CLOUDFLARE_ACCOUNT_HASH or CLOUDFLARE_CUSTOM_DOMAIN is set."
             )
 
-    def get_url(self, image_id: str, variant: str | None = None) -> str:
+    def get_url(self, image_id: str, variant: str | None = None) -> str | None:
         """Construct delivery URL for a Cloudflare Images image."""
+        if not image_id:
+            return None
         v = variant or self._default_variant
         if self._custom_domain:
             return f"https://{self._custom_domain}/{image_id}/{v}"
         if not self._account_hash:
-            raise ValueError(
+            logger.warning(
                 "CLOUDFLARE_ACCOUNT_HASH (or CLOUDFLARE_CUSTOM_DOMAIN) is required "
                 "to construct Cloudflare Images delivery URLs."
             )
+            return None
         return f"https://imagedelivery.net/{self._account_hash}/{image_id}/{v}"
 
     async def get_url_async(
@@ -162,16 +165,19 @@ class CloudflareImageStore(ImageStorePort):
                     f"/{self._default_variant}"
                 ):
                     return v
-            return self.get_url(image_id)
+            constructed = self.get_url(image_id)
+            if constructed:
+                return constructed
 
         for v in variants:
             if v.rstrip("/").endswith(f"/{self._default_variant}"):
                 return v
 
-        try:
-            return self.get_url(image_id)
-        except ValueError:
-            return variants[0] if variants else ""
+        constructed = self.get_url(image_id)
+        if constructed:
+            return constructed
+
+        return variants[0] if variants else ""
 
     async def save_async(
         self,
