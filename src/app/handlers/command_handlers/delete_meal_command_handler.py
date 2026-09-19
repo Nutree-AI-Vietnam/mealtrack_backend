@@ -18,7 +18,10 @@ from src.app.events.hydration.hydration_caloric_deleted_event import (
 from src.app.events.hydration.hydration_deleted_event import (
     HydrationDeletedEvent,
 )
-from src.app.events.meal.meal_events import MealDeletedEvent
+from src.app.events.meal.meal_events import (
+    MealDeletedEvent,
+    _local_cache_invalidation_hook,
+)
 from src.domain.model.hydration import DrinkCategory
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
@@ -26,7 +29,12 @@ from src.domain.ports.integration_event_publisher_port import (
     require_event_publisher,
 )
 from src.domain.services.hydration_catalog_service import find_by_id
-from src.domain.utils.timezone_utils import utc_now
+from src.domain.utils.timezone_utils import (
+    UTC,
+    get_zone_info,
+    resolve_user_timezone_async,
+    utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +59,7 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
         deleted_kind = "meal"
         hydration_delete_event = None
         meal_delete_event = None
+        log_date = None
         async with self.uow_factory() as uow:
             meal = await uow.meals.find_by_id(command.meal_id)
             if meal is not None:
@@ -65,7 +74,12 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                 if plans is not None:
                     await plans.clear_links_for_deleted_meal(meal_id=command.meal_id)
                 await uow.meals.delete(command.meal_id)
-                log_date = (meal.created_at or utc_now()).date()
+                user_tz = await resolve_user_timezone_async(command.user_id, uow)
+                tz = get_zone_info(user_tz)
+                created_at_dt = meal.created_at or utc_now()
+                if created_at_dt.tzinfo is None:
+                    created_at_dt = created_at_dt.replace(tzinfo=UTC)
+                log_date = created_at_dt.astimezone(tz).date()
                 meal_delete_event = MealDeletedEvent(
                     environment=self.environment,
                     aggregate_id=command.meal_id,
@@ -91,7 +105,12 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                         command.meal_id,
                     )
                     deleted_kind = "hydration"
-                    log_date = hydration_entry.logged_at.date()
+                    user_tz = await resolve_user_timezone_async(command.user_id, uow)
+                    tz = get_zone_info(user_tz)
+                    logged_at_dt = hydration_entry.logged_at or utc_now()
+                    if logged_at_dt.tzinfo is None:
+                        logged_at_dt = logged_at_dt.replace(tzinfo=UTC)
+                    log_date = logged_at_dt.astimezone(tz).date()
 
                     drink_id = getattr(hydration_entry, "drink_id", None)
                     drink = find_by_id(drink_id) if drink_id else None
@@ -143,6 +162,9 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                 meal_delete_event.event_id,
                 meal_delete_event.aggregate_id,
             )
+
+        if _local_cache_invalidation_hook is not None and log_date is not None:
+            await _local_cache_invalidation_hook(command.user_id, log_date, None)
 
         return {
             "meal_id": command.meal_id,

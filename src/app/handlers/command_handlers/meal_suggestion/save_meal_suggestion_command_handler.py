@@ -19,6 +19,7 @@ from src.domain.ports.integration_event_publisher_port import (
 from src.domain.utils.timezone_utils import (
     noon_utc_for_date,
     resolve_user_timezone_async,
+    user_today,
     utc_now,
 )
 
@@ -59,13 +60,14 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
         Returns:
             meal_id: ID of the created meal
         """
-        # Parse target meal date
+        # Parse target meal date in user's timezone
         now = utc_now()
         meal_date = datetime.strptime(command.meal_date, "%Y-%m-%d").date()
-        if meal_date != now.date():
+        async with self.uow_factory() as uow:
+            user_tz = await resolve_user_timezone_async(command.user_id, uow)
+        current_user_date = user_today(user_tz)
+        if meal_date != current_user_date:
             # Past/future date: use noon to avoid date-boundary issues
-            async with self.uow_factory() as uow:
-                user_tz = await resolve_user_timezone_async(command.user_id, uow)
             meal_datetime = noon_utc_for_date(meal_date, user_tz)
         else:
             # Today — use actual current time
