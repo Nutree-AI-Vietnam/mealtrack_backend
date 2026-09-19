@@ -4,7 +4,7 @@ Unit tests for DeleteMeal (hard delete) command handler.
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -120,16 +120,20 @@ async def test_delete_meal_command_uses_user_timezone_for_meal_date():
     async def fake_hook(u_id, m_date, old_date):
         hook_called_args.append((u_id, m_date, old_date))
 
-    with patch(
-        "src.app.handlers.command_handlers.delete_meal_command_handler._local_cache_invalidation_hook",
-        fake_hook,
-    ):
+    from src.app.events.meal.meal_events import (
+        register_local_cache_invalidation_hook,
+    )
+
+    register_local_cache_invalidation_hook(fake_hook)
+    try:
         handler = DeleteMealCommandHandler(
             uow=uow, event_publisher=event_publisher, environment="test"
         )
         result = await handler.handle(
             DeleteMealCommand(meal_id=meal_id, user_id=user_id)
         )
+    finally:
+        register_local_cache_invalidation_hook(None)
 
     assert result["meal_id"] == meal_id
     event_publisher.publish.assert_awaited_once()

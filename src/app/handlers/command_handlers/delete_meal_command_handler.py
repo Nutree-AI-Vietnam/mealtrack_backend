@@ -20,7 +20,7 @@ from src.app.events.hydration.hydration_deleted_event import (
 )
 from src.app.events.meal.meal_events import (
     MealDeletedEvent,
-    _local_cache_invalidation_hook,
+    invoke_local_cache_invalidation_hook,
 )
 from src.domain.model.hydration import DrinkCategory
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -57,7 +57,9 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
     async def handle(self, command: DeleteMealCommand) -> dict[str, Any]:
         """Handle meal deletion with data preservation."""
         deleted_kind = "meal"
-        hydration_delete_event = None
+        hydration_delete_event: (
+            HydrationCaloricDeletedEvent | HydrationDeletedEvent | None
+        ) = None
         meal_delete_event = None
         log_date = None
         async with self.uow_factory() as uow:
@@ -91,15 +93,16 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                 )
             else:
                 hydration_entries = getattr(uow, "hydration_entries", None)
-                hydration_entry = (
-                    await hydration_entries.find_by_id_or_legacy_meal_id(
-                        command.user_id,
-                        command.meal_id,
+                if hydration_entries is not None:
+                    hydration_entry = (
+                        await hydration_entries.find_by_id_or_legacy_meal_id(
+                            command.user_id,
+                            command.meal_id,
+                        )
                     )
-                    if hydration_entries is not None
-                    else None
-                )
-                if hydration_entry is not None:
+                else:
+                    hydration_entry = None
+                if hydration_entry is not None and hydration_entries is not None:
                     await hydration_entries.delete_by_id_or_legacy_meal_id(
                         command.user_id,
                         command.meal_id,
@@ -163,8 +166,8 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
                 meal_delete_event.aggregate_id,
             )
 
-        if _local_cache_invalidation_hook is not None and log_date is not None:
-            await _local_cache_invalidation_hook(command.user_id, log_date, None)
+        if log_date is not None:
+            await invoke_local_cache_invalidation_hook(command.user_id, log_date, None)
 
         return {
             "meal_id": command.meal_id,
