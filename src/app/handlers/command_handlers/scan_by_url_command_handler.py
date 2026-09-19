@@ -6,7 +6,9 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from src.api.exceptions import ValidationException
+import httpx
+
+from src.api.exceptions import ExternalServiceException, ValidationException
 from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
@@ -50,6 +52,10 @@ from src.domain.utils.timezone_utils import (
 from src.observability import capture_message, distribution_metric, increment_metric
 
 logger = logging.getLogger(__name__)
+
+_IMAGE_DOWNLOAD_ATTEMPTS = 2
+_RETRYABLE_IMAGE_STATUS_CODES = frozenset({502, 503, 504})
+_IMAGE_DOWNLOAD_RETRY_DELAY_SECONDS = 0.2
 
 
 @handles(ScanByUrlCommand)
@@ -124,14 +130,38 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         )
 
     async def _download_image_bytes(self, image_url: str) -> bytes:
-        if self._download_image_bytes_fn is not None:
-            return await self._download_image_bytes_fn(image_url)
-        import httpx
+        for attempt in range(_IMAGE_DOWNLOAD_ATTEMPTS):
+            try:
+                if self._download_image_bytes_fn is not None:
+                    return await self._download_image_bytes_fn(image_url)
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(image_url)
-            resp.raise_for_status()
-            return resp.content
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(image_url)
+                    response.raise_for_status()
+                    return response.content
+            except httpx.HTTPStatusError as exc:
+                status_code = (
+                    exc.response.status_code if exc.response is not None else None
+                )
+                if status_code not in _RETRYABLE_IMAGE_STATUS_CODES:
+                    raise
+                if attempt + 1 < _IMAGE_DOWNLOAD_ATTEMPTS:
+                    await asyncio.sleep(_IMAGE_DOWNLOAD_RETRY_DELAY_SECONDS)
+                    continue
+                raise ExternalServiceException(
+                    message="The image service is temporarily unavailable. Please try again.",
+                    error_code="IMAGE_DOWNLOAD_UNAVAILABLE",
+                    details={
+                        "status_code": status_code,
+                    }
+                    if status_code is not None
+                    else {},
+                ) from exc
+
+        raise ExternalServiceException(
+            message="The image service is temporarily unavailable. Please try again.",
+            error_code="IMAGE_DOWNLOAD_UNAVAILABLE",
+        )
 
     async def _analyze_food_label_image_with_ai(
         self,
