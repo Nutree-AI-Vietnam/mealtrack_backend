@@ -182,7 +182,6 @@ def test_save_normalizes_content_type_with_parameters_and_aliases(cf_store):
     assert url2 == "https://media.test.com/img-norm-1/public"
 
 
-
 @pytest.mark.asyncio
 @respx.mock
 async def test_load_async_success(cf_store):
@@ -234,3 +233,99 @@ async def test_generate_upload_signature_async(cf_store):
     assert token["provider"] == "cloudflare"
     assert "public_id" in token
     assert "cloud_name" in token
+
+
+@respx.mock
+def test_save_sync_picks_default_variant_regardless_of_order(cf_store):
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-order-1",
+                "variants": [
+                    "https://media.test.com/img-order-1/thumbnail",
+                    "https://media.test.com/img-order-1/public",
+                ],
+            },
+        },
+    )
+
+    url = cf_store.save(b"fake-bytes", "image/jpeg", image_id="img-order-1")
+    assert url == "https://media.test.com/img-order-1/public"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_save_async_picks_default_variant_regardless_of_order(cf_store):
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-order-2",
+                "variants": [
+                    "https://media.test.com/img-order-2/thumbnail",
+                    "https://media.test.com/img-order-2/avatar",
+                    "https://media.test.com/img-order-2/public",
+                ],
+            },
+        },
+    )
+
+    url = await cf_store.save_async(b"fake-bytes", "image/jpeg", image_id="img-order-2")
+    assert url == "https://media.test.com/img-order-2/public"
+
+
+@respx.mock
+def test_save_sync_prefers_custom_domain_over_imagedelivery_variants(cf_store):
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-fallback-1",
+                "variants": [
+                    "https://imagedelivery.net/test-cf-hash/img-fallback-1/public",
+                ],
+            },
+        },
+    )
+
+    url = cf_store.save(b"fake-bytes", "image/jpeg", image_id="img-fallback-1")
+    assert url == "https://media.test.com/img-fallback-1/public"
+
+
+@respx.mock
+def test_save_sync_without_custom_domain_picks_matching_default_variant():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="myhash",
+        custom_domain="",
+        default_variant="public",
+    )
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-nodefault-1",
+                "variants": [
+                    "https://imagedelivery.net/myhash/img-nodefault-1/thumbnail",
+                    "https://imagedelivery.net/myhash/img-nodefault-1/public",
+                ],
+            },
+        },
+    )
+
+    url = store.save(b"fake-bytes", "image/jpeg", image_id="img-nodefault-1")
+    assert url == "https://imagedelivery.net/myhash/img-nodefault-1/public"

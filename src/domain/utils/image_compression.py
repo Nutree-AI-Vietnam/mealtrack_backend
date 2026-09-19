@@ -76,7 +76,16 @@ def to_compressed_image_url(
     is_cf_default = hostname == "imagedelivery.net" or hostname.endswith(
         ".imagedelivery.net"
     )
-    is_cf_custom = bool(custom_domain and hostname == custom_domain.strip().lower())
+    clean_custom_domain = (
+        custom_domain.strip()
+        .lower()
+        .replace("https://", "")
+        .replace("http://", "")
+        .split("/")[0]
+        if custom_domain
+        else ""
+    )
+    is_cf_custom = bool(clean_custom_domain and hostname == clean_custom_domain)
 
     if is_cf_default or is_cf_custom:
         path_segments = [s for s in parsed.path.strip("/").split("/") if s]

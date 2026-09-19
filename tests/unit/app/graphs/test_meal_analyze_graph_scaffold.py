@@ -767,3 +767,26 @@ async def test_acquire_image_food_label_prefers_crop_without_compression():
     assert runtime.acquired_image.analysis_bytes == b"crop-label-bytes"
     assert "image_url" not in state_update
     assert "image_bytes" not in state_update
+
+
+@pytest.mark.asyncio
+async def test_acquire_image_scan_by_url_cloudflare_custom_domain():
+    download_image_bytes = AsyncMock(return_value=b"small-image-bytes")
+    command = ScanByUrlCommand(
+        user_id="user-123",
+        image_url="https://media.nutree.ai/img-cf-1/public",
+        public_id="img-cf-1",
+        scan_mode="scanner",
+    )
+    runtime = MealAnalyzeRuntime(
+        command=command,
+        download_image_bytes=download_image_bytes,
+        cloudflare_custom_domain="media.nutree.ai",
+    )
+
+    state_update = await acquire_image({}, runtime)
+
+    download_image_bytes.assert_awaited_once_with(
+        "https://media.nutree.ai/img-cf-1/w=768,fit=scale-down,f=auto"
+    )
+    assert state_update["image_id"] == "img-cf-1"

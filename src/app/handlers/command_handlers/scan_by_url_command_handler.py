@@ -69,6 +69,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         meal_analyze_graph_enabled: bool = False,
         download_image_bytes: Any | None = None,
         uow_factory=None,
+        cloudflare_custom_domain: str | None = None,
     ):
         self.uow = uow
         self.uow_factory = uow_factory if uow_factory is not None else (lambda: uow)
@@ -82,6 +83,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         self.meal_analyze_workflow = meal_analyze_workflow
         self.meal_analyze_graph_enabled = meal_analyze_graph_enabled
         self._download_image_bytes_fn = download_image_bytes
+        self.cloudflare_custom_domain = cloudflare_custom_domain
 
     def _record_food_label_metric(
         self,
@@ -176,7 +178,10 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         try:
             # For meal scans, fetch edge-compressed URL (Cloudflare/Cloudinary) to avoid local PIL resizing
             download_url = (
-                to_compressed_image_url(command.image_url)
+                to_compressed_image_url(
+                    command.image_url,
+                    custom_domain=self.cloudflare_custom_domain,
+                )
                 if command.scan_mode != "food_label"
                 else command.image_url
             )
@@ -440,6 +445,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     event_bus=self.event_bus,
                     meal_translation_service=self.meal_translation_service,
                     text_translation_service=self.text_translation_service,
+                    cloudflare_custom_domain=self.cloudflare_custom_domain,
                 ),
             )
 

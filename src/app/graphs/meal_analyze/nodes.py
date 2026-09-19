@@ -124,7 +124,13 @@ async def _acquire_scan_by_url_image(
         source_url = command.label_crop_image_url
         source_public_id = command.label_crop_public_id or command.public_id
 
-    download_url = source_url if is_food_label else to_compressed_image_url(source_url)
+    download_url = (
+        source_url
+        if is_food_label
+        else to_compressed_image_url(
+            source_url, custom_domain=runtime.cloudflare_custom_domain
+        )
+    )
     raw_bytes = await runtime.download_image_bytes(download_url)
     if is_food_label or len(raw_bytes) <= 200 * 1024:
         analysis_bytes = raw_bytes

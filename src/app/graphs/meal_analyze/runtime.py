@@ -65,6 +65,7 @@ class MealAnalyzeRuntime:
     food_reference_validation_service: FoodReferenceValidationService | None = None
     fatsecret_validation_enabled: bool = False
     max_vision_attempts: int = 1
+    cloudflare_custom_domain: str | None = None
     acquired_image: AcquiredImage | None = None
     vision_result: dict[str, Any] | None = None
     localization: MealResponseLocalization | None = None

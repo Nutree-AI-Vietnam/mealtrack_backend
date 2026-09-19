@@ -43,6 +43,15 @@ def test_to_compressed_image_url_cloudflare_custom_domain():
     )
     assert transformed == "https://media.nutree.ai/img-123/w=768,fit=scale-down,f=auto"
 
+    # Also works when custom_domain is passed with https:// and trailing slash
+    transformed_with_scheme = to_compressed_image_url(
+        url, max_dim=768, custom_domain="https://media.nutree.ai/"
+    )
+    assert (
+        transformed_with_scheme
+        == "https://media.nutree.ai/img-123/w=768,fit=scale-down,f=auto"
+    )
+
 
 def test_to_compressed_image_url_cloudflare_malformed_url_preserved():
     # URL missing variant segment — must NOT strip or replace the image ID

@@ -148,9 +148,30 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         variants = result.get("variants") or []
-        if variants:
-            return variants[0]
-        return self.get_url(image_id)
+        return self._select_delivery_url(variants, image_id)
+
+    def _select_delivery_url(self, variants: list[str], image_id: str) -> str:
+        """Select the preferred delivery URL for an image.
+
+        Prioritizes the configured default variant and custom domain over
+        arbitrary variant ordering returned by Cloudflare.
+        """
+        if self._custom_domain:
+            for v in variants:
+                if self._custom_domain in v and v.rstrip("/").endswith(
+                    f"/{self._default_variant}"
+                ):
+                    return v
+            return self.get_url(image_id)
+
+        for v in variants:
+            if v.rstrip("/").endswith(f"/{self._default_variant}"):
+                return v
+
+        try:
+            return self.get_url(image_id)
+        except ValueError:
+            return variants[0] if variants else ""
 
     async def save_async(
         self,
@@ -200,9 +221,7 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         variants = result.get("variants") or []
-        if variants:
-            return variants[0]
-        return self.get_url(image_id)
+        return self._select_delivery_url(variants, image_id)
 
     def load(self, image_id: str) -> bytes | None:
         """Synchronously load image bytes from Cloudflare Images."""
