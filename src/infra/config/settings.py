@@ -413,6 +413,17 @@ class Settings(BaseSettings):
         description="Fixed exchange rates to VND for wallet conversion",
     )
 
+    @field_validator("CLOUDFLARE_CUSTOM_DOMAIN", mode="before")
+    @classmethod
+    def normalize_cloudflare_custom_domain(cls, v: Any) -> str:
+        """Normalize Cloudflare custom domain to a bare hostname."""
+        if not v or not isinstance(v, str):
+            return ""
+        cleaned = v.strip().lower()
+        if "://" in cleaned:
+            cleaned = cleaned.split("://", 1)[1]
+        return cleaned.split("/")[0]
+
     @field_validator("NUTRITION_PROVIDER_GLOBAL_RPM", mode="before")
     @classmethod
     def default_provider_rpm(cls, value: Any) -> Any:

@@ -51,11 +51,18 @@ class CloudflareImageStore(ImageStorePort):
             if default_variant is not None
             else settings.CLOUDFLARE_DEFAULT_VARIANT
         ).strip() or "public"
-        self._custom_domain = (
+        raw_custom_domain = (
             custom_domain
             if custom_domain is not None
             else settings.CLOUDFLARE_CUSTOM_DOMAIN
-        ).strip()
+        )
+        if raw_custom_domain:
+            cleaned = raw_custom_domain.strip().lower()
+            if "://" in cleaned:
+                cleaned = cleaned.split("://", 1)[1]
+            self._custom_domain = cleaned.split("/")[0]
+        else:
+            self._custom_domain = ""
         self._client = client
         self._sync_client = sync_client
         self._timeout = timeout

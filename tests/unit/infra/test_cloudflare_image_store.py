@@ -72,6 +72,17 @@ def test_get_url_with_custom_domain(cf_store):
     assert url_thumb == "https://media.test.com/img-123/thumbnail"
 
 
+def test_get_url_with_custom_domain_containing_scheme_or_slashes():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        custom_domain="https://media.test.com/",
+    )
+    url = store.get_url("img-123")
+    assert url == "https://media.test.com/img-123/public"
+    assert "https://https://" not in url
+
+
 def test_get_url_with_imagedelivery_hash(mock_cf_settings, monkeypatch):
     monkeypatch.setattr(
         "src.infra.adapters.cloudflare_image_store.get_settings",

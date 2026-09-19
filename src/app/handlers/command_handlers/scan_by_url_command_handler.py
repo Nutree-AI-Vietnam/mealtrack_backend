@@ -83,7 +83,13 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         self.meal_analyze_workflow = meal_analyze_workflow
         self.meal_analyze_graph_enabled = meal_analyze_graph_enabled
         self._download_image_bytes_fn = download_image_bytes
-        self.cloudflare_custom_domain = cloudflare_custom_domain
+        if cloudflare_custom_domain:
+            cleaned = cloudflare_custom_domain.strip().lower()
+            if "://" in cleaned:
+                cleaned = cleaned.split("://", 1)[1]
+            self.cloudflare_custom_domain = cleaned.split("/")[0]
+        else:
+            self.cloudflare_custom_domain = None
 
     def _record_food_label_metric(
         self,

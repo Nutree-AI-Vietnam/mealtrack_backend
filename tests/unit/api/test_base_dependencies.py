@@ -57,3 +57,30 @@ def test_get_parse_text_settings_reads_structured_reference_flag(monkeypatch):
 def test_get_gpt_parser_returns_parser_instance():
     parser = get_gpt_parser()
     assert isinstance(parser, GPTResponseParser)
+
+
+def test_get_allowed_image_hosts_normalizes_custom_domain(monkeypatch):
+    import src.infra.config.settings as settings_module
+    from src.api.base_dependencies import get_allowed_image_hosts
+
+    class _SettingsWithScheme:
+        CLOUDFLARE_CUSTOM_DOMAIN = "https://images.example.com/"
+
+    monkeypatch.setattr(settings_module, "get_settings", lambda: _SettingsWithScheme())
+    hosts = get_allowed_image_hosts()
+    assert "images.example.com" in hosts
+    assert "https://images.example.com/" not in hosts
+    assert "res.cloudinary.com" in hosts
+    assert "imagedelivery.net" in hosts
+
+
+def test_get_allowed_image_hosts_empty_custom_domain(monkeypatch):
+    import src.infra.config.settings as settings_module
+    from src.api.base_dependencies import get_allowed_image_hosts
+
+    class _SettingsEmpty:
+        CLOUDFLARE_CUSTOM_DOMAIN = ""
+
+    monkeypatch.setattr(settings_module, "get_settings", lambda: _SettingsEmpty())
+    hosts = get_allowed_image_hosts()
+    assert hosts == frozenset({"res.cloudinary.com", "imagedelivery.net"})

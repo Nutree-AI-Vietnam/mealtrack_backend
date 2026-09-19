@@ -152,7 +152,12 @@ def get_allowed_image_hosts() -> frozenset[str]:
     hosts = {"res.cloudinary.com", "imagedelivery.net"}
     custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
     if custom_domain:
-        hosts.add(custom_domain.strip().lower())
+        cleaned = custom_domain.strip().lower()
+        if "://" in cleaned:
+            cleaned = cleaned.split("://", 1)[1]
+        clean_domain = cleaned.split("/")[0]
+        if clean_domain:
+            hosts.add(clean_domain)
     return frozenset(hosts)
 
 
