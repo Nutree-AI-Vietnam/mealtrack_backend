@@ -220,8 +220,17 @@ class AsyncMealRepository(MealRepositoryPort):
         return [meal_orm_to_domain(m) for m in result.scalars().all()]
 
     async def delete(self, meal_id: str) -> None:
+        # Match save() lock order: meal -> nutrition -> food_item. Without
+        # parent locks, delete can hold a food_item row while an edit holds
+        # nutrition and waits for that same child row.
+        if await self._lock_meal_row(meal_id) is None:
+            return
+
         nutrition_result = await self.session.execute(
-            select(NutritionORM).where(NutritionORM.meal_id == meal_id)
+            select(NutritionORM)
+            .where(NutritionORM.meal_id == meal_id)
+            .order_by(NutritionORM.id)
+            .with_for_update()
         )
         nutritions = nutrition_result.scalars().all()
         nutrition_ids = [n.id for n in nutritions]

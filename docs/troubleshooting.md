@@ -45,6 +45,40 @@ echo $APP_DATABASE_URL
 
 ---
 
+### Meal Edit/Delete Deadlocks
+
+**Problem:** PostgreSQL reports `DeadlockDetectedError` while a meal is being
+edited or deleted.
+
+**Diagnosis:** The meal write path must acquire locks in this order:
+`meal -> nutrition -> food_item`. Inspect the endpoint and SQL statements if
+the error continues outside these meal mutations.
+
+**Solutions:**
+1. Deploy the repository lock-order fix and restart the API workers.
+2. Correlate any remaining incident with the endpoint, transaction ID, and
+   PostgreSQL lock details before changing pool sizes or adding retries.
+3. Do not treat a retry as the primary fix for a repeatable lock-order cycle.
+
+---
+
+### PostHog OTLP Exporter Returns HTTP 400
+
+**Problem:** `opentelemetry.exporter.otlp.proto.http.trace_exporter` logs
+`Failed to export span batch code: 400`.
+
+**Diagnosis:** The PostHog OTLP processor appends `/i/v0/ai/otel` to
+`POSTHOG_HOST`. The legacy `app.posthog.com` host is not the OTLP ingestion
+host.
+
+**Solutions:**
+1. Set `POSTHOG_HOST` to `https://us.i.posthog.com` (or the correct regional
+   ingestion host).
+2. Restart/redeploy the API after changing the environment variable.
+3. Confirm the 400 exporter logs stop and that traces appear in PostHog.
+
+---
+
 ### Migration Conflicts
 
 **Problem:** `alembic upgrade head` fails with "heads are not equal"
