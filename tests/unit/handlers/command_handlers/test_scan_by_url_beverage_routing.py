@@ -2,9 +2,10 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
-from src.api.exceptions import ValidationException
+from src.api.exceptions import ExternalServiceException, ValidationException
 from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.handlers.command_handlers.scan_by_url_command_handler import (
     ScanByUrlCommandHandler,
@@ -14,6 +15,14 @@ from src.domain.parsers.vision_response_parser import VisionResponseParser
 _IMAGE_URL = "https://res.cloudinary.com/test/image/upload/v1/mealtrack/drink.jpg"
 _PUBLIC_ID = "mealtrack/1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
 _USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", _IMAGE_URL)
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(
+        "image gateway failed", request=request, response=response
+    )
 
 
 def _make_uow() -> MagicMock:
@@ -401,3 +410,31 @@ async def test_scan_by_url_graph_disabled_keeps_legacy_path():
     assert result == "legacy-result"
     handler._handle_legacy_scan_by_url.assert_awaited_once_with(command)
     workflow.run_scan_by_url.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_download_retries_transient_cloudinary_gateway_error(monkeypatch):
+    from src.app.handlers.command_handlers import scan_by_url_command_handler as module
+
+    sleep = AsyncMock()
+    monkeypatch.setattr(module.asyncio, "sleep", sleep)
+    download = AsyncMock(side_effect=[_http_status_error(504), b"image-bytes"])
+    handler = ScanByUrlCommandHandler(download_image_bytes=download)
+
+    result = await handler._download_image_bytes(_IMAGE_URL)
+
+    assert result == b"image-bytes"
+    assert download.await_count == 2
+    sleep.assert_awaited_once_with(0.2)
+
+
+@pytest.mark.asyncio
+async def test_download_maps_persistent_cloudinary_error_to_external_service():
+    download = AsyncMock(side_effect=[_http_status_error(504), _http_status_error(504)])
+    handler = ScanByUrlCommandHandler(download_image_bytes=download)
+
+    with pytest.raises(ExternalServiceException) as exc_info:
+        await handler._download_image_bytes(_IMAGE_URL)
+
+    assert exc_info.value.error_code == "IMAGE_DOWNLOAD_UNAVAILABLE"
+    assert exc_info.value.details == {"status_code": 504}
