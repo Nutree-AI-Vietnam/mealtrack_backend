@@ -62,6 +62,16 @@ def register_local_cache_invalidation_hook(
     _local_cache_invalidation_hook = hook
 
 
+async def invoke_local_cache_invalidation_hook(
+    user_id: str,
+    meal_date: date | datetime,
+    old_meal_date: date | datetime | None = None,
+) -> None:
+    """Invoke the process-local Redis purge when registered (development/local only)."""
+    if _local_cache_invalidation_hook is not None:
+        await _local_cache_invalidation_hook(user_id, meal_date, old_meal_date)
+
+
 async def _insight_user_context(
     event_bus: Any | None, user_id: str
 ) -> dict[str, Any] | None:
@@ -149,10 +159,9 @@ async def publish_meal_event(
         data=data,
     )
     await publisher.publish(event.to_payload())
-    if _local_cache_invalidation_hook is not None:
-        await _local_cache_invalidation_hook(
-            resolved_user_id, meal_date, old_meal_date
-        )
+    await invoke_local_cache_invalidation_hook(
+        resolved_user_id, meal_date, old_meal_date
+    )
     if insight is not None and _local_insight_hook is not None:
         _local_insight_hook(str(meal.meal_id), insight, occurred_at)
     return True

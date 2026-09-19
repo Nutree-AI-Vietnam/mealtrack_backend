@@ -184,9 +184,17 @@ def get_cache_service() -> CacheService | None:
 
 
 def _register_local_insight_hook() -> None:
-    """Write meal insights to Docker Redis when the Worker cannot reach it."""
-    from src.api.services.local_meal_insight_cache import LocalMealInsightWriter
+    """Write meal insights to Docker Redis when the Worker cannot reach it (development only)."""
+    if settings.ENVIRONMENT != "development":
+        return
+    from src.api.services.local_meal_insight_cache import (
+        LocalMealInsightWriter,
+        redis_url_is_local,
+    )
     from src.app.events.meal.meal_events import register_local_insight_hook
+
+    if not redis_url_is_local(settings.redis_url):
+        return
 
     register_local_insight_hook(
         LocalMealInsightWriter(get_cache_service, get_ai_model_manager).schedule
@@ -194,11 +202,17 @@ def _register_local_insight_hook() -> None:
 
 
 def _register_local_cache_invalidation_hook() -> None:
-    """Purge daily-macros Redis keys locally when Cloudflare Queue is not configured."""
+    """Purge daily-macros Redis keys locally when Cloudflare Queue is not configured (development only)."""
+    if settings.ENVIRONMENT != "development":
+        return
     from src.api.services.local_meal_cache_invalidation import (
         apply_meal_write_cache_invalidation,
     )
+    from src.api.services.local_meal_insight_cache import redis_url_is_local
     from src.app.events.meal.meal_events import register_local_cache_invalidation_hook
+
+    if not redis_url_is_local(settings.redis_url):
+        return
 
     async def _invalidate(user_id, meal_date, old_meal_date=None):
         await apply_meal_write_cache_invalidation(

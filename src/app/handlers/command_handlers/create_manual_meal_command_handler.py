@@ -35,6 +35,7 @@ from src.domain.services.nutrition_calculation_service import (
 from src.domain.utils.timezone_utils import (
     noon_utc_for_date,
     resolve_user_timezone_async,
+    user_today,
     utc_now,
 )
 from src.observability import distribution_metric
@@ -317,17 +318,19 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                 )
         nutrition, _ = self.nutrition_service.aggregate_from_command_items(items)
 
-        # Determine the meal date and datetime
+        # Determine the meal date and datetime in the user's timezone
         now = utc_now()
-        meal_date = event.target_date if event.target_date else now.date()
-        if event.target_date and event.target_date != now.date():
+        if uow is not None:
+            user_tz = await resolve_user_timezone_async(event.user_id, uow)
+        else:
+            async with self.uow_factory() as _uow:
+                user_tz = await resolve_user_timezone_async(event.user_id, _uow)
+
+        current_user_date = user_today(user_tz)
+        meal_date = event.target_date if event.target_date else current_user_date
+        if event.target_date and event.target_date != current_user_date:
             # Past/future date: use noon in user's local timezone to avoid
             # created_at falling into the wrong date after UTC conversion
-            if uow is not None:
-                user_tz = await resolve_user_timezone_async(event.user_id, uow)
-            else:
-                async with self.uow_factory() as _uow:
-                    user_tz = await resolve_user_timezone_async(event.user_id, _uow)
             meal_datetime = noon_utc_for_date(meal_date, user_tz)
         else:
             # Today or no date — use actual current time
