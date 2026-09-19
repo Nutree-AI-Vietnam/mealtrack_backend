@@ -20,7 +20,6 @@ from src.app.commands.meal import (
     UnfavoriteMealCommand,
     UploadMealImageImmediatelyCommand,
 )
-
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.commands.meal_catalog import LogCatalogMealCommand
@@ -97,7 +96,6 @@ from src.app.handlers.command_handlers import (
     SyncUserCommandHandler,
     UnfavoriteMealCommandHandler,
     UpdateCustomMacrosCommandHandler,
-
     UpdateLanguageCommandHandler,
     UpdateMovementEntryCommandHandler,
     UpdateNotificationPreferencesCommandHandler,
@@ -152,7 +150,6 @@ from src.app.handlers.query_handlers import (
     GetProviderFoodDetailsQueryHandler,
     GetRecentMealsQueryHandler,
     GetSavedSuggestionsQueryHandler,
-
     GetStreakQueryHandler,
     GetUserByFirebaseUidQueryHandler,
     GetUserMetricsQueryHandler,
@@ -208,7 +205,6 @@ from src.app.queries.meal import (
     GetRecentMealsQuery,
     GetStreakQuery,
 )
-
 from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_recommendation import (
     GetMealRecommendationPlanQuery,
@@ -543,6 +539,7 @@ def get_configured_event_bus() -> EventBus:
             meal_analyze_workflow=meal_analyze_workflow,
             meal_analyze_graph_enabled=graph_settings["graph_enabled"],
             download_image_bytes=_download_image_bytes_pooled,
+            cloudflare_custom_domain=settings.CLOUDFLARE_CUSTOM_DOMAIN,
         ),
     )
 
@@ -640,7 +637,6 @@ def get_configured_event_bus() -> EventBus:
             provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
         ),
     )
-
 
     # Register meal text parsing command handler
     event_bus.register_handler(

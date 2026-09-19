@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Optional
 
 
 class ImageStorePort(ABC):
@@ -7,7 +6,7 @@ class ImageStorePort(ABC):
 
     @abstractmethod
     def save(
-        self, image_bytes: bytes, content_type: str, image_id: Optional[str] = None
+        self, image_bytes: bytes, content_type: str, image_id: str | None = None
     ) -> str:
         """
         Saves image bytes to storage.
@@ -26,7 +25,7 @@ class ImageStorePort(ABC):
         pass
 
     @abstractmethod
-    def load(self, image_id: str) -> Optional[bytes]:
+    def load(self, image_id: str) -> bytes | None:
         """
         Loads image bytes by ID.
 
@@ -39,7 +38,7 @@ class ImageStorePort(ABC):
         pass
 
     @abstractmethod
-    def get_url(self, image_id: str) -> Optional[str]:
+    def get_url(self, image_id: str) -> str | None:
         """
         Gets a URL for accessing the image, if applicable.
 
@@ -66,18 +65,18 @@ class ImageStorePort(ABC):
 
     @abstractmethod
     async def save_async(
-        self, image_bytes: bytes, content_type: str, image_id: Optional[str] = None
+        self, image_bytes: bytes, content_type: str, image_id: str | None = None
     ) -> str:
         """Async version of save. Implementations should use asyncio.to_thread for sync SDKs."""
         pass
 
     @abstractmethod
-    async def load_async(self, image_id: str) -> Optional[bytes]:
+    async def load_async(self, image_id: str) -> bytes | None:
         """Async version of load."""
         pass
 
     @abstractmethod
-    async def get_url_async(self, image_id: str) -> Optional[str]:
+    async def get_url_async(self, image_id: str) -> str | None:
         """Async version of get_url."""
         pass
 
@@ -88,19 +87,21 @@ class ImageStorePort(ABC):
 
     @abstractmethod
     def generate_upload_signature(self, image_id: str, ttl: int = 300) -> dict:
-        """Return signed Cloudinary upload params for direct client upload.
+        """Return signed upload params or direct upload URL for direct client upload.
 
         Args:
-            image_id: UUID for the image (becomes public_id suffix).
-            ttl: Signature validity window in seconds (default 300).
+            image_id: Unique identifier for the image.
+            ttl: Validity window in seconds (default 300).
 
         Returns:
-            Dict with keys: image_id, cloud_name, api_key, timestamp,
-            signature, folder, public_id.
+            Dict containing upload details (e.g. upload_url, image_id, provider,
+            and any provider-specific parameters).
         """
         pass
 
     @abstractmethod
-    async def generate_upload_signature_async(self, image_id: str, ttl: int = 300) -> dict:
+    async def generate_upload_signature_async(
+        self, image_id: str, ttl: int = 300
+    ) -> dict:
         """Async version of generate_upload_signature."""
         pass

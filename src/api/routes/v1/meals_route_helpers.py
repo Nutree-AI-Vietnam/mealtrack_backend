@@ -101,3 +101,33 @@ def parsed_food_item_to_response(item) -> ParsedFoodItem:
         canonical_name=getattr(item, "canonical_name", None),
         source_snapshot=getattr(item, "source_snapshot", None),
     )
+
+
+def validate_uploaded_image_url(image_url: str, image_id: str) -> None:
+    """Validate that an uploaded meal photo URL uses HTTPS, targets an authorized CDN,
+    and contains the expected image_id."""
+    from urllib.parse import urlparse
+
+    from src.api.base_dependencies import get_allowed_image_hosts
+
+    parsed = urlparse(image_url)
+    if parsed.scheme != "https":
+        raise ValidationException(
+            message="image_url must use https",
+            error_code="INVALID_IMAGE_URL",
+            details={"url": image_url},
+        )
+    allowed_hosts = get_allowed_image_hosts()
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in allowed_hosts:
+        raise ValidationException(
+            message="image_url must be an authorized image host URL",
+            error_code="INVALID_IMAGE_URL",
+            details={"url": image_url},
+        )
+    if image_id not in image_url:
+        raise ValidationException(
+            message="image_id does not match image_url",
+            error_code="IMAGE_ID_URL_MISMATCH",
+            details={"image_id": image_id},
+        )

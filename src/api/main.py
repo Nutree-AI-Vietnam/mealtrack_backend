@@ -216,6 +216,27 @@ async def lifespan(app: FastAPI):
         logger.critical("Failed to initialize Firebase; aborting startup: %s", e)
         raise
 
+    # Validate image storage provider configuration
+    if settings.IMAGE_STORE_PROVIDER.lower() == "cloudflare":
+        if (
+            not settings.CLOUDFLARE_ACCOUNT_HASH
+            and not settings.CLOUDFLARE_CUSTOM_DOMAIN
+        ):
+            if settings.ENVIRONMENT in ("production", "staging"):
+                logger.critical(
+                    "CLOUDFLARE_ACCOUNT_HASH or CLOUDFLARE_CUSTOM_DOMAIN must be set "
+                    "when IMAGE_STORE_PROVIDER is 'cloudflare'."
+                )
+                raise ValueError(
+                    "Missing CLOUDFLARE_ACCOUNT_HASH or CLOUDFLARE_CUSTOM_DOMAIN "
+                    f"in {settings.ENVIRONMENT} environment."
+                )
+            else:
+                logger.warning(
+                    "CLOUDFLARE_ACCOUNT_HASH and CLOUDFLARE_CUSTOM_DOMAIN are not configured; "
+                    "Cloudflare image delivery URLs will fail if generated."
+                )
+
     # NOTE: Database migrations are run via docker-entrypoint.sh BEFORE app startup
     # This ensures migrations complete before any workers start, preventing race conditions
     # See: migrations/run.py and docker-entrypoint.sh

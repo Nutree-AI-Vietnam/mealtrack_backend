@@ -401,3 +401,61 @@ async def test_scan_by_url_graph_disabled_keeps_legacy_path():
     assert result == "legacy-result"
     handler._handle_legacy_scan_by_url.assert_awaited_once_with(command)
     workflow.run_scan_by_url.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scan_by_url_legacy_path_compresses_cloudflare_custom_domain_url():
+    download_mock = AsyncMock(return_value=b"fake-bytes")
+    handler = ScanByUrlCommandHandler(
+        uow=MagicMock(),
+        event_bus=MagicMock(),
+        vision_service=MagicMock(),
+        gpt_parser=MagicMock(),
+        download_image_bytes=download_mock,
+        cloudflare_custom_domain="media.nutree.ai",
+        meal_analyze_graph_enabled=False,
+    )
+    handler.vision_service.analyze = AsyncMock(
+        return_value={"structured_data": {"is_food": False}}
+    )
+    command = ScanByUrlCommand(
+        user_id=_USER_ID,
+        image_url="https://media.nutree.ai/custom-img-123/public",
+        public_id="custom-img-123",
+        scan_mode="meal_scan",
+    )
+
+    try:
+        await handler.handle(command)
+    except Exception:
+        pass
+
+    download_mock.assert_awaited_once_with(
+        "https://media.nutree.ai/custom-img-123/w=768,fit=scale-down,f=auto"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scan_by_url_graph_path_passes_cloudflare_custom_domain_to_runtime():
+    workflow = MagicMock()
+    workflow.run_scan_by_url = AsyncMock()
+    handler = ScanByUrlCommandHandler(
+        uow=MagicMock(),
+        event_bus=MagicMock(),
+        vision_service=MagicMock(),
+        gpt_parser=MagicMock(),
+        meal_analyze_workflow=workflow,
+        meal_analyze_graph_enabled=True,
+        cloudflare_custom_domain="media.nutree.ai",
+    )
+    command = ScanByUrlCommand(
+        user_id=_USER_ID,
+        image_url="https://media.nutree.ai/custom-img-456/public",
+        public_id="custom-img-456",
+    )
+
+    await handler.handle(command)
+
+    workflow.run_scan_by_url.assert_awaited_once()
+    runtime = workflow.run_scan_by_url.await_args.kwargs["runtime"]
+    assert runtime.cloudflare_custom_domain == "media.nutree.ai"
