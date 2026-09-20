@@ -10,6 +10,7 @@ import pytest
 from src.app.handlers.query_handlers import GetDailyActivitiesQueryHandler
 from src.app.queries.activity.get_daily_activities_query import GetDailyActivitiesQuery
 from src.domain.model import Macros, Meal, MealImage, MealStatus, Nutrition
+from src.domain.model.meal_projection import MealProjection
 
 
 @pytest.mark.asyncio
@@ -64,7 +65,7 @@ class TestUserSpecificActivities:
 
         # Configure repository to return different meals for different users
         async def mock_find_by_date(
-            target_date, user_id=None, limit=50, user_timezone=None
+            target_date, user_id=None, limit=50, user_timezone=None, projection=None
         ):
             if user_id == "123e4567-e89b-12d3-a456-426614174100":
                 return [user1_meal]
@@ -82,6 +83,10 @@ class TestUserSpecificActivities:
         mock_uow = AsyncMock()
         mock_uow.meals = mock_meals_repo
         mock_uow.users = mock_users_repo
+        mock_uow.hydration_entries.find_by_date = AsyncMock(return_value=[])
+        mock_uow.movement_entries.find_by_user_and_logged_range = AsyncMock(
+            return_value=[]
+        )
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
 
@@ -143,6 +148,10 @@ class TestUserSpecificActivities:
         mock_uow = AsyncMock()
         mock_uow.meals = mock_meals_repo
         mock_uow.users = mock_users_repo
+        mock_uow.hydration_entries.find_by_date = AsyncMock(return_value=[])
+        mock_uow.movement_entries.find_by_user_and_logged_range = AsyncMock(
+            return_value=[]
+        )
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
 
@@ -169,13 +178,21 @@ class TestUserSpecificActivities:
                 date(2024, 8, 15),
                 user_id="123e4567-e89b-12d3-a456-426614174300",
                 user_timezone="UTC",
+                projection=MealProjection.LIST_CARD,
             )
 
     async def test_daily_activities_uses_short_lived_uow_scopes(self):
-        """Cache misses should not hold one DB checkout across all daily reads."""
+        """Cache misses should open one shared read UoW for timezone, meals, and movement."""
 
         class _UowScope:
-            def __init__(self, *, users=None, meals=None, movement_entries=None, hydration_entries=None):
+            def __init__(
+                self,
+                *,
+                users=None,
+                meals=None,
+                movement_entries=None,
+                hydration_entries=None,
+            ):
                 self.users = users or AsyncMock()
                 self.meals = meals or AsyncMock()
                 self.movement_entries = movement_entries or AsyncMock()
@@ -204,9 +221,12 @@ class TestUserSpecificActivities:
         movement_repo.find_by_user_and_logged_range.return_value = []
 
         scopes = [
-            _UowScope(users=users_repo),
-            _UowScope(meals=meals_repo, hydration_entries=hydration_entries_repo),
-            _UowScope(movement_entries=movement_repo),
+            _UowScope(
+                users=users_repo,
+                meals=meals_repo,
+                hydration_entries=hydration_entries_repo,
+                movement_entries=movement_repo,
+            ),
         ]
         uow_factory = MagicMock(side_effect=scopes)
 
@@ -223,7 +243,7 @@ class TestUserSpecificActivities:
             activities = await handler.handle(query)
 
         assert activities == []
-        assert uow_factory.call_count == 3
+        assert uow_factory.call_count == 1
         for scope in scopes:
             scope.enter.assert_awaited_once()
             scope.exit.assert_awaited_once()
@@ -231,5 +251,6 @@ class TestUserSpecificActivities:
             date(2024, 8, 15),
             user_id="123e4567-e89b-12d3-a456-426614174300",
             user_timezone="UTC",
+            projection=MealProjection.LIST_CARD,
         )
         movement_repo.find_by_user_and_logged_range.assert_awaited_once()

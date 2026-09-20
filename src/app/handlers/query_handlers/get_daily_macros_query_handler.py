@@ -110,7 +110,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 target_date,
                 user_id=query.user_id,
                 user_timezone=user_tz_str,
-                projection=MealProjection.MACROS_ONLY,
+                projection=MealProjection.MACROS_WITH_MICROS,
             )
 
             total_protein = 0.0

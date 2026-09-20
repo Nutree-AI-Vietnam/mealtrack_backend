@@ -116,9 +116,7 @@ class AsyncFavoriteMealRepository(FavoriteMealRepositoryPort):
                 selectinload(FavoriteMealORM.meal)
                 .selectinload(MealORM.nutrition)
                 .selectinload(NutritionORM.food_items),
-                selectinload(FavoriteMealORM.meal).selectinload(
-                    MealORM.instruction_steps
-                ),
+                selectinload(FavoriteMealORM.meal).noload(MealORM.instruction_steps),
             )
             .where(FavoriteMealORM.user_id == user_id)
             .order_by(FavoriteMealORM.favorited_at.desc())

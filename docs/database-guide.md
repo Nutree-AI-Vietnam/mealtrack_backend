@@ -31,7 +31,7 @@ The app supports two runtime modes controlled by `DB_CONNECTION_MODE`:
 | Mode | Pool class | When to use |
 |------|-----------|-------------|
 | `direct_pool` | `AsyncAdaptedQueuePool` | Default. Use with a direct Neon endpoint (`ep-xxx.region.aws.neon.tech`). App owns the connection pool. |
-| `neon_pooler` | `NullPool` | Use with a Neon `-pooler` endpoint. PgBouncer (transaction mode) manages connections. Prepared statement caching is disabled automatically. |
+| `neon_pooler` | `NullPool` (default) or `AsyncAdaptedQueuePool` | Use with a Neon `-pooler` endpoint. PgBouncer (transaction mode) manages server sessions. Prepared statement caching is disabled automatically. Set `NEON_POOLER_USE_QUEUE_POOL=true` so each worker keeps a small SQLAlchemy pool in front of PgBouncer (avoids a TLS handshake per checkout). |
 
 ### URL priority
 
@@ -55,9 +55,10 @@ total_connections = UVICORN_WORKERS × (ASYNC_POOL_SIZE_PER_WORKER + ASYNC_POOL_
 - Use only when direct connections would exhaust `max_connections` at scale.
 - Set `APP_DATABASE_URL` to the `-pooler` endpoint and `DB_CONNECTION_MODE=neon_pooler`.
 - PgBouncer runs in transaction mode — prepared statements are disabled automatically.
-- `ASYNC_POOL_SIZE_PER_WORKER` and related settings are ignored in pooler mode.
+- Production should set `NEON_POOLER_USE_QUEUE_POOL=true` so `ASYNC_POOL_*` apply in front of PgBouncer. Leave `UVICORN_WORKERS` at the current value until P95 on cheap endpoints recovers.
+- Keep Neon autoscaling floor at **1 CU** so cold compute does not sit at 0.25 CU under home-screen fan-out.
 - **Cutover runbook:** [`runbooks/neon-pooler-cutover.md`](./runbooks/neon-pooler-cutover.md) (Stage 2).
-- After cutover, `/v1/health/db-pool` reports `pool_type=NullPool` plus `worker_count` (no SQLAlchemy checkout gauges).
+- After cutover, `/v1/health/db-pool` reports `connection_mode=neon_pooler`. With queue-pool enabled it reports `pool_type=QueuePool` plus checkout gauges; without it reports `pool_type=NullPool` plus `worker_count`.
 
 ### Scale-up order (do not skip Stage 1)
 

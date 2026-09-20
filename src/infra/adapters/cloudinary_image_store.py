@@ -3,8 +3,6 @@ import os
 import uuid
 
 import cloudinary
-import cloudinary.api
-import cloudinary.exceptions
 import cloudinary.uploader
 import cloudinary.utils
 from dotenv import load_dotenv
@@ -74,7 +72,6 @@ class CloudinaryImageStore(ImageStorePort):
         else:
             logger.debug(f"Using provided image_id: {image_id}")
 
-
         # Determine file extension from content type
         if content_type == "image/jpeg":
             file_extension = "jpg"
@@ -136,6 +133,7 @@ class CloudinaryImageStore(ImageStorePort):
         try:
             logger.debug("Fetching Cloudinary image for image_id=%s", image_id)
             import httpx
+
             response = httpx.get(url)
             if response.status_code == 200:
                 logger.debug("Image successfully fetched")
@@ -151,83 +149,17 @@ class CloudinaryImageStore(ImageStorePort):
         return None
 
     def get_url(self, image_id: str) -> str | None:
-        """
-        Gets a URL for accessing the image from Cloudinary.
-
-        Args:
-            image_id: The ID of the image
-
-        Returns:
-            URL to access the image if available, None otherwise
-        """
-        logger.debug(f"Getting URL for image ID: {image_id}")
-        folder = "mealtrack"  # Same folder used in save method
-        public_id = f"{folder}/{image_id}"
-
-        try:
-            # Get resource details from Cloudinary API to get the correct version and format
-            resource = cloudinary.api.resource(public_id)
-
-            # Extract the secure_url which includes the version number
-            secure_url = resource.get("secure_url")
-            if secure_url:
-                logger.debug("Found Cloudinary URL for image_id=%s", image_id)
-                return secure_url
-            else:
-                logger.error(
-                    f"No secure_url found in Cloudinary resource for {public_id}"
-                )
-                return None
-
-        except cloudinary.exceptions.NotFound:
-            logger.warning(f"Image not found in Cloudinary: {public_id}")
+        """Build a Cloudinary delivery URL locally — no Admin API or HEAD round-trip."""
+        logger.debug("Getting URL for image ID: %s", image_id)
+        cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME") or getattr(
+            cloudinary.config(), "cloud_name", None
+        )
+        if not cloud_name:
+            logger.error("CLOUDINARY_CLOUD_NAME not found")
             return None
-        except Exception as e:
-            logger.error(f"Error getting Cloudinary resource: {str(e)}")
 
-            # Fallback to manual URL construction (without version)
-            logger.debug("Falling back to manual URL construction")
-            cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
-            if not cloud_name:
-                logger.error("CLOUDINARY_CLOUD_NAME not found in environment")
-                return None
-
-            # Try both common formats
-            formats_to_try = ["jpg", "png"]
-
-            for fmt in formats_to_try:
-                # Build the direct Cloudinary URL (without version as fallback)
-                url = f"https://res.cloudinary.com/{cloud_name}/image/upload/{folder}/{image_id}.{fmt}"
-
-                logger.debug(
-                    "Trying Cloudinary fallback URL for image_id=%s format=%s",
-                    image_id,
-                    fmt,
-                )
-
-                # Check if the URL is accessible
-                try:
-                    import httpx
-
-                    response = httpx.head(url, timeout=5)
-                    if response.status_code == 200:
-                        logger.debug(
-                            "Found working fallback URL for image_id=%s format=%s",
-                            image_id,
-                            fmt,
-                        )
-                        return url
-                except httpx.RequestError as e:
-                    logger.debug(
-                        "Cloudinary fallback URL check failed for image_id=%s "
-                        "format=%s error_type=%s",
-                        image_id,
-                        fmt,
-                        type(e).__name__,
-                    )
-                    continue
-
-            return None
+        public_id = f"mealtrack/{image_id}"
+        return f"https://res.cloudinary.com/{cloud_name}/image/upload/{public_id}"
 
     def delete(self, image_id: str) -> bool:
         """
@@ -257,21 +189,23 @@ class CloudinaryImageStore(ImageStorePort):
     ) -> str:
         """Async wrapper — runs blocking Cloudinary SDK upload off the event loop."""
         import asyncio
+
         return await asyncio.to_thread(self.save, image_bytes, content_type, image_id)
 
     async def load_async(self, image_id: str) -> bytes | None:
         """Async wrapper — runs blocking Cloudinary SDK + HTTP load off the event loop."""
         import asyncio
+
         return await asyncio.to_thread(self.load, image_id)
 
     async def get_url_async(self, image_id: str) -> str | None:
-        """Async wrapper — runs blocking Cloudinary API call off the event loop."""
-        import asyncio
-        return await asyncio.to_thread(self.get_url, image_id)
+        """URL construction is local and non-blocking."""
+        return self.get_url(image_id)
 
     async def delete_async(self, image_id: str) -> bool:
         """Async wrapper — runs blocking Cloudinary SDK delete off the event loop."""
         import asyncio
+
         return await asyncio.to_thread(self.delete, image_id)
 
     def generate_upload_signature(self, image_id: str, ttl: int = 300) -> dict:
@@ -299,7 +233,10 @@ class CloudinaryImageStore(ImageStorePort):
             "public_id": public_id,
         }
 
-    async def generate_upload_signature_async(self, image_id: str, ttl: int = 300) -> dict:
+    async def generate_upload_signature_async(
+        self, image_id: str, ttl: int = 300
+    ) -> dict:
         """Async wrapper for generate_upload_signature."""
         import asyncio
+
         return await asyncio.to_thread(self.generate_upload_signature, image_id, ttl)

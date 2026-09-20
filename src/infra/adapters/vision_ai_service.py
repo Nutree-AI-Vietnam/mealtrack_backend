@@ -27,6 +27,7 @@ from src.domain.utils.image_compression import compress_image
 from src.infra.adapters.ai_json_utils import extract_json
 from src.infra.config.settings import get_settings
 from src.infra.services.ai.ai_model_manager import AIModelManager, ModelPurpose
+from src.infra.services.scan_concurrency import get_scan_semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,13 @@ class VisionAIService(VisionAIServicePort):
         Raises:
             RuntimeError: If analysis fails
         """
-        image_bytes = self._compress_image(image_bytes)
+        async with get_scan_semaphore(get_settings().MEAL_SCAN_GLOBAL_CONCURRENCY):
+            return await self._analyze_with_strategy_unlocked(image_bytes, strategy)
+
+    async def _analyze_with_strategy_unlocked(
+        self, image_bytes: bytes, strategy: MealAnalysisStrategy
+    ) -> dict[str, Any]:
+        image_bytes = await asyncio.to_thread(self._compress_image, image_bytes)
 
         if isinstance(strategy, IngredientIdentificationStrategy):
             return await self._analyze_without_nutrition_contract(image_bytes, strategy)

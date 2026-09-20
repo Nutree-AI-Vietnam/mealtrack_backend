@@ -15,10 +15,11 @@ Do **not** raise `UVICORN_WORKERS` on a build that still nests checkouts.
 | Variable | Stage 2 value | Notes |
 |----------|---------------|-------|
 | `APP_DATABASE_URL` | Neon **pooled** URL (`…-pooler.…neon.tech…`) | App runtime only |
-| `DB_CONNECTION_MODE` | `neon_pooler` | Selects `NullPool` + `prepared_statement_cache_size=0` |
+| `DB_CONNECTION_MODE` | `neon_pooler` | Selects pooler-safe asyncpg (`prepared_statement_cache_size=0`) |
+| `NEON_POOLER_USE_QUEUE_POOL` | `true` | Small per-worker `AsyncAdaptedQueuePool` in front of PgBouncer. Avoids NullPool TLS-per-checkout. |
 | `DATABASE_URL_DIRECT` | Neon **direct** URL (no `-pooler`) | Alembic / `preDeployCommand` only |
-| `UVICORN_WORKERS` | Start `4`–`6`, canary up | Safe to raise after pooler is healthy |
-| `ASYNC_POOL_*` | Ignored in pooler mode | Leave as-is; do not rely on them |
+| `UVICORN_WORKERS` | Keep current (do not raise in this wave) | Raise only after queue-pool + Neon min CU are healthy |
+| `ASYNC_POOL_*` | Honored when queue-pool is on | `POOL_SIZE_PER_WORKER` / overflow still apply per worker |
 
 Auto-detect: if `DB_CONNECTION_MODE` is unset and the host contains `-pooler`,
 the app selects `neon_pooler` automatically. Prefer setting the mode explicitly
@@ -33,15 +34,17 @@ in Render so misconfigured URLs fail fast.
 3. In Render → mealtrack-backend → Environment:
    - Set `APP_DATABASE_URL` to the pooled string (keep SSL params Neon provides).
    - Set `DB_CONNECTION_MODE=neon_pooler`.
+   - Set `NEON_POOLER_USE_QUEUE_POOL=true`.
    - Verify `DATABASE_URL_DIRECT` still points at the **direct** endpoint.
-4. Deploy (or restart) one service instance.
-5. Verify:
-   - Logs show `Async engine: NullPool mode=neon_pooler`.
+   - Do **not** raise `UVICORN_WORKERS` in the same change.
+4. In Neon → project compute: set autoscaling **min CU = 1** (keep max at 8, suspend off).
+5. Deploy (or restart) one service instance.
+6. Verify:
+   - Logs show `Async engine: AsyncAdaptedQueuePool mode=neon_pooler` (queue-pool on) or `NullPool mode=neon_pooler` (flag off).
    - `GET /v1/health/db-pool` (monitoring auth) returns
-     `connection_mode=neon_pooler`, `pool_type=NullPool`, `prepared_statement_cache_size=0`.
+     `connection_mode=neon_pooler`, `prepared_statement_cache_size=0`.
    - Smoke: login / open app / log a meal / weekly budget.
-6. Optionally bump `UVICORN_WORKERS` one step at a time; watch Neon connection charts
-   and API latency / 5xx.
+7. Only after cheap-endpoint P95 recovers, optionally bump `UVICORN_WORKERS` one step at a time; watch Neon connection charts and API latency / 5xx.
 
 ---
 
