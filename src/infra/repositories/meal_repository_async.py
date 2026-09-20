@@ -312,7 +312,9 @@ class AsyncMealRepository(MealRepositoryPort):
         stmt = stmt.order_by(MealORM.created_at.desc()).limit(limit)
 
         result = await self.session.execute(stmt)
-        return _map_domain_hydratable_meals(result.scalars().all())
+        # joinedload(translations) on LIST_CARD / FULL_WITH_TRANSLATIONS
+        # multiplies parent rows; unique() collapses them before mapping.
+        return _map_domain_hydratable_meals(result.unique().scalars().all())
 
     async def find_activities_by_date(
         self,

@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import get_cache_service
 from src.api.dependencies.auth_cache import get_cached_user_id, set_cached_user_id
+from src.bootstrap.integration_services import get_firebase_executor
 from src.domain.ports.cache_port import CachePort
-from src.infra.concurrency.executors import get_firebase_executor
 from src.infra.config.settings import settings
 from src.infra.database.config_async import AsyncSessionLocal
 
