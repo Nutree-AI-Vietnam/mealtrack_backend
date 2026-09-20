@@ -257,6 +257,10 @@ class Settings(BaseSettings):
         default="",
         description="Optional custom delivery domain for Cloudflare Images",
     )
+    CLOUDFLARE_FLEXIBLE_VARIANTS_ENABLED: bool = Field(
+        default=False,
+        description="Whether Cloudflare Images flexible variants are enabled on the account",
+    )
 
     # CORS
     ALLOWED_ORIGINS: str = Field(

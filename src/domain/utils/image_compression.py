@@ -48,13 +48,15 @@ def to_compressed_image_url(
     max_dim: int = _MAX_DIM,
     quality: str = "auto",
     custom_domain: str | None = None,
+    flexible_variants_enabled: bool = True,
 ) -> str:
     """Transform an image URL (Cloudflare Images or Cloudinary) to deliver an edge-resized & compressed image.
 
     For Cloudflare Images:
         - Default: https://imagedelivery.net/<account_hash>/<image_id>/<variant>
         - Custom domain: https://<custom_domain>/<image_id>/<variant>
-        Replaces the variant with edge resize transform `w={max_dim},fit=scale-down,f=auto`.
+        When flexible_variants_enabled is True, replaces the variant with edge resize transform `w={max_dim},fit=scale-down,f=auto`.
+        When flexible_variants_enabled is False, returns image_url unchanged to avoid 404 on accounts without Flexible Variants.
         Preserves image ID and rejects malformed URLs missing a variant.
     For Cloudinary (res.cloudinary.com/.../image/upload/...):
         Injects `/w_{max_dim},c_limit,q_{quality},f_jpg/` into the upload path.
@@ -88,6 +90,9 @@ def to_compressed_image_url(
     is_cf_custom = bool(clean_custom_domain and hostname == clean_custom_domain)
 
     if is_cf_default or is_cf_custom:
+        if not flexible_variants_enabled:
+            return image_url
+
         path_segments = [s for s in parsed.path.strip("/").split("/") if s]
         # Format:
         # Default: /<account_hash>/<image_id>/<variant> -> requires at least 3 segments

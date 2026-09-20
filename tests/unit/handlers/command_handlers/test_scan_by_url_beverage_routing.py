@@ -413,6 +413,7 @@ async def test_scan_by_url_legacy_path_compresses_cloudflare_custom_domain_url()
         gpt_parser=MagicMock(),
         download_image_bytes=download_mock,
         cloudflare_custom_domain="media.nutree.ai",
+        cloudflare_flexible_variants_enabled=True,
         meal_analyze_graph_enabled=False,
     )
     handler.vision_service.analyze = AsyncMock(

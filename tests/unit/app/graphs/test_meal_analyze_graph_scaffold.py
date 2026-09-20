@@ -782,6 +782,7 @@ async def test_acquire_image_scan_by_url_cloudflare_custom_domain():
         command=command,
         download_image_bytes=download_image_bytes,
         cloudflare_custom_domain="media.nutree.ai",
+        cloudflare_flexible_variants_enabled=True,
     )
 
     state_update = await acquire_image({}, runtime)
@@ -790,3 +791,69 @@ async def test_acquire_image_scan_by_url_cloudflare_custom_domain():
         "https://media.nutree.ai/img-cf-1/w=768,fit=scale-down,f=auto"
     )
     assert state_update["image_id"] == "img-cf-1"
+
+
+@pytest.mark.asyncio
+async def test_acquire_image_scan_by_url_cloudflare_flexible_variants_disabled():
+    download_image_bytes = AsyncMock(return_value=b"small-image-bytes")
+    command = ScanByUrlCommand(
+        user_id="user-123",
+        image_url="https://media.nutree.ai/img-cf-1/public",
+        public_id="img-cf-1",
+        scan_mode="scanner",
+    )
+    runtime = MealAnalyzeRuntime(
+        command=command,
+        download_image_bytes=download_image_bytes,
+        cloudflare_custom_domain="media.nutree.ai",
+        cloudflare_flexible_variants_enabled=False,
+    )
+
+    state_update = await acquire_image({}, runtime)
+
+    download_image_bytes.assert_awaited_once_with(
+        "https://media.nutree.ai/img-cf-1/public"
+    )
+    assert state_update["image_id"] == "img-cf-1"
+
+
+@pytest.mark.asyncio
+async def test_acquire_image_scan_by_url_download_failure_falls_back_to_source_url():
+    async def fake_download(url: str) -> bytes:
+        if "w=" in url:
+            import httpx
+
+            raise httpx.HTTPStatusError(
+                "404 Not Found",
+                request=httpx.Request("GET", url),
+                response=httpx.Response(404),
+            )
+        return b"fallback-original-bytes"
+
+    download_image_bytes = AsyncMock(side_effect=fake_download)
+    command = ScanByUrlCommand(
+        user_id="user-123",
+        image_url="https://media.nutree.ai/img-cf-1/public",
+        public_id="img-cf-1",
+        scan_mode="scanner",
+    )
+    runtime = MealAnalyzeRuntime(
+        command=command,
+        download_image_bytes=download_image_bytes,
+        cloudflare_custom_domain="media.nutree.ai",
+        cloudflare_flexible_variants_enabled=True,
+    )
+
+    state_update = await acquire_image({}, runtime)
+
+    assert download_image_bytes.await_count == 2
+    download_image_bytes.assert_any_await(
+        "https://media.nutree.ai/img-cf-1/w=768,fit=scale-down,f=auto"
+    )
+    download_image_bytes.assert_any_await(
+        "https://media.nutree.ai/img-cf-1/public"
+    )
+    assert runtime.acquired_image is not None
+    assert runtime.acquired_image.source_bytes == b"fallback-original-bytes"
+    assert state_update["image_id"] == "img-cf-1"
+

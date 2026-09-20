@@ -76,3 +76,20 @@ def test_to_compressed_image_url_anti_spoofing_ignores_arbitrary_domains():
 
     spoofed_cld = "https://evil.com/res.cloudinary.com/image/upload/img.jpg"
     assert to_compressed_image_url(spoofed_cld) == spoofed_cld
+
+
+def test_to_compressed_image_url_cloudflare_flexible_variants_disabled():
+    url = "https://imagedelivery.net/PeQb0oPRIbwHNu4iebuEpQ/img-123/public"
+    # When flexible_variants_enabled is False, preserves original URL to prevent 404
+    assert to_compressed_image_url(url, flexible_variants_enabled=False) == url
+
+    custom_url = "https://media.nutree.ai/img-123/public"
+    assert (
+        to_compressed_image_url(
+            custom_url,
+            custom_domain="media.nutree.ai",
+            flexible_variants_enabled=False,
+        )
+        == custom_url
+    )
+

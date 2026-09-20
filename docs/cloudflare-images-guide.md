@@ -57,6 +57,9 @@ CLOUDFLARE_DEFAULT_VARIANT="public"
 
 # Optional: custom delivery domain (leave empty to use https://imagedelivery.net/...)
 CLOUDFLARE_CUSTOM_DOMAIN=""
+
+# Optional: enable flexible variants if enabled in Cloudflare Dashboard (defaults to false)
+CLOUDFLARE_FLEXIBLE_VARIANTS_ENABLED=false
 ```
 
 ---
@@ -85,7 +88,14 @@ CLOUDFLARE_CUSTOM_DOMAIN=""
    - **Quality**: `85`
 3. Save the variant.
 
-### Step 4 (Optional): Custom Delivery Domain via URL Rewrite
+### Step 4 (Optional): Enable Flexible Variants for Dynamic Edge Resizing
+By default, Cloudflare Images accounts only allow pre-defined named variants (like `public`). Dynamic URL parameters (such as `w=768,fit=scale-down,f=auto`) require the Flexible Variants feature to be enabled:
+1. In Cloudflare Dashboard, navigate to **Images → Delivery**.
+2. Locate the **Flexible variants** setting and toggle it to **Enabled**.
+3. Set `CLOUDFLARE_FLEXIBLE_VARIANTS_ENABLED=true` in `.env`.
+*Note: If Flexible Variants are disabled (the default), the backend safely downloads the pre-configured `public` variant directly, and automatically falls back if edge compression encounters errors.*
+
+### Step 5 (Optional): Custom Delivery Domain via URL Rewrite
 By default, Cloudflare serves images via `https://imagedelivery.net/<ACCOUNT_HASH>/<IMAGE_ID>/<VARIANT>`.
 
 If you prefer branded URLs such as `https://images.nutree.ai/<image_id>/<variant>`:

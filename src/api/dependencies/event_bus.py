@@ -540,6 +540,7 @@ def get_configured_event_bus() -> EventBus:
             meal_analyze_graph_enabled=graph_settings["graph_enabled"],
             download_image_bytes=_download_image_bytes_pooled,
             cloudflare_custom_domain=settings.CLOUDFLARE_CUSTOM_DOMAIN,
+            cloudflare_flexible_variants_enabled=settings.CLOUDFLARE_FLEXIBLE_VARIANTS_ENABLED,
         ),
     )
 

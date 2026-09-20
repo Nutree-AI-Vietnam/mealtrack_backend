@@ -66,6 +66,7 @@ class MealAnalyzeRuntime:
     fatsecret_validation_enabled: bool = False
     max_vision_attempts: int = 1
     cloudflare_custom_domain: str | None = None
+    cloudflare_flexible_variants_enabled: bool = False
     acquired_image: AcquiredImage | None = None
     vision_result: dict[str, Any] | None = None
     localization: MealResponseLocalization | None = None
