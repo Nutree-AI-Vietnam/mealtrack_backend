@@ -364,3 +364,83 @@ def test_save_sync_without_custom_domain_picks_matching_default_variant():
 
     url = store.save(b"fake-bytes", "image/jpeg", image_id="img-nodefault-1")
     assert url == "https://imagedelivery.net/myhash/img-nodefault-1/public"
+
+
+@respx.mock
+def test_save_sync_raises_when_delivery_url_empty():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="myhash",
+    )
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-empty-variants",
+                "variants": [],
+            },
+        },
+    )
+    # If delivery URL resolution fails to produce a URL
+    store._select_delivery_url = lambda variants, image_id: ""
+
+    with pytest.raises(RuntimeError, match="failed to resolve a delivery URL"):
+        store.save(b"fake-bytes", "image/jpeg", image_id="img-empty-variants")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_save_async_raises_when_delivery_url_empty():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="myhash",
+    )
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-empty-variants",
+                "variants": [],
+            },
+        },
+    )
+    store._select_delivery_url = lambda variants, image_id: ""
+
+    with pytest.raises(RuntimeError, match="failed to resolve a delivery URL"):
+        await store.save_async(
+            b"fake-bytes", "image/jpeg", image_id="img-empty-variants"
+        )
+
+
+@respx.mock
+def test_save_sync_empty_variants_falls_back_to_get_url():
+    store = CloudflareImageStore(
+        account_id="test-cf-account",
+        api_token="test-cf-token",
+        account_hash="myhash",
+        custom_domain="media.test.com",
+        default_variant="public",
+    )
+    respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": "img-empty-variants-ok",
+                "variants": [],
+            },
+        },
+    )
+    url = store.save(b"fake-bytes", "image/jpeg", image_id="img-empty-variants-ok")
+    assert url == "https://media.test.com/img-empty-variants-ok/public"
+

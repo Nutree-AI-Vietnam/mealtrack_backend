@@ -32,6 +32,97 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def migrate_single_image(
+    img: MealImageORM,
+    *,
+    cf_store: CloudflareImageStore,
+    session,
+    http_client: httpx.AsyncClient,
+    dry_run: bool = False,
+) -> bool:
+    """Migrate a single image from Cloudinary to Cloudflare.
+
+    Returns True if successfully migrated, False if failed.
+    """
+    image_id = img.image_id
+    old_url = img.url
+    if not old_url:
+        return False
+
+    if dry_run:
+        return True
+
+    content_type = "unknown"
+    try:
+        # 1. Download from Cloudinary
+        resp = await http_client.get(old_url)
+        if resp.status_code != 200:
+            logger.error(
+                "Failed to download image %s from Cloudinary (status %d)",
+                image_id,
+                resp.status_code,
+            )
+            return False
+
+        # Determine content type with robust normalization and fallback
+        raw_content_type = (
+            resp.headers.get("content-type")
+            or f"image/{getattr(img, 'format', None) or 'jpeg'}"
+        )
+        content_type = raw_content_type.split(";")[0].strip().lower()
+        if content_type == "image/jpg":
+            content_type = "image/jpeg"
+
+        valid_mime_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+        if content_type not in valid_mime_types:
+            db_fmt = (getattr(img, "format", None) or "").lower().strip(".")
+            if db_fmt in ("jpg", "jpeg"):
+                content_type = "image/jpeg"
+            elif db_fmt in ("png", "webp", "gif"):
+                content_type = f"image/{db_fmt}"
+            else:
+                content_type = "image/jpeg"
+            logger.warning(
+                "Non-standard Content-Type '%s' for image %s; normalized to '%s'",
+                raw_content_type,
+                image_id,
+                content_type,
+            )
+
+        # 2. Upload to Cloudflare
+        new_url = await cf_store.save_async(
+            resp.content,
+            content_type=content_type,
+            image_id=image_id,
+        )
+        if not new_url or not new_url.strip() or not new_url.startswith("http"):
+            logger.error(
+                "Cloudflare upload returned invalid or empty URL for image %s: '%s'; skipping DB update",
+                image_id,
+                new_url,
+            )
+            return False
+
+        # 3. Update DB
+        await session.execute(
+            update(MealImageORM)
+            .where(MealImageORM.image_id == image_id)
+            .values(url=new_url)
+        )
+        logger.info("  -> Migrated to %s", new_url)
+        return True
+    except Exception as exc:
+        logger.error(
+            "Failed to migrate image %s (url=%s, content_type=%s): %s",
+            image_id,
+            old_url,
+            content_type,
+            exc,
+            exc_info=True,
+        )
+        return False
+
+
 async def migrate_images(
     *,
     dry_run: bool = True,
@@ -57,9 +148,7 @@ async def migrate_images(
 
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             for idx, img in enumerate(images, start=1):
-                image_id = img.image_id
-                old_url = img.url
-                if not old_url:
+                if not img.url:
                     stats["skipped"] += 1
                     continue
 
@@ -67,84 +156,27 @@ async def migrate_images(
                     "[%d/%d] Migrating image_id=%s from %s",
                     idx,
                     len(images),
-                    image_id,
-                    old_url,
+                    img.image_id,
+                    img.url,
                 )
 
-                if dry_run:
+                success = await migrate_single_image(
+                    img,
+                    cf_store=cf_store,
+                    session=session,
+                    http_client=http_client,
+                    dry_run=dry_run,
+                )
+                if success:
                     stats["migrated"] += 1
-                    continue
+                else:
+                    stats["failed"] += 1
 
-                try:
-                    # 1. Download from Cloudinary
-                    resp = await http_client.get(old_url)
-                    if resp.status_code != 200:
-                        logger.error(
-                            "Failed to download image %s from Cloudinary (status %d)",
-                            image_id,
-                            resp.status_code,
-                        )
-                        stats["failed"] += 1
-                        continue
-
-                    # Determine content type with robust normalization and fallback
-                    raw_content_type = (
-                        resp.headers.get("content-type")
-                        or f"image/{img.format or 'jpeg'}"
-                    )
-                    content_type = raw_content_type.split(";")[0].strip().lower()
-                    if content_type == "image/jpg":
-                        content_type = "image/jpeg"
-
-                    valid_mime_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-                    if content_type not in valid_mime_types:
-                        db_fmt = (img.format or "").lower().strip(".")
-                        if db_fmt in ("jpg", "jpeg"):
-                            content_type = "image/jpeg"
-                        elif db_fmt in ("png", "webp", "gif"):
-                            content_type = f"image/{db_fmt}"
-                        else:
-                            content_type = "image/jpeg"
-                        logger.warning(
-                            "Non-standard Content-Type '%s' for image %s; normalized to '%s'",
-                            raw_content_type,
-                            image_id,
-                            content_type,
-                        )
-
-                    # 2. Upload to Cloudflare
-                    new_url = await cf_store.save_async(
-                        resp.content,
-                        content_type=content_type,
-                        image_id=image_id,
-                    )
-
-                    # 3. Update DB
-                    await session.execute(
-                        update(MealImageORM)
-                        .where(MealImageORM.image_id == image_id)
-                        .values(url=new_url)
-                    )
-                    stats["migrated"] += 1
-                    logger.info("  -> Migrated to %s", new_url)
-
-                    # Rate limit slightly
+                if not dry_run:
                     await asyncio.sleep(0.05)
-
                     if idx % batch_size == 0:
                         await uow.commit()
                         logger.info("Committed batch of %d images", idx)
-
-                except Exception as exc:
-                    logger.error(
-                        "Failed to migrate image %s (url=%s, content_type=%s): %s",
-                        image_id,
-                        old_url,
-                        content_type if "content_type" in locals() else "unknown",
-                        exc,
-                        exc_info=True,
-                    )
-                    stats["failed"] += 1
 
         if not dry_run:
             await uow.commit()

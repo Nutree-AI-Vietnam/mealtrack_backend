@@ -158,7 +158,12 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         variants = result.get("variants") or []
-        return self._select_delivery_url(variants, image_id)
+        delivery_url = self._select_delivery_url(variants, image_id)
+        if not delivery_url:
+            raise RuntimeError(
+                f"Cloudflare Images upload succeeded for {image_id}, but failed to resolve a delivery URL."
+            )
+        return delivery_url
 
     def _select_delivery_url(self, variants: list[str], image_id: str) -> str:
         """Select the preferred delivery URL for an image.
@@ -234,7 +239,12 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         variants = result.get("variants") or []
-        return self._select_delivery_url(variants, image_id)
+        delivery_url = self._select_delivery_url(variants, image_id)
+        if not delivery_url:
+            raise RuntimeError(
+                f"Cloudflare Images upload succeeded for {image_id}, but failed to resolve a delivery URL."
+            )
+        return delivery_url
 
     def load(self, image_id: str) -> bytes | None:
         """Synchronously load image bytes from Cloudflare Images."""
