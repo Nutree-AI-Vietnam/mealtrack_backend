@@ -33,10 +33,8 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
             cached = await self.cache_service.get_json(cache_key)
             if cached is not None:
                 cached_revision = cached.get("profile_target_revision")
-                if (
-                    cached_revision is None
-                    or cached_revision
-                    == await self._current_profile_revision(query.user_id)
+                if cached_revision == await self._current_profile_revision(
+                    query.user_id
                 ):
                     return cached
         result = await self._compute(query)

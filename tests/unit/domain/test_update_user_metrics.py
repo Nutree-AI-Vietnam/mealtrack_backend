@@ -461,8 +461,30 @@ class TestUpdateUserMetricsCommandHandler:
         await handler.handle(command)
 
         assert profile.target_weight_kg == 65.0
+        assert profile.profile_target_revision == 2
         assert profile.is_current is True
         mock_uow.users.update_profile.assert_called_once_with(profile)
+
+    async def test_identical_target_weight_does_not_increment_revision(self):
+        from datetime import UTC, datetime
+
+        profile = _make_profile(
+            target_weight_kg=65.0,
+            goal_start_weight_kg=70.0,
+            goal_started_at=datetime(2026, 6, 1, tzinfo=UTC),
+            profile_target_revision=3,
+        )
+        mock_uow = _make_mock_uow(profile)
+        handler = UpdateUserMetricsCommandHandler(
+            uow=mock_uow, event_publisher=_publisher()
+        )
+
+        await handler.handle(
+            UpdateUserMetricsCommand(user_id="test_user", target_weight_kg=65.0)
+        )
+
+        assert profile.target_weight_kg == 65.0
+        assert profile.profile_target_revision == 3
 
     async def test_invalid_target_weight(self):
         """Test validation for invalid target weight."""

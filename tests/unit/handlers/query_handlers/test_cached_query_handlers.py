@@ -579,17 +579,74 @@ class TestGetUserMetricsQueryHandlerCache:
         )
         from src.app.queries.user import GetUserMetricsQuery
 
-        cached = {"user_id": "u1", "weight_kg": 75.0}
+        cached = {
+            "user_id": "u1",
+            "weight_kg": 75.0,
+            "target_weight_kg": 65.0,
+            "profile_target_revision": 1,
+        }
         cache_service = MagicMock()
         cache_service.get_json = AsyncMock(return_value=cached)
         cache_service.set_json = AsyncMock()
 
         handler = GetUserMetricsQueryHandler(cache_service=cache_service)
         query = GetUserMetricsQuery(user_id="u1")
-        result = await handler.handle(query)
+        with patch.object(
+            handler, "_current_profile_revision", AsyncMock(return_value=1)
+        ):
+            result = await handler.handle(query)
 
         assert result == cached
         cache_service.set_json.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_recomputes_when_cached_target_revision_is_stale(self):
+        from src.app.handlers.query_handlers.get_user_metrics_query_handler import (
+            GetUserMetricsQueryHandler,
+        )
+        from src.app.queries.user import GetUserMetricsQuery
+
+        cache_service = MagicMock()
+        cache_service.get_json = AsyncMock(
+            return_value={
+                "target_weight_kg": 65.0,
+                "profile_target_revision": 1,
+            }
+        )
+        cache_service.set_json = AsyncMock()
+        handler = GetUserMetricsQueryHandler(cache_service=cache_service)
+        fresh = {"target_weight_kg": 63.0, "profile_target_revision": 2}
+
+        with (
+            patch.object(
+                handler, "_current_profile_revision", AsyncMock(return_value=2)
+            ),
+            patch.object(handler, "_compute", AsyncMock(return_value=fresh)),
+        ):
+            assert await handler.handle(GetUserMetricsQuery(user_id="u1")) == fresh
+
+        cache_service.set_json.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_recomputes_when_cached_revision_is_missing(self):
+        from src.app.handlers.query_handlers.get_user_metrics_query_handler import (
+            GetUserMetricsQueryHandler,
+        )
+        from src.app.queries.user import GetUserMetricsQuery
+
+        cache_service = MagicMock()
+        cache_service.get_json = AsyncMock(return_value={"target_weight_kg": 65.0})
+        cache_service.set_json = AsyncMock()
+        handler = GetUserMetricsQueryHandler(cache_service=cache_service)
+        fresh = {"target_weight_kg": 63.0, "profile_target_revision": 1}
+
+        with (
+            patch.object(
+                handler, "_current_profile_revision", AsyncMock(return_value=1)
+            ),
+            patch.object(handler, "_compute", AsyncMock(return_value=fresh)),
+        ):
+            assert await handler.handle(GetUserMetricsQuery(user_id="u1")) == fresh
 
     @pytest.mark.asyncio
     async def test_stores_result_in_cache_on_miss(self):

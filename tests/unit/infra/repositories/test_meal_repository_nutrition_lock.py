@@ -130,6 +130,34 @@ async def test_update_nutrition_locks_parent_then_deletes_removed_items_by_id():
 
 
 @pytest.mark.asyncio
+async def test_delete_locks_meal_and_nutrition_before_touching_food_items():
+    repo = AsyncMealRepository(session=MagicMock())
+    meal_lock_result = MagicMock()
+    meal_lock_result.scalar_one_or_none.return_value = "meal-1"
+    nutrition = _db_nutrition([])
+    nutrition_result = MagicMock()
+    nutrition_result.scalars.return_value.all.return_value = [nutrition]
+    repo.session.execute = AsyncMock(
+        side_effect=[
+            meal_lock_result,
+            nutrition_result,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        ]
+    )
+
+    await repo.delete("meal-1")
+
+    meal_lock_stmt = repo.session.execute.await_args_list[0].args[0]
+    nutrition_lock_stmt = repo.session.execute.await_args_list[1].args[0]
+    assert meal_lock_stmt._for_update_arg is not None
+    assert nutrition_lock_stmt._for_update_arg is not None
+
+
+@pytest.mark.asyncio
 async def test_update_nutrition_updates_matching_food_items_in_place():
     repo = _repo()
     existing = _db_item("keep-id")

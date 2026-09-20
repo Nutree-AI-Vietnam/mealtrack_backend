@@ -148,16 +148,30 @@ class FoodReferenceLocaleRepository:
     async def apply_serving_name_vi(
         self, food_reference_id: int, labels_by_unit: dict[str, str]
     ) -> None:
-        if not labels_by_unit:
+        await self.apply_serving_name_vi_many({food_reference_id: labels_by_unit})
+
+    async def apply_serving_name_vi_many(
+        self, labels_by_reference: dict[int, dict[str, str]]
+    ) -> None:
+        cleaned: dict[int, dict[str, str]] = {}
+        for food_reference_id, labels_by_unit in labels_by_reference.items():
+            if not labels_by_unit:
+                continue
+            cleaned[int(food_reference_id)] = {
+                serving_phrase_key(unit): label
+                for unit, label in labels_by_unit.items()
+            }
+        if not cleaned:
             return
-        keyed = {serving_phrase_key(unit): label for unit, label in labels_by_unit.items()}
         result = await self._session.execute(
             select(FoodReferenceServingSizeModel).where(
-                FoodReferenceServingSizeModel.food_reference_id == food_reference_id
+                FoodReferenceServingSizeModel.food_reference_id.in_(cleaned)
             )
         )
         for row in result.scalars().all():
-            label = keyed.get(serving_phrase_key(row.name))
+            label = cleaned.get(int(row.food_reference_id), {}).get(
+                serving_phrase_key(row.name)
+            )
             if label:
                 row.name_vi = label[:100]
 
