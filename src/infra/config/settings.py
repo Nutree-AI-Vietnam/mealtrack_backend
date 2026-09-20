@@ -59,7 +59,15 @@ class Settings(BaseSettings):
     )
     DB_CONNECTION_MODE: str = Field(
         default="direct_pool",
-        description="DB connection mode: 'direct_pool' (AsyncAdaptedQueuePool) or 'neon_pooler' (NullPool)",
+        description="DB connection mode: 'direct_pool' (AsyncAdaptedQueuePool) or 'neon_pooler' (NullPool unless NEON_POOLER_USE_QUEUE_POOL)",
+    )
+    NEON_POOLER_USE_QUEUE_POOL: bool = Field(
+        default=False,
+        description=(
+            "When DB_CONNECTION_MODE=neon_pooler, keep a small per-worker "
+            "AsyncAdaptedQueuePool in front of PgBouncer so TLS/auth is not "
+            "repeated on every checkout. Prepared statements stay disabled."
+        ),
     )
     ASYNC_POOL_SIZE_PER_WORKER: int | None = Field(
         default=None,
