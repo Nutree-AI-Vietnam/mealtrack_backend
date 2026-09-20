@@ -75,7 +75,7 @@ class _ConflictPlanRepo(_PlanRepo):
 
     async def _get_by_key(self, **kwargs):
         self._reads += 1
-        return None if self._reads == 1 else self.existing
+        return None if self._reads <= 2 else self.existing
 
 
 class _LogPlanRepo(_PlanRepo):
@@ -271,7 +271,49 @@ async def test_create_handler_replays_after_persistence_conflict():
     result = await handler.handle(_command())
 
     assert result.id == "plan-1"
-    assert plans.get_by_idempotency_key.await_count == 2
+    assert plans.get_by_idempotency_key.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_create_handler_runs_optimizer_after_first_uow_exits():
+    class _TrackingUow(_Uow):
+        def __init__(self, plans, catalog):
+            super().__init__(plans, catalog)
+            self.exits = 0
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            self.exits += 1
+            return None
+
+    class _TrackingOptimizer(_Optimizer):
+        def __init__(self, uow: _TrackingUow):
+            self._uow = uow
+            self.exits_at_build: int | None = None
+
+        def build_plan(self, catalog_meals, *, daily_calories, affinity, **kwargs):
+            self.exits_at_build = self._uow.exits
+            return super().build_plan(
+                catalog_meals,
+                daily_calories=daily_calories,
+                affinity=affinity,
+                **kwargs,
+            )
+
+    plans = _PlanRepo()
+    uow = _TrackingUow(plans, _CatalogRepo(meals=[_catalog_meal("catalog-1")]))
+    optimizer = _TrackingOptimizer(uow)
+    handler = CreateThreeDayMealRecommendationCommandHandler(
+        uow=uow,
+        optimizer=optimizer,
+        history_projector=_HistoryProjector(),
+    )
+
+    await handler.handle(_command())
+
+    assert optimizer.exits_at_build == 1
+    assert uow.exits == 2
+    plans.lock_generation_for_user.assert_awaited()
+    assert plans.lock_generation_for_user.await_count == 2
 
 
 @pytest.mark.asyncio

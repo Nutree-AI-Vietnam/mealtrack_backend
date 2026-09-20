@@ -345,6 +345,11 @@ class Settings(BaseSettings):
     )
     # Meal analysis settings
     MEAL_ANALYZE_MAX_ATTEMPTS: int = Field(default=2)
+    MEAL_SCAN_GLOBAL_CONCURRENCY: int = Field(
+        default=2,
+        ge=1,
+        description="Max concurrent vision scans per worker process.",
+    )
     MEAL_ANALYZE_MAX_OUTPUT_TOKENS: int = Field(
         default=MEAL_ANALYZE_DEFAULT_MAX_OUTPUT_TOKENS
     )
