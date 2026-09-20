@@ -59,7 +59,15 @@ class Settings(BaseSettings):
     )
     DB_CONNECTION_MODE: str = Field(
         default="direct_pool",
-        description="DB connection mode: 'direct_pool' (AsyncAdaptedQueuePool) or 'neon_pooler' (NullPool)",
+        description="DB connection mode: 'direct_pool' (AsyncAdaptedQueuePool) or 'neon_pooler' (NullPool unless NEON_POOLER_USE_QUEUE_POOL)",
+    )
+    NEON_POOLER_USE_QUEUE_POOL: bool = Field(
+        default=False,
+        description=(
+            "When DB_CONNECTION_MODE=neon_pooler, keep a small per-worker "
+            "AsyncAdaptedQueuePool in front of PgBouncer so TLS/auth is not "
+            "repeated on every checkout. Prepared statements stay disabled."
+        ),
     )
     ASYNC_POOL_SIZE_PER_WORKER: int | None = Field(
         default=None,
@@ -123,6 +131,11 @@ class Settings(BaseSettings):
     FIREBASE_CREDENTIALS: str | None = Field(default=None)
     FIREBASE_SERVICE_ACCOUNT_JSON: str | None = Field(default=None)
     FIREBASE_SERVICE_ACCOUNT_PATH: str | None = Field(default=None)
+    FIREBASE_VERIFY_THREADS: int = Field(
+        default=8,
+        ge=1,
+        description="Dedicated thread-pool size for Firebase Admin token verification.",
+    )
 
     # Email (Resend)
     RESEND_API_KEY: str | None = Field(default=None)
@@ -332,6 +345,11 @@ class Settings(BaseSettings):
     )
     # Meal analysis settings
     MEAL_ANALYZE_MAX_ATTEMPTS: int = Field(default=2)
+    MEAL_SCAN_GLOBAL_CONCURRENCY: int = Field(
+        default=2,
+        ge=1,
+        description="Max concurrent vision scans per worker process.",
+    )
     MEAL_ANALYZE_MAX_OUTPUT_TOKENS: int = Field(
         default=MEAL_ANALYZE_DEFAULT_MAX_OUTPUT_TOKENS
     )

@@ -717,13 +717,23 @@ class TestGetDailyActivitiesQueryHandlerCache:
         query = GetDailyActivitiesQuery(user_id="u1", target_date=target_dt)
 
         expected_key, _ = CacheKeys.daily_activities("u1", target_dt.date())
+        mock_uow = AsyncMock()
+        mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
+        mock_uow.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(
-                handler, "_resolve_user_timezone", AsyncMock(return_value="UTC")
+            patch(
+                "src.app.handlers.query_handlers.get_daily_activities_query_handler.AsyncUnitOfWork",
+                return_value=mock_uow,
             ),
-            patch.object(handler, "_get_meal_activities", return_value=[]),
-            patch.object(handler, "_get_workout_activities", return_value=[]),
+            patch(
+                "src.app.handlers.query_handlers.get_daily_activities_query_handler.resolve_user_timezone_async",
+                AsyncMock(return_value="UTC"),
+            ),
+            patch.object(handler, "_get_meal_activities", AsyncMock(return_value=[])),
+            patch.object(
+                handler, "_get_workout_activities", AsyncMock(return_value=[])
+            ),
         ):
             await handler.handle(query)
 

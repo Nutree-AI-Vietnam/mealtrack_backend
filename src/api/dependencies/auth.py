@@ -5,6 +5,7 @@ Provides Firebase token verification and user extraction.
 """
 
 import asyncio
+import functools
 import logging
 import os
 import secrets
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import get_cache_service
 from src.api.dependencies.auth_cache import get_cached_user_id, set_cached_user_id
+from src.bootstrap.integration_services import get_firebase_executor
 from src.domain.ports.cache_port import CachePort
 from src.infra.config.settings import settings
 from src.infra.database.config_async import AsyncSessionLocal
@@ -27,6 +29,21 @@ logger = logging.getLogger(__name__)
 
 # Security scheme for OpenAPI documentation (auto_error=False for dev bypass)
 security = HTTPBearer(auto_error=False)
+
+
+async def _verify_id_token(token: str, *, check_revoked: bool = False) -> dict:
+    """Run Firebase Admin verification on the dedicated executor."""
+    loop = asyncio.get_running_loop()
+    if check_revoked:
+        return await loop.run_in_executor(
+            get_firebase_executor(),
+            functools.partial(firebase_auth.verify_id_token, token, check_revoked=True),
+        )
+    return await loop.run_in_executor(
+        get_firebase_executor(),
+        firebase_auth.verify_id_token,
+        token,
+    )
 
 
 async def verify_firebase_token(
@@ -95,8 +112,8 @@ async def verify_firebase_token(
 
     try:
         # Firebase Admin verification is synchronous and may fetch public certs.
-        # Keep it off the event loop so unrelated requests do not stall.
-        decoded_token = await asyncio.to_thread(firebase_auth.verify_id_token, token)
+        # Use a dedicated pool so Cloudinary/PIL work cannot starve auth.
+        decoded_token = await _verify_id_token(token)
         logger.debug(
             "Successfully verified token for user: %s", decoded_token.get("uid")
         )
@@ -147,11 +164,7 @@ async def verify_firebase_token_revocation_checked(
     if not credentials:
         return decoded_token
     try:
-        return await asyncio.to_thread(
-            firebase_auth.verify_id_token,
-            credentials.credentials,
-            check_revoked=True,
-        )
+        return await _verify_id_token(credentials.credentials, check_revoked=True)
     except firebase_auth.RevokedIdTokenError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -164,7 +177,10 @@ async def verify_firebase_token_revocation_checked(
             detail="Authentication token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         ) from error
-    except (firebase_auth.InvalidIdTokenError, firebase_auth.CertificateFetchError) as error:
+    except (
+        firebase_auth.InvalidIdTokenError,
+        firebase_auth.CertificateFetchError,
+    ) as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",
@@ -420,9 +436,7 @@ async def optional_authentication(
         return None
 
     try:
-        decoded_token = await asyncio.to_thread(
-            firebase_auth.verify_id_token, credentials.credentials
-        )
+        decoded_token = await _verify_id_token(credentials.credentials)
         return decoded_token
     except Exception as e:
         logger.debug("Optional auth failed: %s", str(e))

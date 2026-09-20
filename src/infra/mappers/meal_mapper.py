@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+from sqlalchemy import inspect as sa_inspect
+
 from src.domain.model.meal.meal import Meal as DomainMeal
 from src.domain.model.meal.meal_image import MealImage as DomainMealImage
 from src.domain.model.meal.meal_translation_domain_models import (
@@ -79,6 +81,18 @@ def _to_naive_utc(dt: datetime | None) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 
+def _loaded_relationship(orm, name: str):
+    """Return a relationship value, or None when the projection noload'ed it."""
+    if name in getattr(orm, "__dict__", {}):
+        return getattr(orm, name)
+    try:
+        if name in sa_inspect(orm).unloaded:
+            return None
+    except Exception:
+        return None
+    return getattr(orm, name)
+
+
 def food_item_orm_to_domain(orm: FoodItemORM) -> DomainFoodItem:
     return DomainFoodItem(
         id=orm.id,
@@ -115,10 +129,9 @@ def food_item_orm_to_domain(orm: FoodItemORM) -> DomainFoodItem:
 
 
 def nutrition_orm_to_domain(orm: NutritionORM) -> DomainNutrition:
+    loaded_items = _loaded_relationship(orm, "food_items")
     food_items = (
-        [food_item_orm_to_domain(fi) for fi in orm.food_items]
-        if orm.food_items
-        else None
+        [food_item_orm_to_domain(fi) for fi in loaded_items] if loaded_items else None
     )
     return DomainNutrition(
         macros=Macros(
@@ -170,7 +183,7 @@ def meal_translation_orm_to_domain(orm: MealTranslationORM) -> DomainMealTransla
 
 
 def _instructions_from_rows(orm: MealORM) -> list | None:
-    rows = getattr(orm, "instruction_steps", None)
+    rows = _loaded_relationship(orm, "instruction_steps")
     if not rows:
         return orm.__dict__.get("instructions")
     return [
@@ -184,20 +197,24 @@ def _instructions_from_rows(orm: MealORM) -> list | None:
 
 def meal_orm_to_domain(orm: MealORM) -> DomainMeal:
     translations_dict: dict[str, DomainMealTranslation] | None = None
-    if orm.translations:
+    translations = _loaded_relationship(orm, "translations")
+    if translations:
         translations_dict = {
-            t.language: meal_translation_orm_to_domain(t) for t in orm.translations
+            t.language: meal_translation_orm_to_domain(t) for t in translations
         }
+
+    image = _loaded_relationship(orm, "image")
+    nutrition = _loaded_relationship(orm, "nutrition")
 
     return DomainMeal(
         meal_id=orm.meal_id,
         user_id=orm.user_id,
         status=MealStatusMapper.to_domain(orm.status),
         created_at=orm.created_at,
-        image=meal_image_orm_to_domain(orm.image) if orm.image else None,
+        image=meal_image_orm_to_domain(image) if image else None,
         dish_name=orm.dish_name,
         meal_type=orm.meal_type,
-        nutrition=nutrition_orm_to_domain(orm.nutrition) if orm.nutrition else None,
+        nutrition=nutrition_orm_to_domain(nutrition) if nutrition else None,
         ready_at=orm.ready_at,
         error_message=orm.__dict__.get("error_message"),
         raw_gpt_json=orm.__dict__.get("raw_ai_response"),

@@ -1,15 +1,20 @@
 """Unit tests for Meal repository projection options and mapper deferral handling."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from sqlalchemy.orm.strategy_options import Load
 
 from src.domain.model.meal_projection import MealProjection
 from src.infra.database.models.enums import MealStatusEnum
 from src.infra.database.models.meal.meal import MealORM
 from src.infra.mappers.meal_mapper import meal_orm_to_domain
-from src.infra.repositories.meal_repository_async import _PROJECTION_OPTS
+from src.infra.repositories.meal_repository_async import (
+    _PROJECTION_OPTS,
+    AsyncMealRepository,
+)
 
 
 def test_macros_only_projection_defers_heavy_columns():
@@ -26,6 +31,19 @@ def test_macros_only_projection_defers_heavy_columns():
     assert any("raw_ai_response" in p for p in deferred_paths)
     assert any("food_label_metadata" in p for p in deferred_paths)
     assert any("instructions" in p for p in deferred_paths)
+
+
+def test_projection_variants_are_distinct():
+    assert MealProjection.MACROS_WITH_MICROS in _PROJECTION_OPTS
+    assert MealProjection.LIST_CARD in _PROJECTION_OPTS
+    assert (
+        _PROJECTION_OPTS[MealProjection.MACROS_ONLY]
+        != _PROJECTION_OPTS[MealProjection.MACROS_WITH_MICROS]
+    )
+    assert (
+        _PROJECTION_OPTS[MealProjection.LIST_CARD]
+        != _PROJECTION_OPTS[MealProjection.FULL_WITH_TRANSLATIONS]
+    )
 
 
 def test_meal_orm_to_domain_handles_deferred_attributes():
@@ -76,3 +94,22 @@ def test_meal_orm_to_domain_maps_loaded_attributes():
     assert domain.meal_id == meal_id
     assert domain.raw_gpt_json == '{"analysis": "test"}'
     assert domain.description == "Delicious meal"
+
+
+@pytest.mark.asyncio
+async def test_find_by_date_collapses_joinedload_collection_rows():
+    """LIST_CARD joinedload(translations) multiplies parent rows without unique()."""
+    repo = AsyncMealRepository(session=MagicMock())
+    result = MagicMock()
+    result.unique.return_value.scalars.return_value.all.return_value = []
+    repo.session.execute = AsyncMock(return_value=result)
+
+    meals = await repo.find_by_date(
+        date.today(),
+        user_id="user-1",
+        projection=MealProjection.LIST_CARD,
+    )
+
+    assert meals == []
+    result.unique.assert_called_once()
+    result.scalars.assert_not_called()

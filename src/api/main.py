@@ -267,6 +267,14 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down MealTrack API...")
 
+    from src.bootstrap.integration_services import (
+        drain_integration_event_publisher,
+        shutdown_firebase_executor,
+    )
+
+    await drain_integration_event_publisher()
+    shutdown_firebase_executor()
+
     # Disconnect cache
     await shutdown_cache_layer()
 
