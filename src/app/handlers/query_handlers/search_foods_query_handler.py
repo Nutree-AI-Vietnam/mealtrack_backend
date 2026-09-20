@@ -104,9 +104,7 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
                     language,
                 )
                 or any(
-                    leftover_serving_phrases(
-                        item.get("allowed_units") or [], language
-                    )
+                    leftover_serving_phrases(item.get("allowed_units") or [], language)
                     for item in processed_cached
                 )
             )
@@ -233,14 +231,37 @@ class SearchFoodsQueryHandler(EventHandler[SearchFoodsQuery, dict[str, Any]]):
         """
         if self.uow_factory is None:
             return
-        adoptable = [
-            item for item in items if self._is_adoptable_provider_hit(item)
-        ]
+        adoptable = [item for item in items if self._is_adoptable_provider_hit(item)]
         if not adoptable:
             return
         try:
             async with self.uow_factory() as uow:
+                identities = [
+                    (
+                        str(item.get("source_namespace") or "fatsecret"),
+                        str(item.get("source_food_id") or item.get("food_id") or ""),
+                    )
+                    for item in adoptable
+                ]
+                existing_rows = await uow.food_references.get_by_source_identities(
+                    identities
+                )
+                existing_by_key = {
+                    (
+                        str(row.get("source_namespace") or ""),
+                        str(row.get("source_food_id") or ""),
+                    ): row
+                    for row in existing_rows
+                }
                 for item in adoptable:
+                    namespace = str(item.get("source_namespace") or "fatsecret")
+                    food_id = str(
+                        item.get("source_food_id") or item.get("food_id") or ""
+                    )
+                    existing = existing_by_key.get((namespace, food_id))
+                    if existing and existing.get("id") is not None:
+                        item["food_reference_id"] = existing.get("id")
+                        continue
                     display_name = str(
                         item.get("description") or item.get("name") or ""
                     )

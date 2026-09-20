@@ -46,11 +46,27 @@ logger = logging.getLogger(__name__)
 _PROJECTION_OPTS: dict = {
     MealProjection.MACROS_ONLY: (
         noload(MealORM.image),
-        selectinload(MealORM.nutrition).selectinload(NutritionORM.food_items),
-        selectinload(MealORM.instruction_steps),
+        selectinload(MealORM.nutrition).noload(NutritionORM.food_items),
+        noload(MealORM.instruction_steps),
+        noload(MealORM.translations),
         defer(MealORM.raw_ai_response),
         defer(MealORM.instructions),
         defer(MealORM.food_label_metadata),
+    ),
+    MealProjection.MACROS_WITH_MICROS: (
+        noload(MealORM.image),
+        selectinload(MealORM.nutrition).selectinload(NutritionORM.food_items),
+        noload(MealORM.instruction_steps),
+        noload(MealORM.translations),
+        defer(MealORM.raw_ai_response),
+        defer(MealORM.instructions),
+        defer(MealORM.food_label_metadata),
+    ),
+    MealProjection.LIST_CARD: (
+        joinedload(MealORM.image),
+        selectinload(MealORM.nutrition).selectinload(NutritionORM.food_items),
+        noload(MealORM.instruction_steps),
+        joinedload(MealORM.translations),
     ),
     MealProjection.FULL: (
         joinedload(MealORM.image),
@@ -313,7 +329,7 @@ class AsyncMealRepository(MealRepositoryPort):
 
         result = await self.session.execute(
             select(MealORM)
-            .options(*_PROJECTION_OPTS[MealProjection.FULL_WITH_TRANSLATIONS])
+            .options(*_PROJECTION_OPTS[MealProjection.LIST_CARD])
             .where(
                 MealORM.user_id == user_id,
                 MealORM.created_at >= start_dt,

@@ -28,6 +28,19 @@ def test_macros_only_projection_defers_heavy_columns():
     assert any("instructions" in p for p in deferred_paths)
 
 
+def test_projection_variants_are_distinct():
+    assert MealProjection.MACROS_WITH_MICROS in _PROJECTION_OPTS
+    assert MealProjection.LIST_CARD in _PROJECTION_OPTS
+    assert (
+        _PROJECTION_OPTS[MealProjection.MACROS_ONLY]
+        != _PROJECTION_OPTS[MealProjection.MACROS_WITH_MICROS]
+    )
+    assert (
+        _PROJECTION_OPTS[MealProjection.LIST_CARD]
+        != _PROJECTION_OPTS[MealProjection.FULL_WITH_TRANSLATIONS]
+    )
+
+
 def test_meal_orm_to_domain_handles_deferred_attributes():
     meal_id = str(uuid.uuid4())
     user_id = str(uuid.uuid4())

@@ -79,6 +79,9 @@ class _FakeFoodReferenceRepo:
         )
         return self.adopted
 
+    async def get_by_source_identities(self, identities):
+        return []
+
 
 class _FakeUow:
     def __init__(self, repo: _FakeFoodReferenceRepo):
@@ -583,6 +586,9 @@ class _PoisoningRepo:
             raise RuntimeError("adopt failed")
         return {"id": 900}
 
+    async def get_by_source_identities(self, identities):
+        return []
+
 
 class _SessionUow:
     def __init__(self, repo: _PoisoningRepo, session: _SavepointSession):
@@ -850,9 +856,7 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
     translator = _NeutralTranslator(
         [
             TranslationResult(("bo",), TranslationOutcome.TRANSLATED, "vi", "en"),
-            TranslationResult(
-                ("Phở bò",), TranslationOutcome.TRANSLATED, "en", "vi"
-            ),
+            TranslationResult(("Phở bò",), TranslationOutcome.TRANSLATED, "en", "vi"),
         ]
     )
 
@@ -865,9 +869,7 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
         uow_factory=uow_factory,
     )
 
-    result = await handler.handle(
-        SearchFoodsQuery(query="bo", language="vi", limit=5)
-    )
+    result = await handler.handle(SearchFoodsQuery(query="bo", language="vi", limit=5))
 
     assert len(repo.calls) == 1
     english_name = repo.calls[0][2]
@@ -880,9 +882,7 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
 async def test_local_only_vietnamese_result_is_localized():
     handler, fat_secret, _, _ = _make_handler(local_results=[_local_rice()])
 
-    result = await handler.handle(
-        SearchFoodsQuery(query="cơm", language="vi", limit=1)
-    )
+    result = await handler.handle(SearchFoodsQuery(query="cơm", language="vi", limit=1))
 
     fat_secret.search_foods.assert_not_awaited()
     assert result["results"][0]["description"] == "Cơm"
