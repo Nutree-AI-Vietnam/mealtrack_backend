@@ -148,3 +148,9 @@ class AsyncFoodReferenceUowAdapter:
             await uow.food_references.apply_serving_name_vi(
                 food_reference_id, labels_by_unit
             )
+
+    async def apply_serving_name_vi_many(
+        self, labels_by_reference: dict[int, dict[str, str]]
+    ) -> None:
+        async with self._uow_factory() as uow:
+            await uow.food_references.apply_serving_name_vi_many(labels_by_reference)

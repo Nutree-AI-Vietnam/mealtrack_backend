@@ -97,6 +97,16 @@ log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 logger = logging.getLogger(__name__)
 
+_DEFAULT_POSTHOG_OTEL_HOST = "https://us.i.posthog.com"
+
+
+def _resolve_posthog_otel_host(raw_host: str | None) -> str:
+    """Return a PostHog ingestion host compatible with the OTLP processor."""
+    host = (raw_host or _DEFAULT_POSTHOG_OTEL_HOST).strip().rstrip("/")
+    if host.lower() in {"https://app.posthog.com", "http://app.posthog.com"}:
+        return _DEFAULT_POSTHOG_OTEL_HOST
+    return host or _DEFAULT_POSTHOG_OTEL_HOST
+
 
 async def warm_database_connection() -> None:
     """Warm the async database connection so cold Neon compute wakes before traffic."""
@@ -198,7 +208,7 @@ async def lifespan(app: FastAPI):
             _otel_provider.add_span_processor(
                 PostHogSpanProcessor(
                     api_key=_posthog_key,
-                    host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com"),
+                    host=_resolve_posthog_otel_host(os.getenv("POSTHOG_HOST")),
                 )
             )
             trace.set_tracer_provider(_otel_provider)
@@ -277,6 +287,14 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down MealTrack API...")
+
+    from src.bootstrap.integration_services import (
+        drain_integration_event_publisher,
+        shutdown_firebase_executor,
+    )
+
+    await drain_integration_event_publisher()
+    shutdown_firebase_executor()
 
     # Disconnect cache
     await shutdown_cache_layer()

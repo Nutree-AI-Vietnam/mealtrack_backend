@@ -56,6 +56,9 @@ class _DummyImageStore:
     def get_url(self, image_id: str) -> str:
         return f"https://example.com/{image_id}"
 
+    async def get_url_async(self, image_id: str) -> str:
+        return self.get_url(image_id)
+
 
 @pytest.fixture
 def client(monkeypatch) -> TestClient:

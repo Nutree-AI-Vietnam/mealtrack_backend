@@ -79,6 +79,9 @@ class _FakeFoodReferenceRepo:
         )
         return self.adopted
 
+    async def get_by_source_identities(self, identities):
+        return []
+
 
 class _FakeUow:
     def __init__(self, repo: _FakeFoodReferenceRepo):
@@ -483,6 +486,184 @@ async def test_detailed_fatsecret_hit_is_adopted_and_mapped_with_food_reference_
     assert locale == "en"
     assert locale_name == "Grilled Chicken Breast"
     assert result["results"][0]["food_reference_id"] == 777
+    assert uow_factory.created == 1
+
+
+@pytest.mark.asyncio
+async def test_two_adoptable_hits_share_one_uow():
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[
+            {
+                "description": "Chicken",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "1",
+                "food_id": "1",
+                "protein_100g": 31.0,
+                "carbs_100g": 0.0,
+                "fat_100g": 3.6,
+                "metric_serving_amount": 100.0,
+            },
+            {
+                "description": "Rice",
+                "source": "fatsecret",
+                "source_namespace": "fatsecret",
+                "source_food_id": "2",
+                "food_id": "2",
+                "protein_100g": 2.7,
+                "carbs_100g": 28.0,
+                "fat_100g": 0.3,
+                "metric_serving_amount": 100.0,
+            },
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    repo = _FakeFoodReferenceRepo(adopted={"id": 501})
+    uow_factory = _FakeUowFactory(repo)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    await handler.handle(SearchFoodsQuery(query="dinner", language="en", limit=5))
+
+    assert len(repo.calls) == 2
+    assert uow_factory.created == 1
+
+
+class _SavepointSession:
+    def __init__(self):
+        self.failed = False
+        self.nested = 0
+
+    def begin_nested(self):
+        return _Savepoint(self)
+
+
+class _Savepoint:
+    def __init__(self, session: _SavepointSession):
+        self.session = session
+
+    async def __aenter__(self):
+        self.session.nested += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            self.session.failed = False
+        return False
+
+
+class _PoisoningRepo:
+    def __init__(self, session: _SavepointSession):
+        self.session = session
+        self.calls: list[str] = []
+
+    async def adopt_provider_food(
+        self,
+        namespace,
+        food_id,
+        english_name,
+        per_100g,
+        servings,
+        locale,
+        locale_name,
+    ):
+        if self.session.failed:
+            raise RuntimeError("session is in a failed transaction")
+        self.calls.append(str(food_id))
+        if str(food_id) == "1":
+            self.session.failed = True
+            raise RuntimeError("adopt failed")
+        return {"id": 900}
+
+    async def get_by_source_identities(self, identities):
+        return []
+
+
+class _SessionUow:
+    def __init__(self, repo: _PoisoningRepo, session: _SavepointSession):
+        self.food_references = repo
+        self.session = session
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+
+class _SessionUowFactory:
+    def __init__(self, repo: _PoisoningRepo, session: _SavepointSession):
+        self.repo = repo
+        self.session = session
+        self.created = 0
+
+    def __call__(self):
+        self.created += 1
+        return _SessionUow(self.repo, self.session)
+
+
+def _adoptable_hit(food_id: str, description: str) -> dict:
+    return {
+        "description": description,
+        "source": "fatsecret",
+        "source_namespace": "fatsecret",
+        "source_food_id": food_id,
+        "food_id": food_id,
+        "protein_100g": 31.0,
+        "carbs_100g": 0.0,
+        "fat_100g": 3.6,
+        "metric_serving_amount": 100.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_adopt_does_not_block_later_hits_in_same_uow():
+    cache = MagicMock()
+    cache.get_cached_search = AsyncMock(return_value=None)
+    cache.cache_search = AsyncMock()
+    fat_secret = MagicMock()
+    fat_secret.search_foods = AsyncMock(
+        return_value=[
+            _adoptable_hit("1", "Chicken"),
+            _adoptable_hit("2", "Rice"),
+        ]
+    )
+    mapping = MagicMock()
+    mapping.map_search_item.side_effect = lambda item: dict(item)
+    session = _SavepointSession()
+    repo = _PoisoningRepo(session)
+    uow_factory = _SessionUowFactory(repo, session)
+
+    handler = SearchFoodsQueryHandler(
+        cache_service=cache,
+        mapping_service=mapping,
+        fat_secret_service=fat_secret,
+        local_search=AsyncMock(return_value=[]),
+        uow_factory=uow_factory,
+    )
+
+    result = await handler.handle(
+        SearchFoodsQuery(query="dinner", language="en", limit=5)
+    )
+
+    assert repo.calls == ["1", "2"]
+    assert uow_factory.created == 1
+    assert session.nested == 2
+    assert [item.get("food_reference_id") for item in result["results"]] == [
+        None,
+        900,
+    ]
 
 
 @pytest.mark.asyncio
@@ -675,9 +856,7 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
     translator = _NeutralTranslator(
         [
             TranslationResult(("bo",), TranslationOutcome.TRANSLATED, "vi", "en"),
-            TranslationResult(
-                ("Phở bò",), TranslationOutcome.TRANSLATED, "en", "vi"
-            ),
+            TranslationResult(("Phở bò",), TranslationOutcome.TRANSLATED, "en", "vi"),
         ]
     )
 
@@ -690,9 +869,7 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
         uow_factory=uow_factory,
     )
 
-    result = await handler.handle(
-        SearchFoodsQuery(query="bo", language="vi", limit=5)
-    )
+    result = await handler.handle(SearchFoodsQuery(query="bo", language="vi", limit=5))
 
     assert len(repo.calls) == 1
     english_name = repo.calls[0][2]
@@ -705,9 +882,7 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
 async def test_local_only_vietnamese_result_is_localized():
     handler, fat_secret, _, _ = _make_handler(local_results=[_local_rice()])
 
-    result = await handler.handle(
-        SearchFoodsQuery(query="cơm", language="vi", limit=1)
-    )
+    result = await handler.handle(SearchFoodsQuery(query="cơm", language="vi", limit=1))
 
     fat_secret.search_foods.assert_not_awaited()
     assert result["results"][0]["description"] == "Cơm"

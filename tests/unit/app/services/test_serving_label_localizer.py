@@ -168,3 +168,56 @@ async def test_localize_item_servings_persists_canonical_vietnamese_serving():
     assert items[0]["allowed_units"][0]["display_description"] == "Khẩu phần"
     assert _Uow.saved_labels == ({"serving": "Khẩu phần"}, "vi")
     assert _Uow.saved_food_labels == (9, {"serving": "Khẩu phần"})
+
+
+@pytest.mark.asyncio
+async def test_localize_item_servings_persists_many_foods_in_one_call():
+    class _Uow:
+        saved_food_labels = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        class food_references:
+            @staticmethod
+            async def get_serving_phrase_translations(*_args, **_kwargs):
+                return {}
+
+            @staticmethod
+            async def upsert_serving_phrase_translations(*_args, **_kwargs):
+                return None
+
+            @staticmethod
+            async def apply_serving_name_vi(*_args, **_kwargs):
+                raise AssertionError("batch persist must not loop per food")
+
+            @staticmethod
+            async def apply_serving_name_vi_many(labels_by_reference):
+                _Uow.saved_food_labels = labels_by_reference
+
+    items = [
+        {
+            "food_reference_id": 9,
+            "allowed_units": [{"unit": "serving", "description": "1 serving"}],
+        },
+        {
+            "food_reference_id": 11,
+            "allowed_units": [{"unit": "serving", "description": "1 serving"}],
+        },
+    ]
+
+    await localize_item_servings(
+        items,
+        language="vi",
+        translation_service=None,
+        uow_factory=lambda: _Uow(),
+        persist=True,
+    )
+
+    assert _Uow.saved_food_labels == {
+        9: {"serving": "Khẩu phần"},
+        11: {"serving": "Khẩu phần"},
+    }

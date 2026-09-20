@@ -41,6 +41,9 @@ def client(monkeypatch) -> TestClient:
         def get_url(self, image_id: str) -> str:
             return f"https://example.com/{image_id}"
 
+        async def get_url_async(self, image_id: str) -> str:
+            return self.get_url(image_id)
+
     main.app.dependency_overrides[get_current_user_id] = lambda: "user_1"
     main.app.dependency_overrides[verify_firebase_token] = lambda: {"uid": "firebase_1"}
     main.app.dependency_overrides[verify_firebase_uid_ownership] = (

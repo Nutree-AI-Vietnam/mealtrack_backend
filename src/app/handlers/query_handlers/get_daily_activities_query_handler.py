@@ -11,6 +11,7 @@ from src.app.events.base import EventHandler, handles
 from src.app.queries.activity import GetDailyActivitiesQuery
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal import Meal
+from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.hydration_catalog_service import (
     localized_name_for_catalog_name,
@@ -71,22 +72,25 @@ class GetDailyActivitiesQueryHandler(
 
         fetch_ok = False
         try:
-            user_tz_str = await self._resolve_user_timezone(query)
-            tz = get_zone_info(user_tz_str)
+            async with AsyncUnitOfWork(read_only=True) as uow:
+                user_tz_str = await resolve_user_timezone_async(
+                    query.user_id, uow, query.header_timezone
+                )
+                tz = get_zone_info(user_tz_str)
 
-            # Final local date using the resolved DB timezone (more authoritative
-            # than the header, which is used only for the cache-key estimate above).
-            if hasattr(raw, "tzinfo") and raw.tzinfo is not None:
-                local_date = raw.astimezone(tz).date()
-            elif hasattr(raw, "date"):
-                local_date = raw.date()
+                # Final local date using the resolved DB timezone (more authoritative
+                # than the header, which is used only for the cache-key estimate above).
+                if hasattr(raw, "tzinfo") and raw.tzinfo is not None:
+                    local_date = raw.astimezone(tz).date()
+                elif hasattr(raw, "date"):
+                    local_date = raw.date()
 
-            meal_activities = await self._get_meal_activities(
-                query, user_tz_str, local_date
-            )
-            workout_activities = await self._get_workout_activities(
-                query, tz, local_date, query.language or "en"
-            )
+                meal_activities = await self._get_meal_activities(
+                    uow, query, user_tz_str, local_date
+                )
+                workout_activities = await self._get_workout_activities(
+                    uow, query, tz, local_date, query.language or "en"
+                )
             fetch_ok = True
         except Exception as e:
             logger.error(f"Error getting activities: {str(e)}", exc_info=True)
@@ -106,73 +110,65 @@ class GetDailyActivitiesQueryHandler(
             await self.cache_service.set_json(cache_key, activities, ttl)
         return activities
 
-    async def _resolve_user_timezone(self, query: GetDailyActivitiesQuery) -> str:
-        """Resolve timezone in its own UoW so later reads do not hold its checkout."""
-        async with AsyncUnitOfWork(read_only=True) as uow:
-            return await resolve_user_timezone_async(
-                query.user_id, uow, query.header_timezone
-            )
-
     async def _get_meal_activities(
         self,
+        uow,
         query: GetDailyActivitiesQuery,
         user_tz_str: str,
         local_date,
     ) -> list[dict[str, Any]]:
-        """Fetch meals and hydration logs using a short-lived UoW."""
-        async with AsyncUnitOfWork(read_only=True) as uow:
-            items = await uow.meals.find_by_date(
-                local_date,
-                user_id=query.user_id,
-                user_timezone=user_tz_str,
-            )
-            hydration_entries = await uow.hydration_entries.find_by_date(
-                local_date,
-                user_id=query.user_id,
-                user_timezone=user_tz_str,
-            )
-            covered_meal_ids = {
-                entry.legacy_meal_id
-                for entry in hydration_entries
-                if entry.legacy_meal_id
-            }
+        """Fetch meals and hydration logs from the shared UoW."""
+        items = await uow.meals.find_by_date(
+            local_date,
+            user_id=query.user_id,
+            user_timezone=user_tz_str,
+            projection=MealProjection.LIST_CARD,
+        )
+        hydration_entries = await uow.hydration_entries.find_by_date(
+            local_date,
+            user_id=query.user_id,
+            user_timezone=user_tz_str,
+        )
+        covered_meal_ids = {
+            entry.legacy_meal_id for entry in hydration_entries if entry.legacy_meal_id
+        }
 
-            meal_activities: list[dict[str, Any]] = []
-            for item in items:
-                if item.meal_type == "hydration":
-                    if item.meal_id in covered_meal_ids:
-                        continue
-                    meal_activities.append(
-                        self._build_hydration_activity(item, query.language or "en")
-                    )
+        meal_activities: list[dict[str, Any]] = []
+        for item in items:
+            if item.meal_type == "hydration":
+                if item.meal_id in covered_meal_ids:
                     continue
                 meal_activities.append(
-                    self._build_meal_activity(item, query.target_date, query.language)
+                    self._build_hydration_activity(item, query.language or "en")
                 )
+                continue
+            meal_activities.append(
+                self._build_meal_activity(item, query.target_date, query.language)
+            )
 
-            for entry in hydration_entries:
-                meal_activities.append(
-                    self._build_hydration_entry_activity(entry, query.language or "en")
-                )
+        for entry in hydration_entries:
+            meal_activities.append(
+                self._build_hydration_entry_activity(entry, query.language or "en")
+            )
 
         return meal_activities
 
     async def _get_workout_activities(
         self,
+        uow,
         query: GetDailyActivitiesQuery,
         tz,
         local_date,
         language: str,
     ) -> list[dict[str, Any]]:
-        """Fetch movement entries using a short-lived UoW."""
+        """Fetch movement entries from the shared UoW."""
         from datetime import time, timedelta
 
         start_utc = datetime.combine(local_date, time.min, tzinfo=tz).astimezone(UTC)
         end_utc = start_utc + timedelta(days=1)
-        async with AsyncUnitOfWork(read_only=True) as uow:
-            entries = await uow.movement_entries.find_by_user_and_logged_range(
-                query.user_id, start_utc, end_utc
-            )
+        entries = await uow.movement_entries.find_by_user_and_logged_range(
+            query.user_id, start_utc, end_utc
+        )
         return [self._build_movement_activity(entry, language) for entry in entries]
 
     def _build_movement_activity(self, entry, language: str = "en") -> dict[str, Any]:

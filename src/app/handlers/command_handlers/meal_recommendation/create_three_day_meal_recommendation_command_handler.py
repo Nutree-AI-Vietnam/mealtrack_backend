@@ -65,6 +65,8 @@ class CreateThreeDayMealRecommendationCommandHandler(
         command: CreateThreeDayMealRecommendationCommand,
     ) -> PersistedMealRecommendationPlan:
         fingerprint = _request_fingerprint(command)
+        catalog_meals: list[Any]
+        ingredient_statistics = None
         async with self.uow_factory() as uow:
             await uow.meal_recommendation_plans.lock_generation_for_user(
                 user_id=command.user_id
@@ -84,7 +86,7 @@ class CreateThreeDayMealRecommendationCommandHandler(
                 catalog_meals = list(snapshot.meals)
                 ingredient_statistics = snapshot.ingredient_statistics
             else:
-                catalog_meals = await uow.catalog_recipes.list_active_meals()
+                catalog_meals = list(await uow.catalog_recipes.list_active_meals())
                 ingredient_statistics = None
             if not catalog_meals:
                 raise MealRecommendationCatalogUnavailableError
@@ -95,26 +97,40 @@ class CreateThreeDayMealRecommendationCommandHandler(
                 start_date=command.start_date,
                 timezone=command.timezone,
             )
-            result = await asyncio.to_thread(
-                self.optimizer.build_plan,
-                catalog_meals,
-                user_id=command.user_id,
-                daily_calories=command.daily_calories,
-                affinity=affinity,
-                ingredient_statistics=ingredient_statistics,
-            )
-            if isinstance(result, MealRecommendationInsufficiency):
-                logger.warning(
-                    "meal_recommendation_insufficient_catalog "
-                    "reason=%s required=%s available=%s message=%s",
-                    result.reason,
-                    result.required,
-                    result.available,
-                    result.message,
-                )
-                raise MealRecommendationInsufficientCatalogError(result.message)
 
-            plan = _to_persisted_plan(command, fingerprint, result)
+        result = await asyncio.to_thread(
+            self.optimizer.build_plan,
+            catalog_meals,
+            user_id=command.user_id,
+            daily_calories=command.daily_calories,
+            affinity=affinity,
+            ingredient_statistics=ingredient_statistics,
+        )
+        if isinstance(result, MealRecommendationInsufficiency):
+            logger.warning(
+                "meal_recommendation_insufficient_catalog "
+                "reason=%s required=%s available=%s message=%s",
+                result.reason,
+                result.required,
+                result.available,
+                result.message,
+            )
+            raise MealRecommendationInsufficientCatalogError(result.message)
+
+        plan = _to_persisted_plan(command, fingerprint, result)
+        async with self.uow_factory() as uow:
+            await uow.meal_recommendation_plans.lock_generation_for_user(
+                user_id=command.user_id
+            )
+            existing = await uow.meal_recommendation_plans.get_by_idempotency_key(
+                user_id=command.user_id,
+                operation=command.operation,
+                idempotency_key=command.idempotency_key,
+            )
+            if existing is not None:
+                if existing.request_fingerprint != fingerprint:
+                    raise MealRecommendationIdempotencyConflictError
+                return existing
             try:
                 return await uow.meal_recommendation_plans.save_new_active_plan(plan)
             except MealRecommendationPersistenceConflictError:

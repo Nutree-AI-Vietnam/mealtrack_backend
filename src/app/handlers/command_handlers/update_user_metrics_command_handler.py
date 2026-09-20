@@ -94,6 +94,11 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
             )
+            journey_inputs_before = (
+                profile.target_weight_kg,
+                profile.goal_start_weight_kg,
+                profile.goal_started_at,
+            )
             sex_changed = False
 
             # Update provided fields only
@@ -258,7 +263,15 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
             )
-            if target_inputs_after != target_inputs_before:
+            journey_inputs_after = (
+                profile.target_weight_kg,
+                profile.goal_start_weight_kg,
+                profile.goal_started_at,
+            )
+            if (
+                target_inputs_after != target_inputs_before
+                or journey_inputs_after != journey_inputs_before
+            ):
                 profile.profile_target_revision = (
                     profile.profile_target_revision or 1
                 ) + 1

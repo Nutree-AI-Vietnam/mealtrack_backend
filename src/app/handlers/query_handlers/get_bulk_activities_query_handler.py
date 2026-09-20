@@ -135,7 +135,7 @@ class GetBulkActivitiesQueryHandler(
                 start_date=query.start_date,
                 end_date=query.end_date,
                 user_timezone=user_tz_str,
-                projection=MealProjection.FULL_WITH_TRANSLATIONS,
+                projection=MealProjection.LIST_CARD,
             )
             hydration_entries = await uow.hydration_entries.find_by_date_range(
                 user_id=query.user_id,

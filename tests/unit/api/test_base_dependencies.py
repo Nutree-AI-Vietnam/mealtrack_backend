@@ -68,10 +68,9 @@ def test_get_allowed_image_hosts_normalizes_custom_domain(monkeypatch):
 
     monkeypatch.setattr(settings_module, "get_settings", lambda: _SettingsWithScheme())
     hosts = get_allowed_image_hosts()
-    assert "images.example.com" in hosts
-    assert "https://images.example.com/" not in hosts
-    assert "res.cloudinary.com" in hosts
-    assert "imagedelivery.net" in hosts
+    assert hosts == frozenset(
+        {"images.example.com", "res.cloudinary.com", "imagedelivery.net"}
+    )
 
 
 def test_get_allowed_image_hosts_empty_custom_domain(monkeypatch):
@@ -84,3 +83,42 @@ def test_get_allowed_image_hosts_empty_custom_domain(monkeypatch):
     monkeypatch.setattr(settings_module, "get_settings", lambda: _SettingsEmpty())
     hosts = get_allowed_image_hosts()
     assert hosts == frozenset({"res.cloudinary.com", "imagedelivery.net"})
+
+
+def test_local_hooks_not_registered_in_production(monkeypatch):
+    import src.api.base_dependencies as dependencies
+    import src.app.events.meal.meal_events as meal_events
+
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(
+        dependencies.settings, "REDIS_URL", "rediss://default:pwd@upstash.io:6379"
+    )
+    meal_events.register_local_insight_hook(None)
+    meal_events.register_local_cache_invalidation_hook(None)
+
+    dependencies._register_local_insight_hook()
+    dependencies._register_local_cache_invalidation_hook()
+
+    assert meal_events._local_insight_hook is None
+    assert meal_events._local_cache_invalidation_hook is None
+
+
+def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
+    import src.api.base_dependencies as dependencies
+    import src.app.events.meal.meal_events as meal_events
+
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(dependencies.settings, "REDIS_URL", "redis://localhost:6379/0")
+    meal_events.register_local_insight_hook(None)
+    meal_events.register_local_cache_invalidation_hook(None)
+
+    try:
+        dependencies._register_local_insight_hook()
+        dependencies._register_local_cache_invalidation_hook()
+
+        assert meal_events._local_insight_hook is not None
+        assert meal_events._local_cache_invalidation_hook is not None
+    finally:
+        meal_events.register_local_insight_hook(None)
+        meal_events.register_local_cache_invalidation_hook(None)
+

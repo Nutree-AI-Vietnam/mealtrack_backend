@@ -30,7 +30,6 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
         self.uow_factory = uow_factory
         self.cache_service = cache_service
 
-
     async def handle(self, query: GetRecentMealsQuery) -> dict[str, Any]:
         limit = max(1, min(query.limit, 10))
         language = query.language or "en"
@@ -67,7 +66,7 @@ class GetRecentMealsQueryHandler(EventHandler[GetRecentMealsQuery, dict[str, Any
                 start_dt=start_dt,
                 end_dt=end_dt,
                 limit=80,
-                projection=MealProjection.FULL_WITH_TRANSLATIONS,
+                projection=MealProjection.LIST_CARD,
             )
             deduped = deduplicate_recent_meals(raw_meals, limit=limit)
             meal_ids = [m.meal_id for m in deduped]

@@ -21,6 +21,7 @@ from src.app.handlers.query_handlers.get_daily_activities_query_handler import (
 )
 from src.app.queries.activity import GetDailyActivitiesQuery
 from src.domain.model import MealStatus
+from src.domain.utils.timezone_utils import UTC
 
 
 class _ManualMealUow:
@@ -236,3 +237,73 @@ async def test_manual_meal_without_target_date_uses_current_date():
     assert saved_meal is not None
     assert saved_meal.created_at.date() == date.today()
     assert saved_meal.ready_at.date() == date.today()
+
+
+@pytest.mark.asyncio
+async def test_manual_meal_created_with_target_date_when_utc_date_matches_yesterday():
+    """Test that when UTC date happens to match target_date (e.g. morning in UTC+7),
+    the handler compares target_date against user_today(user_tz) and correctly sets
+    created_at to noon UTC for target_date rather than current UTC time."""
+    mock_meal_repo = MagicMock()
+    saved_meal = None
+
+    def save_meal(meal):
+        nonlocal saved_meal
+        saved_meal = meal
+        return meal
+
+    mock_meal_repo.insert = AsyncMock(side_effect=save_meal)
+    publisher = MagicMock()
+    publisher.publish = AsyncMock()
+
+    uow = _ManualMealUow(mock_meal_repo)
+    # User is in UTC+7
+    uow.users.find_by_id = AsyncMock(
+        return_value=MagicMock(timezone="Asia/Ho_Chi_Minh")
+    )
+
+    handler = CreateManualMealCommandHandler(
+        uow=uow,
+        event_publisher=publisher,
+        meal_repository=mock_meal_repo,
+    )
+
+    # Target date = yesterday: 2026-09-18
+    # Current time = 2026-09-18 23:30:00 UTC
+    # In Asia/Ho_Chi_Minh (+7), current time is 2026-09-19 06:30:00 (Today is 2026-09-19)
+    # Target date (2026-09-18) != user_today (2026-09-19), even though target_date == utc_now().date()
+    fake_now = datetime(2026, 9, 18, 23, 30, 0, tzinfo=UTC)
+    target_date = date(2026, 9, 18)
+
+    test_user_id = str(uuid.uuid4())
+    command = CreateManualMealCommand(
+        user_id=test_user_id,
+        items=[
+            ManualMealItem(
+                name="Pho",
+                quantity=1.0,
+                unit="serving",
+                custom_nutrition=CustomNutrition(
+                    calories_per_100g=100.0,
+                    protein_per_100g=10.0,
+                    carbs_per_100g=20.0,
+                    fat_per_100g=5.0,
+                ),
+            )
+        ],
+        dish_name="Pho Bo",
+        meal_type="breakfast",
+        target_date=target_date,
+    )
+
+    with patch(
+        "src.app.handlers.command_handlers.create_manual_meal_command_handler.utc_now",
+        return_value=fake_now,
+    ):
+        await handler.handle(command)
+
+    assert saved_meal is not None
+    # Must NOT be fake_now (23:30 UTC)!
+    assert saved_meal.created_at != fake_now
+    # Must be noon UTC for 2026-09-18 in Asia/Ho_Chi_Minh (12:00 +07:00 -> 05:00:00 UTC)
+    assert saved_meal.created_at == datetime(2026, 9, 18, 5, 0, 0, tzinfo=UTC)

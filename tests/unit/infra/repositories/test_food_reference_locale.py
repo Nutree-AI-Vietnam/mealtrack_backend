@@ -153,6 +153,22 @@ async def test_get_display_projections_includes_serving_name_vi():
 
 
 @pytest.mark.asyncio
+async def test_apply_serving_name_vi_many_loads_all_ids_in_one_query():
+    first = SimpleNamespace(food_reference_id=7, name="cup", name_vi=None)
+    second = SimpleNamespace(food_reference_id=8, name="bowl", name_vi=None)
+    session = _Session([_Result(rows=[first, second])])
+    repo = FoodReferenceLocaleRepository(session)
+
+    await repo.apply_serving_name_vi_many(
+        {7: {"cup": "cốc"}, 8: {"bowl": "tô"}}
+    )
+
+    assert len(session.statements) == 1
+    assert first.name_vi == "cốc"
+    assert second.name_vi == "tô"
+
+
+@pytest.mark.asyncio
 async def test_get_display_projections_returns_empty_for_no_ids():
     session = _Session([])
     repo = FoodReferenceLocaleRepository(session)

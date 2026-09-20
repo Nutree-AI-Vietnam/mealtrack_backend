@@ -111,7 +111,9 @@ async def _analyze_uploaded_image(
 
     image_url = None
     if meal.image:
-        image_url = meal.image.url or image_store.get_url(meal.image.image_id)
+        image_url = meal.image.url or await image_store.get_url_async(
+            meal.image.image_id
+        )
 
     display_projections = await load_food_reference_display_projections(
         meal, food_reference_repository, language=language
@@ -159,8 +161,7 @@ async def analyze_meal_image_immediate(
         if scan_mode != "scanner":
             raise ValidationException(
                 message=(
-                    "Use /v1/meals/food-label/scan-by-url "
-                    "for Nutrition Facts labels."
+                    "Use /v1/meals/food-label/scan-by-url for Nutrition Facts labels."
                 ),
                 error_code="INVALID_SCAN_MODE",
                 details={"scan_mode": scan_mode},

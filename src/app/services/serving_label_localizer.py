@@ -178,7 +178,15 @@ async def _persist_labels(
             await uow.food_references.upsert_serving_phrase_translations(
                 labels_by_source, language
             )
-            for reference_id, labels in by_reference.items():
-                await uow.food_references.apply_serving_name_vi(reference_id, labels)
+            apply_many = getattr(
+                uow.food_references, "apply_serving_name_vi_many", None
+            )
+            if apply_many is not None:
+                await apply_many(by_reference)
+            else:
+                for reference_id, labels in by_reference.items():
+                    await uow.food_references.apply_serving_name_vi(
+                        reference_id, labels
+                    )
     except Exception:
         return

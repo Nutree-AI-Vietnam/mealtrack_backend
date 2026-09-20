@@ -44,6 +44,7 @@ from src.domain.utils.timezone_utils import (
     get_zone_info,
     is_valid_timezone,
     noon_utc_for_date,
+    user_today,
     utc_now,
 )
 from src.observability import capture_message, distribution_metric, increment_metric
@@ -217,8 +218,11 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 user_timezone = "UTC"
 
             now = utc_now()
-            meal_date = command.target_date if command.target_date else now.date()
-            if command.target_date and command.target_date != now.date():
+            current_user_date = user_today(user_timezone)
+            meal_date = (
+                command.target_date if command.target_date else current_user_date
+            )
+            if command.target_date and command.target_date != current_user_date:
                 meal_datetime = noon_utc_for_date(meal_date, user_timezone)
             else:
                 meal_datetime = now
