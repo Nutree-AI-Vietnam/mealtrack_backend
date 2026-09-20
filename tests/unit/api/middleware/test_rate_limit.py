@@ -3,7 +3,11 @@ import json
 
 import pytest
 
-from src.api.middleware.rate_limit import get_user_id_or_ip, rate_limit_exceeded_handler
+from src.api.middleware.rate_limit import (
+    get_ip_only_rate_limit_key,
+    get_user_id_or_ip,
+    rate_limit_exceeded_handler,
+)
 
 
 class _Req:
@@ -38,6 +42,13 @@ def test_get_user_id_or_ip_falls_back_to_ip_on_bad_token():
 def test_get_user_id_or_ip_falls_back_to_ip_when_missing_auth():
     req = _Req(auth=None, ip="9.9.9.9")
     assert get_user_id_or_ip(req) == "9.9.9.9"
+
+
+def test_ip_only_key_ignores_rotating_unsigned_sub():
+    first = _Req(auth=f"Bearer {_jwt_with_payload({'sub': 'attacker-a'})}", ip="10.0.0.1")
+    second = _Req(auth=f"Bearer {_jwt_with_payload({'sub': 'attacker-b'})}", ip="10.0.0.1")
+    assert get_ip_only_rate_limit_key(first) == get_ip_only_rate_limit_key(second)
+    assert get_ip_only_rate_limit_key(first) == "10.0.0.1"
 
 
 @pytest.mark.asyncio

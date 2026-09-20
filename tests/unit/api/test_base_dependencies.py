@@ -57,3 +57,41 @@ def test_get_parse_text_settings_reads_structured_reference_flag(monkeypatch):
 def test_get_gpt_parser_returns_parser_instance():
     parser = get_gpt_parser()
     assert isinstance(parser, GPTResponseParser)
+
+
+def test_local_hooks_not_registered_in_production(monkeypatch):
+    import src.api.base_dependencies as dependencies
+    import src.app.events.meal.meal_events as meal_events
+
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(
+        dependencies.settings, "REDIS_URL", "rediss://default:pwd@upstash.io:6379"
+    )
+    meal_events.register_local_insight_hook(None)
+    meal_events.register_local_cache_invalidation_hook(None)
+
+    dependencies._register_local_insight_hook()
+    dependencies._register_local_cache_invalidation_hook()
+
+    assert meal_events._local_insight_hook is None
+    assert meal_events._local_cache_invalidation_hook is None
+
+
+def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
+    import src.api.base_dependencies as dependencies
+    import src.app.events.meal.meal_events as meal_events
+
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(dependencies.settings, "REDIS_URL", "redis://localhost:6379/0")
+    meal_events.register_local_insight_hook(None)
+    meal_events.register_local_cache_invalidation_hook(None)
+
+    try:
+        dependencies._register_local_insight_hook()
+        dependencies._register_local_cache_invalidation_hook()
+
+        assert meal_events._local_insight_hook is not None
+        assert meal_events._local_cache_invalidation_hook is not None
+    finally:
+        meal_events.register_local_insight_hook(None)
+        meal_events.register_local_cache_invalidation_hook(None)

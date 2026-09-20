@@ -546,3 +546,222 @@ async def test_correlation_blocks_new_checkout_when_admission_disabled(
 
     assert error.value.status_code == 404
     assert not session.added
+
+
+def _custom_token():
+    return {
+        "uid": "firebase-uid",
+        "email": "buyer@example.com",
+        "email_verified": True,
+        "iat": int(web_funnel.utcnow().timestamp()),
+        "firebase": {"sign_in_provider": "custom"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_rejects_custom_identity_when_silent_login_disabled(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    captured = {}
+
+    class RedemptionService:
+        async def finalize(self, _db, **kwargs):
+            captured.update(kwargs)
+            return {"version": "redemption_result_v1", "access_status": "active"}
+
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    with pytest.raises(HTTPException) as error:
+        await web_funnel.finalize_revenuecat_redemption(
+            _request("127.0.0.4"),
+            web_funnel.WebFunnelRedemptionFinalizeRequest(
+                confirm_apply_purchase=True,
+                redemption_link_hash="a" * 64,
+            ),
+            Response(),
+            "x" * 16,
+            _custom_token(),
+            object(),
+        )
+    assert error.value.status_code == 403
+    assert captured == {}
+
+
+@pytest.mark.asyncio
+async def test_redemption_preflight_rejects_custom_identity_when_silent_login_disabled(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    called = False
+
+    class RedemptionService:
+        async def preflight(self, _db, **_kwargs):
+            nonlocal called
+            called = True
+            return True
+
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    with pytest.raises(HTTPException) as error:
+        await web_funnel.preflight_revenuecat_redemption(
+            _request("127.0.0.5"),
+            web_funnel.WebFunnelRedemptionPreflightRequest(
+                redemption_link_hash="a" * 64,
+            ),
+            _custom_token(),
+            object(),
+        )
+    assert error.value.status_code == 403
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_accepts_silent_login_custom_with_claim(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
+    monkeypatch.setattr(
+        web_funnel,
+        "_get_web_funnel_subscription_service",
+        lambda: VerifiedSubscriberService(),
+    )
+    captured = {}
+
+    class RedemptionService:
+        async def finalize(self, _db, **kwargs):
+            captured.update(kwargs)
+            return {"version": "redemption_result_v1", "access_status": "active"}
+
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    token = {**_custom_token(), "wf_silent_login": True}
+    response = await web_funnel.finalize_revenuecat_redemption(
+        _request("127.0.0.6"),
+        web_funnel.WebFunnelRedemptionFinalizeRequest(
+            confirm_apply_purchase=True,
+            redemption_link_hash="a" * 64,
+        ),
+        Response(),
+        "x" * 16,
+        token,
+        object(),
+    )
+    assert response["access_status"] == "active"
+    assert captured["auth_provider"] == "custom"
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_rejects_custom_without_silent_claim(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
+    captured = {}
+
+    class RedemptionService:
+        async def finalize(self, _db, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    with pytest.raises(HTTPException) as error:
+        await web_funnel.finalize_revenuecat_redemption(
+            _request("127.0.0.7"),
+            web_funnel.WebFunnelRedemptionFinalizeRequest(
+                confirm_apply_purchase=True,
+                redemption_link_hash="a" * 64,
+            ),
+            Response(),
+            "x" * 16,
+            _custom_token(),
+            object(),
+        )
+    assert error.value.status_code == 403
+    assert captured == {}
+
+
+@pytest.mark.asyncio
+async def test_redemption_preflight_accepts_silent_login_custom_with_claim(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
+    called = False
+
+    class RedemptionService:
+        async def preflight(self, _db, **kwargs):
+            nonlocal called
+            called = True
+            assert kwargs["uid"] == "firebase-uid"
+            assert kwargs["email"] == "buyer@example.com"
+            return True
+
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    response = await web_funnel.preflight_revenuecat_redemption(
+        _request("127.0.0.8"),
+        web_funnel.WebFunnelRedemptionPreflightRequest(
+            redemption_link_hash="a" * 64,
+        ),
+        {**_custom_token(), "wf_silent_login": 1},
+        object(),
+    )
+    assert response == {"version": "redemption_preflight_v1", "eligible": True}
+    assert called is True
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_fills_email_from_admin_for_custom_jwt(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
+    monkeypatch.setattr(
+        web_funnel,
+        "_get_web_funnel_subscription_service",
+        lambda: VerifiedSubscriberService(),
+    )
+    captured = {}
+
+    class RedemptionService:
+        async def finalize(self, _db, **kwargs):
+            captured.update(kwargs)
+            return {"version": "redemption_result_v1", "access_status": "active"}
+
+    async def fake_email(_token):
+        return "buyer@example.com"
+
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    monkeypatch.setattr(
+        "src.api.routes.v1.web_funnel_redemption_session.email_for_custom_token",
+        fake_email,
+    )
+    token = {
+        "uid": "firebase-uid",
+        "iat": int(web_funnel.utcnow().timestamp()),
+        "firebase": {"sign_in_provider": "custom"},
+        "wf_silent_login": 1,
+    }
+    response = await web_funnel.finalize_revenuecat_redemption(
+        _request("127.0.0.9"),
+        web_funnel.WebFunnelRedemptionFinalizeRequest(
+            confirm_apply_purchase=True,
+            redemption_link_hash="a" * 64,
+        ),
+        Response(),
+        "x" * 16,
+        token,
+        object(),
+    )
+    assert response["access_status"] == "active"
+    assert captured["email"] == "buyer@example.com"
+    assert captured["auth_provider"] == "custom"

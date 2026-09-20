@@ -218,8 +218,17 @@ optional caches.
 - Canonical handoff (`/v1/web-funnel/*`):
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).
+  - **Silent login** (`POST /redemptions/session`, unauthenticated): hash →
+    one-time Firebase custom token for the lead email owner. IP-only SlowAPI
+    key. First success stamps `silent_login_minted_at` (60m Firebase TTL;
+    later POSTs 404). Does not bind `preflight_uid`. Gated by
+    `WEB_FUNNEL_SILENT_LOGIN_ENABLED` (default false; independent of legacy
+    claim). Kill switch: flag off → 404; custom JWT without `wf_silent_login`
+    is refused at preflight/finalize.
   - **Eligibility** (`POST /redemptions/preflight`): verified Firebase email must
-    match lead; bind UID to that row before redeem-once.
+    match lead; bind UID to that row before redeem-once. `custom` provider
+    allowed only when the flag is on **and** the ID token carries
+    `wf_silent_login`.
   - **Finalize** (`POST /redemptions/finalize`): atomic MealTrack grant;
     idempotent; must select the exact row (hash + preflight UID), not “latest”
     alias match. Opaque preflight receipts / lease-CAS are deferred.
@@ -227,7 +236,9 @@ optional caches.
     `WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED` (new correlation rows; default true),
     `WEB_FUNNEL_LEGACY_CLAIM_ENABLED` (compatibility only; when false, lead-UUID
     webhook reconcile does not enqueue `claim_email`, and claim routes/dispatch
-    stay off). Checkout admission rolls back independently of paid recovery.
+    stay off),
+    `WEB_FUNNEL_SILENT_LOGIN_ENABLED` (hash → one-time custom token; default
+    false; independent of legacy claim). Checkout admission rolls back independently of paid recovery.
 - Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
 - Premium feature gates are planned, not enforced on routes.
 

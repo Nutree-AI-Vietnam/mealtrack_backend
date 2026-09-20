@@ -88,3 +88,58 @@ async def test_delete_meal_command_deletes_hydration_entry_alias():
         "user_id": user_id,
         "log_date": "2026-06-16",
     }
+
+
+@pytest.mark.asyncio
+async def test_delete_meal_command_uses_user_timezone_for_meal_date():
+    meal_id = "33333333-3333-3333-3333-333333333333"
+    user_id = "44444444-4444-4444-4444-444444444444"
+    # Meal created at 2026-09-18 23:00 UTC.
+    # In Asia/Ho_Chi_Minh (+7), this is 2026-09-19 06:00 (i.e. September 19!).
+    created_at = datetime(2026, 9, 18, 23, 0, tzinfo=UTC)
+
+    uow = MagicMock()
+    uow.__aenter__ = AsyncMock(return_value=uow)
+    uow.__aexit__ = AsyncMock(return_value=False)
+    uow.meals.find_by_id = AsyncMock(
+        return_value=SimpleNamespace(
+            meal_id=meal_id,
+            user_id=user_id,
+            created_at=created_at,
+        )
+    )
+    uow.meals.delete = AsyncMock()
+    uow.meal_recommendation_plans.clear_links_for_deleted_meal = AsyncMock()
+    uow.users.find_by_id = AsyncMock(
+        return_value=MagicMock(timezone="Asia/Ho_Chi_Minh")
+    )
+
+    event_publisher = AsyncMock()
+    hook_called_args = []
+
+    async def fake_hook(u_id, m_date, old_date):
+        hook_called_args.append((u_id, m_date, old_date))
+
+    from src.app.events.meal.meal_events import (
+        register_local_cache_invalidation_hook,
+    )
+
+    register_local_cache_invalidation_hook(fake_hook)
+    try:
+        handler = DeleteMealCommandHandler(
+            uow=uow, event_publisher=event_publisher, environment="test"
+        )
+        result = await handler.handle(
+            DeleteMealCommand(meal_id=meal_id, user_id=user_id)
+        )
+    finally:
+        register_local_cache_invalidation_hook(None)
+
+    assert result["meal_id"] == meal_id
+    event_publisher.publish.assert_awaited_once()
+    payload = event_publisher.publish.await_args.args[0]
+    # In Asia/Ho_Chi_Minh (+7), 23:00 UTC on Sept 18 is Sept 19!
+    assert payload["data"]["meal_date"] == "2026-09-19"
+    assert len(hook_called_args) == 1
+    assert hook_called_args[0][0] == user_id
+    assert hook_called_args[0][1].isoformat() == "2026-09-19"
