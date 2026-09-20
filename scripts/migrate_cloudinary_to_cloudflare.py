@@ -90,11 +90,22 @@ async def migrate_single_image(
             )
 
         # 2. Upload to Cloudflare
-        new_url = await cf_store.save_async(
-            resp.content,
-            content_type=content_type,
-            image_id=image_id,
-        )
+        try:
+            new_url = await cf_store.save_async(
+                resp.content,
+                content_type=content_type,
+                image_id=image_id,
+            )
+        except RuntimeError as upload_err:
+            if "already exists" in str(upload_err) or "5409" in str(upload_err):
+                logger.info(
+                    "  -> Image %s already exists in Cloudflare; reusing delivery URL",
+                    image_id,
+                )
+                new_url = cf_store.get_url(image_id)
+            else:
+                raise
+
         if not new_url or not new_url.strip() or not new_url.startswith("http"):
             logger.error(
                 "Cloudflare upload returned invalid or empty URL for image %s: '%s'; skipping DB update",
@@ -128,6 +139,7 @@ async def migrate_images(
     dry_run: bool = True,
     limit: int | None = None,
     batch_size: int = 50,
+    cloud_name: str | None = None,
 ) -> dict[str, int]:
     cf_store = CloudflareImageStore()
     stats = {"total_found": 0, "migrated": 0, "failed": 0, "skipped": 0}
@@ -138,6 +150,10 @@ async def migrate_images(
             raise RuntimeError("Database session not initialized")
 
         stmt = select(MealImageORM).where(MealImageORM.url.like("%res.cloudinary.com%"))
+        if cloud_name:
+            stmt = stmt.where(
+                MealImageORM.url.like(f"%res.cloudinary.com/{cloud_name}/%")
+            )
         if limit:
             stmt = stmt.limit(limit)
 
@@ -209,14 +225,32 @@ def main() -> None:
         default=50,
         help="Batch commit size (default: 50)",
     )
+    parser.add_argument(
+        "--cloud-name",
+        type=str,
+        default=None,
+        help="Only migrate images belonging to a specific Cloudinary cloud name (e.g. n6kanljt)",
+    )
 
     args = parser.parse_args()
     dry_run = not args.execute
     mode = "EXECUTE" if args.execute else "DRY-RUN"
-    logger.info("Starting Cloudinary -> Cloudflare migration in %s mode", mode)
+    if args.cloud_name:
+        logger.info(
+            "Starting Cloudinary -> Cloudflare migration in %s mode (filtering cloud_name=%s)",
+            mode,
+            args.cloud_name,
+        )
+    else:
+        logger.info("Starting Cloudinary -> Cloudflare migration in %s mode", mode)
 
     stats = asyncio.run(
-        migrate_images(dry_run=dry_run, limit=args.limit, batch_size=args.batch_size)
+        migrate_images(
+            dry_run=dry_run,
+            limit=args.limit,
+            batch_size=args.batch_size,
+            cloud_name=args.cloud_name,
+        )
     )
     logger.info("Migration stats: %s", stats)
 

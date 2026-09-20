@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 import httpx
 
@@ -84,20 +85,36 @@ class CloudflareImageStore(ImageStorePort):
                 "CLOUDFLARE_ACCOUNT_HASH or CLOUDFLARE_CUSTOM_DOMAIN is set."
             )
 
+    @staticmethod
+    def _to_cloudflare_id(image_id: str) -> str:
+        """Ensure custom ID conforms to Cloudflare Images rules.
+
+        Cloudflare Images requires that custom IDs must not be a bare UUID.
+        If image_id is a UUID, prefix it with 'mealtrack/' to create a valid subpath ID.
+        """
+        if not image_id:
+            return image_id
+        try:
+            uuid.UUID(image_id)
+            return f"mealtrack/{image_id}"
+        except ValueError:
+            return image_id
+
     def get_url(self, image_id: str, variant: str | None = None) -> str | None:
         """Construct delivery URL for a Cloudflare Images image."""
         if not image_id:
             return None
+        cf_id = self._to_cloudflare_id(image_id)
         v = variant or self._default_variant
         if self._custom_domain:
-            return f"https://{self._custom_domain}/{image_id}/{v}"
+            return f"https://{self._custom_domain}/{cf_id}/{v}"
         if not self._account_hash:
             logger.warning(
                 "CLOUDFLARE_ACCOUNT_HASH (or CLOUDFLARE_CUSTOM_DOMAIN) is required "
                 "to construct Cloudflare Images delivery URLs."
             )
             return None
-        return f"https://imagedelivery.net/{self._account_hash}/{image_id}/{v}"
+        return f"https://imagedelivery.net/{self._account_hash}/{cf_id}/{v}"
 
     async def get_url_async(
         self, image_id: str, variant: str | None = None
@@ -133,10 +150,12 @@ class CloudflareImageStore(ImageStorePort):
         if image_id is None:
             image_id = str(uuid.uuid4())
 
+        cf_id = self._to_cloudflare_id(image_id)
+
         url = f"{self._base_api_url}/v1"
         headers = {"Authorization": f"Bearer {self._api_token}"}
         files = {"file": (f"{image_id}.jpg", image_bytes, normalized_content_type)}
-        data = {"id": image_id}
+        data = {"id": cf_id}
 
         client = self._sync_client or httpx.Client(timeout=self._timeout)
         try:
@@ -158,7 +177,7 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         variants = result.get("variants") or []
-        delivery_url = self._select_delivery_url(variants, image_id)
+        delivery_url = self._select_delivery_url(variants, cf_id)
         if not delivery_url:
             raise RuntimeError(
                 f"Cloudflare Images upload succeeded for {image_id}, but failed to resolve a delivery URL."
@@ -211,10 +230,12 @@ class CloudflareImageStore(ImageStorePort):
         if image_id is None:
             image_id = str(uuid.uuid4())
 
+        cf_id = self._to_cloudflare_id(image_id)
+
         url = f"{self._base_api_url}/v1"
         headers = {"Authorization": f"Bearer {self._api_token}"}
         files = {"file": (f"{image_id}.jpg", image_bytes, normalized_content_type)}
-        data = {"id": image_id}
+        data = {"id": cf_id}
 
         if self._client:
             response = await self._client.post(
@@ -239,7 +260,7 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         variants = result.get("variants") or []
-        delivery_url = self._select_delivery_url(variants, image_id)
+        delivery_url = self._select_delivery_url(variants, cf_id)
         if not delivery_url:
             raise RuntimeError(
                 f"Cloudflare Images upload succeeded for {image_id}, but failed to resolve a delivery URL."
@@ -295,7 +316,8 @@ class CloudflareImageStore(ImageStorePort):
     def delete(self, image_id: str) -> bool:
         """Synchronously delete image from Cloudflare Images."""
         self._ensure_configured()
-        url = f"{self._base_api_url}/v1/{image_id}"
+        cf_id = self._to_cloudflare_id(image_id)
+        url = f"{self._base_api_url}/v1/{quote(cf_id, safe='')}"
         headers = {"Authorization": f"Bearer {self._api_token}"}
         client = self._sync_client or httpx.Client(timeout=10.0)
         try:
@@ -318,7 +340,8 @@ class CloudflareImageStore(ImageStorePort):
     async def delete_async(self, image_id: str) -> bool:
         """Asynchronously delete image from Cloudflare Images."""
         self._ensure_configured()
-        url = f"{self._base_api_url}/v1/{image_id}"
+        cf_id = self._to_cloudflare_id(image_id)
+        url = f"{self._base_api_url}/v1/{quote(cf_id, safe='')}"
         headers = {"Authorization": f"Bearer {self._api_token}"}
         try:
             if self._client:
@@ -346,7 +369,8 @@ class CloudflareImageStore(ImageStorePort):
         expiry = (datetime.now(UTC) + timedelta(seconds=max(120, ttl))).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        data = {"expiry": expiry, "id": image_id}
+        cf_id = self._to_cloudflare_id(image_id)
+        data = {"expiry": expiry, "id": cf_id}
 
         client = self._sync_client or httpx.Client(timeout=10.0)
         try:
@@ -368,7 +392,7 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         upload_url = result.get("uploadURL")
-        returned_id = result.get("id", image_id)
+        returned_id = result.get("id", cf_id)
 
         return {
             "image_id": returned_id,
@@ -392,7 +416,8 @@ class CloudflareImageStore(ImageStorePort):
         expiry = (datetime.now(UTC) + timedelta(seconds=max(120, ttl))).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        data = {"expiry": expiry, "id": image_id}
+        cf_id = self._to_cloudflare_id(image_id)
+        data = {"expiry": expiry, "id": cf_id}
 
         if self._client:
             resp = await self._client.post(
@@ -415,7 +440,7 @@ class CloudflareImageStore(ImageStorePort):
 
         result = payload.get("result", {})
         upload_url = result.get("uploadURL")
-        returned_id = result.get("id", image_id)
+        returned_id = result.get("id", cf_id)
 
         return {
             "image_id": returned_id,
