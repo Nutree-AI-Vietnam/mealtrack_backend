@@ -157,7 +157,9 @@ async def get_meal(
 
     image_url = None
     if meal.image:
-        image_url = meal.image.url or image_store.get_url(meal.image.image_id)
+        image_url = meal.image.url or await image_store.get_url_async(
+            meal.image.image_id
+        )
 
     language = get_request_language(request)
     meal = await ensure_requested_meal_translation(

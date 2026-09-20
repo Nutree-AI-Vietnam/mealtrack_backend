@@ -37,6 +37,9 @@ def client(monkeypatch) -> TestClient:
         def get_url(self, image_id: str) -> str:
             return f"https://example.com/{image_id}"
 
+        async def get_url_async(self, image_id: str) -> str:
+            return self.get_url(image_id)
+
         async def generate_upload_signature_async(
             self, image_id: str, ttl: int = 300
         ) -> dict:
@@ -120,8 +123,8 @@ def test_meals_analyze_ai_unavailable_returns_503(client: TestClient):
                 last_error="503 UNAVAILABLE",
             )
 
-    client.app.dependency_overrides[get_configured_event_bus] = (
-        lambda: _UnavailableBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _UnavailableBus()
     )
 
     r = client.post(
@@ -141,8 +144,8 @@ def test_meals_analyze_localization_error_returns_controlled_422(client: TestCli
         async def send(self, msg):
             raise MealResponseLocalizationError("localized food item is missing")
 
-    client.app.dependency_overrides[get_configured_event_bus] = (
-        lambda: _LocalizationErrorBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _LocalizationErrorBus()
     )
 
     r = client.post(
@@ -200,8 +203,8 @@ def test_scan_by_url_localization_error_returns_controlled_422(client: TestClien
         async def send(self, msg):
             raise MealResponseLocalizationError("localized food item is missing")
 
-    client.app.dependency_overrides[get_configured_event_bus] = (
-        lambda: _LocalizationErrorBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _LocalizationErrorBus()
     )
 
     r = client.post(
@@ -377,7 +380,9 @@ def test_meals_manual_create_happy_path(client: TestClient):
                 ),
             )
 
-    client.app.dependency_overrides[get_configured_event_bus] = lambda: _ManualCreateBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _ManualCreateBus()
+    )
 
     payload = {
         "dish_name": "Chicken Rice",
@@ -581,7 +586,12 @@ def test_meals_edit_ingredients_v2_meal_detail_keeps_requested_locale(
 
     from src.api.dependencies.event_bus import get_configured_event_bus
     from src.app.commands.meal import EditMealCommand
-    from src.domain.model.meal import FoodItemTranslation, Meal, MealStatus, MealTranslation
+    from src.domain.model.meal import (
+        FoodItemTranslation,
+        Meal,
+        MealStatus,
+        MealTranslation,
+    )
     from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 
     meal_id = str(uuid4())
@@ -798,7 +808,9 @@ def test_meals_value_insights_unavailable_without_cache_service(client: TestClie
         async def send(self, msg):
             return meal
 
-    client.app.dependency_overrides[get_configured_event_bus] = lambda: _ValueInsightsBus()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _ValueInsightsBus()
+    )
 
     r = client.get(f"/v1/meals/{meal_id}/value-insights")
 

@@ -6,8 +6,6 @@ import os
 import uuid
 from unittest.mock import Mock, patch
 
-import cloudinary.exceptions
-import httpx
 import pytest
 
 from src.infra.adapters.cloudinary_image_store import CloudinaryImageStore
@@ -305,123 +303,55 @@ class TestLoadImage:
 
 
 class TestGetUrl:
-    """Test get_url method."""
+    """Test get_url method — local URL construction, no Admin API or HEAD."""
 
-    def test_get_url_success_does_not_log_secure_url(self, cloudinary_store, caplog):
-        """Test successfully getting URL from Cloudinary API."""
-        secure_url = (
-            "https://res.cloudinary.com/test/image/upload/v123/mealtrack/test-id.jpg"
-        )
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.return_value = {
-                "secure_url": secure_url,
-                "public_id": "mealtrack/test-id",
-            }
-
+    def test_get_url_constructs_delivery_url_without_network(
+        self, cloudinary_store, caplog
+    ):
+        with (
+            patch("cloudinary.api.resource") as mock_resource,
+            patch("httpx.head") as mock_head,
+        ):
             with caplog.at_level("DEBUG"):
                 result = cloudinary_store.get_url("test-id")
 
-            assert result == secure_url
-            mock_resource.assert_called_once_with("mealtrack/test-id")
-            assert secure_url not in caplog.text
+        assert result is not None
+        assert "mealtrack/test-id" in result
+        assert result.startswith("https://res.cloudinary.com/")
+        mock_resource.assert_not_called()
+        mock_head.assert_not_called()
+        assert result not in caplog.text
 
-    def test_get_url_not_found(self, cloudinary_store):
-        """Test get_url when image not found in Cloudinary."""
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.side_effect = cloudinary.exceptions.NotFound("Not found")
-
-            result = cloudinary_store.get_url("non-existent-id")
-
-            assert result is None
-
-    def test_get_url_api_error_with_fallback_does_not_log_url(
-        self, cloudinary_store, mock_cloudinary_env, caplog
-    ):
-        """Test get_url falls back to manual URL construction on API error."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.side_effect = Exception("API Error")
-
-            with patch("httpx.head") as mock_head:
-                mock_head.return_value = mock_response
-
-                with caplog.at_level("DEBUG"):
-                    result = cloudinary_store.get_url("test-id")
-
-                # Should return fallback URL
-                assert result is not None
-                assert "test-cloud" in result
-                assert "mealtrack/test-id" in result
-                assert result not in caplog.text
-
-    def test_get_url_fallback_tries_multiple_formats(
+    def test_get_url_uses_configured_cloud_name(
         self, cloudinary_store, mock_cloudinary_env
     ):
-        """Test get_url tries both jpg and png formats in fallback."""
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.side_effect = Exception("API Error")
+        result = cloudinary_store.get_url("test-id")
 
-            with patch("httpx.head") as mock_head:
-                # First call (jpg) fails, second call (png) succeeds
-                mock_head.side_effect = [Mock(status_code=404), Mock(status_code=200)]
+        assert result is not None
+        assert "test-cloud" in result
+        assert "mealtrack/test-id" in result
 
+    def test_get_url_returns_none_without_cloud_name(self, cloudinary_store):
+        with patch.dict("os.environ", {"CLOUDINARY_CLOUD_NAME": ""}, clear=False):
+            with patch(
+                "src.infra.adapters.cloudinary_image_store.cloudinary.config"
+            ) as mock_config:
+                mock_config.return_value.cloud_name = None
                 result = cloudinary_store.get_url("test-id")
 
-                # Should try jpg then png
-                assert mock_head.call_count == 2
-                assert ".png" in result
+        assert result is None
 
-    def test_get_url_fallback_all_formats_fail(
-        self, cloudinary_store, mock_cloudinary_env
-    ):
-        """Test get_url returns None when all fallback formats fail."""
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.side_effect = Exception("API Error")
+    @pytest.mark.asyncio
+    async def test_get_url_async_is_local(self, cloudinary_store):
+        with (
+            patch("cloudinary.api.resource") as mock_resource,
+            patch("httpx.head") as mock_head,
+        ):
+            result = await cloudinary_store.get_url_async("test-id")
 
-            with patch("httpx.head") as mock_head:
-                mock_head.return_value = Mock(status_code=404)
-
-                result = cloudinary_store.get_url("test-id")
-
-                assert result is None
-
-    def test_get_url_no_secure_url_in_response(self, cloudinary_store):
-        """Test get_url when secure_url is missing from API response."""
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.return_value = {
-                "public_id": "mealtrack/test-id"
-                # No secure_url
-            }
-
-            result = cloudinary_store.get_url("test-id")
-
-            assert result is None
-
-    def test_get_url_without_cloud_name_in_env(self, cloudinary_store):
-        """Test get_url fallback fails without cloud name in environment."""
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.side_effect = Exception("API Error")
-
-            with patch.dict(os.environ, {}, clear=True):
-                result = cloudinary_store.get_url("test-id")
-
-                assert result is None
-
-    def test_get_url_fallback_network_error(
-        self, cloudinary_store, mock_cloudinary_env
-    ):
-        """Test get_url handles httpx network errors in fallback gracefully."""
-        with patch("cloudinary.api.resource") as mock_resource:
-            mock_resource.side_effect = Exception("API Error")
-
-            with patch("httpx.head") as mock_head:
-                mock_head.side_effect = httpx.ConnectError("Network error")
-
-                result = cloudinary_store.get_url("test-id")
-
-                assert result is None
+        assert result == cloudinary_store.get_url("test-id")
+        mock_resource.assert_not_called()
+        mock_head.assert_not_called()
 
 
 class TestDeleteImage:
@@ -499,17 +429,13 @@ class TestCloudinaryImageStoreIntegration:
         """Test complete flow of save, load, and delete."""
         image_id = "test-flow-id"
 
-        with patch("cloudinary.uploader.upload") as mock_upload, patch(
-            "cloudinary.api.resource"
-        ) as mock_resource, patch("httpx.get") as mock_get, patch(
-            "cloudinary.uploader.destroy"
-        ) as mock_destroy:
-
+        with (
+            patch("cloudinary.uploader.upload") as mock_upload,
+            patch("httpx.get") as mock_get,
+            patch("cloudinary.uploader.destroy") as mock_destroy,
+        ):
             # Setup mocks
             mock_upload.return_value = {
-                "secure_url": f"https://res.cloudinary.com/test/image/upload/v123/mealtrack/{image_id}.jpg"
-            }
-            mock_resource.return_value = {
                 "secure_url": f"https://res.cloudinary.com/test/image/upload/v123/mealtrack/{image_id}.jpg"
             }
             mock_get.return_value = Mock(status_code=200, content=sample_image_bytes)
@@ -587,7 +513,9 @@ class TestAsyncWrappers:
     """Test async wrapper methods delegate to sync implementations."""
 
     @pytest.mark.asyncio
-    async def test_save_async_delegates_to_save(self, cloudinary_store, sample_image_bytes):
+    async def test_save_async_delegates_to_save(
+        self, cloudinary_store, sample_image_bytes
+    ):
         with patch("cloudinary.uploader.upload") as mock_upload:
             mock_upload.return_value = {
                 "secure_url": "https://res.cloudinary.com/test/image/upload/v1/mealtrack/test.jpg"

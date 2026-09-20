@@ -10,10 +10,30 @@ from src.infra.adapters.best_effort_integration_event_publisher import (
 from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
 from src.infra.config.settings import get_settings
 
+_publisher: BestEffortIntegrationEventPublisher | None = None
+
 
 def get_integration_event_publisher() -> IntegrationEventPublisherPort:
-    """Build the Queue publisher; transport failures must not fail business writes."""
-    return BestEffortIntegrationEventPublisher(CloudflareQueuePublisher.from_settings())
+    """Return the process-local Queue publisher; transport failures must not fail writes."""
+    global _publisher
+    if _publisher is None:
+        _publisher = BestEffortIntegrationEventPublisher(
+            CloudflareQueuePublisher.from_settings()
+        )
+    return _publisher
+
+
+async def drain_integration_event_publisher() -> None:
+    """Flush in-flight Queue publishes during process shutdown."""
+    if _publisher is None:
+        return
+    await _publisher.drain()
+
+
+def reset_integration_event_publisher_for_tests() -> None:
+    """Drop the singleton so tests can rebuild a publisher."""
+    global _publisher
+    _publisher = None
 
 
 def get_affiliate_service(

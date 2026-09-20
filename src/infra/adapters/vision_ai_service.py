@@ -69,7 +69,7 @@ class VisionAIService(VisionAIServicePort):
         Raises:
             RuntimeError: If analysis fails
         """
-        image_bytes = self._compress_image(image_bytes)
+        image_bytes = await asyncio.to_thread(self._compress_image, image_bytes)
 
         if isinstance(strategy, IngredientIdentificationStrategy):
             return await self._analyze_without_nutrition_contract(image_bytes, strategy)

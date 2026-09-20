@@ -123,6 +123,11 @@ class Settings(BaseSettings):
     FIREBASE_CREDENTIALS: str | None = Field(default=None)
     FIREBASE_SERVICE_ACCOUNT_JSON: str | None = Field(default=None)
     FIREBASE_SERVICE_ACCOUNT_PATH: str | None = Field(default=None)
+    FIREBASE_VERIFY_THREADS: int = Field(
+        default=8,
+        ge=1,
+        description="Dedicated thread-pool size for Firebase Admin token verification.",
+    )
 
     # Email (Resend)
     RESEND_API_KEY: str | None = Field(default=None)
