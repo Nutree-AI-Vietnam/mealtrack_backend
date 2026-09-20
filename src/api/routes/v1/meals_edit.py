@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, Request
 
@@ -20,6 +19,9 @@ from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.meals_route_helpers import (
     load_food_reference_display_projections,
+)
+from src.api.routes.v1.meals_route_helpers import (
+    validate_uploaded_image_url as _validate_uploaded_meal_photo_url,
 )
 from src.api.schemas.request.meal_requests import (
     AttachMealPhotoRequest,
@@ -42,14 +44,6 @@ router = APIRouter()
 
 # Ingredient PUTs are cheap writes. 60/minute is a backstop, not an AI cap.
 MEAL_INGREDIENTS_EDIT_LIMIT = "60/minute"
-
-
-def _validate_uploaded_meal_photo_url(image_url: str, image_id: str) -> None:
-    parsed = urlparse(image_url)
-    if parsed.scheme != "https" or parsed.netloc != "res.cloudinary.com":
-        raise ValidationException("image_url must be a Cloudinary secure URL")
-    if image_id not in parsed.path:
-        raise ValidationException("image_id does not match image_url")
 
 
 @router.delete("/{meal_id}")

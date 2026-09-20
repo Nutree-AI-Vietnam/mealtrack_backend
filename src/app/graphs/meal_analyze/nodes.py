@@ -34,7 +34,9 @@ from src.domain.strategies.meal_analysis_strategy import (
     AnalysisStrategyFactory,
     FoodLabelImageAnalysisStrategy,
 )
-from src.domain.utils.image_compression import to_compressed_cloudinary_url
+from src.domain.utils.image_compression import (
+    to_compressed_image_url,
+)
 from src.domain.utils.timezone_utils import (
     get_zone_info,
     is_valid_timezone,
@@ -124,9 +126,27 @@ async def _acquire_scan_by_url_image(
         source_public_id = command.label_crop_public_id or command.public_id
 
     download_url = (
-        source_url if is_food_label else to_compressed_cloudinary_url(source_url)
+        source_url
+        if is_food_label
+        else to_compressed_image_url(
+            source_url,
+            custom_domain=runtime.cloudflare_custom_domain,
+            flexible_variants_enabled=runtime.cloudflare_flexible_variants_enabled,
+        )
     )
-    raw_bytes = await runtime.download_image_bytes(download_url)
+    if download_url != source_url:
+        try:
+            raw_bytes = await runtime.download_image_bytes(download_url)
+        except Exception as exc:
+            logger.warning(
+                "[MEAL-ANALYZE-GRAPH] Failed to download compressed image url (%s): %s. Falling back to source url (%s)",
+                download_url,
+                exc,
+                source_url,
+            )
+            raw_bytes = await runtime.download_image_bytes(source_url)
+    else:
+        raw_bytes = await runtime.download_image_bytes(download_url)
     if is_food_label or len(raw_bytes) <= 200 * 1024:
         analysis_bytes = raw_bytes
     else:

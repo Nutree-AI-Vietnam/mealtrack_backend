@@ -38,7 +38,7 @@ from src.domain.strategies.meal_analysis_strategy import (
 )
 from src.domain.utils.image_compression import (
     compress_image,
-    to_compressed_cloudinary_url,
+    to_compressed_image_url,
 )
 from src.domain.utils.timezone_utils import (
     get_zone_info,
@@ -70,6 +70,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         meal_analyze_graph_enabled: bool = False,
         download_image_bytes: Any | None = None,
         uow_factory=None,
+        cloudflare_custom_domain: str | None = None,
+        cloudflare_flexible_variants_enabled: bool = False,
     ):
         self.uow = uow
         self.uow_factory = uow_factory if uow_factory is not None else (lambda: uow)
@@ -83,6 +85,14 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         self.meal_analyze_workflow = meal_analyze_workflow
         self.meal_analyze_graph_enabled = meal_analyze_graph_enabled
         self._download_image_bytes_fn = download_image_bytes
+        self.cloudflare_flexible_variants_enabled = cloudflare_flexible_variants_enabled
+        if cloudflare_custom_domain:
+            cleaned = cloudflare_custom_domain.strip().lower()
+            if "://" in cleaned:
+                cleaned = cleaned.split("://", 1)[1]
+            self.cloudflare_custom_domain = cleaned.split("/")[0]
+        else:
+            self.cloudflare_custom_domain = None
 
     def _record_food_label_metric(
         self,
@@ -175,13 +185,29 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         image_id = command.public_id.split("/")[-1]
 
         try:
-            # For meal scans, fetch edge-compressed Cloudinary URL to avoid local PIL resizing
+            # For meal scans, fetch edge-compressed URL (Cloudflare/Cloudinary) to avoid local PIL resizing
             download_url = (
-                to_compressed_cloudinary_url(command.image_url)
+                to_compressed_image_url(
+                    command.image_url,
+                    custom_domain=self.cloudflare_custom_domain,
+                    flexible_variants_enabled=self.cloudflare_flexible_variants_enabled,
+                )
                 if command.scan_mode != "food_label"
                 else command.image_url
             )
-            raw_bytes = await self._download_image_bytes(download_url)
+            if download_url != command.image_url:
+                try:
+                    raw_bytes = await self._download_image_bytes(download_url)
+                except Exception as exc:
+                    logger.warning(
+                        "[SCAN-BY-URL] Failed to download compressed image url (%s): %s. Falling back to original url (%s)",
+                        download_url,
+                        exc,
+                        command.image_url,
+                    )
+                    raw_bytes = await self._download_image_bytes(command.image_url)
+            else:
+                raw_bytes = await self._download_image_bytes(download_url)
             image_bytes: bytes | None = None
             if command.scan_mode != "food_label":
                 image_bytes = raw_bytes
@@ -444,6 +470,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     event_bus=self.event_bus,
                     meal_translation_service=self.meal_translation_service,
                     text_translation_service=self.text_translation_service,
+                    cloudflare_custom_domain=self.cloudflare_custom_domain,
+                    cloudflare_flexible_variants_enabled=self.cloudflare_flexible_variants_enabled,
                 ),
             )
 
