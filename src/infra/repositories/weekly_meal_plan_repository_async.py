@@ -124,9 +124,11 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             return None  # type: ignore[return-value]
         row = cast(Any, row)
         if row.status == WeeklyMealPlanStatus.CONFIRMED.value and any(
-            value is not None for value in (people, preferences, slots)
+            value is not None for value in (people, preferences)
         ):
-            raise WeeklyMealPlanConflictError()
+            raise WeeklyMealPlanConflictError(
+                "Preferences cannot be changed once a weekly meal plan is confirmed"
+            )
         if people is not None:
             row.people = people
             if preferences is None:

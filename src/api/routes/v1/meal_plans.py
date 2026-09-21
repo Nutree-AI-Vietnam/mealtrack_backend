@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 
@@ -54,6 +54,10 @@ from src.app.queries.meal_planner import (
 )
 from src.app.queries.user import GetUserTimezoneQuery
 from src.app.services.catalog_meal_response_localizer import localize_catalog_meals
+from src.domain.exceptions.weekly_meal_planner_exceptions import (
+    WeeklyMealPlanConflictError,
+    WeeklyMealPlanNotFoundError,
+)
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
 from src.domain.utils.timezone_utils import get_zone_info
@@ -397,16 +401,18 @@ async def _timezone(event_bus, request: Request, user_id: str) -> str:
 
 
 def _resolve_week(value: date | None, timezone: str) -> date:
-    target = value or datetime.now(get_zone_info(timezone)).date()
-    if target.weekday() != 0:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error_code": "WEEK_START_NOT_MONDAY",
-                "message": "week_start_date must be a Monday",
-            },
-        )
-    return target
+    if value is not None:
+        if value.weekday() != 0:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "WEEK_START_NOT_MONDAY",
+                    "message": "week_start_date must be a Monday",
+                },
+            )
+        return value
+    today = datetime.now(get_zone_info(timezone)).date()
+    return today - timedelta(days=today.weekday())
 
 
 async def _plan_response(
@@ -438,6 +444,20 @@ async def _plan_response(
                 if slot.day_index == day
             ]
         )
+    to_buy_count = None
+    if getattr(plan, "id", None):
+        try:
+            groceries_result = await event_bus.send(
+                GetWeeklyGroceriesQuery(user_id=plan.user_id, plan_id=plan.id)
+            )
+            if groceries_result:
+                _, categories = groceries_result
+                to_buy_count = sum(
+                    item.status != "owned" for cat in categories for item in cat.items
+                )
+        except Exception:
+            to_buy_count = None
+
     return WeeklyMealPlanResponse(
         id=plan.id,
         week_start_date=plan.week_start_date,
@@ -446,6 +466,7 @@ async def _plan_response(
         preferences=plan.preferences.to_dict(),
         plan=grouped,
         total_meals_planned=sum(slot.recipe_id is not None for slot in plan.slots),
+        to_buy_count=to_buy_count,
         created_at=plan.created_at,
         updated_at=plan.updated_at,
     )
@@ -540,6 +561,22 @@ def _idempotency_key(value: str) -> str:
 def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, HTTPException):
         return exc
+    if isinstance(exc, WeeklyMealPlanNotFoundError):
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": exc.error_code or "NOT_FOUND",
+                "message": exc.message,
+            },
+        )
+    if isinstance(exc, WeeklyMealPlanConflictError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": exc.error_code or "CONFLICT",
+                "message": exc.message,
+            },
+        )
     from src.api.exceptions import MealTrackException
 
     if isinstance(exc, MealTrackException):

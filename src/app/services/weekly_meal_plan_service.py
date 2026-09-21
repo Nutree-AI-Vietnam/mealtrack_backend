@@ -27,7 +27,7 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanPreferences,
 )
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
-from src.infra.services.durable_write_service import canonicalize_fingerprint
+from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 
 
 @dataclass(frozen=True)

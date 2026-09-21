@@ -46,6 +46,8 @@ class _Bus:
             return _plan()
         if query.__class__.__name__ == "GetRecipeDetailQuery":
             return None
+        if query.__class__.__name__ == "GetWeeklyGroceriesQuery":
+            return (_plan(), ())
         raise AssertionError(f"unexpected query: {query!r}")
 
 
@@ -68,6 +70,15 @@ def test_current_plan_returns_fourteen_slots():
     assert sum(len(day) for day in body["plan"]) == 14
     assert body["plan"][0][0]["slot_name"] == "lunch"
     assert body["plan"][0][1]["slot_name"] == "dinner"
+
+
+def test_current_plan_without_week_start_resolves_to_current_monday():
+    response = TestClient(_app()).get("/v1/meal-plans/current")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "plan-1"
+    assert "to_buy_count" in body
 
 
 def test_current_plan_rejects_non_monday_week():

@@ -14,7 +14,7 @@ from src.app.commands.meal_planner import LogMealPlanSlotCommand
 from src.app.services.recommended_meal_materialization_service import (
     RecommendedMealMaterializationService,
 )
-from src.infra.services.durable_write_service import canonicalize_fingerprint
+from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 
 
 @dataclass(frozen=True)

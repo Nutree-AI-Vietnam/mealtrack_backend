@@ -31,6 +31,7 @@ class WeeklyMealPlanResponse(BaseModel):
     preferences: dict
     plan: list[list[WeeklyMealSlotResponse]]
     total_meals_planned: int
+    to_buy_count: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
