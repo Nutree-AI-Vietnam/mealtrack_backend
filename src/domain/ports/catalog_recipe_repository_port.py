@@ -43,6 +43,9 @@ class CatalogMealSeedWrite:
     allergens: str | None = None
     summary: str | None = None
     equipment: str | None = None
+    base_servings: int | None = None
+    serving_source: str | None = None
+    serving_confidence: str = "unknown"
     steps: tuple[tuple[int, str, str], ...] = ()
 
 

@@ -66,6 +66,7 @@ def test_current_plan_returns_fourteen_slots():
 
     assert response.status_code == 200
     body = response.json()
+    assert body["revision"] == 1
     assert len(body["plan"]) == 7
     assert sum(len(day) for day in body["plan"]) == 14
     assert body["plan"][0][0]["slot_name"] == "lunch"

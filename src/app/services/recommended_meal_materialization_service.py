@@ -113,6 +113,7 @@ class RecommendedMealMaterializationService:
             meal_type=meal_type,
             source=source,
             catalog_meal_id=catalog_meal.id,
+            catalog_meal_content_hash=catalog_meal.content_hash,
         )
         return await uow.meals.save(meal)
 

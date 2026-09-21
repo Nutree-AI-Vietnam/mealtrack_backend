@@ -177,6 +177,7 @@ async def update_weekly_plan(
                 preferences=preferences,
                 status=body.status,
                 slots=slots,
+                expected_revision=body.expected_revision,
             )
         )
         return await _plan_response(
@@ -277,6 +278,7 @@ async def ai_adjust_weekly_plan(
             )
         )
         return WeeklyAiProposalResponse(
+            base_revision=proposal.base_revision,
             explanation=proposal.explanation,
             diff_summary=proposal.diff_summary,
             proposed_plan=await _plan_response(
@@ -314,7 +316,7 @@ async def get_weekly_groceries(
         items = [item for category in categories for item in category.items]
         return WeeklyGroceriesResponse(
             total_items_count=len(items),
-            to_buy_count=sum(item.status != "owned" for item in items),
+            to_buy_count=sum(item.status in {"needed", "need_more"} for item in items),
             owned_count=sum(item.status == "owned" for item in items),
             categories=[
                 GroceryCategoryResponse(
@@ -453,7 +455,9 @@ async def _plan_response(
             if groceries_result:
                 _, categories = groceries_result
                 to_buy_count = sum(
-                    item.status != "owned" for cat in categories for item in cat.items
+                    item.status in {"needed", "need_more"}
+                    for cat in categories
+                    for item in cat.items
                 )
         except Exception:
             to_buy_count = None
@@ -461,6 +465,7 @@ async def _plan_response(
     return WeeklyMealPlanResponse(
         id=plan.id,
         week_start_date=plan.week_start_date,
+        revision=plan.revision,
         status=plan.status.value,
         people=plan.people,
         preferences=plan.preferences.to_dict(),
@@ -522,6 +527,8 @@ def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
         allergens=meal.allergens,
         summary=meal.summary or meal.description,
         equipment=meal.equipment,
+        base_servings=meal.base_servings,
+        serving_confidence=meal.serving_confidence,
         nutrition_per_serving=RecipeDetailNutritionResponse(
             calories=meal.calories,
             protein=float(meal.protein_g),
@@ -538,6 +545,12 @@ def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
                 category="fresh_produce"
                 if item.category == "produce"
                 else item.category,
+                canonical_amount=float(item.canonical_amount)
+                if item.canonical_amount is not None
+                else None,
+                canonical_unit=item.canonical_unit,
+                quantity_dimension=item.quantity_dimension,
+                quantity_confidence=item.quantity_confidence,
             )
             for item in meal.ingredients
         ],

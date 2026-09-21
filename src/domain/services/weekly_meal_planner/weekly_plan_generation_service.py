@@ -31,13 +31,13 @@ class WeeklyPlanGenerationService:
         daily_calories: int,
         preferences: WeeklyMealPlanPreferences,
     ) -> tuple[GeneratedSlot, ...]:
-        candidates = self._eligible(meals, preferences)
-        if not candidates:
-            candidates = [
-                meal
-                for meal in meals
-                if "lunch" in meal.meal_types or "dinner" in meal.meal_types
-            ]
+        all_meals = tuple(meals)
+        hard_candidates = [
+            meal for meal in all_meals if self._hard_eligible(meal, preferences)
+        ]
+        candidates = [
+            meal for meal in hard_candidates if self._soft_eligible(meal, preferences)
+        ] or hard_candidates
         candidates.sort(key=lambda meal: self._sort_key(meal, user_id, week_start_date))
         if not candidates:
             return tuple(
@@ -63,33 +63,36 @@ class WeeklyPlanGenerationService:
                 result.append(GeneratedSlot(day, slot, selected.id))
         return tuple(result)
 
-    def _eligible(
+    def _hard_eligible(
         self,
-        meals: Iterable[CatalogMeal],
+        meal: CatalogMeal,
         preferences: WeeklyMealPlanPreferences,
-    ) -> list[CatalogMeal]:
-        output = []
-        for meal in meals:
-            haystack = _haystack(meal)
-            if (
-                preferences.cuisine
-                and preferences.cuisine.casefold() not in meal.cuisine.casefold()
-            ):
-                continue
-            if preferences.diet == "vegetarian" and _contains_any(
-                haystack, _MEAT_WORDS
-            ):
-                continue
-            if preferences.diet == "no-pork" and _contains_any(haystack, _PORK_WORDS):
-                continue
-            if any(dislike in haystack for dislike in preferences.dislikes):
-                continue
-            if preferences.cooking_time == "30" and _total_minutes(meal) > 30:
-                continue
-            if "lunch" not in meal.meal_types and "dinner" not in meal.meal_types:
-                continue
-            output.append(meal)
-        return output
+    ) -> bool:
+        haystack = _haystack(meal)
+        if "lunch" not in meal.meal_types and "dinner" not in meal.meal_types:
+            return False
+        if preferences.diet == "vegetarian" and _contains_any(haystack, _MEAT_WORDS):
+            return False
+        if preferences.diet == "no-pork" and _contains_any(haystack, _PORK_WORDS):
+            return False
+        if any(dislike in haystack for dislike in preferences.dislikes):
+            return False
+        if any(allergy in haystack for allergy in preferences.allergies):
+            return False
+        return True
+
+    @staticmethod
+    def _soft_eligible(
+        meal: CatalogMeal, preferences: WeeklyMealPlanPreferences
+    ) -> bool:
+        if (
+            preferences.cuisine
+            and preferences.cuisine.casefold() not in meal.cuisine.casefold()
+        ):
+            return False
+        if preferences.cooking_time == "30" and _total_minutes(meal) > 30:
+            return False
+        return True
 
     @staticmethod
     def _supports_slot(meal: CatalogMeal, slot_index: int) -> bool:

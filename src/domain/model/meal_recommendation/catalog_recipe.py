@@ -7,6 +7,9 @@ from decimal import Decimal
 from enum import StrEnum
 
 from src.domain.model.nutrition.macros import Macros
+from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
+    normalize_ingredient_quantity,
+)
 
 
 @dataclass(frozen=True)
@@ -18,6 +21,21 @@ class CatalogMealIngredient:
     quantity: Decimal
     unit: str
     category: str = "pantry"
+    canonical_amount: Decimal | None = None
+    canonical_unit: str | None = None
+    quantity_dimension: str | None = None
+    quantity_confidence: str = "unknown"
+
+    def __post_init__(self) -> None:
+        normalized = normalize_ingredient_quantity(self.quantity, self.unit)
+        if self.canonical_amount is None:
+            object.__setattr__(self, "canonical_amount", normalized.amount)
+        if self.canonical_unit is None:
+            object.__setattr__(self, "canonical_unit", normalized.unit)
+        if self.quantity_dimension is None:
+            object.__setattr__(self, "quantity_dimension", normalized.dimension)
+        if self.quantity_confidence == "unknown":
+            object.__setattr__(self, "quantity_confidence", normalized.confidence)
 
     @property
     def name(self) -> str:
@@ -63,6 +81,9 @@ class CatalogMeal:
     allergens: str | None = None
     summary: str | None = None
     equipment: str | None = None
+    base_servings: int | None = None
+    serving_source: str | None = None
+    serving_confidence: str = "unknown"
     steps: tuple[CatalogMealStep, ...] = field(default_factory=tuple)
 
     @property

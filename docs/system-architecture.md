@@ -265,13 +265,16 @@ projections. The domain generator enforces a Monday week with exactly 14
 lunch/dinner coordinates before persistence.
 
 The plan aggregate never owns recipe nutrition. Catalog ingredient quantities
-and `food_reference_id` remain authoritative; `people` affects only grocery
-aggregation. Slot logging reuses catalog-to-diary materialization with a
-portion multiplier, then links the created `Meal` in the same unit of work.
+and `food_reference_id` remain authoritative; grocery aggregation scales by
+`people / base_servings` only when the catalog serving basis is known and
+otherwise marks quantities as unscaled. Slot logging reuses
+catalog-to-diary materialization with a portion multiplier, then links the
+created `Meal` in the same unit of work while retaining the catalog content
+hash used for the snapshot.
 Ask Nutree uses the existing structured AI fallback service as an untrusted
 proposal source. The application validates catalog IDs, coordinates, logged
-slot immutability, and allergy disclosure policy before returning the
-ephemeral diff; it never writes the plan directly.
+slot immutability, hard preference exclusions, and the proposal base revision
+before returning the ephemeral diff; it never writes the plan directly.
 
 ---
 

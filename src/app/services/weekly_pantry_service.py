@@ -27,9 +27,15 @@ class WeeklyPantryService:
                 raise ValidationException(
                     "kind must be bought or owned", error_code="PANTRY_KIND_INVALID"
                 )
-            if float(update.get("amount") or 0) < 0:
+            amount = update.get("amount")
+            if amount is not None and float(amount) < 0:
                 raise ValidationException(
                     "amount must be non-negative", error_code="PANTRY_AMOUNT_INVALID"
+                )
+            if update.get("unit") is not None and not str(update["unit"]).strip():
+                raise ValidationException(
+                    "unit must be non-empty when provided",
+                    error_code="PANTRY_UNIT_INVALID",
                 )
             try:
                 int(update["ingredient_id"])

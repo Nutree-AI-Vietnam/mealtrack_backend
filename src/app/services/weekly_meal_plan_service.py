@@ -36,6 +36,7 @@ class WeeklyPlanAiProposal:
     diff_summary: str
     proposed_plan: WeeklyMealPlan
     slot_changes: tuple[dict, ...]
+    base_revision: int = 1
 
 
 class WeeklyMealPlanService:
@@ -150,6 +151,7 @@ class WeeklyMealPlanService:
                     preferences=command.preferences,
                     status=command.status,
                     slots=command.slots,
+                    expected_revision=command.expected_revision,
                 )
                 if plan is None:
                     raise ResourceNotFoundException("Weekly meal plan not found")
@@ -224,6 +226,7 @@ class WeeklyMealPlanService:
                 daily_calories=plan.daily_calories,
                 catalog_revision=plan.catalog_revision,
                 algorithm_version=plan.algorithm_version,
+                revision=plan.revision,
                 created_at=plan.created_at,
                 updated_at=plan.updated_at,
             )
@@ -239,6 +242,7 @@ class WeeklyMealPlanService:
                 if before.recipe_id != after.recipe_id
             )
             return WeeklyPlanAiProposal(
+                base_revision=plan.revision,
                 explanation="Prepared a reviewable weekly plan proposal from your request.",
                 diff_summary=f"{len(changes)} meals changed",
                 proposed_plan=proposed,
@@ -266,6 +270,11 @@ class WeeklyMealPlanService:
             raise ValidationException(
                 "AI returned an invalid meal plan proposal",
                 error_code="AI_OUTPUT_INVALID",
+            )
+        if response.base_revision != plan.revision:
+            raise ValidationException(
+                "AI proposal was generated from a stale weekly meal plan",
+                error_code="AI_OUTPUT_STALE_REVISION",
             )
         available_ids = {meal.id for meal in meals}
         by_coordinate = {(slot.day_index, slot.slot_index): slot for slot in plan.slots}
@@ -322,10 +331,12 @@ class WeeklyMealPlanService:
             daily_calories=plan.daily_calories,
             catalog_revision=plan.catalog_revision,
             algorithm_version=plan.algorithm_version,
+            revision=plan.revision,
             created_at=plan.created_at,
             updated_at=plan.updated_at,
         )
         return WeeklyPlanAiProposal(
+            base_revision=plan.revision,
             explanation=response.explanation,
             diff_summary=f"{len(changes)} meals changed",
             proposed_plan=proposed_plan,

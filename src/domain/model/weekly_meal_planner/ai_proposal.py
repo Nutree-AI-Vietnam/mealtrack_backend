@@ -17,3 +17,4 @@ class WeeklyMealPlanSlotAdjustment:
 class WeeklyMealPlanAdjustmentProposal:
     explanation: str
     slot_changes: tuple[WeeklyMealPlanSlotAdjustment, ...]
+    base_revision: int = 1

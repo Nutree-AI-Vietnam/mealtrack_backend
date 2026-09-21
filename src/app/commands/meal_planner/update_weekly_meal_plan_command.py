@@ -13,3 +13,4 @@ class UpdateWeeklyMealPlanCommand(Command):
     preferences: WeeklyMealPlanPreferences | None = None
     status: str | None = None
     slots: dict[tuple[int, int], str | None] | None = None
+    expected_revision: int | None = None

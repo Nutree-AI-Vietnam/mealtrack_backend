@@ -59,6 +59,7 @@ class MealORM(Base, TimestampMixin):
         ForeignKey("meal_catalog.id", ondelete="SET NULL"),
         nullable=True,
     )
+    catalog_meal_content_hash = Column(String(64), nullable=True)
 
     # Generic serving quantity: grams for food meals, ml for hydration meals
     quantity = Column(Integer, nullable=True)

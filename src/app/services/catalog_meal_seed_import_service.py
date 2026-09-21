@@ -471,6 +471,9 @@ class CatalogMealSeedImporter:
             allergens=_optional_string(recipe.get("allergens")),
             summary=_optional_string(recipe.get("summary")),
             equipment=_optional_string(recipe.get("equipment")),
+            base_servings=_optional_positive_int(recipe.get("base_servings")),
+            serving_source=_optional_string(recipe.get("serving_source")),
+            serving_confidence=_serving_confidence(recipe.get("serving_confidence")),
             steps=tuple(_step_payloads(recipe.get("steps"))),
         )
         return _PreparedCatalogSeed(
@@ -887,7 +890,7 @@ def _content_hash(
         for item in ingredients
     ]
     payload = {
-        "version": "meal_catalog_content_v2",
+        "version": "meal_catalog_content_v3",
         "name": normalize_catalog_text(str(recipe["name"])),
         "cuisine": normalize_catalog_text(str(recipe["cuisine"])),
         "meal_types": sorted(recipe["meal_types"]),
@@ -902,6 +905,9 @@ def _content_hash(
                 "allergens",
                 "summary",
                 "equipment",
+                "base_servings",
+                "serving_source",
+                "serving_confidence",
                 "steps",
             )
         },
@@ -940,6 +946,25 @@ def _optional_non_negative_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise CatalogSeedImportError("recipe time must be a non-negative integer")
     return value
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise CatalogSeedImportError("base_servings must be a positive integer")
+    return value
+
+
+def _serving_confidence(value: Any) -> str:
+    if value is None:
+        return "unknown"
+    confidence = str(value).strip().casefold()
+    if confidence not in {"verified", "estimated", "unknown"}:
+        raise CatalogSeedImportError(
+            "serving_confidence must be verified, estimated, or unknown"
+        )
+    return confidence
 
 
 def _step_payloads(value: Any) -> list[tuple[int, str, str]]:

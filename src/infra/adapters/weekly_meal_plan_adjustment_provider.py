@@ -46,6 +46,7 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
         meals: tuple[CatalogMeal, ...],
     ) -> WeeklyMealPlanAdjustmentProposal:
         context = {
+            "base_revision": plan.revision,
             "current_slots": [
                 {
                     "day_index": slot.day_index,
@@ -81,6 +82,7 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
         )
         parsed = WeeklyMealPlanAdjustmentResponse.model_validate(result)
         return WeeklyMealPlanAdjustmentProposal(
+            base_revision=plan.revision,
             explanation=parsed.explanation,
             slot_changes=tuple(
                 WeeklyMealPlanSlotAdjustment(

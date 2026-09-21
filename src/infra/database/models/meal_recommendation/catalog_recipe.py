@@ -46,6 +46,11 @@ class MealCatalogORM(Base):
     allergens = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     equipment = Column(Text, nullable=True)
+    base_servings = Column(Integer, nullable=True)
+    serving_source = Column(String(64), nullable=True)
+    serving_confidence = Column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
     popularity_rank = Column(Integer, nullable=True)
     breakfast_eligible = Column(Boolean, nullable=False, default=False)
     lunch_eligible = Column(Boolean, nullable=False, default=False)
@@ -88,6 +93,14 @@ class MealCatalogORM(Base):
         CheckConstraint(
             "cook_time_minutes IS NULL OR cook_time_minutes >= 0",
             name="ck_meal_catalog_cook_time_non_negative",
+        ),
+        CheckConstraint(
+            "base_servings IS NULL OR base_servings > 0",
+            name="ck_meal_catalog_base_servings_positive",
+        ),
+        CheckConstraint(
+            "serving_confidence IN ('verified', 'estimated', 'unknown')",
+            name="ck_meal_catalog_serving_confidence",
         ),
         CheckConstraint(
             "breakfast_eligible OR lunch_eligible OR dinner_eligible OR snack_eligible",

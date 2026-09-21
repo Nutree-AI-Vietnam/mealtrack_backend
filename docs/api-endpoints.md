@@ -226,17 +226,27 @@ handler/schema when implementing; the bullets below are the durable WHY.
   from the authenticated user's timezone. Generation and slot/preferences
   edits are idempotent and return a conflict for confirmed plans; pantry reads
   and diary logging retain their own owner and state checks.
+- Plan responses include a monotonic `revision`. PATCH clients may send
+  `expected_revision`; a stale value returns `409 WEEKLY_PLAN_STALE_REVISION`
+  instead of overwriting a newer plan. AI proposals are non-mutating and
+  include the `base_revision` they were generated from so clients can apply
+  them only against the same plan version.
 - Recipe detail exposes ordered catalog steps, source metadata, equipment,
-  ingredient grocery categories, and backend-derived nutrition. `people` only
-  scales grocery quantities; clients must not recalculate calories or macros.
+  ingredient grocery categories, serving metadata, and backend-derived
+  nutrition. Grocery quantities scale by `people / base_servings` only when the
+  catalog serving basis is known; otherwise the output is marked `unscaled`.
+  Clients must not recalculate calories or macros.
 - Grocery output is a read-time projection keyed by canonical
-  `food_reference_id` plus unit. Pantry quantities subtract from the planned
-  total and produce `needed`, `need_more`, or `owned` statuses. Incompatible
-  units remain separate.
+  `food_reference_id` plus quantity dimension/unit. Weight and volume units are
+  normalized only through exact conversions; count and unknown units remain
+  separate and carry a confidence marker. Pantry quantities subtract only when
+  their unit is compatible, producing `needed`, `need_more`, or `owned`
+  statuses. `to_buy_count` counts only `needed` and `need_more` items.
 - Ask Nutree returns an ephemeral structured proposal. The provider cannot
   mutate a plan, change a logged slot, invent a recipe ID, or claim allergy
-  safety. Allergy filtering remains disclosure-only with `allergy_evaluated=false`
-  until canonical allergen evaluation is approved.
+  safety. Explicit diet, dislike, and allergy terms are hard generation
+  exclusions when they match catalog text; this is not canonical allergen
+  evaluation, so `allergy_evaluated=false` remains in recipe responses.
 - Logging a slot validates date/type and portion `0.5`, `1`, `1.5`, or `2`,
   materializes the normal backend-owned `Meal`, derives nutrition from scaled
   macros, and links the resulting meal to the weekly slot. Replays return the

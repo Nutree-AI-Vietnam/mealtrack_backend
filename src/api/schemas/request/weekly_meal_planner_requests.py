@@ -29,6 +29,7 @@ class WeeklyMealPlanSlotUpdateRequest(BaseModel):
 
 
 class UpdateWeeklyMealPlanRequest(BaseModel):
+    expected_revision: int | None = Field(default=None, ge=1)
     people: int | None = Field(default=None, ge=1, le=6)
     status: Literal["draft", "confirmed"] | None = None
     preferences: WeeklyMealPlanPreferencesRequest | None = None
@@ -51,7 +52,8 @@ class AiAdjustMealPlanRequest(BaseModel):
 
 class PantryStockUpdateRequest(BaseModel):
     ingredient_id: int = Field(ge=1)
-    amount: float = Field(ge=0, le=100000)
+    amount: float | None = Field(default=None, ge=0, le=100000)
+    unit: str | None = Field(default=None, max_length=80)
     kind: Literal["bought", "owned"]
 
 

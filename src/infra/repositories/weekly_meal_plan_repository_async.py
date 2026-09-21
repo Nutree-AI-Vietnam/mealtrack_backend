@@ -118,11 +118,17 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         preferences: WeeklyMealPlanPreferences | None = None,
         status: str | None = None,
         slots: dict[tuple[int, int], str | None] | None = None,
+        expected_revision: int | None = None,
     ) -> WeeklyMealPlan:
         row = await self.get_for_update(user_id=user_id, plan_id=plan_id)
         if row is None:
             return None  # type: ignore[return-value]
         row = cast(Any, row)
+        if expected_revision is not None and row.revision != expected_revision:
+            raise WeeklyMealPlanConflictError(
+                "Weekly meal plan changed since it was loaded",
+                error_code="WEEKLY_PLAN_STALE_REVISION",
+            )
         if row.status == WeeklyMealPlanStatus.CONFIRMED.value and any(
             value is not None for value in (people, preferences)
         ):
@@ -168,6 +174,11 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                     )
                 slot.catalog_meal_id = recipe_id
                 slot.version += 1
+        changed = any(
+            value is not None for value in (people, preferences, status)
+        ) or bool(slots)
+        if changed:
+            row.revision += 1
         await self.session.flush()
         return _to_domain(row)
 
@@ -191,11 +202,13 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                     plan_id=plan_id,
                     food_reference_id=food_id,
                     custom_amount=update.get("amount"),
+                    custom_unit=update.get("unit"),
                     stock_kind=update["kind"],
                 )
                 self.session.add(item)
             else:
                 item.custom_amount = update.get("amount")
+                item.custom_unit = update.get("unit")
                 item.stock_kind = update["kind"]
         await self.session.flush()
         return _to_domain(row)
@@ -213,6 +226,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             {
                 "food_reference_id": item.food_reference_id,
                 "custom_amount": item.custom_amount,
+                "custom_unit": item.custom_unit,
                 "stock_kind": item.stock_kind,
             }
             for item in result.scalars().all()
@@ -310,6 +324,7 @@ def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
         daily_calories=cast(int | None, data.daily_calories),
         catalog_revision=cast(str | None, data.catalog_revision),
         algorithm_version=cast(str, data.algorithm_version),
+        revision=cast(int, data.revision),
         created_at=cast(datetime | None, data.created_at),
         updated_at=cast(datetime | None, data.updated_at),
     )

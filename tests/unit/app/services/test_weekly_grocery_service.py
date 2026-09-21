@@ -11,6 +11,9 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanSlot,
     WeeklyMealPlanStatus,
 )
+from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
+    normalize_ingredient_quantity,
+)
 
 
 def _plan():
@@ -49,6 +52,8 @@ class _Catalog:
             carbs_g=Decimal("20"),
             fat_g=Decimal("3"),
             fiber_g=Decimal("2"),
+            base_servings=1,
+            serving_confidence="verified",
             meal_types=("lunch",),
             ingredients=(
                 CatalogMealIngredient(
@@ -87,3 +92,39 @@ async def test_groceries_scale_people_and_subtract_pantry():
     assert item.total_needed == 300
     assert item.stock_amount == 100
     assert item.status == "need_more"
+    assert item.quantity_confidence == "verified"
+
+
+@pytest.mark.asyncio
+async def test_groceries_do_not_silently_scale_unknown_servings():
+    plan = _plan()
+
+    class CatalogWithoutServing(_Catalog):
+        async def get_meal(self, recipe_id):
+            meal = await super().get_meal(recipe_id)
+            return meal.__class__(
+                **{
+                    **meal.__dict__,
+                    "base_servings": 1,
+                    "serving_confidence": "unknown",
+                }
+            )
+
+    class UowWithoutServing:
+        catalog_recipes = CatalogWithoutServing()
+        weekly_meal_plans = _Plans()
+
+    categories = await WeeklyGroceryService().calculate(UowWithoutServing(), plan)
+
+    item = categories[0].items[0]
+    assert item.total_needed == 150
+    assert item.quantity_confidence == "unscaled"
+
+
+def test_quantity_normalization_only_uses_exact_conversions():
+    assert normalize_ingredient_quantity(1, "kg").amount == Decimal("1000")
+    assert normalize_ingredient_quantity(250, "g").unit == "g"
+    assert normalize_ingredient_quantity(2, "pieces").dimension == "count:piece"
+    count = normalize_ingredient_quantity(2, "tomatoes")
+    assert count.dimension == "raw:tomatoes"
+    assert count.confidence == "unknown"

@@ -228,6 +228,9 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         row.allergens = seed.allergens
         row.summary = seed.summary
         row.equipment = seed.equipment
+        row.base_servings = seed.base_servings
+        row.serving_source = seed.serving_source
+        row.serving_confidence = seed.serving_confidence
         self._session.add(row)
         await self._session.flush()
 
@@ -357,6 +360,9 @@ def _meal_to_domain(row: MealCatalogORM, *, include_steps: bool = False) -> Cata
         allergens=cast(str | None, getattr(row, "allergens", None)),
         summary=cast(str | None, getattr(row, "summary", None)),
         equipment=cast(str | None, getattr(row, "equipment", None)),
+        base_servings=_optional_int(getattr(row, "base_servings", None)),
+        serving_source=cast(str | None, getattr(row, "serving_source", None)),
+        serving_confidence=cast(str, getattr(row, "serving_confidence", "unknown")),
         steps=(
             tuple(_step_to_domain(step) for step in row.steps) if include_steps else ()
         ),

@@ -30,6 +30,7 @@ class WeeklyMealPlanPantryItemORM(Base, TimestampMixin):
         Integer, ForeignKey("food_reference.id", ondelete="RESTRICT"), nullable=False
     )
     custom_amount = Column(Numeric(12, 4), nullable=True)
+    custom_unit = Column(String(80), nullable=True)
     stock_kind = Column(String(16), nullable=False)
 
     plan = relationship("WeeklyMealPlanORM", back_populates="pantry_items")

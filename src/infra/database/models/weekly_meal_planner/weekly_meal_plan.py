@@ -33,6 +33,7 @@ class WeeklyMealPlanORM(Base, TimestampMixin):
     daily_calories = Column(Integer, nullable=True)
     catalog_revision = Column(String(160), nullable=True)
     algorithm_version = Column(String(32), nullable=False, server_default="v1")
+    revision = Column(Integer, nullable=False, default=1, server_default="1")
 
     slots = relationship(
         "WeeklyMealPlanSlotORM",
@@ -57,4 +58,5 @@ class WeeklyMealPlanORM(Base, TimestampMixin):
             "status IN ('draft', 'confirmed')", name="ck_weekly_meal_plan_status"
         ),
         CheckConstraint("people BETWEEN 1 AND 6", name="ck_weekly_meal_plan_people"),
+        CheckConstraint("revision > 0", name="ck_weekly_meal_plan_revision"),
     )

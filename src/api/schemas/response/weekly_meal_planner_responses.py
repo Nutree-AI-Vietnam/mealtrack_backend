@@ -26,6 +26,7 @@ class WeeklyMealSlotResponse(BaseModel):
 class WeeklyMealPlanResponse(BaseModel):
     id: str
     week_start_date: date
+    revision: int = 1
     status: str
     people: int
     preferences: dict
@@ -60,6 +61,10 @@ class RecipeIngredientResponse(BaseModel):
     amount_per_serving: float
     unit: str
     category: str
+    canonical_amount: float | None = None
+    canonical_unit: str | None = None
+    quantity_dimension: str | None = None
+    quantity_confidence: str = "unknown"
 
 
 class RecipeStepResponse(BaseModel):
@@ -88,6 +93,8 @@ class RecipeDetailResponse(BaseModel):
     allergens: str | None = None
     summary: str | None = None
     equipment: str | None = None
+    base_servings: int | None = None
+    serving_confidence: str = "unknown"
     nutrition_per_serving: RecipeDetailNutritionResponse
     ingredients: list[RecipeIngredientResponse]
     steps: list[RecipeStepResponse]
@@ -103,6 +110,7 @@ class WeeklyAiSlotChangeResponse(BaseModel):
 
 
 class WeeklyAiProposalResponse(BaseModel):
+    base_revision: int = 1
     explanation: str
     diff_summary: str
     proposed_plan: WeeklyMealPlanResponse
@@ -114,9 +122,10 @@ class GroceryItemResponse(BaseModel):
     name: str
     total_needed: float
     unit: str
-    stock_amount: float
+    stock_amount: float | None
     stock_kind: str | None = None
     status: str
+    quantity_confidence: str
 
 
 class GroceryCategoryResponse(BaseModel):

@@ -80,6 +80,7 @@ class WeeklyMealPlan:
     daily_calories: int | None = None
     catalog_revision: str | None = None
     algorithm_version: str = "v1"
+    revision: int = 1
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

@@ -58,7 +58,7 @@ def test_generation_covers_all_fourteen_weekly_coordinates_deterministically():
     assert {slot.recipe_id for slot in first} == {"tofu"}
 
 
-def test_generation_falls_back_when_a_preference_has_no_matching_recipe():
+def test_generation_leaves_slots_empty_when_hard_preference_has_no_match():
     meals = [_meal("chicken", "Chicken Bowl")]
     preferences = WeeklyMealPlanPreferences(diet="vegetarian")
 
@@ -71,4 +71,4 @@ def test_generation_falls_back_when_a_preference_has_no_matching_recipe():
     )
 
     assert len(result) == 14
-    assert all(slot.recipe_id == "chicken" for slot in result)
+    assert all(slot.recipe_id is None for slot in result)
