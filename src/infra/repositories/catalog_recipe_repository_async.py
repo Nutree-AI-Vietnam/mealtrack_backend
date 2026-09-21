@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from src.domain.model.meal_recommendation.catalog_recipe import (
     CatalogMeal,
     CatalogMealIngredient,
+    CatalogMealStep,
 )
 from src.domain.ports.catalog_recipe_repository_port import (
     CatalogMealRepositoryPort,
@@ -30,6 +31,7 @@ from src.infra.database.models.food_reference_model import FoodReferenceModel
 from src.infra.database.models.meal_recommendation import (
     MealCatalogIngredientORM,
     MealCatalogORM,
+    MealCatalogStepORM,
 )
 from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_nutrition_projection,
@@ -148,6 +150,16 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         row = result.scalar_one_or_none()
         return _meal_to_domain(row) if row else None
 
+    async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
+        result = await self._session.execute(
+            select(MealCatalogORM)
+            .where(MealCatalogORM.id == catalog_meal_id)
+            .where(MealCatalogORM.is_active.is_(True))
+            .options(_catalog_meal_detail_load_options())
+        )
+        row = result.scalar_one_or_none()
+        return _meal_to_domain(row, include_steps=True) if row else None
+
     async def get_active_release(self):
         """Temporary compatibility: the four-table catalog has no release row."""
 
@@ -196,9 +208,26 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
                 display_name=item.display_name,
                 quantity=item.quantity,
                 unit=item.unit,
+                category=item.category,
             )
             for item in seed.ingredients
         ]
+        row.steps = [
+            MealCatalogStepORM(
+                step_number=step_number,
+                title=title,
+                description=description,
+            )
+            for step_number, title, description in seed.steps
+        ]
+        row.source_name = seed.source_name
+        row.source_url = seed.source_url
+        row.prep_time_minutes = seed.prep_time_minutes
+        row.cook_time_minutes = seed.cook_time_minutes
+        row.tag = seed.tag
+        row.allergens = seed.allergens
+        row.summary = seed.summary
+        row.equipment = seed.equipment
         self._session.add(row)
         await self._session.flush()
 
@@ -297,7 +326,11 @@ def _catalog_meal_load_options():
     )
 
 
-def _meal_to_domain(row: MealCatalogORM) -> CatalogMeal:
+def _catalog_meal_detail_load_options():
+    return (*_catalog_meal_load_options(), selectinload(MealCatalogORM.steps))
+
+
+def _meal_to_domain(row: MealCatalogORM, *, include_steps: bool = False) -> CatalogMeal:
     nutrition = _nutrition_totals(row)
     return CatalogMeal(
         id=cast(str, row.id),
@@ -316,6 +349,17 @@ def _meal_to_domain(row: MealCatalogORM) -> CatalogMeal:
         meal_types=_meal_types(row),
         ingredients=tuple(_ingredient_to_domain(item) for item in row.ingredients),
         is_active=cast(bool, row.is_active),
+        source_name=cast(str | None, getattr(row, "source_name", None)),
+        source_url=cast(str | None, getattr(row, "source_url", None)),
+        prep_time_minutes=_optional_int(getattr(row, "prep_time_minutes", None)),
+        cook_time_minutes=_optional_int(getattr(row, "cook_time_minutes", None)),
+        tag=cast(str | None, getattr(row, "tag", None)),
+        allergens=cast(str | None, getattr(row, "allergens", None)),
+        summary=cast(str | None, getattr(row, "summary", None)),
+        equipment=cast(str | None, getattr(row, "equipment", None)),
+        steps=(
+            tuple(_step_to_domain(step) for step in row.steps) if include_steps else ()
+        ),
     )
 
 
@@ -369,6 +413,15 @@ def _ingredient_to_domain(row: MealCatalogIngredientORM) -> CatalogMealIngredien
         display_name=cast(str, row.display_name),
         quantity=_decimal(row.quantity),
         unit=cast(str, row.unit),
+        category=cast(str, getattr(row, "category", "pantry")),
+    )
+
+
+def _step_to_domain(row: MealCatalogStepORM) -> CatalogMealStep:
+    return CatalogMealStep(
+        step_number=int(row.step_number),
+        title=cast(str, row.title),
+        description=cast(str, row.description),
     )
 
 

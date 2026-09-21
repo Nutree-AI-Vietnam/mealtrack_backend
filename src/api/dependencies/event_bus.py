@@ -23,6 +23,13 @@ from src.app.commands.meal import (
 from src.app.commands.meal.create_manual_meal_command import CreateManualMealCommand
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.commands.meal_catalog import LogCatalogMealCommand
+from src.app.commands.meal_planner import (
+    AiAdjustMealPlanCommand,
+    GenerateWeeklyMealPlanCommand,
+    LogMealPlanSlotCommand,
+    UpdateMealPlanPantryStockCommand,
+    UpdateWeeklyMealPlanCommand,
+)
 from src.app.commands.meal_recommendation import (
     CreateThreeDayMealRecommendationCommand,
     LogRecommendedMealCommand,
@@ -117,6 +124,13 @@ from src.app.handlers.command_handlers.mark_cheat_day_command_handler import (
 from src.app.handlers.command_handlers.meal_catalog import (
     LogCatalogMealCommandHandler,
 )
+from src.app.handlers.command_handlers.meal_planner import (
+    AiAdjustMealPlanCommandHandler,
+    GenerateWeeklyMealPlanCommandHandler,
+    LogMealPlanSlotCommandHandler,
+    UpdateMealPlanPantryStockCommandHandler,
+    UpdateWeeklyMealPlanCommandHandler,
+)
 from src.app.handlers.command_handlers.meal_recommendation import (
     CreateThreeDayMealRecommendationCommandHandler,
     LogRecommendedMealCommandHandler,
@@ -184,6 +198,12 @@ from src.app.handlers.query_handlers.get_weight_entries_query_handler import (
 from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler import (
     ListLoggedCatalogMealsQueryHandler,
 )
+from src.app.handlers.query_handlers.meal_planner import (
+    GetCurrentWeeklyPlanQueryHandler,
+    GetRecipeDetailQueryHandler,
+    GetWeeklyGroceriesQueryHandler,
+    ListRecipesQueryHandler,
+)
 from src.app.queries.activity import GetBulkActivitiesQuery, GetDailyActivitiesQuery
 from src.app.queries.cheat_day import GetCheatDaysQuery
 from src.app.queries.food.get_food_details_query import GetFoodDetailsQuery
@@ -206,6 +226,12 @@ from src.app.queries.meal import (
     GetStreakQuery,
 )
 from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
+from src.app.queries.meal_planner import (
+    GetCurrentWeeklyPlanQuery,
+    GetRecipeDetailQuery,
+    GetWeeklyGroceriesQuery,
+    ListRecipesQuery,
+)
 from src.app.queries.meal_recommendation import (
     GetMealRecommendationPlanQuery,
     GetMealRecommendationSlotDetailQuery,
@@ -242,6 +268,9 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityPolicy
+from src.infra.adapters.weekly_meal_plan_adjustment_provider import (
+    StructuredWeeklyMealPlanAdjustmentProvider,
+)
 from src.infra.cache.provider_budget import MemoryProviderBudget, RedisProviderBudget
 from src.infra.config.settings import settings
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -848,6 +877,47 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         GetMealRecommendationSlotDetailQuery,
         GetMealRecommendationSlotDetailQueryHandler(AsyncUnitOfWork),
+    )
+
+    # Register weekly meal planner commands and queries.
+    event_bus.register_handler(
+        GenerateWeeklyMealPlanCommand,
+        GenerateWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        UpdateWeeklyMealPlanCommand,
+        UpdateWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        AiAdjustMealPlanCommand,
+        AiAdjustMealPlanCommandHandler(
+            AsyncUnitOfWork,
+            StructuredWeeklyMealPlanAdjustmentProvider(meal_generation_service),
+        ),
+    )
+    event_bus.register_handler(
+        UpdateMealPlanPantryStockCommand,
+        UpdateMealPlanPantryStockCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        LogMealPlanSlotCommand,
+        LogMealPlanSlotCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        GetCurrentWeeklyPlanQuery,
+        GetCurrentWeeklyPlanQueryHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        ListRecipesQuery,
+        ListRecipesQueryHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        GetRecipeDetailQuery,
+        GetRecipeDetailQueryHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        GetWeeklyGroceriesQuery,
+        GetWeeklyGroceriesQueryHandler(AsyncUnitOfWork),
     )
 
     # Register meal suggestion handlers

@@ -196,6 +196,15 @@ def _unique_display_texts(
         _append_unique(texts, meal.cuisine)
         if meal.description:
             _append_unique(texts, meal.description)
+        if meal.summary:
+            _append_unique(texts, meal.summary)
+        if meal.equipment:
+            _append_unique(texts, meal.equipment)
+        if meal.tag:
+            _append_unique(texts, meal.tag)
+        for step in meal.steps:
+            _append_unique(texts, step.title)
+            _append_unique(texts, step.description)
         if include_ingredients:
             for ingredient in meal.ingredients:
                 _append_unique(texts, ingredient.display_name)
@@ -220,6 +229,13 @@ def _replace_meal_display_text(
             if meal.description
             else None
         ),
+        summary=(
+            translations.get(meal.summary, meal.summary) if meal.summary else None
+        ),
+        equipment=(
+            translations.get(meal.equipment, meal.equipment) if meal.equipment else None
+        ),
+        tag=translations.get(meal.tag, meal.tag) if meal.tag else None,
         ingredients=tuple(
             replace(
                 ingredient,
@@ -229,6 +245,14 @@ def _replace_meal_display_text(
                 ),
             )
             for ingredient in meal.ingredients
+        ),
+        steps=tuple(
+            replace(
+                step,
+                title=translations.get(step.title, step.title),
+                description=translations.get(step.description, step.description),
+            )
+            for step in meal.steps
         ),
     )
 

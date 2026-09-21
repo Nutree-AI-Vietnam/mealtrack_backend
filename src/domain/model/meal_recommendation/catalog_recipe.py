@@ -17,12 +17,22 @@ class CatalogMealIngredient:
     display_name: str
     quantity: Decimal
     unit: str
+    category: str = "pantry"
 
     @property
     def name(self) -> str:
         """Compatibility for scoring/materialization call sites during rework."""
 
         return self.display_name
+
+
+@dataclass(frozen=True)
+class CatalogMealStep:
+    """One ordered, curated cooking instruction."""
+
+    step_number: int
+    title: str
+    description: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,15 @@ class CatalogMeal:
     ingredients: tuple[CatalogMealIngredient, ...] = field(default_factory=tuple)
     is_active: bool = True
     popularity_rank: int | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    prep_time_minutes: int | None = None
+    cook_time_minutes: int | None = None
+    tag: str | None = None
+    allergens: str | None = None
+    summary: str | None = None
+    equipment: str | None = None
+    steps: tuple[CatalogMealStep, ...] = field(default_factory=tuple)
 
     @property
     def calories(self) -> int:

@@ -19,6 +19,7 @@ class CatalogMealSeedIngredientWrite:
     display_name: str
     quantity: float
     unit: str
+    category: str = "pantry"
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,15 @@ class CatalogMealSeedWrite:
     meal_types: tuple[str, ...]
     ingredients: tuple[CatalogMealSeedIngredientWrite, ...]
     popularity_rank: int | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    prep_time_minutes: int | None = None
+    cook_time_minutes: int | None = None
+    tag: str | None = None
+    allergens: str | None = None
+    summary: str | None = None
+    equipment: str | None = None
+    steps: tuple[tuple[int, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,10 @@ class CatalogMealRepositoryPort(ABC):
     @abstractmethod
     async def get_meal(self, catalog_meal_id: str) -> CatalogMeal | None:
         """Return one active catalog meal."""
+
+    @abstractmethod
+    async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
+        """Return one active catalog meal with ordered detail steps."""
 
     @abstractmethod
     async def find_seed_existing(

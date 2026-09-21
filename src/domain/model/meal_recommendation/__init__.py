@@ -3,6 +3,7 @@
 from .catalog_recipe import (
     CatalogMeal,
     CatalogMealIngredient,
+    CatalogMealStep,
     MealRecommendationAlternative,
     MealRecommendationInsufficiency,
     MealRecommendationInsufficiencyReason,
@@ -19,6 +20,7 @@ from .meal_recommendation_plan import (
 __all__ = [
     "CatalogMeal",
     "CatalogMealIngredient",
+    "CatalogMealStep",
     "MealRecommendationAlternative",
     "MealRecommendationInsufficiency",
     "MealRecommendationInsufficiencyReason",

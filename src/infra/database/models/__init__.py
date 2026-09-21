@@ -46,6 +46,7 @@ from .meal_image_cache import MealImageCacheModel
 from .meal_recommendation import (
     MealCatalogIngredientORM,
     MealCatalogORM,
+    MealCatalogStepORM,
     MealRecommendationOperationORM,
     MealRecommendationORM,
 )
@@ -108,6 +109,11 @@ from .web_funnel_claim import (
     WebFunnelOutbox,
     WebFunnelProviderEvent,
     WebFunnelRedemption,
+)
+from .weekly_meal_planner import (
+    WeeklyMealPlanORM,
+    WeeklyMealPlanPantryItemORM,
+    WeeklyMealPlanSlotORM,
 )
 
 # Weight tracking
@@ -172,6 +178,7 @@ __all__ = [
     # Meal recommendation catalog
     "MealCatalogORM",
     "MealCatalogIngredientORM",
+    "MealCatalogStepORM",
     "MealRecommendationORM",
     "MealRecommendationOperationORM",
     "PendingMealImageResolutionModel",
@@ -186,6 +193,9 @@ __all__ = [
     "DurableWriteRecordORM",
     # Movement tracking
     "MovementEntryORM",
+    "WeeklyMealPlanORM",
+    "WeeklyMealPlanSlotORM",
+    "WeeklyMealPlanPantryItemORM",
     # Promo codes
     "PromoCode",
     "PromoCodeRedemption",

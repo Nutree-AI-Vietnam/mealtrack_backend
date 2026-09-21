@@ -215,6 +215,33 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Browse requests do not create recommendation plans, candidate rows, or meal
   logs; Home's three-day recommendation endpoints remain a separate flow.
 
+### Weekly meal planner and recipe aliases
+
+- `/v1/meal-plans/*` is an owner-scoped weekly aggregate backed by
+  `weekly_meal_plans`, `weekly_meal_plan_slots`, and
+  `weekly_meal_plan_pantry_items`; `/v1/recipes*` reads the existing immutable
+  catalog rather than a duplicate recipe table.
+- Weeks are Monday-based and contain exactly 14 coordinates: day indexes 0–6
+  with slot index 0 for lunch and 1 for dinner. The default week is resolved
+  from the authenticated user's timezone. Generation and slot/preferences
+  edits are idempotent and return a conflict for confirmed plans; pantry reads
+  and diary logging retain their own owner and state checks.
+- Recipe detail exposes ordered catalog steps, source metadata, equipment,
+  ingredient grocery categories, and backend-derived nutrition. `people` only
+  scales grocery quantities; clients must not recalculate calories or macros.
+- Grocery output is a read-time projection keyed by canonical
+  `food_reference_id` plus unit. Pantry quantities subtract from the planned
+  total and produce `needed`, `need_more`, or `owned` statuses. Incompatible
+  units remain separate.
+- Ask Nutree returns an ephemeral structured proposal. The provider cannot
+  mutate a plan, change a logged slot, invent a recipe ID, or claim allergy
+  safety. Allergy filtering remains disclosure-only with `allergy_evaluated=false`
+  until canonical allergen evaluation is approved.
+- Logging a slot validates date/type and portion `0.5`, `1`, `1.5`, or `2`,
+  materializes the normal backend-owned `Meal`, derives nutrition from scaled
+  macros, and links the resulting meal to the weekly slot. Replays return the
+  original diary meal.
+
 ### Food search and barcode
 
 - Search order: optional Redis cache → local `food_reference` → provider fill.
