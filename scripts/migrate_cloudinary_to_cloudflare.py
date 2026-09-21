@@ -162,43 +162,61 @@ async def migrate_images(
         stats["total_found"] = len(images)
         logger.info("Found %d images to migrate", len(images))
 
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
-            for idx, img in enumerate(images, start=1):
-                if not img.url:
-                    stats["skipped"] += 1
-                    continue
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                for idx, img in enumerate(images, start=1):
+                    if not img.url:
+                        stats["skipped"] += 1
+                        continue
 
-                logger.info(
-                    "[%d/%d] Migrating image_id=%s from %s",
-                    idx,
-                    len(images),
-                    img.image_id,
-                    img.url,
-                )
+                    logger.info(
+                        "[%d/%d] Migrating image_id=%s from %s",
+                        idx,
+                        len(images),
+                        img.image_id,
+                        img.url,
+                    )
 
-                success = await migrate_single_image(
-                    img,
-                    cf_store=cf_store,
-                    session=session,
-                    http_client=http_client,
-                    dry_run=dry_run,
-                )
-                if success:
-                    stats["migrated"] += 1
-                else:
-                    stats["failed"] += 1
+                    success = await migrate_single_image(
+                        img,
+                        cf_store=cf_store,
+                        session=session,
+                        http_client=http_client,
+                        dry_run=dry_run,
+                    )
+                    if success:
+                        stats["migrated"] += 1
+                    else:
+                        stats["failed"] += 1
 
-                if not dry_run:
-                    await asyncio.sleep(0.05)
-                    if idx % batch_size == 0:
-                        await uow.commit()
-                        logger.info("Committed batch of %d images", idx)
+                    if not dry_run:
+                        await asyncio.sleep(0.05)
+                        if idx % batch_size == 0:
+                            await uow.commit()
+                            logger.info("Committed batch of %d images", idx)
 
-        if not dry_run:
-            await uow.commit()
-            logger.info("Migration complete and committed to database.")
-        else:
-            logger.info("Dry-run complete. No changes were committed.")
+            if not dry_run:
+                await uow.commit()
+                logger.info("Migration complete and committed to database.")
+            else:
+                logger.info("Dry-run complete. No changes were committed.")
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.warning(
+                "\nProcess interrupted by user (Ctrl+C). Committing in-flight progress..."
+            )
+            if not dry_run:
+                try:
+                    await uow.commit()
+                    logger.info(
+                        "Successfully committed %d migrated images before exiting.",
+                        stats["migrated"],
+                    )
+                except Exception as commit_err:
+                    logger.error(
+                        "Failed to commit progress on interrupt: %s", commit_err
+                    )
+            else:
+                logger.info("Interrupted during dry-run. No changes were made.")
 
     return stats
 
