@@ -444,3 +444,31 @@ def test_save_sync_empty_variants_falls_back_to_get_url():
     url = store.save(b"fake-bytes", "image/jpeg", image_id="img-empty-variants-ok")
     assert url == "https://media.test.com/img-empty-variants-ok/public"
 
+
+@respx.mock
+def test_uuid_image_id_prefixed_for_cloudflare_compatibility(cf_store):
+    raw_uuid = "cdf521da-61ff-48b7-b5c6-d0c155e243ec"
+    expected_cf_id = f"mealtrack/{raw_uuid}"
+
+    route = respx.post(
+        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v1"
+    ).respond(
+        200,
+        json={
+            "success": True,
+            "result": {
+                "id": expected_cf_id,
+                "variants": [
+                    f"https://media.test.com/{expected_cf_id}/public",
+                ],
+            },
+        },
+    )
+
+    url = cf_store.save(b"fake-bytes", "image/jpeg", image_id=raw_uuid)
+    assert url == f"https://media.test.com/{expected_cf_id}/public"
+    # Verify the request payload sent id="mealtrack/..."
+    assert (
+        b"mealtrack/cdf521da-61ff-48b7-b5c6-d0c155e243ec"
+        in route.calls.last.request.content
+    )

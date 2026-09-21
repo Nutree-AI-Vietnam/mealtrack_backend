@@ -90,11 +90,22 @@ async def migrate_single_image(
             )
 
         # 2. Upload to Cloudflare
-        new_url = await cf_store.save_async(
-            resp.content,
-            content_type=content_type,
-            image_id=image_id,
-        )
+        try:
+            new_url = await cf_store.save_async(
+                resp.content,
+                content_type=content_type,
+                image_id=image_id,
+            )
+        except RuntimeError as upload_err:
+            if "already exists" in str(upload_err) or "5409" in str(upload_err):
+                logger.info(
+                    "  -> Image %s already exists in Cloudflare; reusing delivery URL",
+                    image_id,
+                )
+                new_url = cf_store.get_url(image_id)
+            else:
+                raise
+
         if not new_url or not new_url.strip() or not new_url.startswith("http"):
             logger.error(
                 "Cloudflare upload returned invalid or empty URL for image %s: '%s'; skipping DB update",
@@ -128,6 +139,7 @@ async def migrate_images(
     dry_run: bool = True,
     limit: int | None = None,
     batch_size: int = 50,
+    cloud_name: str | None = None,
 ) -> dict[str, int]:
     cf_store = CloudflareImageStore()
     stats = {"total_found": 0, "migrated": 0, "failed": 0, "skipped": 0}
@@ -138,6 +150,10 @@ async def migrate_images(
             raise RuntimeError("Database session not initialized")
 
         stmt = select(MealImageORM).where(MealImageORM.url.like("%res.cloudinary.com%"))
+        if cloud_name:
+            stmt = stmt.where(
+                MealImageORM.url.like(f"%res.cloudinary.com/{cloud_name}/%")
+            )
         if limit:
             stmt = stmt.limit(limit)
 
@@ -146,43 +162,61 @@ async def migrate_images(
         stats["total_found"] = len(images)
         logger.info("Found %d images to migrate", len(images))
 
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
-            for idx, img in enumerate(images, start=1):
-                if not img.url:
-                    stats["skipped"] += 1
-                    continue
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                for idx, img in enumerate(images, start=1):
+                    if not img.url:
+                        stats["skipped"] += 1
+                        continue
 
-                logger.info(
-                    "[%d/%d] Migrating image_id=%s from %s",
-                    idx,
-                    len(images),
-                    img.image_id,
-                    img.url,
-                )
+                    logger.info(
+                        "[%d/%d] Migrating image_id=%s from %s",
+                        idx,
+                        len(images),
+                        img.image_id,
+                        img.url,
+                    )
 
-                success = await migrate_single_image(
-                    img,
-                    cf_store=cf_store,
-                    session=session,
-                    http_client=http_client,
-                    dry_run=dry_run,
-                )
-                if success:
-                    stats["migrated"] += 1
-                else:
-                    stats["failed"] += 1
+                    success = await migrate_single_image(
+                        img,
+                        cf_store=cf_store,
+                        session=session,
+                        http_client=http_client,
+                        dry_run=dry_run,
+                    )
+                    if success:
+                        stats["migrated"] += 1
+                    else:
+                        stats["failed"] += 1
 
-                if not dry_run:
-                    await asyncio.sleep(0.05)
-                    if idx % batch_size == 0:
-                        await uow.commit()
-                        logger.info("Committed batch of %d images", idx)
+                    if not dry_run:
+                        await asyncio.sleep(0.05)
+                        if idx % batch_size == 0:
+                            await uow.commit()
+                            logger.info("Committed batch of %d images", idx)
 
-        if not dry_run:
-            await uow.commit()
-            logger.info("Migration complete and committed to database.")
-        else:
-            logger.info("Dry-run complete. No changes were committed.")
+            if not dry_run:
+                await uow.commit()
+                logger.info("Migration complete and committed to database.")
+            else:
+                logger.info("Dry-run complete. No changes were committed.")
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.warning(
+                "\nProcess interrupted by user (Ctrl+C). Committing in-flight progress..."
+            )
+            if not dry_run:
+                try:
+                    await uow.commit()
+                    logger.info(
+                        "Successfully committed %d migrated images before exiting.",
+                        stats["migrated"],
+                    )
+                except Exception as commit_err:
+                    logger.error(
+                        "Failed to commit progress on interrupt: %s", commit_err
+                    )
+            else:
+                logger.info("Interrupted during dry-run. No changes were made.")
 
     return stats
 
@@ -209,14 +243,32 @@ def main() -> None:
         default=50,
         help="Batch commit size (default: 50)",
     )
+    parser.add_argument(
+        "--cloud-name",
+        type=str,
+        default=None,
+        help="Only migrate images belonging to a specific Cloudinary cloud name (e.g. n6kanljt)",
+    )
 
     args = parser.parse_args()
     dry_run = not args.execute
     mode = "EXECUTE" if args.execute else "DRY-RUN"
-    logger.info("Starting Cloudinary -> Cloudflare migration in %s mode", mode)
+    if args.cloud_name:
+        logger.info(
+            "Starting Cloudinary -> Cloudflare migration in %s mode (filtering cloud_name=%s)",
+            mode,
+            args.cloud_name,
+        )
+    else:
+        logger.info("Starting Cloudinary -> Cloudflare migration in %s mode", mode)
 
     stats = asyncio.run(
-        migrate_images(dry_run=dry_run, limit=args.limit, batch_size=args.batch_size)
+        migrate_images(
+            dry_run=dry_run,
+            limit=args.limit,
+            batch_size=args.batch_size,
+            cloud_name=args.cloud_name,
+        )
     )
     logger.info("Migration stats: %s", stats)
 
