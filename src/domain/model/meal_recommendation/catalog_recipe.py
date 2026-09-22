@@ -7,6 +7,9 @@ from decimal import Decimal
 from enum import StrEnum
 
 from src.domain.model.nutrition.macros import Macros
+from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
+    normalize_ingredient_quantity,
+)
 
 
 @dataclass(frozen=True)
@@ -17,12 +20,38 @@ class CatalogMealIngredient:
     display_name: str
     quantity: Decimal
     unit: str
+    category: str = "pantry"
+    position: int | None = None
+    canonical_amount: Decimal | None = None
+    canonical_unit: str | None = None
+    quantity_dimension: str | None = None
+    quantity_confidence: str = "unknown"
+
+    def __post_init__(self) -> None:
+        normalized = normalize_ingredient_quantity(self.quantity, self.unit)
+        if self.canonical_amount is None:
+            object.__setattr__(self, "canonical_amount", normalized.amount)
+        if self.canonical_unit is None:
+            object.__setattr__(self, "canonical_unit", normalized.unit)
+        if self.quantity_dimension is None:
+            object.__setattr__(self, "quantity_dimension", normalized.dimension)
+        if self.quantity_confidence == "unknown":
+            object.__setattr__(self, "quantity_confidence", normalized.confidence)
 
     @property
     def name(self) -> str:
         """Compatibility for scoring/materialization call sites during rework."""
 
         return self.display_name
+
+
+@dataclass(frozen=True)
+class CatalogMealStep:
+    """One ordered, curated cooking instruction."""
+
+    step_number: int
+    title: str
+    description: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +74,23 @@ class CatalogMeal:
     ingredients: tuple[CatalogMealIngredient, ...] = field(default_factory=tuple)
     is_active: bool = True
     popularity_rank: int | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    prep_time_minutes: int | None = None
+    cook_time_minutes: int | None = None
+    tag: str | None = None
+    allergens: str | None = None
+    summary: str | None = None
+    equipment: str | None = None
+    base_servings: int | None = None
+    serving_source: str | None = None
+    serving_confidence: str = "unknown"
+    steps: tuple[CatalogMealStep, ...] = field(default_factory=tuple)
+    publication_status: str = "published"
+    nutrition_status: str = "ready"
+    allergen_codes: tuple[str, ...] = ()
+    recipe_payload: dict | None = None
+    ai_nutrition_estimate: dict | None = None
 
     @property
     def calories(self) -> int:

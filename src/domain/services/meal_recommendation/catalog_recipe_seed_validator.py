@@ -20,7 +20,16 @@ PRODUCTION_CUISINE_COUNTS = {
     "korean": 60,
 }
 _DERIVED_RECIPE_FIELDS = frozenset(
-    {"servings", "instructions", "calories", "protein_g", "carbs_g", "fat_g", "fiber_g", "sugar_g"}
+    {
+        "servings",
+        "instructions",
+        "calories",
+        "protein_g",
+        "carbs_g",
+        "fat_g",
+        "fiber_g",
+        "sugar_g",
+    }
 )
 _DERIVED_INGREDIENT_FIELDS = frozenset(
     {"resolved_grams", "protein_g", "carbs_g", "fat_g", "fiber_g", "sugar_g"}
@@ -78,7 +87,9 @@ def validate_catalog_seed_manifest(
             f"got {declared_expected}"
         )
     if len(recipes) != expected_recipe_count:
-        errors.append(f"recipe count must be {expected_recipe_count}, got {len(recipes)}")
+        errors.append(
+            f"recipe count must be {expected_recipe_count}, got {len(recipes)}"
+        )
 
     keys: Counter[str] = Counter()
     cuisine_counts: Counter[str] = Counter()
@@ -111,7 +122,9 @@ def validate_catalog_seed_manifest(
                 )
 
     coverage_dict = {
-        cuisine: {meal_type: counts.get(meal_type, 0) for meal_type in ALLOWED_MEAL_TYPES}
+        cuisine: {
+            meal_type: counts.get(meal_type, 0) for meal_type in ALLOWED_MEAL_TYPES
+        }
         for cuisine, counts in coverage.items()
     }
     for cuisine in required_cuisines or ():
@@ -186,6 +199,7 @@ def _validate_recipe(
 
     _validate_absent_derived_recipe_fields(recipe, index, errors)
     _validate_ingredients(recipe.get("ingredients"), index, errors)
+    _validate_recipe_detail(recipe, index, errors)
 
 
 def _validate_ingredients(ingredients: Any, index: int, errors: list[str]) -> None:
@@ -218,12 +232,49 @@ def _validate_ingredients(ingredients: Any, index: int, errors: list[str]) -> No
             errors.append(
                 f"recipes[{index}].ingredients[{ingredient_index}].unit is required"
             )
+        if ingredient.get("category", "pantry") not in {"produce", "protein", "pantry"}:
+            errors.append(
+                f"recipes[{index}].ingredients[{ingredient_index}].category is invalid"
+            )
         _validate_absent_derived_ingredient_fields(
             ingredient,
             index,
             ingredient_index,
             errors,
         )
+
+
+def _validate_recipe_detail(
+    recipe: dict[str, Any], index: int, errors: list[str]
+) -> None:
+    for field_name in ("prep_time_minutes", "cook_time_minutes"):
+        value = recipe.get(field_name)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            errors.append(
+                f"recipes[{index}].{field_name} must be a non-negative integer"
+            )
+    steps = recipe.get("steps")
+    if steps is None:
+        return
+    if not isinstance(steps, list) or len(steps) > 50:
+        errors.append(f"recipes[{index}].steps must contain at most 50 items")
+        return
+    for step_number, step in enumerate(steps, start=1):
+        if (
+            not isinstance(step, dict)
+            or step.get("step_number", step_number) != step_number
+        ):
+            errors.append(f"recipes[{index}].steps must be consecutively numbered")
+            break
+        if (
+            _string(step.get("title")) is None
+            or _string(step.get("description")) is None
+        ):
+            errors.append(
+                f"recipes[{index}].steps[{step_number - 1}] requires title and description"
+            )
 
 
 def _validate_absent_derived_recipe_fields(

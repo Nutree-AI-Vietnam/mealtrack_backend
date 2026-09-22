@@ -101,15 +101,19 @@ instead of the request/runtime session factory.
 | **user_profiles** | Health metrics | user_id, age, gender, height, weight, body_fat_percentage, date_of_birth |
 | **user_profile_preferences** | Normalized profile arrays | profile_id, preference_type, value, position |
 | **subscriptions** | RevenueCat cache | user_id, product_id, platform, status, expires_at |
-| **meal** | Meal records | meal_id, user_id, status (state machine), dish_name, ready_at |
+| **meal** | Meal records | meal_id, user_id, status (state machine), dish_name, ready_at, catalog_meal_content_hash |
 | **mealimage** | Cloudinary refs | image_id, url, format, size_bytes, width, height |
 | **nutrition** | Meal macro facts | meal_id, protein, carbs, fat, fiber, sugar, confidence_score |
 | **food_item** | Ingredients | nutrition_id, name, quantity, unit, fdc_id, food_reference_id, is_custom, fiber, sugar |
 | **food_reference** | Barcode/food data | barcode, name, name_normalized, nutrition data |
 | **food_reference_serving_sizes** | Normalized serving conversions | food_reference_id, name, grams, milliliters, is_default, position |
 | **food_reference_nutrients** | Normalized extended nutrients | food_reference_id, nutrient_key, amount, unit |
-| **meal_catalog** | Curated catalog meals for recommendations | catalog_key, cuisine, meal_types, content_hash, is_active, image_url |
+| **meal_catalog** | Curated catalog meals for recommendations | catalog_key, cuisine, meal_types, content_hash, base_servings, serving_confidence, is_active, image_url |
 | **meal_catalog_ingredients** | Catalog ingredients linked to canonical foods | catalog_meal_id, food_reference_id, display_name, quantity, unit |
+| **meal_catalog_steps** | Ordered immutable catalog cooking instructions | catalog_meal_id, step_number, title, description |
+| **weekly_meal_plans** | Owner-scoped Monday-based weekly plan aggregate | user_id, week_start_date, status, revision, people, preferences |
+| **weekly_meal_plan_slots** | Durable lunch/dinner coordinates and diary links | plan_id, day_index, slot_index, catalog_meal_id, logged_meal_id |
+| **weekly_meal_plan_pantry_items** | Per-plan canonical pantry quantities | plan_id, food_reference_id, custom_amount, custom_unit, stock_kind |
 | **meal_recommendations** | Durable selected and alternative recommendation candidates | batch_id, slot_id, catalog_meal_id, score, selection_version, shown/skipped/logged state |
 | **meal_recommendation_operations** | Idempotent recommendation mutation replay | request_id, operation_type, request_fingerprint, result fields |
 | **hydration_entries** | Normalized hydration logs | user_id, drink_id, volume_ml, credited_ml, macro facts, logged_at, legacy_meal_id |
@@ -159,7 +163,11 @@ Nutrition (1:N) FoodItem
 SavedSuggestion (1:N) SavedSuggestionItem, SavedSuggestionStep
 FoodReference (1:N) FoodReferenceServingSize, FoodReferenceNutrient
 MealCatalog (1:N) MealCatalogIngredient
+MealCatalog (1:N) MealCatalogStep
 MealCatalog (1:N) MealRecommendation selected/alternative candidates
+User (1:N) WeeklyMealPlan
+WeeklyMealPlan (1:N) WeeklyMealPlanSlot, WeeklyMealPlanPantryItem
+WeeklyMealPlanSlot (N:1) MealCatalog; (N:1) Meal when logged
 ```
 
 ---
@@ -195,6 +203,8 @@ migration/admin URLs.
 
 | Version | Changes |
 |---------|---------|
+| 20260921145751448341 | Add serving-aware grocery metadata, optimistic plan revisions, pantry units, and catalog recipe content snapshots |
+| 20260921053202014838 | Add weekly meal planner tables, catalog recipe detail fields, ordered catalog steps, and grocery categories |
 | 20260727000001 | Add meal-recommendation candidate lifecycle states |
 | 20260726000001 | Relax meal recommendation anchor metadata |
 | 20260724000001 | Add meal recommendation skip state |

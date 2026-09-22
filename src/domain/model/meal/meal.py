@@ -53,6 +53,9 @@ class Meal:
     # Source tracking (scanner, prompt, food_search, manual)
     source: str | None = None
     catalog_meal_id: str | None = None
+    catalog_meal_content_hash: str | None = None
+    recipe_snapshot: dict | None = None
+    nutrition_snapshot: dict | None = None
     # Recipe details (populated for AI suggestions)
     description: str | None = None
     instructions: list | None = (
@@ -112,6 +115,9 @@ class Meal:
             "origin_country": self.origin_country,
             "emoji": self.emoji,
             "catalog_meal_id": self.catalog_meal_id,
+            "catalog_meal_content_hash": self.catalog_meal_content_hash,
+            "recipe_snapshot": self.recipe_snapshot,
+            "nutrition_snapshot": self.nutrition_snapshot,
         }
 
     def mark_analyzing(self) -> "Meal":
@@ -199,6 +205,9 @@ class Meal:
             origin_country=self.origin_country,
             emoji=emoji if emoji is not None else self.emoji,
             catalog_meal_id=self.catalog_meal_id,
+            catalog_meal_content_hash=self.catalog_meal_content_hash,
+            recipe_snapshot=self.recipe_snapshot,
+            nutrition_snapshot=self.nutrition_snapshot,
         )
 
     def mark_failed(self, error_message: str) -> "Meal":

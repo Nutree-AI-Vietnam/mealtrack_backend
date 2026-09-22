@@ -15,10 +15,11 @@ MAX_CATALOG_POPULARITY_RANK = 2_147_483_647
 class CatalogMealSeedIngredientWrite:
     """Ingredient payload for additive catalog seed imports."""
 
-    food_reference_id: int
     display_name: str
     quantity: float
     unit: str
+    category: str = "pantry"
+    food_reference_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,18 @@ class CatalogMealSeedWrite:
     meal_types: tuple[str, ...]
     ingredients: tuple[CatalogMealSeedIngredientWrite, ...]
     popularity_rank: int | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    prep_time_minutes: int | None = None
+    cook_time_minutes: int | None = None
+    tag: str | None = None
+    allergens: str | None = None
+    summary: str | None = None
+    equipment: str | None = None
+    base_servings: int | None = None
+    serving_source: str | None = None
+    serving_confidence: str = "unknown"
+    steps: tuple[tuple[int, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -106,6 +119,10 @@ class CatalogMealRepositoryPort(ABC):
     @abstractmethod
     async def get_meal(self, catalog_meal_id: str) -> CatalogMeal | None:
         """Return one active catalog meal."""
+
+    @abstractmethod
+    async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
+        """Return one active catalog meal with ordered detail steps."""
 
     @abstractmethod
     async def find_seed_existing(
