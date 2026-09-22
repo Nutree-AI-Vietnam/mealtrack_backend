@@ -23,6 +23,7 @@ from src.domain.ports.weekly_meal_plan_repository_port import (
     WeeklyMealPlanRepositoryPort,
 )
 from src.infra.database.models.weekly_meal_planner import (
+    WeeklyGroceryItemStateORM,
     WeeklyMealPlanORM,
     WeeklyMealPlanPantryItemORM,
     WeeklyMealPlanSlotORM,
@@ -193,6 +194,14 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         if row is None:
             return None  # type: ignore[return-value]
         by_food = {item.food_reference_id: item for item in row.pantry_items}
+        state_result = await self.session.execute(
+            select(WeeklyGroceryItemStateORM).where(
+                WeeklyGroceryItemStateORM.plan_id == plan_id
+            )
+        )
+        by_state = {
+            item.food_reference_id: item for item in state_result.scalars().all()
+        }
         for update in updates:
             food_id = int(update["ingredient_id"])
             item = cast(Any, by_food.get(food_id))
@@ -201,15 +210,27 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                     id=str(uuid.uuid4()),
                     plan_id=plan_id,
                     food_reference_id=food_id,
-                    custom_amount=update.get("amount"),
-                    custom_unit=update.get("unit"),
-                    stock_kind=update["kind"],
+                    available_amount=update.get("available_amount"),
+                    available_unit=update.get("available_unit"),
                 )
                 self.session.add(item)
+                by_food[food_id] = item
             else:
-                item.custom_amount = update.get("amount")
-                item.custom_unit = update.get("unit")
-                item.stock_kind = update["kind"]
+                item.available_amount = update.get("available_amount")
+                item.available_unit = update.get("available_unit")
+            if any(key in update for key in ("checked", "do_not_buy", "manually_owned")):
+                state = by_state.get(food_id)
+                if state is None:
+                    state = WeeklyGroceryItemStateORM(
+                        id=str(uuid.uuid4()),
+                        plan_id=plan_id,
+                        food_reference_id=food_id,
+                    )
+                    self.session.add(state)
+                    by_state[food_id] = state
+                state.checked = bool(update.get("checked", False))
+                state.do_not_buy = bool(update.get("do_not_buy", False))
+                state.manually_owned = bool(update.get("manually_owned", False))
         await self.session.flush()
         return _to_domain(row)
 
@@ -225,9 +246,30 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         return [
             {
                 "food_reference_id": item.food_reference_id,
-                "custom_amount": item.custom_amount,
-                "custom_unit": item.custom_unit,
-                "stock_kind": item.stock_kind,
+                "available_amount": item.available_amount,
+                "available_unit": item.available_unit,
+            }
+            for item in result.scalars().all()
+        ]
+
+    async def list_grocery_interactions(self, *, user_id: str, plan_id: str) -> list[dict]:
+        result = await self.session.execute(
+            select(WeeklyGroceryItemStateORM)
+            .join(
+                WeeklyMealPlanORM,
+                WeeklyMealPlanORM.id == WeeklyGroceryItemStateORM.plan_id,
+            )
+            .where(
+                WeeklyGroceryItemStateORM.plan_id == plan_id,
+                WeeklyMealPlanORM.user_id == user_id,
+            )
+        )
+        return [
+            {
+                "food_reference_id": item.food_reference_id,
+                "checked": item.checked,
+                "do_not_buy": item.do_not_buy,
+                "manually_owned": item.manually_owned,
             }
             for item in result.scalars().all()
         ]
@@ -307,6 +349,7 @@ def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
             is_logged=cast(bool, slot.is_logged),
             logged_meal_id=cast(str | None, slot.logged_meal_id),
             version=cast(int, slot.version),
+            recipe_override=cast(dict | None, getattr(slot, "recipe_override", None)),
         )
         for slot in sorted(
             data.slots, key=lambda item: (item.day_index, item.slot_index)

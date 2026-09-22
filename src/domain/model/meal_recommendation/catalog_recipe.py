@@ -21,6 +21,7 @@ class CatalogMealIngredient:
     quantity: Decimal
     unit: str
     category: str = "pantry"
+    position: int | None = None
     canonical_amount: Decimal | None = None
     canonical_unit: str | None = None
     quantity_dimension: str | None = None
@@ -85,6 +86,11 @@ class CatalogMeal:
     serving_source: str | None = None
     serving_confidence: str = "unknown"
     steps: tuple[CatalogMealStep, ...] = field(default_factory=tuple)
+    publication_status: str = "published"
+    nutrition_status: str = "ready"
+    allergen_codes: tuple[str, ...] = ()
+    recipe_payload: dict | None = None
+    ai_nutrition_estimate: dict | None = None
 
     @property
     def calories(self) -> int:

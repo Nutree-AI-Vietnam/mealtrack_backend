@@ -21,6 +21,10 @@ from src.app.commands.meal_planner import (
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
+from src.domain.services.weekly_meal_planner.slot_rules import (
+    ensure_base_revision,
+    ensure_slot_coordinate,
+)
 from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
@@ -271,17 +275,26 @@ class WeeklyMealPlanService:
                 "AI returned an invalid meal plan proposal",
                 error_code="AI_OUTPUT_INVALID",
             )
-        if response.base_revision != plan.revision:
+        try:
+            ensure_base_revision(response.base_revision, plan.revision)
+        except ValueError as exc:
             raise ValidationException(
                 "AI proposal was generated from a stale weekly meal plan",
                 error_code="AI_OUTPUT_STALE_REVISION",
-            )
+            ) from exc
         available_ids = {meal.id for meal in meals}
         by_coordinate = {(slot.day_index, slot.slot_index): slot for slot in plan.slots}
         proposed = list(plan.slots)
         changes = []
         seen = set()
         for change in response.slot_changes:
+            try:
+                ensure_slot_coordinate(change.day_index, change.slot_index)
+            except ValueError as exc:
+                raise ValidationException(
+                    "AI returned duplicate or invalid weekly slot coordinates",
+                    error_code="AI_OUTPUT_INVALID",
+                ) from exc
             coordinate = (change.day_index, change.slot_index)
             if coordinate in seen or coordinate not in by_coordinate:
                 raise ValidationException(

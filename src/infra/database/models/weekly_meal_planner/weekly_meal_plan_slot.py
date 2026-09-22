@@ -1,6 +1,7 @@
 """Weekly meal plan slot persistence model."""
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from src.infra.database.base import Base
@@ -32,6 +34,7 @@ class WeeklyMealPlanSlotORM(Base, TimestampMixin):
         String(36), ForeignKey("meal_catalog.id", ondelete="SET NULL"), nullable=True
     )
     is_logged = Column(Boolean, nullable=False, default=False, server_default="false")
+    recipe_override = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
     logged_meal_id = Column(
         String(36), ForeignKey("meal.meal_id", ondelete="SET NULL"), nullable=True
     )

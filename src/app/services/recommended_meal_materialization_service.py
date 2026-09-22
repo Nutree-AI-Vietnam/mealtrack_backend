@@ -23,6 +23,10 @@ from src.domain.services.meal_recommendation.ingredient_quantity_conversion_serv
     IngredientQuantityConversionError,
     IngredientQuantityConversionService,
 )
+from src.domain.services.weekly_meal_planner.meal_log_snapshot import (
+    build_logged_meal_snapshot,
+    select_logged_nutrition,
+)
 from src.domain.utils.timezone_utils import noon_utc_for_date
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
@@ -93,6 +97,22 @@ class RecommendedMealMaterializationService:
                 food_items, catalog_meal, portion_multiplier
             )
         meal_time = noon_utc_for_date(meal_date, timezone)
+        verified_nutrition = {
+            "calories": int(round(catalog_meal.calories * portion_multiplier)),
+            "protein_g": float(catalog_meal.protein_g) * portion_multiplier,
+            "carbs_g": float(catalog_meal.carbs_g) * portion_multiplier,
+            "fat_g": float(catalog_meal.fat_g) * portion_multiplier,
+            "fiber_g": float(catalog_meal.fiber_g) * portion_multiplier,
+        }
+        logged = build_logged_meal_snapshot(
+            catalog_meal_id=catalog_meal.id,
+            content_hash=catalog_meal.content_hash,
+            recipe_payload=_recipe_payload(catalog_meal),
+            nutrition=select_logged_nutrition(
+                verified=verified_nutrition,
+                estimate=getattr(catalog_meal, "ai_nutrition_estimate", None),
+            ),
+        )
         meal = Meal(
             meal_id=str(uuid4()),
             user_id=user_id,
@@ -112,10 +132,29 @@ class RecommendedMealMaterializationService:
             ),
             meal_type=meal_type,
             source=source,
-            catalog_meal_id=catalog_meal.id,
-            catalog_meal_content_hash=catalog_meal.content_hash,
+            catalog_meal_id=logged.catalog_meal_id,
+            catalog_meal_content_hash=logged.catalog_meal_content_hash,
+            recipe_snapshot=logged.recipe_snapshot,
+            nutrition_snapshot=logged.nutrition_snapshot,
         )
         return await uow.meals.save(meal)
+
+
+def _recipe_payload(catalog_meal: CatalogMeal) -> dict:
+    payload = getattr(catalog_meal, "recipe_payload", None)
+    if payload:
+        return payload
+    return {
+        "recipe_name": catalog_meal.name,
+        "ingredients": [
+            {
+                "name": ingredient.name,
+                "quantity": float(ingredient.quantity),
+                "unit": ingredient.unit,
+            }
+            for ingredient in catalog_meal.ingredients
+        ],
+    }
 
 
 def _meal_image_for_catalog(catalog_meal: CatalogMeal) -> MealImage:

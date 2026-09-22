@@ -7,6 +7,18 @@ from datetime import date, datetime
 from enum import StrEnum
 
 
+def ensure_slot_coordinate(day_index: int, slot_index: int) -> None:
+    if (
+        isinstance(day_index, bool)
+        or isinstance(slot_index, bool)
+        or not isinstance(day_index, int)
+        or not isinstance(slot_index, int)
+        or not 0 <= day_index <= 6
+        or not 0 <= slot_index <= 1
+    ):
+        raise ValueError("slot coordinate out of range")
+
+
 class WeeklyMealPlanStatus(StrEnum):
     DRAFT = "draft"
     CONFIRMED = "confirmed"
@@ -65,6 +77,10 @@ class WeeklyMealPlanSlot:
     is_logged: bool = False
     logged_meal_id: str | None = None
     version: int = 1
+    recipe_override: dict | None = None
+
+    def __post_init__(self) -> None:
+        ensure_slot_coordinate(self.day_index, self.slot_index)
 
 
 @dataclass(frozen=True)

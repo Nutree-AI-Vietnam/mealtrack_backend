@@ -8,6 +8,12 @@ from dataclasses import dataclass
 
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    recipe_excluded_by_allergen,
+)
+from src.domain.services.weekly_meal_planner.recipe_publication import (
+    is_planner_eligible,
+)
 
 
 @dataclass(frozen=True)
@@ -77,7 +83,14 @@ class WeeklyPlanGenerationService:
             return False
         if any(dislike in haystack for dislike in preferences.dislikes):
             return False
-        if any(allergy in haystack for allergy in preferences.allergies):
+        if not is_planner_eligible(
+            publication_status=meal.publication_status,
+            nutrition_status=meal.nutrition_status,
+            is_active=meal.is_active,
+        ):
+            return False
+        # Codes are the planner constraint. Free-text allergen copy is not.
+        if recipe_excluded_by_allergen(meal.allergen_codes, preferences.allergies):
             return False
         return True
 

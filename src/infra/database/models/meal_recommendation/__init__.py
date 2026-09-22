@@ -1,5 +1,6 @@
 """Meal recommendation catalog database models."""
 
+from .catalog_allergens import AllergenReferenceORM, MealCatalogAllergenORM
 from .catalog_recipe import (
     MealCatalogIngredientORM,
     MealCatalogORM,
@@ -11,6 +12,8 @@ from .meal_recommendation_plan import (
 )
 
 __all__ = [
+    "AllergenReferenceORM",
+    "MealCatalogAllergenORM",
     "MealCatalogIngredientORM",
     "MealCatalogORM",
     "MealCatalogStepORM",

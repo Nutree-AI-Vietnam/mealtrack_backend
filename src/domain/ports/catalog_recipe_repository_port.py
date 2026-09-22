@@ -15,11 +15,11 @@ MAX_CATALOG_POPULARITY_RANK = 2_147_483_647
 class CatalogMealSeedIngredientWrite:
     """Ingredient payload for additive catalog seed imports."""
 
-    food_reference_id: int
     display_name: str
     quantity: float
     unit: str
     category: str = "pantry"
+    food_reference_id: int | None = None
 
 
 @dataclass(frozen=True)

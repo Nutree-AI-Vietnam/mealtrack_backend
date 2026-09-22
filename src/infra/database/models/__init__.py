@@ -28,6 +28,7 @@ from .enums import (
 from .feature_flag import FeatureFlag
 
 # Food reference (evolved from barcode_products)
+from .food_reference_alias import FoodReferenceAliasORM
 from .food_reference_model import FoodReferenceModel
 from .food_reference_nutrient import FoodReferenceNutrientModel
 from .food_reference_serving_size import FoodReferenceServingSizeModel
@@ -44,6 +45,8 @@ from .meal.meal_instruction_step import MealInstructionStepORM
 from .meal.meal_translation_model import MealTranslationORM
 from .meal_image_cache import MealImageCacheModel
 from .meal_recommendation import (
+    AllergenReferenceORM,
+    MealCatalogAllergenORM,
     MealCatalogIngredientORM,
     MealCatalogORM,
     MealCatalogStepORM,
@@ -111,6 +114,7 @@ from .web_funnel_claim import (
     WebFunnelRedemption,
 )
 from .weekly_meal_planner import (
+    WeeklyGroceryItemStateORM,
     WeeklyMealPlanORM,
     WeeklyMealPlanPantryItemORM,
     WeeklyMealPlanSlotORM,
@@ -166,6 +170,7 @@ __all__ = [
     "CheatDayORM",
     "DailyTargetSnapshotORM",
     # Food reference (evolved from barcode_products)
+    "FoodReferenceAliasORM",
     "FoodReferenceModel",
     "FoodReferenceNutrientModel",
     "FoodReferenceServingSizeModel",
@@ -176,6 +181,8 @@ __all__ = [
     "HydrationEntryORM",
     "MealImageCacheModel",
     # Meal recommendation catalog
+    "AllergenReferenceORM",
+    "MealCatalogAllergenORM",
     "MealCatalogORM",
     "MealCatalogIngredientORM",
     "MealCatalogStepORM",
@@ -196,6 +203,7 @@ __all__ = [
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",
     "WeeklyMealPlanPantryItemORM",
+    "WeeklyGroceryItemStateORM",
     # Promo codes
     "PromoCode",
     "PromoCodeRedemption",

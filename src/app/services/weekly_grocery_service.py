@@ -7,8 +7,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from src.domain.model.weekly_meal_planner import WeeklyMealPlan
-from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
-    normalize_ingredient_quantity,
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    DerivedGroceryItem,
+    GroceryIngredient,
+    GroceryInteraction,
+    GrocerySlot,
+    PantryAvailability,
+    aggregate_grocery,
 )
 
 
@@ -20,9 +25,13 @@ class GroceryItem:
     total_needed: float
     unit: str
     stock_amount: float | None
-    stock_kind: str | None
     status: str
     quantity_confidence: str
+    remaining: float
+    contributions: tuple[tuple[int, float], ...] = ()
+    checked: bool = False
+    do_not_buy: bool = False
+    manually_owned: bool = False
 
 
 @dataclass(frozen=True)
@@ -35,92 +44,124 @@ class WeeklyGroceryService:
     """Aggregate canonical catalog ingredient quantities without client math."""
 
     async def calculate(self, uow, plan: WeeklyMealPlan) -> tuple[GroceryCategory, ...]:
-        totals: dict[tuple[int, str, str], dict] = defaultdict(
-            lambda: {
-                "name": "",
-                "category": "pantry",
-                "amount": Decimal("0"),
-                "quantity_confidence": "verified",
-            }
-        )
+        slots: list[GrocerySlot] = []
         for slot in plan.slots:
             if slot.recipe_id is None:
                 continue
             meal = await uow.catalog_recipes.get_meal(slot.recipe_id)
             if meal is None:
                 continue
-            for ingredient in meal.ingredients:
-                canonical_unit = ingredient.canonical_unit or ingredient.unit.casefold()
-                dimension = ingredient.quantity_dimension or f"raw:{canonical_unit}"
-                key = (ingredient.food_reference_id, dimension, canonical_unit)
-                totals[key]["name"] = ingredient.name
-                totals[key]["category"] = ingredient.category or "pantry"
-                base_servings = getattr(meal, "base_servings", None)
-                serving_confidence = getattr(meal, "serving_confidence", "unknown")
-                if (
-                    base_servings
-                    and base_servings > 0
-                    and serving_confidence != "unknown"
-                ):
-                    multiplier = Decimal(plan.people) / Decimal(base_servings)
-                else:
-                    multiplier = Decimal("1")
-                    serving_confidence = "unknown"
-                totals[key]["amount"] += (
-                    ingredient.canonical_amount or Decimal(str(ingredient.quantity))
-                ) * multiplier
-                if serving_confidence == "unknown":
-                    totals[key]["quantity_confidence"] = "unscaled"
-                elif ingredient.quantity_confidence != "exact":
-                    totals[key]["quantity_confidence"] = "unconverted"
-                elif serving_confidence == "estimated":
-                    totals[key]["quantity_confidence"] = "estimated"
-
-        pantry = await uow.weekly_meal_plans.list_pantry(
+            slots.append(_slot_from_meal(meal, plan_people=plan.people, override=getattr(slot, "recipe_override", None)))
+        pantry_rows = await uow.weekly_meal_plans.list_pantry(
             user_id=plan.user_id, plan_id=plan.id
         )
-        pantry_by_food = {int(item["food_reference_id"]): item for item in pantry}
-        grouped: dict[str, list[GroceryItem]] = defaultdict(list)
-        for (food_id, dimension, unit), value in sorted(
-            totals.items(), key=lambda item: (item[0][0], item[0][1])
-        ):
-            stock = pantry_by_food.get(food_id, {})
-            needed = float(value["amount"])
-            stock_amount = _stock_amount(stock, dimension=dimension, unit=unit)
-            if stock_amount is None and stock.get("stock_kind"):
-                status = "owned"
-            else:
-                available = stock_amount or 0.0
-                status = (
-                    "owned"
-                    if max(needed - available, 0.0) == 0
-                    else ("need_more" if available else "needed")
-                )
-            grouped[value["category"]].append(
-                GroceryItem(
-                    ingredient_id=food_id,
-                    name=value["name"],
-                    category=value["category"],
-                    total_needed=needed,
-                    unit=unit,
-                    stock_amount=stock_amount,
-                    stock_kind=stock.get("stock_kind"),
-                    status=status,
-                    quantity_confidence=value["quantity_confidence"],
-                )
-            )
-        return tuple(
-            GroceryCategory(category=category, items=tuple(items))
-            for category, items in sorted(grouped.items())
+        interaction_loader = getattr(uow.weekly_meal_plans, "list_grocery_interactions", None)
+        interaction_rows = (
+            await interaction_loader(user_id=plan.user_id, plan_id=plan.id)
+            if interaction_loader is not None
+            else []
         )
+        derived = aggregate_grocery(
+            slots,
+            _pantry(pantry_rows),
+            _interactions(interaction_rows),
+        )
+        return _categories(derived)
 
 
-def _stock_amount(stock: dict, *, dimension: str, unit: str) -> float | None:
-    raw_amount = stock.get("custom_amount")
-    if raw_amount is None:
+def _slot_from_meal(meal, *, plan_people: int, override) -> GrocerySlot:
+    ingredients = [
+        GroceryIngredient(
+            position=int(getattr(ingredient, "position", None) or index),
+            food_reference_id=ingredient.food_reference_id,
+            name=ingredient.name,
+            quantity=ingredient.quantity,
+            unit=ingredient.unit,
+            category=ingredient.category or "pantry",
+            quantity_confidence=ingredient.quantity_confidence,
+        )
+        for index, ingredient in enumerate(meal.ingredients, start=1)
+    ]
+    payload = getattr(meal, "recipe_payload", None) or {}
+    for raw in payload.get("ingredients") or []:
+        if raw.get("food_reference_id") is not None and raw.get("quantity") not in (None, ""):
+            continue
+        ingredients.append(
+            GroceryIngredient(
+                position=int(raw.get("position") or len(ingredients) + 1),
+                food_reference_id=raw.get("food_reference_id"),
+                name=str(raw.get("name") or ""),
+                quantity=_decimal_or_none(raw.get("quantity")),
+                unit=raw.get("unit"),
+                quantity_text=raw.get("quantity_text"),
+            )
+        )
+    return GrocerySlot(
+        recipe_id=meal.id,
+        publication_status=getattr(meal, "publication_status", "published"),
+        nutrition_status=getattr(meal, "nutrition_status", "ready"),
+        is_active=getattr(meal, "is_active", True),
+        base_servings=getattr(meal, "base_servings", None),
+        serving_confidence=getattr(meal, "serving_confidence", "unknown"),
+        people=plan_people,
+        ingredients=tuple(ingredients),
+        recipe_override=override,
+    )
+
+
+def _pantry(rows: list[dict]) -> tuple[PantryAvailability, ...]:
+    items: list[PantryAvailability] = []
+    for row in rows:
+        amount = row.get("available_amount")
+        items.append(
+            PantryAvailability(
+                food_reference_id=int(row["food_reference_id"]),
+                available_amount=None if amount is None else Decimal(str(amount)),
+                available_unit=row.get("available_unit"),
+            )
+        )
+    return tuple(items)
+
+
+def _interactions(rows: list[dict]) -> tuple[GroceryInteraction, ...]:
+    return tuple(
+        GroceryInteraction(
+            food_reference_id=int(row["food_reference_id"]),
+            checked=bool(row.get("checked", False)),
+            do_not_buy=bool(row.get("do_not_buy", False)),
+            manually_owned=bool(row.get("manually_owned", False)),
+        )
+        for row in rows
+    )
+
+
+def _categories(items: tuple[DerivedGroceryItem, ...]) -> tuple[GroceryCategory, ...]:
+    grouped: dict[str, list[GroceryItem]] = defaultdict(list)
+    for item in items:
+        grouped[item.category].append(
+            GroceryItem(
+                ingredient_id=item.ingredient_id,
+                name=item.name,
+                category=item.category,
+                total_needed=item.total_needed,
+                unit=item.unit,
+                stock_amount=item.available_amount,
+                status=item.status,
+                quantity_confidence=item.quantity_confidence,
+                remaining=item.remaining,
+                contributions=item.contributions,
+                checked=item.checked,
+                do_not_buy=item.do_not_buy,
+                manually_owned=item.manually_owned,
+            )
+        )
+    return tuple(
+        GroceryCategory(category=category, items=tuple(grouped[category]))
+        for category in sorted(grouped)
+    )
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None or value == "":
         return None
-    stock_unit = stock.get("custom_unit") or unit
-    normalized = normalize_ingredient_quantity(raw_amount, stock_unit)
-    if normalized.dimension != dimension or normalized.unit != unit:
-        return 0.0
-    return float(normalized.amount)
+    return Decimal(str(value))

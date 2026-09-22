@@ -1,4 +1,4 @@
-"""Weekly meal plan pantry state model."""
+"""Weekly meal plan pantry inventory."""
 
 from sqlalchemy import (
     CheckConstraint,
@@ -16,7 +16,7 @@ from src.infra.database.models.base import TimestampMixin
 
 
 class WeeklyMealPlanPantryItemORM(Base, TimestampMixin):
-    """Owner-entered stock for one canonical catalog ingredient."""
+    """Quantity on hand for one canonical ingredient. Not a grocery checkbox."""
 
     __tablename__ = "weekly_meal_plan_pantry_items"
 
@@ -29,9 +29,8 @@ class WeeklyMealPlanPantryItemORM(Base, TimestampMixin):
     food_reference_id = Column(
         Integer, ForeignKey("food_reference.id", ondelete="RESTRICT"), nullable=False
     )
-    custom_amount = Column(Numeric(12, 4), nullable=True)
-    custom_unit = Column(String(80), nullable=True)
-    stock_kind = Column(String(16), nullable=False)
+    available_amount = Column(Numeric(12, 4), nullable=True)
+    available_unit = Column(String(80), nullable=True)
 
     plan = relationship("WeeklyMealPlanORM", back_populates="pantry_items")
 
@@ -40,10 +39,7 @@ class WeeklyMealPlanPantryItemORM(Base, TimestampMixin):
             "uq_weekly_pantry_plan_food", "plan_id", "food_reference_id", unique=True
         ),
         CheckConstraint(
-            "custom_amount IS NULL OR custom_amount >= 0",
-            name="ck_weekly_pantry_amount",
-        ),
-        CheckConstraint(
-            "stock_kind IN ('bought', 'owned')", name="ck_weekly_pantry_kind"
+            "available_amount IS NULL OR available_amount >= 0",
+            name="ck_weekly_pantry_available_amount",
         ),
     )

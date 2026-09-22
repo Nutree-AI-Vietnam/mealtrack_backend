@@ -23,18 +23,16 @@ class WeeklyPantryService:
                 "at most 100 pantry updates are allowed", error_code="PANTRY_TOO_LARGE"
             )
         for update in command.updates:
-            if update.get("kind") not in {"bought", "owned"}:
-                raise ValidationException(
-                    "kind must be bought or owned", error_code="PANTRY_KIND_INVALID"
-                )
-            amount = update.get("amount")
+            amount = update.get("available_amount")
             if amount is not None and float(amount) < 0:
                 raise ValidationException(
-                    "amount must be non-negative", error_code="PANTRY_AMOUNT_INVALID"
+                    "available_amount must be non-negative",
+                    error_code="PANTRY_AMOUNT_INVALID",
                 )
-            if update.get("unit") is not None and not str(update["unit"]).strip():
+            unit = update.get("available_unit")
+            if unit is not None and not str(unit).strip():
                 raise ValidationException(
-                    "unit must be non-empty when provided",
+                    "available_unit must be non-empty when provided",
                     error_code="PANTRY_UNIT_INVALID",
                 )
             try:

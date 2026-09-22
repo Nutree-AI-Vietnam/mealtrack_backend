@@ -72,8 +72,8 @@ class _Plans:
         return [
             {
                 "food_reference_id": 7,
-                "custom_amount": Decimal("100"),
-                "stock_kind": "owned",
+                "available_amount": Decimal("100"),
+                "available_unit": "g",
             }
         ]
 

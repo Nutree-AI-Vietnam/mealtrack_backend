@@ -52,9 +52,11 @@ class AiAdjustMealPlanRequest(BaseModel):
 
 class PantryStockUpdateRequest(BaseModel):
     ingredient_id: int = Field(ge=1)
-    amount: float | None = Field(default=None, ge=0, le=100000)
-    unit: str | None = Field(default=None, max_length=80)
-    kind: Literal["bought", "owned"]
+    available_amount: float | None = Field(default=None, ge=0, le=100000)
+    available_unit: str | None = Field(default=None, max_length=80)
+    checked: bool = False
+    do_not_buy: bool = False
+    manually_owned: bool = False
 
 
 class UpdateMealPlanPantryRequest(BaseModel):

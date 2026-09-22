@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from src.infra.database.base import Base
@@ -60,6 +61,10 @@ class MealORM(Base, TimestampMixin):
         nullable=True,
     )
     catalog_meal_content_hash = Column(String(64), nullable=True)
+    recipe_snapshot = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    nutrition_snapshot = Column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
 
     # Generic serving quantity: grams for food meals, ml for hydration meals
     quantity = Column(Integer, nullable=True)
