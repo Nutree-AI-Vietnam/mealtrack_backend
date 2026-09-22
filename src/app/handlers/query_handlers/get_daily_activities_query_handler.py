@@ -248,7 +248,7 @@ class GetDailyActivitiesQueryHandler(
             "timestamp": format_iso_utc(meal.created_at),
             "title": localized_name_for_catalog_name(meal.dish_name, language)
             or "Water",
-            "emoji": meal.emoji or "💧",
+            "emoji": None,
             "meal_type": "hydration",
             "calories": kcal,
             "macros": macros,
@@ -277,7 +277,7 @@ class GetDailyActivitiesQueryHandler(
             or entry.drink_name_snapshot
             or "Water",
             "drink_id": entry.drink_id,
-            "emoji": entry.emoji_snapshot or "💧",
+            "emoji": None,
             "meal_type": "hydration",
             "calories": round(entry.calories, 1),
             "macros": {

@@ -98,7 +98,6 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                     image_id=str(uuid4()), format="jpeg", size_bytes=1, url=None
                 ),
                 dish_name=drink.name,
-                emoji=drink.emoji,
                 meal_type="hydration",
                 source="hydration",
                 quantity=credited_ml,
@@ -111,7 +110,6 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                     user_id=cmd.user_id,
                     drink_id=cmd.drink_id,
                     drink_name_snapshot=drink.name,
-                    emoji_snapshot=drink.emoji,
                     volume_ml=cmd.volume_ml,
                     credited_ml=credited_ml,
                     protein_g=macros.protein,
@@ -143,7 +141,6 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
             "id": hydration_entry.id,
             "drink_id": cmd.drink_id,
             "drink_name": localized_name(drink, cmd.language),
-            "emoji": drink.emoji,
             "volume_ml": cmd.volume_ml,
             "credited_ml": hydration_entry.credited_ml,
             "kcal": kcal,

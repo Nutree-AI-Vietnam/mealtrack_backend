@@ -16,7 +16,6 @@ class Drink:
     id: str
     name: str
     sub: str | None
-    emoji: str
     default_ml: int
     kcal_per_100ml: float
     sugar_per_100ml: float

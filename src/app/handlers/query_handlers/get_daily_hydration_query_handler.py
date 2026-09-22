@@ -60,7 +60,6 @@ def _build_entry_dict(meal: Meal, language: str = "en") -> dict:
     return {
         "id": meal.meal_id,
         "drink_name": localized_name_for_catalog_name(meal.dish_name, language),
-        "emoji": meal.emoji or "💧",
         "volume_ml": meal.quantity or 0,
         "credited_ml": meal.quantity or 0,
         "kcal": kcal,
@@ -79,7 +78,6 @@ def _build_hydration_entry_dict(entry: HydrationEntry, language: str = "en") -> 
         "drink_name": localized_name_for_catalog_name(
             entry.drink_name_snapshot, language
         ),
-        "emoji": entry.emoji_snapshot or "💧",
         "volume_ml": entry.volume_ml,
         "credited_ml": entry.credited_ml,
         "kcal": kcal,
