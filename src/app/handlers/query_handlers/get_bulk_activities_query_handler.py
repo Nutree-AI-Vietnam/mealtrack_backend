@@ -69,6 +69,7 @@ def _build_hydration_activity(meal: Meal, language: str = "en") -> dict[str, Any
         "type": "hydration",
         "timestamp": format_iso_utc(meal.created_at),
         "title": localized_name_for_catalog_name(meal.dish_name, language) or "Water",
+        "emoji": None,
         "meal_type": "hydration",
         "calories": kcal,
         "macros": macros,
@@ -95,6 +96,7 @@ def _build_hydration_entry_activity(entry, language: str = "en") -> dict[str, An
         or entry.drink_name_snapshot
         or "Water",
         "drink_id": entry.drink_id,
+        "emoji": None,
         "meal_type": "hydration",
         "calories": round(entry.calories, 1),
         "macros": {
