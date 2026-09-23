@@ -58,6 +58,9 @@ from src.infra.repositories.user_repository_async import AsyncUserRepository
 from src.infra.repositories.weekly_budget_repository_async import (
     AsyncWeeklyBudgetRepository,
 )
+from src.infra.repositories.weekly_meal_plan_repository_async import (
+    AsyncWeeklyMealPlanRepository,
+)
 from src.infra.repositories.weight_repository_async import AsyncWeightRepository
 
 logger = logging.getLogger(__name__)
@@ -157,6 +160,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.promo_codes = PromoCodeRepository(session)
         self.referrals = ReferralRepository(session)
         self.meal_write_operations = AsyncMealWriteOperationRepository(session)
+        self.weekly_meal_plans = AsyncWeeklyMealPlanRepository(session)
         self.chat = AsyncChatRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

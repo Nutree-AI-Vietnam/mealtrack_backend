@@ -23,6 +23,10 @@ from src.domain.services.meal_recommendation.ingredient_quantity_conversion_serv
     IngredientQuantityConversionError,
     IngredientQuantityConversionService,
 )
+from src.domain.services.weekly_meal_planner.meal_log_snapshot import (
+    build_logged_meal_snapshot,
+    select_logged_nutrition,
+)
 from src.domain.utils.timezone_utils import noon_utc_for_date
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
@@ -74,18 +78,41 @@ class RecommendedMealMaterializationService:
         meal_date: date,
         meal_type: str,
         timezone: str,
+        portion_multiplier: float = 1.0,
+        source: str = "meal_recommendation",
     ) -> Meal:
+        if portion_multiplier not in {0.5, 1.0, 1.5, 2.0}:
+            raise ValueError("portion_multiplier must be one of 0.5, 1, 1.5, or 2")
         projections = await _load_nutrition_projections(uow, catalog_meal)
         food_items = [
             _food_item_for_ingredient(
                 ingredient,
                 projections.get(ingredient.food_reference_id),
+                portion_multiplier,
             )
             for ingredient in catalog_meal.ingredients
         ]
         if _needs_catalog_macro_fallback(food_items):
-            food_items = _distribute_catalog_macros(food_items, catalog_meal)
+            food_items = _distribute_catalog_macros(
+                food_items, catalog_meal, portion_multiplier
+            )
         meal_time = noon_utc_for_date(meal_date, timezone)
+        verified_nutrition = {
+            "calories": int(round(catalog_meal.calories * portion_multiplier)),
+            "protein_g": float(catalog_meal.protein_g) * portion_multiplier,
+            "carbs_g": float(catalog_meal.carbs_g) * portion_multiplier,
+            "fat_g": float(catalog_meal.fat_g) * portion_multiplier,
+            "fiber_g": float(catalog_meal.fiber_g) * portion_multiplier,
+        }
+        logged = build_logged_meal_snapshot(
+            catalog_meal_id=catalog_meal.id,
+            content_hash=catalog_meal.content_hash,
+            recipe_payload=_recipe_payload(catalog_meal),
+            nutrition=select_logged_nutrition(
+                verified=verified_nutrition,
+                estimate=getattr(catalog_meal, "ai_nutrition_estimate", None),
+            ),
+        )
         meal = Meal(
             meal_id=str(uuid4()),
             user_id=user_id,
@@ -96,18 +123,38 @@ class RecommendedMealMaterializationService:
             dish_name=catalog_meal.name,
             nutrition=Nutrition(
                 macros=Macros(
-                    protein=float(catalog_meal.protein_g),
-                    carbs=float(catalog_meal.carbs_g),
-                    fat=float(catalog_meal.fat_g),
-                    fiber=float(catalog_meal.fiber_g),
+                    protein=float(catalog_meal.protein_g) * portion_multiplier,
+                    carbs=float(catalog_meal.carbs_g) * portion_multiplier,
+                    fat=float(catalog_meal.fat_g) * portion_multiplier,
+                    fiber=float(catalog_meal.fiber_g) * portion_multiplier,
                 ),
                 food_items=food_items,
             ),
             meal_type=meal_type,
-            source="meal_recommendation",
-            catalog_meal_id=catalog_meal.id,
+            source=source,
+            catalog_meal_id=logged.catalog_meal_id,
+            catalog_meal_content_hash=logged.catalog_meal_content_hash,
+            recipe_snapshot=logged.recipe_snapshot,
+            nutrition_snapshot=logged.nutrition_snapshot,
         )
         return await uow.meals.save(meal)
+
+
+def _recipe_payload(catalog_meal: CatalogMeal) -> dict:
+    payload = getattr(catalog_meal, "recipe_payload", None)
+    if payload:
+        return payload
+    return {
+        "recipe_name": catalog_meal.name,
+        "ingredients": [
+            {
+                "name": ingredient.name,
+                "quantity": float(ingredient.quantity),
+                "unit": ingredient.unit,
+            }
+            for ingredient in catalog_meal.ingredients
+        ],
+    }
 
 
 def _meal_image_for_catalog(catalog_meal: CatalogMeal) -> MealImage:
@@ -141,14 +188,27 @@ async def _load_nutrition_projections(
 def _food_item_for_ingredient(
     ingredient: CatalogMealIngredient,
     projection: FoodReferenceNutritionProjection | None,
+    portion_multiplier: float = 1.0,
 ) -> FoodItem:
     return FoodItem(
         id=str(uuid4()),
         name=ingredient.name,
-        quantity=float(ingredient.quantity),
+        quantity=float(ingredient.quantity) * portion_multiplier,
         unit=ingredient.unit,
-        macros=_macros_from_projection(ingredient, projection),
+        macros=_scale_macros(
+            _macros_from_projection(ingredient, projection), portion_multiplier
+        ),
         food_reference_id=ingredient.food_reference_id,
+    )
+
+
+def _scale_macros(macros: Macros, multiplier: float) -> Macros:
+    return Macros(
+        protein=macros.protein * multiplier,
+        carbs=macros.carbs * multiplier,
+        fat=macros.fat * multiplier,
+        fiber=macros.fiber * multiplier,
+        sugar=macros.sugar * multiplier,
     )
 
 
@@ -188,15 +248,16 @@ def _needs_catalog_macro_fallback(food_items: list[FoodItem]) -> bool:
 def _distribute_catalog_macros(
     food_items: list[FoodItem],
     catalog_meal: CatalogMeal,
+    portion_multiplier: float = 1.0,
 ) -> list[FoodItem]:
     total_weight = sum(_estimated_grams(item) for item in food_items)
     if total_weight <= 0:
         return food_items
-    protein = float(catalog_meal.protein_g)
-    carbs = float(catalog_meal.carbs_g)
-    fat = float(catalog_meal.fat_g)
-    fiber = float(catalog_meal.fiber_g)
-    sugar = float(catalog_meal.sugar_g)
+    protein = float(catalog_meal.protein_g) * portion_multiplier
+    carbs = float(catalog_meal.carbs_g) * portion_multiplier
+    fat = float(catalog_meal.fat_g) * portion_multiplier
+    fiber = float(catalog_meal.fiber_g) * portion_multiplier
+    sugar = float(catalog_meal.sugar_g) * portion_multiplier
     distributed: list[FoodItem] = []
     for item in food_items:
         ratio = _estimated_grams(item) / total_weight

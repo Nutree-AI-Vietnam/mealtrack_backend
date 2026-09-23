@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import timedelta
@@ -11,6 +10,12 @@ from typing import Any
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 
+from src.domain.utils.fingerprint_utils import (
+    canonicalize_fingerprint as canonicalize_fingerprint,
+)
+from src.domain.utils.fingerprint_utils import (
+    normalize_idempotency_key as normalize_idempotency_key,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.durable_write_record import DurableWriteRecordORM
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -99,28 +104,6 @@ class DurableWriteRecord:
     @property
     def is_pending(self) -> bool:
         return self.response_status_code == PENDING_RESPONSE_STATUS
-
-
-def canonicalize_fingerprint(payload: Any) -> str:
-    """SHA-256 of canonical JSON (sorted keys, compact separators)."""
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def normalize_idempotency_key(raw: str | None) -> str | None:
-    if raw is None:
-        return None
-    key = raw.strip()
-    if not key:
-        return None
-    if len(key) > 160:
-        raise ValueError("Idempotency-Key must be 160 characters or fewer")
-    return key
 
 
 def _to_record(row: DurableWriteRecordORM) -> DurableWriteRecord:
@@ -302,9 +285,7 @@ async def abandon_durable_write(
         if existing.response_status_code != PENDING_RESPONSE_STATUS:
             return
         await uow.session.execute(
-            delete(DurableWriteRecordORM).where(
-                DurableWriteRecordORM.id == existing.id
-            )
+            delete(DurableWriteRecordORM).where(DurableWriteRecordORM.id == existing.id)
         )
 
 
