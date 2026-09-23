@@ -24,7 +24,6 @@ class GetDrinkCatalogQueryHandler(EventHandler[GetDrinkCatalogQuery, dict]):
                     "id": d.id,
                     "name": localized_name(d, query.language),
                     "sub": localized_sub(d, query.language),
-                    "emoji": d.emoji,
                     "default_ml": d.default_ml,
                     "kcal_per_100ml": d.kcal_per_100ml,
                     "sugar_per_100ml": d.sugar_per_100ml,
