@@ -201,6 +201,7 @@ ignore_imports =
     src.api.dependencies.event_bus -> src.infra.adapters.brave_search_nutrition_service
     src.api.dependencies.event_bus -> src.infra.adapters.meal_generation_service
     src.api.dependencies.event_bus -> src.infra.adapters.nutritionix_service
+    src.api.dependencies.event_bus -> src.infra.adapters.weekly_meal_plan_adjustment_provider
     src.api.dependencies.event_bus -> src.infra.cache.meal_list_cache_service
     src.api.dependencies.event_bus -> src.infra.cache.provider_budget
 

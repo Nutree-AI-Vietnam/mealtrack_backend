@@ -88,6 +88,15 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   `src/api/routes/v1/meal_catalog.py`; the browse contract is documented in
   `api-endpoints.md` and the import manifest contract in
   `meal-catalog-import-schema.md`.
+- Weekly meal planner: authenticated plan, recipe alias, grocery, pantry, AI
+  proposal, and diary-slot routes live in `src/api/routes/v1/meal_plans.py`;
+  CQRS commands/queries are under `src/app/commands/meal_planner/` and
+  `src/app/queries/meal_planner/`, with persistence in
+  `src/infra/database/models/weekly_meal_planner/` and
+  `src/infra/repositories/weekly_meal_plan_repository_async.py`.
+- Recipe detail foundation: catalog metadata and immutable ordered steps extend
+  `MealCatalogORM`; canonical nutrition still comes from linked food references
+  and the catalog materializer.
 - Parse-text eval harness:
   `scripts/development/evaluate_parse_text_nutrition.py` with fixtures in
   `tests/fixtures/parse_text_nutrition_golden_cases.json`. Unmatched foods are

@@ -215,6 +215,43 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Browse requests do not create recommendation plans, candidate rows, or meal
   logs; Home's three-day recommendation endpoints remain a separate flow.
 
+### Weekly meal planner and recipe aliases
+
+- `/v1/meal-plans/*` is an owner-scoped weekly aggregate backed by
+  `weekly_meal_plans`, `weekly_meal_plan_slots`, and
+  `weekly_meal_plan_pantry_items`; `/v1/recipes*` reads the existing immutable
+  catalog rather than a duplicate recipe table.
+- Weeks are Monday-based and contain exactly 14 coordinates: day indexes 0–6
+  with slot index 0 for lunch and 1 for dinner. The default week is resolved
+  from the authenticated user's timezone. Generation and slot/preferences
+  edits are idempotent and return a conflict for confirmed plans; pantry reads
+  and diary logging retain their own owner and state checks.
+- Plan responses include a monotonic `revision`. PATCH clients may send
+  `expected_revision`; a stale value returns `409 WEEKLY_PLAN_STALE_REVISION`
+  instead of overwriting a newer plan. AI proposals are non-mutating and
+  include the `base_revision` they were generated from so clients can apply
+  them only against the same plan version.
+- Recipe detail exposes ordered catalog steps, source metadata, equipment,
+  ingredient grocery categories, serving metadata, and backend-derived
+  nutrition. Grocery quantities scale by `people / base_servings` only when the
+  catalog serving basis is known; otherwise the output is marked `unscaled`.
+  Clients must not recalculate calories or macros.
+- Grocery output is a read-time projection keyed by canonical
+  `food_reference_id` plus quantity dimension/unit. Weight and volume units are
+  normalized only through exact conversions; count and unknown units remain
+  separate and carry a confidence marker. Pantry quantities subtract only when
+  their unit is compatible, producing `needed`, `need_more`, or `owned`
+  statuses. `to_buy_count` counts only `needed` and `need_more` items.
+- Ask Nutree returns an ephemeral structured proposal. The provider cannot
+  mutate a plan, change a logged slot, invent a recipe ID, or claim allergy
+  safety. Explicit diet, dislike, and allergy terms are hard generation
+  exclusions when they match catalog text; this is not canonical allergen
+  evaluation, so `allergy_evaluated=false` remains in recipe responses.
+- Logging a slot validates date/type and portion `0.5`, `1`, `1.5`, or `2`,
+  materializes the normal backend-owned `Meal`, derives nutrition from scaled
+  macros, and links the resulting meal to the weekly slot. Replays return the
+  original diary meal.
+
 ### Food search and barcode
 
 - Search order: optional Redis cache → local `food_reference` → provider fill.

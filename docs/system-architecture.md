@@ -232,7 +232,7 @@ Architecture guardrails enforced by `tests/unit/architecture/test_logging_owners
 | Hydration | Hydration entries, drink catalog, caloric drink logging |
 | Movement | Movement entries, activity catalog, daily movement summaries |
 | Progress | Journey progress snapshot, active-period filtering, action scoring |
-| Meal Planning | Weekly budget, meal planning, meal suggestion, saved suggestion models |
+| Meal Planning | Weekly budget, weekly meal plans, catalog recipe detail, groceries, meal suggestion, saved suggestion models |
 | Notification | UserFcmToken, NotificationPreferences, PushNotification, queued notification rows |
 | AI | GPTAnalysisResponse, GPTFoodItem, GPTResponseError |
 | Commerce | Subscription state, RevenueCat web-funnel redemption, referral codes, promo codes |
@@ -255,6 +255,26 @@ separate path (`source="food_label"`) with validated label contracts. Non-null
 `beverage_metadata` on meal-scan output fails validation. Legacy
 `source="scan_beverage"` hydration rows may still exist for compatibility reads;
 new scans must not create them.
+
+### Weekly meal planner boundary
+
+Weekly planning is an additive CQRS context over the immutable catalog and
+canonical food-reference nutrition path. Weekly plan, slot, pantry, and diary
+commands own mutations; current-plan, recipe, and grocery queries own read
+projections. The domain generator enforces a Monday week with exactly 14
+lunch/dinner coordinates before persistence.
+
+The plan aggregate never owns recipe nutrition. Catalog ingredient quantities
+and `food_reference_id` remain authoritative; grocery aggregation scales by
+`people / base_servings` only when the catalog serving basis is known and
+otherwise marks quantities as unscaled. Slot logging reuses
+catalog-to-diary materialization with a portion multiplier, then links the
+created `Meal` in the same unit of work while retaining the catalog content
+hash used for the snapshot.
+Ask Nutree uses the existing structured AI fallback service as an untrusted
+proposal source. The application validates catalog IDs, coordinates, logged
+slot immutability, hard preference exclusions, and the proposal base revision
+before returning the ephemeral diff; it never writes the plan directly.
 
 ---
 

@@ -54,6 +54,7 @@ class AsyncUnitOfWorkPort(ABC):
     referrals: Any
     meal_write_operations: Any
     chat: ChatRepositoryPort
+    weekly_meal_plans: Any
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:
