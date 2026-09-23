@@ -41,7 +41,6 @@ class GetMealByIdQueryHandler(EventHandler[GetMealByIdQuery, Meal]):
                 url=entry.image_url,
             ),
             dish_name=entry.drink_name_snapshot,
-            emoji=entry.emoji_snapshot,
             meal_type="hydration",
             source=entry.source,
             quantity=entry.credited_ml,

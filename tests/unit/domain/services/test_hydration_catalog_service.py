@@ -24,3 +24,14 @@ def test_localized_name_for_catalog_name_resolves_vietnamese_snapshot():
 
 def test_localized_name_for_catalog_name_prefers_drink_id():
     assert localized_name_for_catalog_name("Water", "ja", drink_id="water") == "水"
+
+
+def test_coconut_is_in_catalog_with_localized_names():
+    drink = find_by_id("coconut")
+    assert drink is not None
+    assert drink.name == "Coconut"
+    assert drink.kcal_per_100ml == 18.0
+    assert drink.sugar_per_100ml == 3.92
+    assert drink.default_ml == 245
+    assert localized_name(drink, "vi") == "Nước dừa"
+    assert localized_name_for_catalog_name("Coconut water", "vi") == "Nước dừa"
