@@ -24,7 +24,12 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
 from src.domain.ports.meal_list_cache_port import MealListCachePort
-from src.domain.utils.timezone_utils import utc_now
+from src.domain.utils.timezone_utils import (
+    noon_utc_for_date,
+    resolve_user_timezone_async,
+    user_today,
+    utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,7 @@ class RepeatMealCommandHandler(EventHandler[RepeatMealCommand, Meal]):
     async def handle(self, command: RepeatMealCommand) -> Meal:
         cache_event_needed = False
         saved_meal: Meal | None = None
+        meal_date = None
 
         async with self.uow_factory() as uow:
             source_meal = await uow.meals.find_by_id(
@@ -81,10 +87,20 @@ class RepeatMealCommandHandler(EventHandler[RepeatMealCommand, Meal]):
                     "Meal is neither active nor favorited and cannot be repeated"
                 )
 
+            user_tz = await resolve_user_timezone_async(command.user_id, uow)
+            current_user_date = user_today(user_tz)
+            meal_date = command.target_date or current_user_date
+            if command.target_date and command.target_date != current_user_date:
+                # Past/future diary day: local noon so created_at stays on that day.
+                meal_datetime = noon_utc_for_date(meal_date, user_tz)
+            else:
+                meal_datetime = utc_now()
+
             # Claim idempotency lease
             fingerprint_data = {
                 "source_meal_id": command.meal_id,
                 "meal_type": command.meal_type,
+                "target_date": meal_date.isoformat(),
             }
             fingerprint = hashlib.sha256(
                 json.dumps(fingerprint_data, sort_keys=True).encode("utf-8")
@@ -117,7 +133,6 @@ class RepeatMealCommandHandler(EventHandler[RepeatMealCommand, Meal]):
             try:
                 # Clone source meal aggregate
                 new_meal_id = str(uuid.uuid4())
-                now = utc_now()
                 target_meal_type = command.meal_type or source_meal.meal_type
 
                 new_image = (
@@ -199,9 +214,9 @@ class RepeatMealCommandHandler(EventHandler[RepeatMealCommand, Meal]):
                     meal_id=new_meal_id,
                     user_id=command.user_id,
                     status=MealStatus.READY,
-                    created_at=now,
-                    ready_at=now,
-                    updated_at=now,
+                    created_at=meal_datetime,
+                    ready_at=meal_datetime,
+                    updated_at=utc_now(),
                     image=new_image,
                     dish_name=source_meal.dish_name,
                     emoji=source_meal.emoji,
@@ -230,14 +245,14 @@ class RepeatMealCommandHandler(EventHandler[RepeatMealCommand, Meal]):
                 raise
 
         if cache_event_needed and saved_meal is not None:
-            meal_date = (saved_meal.created_at or utc_now()).date()
+            publish_date = meal_date or (saved_meal.created_at or utc_now()).date()
             if self.event_publisher:
                 await publish_meal_event(
                     self.event_publisher,
                     saved_meal,
                     event_type="created",
                     environment=self.environment,
-                    meal_date=meal_date,
+                    meal_date=publish_date,
                     language=command.language,
                     event_bus=self.event_bus,
                     source="meal_repeat",
