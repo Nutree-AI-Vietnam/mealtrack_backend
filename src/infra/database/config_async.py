@@ -5,6 +5,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from src.infra.database.connection_policy import (
     DatabaseConnectionPolicy,
@@ -88,7 +89,7 @@ _ASYNC_POOL_OVERFLOW = _policy.max_overflow
 _ASYNC_POOL_TOTAL_CAPACITY = _policy.total_capacity
 
 try:
-    if _policy.mode == "neon_pooler":
+    if _policy.pool_class is NullPool:
         async_engine = create_async_engine(
             ASYNC_DATABASE_URL,
             echo=False,
@@ -96,7 +97,8 @@ try:
             connect_args=_connect_args,
         )
         logger.info(
-            "Async engine: NullPool mode=neon_pooler (PgBouncer manages connection reuse)",
+            "Async engine: NullPool mode=%s (PgBouncer manages connection reuse)",
+            _policy.mode,
         )
     else:
         async_engine = create_async_engine(
@@ -111,7 +113,8 @@ try:
             connect_args=_connect_args,
         )
         logger.info(
-            "Async engine: AsyncAdaptedQueuePool mode=direct_pool pool_size=%s max_overflow=%s",
+            "Async engine: AsyncAdaptedQueuePool mode=%s pool_size=%s max_overflow=%s",
+            _policy.mode,
             _policy.pool_size,
             _policy.max_overflow,
         )
