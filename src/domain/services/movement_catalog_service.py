@@ -135,6 +135,38 @@ _ACTIVITIES: list[dict[str, Any]] = [
         "is_custom": False,
     },
     {
+        "id": "tennis",
+        "name": {
+            "en": "Tennis",
+            "vi": "Quần vợt",
+            "es": "Tenis",
+            "fr": "Tennis",
+            "de": "Tennis",
+            "ja": "テニス",
+            "zh": "网球",
+        },
+        "default_met": 7.3,
+        "met": {"light": 5.0, "moderate": 7.3, "hard": 8.0},
+        "apple_health_type": "tennis",
+        "is_custom": False,
+    },
+    {
+        "id": "pickleball",
+        "name": {
+            "en": "Pickleball",
+            "vi": "Pickleball",
+            "es": "Pickleball",
+            "fr": "Pickleball",
+            "de": "Pickleball",
+            "ja": "ピックルボール",
+            "zh": "匹克球",
+        },
+        "default_met": 5.0,
+        "met": {"light": 4.0, "moderate": 5.0, "hard": 6.5},
+        "apple_health_type": "pickleball",
+        "is_custom": False,
+    },
+    {
         "id": "football",
         "name": {
             "en": "Football",
@@ -148,6 +180,22 @@ _ACTIVITIES: list[dict[str, Any]] = [
         "default_met": 7.0,
         "met": {"light": 3.5, "moderate": 7.0, "hard": 9.5},
         "apple_health_type": "soccer",
+        "is_custom": False,
+    },
+    {
+        "id": "basketball",
+        "name": {
+            "en": "Basketball",
+            "vi": "Bóng rổ",
+            "es": "Baloncesto",
+            "fr": "Basket-ball",
+            "de": "Basketball",
+            "ja": "バスケットボール",
+            "zh": "篮球",
+        },
+        "default_met": 6.5,
+        "met": {"light": 4.5, "moderate": 6.5, "hard": 8.0},
+        "apple_health_type": "basketball",
         "is_custom": False,
     },
     {
@@ -187,7 +235,9 @@ def get_activity(activity_id: str | None) -> dict[str, Any] | None:
     return deepcopy(item) if item else None
 
 
-def localized_activity_name(activity_id: str | None, language: str = "en") -> str | None:
+def localized_activity_name(
+    activity_id: str | None, language: str = "en"
+) -> str | None:
     item = _BY_ID.get(activity_id or "")
     if not item:
         return None
