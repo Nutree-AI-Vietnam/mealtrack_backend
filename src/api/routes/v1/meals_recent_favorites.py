@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 
@@ -11,6 +12,7 @@ from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
+from src.api.routes.v1.meals_route_helpers import parse_target_date
 from src.api.schemas.request.meal_requests import RepeatMealRequest
 from src.api.schemas.response import (
     DetailedMealResponse,
@@ -41,7 +43,6 @@ async def list_recent_meals(
     language: str = Depends(get_request_language),
     event_bus: Any = Depends(get_configured_event_bus),
 ) -> RecentMealsListResponse:
-
     """Retrieve up to 10 distinct recent meals from the last 7 local calendar days."""
     header_tz = request.headers.get("X-Timezone")
     user_tz = await event_bus.send(
@@ -120,11 +121,13 @@ async def repeat_meal(
     """Repeat an active or favorited meal with durable idempotency."""
     key = idempotency_key or str(uuid.uuid4())
     meal_type = payload.meal_type if payload else None
+    target_date = parse_target_date(payload.target_date if payload else None)
     command = RepeatMealCommand(
         user_id=user_id,
         meal_id=meal_id,
         idempotency_key=key,
         meal_type=meal_type,
+        target_date=target_date,
         language=language,
     )
     new_meal = await event_bus.send(command)

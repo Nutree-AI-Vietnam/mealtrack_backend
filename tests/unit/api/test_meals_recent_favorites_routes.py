@@ -185,13 +185,14 @@ class TestMealsRecentFavoritesRoutes:
             assert command.meal_id == meal_id
             assert command.idempotency_key == "idempotent-key-1"
             assert command.meal_type == "dinner"
+            assert command.target_date.isoformat() == "2026-09-22"
             return meal
 
         event_bus.send = AsyncMock(side_effect=_mock_send)
 
         response = await repeat_meal(
             meal_id=meal_id,
-            payload=RepeatMealRequest(meal_type="dinner"),
+            payload=RepeatMealRequest(meal_type="dinner", target_date="2026-09-22"),
             idempotency_key="idempotent-key-1",
             user_id=user_id,
             language="vi",

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -102,7 +102,17 @@ class TestRepeatMealCommandHandler:
             meal_type="dinner",
         )
 
-        result = await handler.handle(command)
+        with (
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.resolve_user_timezone_async",
+                new=AsyncMock(return_value="UTC"),
+            ),
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.user_today",
+                return_value=datetime.now(UTC).date(),
+            ),
+        ):
+            result = await handler.handle(command)
 
         assert result.meal_id != source_meal_id
         assert result.user_id == user_id
@@ -122,6 +132,56 @@ class TestRepeatMealCommandHandler:
         uow.meal_write_operations.complete.assert_awaited_once()
         event_publisher.publish.assert_awaited_once()
         cache_service.increment_revision.assert_awaited_once_with(user_id)
+
+    @pytest.mark.asyncio
+    async def test_repeat_meal_honors_past_target_date(self):
+        from datetime import date, timedelta
+
+        user_id = str(uuid4())
+        source_meal_id = str(uuid4())
+        source_meal = _create_full_meal(user_id, source_meal_id)
+        past_day = date(2026, 9, 22)
+
+        uow = MagicMock()
+        uow.__aenter__ = AsyncMock(return_value=uow)
+        uow.__aexit__ = AsyncMock(return_value=False)
+        uow.meals.find_by_id = AsyncMock(return_value=source_meal)
+        uow.favorite_meals.is_favorite = AsyncMock(return_value=False)
+
+        reservation = SimpleNamespace(state="active", target_meal_id=None)
+        uow.meal_write_operations.reserve = AsyncMock(return_value=reservation)
+        uow.meal_write_operations.complete = AsyncMock()
+        uow.meals.insert = AsyncMock(side_effect=lambda m: m)
+
+        handler = RepeatMealCommandHandler(uow=uow)
+        command = RepeatMealCommand(
+            user_id=user_id,
+            meal_id=source_meal_id,
+            idempotency_key="key-past",
+            meal_type="lunch",
+            target_date=past_day,
+        )
+
+        with (
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.resolve_user_timezone_async",
+                new=AsyncMock(return_value="Asia/Ho_Chi_Minh"),
+            ),
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.user_today",
+                return_value=past_day + timedelta(days=1),
+            ),
+        ):
+            result = await handler.handle(command)
+
+        assert result.created_at is not None
+        # Local noon Asia/Ho_Chi_Minh on 2026-09-22 → 05:00 UTC same calendar day
+        assert result.created_at.astimezone(UTC).date() == past_day
+        uow.meal_write_operations.reserve.assert_awaited_once()
+        assert (
+            uow.meal_write_operations.reserve.await_args.kwargs["request_fingerprint"]
+            is not None
+        )
 
     @pytest.mark.asyncio
     async def test_repeat_inactive_favorited_meal_allowed(self):
@@ -149,7 +209,17 @@ class TestRepeatMealCommandHandler:
             idempotency_key="key-456",
         )
 
-        result = await handler.handle(command)
+        with (
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.resolve_user_timezone_async",
+                new=AsyncMock(return_value="UTC"),
+            ),
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.user_today",
+                return_value=datetime.now(UTC).date(),
+            ),
+        ):
+            result = await handler.handle(command)
         assert result.status == MealStatus.READY
         assert result.meal_id != source_meal_id
 
@@ -231,6 +301,16 @@ class TestRepeatMealCommandHandler:
             idempotency_key="key-replay",
         )
 
-        result = await handler.handle(command)
+        with (
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.resolve_user_timezone_async",
+                new=AsyncMock(return_value="UTC"),
+            ),
+            patch(
+                "src.app.handlers.command_handlers.repeat_meal_command_handler.user_today",
+                return_value=datetime.now(UTC).date(),
+            ),
+        ):
+            result = await handler.handle(command)
         assert result.meal_id == replayed_meal_id
         uow.meals.insert.assert_not_called()
