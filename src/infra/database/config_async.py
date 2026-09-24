@@ -5,6 +5,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from src.infra.database.connection_policy import (
     DatabaseConnectionPolicy,
@@ -88,7 +89,33 @@ _ASYNC_POOL_OVERFLOW = _policy.max_overflow
 _ASYNC_POOL_TOTAL_CAPACITY = _policy.total_capacity
 
 try:
-    if _policy.mode == "neon_pooler":
+    # Engine creation branches on the resolved pool class, not the mode name, because
+    # neon_pooler can run with either NullPool (the default) or AsyncAdaptedQueuePool
+    # (when NEON_POOLER_USE_QUEUE_POOL=true).
+    #
+    # Why have a local queue pool in front of Neon's PgBouncer?
+    # ---------------------------------------------------------
+    # Neon's PgBouncer endpoint operates in transaction mode: it provides external
+    # connection pooling so the database server is not overwhelmed.  However, each
+    # time the app checks out a connection from SQLAlchemy's NullPool it must perform
+    # a fresh TLS handshake to PgBouncer.  Under high concurrency (many Uvicorn
+    # workers firing simultaneous requests) that per-checkout overhead adds up.
+    #
+    # With NEON_POOLER_USE_QUEUE_POOL=true the app keeps a small local
+    # AsyncAdaptedQueuePool of persistent TCP/TLS connections to PgBouncer.
+    # Requests are served from those already-open connections, eliminating the
+    # per-request handshake cost.  PgBouncer still multiplexes those connections
+    # onto a much smaller set of actual Postgres server connections, so the database
+    # side is still protected.
+    #
+    # When a local queue pool is active it must be configured with pool_pre_ping,
+    # pool_recycle, and pool_timeout so that connections closed by PgBouncer or
+    # Postgres (idle timeout) are detected and replaced before being handed to a
+    # request — without these settings a stale connection causes an immediate
+    # "connection is closed" InterfaceError.
+    if _policy.pool_class is NullPool:
+        # NullPool: every request opens and closes its own connection to PgBouncer.
+        # No local pool arguments are valid here; PgBouncer handles reuse.
         async_engine = create_async_engine(
             ASYNC_DATABASE_URL,
             echo=False,
@@ -96,9 +123,14 @@ try:
             connect_args=_connect_args,
         )
         logger.info(
-            "Async engine: NullPool mode=neon_pooler (PgBouncer manages connection reuse)",
+            "Async engine: NullPool mode=%s (PgBouncer manages connection reuse)",
+            _policy.mode,
         )
     else:
+        # AsyncAdaptedQueuePool: used for direct_pool mode and for neon_pooler with
+        # NEON_POOLER_USE_QUEUE_POOL=true (local pool in front of PgBouncer).
+        # pool_pre_ping validates connections before use so closed/stale ones are
+        # never returned to a request.
         async_engine = create_async_engine(
             ASYNC_DATABASE_URL,
             echo=False,
@@ -111,7 +143,8 @@ try:
             connect_args=_connect_args,
         )
         logger.info(
-            "Async engine: AsyncAdaptedQueuePool mode=direct_pool pool_size=%s max_overflow=%s",
+            "Async engine: AsyncAdaptedQueuePool mode=%s pool_size=%s max_overflow=%s",
+            _policy.mode,
             _policy.pool_size,
             _policy.max_overflow,
         )
