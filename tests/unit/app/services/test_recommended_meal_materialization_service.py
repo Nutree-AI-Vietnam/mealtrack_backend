@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import date
 from decimal import Decimal
 
@@ -304,3 +305,36 @@ async def test_materializer_scales_backend_macros_for_weekly_portions():
     assert meal.nutrition.macros.protein == 45
     assert meal.nutrition.macros.carbs == 75
     assert meal.nutrition.macros.fat == 15
+    assert meal.recipe_snapshot is not None
+    assert meal.recipe_snapshot["portion_multiplier"] == 1.5
+    assert meal.recipe_snapshot["ingredients"][0]["quantity"] == 150
+
+
+@pytest.mark.asyncio
+async def test_materializer_scales_published_recipe_payload_without_mutating_catalog():
+    plan, slot = _plan_and_slot()
+    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    catalog_meal = dataclasses.replace(
+        slot.selected.catalog_meal,
+        recipe_payload={
+            "recipe_name": slot.selected.catalog_meal.name,
+            "ingredients": [
+                {"name": "rice", "quantity": 200, "unit": "g"},
+                {"name": "salt", "quantity": None, "unit": None},
+            ],
+        },
+    )
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        _Uow(),
+        user_id=plan.user_id,
+        catalog_meal=catalog_meal,
+        meal_date=plan.start_date,
+        meal_type="lunch",
+        timezone="UTC",
+        portion_multiplier=0.5,
+    )
+
+    assert meal.recipe_snapshot["ingredients"][0]["quantity"] == 100
+    assert meal.recipe_snapshot["ingredients"][1]["quantity"] is None
+    assert catalog_meal.recipe_payload["ingredients"][0]["quantity"] == 200
