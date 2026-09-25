@@ -753,4 +753,7 @@ class RepeatMealRequest(BaseModel):
         None,
         description="Target meal type for the repeated meal (e.g., breakfast, lunch, dinner, snack)",
     )
-
+    target_date: str | None = Field(
+        None,
+        description="Diary date in YYYY-MM-DD format; when set, the clone is logged for that day",
+    )

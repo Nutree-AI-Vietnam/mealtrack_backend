@@ -1,6 +1,7 @@
 """Command to repeat a meal idempotently."""
 
 from dataclasses import dataclass
+from datetime import date
 
 from src.app.events.base import Command
 
@@ -11,4 +12,5 @@ class RepeatMealCommand(Command):
     meal_id: str
     idempotency_key: str
     meal_type: str | None = None
+    target_date: date | None = None
     language: str = "en"

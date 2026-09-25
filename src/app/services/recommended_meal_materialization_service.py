@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date
 from uuid import uuid4
 
@@ -107,7 +108,7 @@ class RecommendedMealMaterializationService:
         logged = build_logged_meal_snapshot(
             catalog_meal_id=catalog_meal.id,
             content_hash=catalog_meal.content_hash,
-            recipe_payload=_recipe_payload(catalog_meal),
+            recipe_payload=_recipe_payload(catalog_meal, portion_multiplier),
             nutrition=select_logged_nutrition(
                 verified=verified_nutrition,
                 estimate=getattr(catalog_meal, "ai_nutrition_estimate", None),
@@ -140,21 +141,28 @@ class RecommendedMealMaterializationService:
         return await uow.meals.save(meal)
 
 
-def _recipe_payload(catalog_meal: CatalogMeal) -> dict:
+def _recipe_payload(catalog_meal: CatalogMeal, portion_multiplier: float = 1.0) -> dict:
     payload = getattr(catalog_meal, "recipe_payload", None)
     if payload:
-        return payload
-    return {
-        "recipe_name": catalog_meal.name,
-        "ingredients": [
-            {
-                "name": ingredient.name,
-                "quantity": float(ingredient.quantity),
-                "unit": ingredient.unit,
-            }
-            for ingredient in catalog_meal.ingredients
-        ],
-    }
+        scaled = deepcopy(payload)
+        for ingredient in scaled.get("ingredients") or []:
+            quantity = ingredient.get("quantity")
+            if isinstance(quantity, (int, float)) and not isinstance(quantity, bool):
+                ingredient["quantity"] = quantity * portion_multiplier
+    else:
+        scaled = {
+            "recipe_name": catalog_meal.name,
+            "ingredients": [
+                {
+                    "name": ingredient.name,
+                    "quantity": float(ingredient.quantity) * portion_multiplier,
+                    "unit": ingredient.unit,
+                }
+                for ingredient in catalog_meal.ingredients
+            ],
+        }
+    scaled["portion_multiplier"] = portion_multiplier
+    return scaled
 
 
 def _meal_image_for_catalog(catalog_meal: CatalogMeal) -> MealImage:
