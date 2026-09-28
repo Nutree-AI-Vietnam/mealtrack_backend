@@ -41,6 +41,7 @@ class CloudflareWorkersImageGenerator:
         self,
         prompt: str,
         *,
+        image_id: str | None = None,
         quality: str = "medium",
         size: str = "1024x1024",
         output_format: str = "jpeg",
@@ -48,6 +49,7 @@ class CloudflareWorkersImageGenerator:
         if _requires_multipart(self._model):
             return await self._generate_multipart_url(
                 prompt,
+                image_id=image_id,
                 size=size,
                 output_format=output_format,
             )
@@ -65,10 +67,7 @@ class CloudflareWorkersImageGenerator:
             "Authorization": f"Bearer {self._api_token}",
             "Content-Type": "application/json",
         }
-        url = (
-            "https://api.cloudflare.com/client/v4/accounts/"
-            f"{self._account_id}/ai/run"
-        )
+        url = f"https://api.cloudflare.com/client/v4/accounts/{self._account_id}/ai/run"
         async with httpx.AsyncClient(
             timeout=self._timeout,
             transport=self._transport,
@@ -79,12 +78,15 @@ class CloudflareWorkersImageGenerator:
                 f"Cloudflare image generation returned {response.status_code}: "
                 f"{response.text[:200]}"
             )
-        return await self._extract_image_url(response.json(), output_format)
+        return await self._extract_image_url(
+            response.json(), output_format, image_id=image_id
+        )
 
     async def _generate_multipart_url(
         self,
         prompt: str,
         *,
+        image_id: str | None = None,
         size: str,
         output_format: str,
     ) -> str:
@@ -109,9 +111,16 @@ class CloudflareWorkersImageGenerator:
                 f"Cloudflare image generation returned {response.status_code}: "
                 f"{response.text[:200]}"
             )
-        return await self._extract_image_url(response.json(), output_format)
+        return await self._extract_image_url(
+            response.json(), output_format, image_id=image_id
+        )
 
-    async def _extract_image_url(self, payload: dict, output_format: str) -> str:
+    async def _extract_image_url(
+        self,
+        payload: dict,
+        output_format: str,
+        image_id: str | None = None,
+    ) -> str:
         image = _extract_image(payload)
         if image.startswith("https://"):
             return image
@@ -121,7 +130,9 @@ class CloudflareWorkersImageGenerator:
             )
         image_bytes = _decode_image(image)
         content_type = _content_type(image_bytes, output_format)
-        return await self._image_store.save_async(image_bytes, content_type)
+        return await self._image_store.save_async(
+            image_bytes, content_type, image_id=image_id
+        )
 
 
 def _extract_image(payload: dict) -> str:

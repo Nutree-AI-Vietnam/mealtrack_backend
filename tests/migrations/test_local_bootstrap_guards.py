@@ -63,6 +63,23 @@ def test_local_development_script_bootstraps_missing_pip() -> None:
     assert '"$VENV_PYTHON" -m pip install' in text
 
 
+def test_local_development_script_overrides_all_database_urls_to_localhost() -> None:
+    text = LOCAL_SCRIPT.read_text()
+
+    assert (
+        'LOCAL_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:$PG_PORT/$PG_DB"'
+        in text
+    )
+    for key in (
+        "APP_DATABASE_URL",
+        "DATABASE_URL",
+        "DATABASE_URL_DIRECT",
+        "MIGRATION_DATABASE_URL",
+    ):
+        assert f'export {key}="$LOCAL_DATABASE_URL"' in text
+    assert 'export DB_CONNECTION_MODE="direct_pool"' in text
+
+
 def test_local_development_script_discovers_python_without_hardcoded_python3() -> None:
     text = LOCAL_SCRIPT.read_text()
 

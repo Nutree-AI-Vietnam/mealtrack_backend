@@ -86,6 +86,11 @@ class WeeklyMealLoggingService:
                         "date and meal_type must match the selected weekly slot",
                         error_code="WEEKLY_SLOT_MISMATCH",
                     )
+                if slot.catalog_meal_id != command.expected_recipe_id:
+                    raise ConflictException(
+                        "Weekly meal slot has changed; refresh the plan before logging",
+                        error_code="WEEKLY_SLOT_STALE_RECIPE",
+                    )
                 if slot.is_logged:
                     raise ConflictException(
                         "Weekly meal slot is already logged",

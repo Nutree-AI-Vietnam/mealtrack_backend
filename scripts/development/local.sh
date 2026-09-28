@@ -77,7 +77,17 @@ if ! docker ps | grep -q "$PG_CONTAINER"; then
     sleep 4
 fi
 
-export DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:$PG_PORT/$PG_DB"
+LOCAL_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:$PG_PORT/$PG_DB"
+
+# .env can contain production or remote Neon URLs. Export every app and
+# migration URL explicitly so the documented local workflow cannot fall back
+# to a remote database through a higher-priority variable.
+export APP_DATABASE_URL="$LOCAL_DATABASE_URL"
+export DATABASE_URL="$LOCAL_DATABASE_URL"
+export DATABASE_URL_DIRECT="$LOCAL_DATABASE_URL"
+export MIGRATION_DATABASE_URL="$LOCAL_DATABASE_URL"
+export DB_CONNECTION_MODE="direct_pool"
+export ENVIRONMENT="development"
 
 # ── 3. Redis ──────────────────────────────────────────────────────────────────
 if ! docker ps | grep -q mealtrack_redis; then

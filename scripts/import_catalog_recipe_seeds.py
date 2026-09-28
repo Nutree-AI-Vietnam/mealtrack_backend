@@ -34,7 +34,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--manifest",
-        default=str(Path(__file__).resolve().parent / "data" / "meal-recommendation-recipes.json"),
+        default=str(
+            Path(__file__).resolve().parent
+            / "data"
+            / "meal-recommendation-recipes.json"
+        ),
         help="Catalog recipe seed manifest JSON path.",
     )
     parser.add_argument(
@@ -91,6 +95,11 @@ def main() -> None:
             "from an unapproved source."
         ),
     )
+    parser.add_argument(
+        "--skip-failed-recipes",
+        action="store_true",
+        help="Skip individual recipes that fail ingredient resolution and import only the clean ones.",
+    )
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest)
@@ -101,7 +110,9 @@ def main() -> None:
     with manifest_path.open("r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
-    expected_count = len(manifest.get("recipes", [])) if args.partial else args.expected_count
+    expected_count = (
+        len(manifest.get("recipes", [])) if args.partial else args.expected_count
+    )
     result = validate_catalog_seed_manifest(
         manifest,
         expected_recipe_count=expected_count,
@@ -132,7 +143,9 @@ def main() -> None:
     auto_resolve_threshold = (
         0.0
         if args.resolve_all_best_effort and args.auto_resolve_threshold is None
-        else (0.92 if args.auto_resolve_threshold is None else args.auto_resolve_threshold)
+        else (
+            0.92 if args.auto_resolve_threshold is None else args.auto_resolve_threshold
+        )
     )
     summary = asyncio.run(
         _run_import(
@@ -141,6 +154,7 @@ def main() -> None:
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=args.resolve_all_best_effort,
+            skip_failed_recipes=args.skip_failed_recipes,
         )
     )
     if args.resolver_report:
@@ -199,6 +213,7 @@ async def _run_import(
     approved_mappings: dict[str, int],
     auto_resolve_threshold: float,
     resolve_all_best_effort: bool,
+    skip_failed_recipes: bool = False,
 ):
     async with AsyncUnitOfWork() as uow:
         if uow.session is None:
@@ -206,6 +221,32 @@ async def _run_import(
         await uow.session.execute(text("select 1"))
         catalog_repository = AsyncCatalogMealRepository(uow.session)
         food_reference_repository = AsyncFoodReferenceRepository(uow.session)
+
+        target_manifest = manifest
+        if skip_failed_recipes:
+            filter_importer = CatalogMealSeedImporter(
+                catalog_repository,
+                food_reference_repository,
+                dry_run=True,
+                approved_mappings=approved_mappings,
+                auto_resolve_threshold=auto_resolve_threshold,
+                resolve_all_best_effort=resolve_all_best_effort,
+            )
+            clean_recipes = []
+            for idx, r in enumerate(manifest.get("recipes", [])):
+                try:
+                    prep = await filter_importer._prepare_recipe(r, idx)
+                    if prep is not None:
+                        clean_recipes.append(r)
+                except Exception:
+                    continue
+            print(
+                f"skip_failed_recipes: filtered {len(clean_recipes)} / {len(manifest.get('recipes', []))} clean recipes."
+            )
+            target_manifest = dict(manifest)
+            target_manifest["recipes"] = clean_recipes
+            target_manifest["expected_recipe_count"] = len(clean_recipes)
+
         preview = await CatalogMealSeedImporter(
             catalog_repository,
             food_reference_repository,
@@ -213,7 +254,7 @@ async def _run_import(
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
-        ).import_manifest(manifest)
+        ).import_manifest(target_manifest)
         if dry_run or not preview.is_successful:
             return preview
         summary = await CatalogMealSeedImporter(
@@ -223,7 +264,7 @@ async def _run_import(
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
-        ).import_manifest(manifest)
+        ).import_manifest(target_manifest)
         if not summary.is_successful:
             await uow.rollback()
         return summary

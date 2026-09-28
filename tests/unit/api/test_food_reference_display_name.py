@@ -2,6 +2,7 @@
 
 from src.api.mappers.food_reference_display_name import (
     resolve_food_reference_display_name,
+    resolve_grocery_proposal_display_name,
 )
 
 
@@ -47,3 +48,32 @@ def test_non_vi_language_ignores_name_vi_column():
 
     assert resolve_food_reference_display_name(projection, "ja") == "Grilled chicken"
     assert resolve_food_reference_display_name(projection, "fr") == "Grilled chicken"
+
+
+def test_grocery_proposal_uses_authored_name_vi_without_translation():
+    assert (
+        resolve_grocery_proposal_display_name(
+            {"name": "Tomato", "name_vi": "Cà chua"}, "Tomato", "vi"
+        )
+        == "Cà chua"
+    )
+
+
+def test_grocery_proposal_uses_direct_vietnamese_label_when_catalog_label_missing():
+    assert (
+        resolve_grocery_proposal_display_name(
+            {"name": "Tomato", "name_vi": None}, "Tomato", "vi-VN"
+        )
+        == "Cà chua"
+    )
+
+
+def test_grocery_proposal_uses_localized_fallback_for_unknown_source_name():
+    assert (
+        resolve_grocery_proposal_display_name(None, "Dragon fruit", "vi")
+        == "Nguyên liệu"
+    )
+
+
+def test_grocery_proposal_replaces_numeric_source_name_with_generic_label():
+    assert resolve_grocery_proposal_display_name(None, "42", "vi") == "Nguyên liệu"

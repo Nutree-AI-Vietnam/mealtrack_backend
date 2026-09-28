@@ -243,7 +243,11 @@ class Settings(BaseSettings):
     # Image storage provider configuration
     IMAGE_STORE_PROVIDER: str = Field(
         default="cloudflare",
-        description="Image storage provider: 'cloudflare' or 'cloudinary'",
+        description="Image storage provider: 'cloudflare', 'cloudinary', or 'local'",
+    )
+    LOCAL_IMAGE_STORE_BASE_URL: str = Field(
+        default="http://localhost:8000",
+        description="Base URL for local image store delivery",
     )
     CLOUDFLARE_ACCOUNT_HASH: str = Field(
         default="",

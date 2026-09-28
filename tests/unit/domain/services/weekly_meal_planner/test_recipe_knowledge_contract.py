@@ -12,25 +12,15 @@ from src.app.services.recommended_meal_materialization_service import (
 )
 from src.app.services.weekly_grocery_service import WeeklyGroceryService
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
-from src.domain.ports.catalog_recipe_repository_port import (
-    CatalogMealSeedIngredientWrite,
-    CatalogMealSeedWrite,
-)
-from src.infra.database.base import Base
-from src.infra.database.models.food_reference_alias import FoodReferenceAliasORM
-from src.infra.database.models.food_reference_model import FoodReferenceModel
-from src.infra.database.models.meal_recommendation import (
-    AllergenReferenceORM,
-    MealCatalogORM,
-)
-from src.infra.repositories.catalog_recipe_repository_async import (
-    AsyncCatalogMealRepository,
-)
 from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
     WeeklyMealPlanStatus,
+)
+from src.domain.ports.catalog_recipe_repository_port import (
+    CatalogMealSeedIngredientWrite,
+    CatalogMealSeedWrite,
 )
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     recipe_excluded_by_allergen,
@@ -53,11 +43,23 @@ from src.domain.services.weekly_meal_planner.slot_rules import (
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     WeeklyPlanGenerationService,
 )
+from src.infra.database.base import Base
+from src.infra.database.models.food_reference_alias import FoodReferenceAliasORM
+from src.infra.database.models.food_reference_model import FoodReferenceModel
+from src.infra.database.models.meal_recommendation import (
+    AllergenReferenceORM,
+    MealCatalogORM,
+)
+from src.infra.repositories.catalog_recipe_repository_async import (
+    AsyncCatalogMealRepository,
+)
 
 _USER_ID = "11111111-1111-1111-1111-111111111111"
 
 
-def _ingredient(food_id: int, name: str, quantity: str, *, position: int) -> CatalogMealIngredient:
+def _ingredient(
+    food_id: int, name: str, quantity: str, *, position: int
+) -> CatalogMealIngredient:
     return CatalogMealIngredient(
         food_reference_id=food_id,
         display_name=name,
@@ -73,7 +75,12 @@ def _meal(**overrides) -> CatalogMeal:
         "recipe_name": "Tomato plate",
         "ingredients": [
             {"name": "Tomato", "quantity": 1200, "unit": "g", "food_reference_id": 7},
-            {"name": "Muối", "quantity": None, "unit": None, "quantity_text": "theo khẩu vị"},
+            {
+                "name": "Muối",
+                "quantity": None,
+                "unit": None,
+                "quantity_text": "theo khẩu vị",
+            },
         ],
     }
     values = {
@@ -100,7 +107,9 @@ def _meal(**overrides) -> CatalogMeal:
     return CatalogMeal(**values)
 
 
-def _plan(recipe_id: str | None = "recipe-1", override: dict | None = None) -> WeeklyMealPlan:
+def _plan(
+    recipe_id: str | None = "recipe-1", override: dict | None = None
+) -> WeeklyMealPlan:
     return WeeklyMealPlan(
         id="plan-1",
         user_id="user-1",
@@ -181,7 +190,12 @@ async def test_repeated_ingredients_keep_order_and_distinct_quantities():
 
 
 def test_to_taste_lines_add_nothing_to_grocery_or_nutrition():
-    salt = {"name": "Muối", "quantity": None, "unit": None, "quantity_text": "theo khẩu vị"}
+    salt = {
+        "name": "Muối",
+        "quantity": None,
+        "unit": None,
+        "quantity_text": "theo khẩu vị",
+    }
     tomato = {"name": "Tomato", "food_reference_id": 7, "quantity": 100, "unit": "g"}
 
     assert projection_nutrition_quantity(salt) == 0
@@ -205,8 +219,16 @@ async def test_unpublished_or_unready_recipes_are_absent_from_grocery_and_planni
 
     assert await _item(draft, []) is None
     assert await _item(unready, []) is None
-    assert is_planner_eligible(publication_status="draft", nutrition_status="ready") is False
-    assert is_planner_eligible(publication_status="published", nutrition_status="not_ready") is False
+    assert (
+        is_planner_eligible(publication_status="draft", nutrition_status="ready")
+        is False
+    )
+    assert (
+        is_planner_eligible(
+            publication_status="published", nutrition_status="not_ready"
+        )
+        is False
+    )
     generated = WeeklyPlanGenerationService().generate(
         [draft, unready],
         user_id="user-1",
@@ -220,8 +242,26 @@ async def test_unpublished_or_unready_recipes_are_absent_from_grocery_and_planni
 @pytest.mark.asyncio
 async def test_pantry_quantity_sets_needed_need_more_and_owned_without_stock_kind():
     meal = _meal()
-    partial = await _item(meal, [{"food_reference_id": 7, "available_amount": Decimal("400"), "available_unit": "g"}])
-    covered = await _item(meal, [{"food_reference_id": 7, "available_amount": Decimal("1200"), "available_unit": "g"}])
+    partial = await _item(
+        meal,
+        [
+            {
+                "food_reference_id": 7,
+                "available_amount": Decimal("400"),
+                "available_unit": "g",
+            }
+        ],
+    )
+    covered = await _item(
+        meal,
+        [
+            {
+                "food_reference_id": 7,
+                "available_amount": Decimal("1200"),
+                "available_unit": "g",
+            }
+        ],
+    )
     empty = await _item(meal, [])
 
     assert partial.status == "need_more"
@@ -231,7 +271,7 @@ async def test_pantry_quantity_sets_needed_need_more_and_owned_without_stock_kin
     assert covered.remaining == 0
     assert empty.status == "needed"
     assert empty.remaining == 1200
-    assert not hasattr(partial, "stock_kind")
+    assert partial.stock_kind is None
 
 
 @pytest.mark.asyncio
@@ -239,7 +279,13 @@ async def test_interaction_flags_do_not_change_derived_quantity():
     meal = _meal()
     item = await _item(
         meal,
-        [{"food_reference_id": 7, "available_amount": Decimal("400"), "available_unit": "g"}],
+        [
+            {
+                "food_reference_id": 7,
+                "available_amount": Decimal("400"),
+                "available_unit": "g",
+            }
+        ],
         [
             {
                 "food_reference_id": 7,
@@ -269,9 +315,7 @@ async def test_slot_override_changes_grocery_without_rewriting_catalog_payload()
         meal,
         [],
         override={
-            "ingredient_changes": [
-                {"position": 1, "new_quantity": 500, "unit": "g"}
-            ]
+            "ingredient_changes": [{"position": 1, "new_quantity": 500, "unit": "g"}]
         },
     )
 
@@ -301,13 +345,25 @@ def test_publish_resolves_alias_and_keeps_payload_with_projections():
     assert published.planner_eligible is True
 
 
-def test_normalized_allergen_excludes_recipe_and_free_text_does_not():
-    peanut = _meal(id="peanut", name="Salad", allergen_codes=("peanut",), allergens="none")
-    labeled_only = _meal(id="labeled", name="Noodles", allergens="peanut", allergen_codes=())
+def test_normalized_allergen_excludes_recipe_and_unknown_codes_fail_closed():
+    peanut = _meal(
+        id="peanut", name="Salad", allergen_codes=("peanut",), allergens="none"
+    )
+    labeled_only = _meal(
+        id="labeled", name="Noodles", allergens="peanut", allergen_codes=()
+    )
+    other_code = _meal(
+        id="other", name="Noodles", allergens="peanut", allergen_codes=("milk",)
+    )
     preferences = WeeklyMealPlanPreferences(allergies=("Peanut",))
 
     assert recipe_excluded_by_allergen(peanut.allergen_codes, preferences.allergies)
-    assert not recipe_excluded_by_allergen(labeled_only.allergen_codes, preferences.allergies)
+    assert recipe_excluded_by_allergen(
+        labeled_only.allergen_codes, preferences.allergies
+    )
+    assert not recipe_excluded_by_allergen(
+        other_code.allergen_codes, preferences.allergies
+    )
     generated = WeeklyPlanGenerationService().generate(
         [peanut, labeled_only],
         user_id="user-1",
@@ -315,7 +371,7 @@ def test_normalized_allergen_excludes_recipe_and_free_text_does_not():
         daily_calories=1800,
         preferences=preferences,
     )
-    assert {slot.recipe_id for slot in generated} == {"labeled"}
+    assert {slot.recipe_id for slot in generated} == {None}
 
 
 def test_logged_snapshot_keeps_old_provenance_and_prefers_verified_nutrition():
@@ -349,10 +405,18 @@ def test_logged_snapshot_keeps_old_provenance_and_prefers_verified_nutrition():
 
 @pytest.mark.asyncio
 async def test_materializer_persists_verified_snapshot_not_the_estimate():
-    payload = {"recipe_name": "Tomato plate", "ingredients": [{"name": "Tomato", "quantity": 100, "unit": "g"}]}
+    payload = {
+        "recipe_name": "Tomato plate",
+        "ingredients": [{"name": "Tomato", "quantity": 100, "unit": "g"}],
+    }
     meal = _meal(
         recipe_payload=payload,
-        ai_nutrition_estimate={"calories": 999, "protein_g": 1, "carbs_g": 1, "fat_g": 1},
+        ai_nutrition_estimate={
+            "calories": 999,
+            "protein_g": 1,
+            "carbs_g": 1,
+            "fat_g": 1,
+        },
     )
 
     class _Meals:
@@ -401,7 +465,9 @@ class _SyncAsyncSession:
         self._session.flush()
 
 
-def _seed(catalog_key: str, *, name: str, allergens: str, ingredient_name: str) -> CatalogMealSeedWrite:
+def _seed(
+    catalog_key: str, *, name: str, allergens: str, ingredient_name: str
+) -> CatalogMealSeedWrite:
     return CatalogMealSeedWrite(
         catalog_key=catalog_key,
         content_hash=("d" if catalog_key == "bacon-roll" else "e") * 64,
@@ -470,10 +536,14 @@ async def test_seed_publish_uses_stored_aliases_and_allergen_links():
             )
             session.expire_all()
             bacon_id = session.execute(
-                select(MealCatalogORM.id).where(MealCatalogORM.catalog_key == "bacon-roll")
+                select(MealCatalogORM.id).where(
+                    MealCatalogORM.catalog_key == "bacon-roll"
+                )
             ).scalar_one()
             plain_id = session.execute(
-                select(MealCatalogORM.id).where(MealCatalogORM.catalog_key == "plain-roll")
+                select(MealCatalogORM.id).where(
+                    MealCatalogORM.catalog_key == "plain-roll"
+                )
             ).scalar_one()
             bacon = await repository.get_meal(bacon_id)
             plain = await repository.get_meal(plain_id)
@@ -491,7 +561,9 @@ async def test_seed_publish_uses_stored_aliases_and_allergen_links():
             daily_calories=1800,
             preferences=WeeklyMealPlanPreferences(allergies=("peanut",)),
         )
-        assert {slot.recipe_id for slot in generated} == {plain.id}
+        # The plain recipe has no allergen-code coverage, so it cannot be
+        # treated as safe when a peanut allergy is active.
+        assert {slot.recipe_id for slot in generated} == {None}
     finally:
         engine.dispose()
 

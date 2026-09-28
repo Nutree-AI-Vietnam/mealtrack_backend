@@ -85,6 +85,28 @@ def test_get_allowed_image_hosts_empty_custom_domain(monkeypatch):
     assert hosts == frozenset({"res.cloudinary.com", "imagedelivery.net"})
 
 
+@pytest.mark.parametrize(
+    "custom_domain",
+    ["localhost", "localhost.", "api.localhost", "127.0.0.1", "192.168.1.10", "[::1]"],
+)
+def test_get_allowed_image_hosts_rejects_local_custom_domains(
+    monkeypatch, custom_domain
+):
+    import src.infra.config.settings as settings_module
+    from src.api.base_dependencies import get_allowed_image_hosts
+
+    class _SettingsWithLocalDomain:
+        CLOUDFLARE_CUSTOM_DOMAIN = custom_domain
+
+    monkeypatch.setattr(
+        settings_module, "get_settings", lambda: _SettingsWithLocalDomain()
+    )
+
+    assert get_allowed_image_hosts() == frozenset(
+        {"res.cloudinary.com", "imagedelivery.net"}
+    )
+
+
 def test_local_hooks_not_registered_in_production(monkeypatch):
     import src.api.base_dependencies as dependencies
     import src.app.events.meal.meal_events as meal_events
@@ -121,4 +143,3 @@ def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
     finally:
         meal_events.register_local_insight_hook(None)
         meal_events.register_local_cache_invalidation_hook(None)
-

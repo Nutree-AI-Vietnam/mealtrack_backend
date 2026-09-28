@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import date
+from typing import Any
 from uuid import uuid4
 
 from src.domain.exceptions.meal_recommendation_exceptions import (
@@ -17,6 +18,10 @@ from src.domain.model.meal_recommendation import (
     PersistedMealRecommendationSlot,
 )
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
+from src.domain.model.nutrition.extra_nutrients import (
+    complete_micros_from_per_100g_portions,
+)
+from src.domain.model.nutrition.micros_ops import scale_micros
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
@@ -97,6 +102,10 @@ class RecommendedMealMaterializationService:
             food_items = _distribute_catalog_macros(
                 food_items, catalog_meal, portion_multiplier
             )
+        recipe_micros = complete_micros_from_per_100g_portions(
+            _ingredient_micro_portions(catalog_meal, projections)
+        )
+        recipe_micros = scale_micros(recipe_micros, portion_multiplier)
         meal_time = noon_utc_for_date(meal_date, timezone)
         verified_nutrition = {
             "calories": int(round(catalog_meal.calories * portion_multiplier)),
@@ -129,6 +138,7 @@ class RecommendedMealMaterializationService:
                     fat=float(catalog_meal.fat_g) * portion_multiplier,
                     fiber=float(catalog_meal.fiber_g) * portion_multiplier,
                 ),
+                micros=recipe_micros,
                 food_items=food_items,
             ),
             meal_type=meal_type,
@@ -190,7 +200,34 @@ async def _load_nutrition_projections(
     loader = getattr(repo, "get_nutrition_projections", None)
     if loader is None:
         return {}
-    return await loader(food_reference_ids)
+    return await loader(food_reference_ids, preserve_nutrient_units=True)
+
+
+def _ingredient_micro_portions(
+    catalog_meal: CatalogMeal,
+    projections: dict[int, FoodReferenceNutritionProjection],
+) -> list[tuple[dict[str, Any] | None, float]]:
+    portions: list[tuple[dict[str, Any] | None, float]] = []
+    for ingredient in catalog_meal.ingredients:
+        quantity = float(ingredient.quantity)
+        if quantity <= 0:
+            continue
+        projection = projections.get(ingredient.food_reference_id)
+        if projection is None:
+            portions.append((None, 0.0))
+            continue
+        try:
+            resolved = _CATALOG_CONVERTER.resolve(
+                reference=projection,
+                quantity=quantity,
+                unit=ingredient.unit,
+                display_name=ingredient.name,
+            )
+        except IngredientQuantityConversionError:
+            portions.append((None, 0.0))
+            continue
+        portions.append((projection.extra_nutrients, resolved.grams))
+    return portions
 
 
 def _food_item_for_ingredient(

@@ -7,9 +7,9 @@ applied to a copy of the lines and do not rewrite the catalog payload.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Mapping
 
 from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
     normalize_ingredient_quantity,
@@ -50,6 +50,7 @@ class GrocerySlot:
     people: int
     ingredients: tuple[GroceryIngredient, ...]
     recipe_override: Mapping | None = None
+    day_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,7 @@ class DerivedGroceryItem:
     checked: bool = False
     do_not_buy: bool = False
     manually_owned: bool = False
+    daily_amounts: tuple[tuple[int, float, float], ...] = ()
 
 
 def apply_recipe_override(
@@ -131,6 +133,7 @@ def aggregate_grocery(
             "amount": Decimal("0"),
             "quantity_confidence": "verified",
             "contributions": [],
+            "day_amounts": defaultdict(Decimal),
         }
     )
     for slot in slots:
@@ -154,6 +157,7 @@ def aggregate_grocery(
             bucket["category"] = line.category or "pantry"
             bucket["amount"] += scaled
             bucket["contributions"].append((line.position, float(scaled)))
+            bucket["day_amounts"][slot.day_index] += scaled
             bucket["quantity_confidence"] = _confidence(
                 current=bucket["quantity_confidence"],
                 serving_confidence=serving_confidence,
@@ -163,11 +167,25 @@ def aggregate_grocery(
     pantry_by_food = {item.food_reference_id: item for item in pantry}
     interaction_by_food = {item.food_reference_id: item for item in interactions}
     items: list[DerivedGroceryItem] = []
-    for (food_id, dimension, unit), value in sorted(totals.items(), key=lambda item: item[0]):
+    for (food_id, dimension, unit), value in sorted(
+        totals.items(), key=lambda item: item[0]
+    ):
         stock = pantry_by_food.get(food_id)
         available = _available_amount(stock, dimension=dimension, unit=unit)
         status, remaining = grocery_status(value["amount"], available)
         flags = interaction_by_food.get(food_id, GroceryInteraction(food_id))
+        stock_remaining = max(available or Decimal("0"), Decimal("0"))
+        daily_amounts = []
+        for day_index, day_needed in sorted(value["day_amounts"].items()):
+            used_for_day = min(day_needed, stock_remaining)
+            stock_remaining -= used_for_day
+            daily_amounts.append(
+                (
+                    day_index,
+                    float(day_needed),
+                    float(day_needed - used_for_day),
+                )
+            )
         items.append(
             DerivedGroceryItem(
                 ingredient_id=food_id,
@@ -183,14 +201,13 @@ def aggregate_grocery(
                 checked=flags.checked,
                 do_not_buy=flags.do_not_buy,
                 manually_owned=flags.manually_owned,
+                daily_amounts=tuple(daily_amounts),
             )
         )
     return tuple(items)
 
 
-def grocery_status(
-    required: Decimal, available: Decimal | None
-) -> tuple[str, Decimal]:
+def grocery_status(required: Decimal, available: Decimal | None) -> tuple[str, Decimal]:
     if available is None or available <= 0:
         return "needed", required
     remaining = required - available
@@ -200,7 +217,11 @@ def grocery_status(
 
 
 def _serving_multiplier(slot: GrocerySlot) -> tuple[Decimal, str]:
-    if slot.base_servings and slot.base_servings > 0 and slot.serving_confidence != "unknown":
+    if (
+        slot.base_servings
+        and slot.base_servings > 0
+        and slot.serving_confidence != "unknown"
+    ):
         return (
             Decimal(slot.people) / Decimal(slot.base_servings),
             slot.serving_confidence,

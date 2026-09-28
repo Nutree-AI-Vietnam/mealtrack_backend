@@ -218,7 +218,9 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             else:
                 item.available_amount = update.get("available_amount")
                 item.available_unit = update.get("available_unit")
-            if any(key in update for key in ("checked", "do_not_buy", "manually_owned")):
+            if any(
+                key in update for key in ("checked", "do_not_buy", "manually_owned")
+            ):
                 state = by_state.get(food_id)
                 if state is None:
                     state = WeeklyGroceryItemStateORM(
@@ -252,7 +254,9 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             for item in result.scalars().all()
         ]
 
-    async def list_grocery_interactions(self, *, user_id: str, plan_id: str) -> list[dict]:
+    async def list_grocery_interactions(
+        self, *, user_id: str, plan_id: str
+    ) -> list[dict]:
         result = await self.session.execute(
             select(WeeklyGroceryItemStateORM)
             .join(
@@ -285,7 +289,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                 WeeklyMealPlanSlotORM.plan_id == plan_id,
                 WeeklyMealPlanORM.user_id == user_id,
             )
-            .with_for_update()
+            .with_for_update(of=WeeklyMealPlanSlotORM)
         )
         slot = result.scalar_one_or_none()
         if slot is None:
@@ -305,7 +309,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                 WeeklyMealPlanSlotORM.plan_id == plan_id,
                 WeeklyMealPlanORM.user_id == user_id,
             )
-            .with_for_update()
+            .with_for_update(of=WeeklyMealPlanSlotORM)
         )
         return result.scalar_one_or_none()
 

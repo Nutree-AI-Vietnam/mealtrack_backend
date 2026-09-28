@@ -146,7 +146,11 @@ class AsyncFoodReferenceRepository:
         return food_reference_model_to_nutrition_projection(model) if model else None
 
     async def get_nutrition_projections(
-        self, food_reference_ids: list[int], *, for_update: bool = False
+        self,
+        food_reference_ids: list[int],
+        *,
+        for_update: bool = False,
+        preserve_nutrient_units: bool = False,
     ) -> dict[int, FoodReferenceNutritionProjection]:
         ids = sorted({int(value) for value in food_reference_ids})
         if not ids:
@@ -161,7 +165,9 @@ class AsyncFoodReferenceRepository:
             statement = statement.with_for_update()
         result = await self._session.execute(statement)
         return {
-            model.id: food_reference_model_to_nutrition_projection(model)
+            model.id: food_reference_model_to_nutrition_projection(
+                model, preserve_nutrient_units=preserve_nutrient_units
+            )
             for model in result.scalars().all()
         }
 
