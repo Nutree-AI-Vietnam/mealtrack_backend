@@ -31,6 +31,9 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanSlotAdjustment,
 )
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    resolve_allergen_preferences,
+)
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
 )
@@ -280,6 +283,16 @@ class WeeklyMealPlanService:
                 raise ResourceNotFoundException("Weekly meal plan not found")
             meals = await uow.catalog_recipes.list_active_meals()
             profile = await uow.users.get_profile(command.user_id)
+            profile_allergies = _profile_values(profile, "allergies")
+            known_allergen_codes = ()
+            list_allergen_codes = getattr(
+                uow.catalog_recipes, "list_allergen_codes", None
+            )
+            if (
+                profile_allergies
+                or re.search(r"\ballerg(?:ic|y|ies)\b", prompt, re.IGNORECASE)
+            ) and callable(list_allergen_codes):
+                known_allergen_codes = tuple(await list_allergen_codes())
         target = _target_coordinate(command)
         slots_by_coordinate = {
             (slot.day_index, slot.slot_index): slot for slot in plan.slots
@@ -296,7 +309,9 @@ class WeeklyMealPlanService:
                     error_code="AI_TARGET_LOGGED",
                 )
         meals = tuple(meals)
-        request_preferences = _preferences_from_prompt(plan.preferences, prompt, meals)
+        request_preferences = _preferences_from_prompt(
+            plan.preferences, prompt, meals, known_allergen_codes
+        )
         preferences, profile_dietary_preferences = _with_profile_context(
             plan.preferences,
             request_preferences,
@@ -304,6 +319,7 @@ class WeeklyMealPlanService:
             meals,
             request_explicitly_sets_diet=request_preferences.diet
             != plan.preferences.diet,
+            known_allergen_codes=known_allergen_codes,
         )
         proposal_preferences = (
             request_preferences if target is None else plan.preferences
@@ -777,24 +793,17 @@ def _with_profile_context(
     meals,
     *,
     request_explicitly_sets_diet: bool,
+    known_allergen_codes: tuple[str, ...] = (),
 ):
+    # Saved profile diets are advisory context; strict diet constraints live in
+    # plan preferences or explicit requests parsed by _preferences_from_prompt.
     profile_dietary_preferences = _profile_values(profile, "dietary_preferences")
-    unsupported = {
-        "vegan",
-        "gluten free",
-        "dairy free",
-        "pescatarian",
-        "halal",
-    } & set(profile_dietary_preferences)
-    if unsupported:
-        raise ValidationException(
-            "A saved dietary preference is not yet supported by weekly recipe filtering",
-            error_code="AI_PROFILE_PREFERENCE_UNSUPPORTED",
-        )
 
     allergies = set(request_preferences.allergies)
     allergies.update(
-        _profile_allergy_codes(_profile_values(profile, "allergies"), meals)
+        _profile_allergy_codes(
+            _profile_values(profile, "allergies"), meals, known_allergen_codes
+        )
     )
     diet = request_preferences.diet
     if (
@@ -819,66 +828,24 @@ def _with_profile_context(
     )
 
 
-def _profile_allergy_codes(values: tuple[str, ...], meals) -> tuple[str, ...]:
-    known: dict[str, str] = {}
+def _profile_allergy_codes(
+    values: tuple[str, ...], meals, known_allergen_codes: tuple[str, ...] = ()
+) -> tuple[str, ...]:
+    known_codes = list(known_allergen_codes)
+    # Include observed codes for compatibility with catalog adapters that do not
+    # expose the global allergen reference.
     for meal in meals:
         for raw_code in getattr(meal, "allergen_codes", ()):
             code = str(raw_code).strip()
             if code:
-                known.setdefault(
-                    code.replace(" ", "_").replace("-", "_").casefold(), code
-                )
-    aliases = {
-        "nuts": {
-            "peanut",
-            "peanuts",
-            "tree_nut",
-            "tree_nuts",
-            "almond",
-            "cashew",
-            "hazelnut",
-            "walnut",
-            "pecan",
-            "pistachio",
-        },
-        "nut": {
-            "peanut",
-            "peanuts",
-            "tree_nut",
-            "tree_nuts",
-            "almond",
-            "cashew",
-            "hazelnut",
-            "walnut",
-            "pecan",
-            "pistachio",
-        },
-        "dairy": {"milk", "dairy", "lactose"},
-        "shellfish": {
-            "shellfish",
-            "crustacean",
-            "mollusk",
-            "shrimp",
-            "crab",
-            "lobster",
-        },
-        "gluten": {"gluten", "wheat", "barley", "rye"},
-    }
-    resolved: set[str] = set()
-    for value in values:
-        cleaned = re.sub(r"\ballerg(?:y|ic)\b", "", value).strip()
-        normalized = cleaned.replace(" ", "_").replace("-", "_")
-        candidates = aliases.get(normalized, {normalized})
-        if normalized.endswith("s") and not normalized.endswith("ss"):
-            candidates = {*candidates, normalized[:-1]}
-        matches = {known[candidate] for candidate in candidates if candidate in known}
-        if not matches:
-            raise ValidationException(
-                "A saved allergy cannot be checked against the available recipe data",
-                error_code="AI_PROFILE_ALLERGY_UNSUPPORTED",
-            )
-        resolved.update(matches)
-    return tuple(sorted(resolved))
+                known_codes.append(code)
+    resolved = resolve_allergen_preferences(values, known_codes)
+    if resolved is None:
+        raise ValidationException(
+            "A saved allergy cannot be checked against the available recipe data",
+            error_code="AI_PROFILE_ALLERGY_UNSUPPORTED",
+        )
+    return resolved
 
 
 def _validate_proposal_outcome(
@@ -955,7 +922,10 @@ def _prompt_explicitly_requests_clear(prompt: str) -> bool:
 
 
 def _preferences_from_prompt(
-    current: WeeklyMealPlanPreferences, prompt: str, meals=()
+    current: WeeklyMealPlanPreferences,
+    prompt: str,
+    meals=(),
+    known_allergen_codes: tuple[str, ...] = (),
 ) -> WeeklyMealPlanPreferences:
     lowered = (
         unicodedata.normalize("NFKD", prompt)
@@ -1002,18 +972,17 @@ def _preferences_from_prompt(
         else current.cooking_time
     )
     allergies = set(current.allergies)
-    allergy_statement = bool(re.search(r"\ballerg(?:ic|y)\b", lowered)) and not bool(
-        re.search(r"\b(?:not|isn't|is not)\s+allergic\b", lowered)
-    )
+    allergy_statement = _has_positive_allergy_statement(lowered)
     allergen_codes = {
-        str(code).replace("_", " ").casefold()
+        str(code).strip()
         for meal in meals
         for code in getattr(meal, "allergen_codes", ())
     }
+    allergen_codes.update(str(code).strip() for code in known_allergen_codes)
     allergen_codes.update(
         {
             "peanut",
-            "tree nut",
+            "tree_nut",
             "milk",
             "egg",
             "soy",
@@ -1025,16 +994,27 @@ def _preferences_from_prompt(
         }
     )
     if allergy_statement:
-        for code in allergen_codes:
-            variants = {code}
-            if code.endswith("s"):
-                variants.add(code[:-1])
-            else:
-                variants.add(f"{code}s")
-            if any(
-                re.search(rf"\b{re.escape(variant)}\b", lowered) for variant in variants
-            ):
-                allergies.add(code.replace(" ", "_"))
+        resolved_allergies: set[str] = set()
+        allergy_subjects = _explicit_allergy_subjects(lowered)
+        if not allergy_subjects:
+            raise ValidationException(
+                "A requested allergy cannot be checked against the available recipe data",
+                error_code="AI_PREFERENCE_ALLERGY_UNSUPPORTED",
+            )
+        for subject in allergy_subjects:
+            resolved = resolve_allergen_preferences((subject,), allergen_codes)
+            if resolved is None:
+                raise ValidationException(
+                    "A requested allergy cannot be checked against the available recipe data",
+                    error_code="AI_PREFERENCE_ALLERGY_UNSUPPORTED",
+                )
+            resolved_allergies.update(resolved)
+        if not resolved_allergies:
+            raise ValidationException(
+                "A requested allergy cannot be checked against the available recipe data",
+                error_code="AI_PREFERENCE_ALLERGY_UNSUPPORTED",
+            )
+        allergies.update(resolved_allergies)
     dislikes = set(current.dislikes)
     ingredient_terms = {
         ingredient.display_name.strip().casefold()
@@ -1060,6 +1040,71 @@ def _preferences_from_prompt(
         dislikes=tuple(sorted(dislikes)),
         allergies=tuple(sorted(allergies)),
     )
+
+
+def _explicit_allergy_subjects(prompt: str) -> tuple[str, ...]:
+    parsed: list[str] = []
+    subject_matches = [
+        (match.start(), match.group(1), True)
+        for match in re.finditer(
+            r"\ballerg(?:ic|y|ies)\s+(?:(?:to|for|is|are|include|includes)\s+)?([^.!?;]+)",
+            prompt,
+        )
+    ]
+    subject_matches.extend(
+        (match.end() - len("allergy"), match.group(1), True)
+        for match in re.finditer(r"\b((?:[a-z0-9_'-]+\s+){1,6})allergy\b", prompt)
+    )
+    subject_matches.extend(
+        (match.start(), match.group(1), True)
+        for match in re.finditer(r"\ballergy\s*(?::|is)\s*([^.!?;]+)", prompt)
+    )
+    subject_matches.extend(
+        (match.start(1), match.group(1), False)
+        for match in _NO_ALLERGY_EXCEPTION_PATTERN.finditer(prompt)
+    )
+    for allergy_position, subject, check_negation in subject_matches:
+        if check_negation and _is_negated_allergy_mention(prompt, allergy_position):
+            continue
+        cleaned = re.sub(r"^(?:i am|i'm|i have|i've got|my)\s+", "", subject.strip())
+        cleaned = re.sub(r"^(?:a|an|the|food)\s+", "", cleaned)
+        for part in re.split(r"\s*(?:,|;|\band\b|\bor\b|\bbut\b)\s*", cleaned):
+            part = re.sub(r"^(?:and|or|but)\s+", "", part.strip())
+            if re.match(
+                r"^(?:but|please|so|because|avoid|no|not|without|change|switch|make|give|show|find|replace|recommend|suggest|prefer|like|enjoy|hate|dislike|could|can|don't like|do not like|don't want|do not want|don't eat|do not eat|i am|i'm|i have|i've got|i want|i prefer|i like|i enjoy|i hate|i dislike|i don't like|i do not like|i don't want|i do not want|i don't eat|i do not eat|i avoid|i would|i'd like|i can|i will|i need|i can't stand|i cannot stand)\b",
+                part,
+            ):
+                break
+            if part:
+                parsed.append(part)
+    return tuple(parsed)
+
+
+def _has_positive_allergy_statement(prompt: str) -> bool:
+    return bool(_NO_ALLERGY_EXCEPTION_PATTERN.search(prompt)) or any(
+        not _is_negated_allergy_mention(prompt, match.start())
+        for match in re.finditer(r"\ballerg(?:ic|y|ies)\b", prompt)
+    )
+
+
+def _is_negated_allergy_mention(prompt: str, position: int) -> bool:
+    prefix = prompt[:position]
+    boundaries = [
+        match.end() for match in re.finditer(r"[.!?;]|\b(?:but|and)\b", prefix)
+    ]
+    clause_prefix = prefix[max(boundaries, default=0) :]
+    return bool(
+        re.search(
+            r"\b(?:not|isn't|is\s+not|never|no\s+longer|no|don't\s+have|do\s+not\s+have)(?:\s+\w+){0,2}\s*$",
+            clause_prefix,
+        )
+    )
+
+
+_NO_ALLERGY_EXCEPTION_PATTERN = re.compile(
+    r"\b(?:no\s+allerg(?:y|ies)|(?:don't|do\s+not)\s+have\s+(?:any\s+)?allerg(?:y|ies))\b"
+    r"\s*(?:,|;)?\s*(?:except(?:\s+for)?|other\s+than|besides)\s+([^.!?;]+)"
+)
 
 
 def _target_coordinate(command: AiAdjustMealPlanCommand) -> tuple[int, int] | None:
