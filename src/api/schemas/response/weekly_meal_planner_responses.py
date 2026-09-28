@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WeeklyRecipeSummaryResponse(BaseModel):
@@ -79,6 +79,8 @@ class RecipeDetailNutritionResponse(BaseModel):
     carbs: float
     fat: float
     fiber: float
+    micros: dict[str, float] = Field(default_factory=dict)
+    score: int | None = None
 
 
 class RecipeDetailResponse(BaseModel):
@@ -109,12 +111,29 @@ class WeeklyAiSlotChangeResponse(BaseModel):
     action: str
 
 
+class WeeklyAiProposalGroceryItemResponse(BaseModel):
+    ingredient_id: int
+    name: str
+    category: str
+    total_needed: float
+    unit: str
+
+
 class WeeklyAiProposalResponse(BaseModel):
     base_revision: int = 1
     explanation: str
     diff_summary: str
     proposed_plan: WeeklyMealPlanResponse
     slot_changes: list[WeeklyAiSlotChangeResponse]
+    proposed_groceries: list[WeeklyAiProposalGroceryItemResponse] = Field(
+        default_factory=list
+    )
+
+
+class GroceryDayAmountResponse(BaseModel):
+    day_index: int
+    total_needed: float
+    remaining: float
 
 
 class GroceryItemResponse(BaseModel):
@@ -126,6 +145,8 @@ class GroceryItemResponse(BaseModel):
     stock_kind: str | None = None
     status: str
     quantity_confidence: str
+    remaining: float
+    daily_amounts: list[GroceryDayAmountResponse] = Field(default_factory=list)
 
 
 class GroceryCategoryResponse(BaseModel):

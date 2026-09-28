@@ -5,6 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from src.domain.model.meal_recommendation import CatalogMeal
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    recipe_excluded_by_allergen,
+    resolve_allergen_preferences,
+)
+from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
+    is_non_meal_title,
+)
 
 
 @dataclass(frozen=True)
@@ -26,13 +33,26 @@ class WeeklyRecipeService:
         diet=None,
         max_cook_time=None,
         cuisine=None,
+        meal_type=None,
         dislikes=(),
         allergies=(),
         limit=20,
         offset=0,
     ) -> RecipePage:
         async with self.uow_factory() as uow:
-            meals = await uow.catalog_recipes.list_active_meals(cuisine=cuisine)
+            meals = await uow.catalog_recipes.list_active_meals(
+                cuisine=cuisine,
+                meal_type=meal_type,
+            )
+            known_allergen_codes = (
+                await uow.catalog_recipes.list_allergen_codes() if allergies else ()
+            )
+        allergen_codes = resolve_allergen_preferences(
+            allergies,
+            known_allergen_codes,
+        )
+        if allergen_codes is None:
+            return RecipePage(items=(), total=0)
         filtered = [
             meal
             for meal in meals
@@ -40,9 +60,12 @@ class WeeklyRecipeService:
             and _matches_diet(meal, diet)
             and _matches_time(meal, max_cook_time)
             and not _contains_terms(meal, dislikes)
+            and not (
+                meal_type in {"lunch", "dinner"}
+                and is_non_meal_title(meal.name, meal.tag)
+            )
+            and not recipe_excluded_by_allergen(meal.allergen_codes, allergen_codes)
         ]
-        # Allergy data is intentionally disclosure-only until its canonical source is approved.
-        del allergies
         ordered = sorted(
             filtered,
             key=lambda item: (

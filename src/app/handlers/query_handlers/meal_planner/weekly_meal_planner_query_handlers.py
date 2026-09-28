@@ -36,6 +36,7 @@ class ListRecipesQueryHandler(EventHandler):
             diet=query.diet,
             max_cook_time=query.max_cook_time,
             cuisine=query.cuisine,
+            meal_type=query.meal_type,
             allergies=query.allergies,
             dislikes=query.dislikes,
             limit=query.limit,

@@ -93,7 +93,10 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   CQRS commands/queries are under `src/app/commands/meal_planner/` and
   `src/app/queries/meal_planner/`, with persistence in
   `src/infra/database/models/weekly_meal_planner/` and
-  `src/infra/repositories/weekly_meal_plan_repository_async.py`.
+  `src/infra/repositories/weekly_meal_plan_repository_async.py`. The mobile
+  planner uses the persisted current-week record as its durable cache and only
+  generates when the week is missing or still an empty draft; generation keeps
+  logged slots intact and filters non-meal catalog candidates.
 - Recipe detail foundation: catalog metadata and immutable ordered steps extend
   `MealCatalogORM`; canonical nutrition still comes from linked food references
   and the catalog materializer.

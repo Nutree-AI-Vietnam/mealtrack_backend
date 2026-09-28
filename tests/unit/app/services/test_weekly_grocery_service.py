@@ -1,9 +1,15 @@
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
 import pytest
 
-from src.app.services.weekly_grocery_service import WeeklyGroceryService
+from src.api.schemas.response.weekly_meal_planner_responses import GroceryItemResponse
+from src.app.services.weekly_grocery_service import (
+    WeeklyGroceryService,
+    _resolve_grocery_category,
+    _slot_from_meal,
+)
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlan,
@@ -77,6 +83,9 @@ class _Plans:
             }
         ]
 
+    async def list_grocery_interactions(self, **kwargs):
+        return []
+
 
 class _Uow:
     catalog_recipes = _Catalog()
@@ -88,7 +97,7 @@ async def test_groceries_scale_people_and_subtract_pantry():
     categories = await WeeklyGroceryService().calculate(_Uow(), _plan())
 
     item = categories[0].items[0]
-    assert item.category == "produce"
+    assert item.category == "fresh_produce"
     assert item.total_needed == 300
     assert item.stock_amount == 100
     assert item.status == "need_more"
@@ -121,6 +130,80 @@ async def test_groceries_do_not_silently_scale_unknown_servings():
     assert item.quantity_confidence == "unscaled"
 
 
+@pytest.mark.asyncio
+async def test_groceries_allocate_partial_stock_once_across_days_and_keep_kind():
+    plan = _plan()
+    plan = WeeklyMealPlan(
+        **{
+            **plan.__dict__,
+            "people": 1,
+            "preferences": WeeklyMealPlanPreferences(people=1),
+            "slots": tuple(
+                WeeklyMealPlanSlot(
+                    id=slot.id,
+                    day_index=slot.day_index,
+                    slot_index=slot.slot_index,
+                    recipe_id=(
+                        "recipe-1"
+                        if slot.day_index in (0, 1) and slot.slot_index == 0
+                        else None
+                    ),
+                )
+                for slot in plan.slots
+            ),
+        }
+    )
+
+    class PlansWithBoughtStock(_Plans):
+        async def list_pantry(self, **kwargs):
+            return [
+                {
+                    "food_reference_id": 7,
+                    "available_amount": Decimal("50"),
+                    "available_unit": "g",
+                }
+            ]
+
+        async def list_grocery_interactions(self, **kwargs):
+            return [{"food_reference_id": 7, "checked": True}]
+
+    class UowWithBoughtStock:
+        catalog_recipes = _Catalog()
+        weekly_meal_plans = PlansWithBoughtStock()
+
+    item = (await WeeklyGroceryService().calculate(UowWithBoughtStock(), plan))[
+        0
+    ].items[0]
+
+    assert item.stock_amount == 50
+    assert item.stock_kind == "bought"
+    assert item.status == "need_more"
+    assert item.remaining == 250
+    assert item.daily_amounts == (
+        {"day_index": 0, "total_needed": 150, "remaining": 100},
+        {"day_index": 1, "total_needed": 150, "remaining": 150},
+    )
+    response = GroceryItemResponse(**item.__dict__)
+    assert response.remaining == 250
+    assert response.stock_kind == "bought"
+    assert [day.model_dump() for day in response.daily_amounts] == list(
+        item.daily_amounts
+    )
+
+    class PlansWithOwnedStock(PlansWithBoughtStock):
+        async def list_grocery_interactions(self, **kwargs):
+            return [{"food_reference_id": 7, "manually_owned": True}]
+
+    class UowWithOwnedStock:
+        catalog_recipes = _Catalog()
+        weekly_meal_plans = PlansWithOwnedStock()
+
+    owned_item = (await WeeklyGroceryService().calculate(UowWithOwnedStock(), plan))[
+        0
+    ].items[0]
+    assert owned_item.stock_kind == "owned"
+
+
 def test_quantity_normalization_only_uses_exact_conversions():
     assert normalize_ingredient_quantity(1, "kg").amount == Decimal("1000")
     assert normalize_ingredient_quantity(250, "g").unit == "g"
@@ -128,3 +211,71 @@ def test_quantity_normalization_only_uses_exact_conversions():
     count = normalize_ingredient_quantity(2, "tomatoes")
     assert count.dimension == "raw:tomatoes"
     assert count.confidence == "unknown"
+
+
+def test_eggplant_is_produce_while_eggs_are_protein():
+    assert _resolve_grocery_category("Eggplant", None) == "fresh_produce"
+    assert _resolve_grocery_category("2 eggs", None) == "protein"
+
+
+@pytest.mark.asyncio
+async def test_groceries_exclude_vietnamese_equipment_from_catalog_and_payload():
+    class CatalogWithEquipment(_Catalog):
+        async def get_meal(self, recipe_id):
+            meal = await super().get_meal(recipe_id)
+            return replace(
+                meal,
+                ingredients=(
+                    *meal.ingredients,
+                    CatalogMealIngredient(
+                        food_reference_id=8,
+                        display_name="Tô",
+                        quantity=Decimal("1"),
+                        unit="piece",
+                    ),
+                    CatalogMealIngredient(
+                        food_reference_id=9,
+                        display_name="Dụng cụ",
+                        quantity=Decimal("20"),
+                        unit="g",
+                    ),
+                ),
+                recipe_payload={
+                    "ingredients": [
+                        {"name": "Dụng cụ sơ chế", "quantity": 15, "unit": "g"},
+                        {
+                            "name": "Olive oil",
+                            "quantity": 10,
+                            "unit": "g",
+                        },
+                        {
+                            "name": "Whisk",
+                            "quantity": 1,
+                            "unit": "piece",
+                            "is_equipment": True,
+                        },
+                    ]
+                },
+            )
+
+    meal = await CatalogWithEquipment().get_meal("recipe-1")
+    grocery_service = WeeklyGroceryService()
+
+    class UowWithEquipment:
+        catalog_recipes = CatalogWithEquipment()
+        weekly_meal_plans = _Plans()
+
+    categories = await grocery_service.calculate(UowWithEquipment(), _plan())
+    calculated_names = {item.name for category in categories for item in category.items}
+    proposal_items = grocery_service.project(_plan(), [meal])
+    slot_names = {
+        ingredient.name
+        for ingredient in _slot_from_meal(
+            meal, plan_people=2, override=None
+        ).ingredients
+    }
+
+    assert calculated_names == {"Tomato"}
+    assert {item.name for item in proposal_items} == {"Tomato"}
+    assert {item.ingredient_id for item in proposal_items} == {7}
+    assert slot_names == {"Tomato", "Olive oil"}

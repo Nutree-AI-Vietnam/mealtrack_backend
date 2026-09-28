@@ -71,6 +71,7 @@ class FoodReferenceRepositoryPort(Protocol):
         food_reference_ids: list[int],
         *,
         for_update: bool = False,
+        preserve_nutrient_units: bool = False,
     ) -> dict[int, FoodReferenceNutritionProjection]:
         """Return canonical projections for a deduplicated ID batch."""
 

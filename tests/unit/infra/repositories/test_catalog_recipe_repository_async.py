@@ -56,6 +56,8 @@ def _meal_row():
     food_reference.sugar_100g = 0.1
     food_reference.density = 1.0
     food_reference.serving_size_rows = []
+    food_reference.nutrient_rows = []
+    food_reference.extra_nutrients = None
 
     ingredient = MagicMock()
     ingredient.food_reference_id = 7
@@ -80,6 +82,116 @@ def _meal_row():
     row.popularity_rank = 1
     row.ingredients = [ingredient]
     return row
+
+
+@pytest.mark.asyncio
+async def test_get_meal_detail_scales_canonical_micros_by_resolved_ingredient_weight():
+    row = _meal_row()
+    row.ingredients[0].food_reference.extra_nutrients = {
+        "iron_mg": {"amount": 2.0, "unit": "mg"},
+        "vitamin_a_mcg": {"amount": 300.0, "unit": "mcg"},
+        "sodium_mg": {"amount": 0.2, "unit": "g"},
+    }
+    row.ingredients[0].quantity = 50
+    row.steps = []
+    session = _AsyncSession([_Result(one=row)])
+
+    meal = await AsyncCatalogMealRepository(session).get_meal_detail("catalog-1")
+
+    assert meal is not None
+    assert meal.nutrition_micros is not None
+    assert meal.nutrition_micros.iron == pytest.approx(1.0)
+    assert meal.nutrition_micros.vitamin_a == pytest.approx(150.0)
+    assert meal.nutrition_micros.sodium == pytest.approx(100.0)
+
+
+@pytest.mark.asyncio
+async def test_get_meal_detail_keeps_micros_unknown_when_an_ingredient_is_missing_data():
+    row = _meal_row()
+    row.ingredients[0].food_reference.extra_nutrients = {"iron_mg": 2.0}
+    second_reference = MagicMock()
+    second_reference.id = 8
+    second_reference.name = "Chicken"
+    second_reference.source = "catalog_seed"
+    second_reference.is_verified = True
+    second_reference.protein_100g = 23.0
+    second_reference.carbs_100g = 0.0
+    second_reference.fat_100g = 2.5
+    second_reference.fiber_100g = 0.0
+    second_reference.sugar_100g = 0.0
+    second_reference.density = 1.0
+    second_reference.serving_size_rows = []
+    second_reference.nutrient_rows = []
+    second_reference.extra_nutrients = None
+    ingredient = MagicMock()
+    ingredient.food_reference_id = 8
+    ingredient.display_name = "Chicken"
+    ingredient.quantity = 100
+    ingredient.unit = "g"
+    ingredient.food_reference = second_reference
+    row.ingredients.append(ingredient)
+    row.steps = []
+    session = _AsyncSession([_Result(one=row)])
+
+    meal = await AsyncCatalogMealRepository(session).get_meal_detail("catalog-1")
+
+    assert meal is not None
+    assert meal.nutrition_micros is None
+
+
+@pytest.mark.asyncio
+async def test_get_meal_detail_prefers_normalized_nutrient_row_over_legacy_alias():
+    row = _meal_row()
+    reference = row.ingredients[0].food_reference
+    reference.extra_nutrients = {
+        "iron_mg": {
+            "amount": 8.0,
+            "unit": "mg",
+            "_normalized_row": True,
+        }
+    }
+    reference.nutrient_rows = [MagicMock(nutrient_key="iron", amount=2.0, unit="mg")]
+    row.steps = []
+    session = _AsyncSession([_Result(one=row)])
+
+    meal = await AsyncCatalogMealRepository(session).get_meal_detail("catalog-1")
+
+    assert meal is not None
+    assert meal.nutrition_micros is not None
+    assert meal.nutrition_micros.iron == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_get_meal_detail_omits_normalized_micro_without_a_unit():
+    row = _meal_row()
+    row.ingredients[0].food_reference.nutrient_rows = [
+        MagicMock(nutrient_key="iron_mg", amount=2.0, unit=None)
+    ]
+    row.steps = []
+    session = _AsyncSession([_Result(one=row)])
+
+    meal = await AsyncCatalogMealRepository(session).get_meal_detail("catalog-1")
+
+    assert meal is not None
+    assert meal.nutrition_micros is None
+
+
+@pytest.mark.asyncio
+async def test_get_meal_detail_keeps_legacy_scalar_when_normalized_row_has_no_unit():
+    row = _meal_row()
+    reference = row.ingredients[0].food_reference
+    reference.extra_nutrients = {"iron_mg": 2.0}
+    reference.nutrient_rows = [
+        MagicMock(nutrient_key="iron_mg", amount=99.0, unit=None)
+    ]
+    row.steps = []
+    session = _AsyncSession([_Result(one=row)])
+
+    meal = await AsyncCatalogMealRepository(session).get_meal_detail("catalog-1")
+
+    assert meal is not None
+    assert meal.nutrition_micros is not None
+    assert meal.nutrition_micros.iron == pytest.approx(2.0)
 
 
 @pytest.mark.asyncio

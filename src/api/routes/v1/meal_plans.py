@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 
-from src.api.base_dependencies import get_text_translation_service
+from src.api.base_dependencies import (
+    get_async_food_reference_repository,
+    get_text_translation_service,
+)
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import create_http_exception, handle_exception
+from src.api.mappers.food_reference_display_name import (
+    resolve_grocery_proposal_display_name,
+)
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
 from src.api.schemas.request.weekly_meal_planner_requests import (
@@ -31,6 +40,7 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
     RecipeListItemResponse,
     RecipeListResponse,
     RecipeStepResponse,
+    WeeklyAiProposalGroceryItemResponse,
     WeeklyAiProposalResponse,
     WeeklyAiSlotChangeResponse,
     WeeklyGroceriesResponse,
@@ -53,16 +63,24 @@ from src.app.queries.meal_planner import (
     ListRecipesQuery,
 )
 from src.app.queries.user import GetUserTimezoneQuery
-from src.app.services.catalog_meal_response_localizer import localize_catalog_meals
+from src.app.services.catalog_meal_response_localizer import (
+    localize_catalog_meals,
+    localize_grocery_categories,
+    localize_presentation_texts,
+)
+from src.domain.constants.languages import normalize_language
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
     WeeklyMealPlanNotFoundError,
 )
 from src.domain.model.meal_recommendation import CatalogMeal
+from src.domain.model.nutrition.micros import Micros
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
+from src.domain.services.nrf_score import nrf_coverage, nrf_quality
 from src.domain.utils.timezone_utils import get_zone_info
 
 router = APIRouter(tags=["Weekly Meal Plans", "Recipes"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/v1/meal-plans/current", response_model=WeeklyMealPlanResponse)
@@ -198,6 +216,7 @@ async def list_recipes(
     diet: str | None = Query(default=None),
     max_cook_time: int | None = Query(default=None, ge=0, le=600),
     cuisine: str | None = Query(default=None, max_length=80),
+    meal_type: Literal["lunch", "dinner"] | None = Query(default=None),
     allergies: str = Query(default="", max_length=1000),
     dislikes: str = Query(default="", max_length=1000),
     limit: int = Query(default=20, ge=1, le=50),
@@ -214,6 +233,7 @@ async def list_recipes(
                 diet=diet,
                 max_cook_time=max_cook_time,
                 cuisine=cuisine,
+                meal_type=meal_type,
                 allergies=_csv(allergies),
                 dislikes=_csv(dislikes),
                 limit=limit,
@@ -238,11 +258,9 @@ async def list_recipes(
 async def get_recipe_detail(
     request: Request,
     recipe_id: str,
-    user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
     translation_service=Depends(get_text_translation_service),
 ):
-    del user_id
     try:
         meal = await event_bus.send(GetRecipeDetailQuery(recipe_id=recipe_id))
         if meal is None:
@@ -270,25 +288,78 @@ async def ai_adjust_weekly_plan(
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
     translation_service=Depends(get_text_translation_service),
+    food_reference_repository=Depends(get_async_food_reference_repository),
 ):
     try:
+        language = get_request_language(request)
         proposal = await event_bus.send(
             AiAdjustMealPlanCommand(
-                user_id=user_id, plan_id=plan_id, prompt=body.prompt
+                user_id=user_id,
+                plan_id=plan_id,
+                prompt=body.prompt,
+                target_day_index=body.target_day_index,
+                target_slot_index=body.target_slot_index,
             )
         )
+        explanation, diff_summary = await localize_presentation_texts(
+            (proposal.explanation, proposal.diff_summary),
+            language=language,
+            translation_service=translation_service,
+        )
+        grocery_names_by_id: dict[int, str] = {}
+        if normalize_language(language) == "vi" and proposal.proposed_groceries:
+            source_names_by_id = {
+                item.ingredient_id: item.name for item in proposal.proposed_groceries
+            }
+            grocery_ids = list(source_names_by_id)
+            # The English projection mode avoids serving-label translation lookups;
+            # name_vi is included independently as authored catalog metadata.
+            try:
+                grocery_projections = (
+                    await food_reference_repository.get_display_projections(
+                        grocery_ids, language="en"
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Could not load catalog labels for meal-plan proposal groceries"
+                )
+                grocery_projections = {}
+            grocery_names_by_id = {
+                ingredient_id: resolve_grocery_proposal_display_name(
+                    grocery_projections.get(ingredient_id),
+                    source_names_by_id[ingredient_id],
+                    language,
+                )
+                for ingredient_id in grocery_ids
+            }
         return WeeklyAiProposalResponse(
             base_revision=proposal.base_revision,
-            explanation=proposal.explanation,
-            diff_summary=proposal.diff_summary,
+            explanation=explanation,
+            diff_summary=diff_summary,
             proposed_plan=await _plan_response(
                 proposal.proposed_plan,
                 event_bus,
-                language=get_request_language(request),
+                language=language,
                 translation_service=translation_service,
             ),
             slot_changes=[
                 WeeklyAiSlotChangeResponse(**change) for change in proposal.slot_changes
+            ],
+            proposed_groceries=[
+                WeeklyAiProposalGroceryItemResponse(
+                    ingredient_id=item.ingredient_id,
+                    name=grocery_names_by_id.get(
+                        item.ingredient_id,
+                        resolve_grocery_proposal_display_name(
+                            None, item.name, language
+                        ),
+                    ),
+                    category=item.category,
+                    total_needed=item.total_needed,
+                    unit=item.unit,
+                )
+                for item in proposal.proposed_groceries
             ],
         )
     except Exception as exc:
@@ -304,8 +375,8 @@ async def get_weekly_groceries(
     plan_id: str,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_text_translation_service),
 ):
-    del request
     try:
         result = await event_bus.send(
             GetWeeklyGroceriesQuery(user_id=user_id, plan_id=plan_id)
@@ -313,7 +384,12 @@ async def get_weekly_groceries(
         if result is None:
             raise HTTPException(status_code=404, detail="Weekly meal plan not found")
         _, categories = result
-        items = [item for category in categories for item in category.items]
+        localized_categories = await localize_grocery_categories(
+            categories,
+            language=get_request_language(request),
+            translation_service=translation_service,
+        )
+        items = [item for category in localized_categories for item in category.items]
         return WeeklyGroceriesResponse(
             total_items_count=len(items),
             to_buy_count=sum(item.status in {"needed", "need_more"} for item in items),
@@ -325,7 +401,7 @@ async def get_weekly_groceries(
                         GroceryItemResponse(**item.__dict__) for item in category.items
                     ],
                 )
-                for category in categories
+                for category in localized_categories
             ],
         )
     except HTTPException:
@@ -384,6 +460,7 @@ async def log_weekly_slot(
                 idempotency_key=_idempotency_key(idempotency_key),
                 meal_date=body.date,
                 meal_type=body.meal_type,
+                expected_recipe_id=body.expected_recipe_id,
                 portion_multiplier=body.portion_multiplier,
                 timezone=timezone,
             )
@@ -515,6 +592,12 @@ def _recipe_list_item(meal: CatalogMeal) -> RecipeListItemResponse:
 
 
 def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
+    micros = meal.nutrition_micros
+    score = (
+        round(nrf_quality(float(meal.protein_g), float(meal.fiber_g), micros))
+        if isinstance(micros, Micros) and nrf_coverage(micros) >= 1
+        else None
+    )
     return RecipeDetailResponse(
         id=meal.id,
         name=meal.name,
@@ -535,6 +618,8 @@ def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
             carbs=float(meal.carbs_g),
             fat=float(meal.fat_g),
             fiber=float(meal.fiber_g),
+            micros=micros.to_dict() if isinstance(micros, Micros) else {},
+            score=score,
         ),
         ingredients=[
             RecipeIngredientResponse(
@@ -559,7 +644,9 @@ def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
 
 
 def _csv(value: str) -> tuple[str, ...]:
-    return tuple(item.strip().casefold() for item in value.split(",") if item.strip())
+    return tuple(
+        item.strip().casefold() for item in re.split(r"[,;]", value) if item.strip()
+    )
 
 
 def _idempotency_key(value: str) -> str:

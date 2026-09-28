@@ -19,6 +19,7 @@ from src.domain.model.meal_recommendation import (
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
+from src.domain.services.meal_nrf_fields import meal_nrf_fields
 
 
 class _CatalogRepo:
@@ -64,8 +65,16 @@ class _MealRepo:
 class _FoodRefRepo:
     def __init__(self, projections: dict[int, FoodReferenceNutritionProjection]):
         self._projections = projections
+        self.preserve_nutrient_units = False
 
-    async def get_nutrition_projections(self, food_reference_ids, *, for_update=False):
+    async def get_nutrition_projections(
+        self,
+        food_reference_ids,
+        *,
+        for_update=False,
+        preserve_nutrient_units=False,
+    ):
+        self.preserve_nutrient_units = preserve_nutrient_units
         return {
             food_id: self._projections[food_id]
             for food_id in food_reference_ids
@@ -198,6 +207,62 @@ async def test_materializer_scales_food_reference_macros_onto_items():
     assert item.macros.protein == pytest.approx(31.0)
     assert item.macros.fat == pytest.approx(3.6)
     assert item.calories == pytest.approx(31.0 * 4 + 3.6 * 9)
+
+
+@pytest.mark.asyncio
+async def test_materializer_preserves_complete_micros_for_nrf_score_parity():
+    plan, slot = _plan_and_slot()
+    source_micros = {
+        "vitamin_a_mcg": 900,
+        "vitamin_c_mg": 90,
+        "vitamin_e_mg": 15,
+        "calcium_mg": 1300,
+        "iron_mg": 18,
+        "magnesium_mg": 420,
+        "potassium_mg": 4700,
+        "saturated_fat_g": 20,
+        "added_sugar_g": 50,
+        "sodium_mg": {"amount": 0.2, "unit": "g"},
+    }
+    uow = _Uow(
+        food_references=_FoodRefRepo(
+            {
+                123: FoodReferenceNutritionProjection(
+                    id=123,
+                    name="Ingredient",
+                    source="catalog_seed",
+                    is_verified=True,
+                    protein_100g=31.0,
+                    carbs_100g=0.0,
+                    fat_100g=3.6,
+                    fiber_100g=0.0,
+                    sugar_100g=0.0,
+                    density_g_ml=1.0,
+                    extra_nutrients=source_micros,
+                )
+            }
+        )
+    )
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        uow,
+        user_id=plan.user_id,
+        catalog_meal=slot.selected.catalog_meal,
+        meal_date=plan.start_date,
+        meal_type="lunch",
+        timezone="UTC",
+        portion_multiplier=1.5,
+        source="weekly_meal_planner",
+    )
+
+    assert meal.nutrition is not None
+    assert meal.nutrition.micros is not None
+    assert meal.nutrition.micros.iron == pytest.approx(27.0)
+    assert meal.nutrition.micros.sodium == pytest.approx(300.0)
+    assert uow.food_references.preserve_nutrient_units is True
+    fields = meal_nrf_fields(meal)
+    assert fields["nrf_coverage"] == 10
+    assert fields["nrf_quality"] is not None
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class WeeklyMealPlanPreferencesRequest(BaseModel):
@@ -45,9 +45,27 @@ class UpdateWeeklyMealPlanRequest(BaseModel):
             raise ValueError("duplicate weekly slot coordinate")
         return value
 
+    @model_validator(mode="after")
+    def preferences_are_complete(self):
+        if self.preferences is not None:
+            required = {"diet", "cooking_time", "cuisine", "dislikes", "allergies"}
+            if not required.issubset(self.preferences.model_fields_set):
+                raise ValueError("all preference fields must be provided together")
+            if self.people is None:
+                raise ValueError("people is required when preferences are updated")
+        return self
+
 
 class AiAdjustMealPlanRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=1000)
+    target_day_index: int | None = Field(default=None, ge=0, le=6)
+    target_slot_index: int | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def target_coordinates_are_paired(self):
+        if (self.target_day_index is None) != (self.target_slot_index is None):
+            raise ValueError("target day and meal slot must be provided together")
+        return self
 
 
 class PantryStockUpdateRequest(BaseModel):
@@ -66,4 +84,5 @@ class UpdateMealPlanPantryRequest(BaseModel):
 class LogMealPlanSlotRequest(BaseModel):
     date: date
     meal_type: Literal["lunch", "dinner"]
+    expected_recipe_id: str = Field(min_length=1, max_length=128)
     portion_multiplier: Literal[0.5, 1.0, 1.5, 2.0] = 1.0

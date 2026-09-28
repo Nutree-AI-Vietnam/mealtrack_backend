@@ -14,10 +14,10 @@ from sqlalchemy.orm import selectinload
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.api.base_dependencies import get_image_store
 from src.app.services.catalog_meal_image_prompt_service import (
     build_catalog_meal_image_prompt,
 )
-from src.api.base_dependencies import get_image_store
 from src.infra.adapters.cloudflare_workers_image_generator import (
     CloudflareWorkersImageGenerator,
 )
@@ -91,6 +91,7 @@ async def _run(args) -> dict[str, int]:
                 raise RuntimeError("Cloudflare image generator is not initialized")
             image_url = await generator.generate_url(
                 prompt,
+                image_id=f"catalog_meals/{meal.catalog_key}",
                 quality=args.quality,
                 size=args.size,
                 output_format=args.output_format,
@@ -126,7 +127,12 @@ async def _run(args) -> dict[str, int]:
                 f"image_generation_skipped catalog_key={meal.catalog_key}: image_url already set",
                 file=sys.stderr,
             )
-    return {"selected": selected, "updated": updated, "skipped": skipped, "failed": failed}
+    return {
+        "selected": selected,
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
+    }
 
 
 async def _persist_image_url(
@@ -192,7 +198,9 @@ async def _set_image_url(
 
 
 def _missing_image_filter():
-    return or_(MealCatalogORM.image_url.is_(None), func.trim(MealCatalogORM.image_url) == "")
+    return or_(
+        MealCatalogORM.image_url.is_(None), func.trim(MealCatalogORM.image_url) == ""
+    )
 
 
 if __name__ == "__main__":

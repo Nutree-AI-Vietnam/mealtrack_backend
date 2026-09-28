@@ -7,6 +7,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.micros import Micros
 from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
     normalize_ingredient_quantity,
 )
@@ -91,6 +92,7 @@ class CatalogMeal:
     allergen_codes: tuple[str, ...] = ()
     recipe_payload: dict | None = None
     ai_nutrition_estimate: dict | None = None
+    nutrition_micros: Micros | None = None
 
     @property
     def calories(self) -> int:

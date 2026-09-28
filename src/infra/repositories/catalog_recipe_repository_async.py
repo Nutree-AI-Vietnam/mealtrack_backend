@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Iterable
 from decimal import Decimal
 from typing import cast
 
@@ -10,15 +11,15 @@ from sqlalchemy import and_, func, or_, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.domain.services.weekly_meal_planner.recipe_publication import (
-    projection_nutrition_quantity,
-    publish_recipe,
-)
 from src.domain.model.meal_recommendation.catalog_recipe import (
     CatalogMeal,
     CatalogMealIngredient,
     CatalogMealStep,
 )
+from src.domain.model.nutrition.extra_nutrients import (
+    complete_micros_from_per_100g_portions,
+)
+from src.domain.model.nutrition.micros import Micros
 from src.domain.ports.catalog_recipe_repository_port import (
     CatalogMealRepositoryPort,
     CatalogMealRevision,
@@ -30,6 +31,10 @@ from src.domain.ports.catalog_recipe_repository_port import (
 from src.domain.services.meal_recommendation.ingredient_quantity_conversion_service import (
     IngredientQuantityConversionService,
     ResolvedIngredientQuantity,
+)
+from src.domain.services.weekly_meal_planner.recipe_publication import (
+    projection_nutrition_quantity,
+    publish_recipe,
 )
 from src.infra.database.models.food_reference_alias import FoodReferenceAliasORM
 from src.infra.database.models.food_reference_model import FoodReferenceModel
@@ -58,6 +63,12 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     def __init__(self, session: AsyncSession):
         self._session = session
 
+    async def list_allergen_codes(self) -> list[str]:
+        result = await self._session.execute(
+            select(AllergenReferenceORM.code).order_by(AllergenReferenceORM.code)
+        )
+        return [str(code) for code in result.scalars().all()]
+
     async def list_active_meals(
         self,
         *,
@@ -70,8 +81,10 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             .options(*_catalog_meal_load_options())
             .order_by(MealCatalogORM.id)
         )
-        if cuisine is not None:
-            stmt = stmt.where(MealCatalogORM.cuisine == cuisine)
+        if cuisine is not None and cuisine.strip():
+            stmt = stmt.where(
+                func.lower(MealCatalogORM.cuisine) == cuisine.strip().casefold()
+            )
         if meal_type is not None:
             column = _meal_type_column(meal_type)
             stmt = stmt.where(column.is_(True))
@@ -156,6 +169,19 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
         row = result.scalar_one_or_none()
         return _meal_to_domain(row) if row else None
+
+    async def get_meals(self, catalog_meal_ids: Iterable[str]) -> list[CatalogMeal]:
+        ids = [mid for mid in catalog_meal_ids if mid]
+        if not ids:
+            return []
+        result = await self._session.execute(
+            select(MealCatalogORM)
+            .where(MealCatalogORM.id.in_(ids))
+            .where(MealCatalogORM.is_active.is_(True))
+            .options(*_catalog_meal_load_options())
+        )
+        rows = result.scalars().all()
+        return [_meal_to_domain(row) for row in rows]
 
     async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
         result = await self._session.execute(
@@ -383,11 +409,18 @@ def _meal_type_column(meal_type: str):
     raise ValueError(f"unsupported meal_type: {meal_type}")
 
 
-def _catalog_meal_load_options():
+def _catalog_meal_load_options(*, include_nutrients: bool = False):
+    food_reference_loader = selectinload(MealCatalogORM.ingredients).selectinload(
+        MealCatalogIngredientORM.food_reference
+    )
+    nutrient_loader = (
+        food_reference_loader.selectinload(FoodReferenceModel.nutrient_rows)
+        if include_nutrients
+        else food_reference_loader.noload(FoodReferenceModel.nutrient_rows)
+    )
     return (
-        selectinload(MealCatalogORM.ingredients)
-        .selectinload(MealCatalogIngredientORM.food_reference)
-        .selectinload(FoodReferenceModel.serving_size_rows),
+        food_reference_loader.selectinload(FoodReferenceModel.serving_size_rows),
+        nutrient_loader,
         selectinload(MealCatalogORM.allergen_links).selectinload(
             MealCatalogAllergenORM.allergen
         ),
@@ -395,7 +428,10 @@ def _catalog_meal_load_options():
 
 
 def _catalog_meal_detail_load_options():
-    return (*_catalog_meal_load_options(), selectinload(MealCatalogORM.steps))
+    return (
+        *_catalog_meal_load_options(include_nutrients=True),
+        selectinload(MealCatalogORM.steps),
+    )
 
 
 def _meal_to_domain(row: MealCatalogORM, *, include_steps: bool = False) -> CatalogMeal:
@@ -435,6 +471,7 @@ def _meal_to_domain(row: MealCatalogORM, *, include_steps: bool = False) -> Cata
         nutrition_status=cast(str, getattr(row, "nutrition_status", "ready")),
         allergen_codes=_allergen_codes(row),
         recipe_payload=getattr(row, "recipe_payload", None),
+        nutrition_micros=_nutrition_micros(row) if include_steps else None,
     )
 
 
@@ -481,10 +518,34 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
     )
 
 
+def _nutrition_micros(row: MealCatalogORM) -> Micros | None:
+    portions = []
+    for ingredient in row.ingredients:
+        if (
+            projection_nutrition_quantity(
+                {
+                    "food_reference_id": ingredient.food_reference_id,
+                    "quantity": ingredient.quantity,
+                    "quantity_text": getattr(ingredient, "quantity_text", None),
+                }
+            )
+            == 0
+        ):
+            continue
+        resolved = _resolve_ingredient_nutrition(ingredient)
+        reference = food_reference_model_to_nutrition_projection(
+            ingredient.food_reference, preserve_nutrient_units=True
+        )
+        portions.append((reference.extra_nutrients, resolved.grams))
+    return complete_micros_from_per_100g_portions(portions)
+
+
 def _resolve_ingredient_nutrition(
     row: MealCatalogIngredientORM,
 ) -> ResolvedIngredientQuantity:
-    reference = food_reference_model_to_nutrition_projection(row.food_reference)
+    reference = food_reference_model_to_nutrition_projection(
+        row.food_reference, include_nutrients=False
+    )
     return _CATALOG_CONVERTER.resolve(
         reference=reference,
         quantity=float(row.quantity),

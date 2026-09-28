@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Iterable
 from typing import Any
 
 from src.domain.model.nutrition.micros import Micros
@@ -9,8 +11,10 @@ from src.domain.model.nutrition.micros_ops import (
     is_empty,
     mapping_from_micros,
     merge_micros,
+    merge_micros_complete,
     scale_micros,
 )
+from src.domain.model.nutrition.nutrient_units import convert_nutrient_amount
 
 _ALIASES: dict[str, str] = {
     "vitamin_a": "vitamin_a",
@@ -18,20 +22,42 @@ _ALIASES: dict[str, str] = {
     "vit_a_mcg": "vitamin_a",
     "vitamin_c": "vitamin_c",
     "vitamin_c_mg": "vitamin_c",
+    "vitamin_d": "vitamin_d",
+    "vitamin_d_mcg": "vitamin_d",
     "vitamin_e": "vitamin_e",
     "vitamin_e_mg": "vitamin_e",
+    "vitamin_k": "vitamin_k",
+    "vitamin_k_mcg": "vitamin_k",
+    "thiamin": "thiamin",
+    "thiamin_mg": "thiamin",
+    "riboflavin": "riboflavin",
+    "riboflavin_mg": "riboflavin",
+    "niacin": "niacin",
+    "niacin_mg": "niacin",
+    "vitamin_b6": "vitamin_b6",
+    "vitamin_b6_mg": "vitamin_b6",
+    "vitamin_b12": "vitamin_b12",
+    "vitamin_b12_mcg": "vitamin_b12",
+    "folate": "folate",
+    "folate_mcg": "folate",
     "calcium": "calcium",
     "calcium_mg": "calcium",
     "iron": "iron",
     "iron_mg": "iron",
     "magnesium": "magnesium",
     "magnesium_mg": "magnesium",
+    "phosphorus": "phosphorus",
+    "phosphorus_mg": "phosphorus",
     "potassium": "potassium",
     "potassium_mg": "potassium",
     "k_mg": "potassium",
     "sodium": "sodium",
     "sodium_mg": "sodium",
     "na_mg": "sodium",
+    "zinc": "zinc",
+    "zinc_mg": "zinc",
+    "selenium": "selenium",
+    "selenium_mcg": "selenium",
     "saturated_fat": "saturated_fat",
     "saturated_fat_g": "saturated_fat",
     "sat_fat": "saturated_fat",
@@ -48,7 +74,9 @@ def first_nonempty_extras(*candidates: Any) -> dict[str, Any] | None:
     return None
 
 
-def extras_from_portion_micros(micros: Any, quantity_g: float) -> dict[str, float] | None:
+def extras_from_portion_micros(
+    micros: Any, quantity_g: float
+) -> dict[str, float] | None:
     """Convert portion-level AI micros into a per-100g extra_nutrients blob."""
     if quantity_g <= 0:
         return None
@@ -58,23 +86,66 @@ def extras_from_portion_micros(micros: Any, quantity_g: float) -> dict[str, floa
 
 
 def extra_nutrients_to_micros(
-    extra: Any, *, factor: float = 1.0
+    extra: Any, *, factor: float = 1.0, validate_units: bool = False
 ) -> Micros | None:
-    """Scale a per-100g extra_nutrients blob by grams/100 (`factor`)."""
+    """Scale per-100g extras; optionally reject or convert explicit units."""
     if not isinstance(extra, dict) or factor <= 0:
         return None
+    candidates: dict[str, tuple[int, float]] = {}
     parsed: dict[str, float] = {}
     for key, raw in extra.items():
-        field = _ALIASES.get(str(key))
+        normalized_key = str(key).strip().casefold()
+        field = _ALIASES.get(normalized_key)
         if field is None:
             continue
         amount = _amount(raw)
         if amount is None:
             continue
-        parsed[field] = parsed.get(field, 0.0) + amount
+        has_explicit_unit = isinstance(raw, dict) and raw.get("unit") is not None
+        if validate_units:
+            if isinstance(raw, dict) and not has_explicit_unit:
+                continue
+            unit = raw.get("unit") if isinstance(raw, dict) else None
+            amount = convert_nutrient_amount(amount, unit, field)
+            if amount is None:
+                continue
+        if validate_units:
+            is_normalized_row = (
+                isinstance(raw, dict) and raw.get("_normalized_row") is True
+            )
+            rank = (
+                int(is_normalized_row) * 100
+                + int(has_explicit_unit) * 2
+                + int(normalized_key.endswith(_UNIT_SUFFIXES))
+            )
+            current = candidates.get(field)
+            if current is None or rank > current[0]:
+                candidates[field] = (rank, amount)
+        else:
+            parsed[field] = parsed.get(field, 0.0) + amount
+    if validate_units:
+        parsed = {field: amount for field, (_, amount) in candidates.items()}
     if not parsed:
         return None
     return scale_micros(Micros.from_dict(parsed), factor)
+
+
+def complete_micros_from_per_100g_portions(
+    portions: Iterable[tuple[Any, float]],
+) -> Micros | None:
+    """Aggregate source-backed nutrients only when each portion is complete."""
+    return merge_micros_complete(
+        *(
+            extra_nutrients_to_micros(
+                extra_nutrients,
+                factor=grams / 100.0,
+                validate_units=True,
+            )
+            if grams > 0
+            else None
+            for extra_nutrients, grams in portions
+        )
+    )
 
 
 def micros_from_snapshot(snapshot: Any, quantity_g: float) -> Micros | None:
@@ -159,6 +230,9 @@ def _amount(raw: Any) -> float | None:
         number = float(raw)
     except (TypeError, ValueError):
         return None
-    if number < 0:
+    if number < 0 or not math.isfinite(number):
         return None
     return number
+
+
+_UNIT_SUFFIXES = ("_mcg", "_mg", "_g")

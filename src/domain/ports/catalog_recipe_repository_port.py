@@ -91,6 +91,10 @@ class CatalogMealRepositoryPort(ABC):
     """Read/write contract for catalog meals during the rework."""
 
     @abstractmethod
+    async def list_allergen_codes(self) -> list[str]:
+        """Return canonical codes from the global allergen reference."""
+
+    @abstractmethod
     async def list_active_meals(
         self,
         *,

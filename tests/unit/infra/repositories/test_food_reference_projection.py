@@ -57,6 +57,35 @@ def test_food_reference_nutrient_projection_preserves_legacy_scalar_shape():
 
     assert result["extra_nutrients"]["calcium_mg"] == 120.0
 
+    nutrition = food_reference_model_to_nutrition_projection(
+        model, preserve_nutrient_units=True
+    )
+    assert nutrition.extra_nutrients == {
+        "calcium_mg": {
+            "amount": 120.0,
+            "unit": "mg",
+            "_normalized_row": True,
+        }
+    }
+
+
+def test_unitless_normalized_row_does_not_mask_legacy_scalar_with_unit_key():
+    model = _make_food_reference_model("spinach")
+    model.extra_nutrients = {"iron_mg": 2.0}
+    model.nutrient_rows = [
+        FoodReferenceNutrientModel(
+            nutrient_key="iron_mg",
+            amount=2.0,
+            unit=None,
+        )
+    ]
+
+    nutrition = food_reference_model_to_nutrition_projection(
+        model, preserve_nutrient_units=True
+    )
+
+    assert nutrition.extra_nutrients == {"iron_mg": 2.0}
+
 
 def test_food_reference_nutrient_projection_preserves_legacy_object_shape():
     model = _make_food_reference_model("spinach")
