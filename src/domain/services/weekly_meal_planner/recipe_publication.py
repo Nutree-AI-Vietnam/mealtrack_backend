@@ -11,6 +11,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     matched_allergen_codes,
@@ -116,6 +117,7 @@ def publish_recipe(
     source: Mapping | None = None,
     aliases: list[tuple[str, int]] | None = None,
     known_allergen_codes: list[str] | None = None,
+    nutrition: dict[str, Any] | None = None,
 ) -> PublishedRecipe:
     """Build the canonical payload and the normalized rows from one input."""
 
@@ -175,6 +177,8 @@ def publish_recipe(
         "allergen_disclosures": list(allergen_disclosures or []),
         "source": dict(source or {}),
     }
+    if nutrition is not None:
+        payload["nutrition"] = dict(nutrition)
     publication_status = "published" if publish else "draft"
     nutrition_status = "ready" if nutrition_ready else "not_ready"
     return PublishedRecipe(

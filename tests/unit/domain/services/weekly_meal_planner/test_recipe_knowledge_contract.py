@@ -466,7 +466,12 @@ class _SyncAsyncSession:
 
 
 def _seed(
-    catalog_key: str, *, name: str, allergens: str, ingredient_name: str
+    catalog_key: str,
+    *,
+    name: str,
+    allergens: str,
+    ingredient_name: str,
+    nutrition: dict | None = None,
 ) -> CatalogMealSeedWrite:
     return CatalogMealSeedWrite(
         catalog_key=catalog_key,
@@ -488,6 +493,7 @@ def _seed(
         base_servings=1,
         serving_source="explicit",
         serving_confidence="verified",
+        nutrition=nutrition,
     )
 
 
@@ -578,3 +584,51 @@ def test_stale_revision_and_slot_coordinates_are_rejected():
     with pytest.raises(ValueError, match="slot coordinate"):
         ensure_slot_coordinate(0, 2)
     ensure_slot_coordinate(6, 1)
+
+
+@pytest.mark.asyncio
+async def test_seed_publish_with_ai_estimated_nutrition_fallback():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine) as session:
+            repository = AsyncCatalogMealRepository(_SyncAsyncSession(session))
+            seed = _seed(
+                "ai-estimated-roll",
+                name="AI Estimated Roll",
+                allergens="",
+                ingredient_name="Decoupled local veggie",
+                nutrition={
+                    "calories": 350,
+                    "protein": 25.0,
+                    "carbs": 30.0,
+                    "fat": 12.0,
+                    "fiber": 4.0,
+                    "sugar": 3.0,
+                },
+            )
+            await repository.add_seed_meal(seed)
+            session.expire_all()
+            meal_id = session.execute(
+                select(MealCatalogORM.id).where(
+                    MealCatalogORM.catalog_key == "ai-estimated-roll"
+                )
+            ).scalar_one()
+
+            meal = await repository.get_meal_detail(meal_id)
+            assert meal is not None
+            assert meal.protein_g == Decimal("25.0")
+            assert meal.carbs_g == Decimal("30.0")
+            assert meal.fat_g == Decimal("12.0")
+            assert meal.fiber_g == Decimal("4.0")
+            assert meal.sugar_g == Decimal("3.0")
+            # Derived calories: 25*4 + (30-4)*4 + 4*2 + 12*9 = 100 + 104 + 8 + 108 = 320
+            assert meal.calories == 320
+            assert meal.nutrition_status == "ready"
+            assert is_planner_eligible(
+                publication_status=meal.publication_status,
+                nutrition_status=meal.nutrition_status,
+                is_active=meal.is_active,
+            )
+    finally:
+        engine.dispose()

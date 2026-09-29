@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from src.domain.model.meal_recommendation.catalog_recipe import CatalogMeal
 
@@ -47,6 +48,7 @@ class CatalogMealSeedWrite:
     serving_source: str | None = None
     serving_confidence: str = "unknown"
     steps: tuple[tuple[int, str, str], ...] = ()
+    nutrition: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

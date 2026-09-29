@@ -19,6 +19,7 @@ from src.domain.model.meal_recommendation.catalog_recipe import (
 from src.domain.model.nutrition.extra_nutrients import (
     complete_micros_from_per_100g_portions,
 )
+from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros import Micros
 from src.domain.ports.catalog_recipe_repository_port import (
     CatalogMealRepositoryPort,
@@ -250,6 +251,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             source={"publisher": seed.source_name, "url": seed.source_url},
             aliases=alias_rows,
             known_allergen_codes=[str(r.code) for r in allergen_rows],
+            nutrition=seed.nutrition,
         )
         existing_result = await self._session.execute(
             select(MealCatalogORM)
@@ -571,6 +573,44 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
         totals["fiber"] += resolved.fiber
         totals["sugar"] += resolved.sugar
         totals["calories"] += resolved.calories
+    if (
+        totals["calories"] == 0.0
+        and totals["protein"] == 0.0
+        and totals["carbs"] == 0.0
+        and totals["fat"] == 0.0
+        and isinstance(row.recipe_payload, dict)
+    ):
+        nutr = row.recipe_payload.get("nutrition")
+        if isinstance(nutr, dict) and (
+            nutr.get("calories") is not None
+            or nutr.get("protein") is not None
+            or nutr.get("carbs") is not None
+            or nutr.get("fat") is not None
+        ):
+            p = float(nutr.get("protein", 0.0))
+            c = float(nutr.get("carbs", 0.0))
+            f = float(nutr.get("fat", 0.0))
+            fib = float(nutr.get("fiber", 0.0))
+            s = float(nutr.get("sugar", 0.0))
+            raw_cals = nutr.get("calories")
+            cal = (
+                float(raw_cals)
+                if raw_cals is not None
+                else Macros.raw_total_calories(p, c, f, fib)
+            )
+            return ResolvedIngredientQuantity(
+                food_reference_id=None,
+                display_name=cast(str, row.name),
+                quantity=1,
+                unit="meal",
+                grams=0,
+                protein=p,
+                carbs=c,
+                fat=f,
+                fiber=fib,
+                sugar=s,
+                calories=cal,
+            )
     return ResolvedIngredientQuantity(
         food_reference_id=None,
         display_name=cast(str, row.name),

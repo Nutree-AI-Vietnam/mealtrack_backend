@@ -493,6 +493,7 @@ class CatalogMealSeedImporter:
             serving_source=_optional_string(recipe.get("serving_source")),
             serving_confidence=_serving_confidence(recipe.get("serving_confidence")),
             steps=tuple(_step_payloads(recipe.get("steps"))),
+            nutrition=recipe.get("nutrition"),
         )
         return _PreparedCatalogSeed(
             recipe_index=index,
