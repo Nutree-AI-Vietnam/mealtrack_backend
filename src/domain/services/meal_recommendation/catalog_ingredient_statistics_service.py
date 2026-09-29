@@ -32,7 +32,7 @@ class CatalogIngredientStatisticsService:
             seen = {
                 ingredient.food_reference_id
                 for ingredient in meal.ingredients
-                if ingredient.food_reference_id > 0
+                if ingredient.food_reference_id is not None and ingredient.food_reference_id > 0
             }
             for food_reference_id in seen:
                 document_frequency[food_reference_id] = (
