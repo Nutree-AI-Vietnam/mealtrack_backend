@@ -259,25 +259,39 @@ def _slot_from_meal(
             quantity=ingredient.quantity,
             unit=ingredient.unit,
             category=_resolve_grocery_category(ingredient.name, ingredient.category),
-            quantity_confidence=ingredient.quantity_confidence,
+            quantity_confidence=getattr(ingredient, "quantity_confidence", "exact"),
         )
         for index, ingredient in enumerate(meal.ingredients, start=1)
         if not _is_non_food_ingredient(ingredient.name, ingredient.category)
     ]
+    existing_positions = {item.position for item in ingredients}
+    existing_names = {item.name.strip().casefold() for item in ingredients}
     payload = getattr(meal, "recipe_payload", None) or {}
     for raw in payload.get("ingredients") or []:
+        raw_name = str(raw.get("name") or "").strip()
+        if not raw_name or raw_name.casefold() in existing_names:
+            continue
+        raw_pos = int(raw.get("position") or 0)
+        if raw_pos and raw_pos in existing_positions:
+            continue
         if raw.get("food_reference_id") is not None and raw.get("quantity") not in (
             None,
             "",
         ):
             continue
-        raw_name = str(raw.get("name") or "")
         raw_category = raw.get("category") or raw.get("type") or raw.get("kind")
         if raw.get("is_equipment") or _is_non_food_ingredient(raw_name, raw_category):
             continue
+        assigned_pos = (
+            raw_pos
+            if raw_pos and raw_pos not in existing_positions
+            else max(existing_positions, default=0) + 1
+        )
+        existing_positions.add(assigned_pos)
+        existing_names.add(raw_name.casefold())
         ingredients.append(
             GroceryIngredient(
-                position=int(raw.get("position") or len(ingredients) + 1),
+                position=assigned_pos,
                 food_reference_id=raw.get("food_reference_id"),
                 name=raw_name,
                 quantity=_decimal_or_none(raw.get("quantity")),

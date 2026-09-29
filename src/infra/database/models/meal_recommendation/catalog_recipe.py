@@ -168,8 +168,8 @@ class MealCatalogIngredientORM(Base):
     position = Column(Integer, nullable=False)
     food_reference_id = Column(
         Integer,
-        ForeignKey("food_reference.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("food_reference.id", ondelete="SET NULL"),
+        nullable=True,
     )
     display_name = Column(String(255), nullable=False)
     quantity = Column(Numeric(12, 4), nullable=False)
@@ -184,6 +184,10 @@ class MealCatalogIngredientORM(Base):
 
     catalog_meal = relationship("MealCatalogORM", back_populates="ingredients")
     food_reference = relationship("FoodReferenceModel", lazy="selectin")
+
+    @property
+    def name(self) -> str:
+        return str(self.display_name)
 
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_meal_catalog_ingredients_quantity"),

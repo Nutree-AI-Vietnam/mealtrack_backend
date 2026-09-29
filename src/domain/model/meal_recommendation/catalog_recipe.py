@@ -12,12 +12,37 @@ from src.domain.services.meal_recommendation.ingredient_quantity_normalization i
     normalize_ingredient_quantity,
 )
 
+ALLOWED_CATALOG_INGREDIENT_CATEGORIES: frozenset[str] = frozenset(
+    {"produce", "protein", "pantry"}
+)
+
+PRODUCE_CATEGORY_ALIASES: frozenset[str] = frozenset(
+    {"produce", "fresh_produce", "vegetable", "vegetables", "fruit", "fruits"}
+)
+PROTEIN_CATEGORY_ALIASES: frozenset[str] = frozenset(
+    {"protein", "meat", "seafood", "poultry", "fish"}
+)
+
+
+def normalize_catalog_ingredient_category(raw_category: object) -> str:
+    """Normalize raw ingredient categories to the allowed catalog check constraint values.
+
+    The database constraint ``ck_meal_catalog_ingredients_category`` restricts
+    category to ('produce', 'protein', 'pantry').
+    """
+    category = str(raw_category or "pantry").strip().casefold()
+    if category in PRODUCE_CATEGORY_ALIASES:
+        return "produce"
+    if category in PROTEIN_CATEGORY_ALIASES:
+        return "protein"
+    return "pantry"
+
 
 @dataclass(frozen=True)
 class CatalogMealIngredient:
     """Ingredient reference for a catalog meal."""
 
-    food_reference_id: int
+    food_reference_id: int | None
     display_name: str
     quantity: Decimal
     unit: str
@@ -29,6 +54,11 @@ class CatalogMealIngredient:
     quantity_confidence: str = "unknown"
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "category",
+            normalize_catalog_ingredient_category(self.category),
+        )
         normalized = normalize_ingredient_quantity(self.quantity, self.unit)
         if self.canonical_amount is None:
             object.__setattr__(self, "canonical_amount", normalized.amount)

@@ -77,6 +77,9 @@ from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.micros import Micros
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
 from src.domain.services.nrf_score import nrf_coverage, nrf_quality
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    deterministic_ingredient_id,
+)
 from src.domain.utils.timezone_utils import get_zone_info
 
 router = APIRouter(tags=["Weekly Meal Plans", "Recipes"])
@@ -623,7 +626,11 @@ def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
         ),
         ingredients=[
             RecipeIngredientResponse(
-                id=str(item.food_reference_id),
+                id=(
+                    str(item.food_reference_id)
+                    if item.food_reference_id is not None
+                    else str(deterministic_ingredient_id(item.name))
+                ),
                 name=item.name,
                 amount_per_serving=float(item.quantity),
                 unit=item.unit,

@@ -16,7 +16,7 @@ class MealRecommendationMacrosResponse(BaseModel):
 
 
 class MealRecommendationIngredientResponse(BaseModel):
-    food_reference_id: int
+    food_reference_id: int | None = None
     display_name: str
     quantity: float
     unit: str

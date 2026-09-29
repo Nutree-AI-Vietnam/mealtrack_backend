@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Mapping
+from typing import Any
 
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    normalize_catalog_ingredient_category,
+)
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     matched_allergen_codes,
 )
@@ -25,7 +29,7 @@ class IngredientProjection:
     """Nutrition-safe ingredient row written with the payload."""
 
     position: int
-    food_reference_id: int
+    food_reference_id: int | None
     display_name: str
     quantity: Decimal
     unit: str
@@ -33,6 +37,13 @@ class IngredientProjection:
     raw_text: str | None = None
     quantity_text: str | None = None
     is_optional: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "category",
+            normalize_catalog_ingredient_category(self.category),
+        )
 
 
 @dataclass(frozen=True)
@@ -86,9 +97,8 @@ def payload_digest(payload: Mapping) -> str:
 def is_nutrition_safe_ingredient(line: Mapping) -> bool:
     """Resolved, positive quantities are the only grocery and nutrition inputs."""
 
-    food_id = line.get("food_reference_id")
     quantity = line.get("quantity")
-    if food_id is None or quantity is None or quantity == "":
+    if quantity is None or quantity == "":
         return False
     try:
         amount = Decimal(str(quantity))
@@ -117,6 +127,7 @@ def publish_recipe(
     source: Mapping | None = None,
     aliases: list[tuple[str, int]] | None = None,
     known_allergen_codes: list[str] | None = None,
+    nutrition: dict[str, Any] | None = None,
 ) -> PublishedRecipe:
     """Build the canonical payload and the normalized rows from one input."""
 
@@ -142,10 +153,11 @@ def publish_recipe(
         )
         if not is_nutrition_safe_ingredient(line):
             continue
+        food_ref_id = line.get("food_reference_id")
         projections.append(
             IngredientProjection(
                 position=next_position,
-                food_reference_id=int(line["food_reference_id"]),
+                food_reference_id=int(food_ref_id) if food_ref_id is not None else None,
                 display_name=str(line.get("name") or line.get("display_name") or ""),
                 quantity=Decimal(str(line["quantity"])),
                 unit=str(line.get("unit") or ""),
@@ -175,6 +187,8 @@ def publish_recipe(
         "allergen_disclosures": list(allergen_disclosures or []),
         "source": dict(source or {}),
     }
+    if nutrition is not None:
+        payload["nutrition"] = dict(nutrition)
     publication_status = "published" if publish else "draft"
     nutrition_status = "ready" if nutrition_ready else "not_ready"
     return PublishedRecipe(
@@ -186,7 +200,7 @@ def publish_recipe(
         ingredients=tuple(projections),
         steps=tuple(
             StepProjection(
-                step_number=int(step["step"]),
+                step_number=int(str(step["step"])),
                 title=str(step.get("title") or f"Step {step['step']}"),
                 description=str(step["instruction"]),
             )

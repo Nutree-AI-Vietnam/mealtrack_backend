@@ -184,7 +184,10 @@ def test_manifest_rejects_invalid_food_reference_id_type():
     )
 
     assert result.is_valid is False
-    assert any("food_reference_id must be an integer or null" in error for error in result.errors)
+    assert any(
+        "food_reference_id must be an integer or null" in error
+        for error in result.errors
+    )
 
 
 def test_manifest_rejects_derived_recipe_fields():
@@ -224,7 +227,10 @@ def test_manifest_rejects_invalid_popularity_rank():
     )
 
     assert result.is_valid is False
-    assert "popularity_rank must fit a non-negative PostgreSQL INTEGER or null" in result.errors[0]
+    assert (
+        "popularity_rank must fit a non-negative PostgreSQL INTEGER or null"
+        in result.errors[0]
+    )
 
 
 def test_manifest_rejects_derived_ingredient_fields():
@@ -245,5 +251,47 @@ def test_manifest_rejects_derived_ingredient_fields():
     )
 
     assert result.is_valid is False
-    assert any("resolved_grams is derived by backend" in error for error in result.errors)
+    assert any(
+        "resolved_grams is derived by backend" in error for error in result.errors
+    )
     assert any("fiber_g is derived by backend" in error for error in result.errors)
+
+
+def test_manifest_allows_fresh_produce_and_semantic_category_aliases():
+    recipe = _recipe("vn-breakfast", "vietnamese", "breakfast")
+    recipe["ingredients"][0]["category"] = "fresh_produce"
+    manifest = {
+        "release_key": "test-release",
+        "expected_recipe_count": 1,
+        "recipes": [recipe],
+    }
+
+    result = validate_catalog_seed_manifest(
+        manifest,
+        expected_recipe_count=1,
+        min_per_cuisine_meal_type=0,
+        expected_cuisine_counts=None,
+    )
+
+    assert result.is_valid is True
+    assert result.errors == ()
+
+
+def test_manifest_rejects_unknown_ingredient_category():
+    recipe = _recipe("vn-breakfast", "vietnamese", "breakfast")
+    recipe["ingredients"][0]["category"] = "unsupported_xyz_category"
+    manifest = {
+        "release_key": "test-release",
+        "expected_recipe_count": 1,
+        "recipes": [recipe],
+    }
+
+    result = validate_catalog_seed_manifest(
+        manifest,
+        expected_recipe_count=1,
+        min_per_cuisine_meal_type=0,
+        expected_cuisine_counts=None,
+    )
+
+    assert result.is_valid is False
+    assert any("ingredients[0].category is invalid" in error for error in result.errors)

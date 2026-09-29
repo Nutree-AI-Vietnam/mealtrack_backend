@@ -1,5 +1,6 @@
 import asyncio
 from datetime import date, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -17,13 +18,19 @@ from src.app.handlers.query_handlers.meal_planner.weekly_meal_planner_query_hand
     ListRecipesQueryHandler,
 )
 from src.app.queries.meal_planner import ListRecipesQuery
-from src.domain.model.meal_recommendation.catalog_recipe import CatalogMeal
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    CatalogMeal,
+    CatalogMealIngredient,
+)
 from src.domain.model.nutrition.micros import Micros
 from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
     WeeklyMealPlanStatus,
+)
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    deterministic_ingredient_id,
 )
 
 
@@ -166,6 +173,37 @@ def test_recipe_detail_uses_empty_micros_and_null_score_when_unavailable():
     nutrition = response.json()["nutrition_per_serving"]
     assert nutrition["micros"] == {}
     assert nutrition["score"] is None
+
+
+def test_recipe_detail_unmapped_ingredient_id_is_not_string_none():
+    ingredient = CatalogMealIngredient(
+        food_reference_id=None,
+        display_name="Phi lê cá điêu hồng",
+        quantity=Decimal("300"),
+        unit="g",
+        category="protein",
+    )
+    meal = CatalogMeal(
+        id="catalog-1",
+        catalog_key="sample-recipe",
+        content_hash="a" * 64,
+        name="Sample recipe",
+        cuisine="vietnamese",
+        description=None,
+        image_url=None,
+        protein_g=Decimal("30"),
+        carbs_g=Decimal("42"),
+        fat_g=Decimal("14"),
+        fiber_g=Decimal("8"),
+        ingredients=(ingredient,),
+    )
+    response = TestClient(_app(meal)).get("/v1/recipes/catalog-1")
+    assert response.status_code == 200
+    ing_response = response.json()["ingredients"][0]
+    assert ing_response["id"] != "None"
+    assert ing_response["id"] == str(
+        deterministic_ingredient_id("Phi lê cá điêu hồng")
+    )
 
 
 def test_recipe_list_forwards_requested_meal_type():

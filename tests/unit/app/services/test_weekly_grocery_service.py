@@ -20,6 +20,16 @@ from src.domain.model.weekly_meal_planner import (
 from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
     normalize_ingredient_quantity,
 )
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    SYNTHETIC_INGREDIENT_ID_OFFSET,
+    GroceryIngredient,
+    GroceryInteraction,
+    GrocerySlot,
+    PantryAvailability,
+    aggregate_grocery,
+    apply_recipe_override,
+    deterministic_ingredient_id,
+)
 
 
 def _plan():
@@ -275,7 +285,220 @@ async def test_groceries_exclude_vietnamese_equipment_from_catalog_and_payload()
         ).ingredients
     }
 
-    assert calculated_names == {"Tomato"}
-    assert {item.name for item in proposal_items} == {"Tomato"}
-    assert {item.ingredient_id for item in proposal_items} == {7}
+    assert calculated_names == {"Tomato", "Olive oil"}
+    assert {item.name for item in proposal_items} == {"Tomato", "Olive oil"}
+    assert {item.ingredient_id for item in proposal_items} == {
+        7,
+        deterministic_ingredient_id("Olive oil"),
+    }
     assert slot_names == {"Tomato", "Olive oil"}
+
+
+@pytest.mark.asyncio
+async def test_unmapped_ingredients_are_not_doubled_in_groceries():
+    meal = CatalogMeal(
+        id="recipe-1",
+        catalog_key="recipe-1",
+        content_hash="f" * 64,
+        name="Phi lê cá điêu hồng",
+        cuisine="vietnamese",
+        description=None,
+        image_url=None,
+        protein_g=Decimal("60"),
+        carbs_g=Decimal("10"),
+        fat_g=Decimal("15"),
+        fiber_g=Decimal("1"),
+        base_servings=1,
+        serving_confidence="verified",
+        meal_types=("lunch", "dinner"),
+        ingredients=(
+            CatalogMealIngredient(
+                food_reference_id=None,
+                display_name="Phi lê cá điêu hồng",
+                quantity=Decimal("300"),
+                unit="g",
+                category="protein",
+            ),
+        ),
+        recipe_payload={
+            "ingredients": [
+                {
+                    "name": "Phi lê cá điêu hồng",
+                    "quantity": 300,
+                    "unit": "g",
+                    "food_reference_id": None,
+                }
+            ]
+        },
+    )
+
+    slot = _slot_from_meal(meal, plan_people=1, override=None)
+    assert len(slot.ingredients) == 1
+    assert slot.ingredients[0].name == "Phi lê cá điêu hồng"
+    assert slot.ingredients[0].quantity == Decimal("300")
+
+    grocery_service = WeeklyGroceryService()
+    items = grocery_service.project(_plan(), [meal])
+    fish_item = next(item for item in items if item.name == "Phi lê cá điêu hồng")
+    # For 2 people in _plan() with base_servings=1, total needed should be 2 * 300 = 600g (NOT 1200g doubled)
+    assert fish_item.total_needed == 600.0
+
+
+def test_deterministic_ingredient_id_is_namespaced_to_prevent_collision():
+    names = [
+        "Water",
+        "Salt",
+        "Phi lê cá điêu hồng",
+        "Rau muống",
+        "Olive oil",
+    ]
+    for name in names:
+        val = deterministic_ingredient_id(name)
+        assert val >= SYNTHETIC_INGREDIENT_ID_OFFSET
+        assert val <= 2_147_483_647
+
+
+def test_deterministic_ingredient_id_zero_and_one_modulo_do_not_collide(monkeypatch):
+    import src.domain.services.weekly_meal_planner.grocery_projection as gp
+
+    monkeypatch.setattr(
+        gp.zlib,
+        "crc32",
+        lambda b: 1_000_000_000 if b == b"ing_zero" else 1_000_000_001,
+    )
+
+    id_zero = deterministic_ingredient_id("ing_zero")
+    id_one = deterministic_ingredient_id("ing_one")
+
+    assert id_zero == SYNTHETIC_INGREDIENT_ID_OFFSET
+    assert id_one == SYNTHETIC_INGREDIENT_ID_OFFSET + 1
+    assert id_zero != id_one
+
+    monkeypatch.undo()
+    assert deterministic_ingredient_id("") == SYNTHETIC_INGREDIENT_ID_OFFSET
+
+
+def test_unmapped_ingredient_does_not_collide_with_low_food_reference_id_pantry():
+    unmapped_line = GroceryIngredient(
+        position=0,
+        food_reference_id=None,
+        name="Special Herb",
+        quantity=Decimal("50"),
+        unit="g",
+        category="produce",
+    )
+    slot = GrocerySlot(
+        recipe_id="r1",
+        publication_status="published",
+        nutrition_status="ready",
+        is_active=True,
+        base_servings=1,
+        serving_confidence="verified",
+        people=1,
+        ingredients=(unmapped_line,),
+    )
+    pantry = [
+        PantryAvailability(
+            food_reference_id=7,
+            available_amount=Decimal("100"),
+            available_unit="g",
+        )
+    ]
+    interactions = [
+        GroceryInteraction(
+            food_reference_id=7,
+            checked=True,
+            do_not_buy=True,
+        )
+    ]
+    items = aggregate_grocery([slot], pantry, interactions)
+    assert len(items) == 1
+    herb_item = items[0]
+    assert herb_item.name == "Special Herb"
+    assert herb_item.ingredient_id >= SYNTHETIC_INGREDIENT_ID_OFFSET
+    assert herb_item.available_amount is None
+    assert herb_item.checked is False
+    assert herb_item.do_not_buy is False
+    assert herb_item.status == "needed"
+
+
+def test_slot_from_meal_non_contiguous_positions_does_not_collide_and_override_works_correctly():
+    meal = CatalogMeal(
+        id="recipe-non-contiguous",
+        catalog_key="recipe-non-contiguous",
+        content_hash="c" * 64,
+        name="Chicken Bowl",
+        cuisine="vietnamese",
+        description=None,
+        image_url=None,
+        protein_g=Decimal("40"),
+        carbs_g=Decimal("50"),
+        fat_g=Decimal("10"),
+        fiber_g=Decimal("2"),
+        base_servings=1,
+        serving_confidence="verified",
+        meal_types=("lunch", "dinner"),
+        ingredients=(
+            CatalogMealIngredient(
+                food_reference_id=7,
+                display_name="Rice",
+                quantity=Decimal("100"),
+                unit="g",
+                category="pantry",
+                position=1,
+            ),
+            CatalogMealIngredient(
+                food_reference_id=8,
+                display_name="Chicken",
+                quantity=Decimal("200"),
+                unit="g",
+                category="protein",
+                position=3,  # non-contiguous gap at 2
+            ),
+        ),
+        recipe_payload={
+            "ingredients": [
+                {
+                    "name": "Special Sauce",
+                    "quantity": 50,
+                    "unit": "g",
+                    "food_reference_id": None,
+                },
+                {
+                    "name": "Garnish Herb",
+                    "quantity": 10,
+                    "unit": "g",
+                    "food_reference_id": None,
+                },
+                {
+                    # duplicate payload entry with same name should be skipped
+                    "name": "Special Sauce",
+                    "quantity": 50,
+                    "unit": "g",
+                    "food_reference_id": None,
+                },
+            ]
+        },
+    )
+
+    slot = _slot_from_meal(meal, plan_people=1, override=None)
+    assert len(slot.ingredients) == 4
+    positions = [item.position for item in slot.ingredients]
+    assert len(set(positions)) == 4
+    assert positions == [1, 3, 4, 5]
+
+    sauce = next(item for item in slot.ingredients if item.name == "Special Sauce")
+    assert sauce.position == 4  # Does not collide with position 3!
+
+    # Now verify that applying an override for position 3 removes ONLY Chicken, not Special Sauce
+    override = {
+        "removed_ingredients": [{"position": 3}],
+        "ingredient_changes": [],
+    }
+    slot_with_override = _slot_from_meal(meal, plan_people=1, override=override)
+    remaining_after_override = apply_recipe_override(
+        slot_with_override.ingredients, slot_with_override.recipe_override
+    )
+    remaining_names = [item.name for item in remaining_after_override]
+    assert remaining_names == ["Rice", "Special Sauce", "Garnish Herb"]
+    assert "Chicken" not in remaining_names

@@ -12,6 +12,9 @@ from difflib import SequenceMatcher
 from time import perf_counter
 from typing import Any, NoReturn
 
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    normalize_catalog_ingredient_category,
+)
 from src.domain.ports.catalog_recipe_repository_port import (
     MAX_CATALOG_POPULARITY_RANK,
     CatalogMealRepositoryPort,
@@ -31,6 +34,9 @@ from src.domain.services.meal_recommendation.ingredient_quantity_conversion_serv
 )
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
     normalize_food_name,
+)
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    deterministic_ingredient_id,
 )
 from src.observability import distribution_metric, increment_metric
 
@@ -174,6 +180,7 @@ class CatalogSeedImportSummary:
         default_factory=tuple
     )
     inserted_catalog_keys: tuple[str, ...] = field(default_factory=tuple)
+    updated_catalog_keys: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def is_successful(self) -> bool:
@@ -242,6 +249,7 @@ class _PreparedCatalogSeed:
     recipe_index: int
     seed: CatalogMealSeedWrite
     signature: CatalogMealSeedSignature
+    is_overwrite: bool = False
 
 
 class CatalogMealSeedImporter:
@@ -258,6 +266,9 @@ class CatalogMealSeedImporter:
         resolve_all_best_effort: bool = False,
         candidate_enricher: CatalogIngredientCandidateEnricher | None = None,
         converter: IngredientQuantityConversionService | None = None,
+        allow_unmapped_ingredients: bool = False,
+        overwrite_existing: bool = False,
+        skip_existing: bool = False,
     ) -> None:
         self._catalog_repository = catalog_repository
         self._food_reference_repository = food_reference_repository
@@ -269,6 +280,9 @@ class CatalogMealSeedImporter:
         self._auto_resolve_threshold = auto_resolve_threshold
         self._resolve_all_best_effort = resolve_all_best_effort
         self._candidate_enricher = candidate_enricher
+        self._allow_unmapped_ingredients = allow_unmapped_ingredients
+        self._overwrite_existing = overwrite_existing
+        self._skip_existing = skip_existing
         self._enriched_names: set[str] = set()
         self._converter = converter or IngredientQuantityConversionService(
             allow_unverified=resolve_all_best_effort,
@@ -286,6 +300,9 @@ class CatalogMealSeedImporter:
         approved_mappings: dict[str, int],
         auto_resolve_threshold: float | None,
         resolve_all_best_effort: bool,
+        allow_unmapped_ingredients: bool = False,
+        overwrite_existing: bool = False,
+        skip_existing: bool = False,
     ) -> CatalogMealSeedImporter:
         """Create a request-specific importer using the same repository ports."""
 
@@ -297,6 +314,9 @@ class CatalogMealSeedImporter:
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
             candidate_enricher=self._candidate_enricher,
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            overwrite_existing=overwrite_existing,
+            skip_existing=skip_existing,
         )
 
     async def import_manifest(
@@ -311,7 +331,16 @@ class CatalogMealSeedImporter:
         review_required: list[CatalogSeedReviewRequired] = []
         prepared: list[_PreparedCatalogSeed] = []
         signatures = await self._catalog_repository.list_seed_signatures()
+        seen_catalog_keys: set[str] = set()
         for index, recipe in enumerate(manifest.get("recipes", [])):
+            if isinstance(recipe, dict) and "recipe_key" in recipe:
+                recipe_key = str(recipe["recipe_key"]).strip()
+                if recipe_key in seen_catalog_keys:
+                    errors.append(
+                        f"recipes[{index}] duplicate catalog_key in manifest: {recipe_key}"
+                    )
+                    continue
+                seen_catalog_keys.add(recipe_key)
             try:
                 prepared_seed = await self._prepare_recipe(recipe, index)
             except CatalogSeedResolutionErrors as exc:
@@ -341,14 +370,36 @@ class CatalogMealSeedImporter:
             prepared.append(prepared_seed)
             signatures.append(prepared_seed.signature)
         if errors or review_required or self._dry_run:
+            dry_inserted = (
+                len([p for p in prepared if not p.is_overwrite])
+                if self._dry_run and not errors
+                else 0
+            )
+            dry_updated = (
+                len([p for p in prepared if p.is_overwrite])
+                + len(self._pending_popularity_updates)
+                if self._dry_run and not errors
+                else 0
+            )
             summary = CatalogSeedImportSummary(
-                inserted=len(prepared) if self._dry_run and not errors else 0,
+                inserted=dry_inserted,
+                updated=dry_updated,
                 skipped_existing=skipped,
                 dry_run=self._dry_run,
                 errors=tuple(errors),
                 resolution_issues=tuple(resolution_issues),
                 unverified_references=tuple(unverified_references),
                 review_required=tuple(review_required),
+                inserted_catalog_keys=(
+                    tuple(p.seed.catalog_key for p in prepared if not p.is_overwrite)
+                    if self._dry_run and not errors
+                    else ()
+                ),
+                updated_catalog_keys=(
+                    tuple(p.seed.catalog_key for p in prepared if p.is_overwrite)
+                    if self._dry_run and not errors
+                    else ()
+                ),
             )
             _record_seed_import_metrics(summary, started)
             return summary
@@ -356,17 +407,25 @@ class CatalogMealSeedImporter:
         if prepared:
             (
                 to_insert,
+                to_update,
                 skipped_after_lock,
                 lock_errors,
                 lock_reviews,
             ) = await self._recheck_under_lock(prepared)
         else:
             await self._catalog_repository.lock_seed_import()
-            to_insert, skipped_after_lock, lock_errors, lock_reviews = [], 0, [], []
+            to_insert, to_update, skipped_after_lock, lock_errors, lock_reviews = (
+                [],
+                [],
+                0,
+                [],
+                [],
+            )
         skipped += skipped_after_lock
         if lock_errors or lock_reviews:
             summary = CatalogSeedImportSummary(
                 inserted=0,
+                updated=0,
                 skipped_existing=skipped,
                 dry_run=self._dry_run,
                 errors=tuple(lock_errors),
@@ -377,6 +436,8 @@ class CatalogMealSeedImporter:
 
         for item in to_insert:
             await self._catalog_repository.add_seed_meal(item.seed)
+        for item in to_update:
+            await self._catalog_repository.add_seed_meal(item.seed)
         for catalog_key, popularity_rank in self._pending_popularity_updates:
             await self._catalog_repository.update_popularity_rank(
                 catalog_key=catalog_key,
@@ -384,10 +445,11 @@ class CatalogMealSeedImporter:
             )
         summary = CatalogSeedImportSummary(
             inserted=len(to_insert),
-            updated=len(self._pending_popularity_updates),
+            updated=len(to_update) + len(self._pending_popularity_updates),
             skipped_existing=skipped,
             dry_run=self._dry_run,
             inserted_catalog_keys=tuple(item.seed.catalog_key for item in to_insert),
+            updated_catalog_keys=tuple(item.seed.catalog_key for item in to_update),
         )
         _record_seed_import_metrics(summary, started)
         return summary
@@ -410,26 +472,37 @@ class CatalogMealSeedImporter:
         resolved_ingredients = await self._resolve_ingredients(recipe, index)
         content_hash = _content_hash(recipe, resolved_ingredients)
         existing = await self._find_existing(catalog_key, content_hash)
+        is_overwrite = False
         if existing is not None:
             if existing.catalog_key == catalog_key:
-                if existing.content_hash != content_hash:
+                if existing.content_hash == content_hash or self._skip_existing:
+                    if "popularity_rank" in recipe:
+                        popularity_rank = _optional_popularity_rank(
+                            recipe.get("popularity_rank")
+                        )
+                        if not self._dry_run:
+                            self._pending_popularity_updates.append(
+                                (catalog_key, popularity_rank)
+                            )
+                    return None
+                elif not self._overwrite_existing:
                     raise CatalogSeedImportError(
                         f"recipes[{index}] catalog_key already exists with different content: "
                         f"{catalog_key}"
                     )
-                if "popularity_rank" in recipe:
-                    popularity_rank = _optional_popularity_rank(
-                        recipe.get("popularity_rank")
-                    )
-                    if not self._dry_run:
-                        self._pending_popularity_updates.append(
-                            (catalog_key, popularity_rank)
-                        )
-            return None
+                else:
+                    is_overwrite = True
+            elif not self._overwrite_existing:
+                return None
+            else:
+                raise CatalogSeedImportError(
+                    f"recipes[{index}] content_hash already exists under a different catalog_key: "
+                    f"{existing.catalog_key} (incoming: {catalog_key})"
+                )
 
         seed_ingredients = []
         for ingredient_index, item in enumerate(resolved_ingredients):
-            if item.food_reference_id is None:
+            if item.food_reference_id is None and not self._allow_unmapped_ingredients:
                 raise CatalogSeedImportError(
                     f"recipes[{index}] resolved ingredient is missing food_reference_id"
                 )
@@ -439,13 +512,11 @@ class CatalogMealSeedImporter:
                     display_name=item.display_name,
                     quantity=item.quantity,
                     unit=item.unit,
-                    category=str(
+                    category=normalize_catalog_ingredient_category(
                         recipe.get("ingredients", [])[ingredient_index].get(
                             "category", "pantry"
                         )
-                    )
-                    .strip()
-                    .casefold(),
+                    ),
                 )
             )
 
@@ -475,11 +546,13 @@ class CatalogMealSeedImporter:
             serving_source=_optional_string(recipe.get("serving_source")),
             serving_confidence=_serving_confidence(recipe.get("serving_confidence")),
             steps=tuple(_step_payloads(recipe.get("steps"))),
+            nutrition=recipe.get("nutrition"),
         )
         return _PreparedCatalogSeed(
             recipe_index=index,
             seed=seed,
             signature=_seed_signature(seed, content_hash),
+            is_overwrite=is_overwrite,
         )
 
     async def _recheck_under_lock(
@@ -487,19 +560,28 @@ class CatalogMealSeedImporter:
         prepared: list[_PreparedCatalogSeed],
     ) -> tuple[
         list[_PreparedCatalogSeed],
+        list[_PreparedCatalogSeed],
         int,
         list[str],
         list[CatalogSeedReviewRequired],
     ]:
         if not prepared:
-            return [], 0, [], []
+            return [], [], 0, [], []
         await self._catalog_repository.lock_seed_import()
         signatures = await self._catalog_repository.list_seed_signatures()
         to_insert: list[_PreparedCatalogSeed] = []
+        to_update: list[_PreparedCatalogSeed] = []
         skipped = 0
         errors: list[str] = []
         review_required: list[CatalogSeedReviewRequired] = []
+        seen_under_lock: set[str] = set()
         for item in prepared:
+            if item.seed.catalog_key in seen_under_lock:
+                errors.append(
+                    f"duplicate catalog_key under lock: {item.seed.catalog_key}"
+                )
+                continue
+            seen_under_lock.add(item.seed.catalog_key)
             existing = await self._find_existing(
                 item.seed.catalog_key,
                 item.seed.content_hash,
@@ -509,11 +591,25 @@ class CatalogMealSeedImporter:
                     existing.catalog_key == item.seed.catalog_key
                     and existing.content_hash != item.seed.content_hash
                 ):
+                    if self._overwrite_existing:
+                        to_update.append(item)
+                        signatures.append(item.signature)
+                        continue
+                    if self._skip_existing:
+                        skipped += 1
+                        continue
                     errors.append(
                         "catalog_key already exists with different content: "
                         f"{item.seed.catalog_key}"
                     )
                     continue
+                elif existing.catalog_key != item.seed.catalog_key:
+                    if self._overwrite_existing:
+                        errors.append(
+                            f"content_hash already exists under a different catalog_key: "
+                            f"{existing.catalog_key} (incoming: {item.seed.catalog_key})"
+                        )
+                        continue
                 skipped += 1
                 continue
             review = _near_duplicate_review(
@@ -524,7 +620,7 @@ class CatalogMealSeedImporter:
                 continue
             to_insert.append(item)
             signatures.append(item.signature)
-        return to_insert, skipped, errors, review_required
+        return to_insert, to_update, skipped, errors, review_required
 
     async def _resolve_ingredients(
         self,
@@ -534,6 +630,34 @@ class CatalogMealSeedImporter:
         resolved: list[ResolvedIngredientQuantity] = []
         issues: list[CatalogSeedResolutionIssue] = []
         for ingredient_index, ingredient in enumerate(recipe.get("ingredients", [])):
+            food_ref_id = ingredient.get("food_reference_id")
+            norm_name = normalize_food_name(str(ingredient.get("name", "")).strip())
+            mapped_id = self._approved_mappings.get(norm_name)
+
+            if (
+                self._allow_unmapped_ingredients
+                and food_ref_id is None
+                and mapped_id is None
+            ):
+                resolved.append(
+                    ResolvedIngredientQuantity(
+                        food_reference_id=None,
+                        display_name=str(ingredient["name"]).strip(),
+                        quantity=float(ingredient["quantity"]),
+                        unit=str(ingredient["unit"]).strip(),
+                        grams=0.0,
+                        protein=0.0,
+                        carbs=0.0,
+                        fat=0.0,
+                        fiber=0.0,
+                        sugar=0.0,
+                        calories=0.0,
+                        display_only=True,
+                    )
+                )
+                continue
+
+            reference = None
             try:
                 reference = await self._resolve_food_reference(
                     ingredient,
@@ -542,34 +666,61 @@ class CatalogMealSeedImporter:
                     ingredient_index=ingredient_index,
                 )
             except CatalogSeedResolutionError as exc:
-                issues.append(exc.issue)
-                continue
-            try:
-                resolved.append(
-                    self._converter.resolve(
-                        reference=reference,
-                        quantity=float(ingredient["quantity"]),
-                        unit=str(ingredient["unit"]).strip(),
-                        display_name=str(ingredient["name"]).strip(),
-                    )
-                )
-            except IngredientQuantityConversionError as exc:
-                if exc.code == "food_reference_not_verified":
-                    raise CatalogSeedUnverifiedReferenceError(
-                        CatalogSeedUnverifiedReference(
-                            recipe_index=recipe_index,
-                            recipe_key=str(recipe["recipe_key"]).strip(),
-                            ingredient_index=ingredient_index,
-                            ingredient_name=str(ingredient["name"]).strip(),
-                            food_reference_id=reference.id,
-                            food_reference_name=reference.name,
-                            source=reference.source,
+                if not self._allow_unmapped_ingredients:
+                    issues.append(exc.issue)
+                    continue
+            except CatalogSeedResolutionErrors as exc:
+                if not self._allow_unmapped_ingredients:
+                    issues.extend(exc.issues)
+                    continue
+
+            if reference is not None:
+                try:
+                    resolved.append(
+                        self._converter.resolve(
+                            reference=reference,
+                            quantity=float(ingredient["quantity"]),
+                            unit=str(ingredient["unit"]).strip(),
+                            display_name=str(ingredient["name"]).strip(),
                         )
-                    ) from exc
-                raise CatalogSeedImportError(
-                    f"recipes[{recipe_index}].ingredients[{ingredient_index}] "
-                    f"{exc.code}: {exc}"
-                ) from exc
+                    )
+                    continue
+                except IngredientQuantityConversionError as exc:
+                    if exc.code == "food_reference_not_verified":
+                        if not self._allow_unmapped_ingredients:
+                            raise CatalogSeedUnverifiedReferenceError(
+                                CatalogSeedUnverifiedReference(
+                                    recipe_index=recipe_index,
+                                    recipe_key=str(recipe["recipe_key"]).strip(),
+                                    ingredient_index=ingredient_index,
+                                    ingredient_name=str(ingredient["name"]).strip(),
+                                    food_reference_id=reference.id,
+                                    food_reference_name=reference.name,
+                                    source=reference.source,
+                                )
+                            ) from exc
+                    else:
+                        raise CatalogSeedImportError(
+                            f"recipes[{recipe_index}].ingredients[{ingredient_index}] "
+                            f"{exc.code}: {exc}"
+                        ) from exc
+
+            resolved.append(
+                ResolvedIngredientQuantity(
+                    food_reference_id=None,
+                    display_name=str(ingredient["name"]).strip(),
+                    quantity=float(ingredient["quantity"]),
+                    unit=str(ingredient["unit"]).strip(),
+                    grams=0.0,
+                    protein=0.0,
+                    carbs=0.0,
+                    fat=0.0,
+                    fiber=0.0,
+                    sugar=0.0,
+                    calories=0.0,
+                    display_only=True,
+                )
+            )
         if issues:
             raise CatalogSeedResolutionErrors(issues)
         return resolved
@@ -877,6 +1028,20 @@ def normalize_catalog_text(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).split()).casefold()
 
 
+def _canonical_nutrition(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    canonical: dict[str, str] = {}
+    for key, val in sorted(value.items()):
+        if val is None:
+            continue
+        try:
+            canonical[str(key)] = _canonical_decimal(float(val))
+        except (ValueError, TypeError):
+            canonical[str(key)] = str(val)
+    return canonical or None
+
+
 def _content_hash(
     recipe: dict[str, Any],
     ingredients: list[ResolvedIngredientQuantity],
@@ -886,6 +1051,11 @@ def _content_hash(
             "food_reference_id": item.food_reference_id,
             "quantity": _canonical_decimal(item.quantity),
             "unit": normalize_catalog_text(item.unit),
+            **(
+                {"name": normalize_catalog_text(item.display_name)}
+                if item.food_reference_id is None
+                else {}
+            ),
         }
         for item in ingredients
     ]
@@ -895,26 +1065,32 @@ def _content_hash(
         "cuisine": normalize_catalog_text(str(recipe["cuisine"])),
         "meal_types": sorted(recipe["meal_types"]),
         "details": {
-            key: recipe.get(key)
-            for key in (
-                "source_name",
-                "source_url",
-                "prep_time_minutes",
-                "cook_time_minutes",
-                "tag",
-                "allergens",
-                "summary",
-                "equipment",
-                "base_servings",
-                "serving_source",
-                "serving_confidence",
-                "steps",
-            )
+            **{
+                key: recipe.get(key)
+                for key in (
+                    "source_name",
+                    "source_url",
+                    "prep_time_minutes",
+                    "cook_time_minutes",
+                    "tag",
+                    "allergens",
+                    "summary",
+                    "equipment",
+                    "base_servings",
+                    "serving_source",
+                    "serving_confidence",
+                    "steps",
+                )
+            },
+            "nutrition": _canonical_nutrition(recipe.get("nutrition")),
         },
         "ingredients": sorted(
             ingredient_payloads,
             key=lambda item: (
-                item["food_reference_id"],
+                item["food_reference_id"]
+                if item["food_reference_id"] is not None
+                else -1,
+                item.get("name", ""),
                 item["unit"],
                 item["quantity"],
             ),
@@ -997,7 +1173,10 @@ def _seed_signature(
         normalized_name=normalize_catalog_text(seed.name),
         normalized_cuisine=normalize_catalog_text(seed.cuisine),
         food_reference_ids=frozenset(
-            item.food_reference_id for item in seed.ingredients
+            item.food_reference_id
+            if item.food_reference_id is not None
+            else deterministic_ingredient_id(item.display_name)
+            for item in seed.ingredients
         ),
     )
 
@@ -1009,6 +1188,8 @@ def _near_duplicate_review(
 ) -> CatalogSeedReviewRequired | None:
     for existing in existing_signatures:
         if existing.content_hash == candidate.content_hash:
+            continue
+        if existing.catalog_key == candidate.catalog_key:
             continue
         if existing.normalized_name != candidate.normalized_name:
             continue

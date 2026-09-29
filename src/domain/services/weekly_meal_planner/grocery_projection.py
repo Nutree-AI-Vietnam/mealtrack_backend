@@ -6,6 +6,8 @@ applied to a copy of the lines and do not rewrite the catalog payload.
 
 from __future__ import annotations
 
+import unicodedata
+import zlib
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -18,6 +20,15 @@ from src.domain.services.weekly_meal_planner.recipe_publication import (
     is_nutrition_safe_ingredient,
     is_planner_eligible,
 )
+
+SYNTHETIC_INGREDIENT_ID_OFFSET = 1_000_000_000
+
+
+def deterministic_ingredient_id(name: str) -> int:
+    """Generate a stable positive 31-bit integer ID for an ingredient name, offset to avoid collision with database food_reference_id."""
+    norm = unicodedata.normalize("NFC", (name or "").strip().lower())
+    val = zlib.crc32(norm.encode("utf-8")) % 1_000_000_000
+    return SYNTHETIC_INGREDIENT_ID_OFFSET + val
 
 
 @dataclass(frozen=True)
@@ -149,8 +160,15 @@ def aggregate_grocery(
         for line in apply_recipe_override(slot.ingredients, slot.recipe_override):
             if not is_nutrition_safe_ingredient(line.as_mapping()):
                 continue
+            if line.quantity is None:
+                continue
             normalized = normalize_ingredient_quantity(line.quantity, line.unit or "")
-            key = (int(line.food_reference_id), normalized.dimension, normalized.unit)
+            ingredient_id = (
+                int(line.food_reference_id)
+                if line.food_reference_id is not None
+                else deterministic_ingredient_id(line.name)
+            )
+            key = (ingredient_id, normalized.dimension, normalized.unit)
             scaled = normalized.amount * multiplier
             bucket = totals[key]
             bucket["name"] = line.name
@@ -167,13 +185,15 @@ def aggregate_grocery(
     pantry_by_food = {item.food_reference_id: item for item in pantry}
     interaction_by_food = {item.food_reference_id: item for item in interactions}
     items: list[DerivedGroceryItem] = []
-    for (food_id, dimension, unit), value in sorted(
+    for (ingredient_id, dimension, unit), value in sorted(
         totals.items(), key=lambda item: item[0]
     ):
-        stock = pantry_by_food.get(food_id)
+        stock = pantry_by_food.get(ingredient_id)
         available = _available_amount(stock, dimension=dimension, unit=unit)
         status, remaining = grocery_status(value["amount"], available)
-        flags = interaction_by_food.get(food_id, GroceryInteraction(food_id))
+        flags = interaction_by_food.get(
+            ingredient_id, GroceryInteraction(ingredient_id)
+        )
         stock_remaining = max(available or Decimal("0"), Decimal("0"))
         daily_amounts = []
         for day_index, day_needed in sorted(value["day_amounts"].items()):
@@ -188,7 +208,7 @@ def aggregate_grocery(
             )
         items.append(
             DerivedGroceryItem(
-                ingredient_id=food_id,
+                ingredient_id=ingredient_id,
                 name=value["name"],
                 category=value["category"],
                 total_needed=float(value["amount"]),

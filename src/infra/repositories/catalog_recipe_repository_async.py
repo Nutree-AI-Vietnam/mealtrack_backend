@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import unicodedata
 from collections.abc import Iterable
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import and_, func, or_, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,7 @@ from src.domain.model.meal_recommendation.catalog_recipe import (
 from src.domain.model.nutrition.extra_nutrients import (
     complete_micros_from_per_100g_portions,
 )
+from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros import Micros
 from src.domain.ports.catalog_recipe_repository_port import (
     CatalogMealRepositoryPort,
@@ -31,6 +33,9 @@ from src.domain.ports.catalog_recipe_repository_port import (
 from src.domain.services.meal_recommendation.ingredient_quantity_conversion_service import (
     IngredientQuantityConversionService,
     ResolvedIngredientQuantity,
+)
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    deterministic_ingredient_id,
 )
 from src.domain.services.weekly_meal_planner.recipe_publication import (
     projection_nutrition_quantity,
@@ -246,28 +251,22 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             allergen_disclosures=_text_list(seed.allergens),
             source={"publisher": seed.source_name, "url": seed.source_url},
             aliases=alias_rows,
-            known_allergen_codes=[row.code for row in allergen_rows],
+            known_allergen_codes=[str(r.code) for r in allergen_rows],
+            nutrition=seed.nutrition,
         )
-        row = MealCatalogORM(
-            catalog_key=seed.catalog_key,
-            content_hash=seed.content_hash,
-            name=seed.name,
-            cuisine=seed.cuisine,
-            description=seed.description,
-            image_url=seed.image_url,
-            popularity_rank=seed.popularity_rank,
-            breakfast_eligible="breakfast" in seed.meal_types,
-            lunch_eligible="lunch" in seed.meal_types,
-            dinner_eligible="dinner" in seed.meal_types,
-            snack_eligible="snack" in seed.meal_types,
-            is_active=True,
-            recipe_payload=published.recipe_payload,
-            payload_schema_version=published.payload_schema_version,
-            payload_digest=published.payload_digest,
-            publication_status=published.publication_status,
-            nutrition_status=published.nutrition_status,
+        existing_result = await self._session.execute(
+            select(MealCatalogORM)
+            .options(
+                selectinload(MealCatalogORM.ingredients),
+                selectinload(MealCatalogORM.steps),
+                selectinload(MealCatalogORM.allergen_links),
+            )
+            .where(MealCatalogORM.catalog_key == seed.catalog_key)
         )
-        row.ingredients = [
+        row = existing_result.scalars().first()
+        is_new = row is None
+
+        ingredients = [
             MealCatalogIngredientORM(
                 food_reference_id=item.food_reference_id,
                 position=item.position,
@@ -281,7 +280,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             )
             for item in published.ingredients
         ]
-        row.steps = [
+        steps = [
             MealCatalogStepORM(
                 step_number=step.step_number,
                 title=step.title,
@@ -289,8 +288,8 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             )
             for step in published.steps
         ]
-        allergens_by_code = {row.code: row for row in allergen_rows}
-        row.allergen_links = [
+        allergens_by_code = {str(r.code): r for r in allergen_rows}
+        allergen_links = [
             MealCatalogAllergenORM(
                 allergen=allergens_by_code[code],
                 source="explicit",
@@ -298,18 +297,81 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             for code in published.allergen_codes
             if code in allergens_by_code
         ]
-        row.source_name = seed.source_name
-        row.source_url = seed.source_url
-        row.prep_time_minutes = seed.prep_time_minutes
-        row.cook_time_minutes = seed.cook_time_minutes
-        row.tag = seed.tag
-        row.allergens = seed.allergens
-        row.summary = seed.summary
-        row.equipment = seed.equipment
-        row.base_servings = seed.base_servings
-        row.serving_source = seed.serving_source
-        row.serving_confidence = seed.serving_confidence
-        self._session.add(row)
+
+        if is_new:
+            row = MealCatalogORM(
+                catalog_key=seed.catalog_key,
+                content_hash=seed.content_hash,
+                name=seed.name,
+                cuisine=seed.cuisine,
+                description=seed.description,
+                image_url=seed.image_url,
+                popularity_rank=seed.popularity_rank,
+                breakfast_eligible="breakfast" in seed.meal_types,
+                lunch_eligible="lunch" in seed.meal_types,
+                dinner_eligible="dinner" in seed.meal_types,
+                snack_eligible="snack" in seed.meal_types,
+                is_active=True,
+                recipe_payload=published.recipe_payload,
+                payload_schema_version=published.payload_schema_version,
+                payload_digest=published.payload_digest,
+                publication_status=published.publication_status,
+                nutrition_status=published.nutrition_status,
+                ingredients=ingredients,
+                steps=steps,
+                allergen_links=allergen_links,
+                source_name=seed.source_name,
+                source_url=seed.source_url,
+                prep_time_minutes=seed.prep_time_minutes,
+                cook_time_minutes=seed.cook_time_minutes,
+                tag=seed.tag,
+                allergens=seed.allergens,
+                summary=seed.summary,
+                equipment=seed.equipment,
+                base_servings=seed.base_servings,
+                serving_source=seed.serving_source,
+                serving_confidence=seed.serving_confidence,
+            )
+            self._session.add(row)
+        else:
+            assert row is not None
+            row.ingredients.clear()
+            row.steps.clear()
+            row.allergen_links.clear()
+            await self._session.flush()
+            _set_fields(
+                row,
+                content_hash=seed.content_hash,
+                name=seed.name,
+                cuisine=seed.cuisine,
+                description=seed.description,
+                image_url=seed.image_url,
+                popularity_rank=seed.popularity_rank,
+                breakfast_eligible="breakfast" in seed.meal_types,
+                lunch_eligible="lunch" in seed.meal_types,
+                dinner_eligible="dinner" in seed.meal_types,
+                snack_eligible="snack" in seed.meal_types,
+                is_active=True,
+                recipe_payload=published.recipe_payload,
+                payload_schema_version=published.payload_schema_version,
+                payload_digest=published.payload_digest,
+                publication_status=published.publication_status,
+                nutrition_status=published.nutrition_status,
+                ingredients=ingredients,
+                steps=steps,
+                allergen_links=allergen_links,
+                source_name=seed.source_name,
+                source_url=seed.source_url,
+                prep_time_minutes=seed.prep_time_minutes,
+                cook_time_minutes=seed.cook_time_minutes,
+                tag=seed.tag,
+                allergens=seed.allergens,
+                summary=seed.summary,
+                equipment=seed.equipment,
+                base_servings=seed.base_servings,
+                serving_source=seed.serving_source,
+                serving_confidence=seed.serving_confidence,
+            )
         await self._session.flush()
 
     async def _food_alias_pairs(self) -> list[tuple[str, int]]:
@@ -353,11 +415,18 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
                 normalized_cuisine=_normalize_catalog_text(cast(str, row.cuisine)),
                 food_reference_ids=frozenset(
                     cast(int, ingredient.food_reference_id)
+                    if ingredient.food_reference_id is not None
+                    else deterministic_ingredient_id(ingredient.display_name)
                     for ingredient in row.ingredients
                 ),
             )
             for row in result.scalars().unique().all()
         ]
+
+
+def _set_fields(target: Any, **fields: Any) -> None:
+    for key, val in fields.items():
+        setattr(target, key, val)
 
 
 def _browse_match_clause(
@@ -475,6 +544,16 @@ def _meal_to_domain(row: MealCatalogORM, *, include_steps: bool = False) -> Cata
     )
 
 
+def _safe_float(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return f if math.isfinite(f) else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
     totals = {
         "protein": 0.0,
@@ -486,7 +565,9 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
     }
     for ingredient in row.ingredients:
         if (
-            projection_nutrition_quantity(
+            ingredient.food_reference_id is None
+            or ingredient.food_reference is None
+            or projection_nutrition_quantity(
                 {
                     "food_reference_id": ingredient.food_reference_id,
                     "quantity": ingredient.quantity,
@@ -503,6 +584,51 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
         totals["fiber"] += resolved.fiber
         totals["sugar"] += resolved.sugar
         totals["calories"] += resolved.calories
+    has_unmapped_ingredients = any(
+        (ingredient.food_reference_id is None or ingredient.food_reference is None)
+        and projection_nutrition_quantity(
+            {
+                "food_reference_id": ingredient.food_reference_id,
+                "quantity": ingredient.quantity,
+                "quantity_text": getattr(ingredient, "quantity_text", None),
+            }
+        )
+        != 0
+        for ingredient in row.ingredients
+    )
+    if has_unmapped_ingredients and isinstance(row.recipe_payload, dict):
+        nutr = row.recipe_payload.get("nutrition")
+        if isinstance(nutr, dict):
+            raw_p = _safe_float(nutr.get("protein"))
+            raw_c = _safe_float(nutr.get("carbs"))
+            raw_f = _safe_float(nutr.get("fat"))
+            raw_fib = _safe_float(nutr.get("fiber"))
+            raw_s = _safe_float(nutr.get("sugar"))
+            raw_cals = _safe_float(nutr.get("calories"))
+            if any(v is not None for v in (raw_cals, raw_p, raw_c, raw_f)):
+                p = raw_p or 0.0
+                c = raw_c or 0.0
+                f = raw_f or 0.0
+                fib = raw_fib or 0.0
+                s = raw_s or 0.0
+                cal = (
+                    raw_cals
+                    if raw_cals is not None
+                    else Macros.raw_total_calories(p, c, f, fib)
+                )
+                return ResolvedIngredientQuantity(
+                    food_reference_id=None,
+                    display_name=cast(str, row.name),
+                    quantity=1,
+                    unit="meal",
+                    grams=0,
+                    protein=p,
+                    carbs=c,
+                    fat=f,
+                    fiber=fib,
+                    sugar=s,
+                    calories=cal,
+                )
     return ResolvedIngredientQuantity(
         food_reference_id=None,
         display_name=cast(str, row.name),
@@ -522,7 +648,9 @@ def _nutrition_micros(row: MealCatalogORM) -> Micros | None:
     portions = []
     for ingredient in row.ingredients:
         if (
-            projection_nutrition_quantity(
+            ingredient.food_reference_id is None
+            or ingredient.food_reference is None
+            or projection_nutrition_quantity(
                 {
                     "food_reference_id": ingredient.food_reference_id,
                     "quantity": ingredient.quantity,
@@ -556,7 +684,7 @@ def _resolve_ingredient_nutrition(
 
 def _ingredient_to_domain(row: MealCatalogIngredientORM) -> CatalogMealIngredient:
     return CatalogMealIngredient(
-        food_reference_id=cast(int, row.food_reference_id),
+        food_reference_id=cast(int | None, row.food_reference_id),
         display_name=cast(str, row.display_name),
         quantity=_decimal(row.quantity),
         unit=cast(str, row.unit),

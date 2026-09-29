@@ -9,7 +9,18 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    ALLOWED_CATALOG_INGREDIENT_CATEGORIES,
+    PRODUCE_CATEGORY_ALIASES,
+    PROTEIN_CATEGORY_ALIASES,
+)
 from src.domain.ports.catalog_recipe_repository_port import MAX_CATALOG_POPULARITY_RANK
+
+ALLOWED_MANIFEST_INGREDIENT_CATEGORIES: frozenset[str] = (
+    ALLOWED_CATALOG_INGREDIENT_CATEGORIES
+    | PRODUCE_CATEGORY_ALIASES
+    | PROTEIN_CATEGORY_ALIASES
+)
 
 REQUIRED_CUISINES = ("vietnamese", "japanese", "korean")
 ALLOWED_MEAL_TYPES = ("breakfast", "lunch", "dinner", "snack")
@@ -232,7 +243,8 @@ def _validate_ingredients(ingredients: Any, index: int, errors: list[str]) -> No
             errors.append(
                 f"recipes[{index}].ingredients[{ingredient_index}].unit is required"
             )
-        if ingredient.get("category", "pantry") not in {"produce", "protein", "pantry"}:
+        category_raw = str(ingredient.get("category", "pantry")).strip().casefold()
+        if category_raw not in ALLOWED_MANIFEST_INGREDIENT_CATEGORIES:
             errors.append(
                 f"recipes[{index}].ingredients[{ingredient_index}].category is invalid"
             )

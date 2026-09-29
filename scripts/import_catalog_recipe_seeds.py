@@ -96,9 +96,30 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--allow-unmapped-ingredients",
+        action="store_true",
+        default=True,
+        help="Allow ingredients without food_reference_id (default: True).",
+    )
+    parser.add_argument(
+        "--strict-food-reference",
+        action="store_true",
+        help="Disallow ingredients without food_reference_id.",
+    )
+    parser.add_argument(
         "--skip-failed-recipes",
         action="store_true",
         help="Skip individual recipes that fail ingredient resolution and import only the clean ones.",
+    )
+    parser.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        help="Overwrite existing catalog recipes if content_hash differs.",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip recipes whose catalog_key already exists in the catalog.",
     )
     args = parser.parse_args()
 
@@ -147,6 +168,7 @@ def main() -> None:
             0.92 if args.auto_resolve_threshold is None else args.auto_resolve_threshold
         )
     )
+    allow_unmapped_ingredients = not args.strict_food_reference
     summary = asyncio.run(
         _run_import(
             manifest,
@@ -154,7 +176,10 @@ def main() -> None:
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=args.resolve_all_best_effort,
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
             skip_failed_recipes=args.skip_failed_recipes,
+            overwrite_existing=args.overwrite_existing,
+            skip_existing=args.skip_existing,
         )
     )
     if args.resolver_report:
@@ -173,6 +198,7 @@ def main() -> None:
         print(f"- {error}", file=sys.stderr)
     print(f"db_import={'dry_run' if summary.dry_run else 'applied'}")
     print(f"inserted={summary.inserted}")
+    print(f"updated={summary.updated}")
     print(f"skipped_existing={summary.skipped_existing}")
     if not summary.is_successful:
         print("import=failed")
@@ -213,7 +239,10 @@ async def _run_import(
     approved_mappings: dict[str, int],
     auto_resolve_threshold: float,
     resolve_all_best_effort: bool,
+    allow_unmapped_ingredients: bool = True,
     skip_failed_recipes: bool = False,
+    overwrite_existing: bool = False,
+    skip_existing: bool = False,
 ):
     async with AsyncUnitOfWork() as uow:
         if uow.session is None:
@@ -231,6 +260,9 @@ async def _run_import(
                 approved_mappings=approved_mappings,
                 auto_resolve_threshold=auto_resolve_threshold,
                 resolve_all_best_effort=resolve_all_best_effort,
+                allow_unmapped_ingredients=allow_unmapped_ingredients,
+                overwrite_existing=overwrite_existing,
+                skip_existing=skip_existing,
             )
             clean_recipes = []
             for idx, r in enumerate(manifest.get("recipes", [])):
@@ -254,6 +286,9 @@ async def _run_import(
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            overwrite_existing=overwrite_existing,
+            skip_existing=skip_existing,
         ).import_manifest(target_manifest)
         if dry_run or not preview.is_successful:
             return preview
@@ -264,6 +299,9 @@ async def _run_import(
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            overwrite_existing=overwrite_existing,
+            skip_existing=skip_existing,
         ).import_manifest(target_manifest)
         if not summary.is_successful:
             await uow.rollback()
