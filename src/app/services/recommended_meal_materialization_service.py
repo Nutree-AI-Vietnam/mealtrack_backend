@@ -192,7 +192,9 @@ async def _load_nutrition_projections(
     catalog_meal: CatalogMeal,
 ) -> dict[int, FoodReferenceNutritionProjection]:
     food_reference_ids = [
-        ingredient.food_reference_id for ingredient in catalog_meal.ingredients
+        ingredient.food_reference_id
+        for ingredient in catalog_meal.ingredients
+        if ingredient.food_reference_id is not None
     ]
     if not food_reference_ids:
         return {}
