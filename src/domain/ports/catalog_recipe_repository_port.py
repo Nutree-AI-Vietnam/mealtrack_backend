@@ -141,6 +141,45 @@ class CatalogMealRepositoryPort(ABC):
         """Return one active catalog meal with ordered detail steps."""
 
     @abstractmethod
+    async def get_micronutrient_enrichment(
+        self, *, catalog_meal_id: str, content_hash: str
+    ) -> dict | None:
+        """Return a cached micronutrient estimate for one recipe revision."""
+
+    @abstractmethod
+    async def claim_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        lease_seconds: int,
+    ) -> tuple[str, str | None]:
+        """Claim cold enrichment work and return a fencing token when claimed."""
+
+    @abstractmethod
+    async def save_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        claim_token: str,
+        micros: dict[str, float],
+        sources: dict[str, str],
+    ) -> bool:
+        """Save estimate only while the revision and claim token still match."""
+
+    @abstractmethod
+    async def fail_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        claim_token: str,
+        retry_seconds: int,
+    ) -> None:
+        """Release the claim and apply a bounded retry backoff."""
+
+    @abstractmethod
     async def find_seed_existing(
         self,
         *,

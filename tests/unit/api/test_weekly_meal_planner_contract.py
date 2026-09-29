@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -63,6 +64,7 @@ class _Bus:
         self.recipe = recipe
         self.proposal = proposal
         self.recipe_query = None
+        self.recipe_detail_query = None
 
     async def send(self, query):
         if query.__class__.__name__ == "GetUserTimezoneQuery":
@@ -70,6 +72,7 @@ class _Bus:
         if query.__class__.__name__ == "GetCurrentWeeklyPlanQuery":
             return _plan()
         if query.__class__.__name__ == "GetRecipeDetailQuery":
+            self.recipe_detail_query = query
             return self.recipe
         if query.__class__.__name__ == "ListRecipesQuery":
             self.recipe_query = query
@@ -91,11 +94,12 @@ class _FoodReferenceRepository:
         return self.projections
 
 
-def _app(recipe=None, bus=None, food_reference_repository=None):
+def _app(recipe=None, bus=None, food_reference_repository=None, authenticated=True):
     app = FastAPI()
     app.add_middleware(AcceptLanguageMiddleware)
     app.include_router(router)
-    app.dependency_overrides[get_current_user_id] = lambda: "user-1"
+    if authenticated:
+        app.dependency_overrides[get_current_user_id] = lambda: "user-1"
     event_bus = bus or _Bus(recipe)
     app.dependency_overrides[get_configured_event_bus] = lambda: event_bus
     app.dependency_overrides[get_text_translation_service] = lambda: None
@@ -173,6 +177,62 @@ def test_recipe_detail_uses_empty_micros_and_null_score_when_unavailable():
     nutrition = response.json()["nutrition_per_serving"]
     assert nutrition["micros"] == {}
     assert nutrition["score"] is None
+    assert nutrition["micros_enrichment_loaded"] is False
+
+
+def test_recipe_detail_marks_ai_micronutrient_values_as_estimates():
+    meal = replace(
+        _recipe(Micros(iron=3)),
+        nutrition_micros_sources={"iron": "ai_estimate"},
+        nutrition_micros_estimated=True,
+    )
+    response = TestClient(_app(meal)).get("/v1/recipes/catalog-1")
+
+    assert response.status_code == 200
+    nutrition = response.json()["nutrition_per_serving"]
+    assert nutrition["micros"] == {"iron": 3.0}
+    assert nutrition["micros_sources"] == {"iron": "ai_estimate"}
+    assert nutrition["micros_estimated"] is True
+    assert nutrition["micros_enrichment_loaded"] is False
+    assert nutrition["score"] is None
+
+
+def test_recipe_detail_reports_completed_micronutrient_enrichment():
+    meal = replace(
+        _recipe(Micros(iron=3)),
+        nutrition_micros_sources={"iron": "usda_fdc"},
+        nutrition_micros_enrichment_loaded=True,
+    )
+    response = TestClient(_app(meal)).get("/v1/recipes/catalog-1")
+
+    assert response.status_code == 200
+    nutrition = response.json()["nutrition_per_serving"]
+    assert nutrition["micros"] == {"iron": 3.0}
+    assert nutrition["micros_sources"] == {"iron": "usda_fdc"}
+    assert nutrition["micros_enrichment_loaded"] is True
+
+
+def test_recipe_micronutrient_enrichment_is_authenticated_and_explicit():
+    bus = _Bus(recipe=_recipe())
+    response = TestClient(_app(bus=bus)).post(
+        "/v1/recipes/catalog-1/micronutrients/enrich"
+    )
+
+    assert response.status_code == 200
+    assert bus.recipe_detail_query.enrich_micronutrients is True
+
+    default_bus = _Bus(recipe=_recipe())
+    response = TestClient(_app(bus=default_bus)).get("/v1/recipes/catalog-1")
+
+    assert response.status_code == 200
+    assert default_bus.recipe_detail_query.enrich_micronutrients is False
+
+    public_client = TestClient(_app(recipe=_recipe(), authenticated=False))
+    response = public_client.get("/v1/recipes/catalog-1")
+    assert response.status_code == 200
+
+    response = public_client.post("/v1/recipes/catalog-1/micronutrients/enrich")
+    assert response.status_code == 401
 
 
 def test_recipe_detail_unmapped_ingredient_id_is_not_string_none():
@@ -201,9 +261,7 @@ def test_recipe_detail_unmapped_ingredient_id_is_not_string_none():
     assert response.status_code == 200
     ing_response = response.json()["ingredients"][0]
     assert ing_response["id"] != "None"
-    assert ing_response["id"] == str(
-        deterministic_ingredient_id("Phi lê cá điêu hồng")
-    )
+    assert ing_response["id"] == str(deterministic_ingredient_id("Phi lê cá điêu hồng"))
 
 
 def test_recipe_list_forwards_requested_meal_type():

@@ -273,15 +273,39 @@ async def get_recipe_detail(
     translation_service=Depends(get_text_translation_service),
 ):
     try:
-        meal = await event_bus.send(GetRecipeDetailQuery(recipe_id=recipe_id))
-        if meal is None:
-            raise HTTPException(status_code=404, detail="Recipe not found")
-        localized = await localize_catalog_meals(
-            (meal,),
-            language=get_request_language(request),
+        return await _recipe_detail_response(
+            request,
+            recipe_id,
+            enrich_micronutrients=False,
+            event_bus=event_bus,
             translation_service=translation_service,
         )
-        return _recipe_detail(localized[0])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/v1/recipes/{recipe_id}/micronutrients/enrich", response_model=RecipeDetailResponse
+)
+@limiter.limit("10/minute")
+async def enrich_recipe_detail_micronutrients(
+    request: Request,
+    recipe_id: str,
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_text_translation_service),
+):
+    del user_id
+    try:
+        return await _recipe_detail_response(
+            request,
+            recipe_id,
+            enrich_micronutrients=True,
+            event_bus=event_bus,
+            translation_service=translation_service,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -611,11 +635,39 @@ def _recipe_list_item(meal: CatalogMeal) -> RecipeListItemResponse:
     )
 
 
+async def _recipe_detail_response(
+    request: Request,
+    recipe_id: str,
+    *,
+    enrich_micronutrients: bool,
+    event_bus,
+    translation_service,
+) -> RecipeDetailResponse:
+    meal = await event_bus.send(
+        GetRecipeDetailQuery(
+            recipe_id=recipe_id,
+            enrich_micronutrients=enrich_micronutrients,
+        )
+    )
+    if meal is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    localized = await localize_catalog_meals(
+        (meal,),
+        language=get_request_language(request),
+        translation_service=translation_service,
+    )
+    return _recipe_detail(localized[0])
+
+
 def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
     micros = meal.nutrition_micros
     score = (
         round(nrf_quality(float(meal.protein_g), float(meal.fiber_g), micros))
-        if isinstance(micros, Micros) and nrf_coverage(micros) >= 1
+        if (
+            isinstance(micros, Micros)
+            and not meal.nutrition_micros_estimated
+            and nrf_coverage(micros) >= 1
+        )
         else None
     )
     return RecipeDetailResponse(
@@ -639,6 +691,9 @@ def _recipe_detail(meal: CatalogMeal) -> RecipeDetailResponse:
             fat=float(meal.fat_g),
             fiber=float(meal.fiber_g),
             micros=micros.to_dict() if isinstance(micros, Micros) else {},
+            micros_sources=meal.nutrition_micros_sources,
+            micros_estimated=meal.nutrition_micros_estimated,
+            micros_enrichment_loaded=meal.nutrition_micros_enrichment_loaded,
             score=score,
         ),
         ingredients=[

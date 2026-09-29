@@ -89,6 +89,9 @@ class RecipeDetailNutritionResponse(BaseModel):
     fat: float
     fiber: float
     micros: dict[str, float] = Field(default_factory=dict)
+    micros_sources: dict[str, str] = Field(default_factory=dict)
+    micros_estimated: bool = False
+    micros_enrichment_loaded: bool = False
     score: int | None = None
 
 

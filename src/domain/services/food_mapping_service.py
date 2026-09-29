@@ -3,6 +3,7 @@ Maps USDA FDC responses into internal simplified structures and domain-friendly 
 Keeps logic flat and readable.
 """
 
+import math
 from typing import Any
 
 USDA_NUTRIENT_MAPPING = {
@@ -12,6 +13,30 @@ USDA_NUTRIENT_MAPPING = {
     1004: "fat",  # Total lipid (fat) (g)
     1079: "fiber",  # Fiber, total dietary (g)
     2000: "sugar",  # Sugars, total including NLEA (g)
+}
+
+USDA_MICRONUTRIENT_MAPPING = {
+    1106: ("vitamin_a", "µg"),
+    1162: ("vitamin_c", "mg"),
+    1114: ("vitamin_d", "µg"),
+    1109: ("vitamin_e", "mg"),
+    1185: ("vitamin_k", "µg"),
+    1165: ("thiamin", "mg"),
+    1166: ("riboflavin", "mg"),
+    1167: ("niacin", "mg"),
+    1175: ("vitamin_b6", "mg"),
+    1178: ("vitamin_b12", "µg"),
+    1177: ("folate", "µg"),
+    1087: ("calcium", "mg"),
+    1089: ("iron", "mg"),
+    1090: ("magnesium", "mg"),
+    1091: ("phosphorus", "mg"),
+    1092: ("potassium", "mg"),
+    1093: ("sodium", "mg"),
+    1095: ("zinc", "mg"),
+    1103: ("selenium", "µg"),
+    1258: ("saturated_fat", "g"),
+    1235: ("added_sugar", "g"),
 }
 
 # Fallback unit categories for custom/manual ingredients
@@ -345,6 +370,34 @@ class FoodMappingService(FoodMappingServicePort):
         return values
 
     @staticmethod
+    def _extract_micronutrients(
+        nutrients: list[dict[str, Any]],
+    ) -> dict[str, dict[str, float | str]]:
+        values: dict[str, dict[str, float | str]] = {}
+        for entry in nutrients or []:
+            nutrient = entry.get("nutrient") or {}
+            raw_nutrient_id = nutrient.get("id") or entry.get("nutrientId")
+            raw_amount = (
+                entry.get("amount") if "nutrient" in entry else entry.get("value")
+            )
+            if raw_nutrient_id is None or raw_amount is None:
+                continue
+            try:
+                nutrient_id = int(raw_nutrient_id)
+                amount = float(raw_amount)
+            except (TypeError, ValueError):
+                continue
+            mapping = USDA_MICRONUTRIENT_MAPPING.get(nutrient_id)
+            if mapping is None or amount < 0 or not math.isfinite(amount):
+                continue
+            key, fallback_unit = mapping
+            unit = str(
+                nutrient.get("unitName") or entry.get("unitName") or fallback_unit
+            )
+            values[key] = {"amount": amount, "unit": unit}
+        return values
+
+    @staticmethod
     def _nutrient_name_key(entry: dict[str, Any]) -> str | None:
         nutrient = entry.get("nutrient") or {}
         name = str(entry.get("nutrientName") or nutrient.get("name") or "").lower()
@@ -427,6 +480,9 @@ class FoodMappingService(FoodMappingServicePort):
 
     def map_food_details(self, details: dict[str, Any]) -> dict[str, Any]:
         macros = self._extract_macros(details.get("foodNutrients") or [])
+        micronutrients = self._extract_micronutrients(
+            details.get("foodNutrients") or []
+        )
         return {
             "fdc_id": details.get("fdcId"),
             "name": details.get("description"),
@@ -439,6 +495,7 @@ class FoodMappingService(FoodMappingServicePort):
                 "carbs": macros.get("carbs"),
                 "fat": macros.get("fat"),
             },
+            "extra_nutrients": micronutrients,
             "portions": details.get("foodPortions") or [],
             "allowed_units": (
                 self._parse_usda_portions(details.get("foodPortions"))

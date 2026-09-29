@@ -5,10 +5,14 @@ from __future__ import annotations
 import math
 import unicodedata
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
+from uuid import uuid4
 
-from sqlalchemy import and_, func, or_, select, true, update
+from sqlalchemy import Table, and_, func, or_, select, true, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,6 +51,7 @@ from src.infra.database.models.meal_recommendation import (
     AllergenReferenceORM,
     MealCatalogAllergenORM,
     MealCatalogIngredientORM,
+    MealCatalogMicronutrientEnrichmentORM,
     MealCatalogORM,
     MealCatalogStepORM,
 )
@@ -197,6 +202,165 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
         row = result.scalar_one_or_none()
         return _meal_to_domain(row, include_steps=True) if row else None
+
+    async def get_micronutrient_enrichment(
+        self, *, catalog_meal_id: str, content_hash: str
+    ) -> dict | None:
+        result = await self._session.execute(
+            select(MealCatalogMicronutrientEnrichmentORM).where(
+                MealCatalogMicronutrientEnrichmentORM.catalog_meal_id
+                == catalog_meal_id,
+                MealCatalogMicronutrientEnrichmentORM.content_hash == content_hash,
+                MealCatalogMicronutrientEnrichmentORM.status == "ready",
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return {"micros": dict(row.micros or {}), "sources": dict(row.sources or {})}
+
+    async def claim_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        lease_seconds: int,
+    ) -> tuple[str, str | None]:
+        now = datetime.now(UTC)
+        table = cast(Table, MealCatalogMicronutrientEnrichmentORM.__table__)
+        claim_token = str(uuid4())
+        values = {
+            "id": str(uuid4()),
+            "catalog_meal_id": catalog_meal_id,
+            "content_hash": content_hash,
+            "micros": {},
+            "sources": {},
+            "status": "pending",
+            "claim_token": claim_token,
+            "lease_expires_at": now + timedelta(seconds=lease_seconds),
+        }
+        inserted = False
+        dialect = self._session.get_bind().dialect.name
+        insert_factory = (
+            pg_insert
+            if dialect == "postgresql"
+            else sqlite_insert
+            if dialect == "sqlite"
+            else None
+        )
+        if insert_factory is not None:
+            statement = (
+                insert_factory(table)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=["catalog_meal_id", "content_hash"]
+                )
+                .returning(table.c.id)
+            )
+            result = await self._session.execute(statement)
+            inserted = result.scalar_one_or_none() is not None
+        else:
+            existing = await self._micronutrient_enrichment_row(
+                catalog_meal_id, content_hash, for_update=True
+            )
+            if existing is None:
+                self._session.add(MealCatalogMicronutrientEnrichmentORM(**values))
+                await self._session.flush()
+                inserted = True
+
+        row = await self._micronutrient_enrichment_row(
+            catalog_meal_id, content_hash, for_update=True
+        )
+        if row is None:
+            raise RuntimeError("Micronutrient enrichment claim could not be loaded")
+        if row.status == "ready":
+            return "ready", None
+        if inserted:
+            return "claimed", claim_token
+        if (
+            row.status == "pending"
+            and row.lease_expires_at
+            and row.lease_expires_at > now
+        ):
+            return "pending", None
+        if row.status == "failed" and row.retry_after and row.retry_after > now:
+            return "backoff", None
+        mutable_row = cast(Any, row)
+        mutable_row.status = "pending"
+        mutable_row.claim_token = claim_token
+        mutable_row.lease_expires_at = now + timedelta(seconds=lease_seconds)
+        mutable_row.retry_after = None
+        await self._session.flush()
+        return "claimed", claim_token
+
+    async def save_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        claim_token: str,
+        micros: dict[str, float],
+        sources: dict[str, str],
+    ) -> bool:
+        current_recipe = await self._session.execute(
+            select(MealCatalogORM.id)
+            .where(MealCatalogORM.id == catalog_meal_id)
+            .where(MealCatalogORM.content_hash == content_hash)
+            .where(MealCatalogORM.is_active.is_(True))
+        )
+        if current_recipe.scalar_one_or_none() is None:
+            return False
+        row = await self._micronutrient_enrichment_row(
+            catalog_meal_id, content_hash, for_update=True
+        )
+        if row is None or row.status != "pending" or row.claim_token != claim_token:
+            return False
+        mutable_row = cast(Any, row)
+        mutable_row.micros = dict(micros)
+        mutable_row.sources = dict(sources)
+        mutable_row.status = "ready"
+        mutable_row.claim_token = None
+        mutable_row.lease_expires_at = None
+        mutable_row.retry_after = None
+        await self._session.flush()
+        return True
+
+    async def fail_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        claim_token: str,
+        retry_seconds: int,
+    ) -> None:
+        row = await self._micronutrient_enrichment_row(
+            catalog_meal_id, content_hash, for_update=True
+        )
+        if row is None or row.status != "pending" or row.claim_token != claim_token:
+            return
+        now = datetime.now(UTC)
+        mutable_row = cast(Any, row)
+        mutable_row.status = "failed"
+        mutable_row.claim_token = None
+        mutable_row.lease_expires_at = None
+        mutable_row.retry_after = now + timedelta(seconds=retry_seconds)
+        await self._session.flush()
+
+    async def _micronutrient_enrichment_row(
+        self,
+        catalog_meal_id: str,
+        content_hash: str,
+        *,
+        for_update: bool = False,
+    ) -> MealCatalogMicronutrientEnrichmentORM | None:
+        statement = select(MealCatalogMicronutrientEnrichmentORM).where(
+            MealCatalogMicronutrientEnrichmentORM.catalog_meal_id == catalog_meal_id,
+            MealCatalogMicronutrientEnrichmentORM.content_hash == content_hash,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none()
 
     async def get_active_release(self):
         """Temporary compatibility: the four-table catalog has no release row."""

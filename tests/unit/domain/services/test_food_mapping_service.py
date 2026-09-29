@@ -43,6 +43,35 @@ def test_map_fdc_barcode_product_returns_flat_barcode_shape():
     ]
 
 
+def test_map_food_details_preserves_usda_micronutrient_units():
+    result = FoodMappingService().map_food_details(
+        {
+            "fdcId": 12345,
+            "description": "Orange",
+            "foodNutrients": [
+                {
+                    "nutrient": {"id": 1162, "name": "Vitamin C", "unitName": "mg"},
+                    "amount": 53.2,
+                },
+                {
+                    "nutrient": {
+                        "id": 1106,
+                        "name": "Vitamin A, RAE",
+                        "unitName": "µg",
+                    },
+                    "amount": 11,
+                },
+            ],
+        }
+    )
+
+    assert result["fdc_id"] == 12345
+    assert result["extra_nutrients"] == {
+        "vitamin_c": {"amount": 53.2, "unit": "mg"},
+        "vitamin_a": {"amount": 11, "unit": "µg"},
+    }
+
+
 def test_map_search_item_rejects_catastrophic_provider_nutrition():
     with pytest.raises(NutritionIntegrityError, match="macro_mass_out_of_range"):
         FoodMappingService().map_search_item(

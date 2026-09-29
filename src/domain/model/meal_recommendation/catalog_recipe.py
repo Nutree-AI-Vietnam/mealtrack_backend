@@ -123,6 +123,9 @@ class CatalogMeal:
     recipe_payload: dict | None = None
     ai_nutrition_estimate: dict | None = None
     nutrition_micros: Micros | None = None
+    nutrition_micros_sources: dict[str, str] = field(default_factory=dict)
+    nutrition_micros_estimated: bool = False
+    nutrition_micros_enrichment_loaded: bool = False
 
     @property
     def calories(self) -> int:
