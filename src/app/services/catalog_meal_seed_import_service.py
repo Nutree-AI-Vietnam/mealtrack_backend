@@ -12,6 +12,9 @@ from difflib import SequenceMatcher
 from time import perf_counter
 from typing import Any, NoReturn
 
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    normalize_catalog_ingredient_category,
+)
 from src.domain.ports.catalog_recipe_repository_port import (
     MAX_CATALOG_POPULARITY_RANK,
     CatalogMealRepositoryPort,
@@ -509,13 +512,11 @@ class CatalogMealSeedImporter:
                     display_name=item.display_name,
                     quantity=item.quantity,
                     unit=item.unit,
-                    category=str(
+                    category=normalize_catalog_ingredient_category(
                         recipe.get("ingredients", [])[ingredient_index].get(
                             "category", "pantry"
                         )
-                    )
-                    .strip()
-                    .casefold(),
+                    ),
                 )
             )
 

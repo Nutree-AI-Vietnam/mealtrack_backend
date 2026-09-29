@@ -409,7 +409,6 @@ async def test_import_mixed_new_and_overwritten_recipes_counts_accurately():
     assert len(importer.session.added) == 2
 
 
-
 @pytest.mark.asyncio
 async def test_import_with_skip_existing_skips_changed_content():
     importer = _Importer(
@@ -811,7 +810,9 @@ async def test_conversion_error_on_matched_reference_raises_error_even_when_unma
 
     assert summary.is_successful is False
     assert summary.inserted == 0
-    assert any("conversion" in err.lower() or "unit" in err.lower() for err in summary.errors)
+    assert any(
+        "conversion" in err.lower() or "unit" in err.lower() for err in summary.errors
+    )
 
 
 @pytest.mark.asyncio
@@ -865,3 +866,47 @@ async def test_import_rejects_duplicate_catalog_key_in_same_manifest():
         for err in summary.errors
     )
 
+
+@pytest.mark.asyncio
+async def test_import_normalizes_ingredient_category_to_db_check_constraint():
+    manifest = {
+        "recipes": [
+            {
+                "recipe_key": "vn-unmapped-categories",
+                "cuisine": "vietnamese",
+                "name": "Herb Salad",
+                "meal_types": ["lunch"],
+                "ingredients": [
+                    {
+                        "name": "Fresh Mint",
+                        "quantity": 30.0,
+                        "unit": "g",
+                        "category": "fresh_produce",
+                    },
+                    {
+                        "name": "Grilled Chicken",
+                        "quantity": 100.0,
+                        "unit": "g",
+                        "category": "meat",
+                    },
+                    {
+                        "name": "Fish Sauce Dressing",
+                        "quantity": 15.0,
+                        "unit": "ml",
+                        "category": "unknown_sauce",
+                    },
+                ],
+            }
+        ]
+    }
+    importer = _Importer(
+        allow_unmapped_ingredients=True,
+    )
+    summary = await importer.import_manifest(manifest)
+
+    assert summary.is_successful is True
+    assert summary.inserted == 1
+    assert len(importer.session.added) == 1
+    added_seed = importer.session.added[0]
+    categories = [item.category for item in added_seed.ingredients]
+    assert categories == ["produce", "protein", "pantry"]

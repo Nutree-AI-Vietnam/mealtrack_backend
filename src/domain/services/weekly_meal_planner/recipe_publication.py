@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    normalize_catalog_ingredient_category,
+)
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     matched_allergen_codes,
 )
@@ -34,6 +37,13 @@ class IngredientProjection:
     raw_text: str | None = None
     quantity_text: str | None = None
     is_optional: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "category",
+            normalize_catalog_ingredient_category(self.category),
+        )
 
 
 @dataclass(frozen=True)

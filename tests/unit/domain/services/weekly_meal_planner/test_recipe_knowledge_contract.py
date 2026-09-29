@@ -632,3 +632,29 @@ async def test_seed_publish_with_ai_estimated_nutrition_fallback():
             )
     finally:
         engine.dispose()
+
+
+def test_ingredient_category_normalization_fresh_produce_to_produce():
+    item = CatalogMealSeedIngredientWrite(
+        display_name="Cilantro",
+        quantity=10.0,
+        unit="g",
+        category="fresh_produce",
+    )
+    assert item.category == "produce"
+
+    published = publish_recipe(
+        recipe_name="Herb plate",
+        description=None,
+        ingredients=[
+            {
+                "name": "Cilantro",
+                "quantity": 10,
+                "unit": "g",
+                "category": "fresh_produce",
+            }
+        ],
+        instructions=[{"step": 1, "title": "Plate", "instruction": "Serve"}],
+        nutrition_ready=True,
+    )
+    assert published.ingredients[0].category == "produce"

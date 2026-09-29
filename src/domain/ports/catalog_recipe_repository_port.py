@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from src.domain.model.meal_recommendation.catalog_recipe import CatalogMeal
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    CatalogMeal,
+    normalize_catalog_ingredient_category,
+)
 
 MAX_CATALOG_POPULARITY_RANK = 2_147_483_647
 
@@ -21,6 +24,13 @@ class CatalogMealSeedIngredientWrite:
     unit: str
     category: str = "pantry"
     food_reference_id: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "category",
+            normalize_catalog_ingredient_category(self.category),
+        )
 
 
 @dataclass(frozen=True)
