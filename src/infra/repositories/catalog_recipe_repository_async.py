@@ -573,11 +573,19 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
         totals["fiber"] += resolved.fiber
         totals["sugar"] += resolved.sugar
         totals["calories"] += resolved.calories
-    has_food_refs = any(
-        ingredient.food_reference_id is not None and ingredient.food_reference is not None
+    has_unmapped_ingredients = not row.ingredients or any(
+        (ingredient.food_reference_id is None or ingredient.food_reference is None)
+        and projection_nutrition_quantity(
+            {
+                "food_reference_id": ingredient.food_reference_id,
+                "quantity": ingredient.quantity,
+                "quantity_text": getattr(ingredient, "quantity_text", None),
+            }
+        )
+        != 0
         for ingredient in row.ingredients
     )
-    if not has_food_refs and isinstance(row.recipe_payload, dict):
+    if has_unmapped_ingredients and isinstance(row.recipe_payload, dict):
         nutr = row.recipe_payload.get("nutrition")
         if isinstance(nutr, dict) and (
             nutr.get("calories") is not None

@@ -325,3 +325,62 @@ async def test_get_meal_unmapped_ingredients_uses_payload_fallback():
     assert result.calories == 221
 
 
+@pytest.mark.asyncio
+async def test_get_meal_mixed_mapped_and_unmapped_ingredients_uses_payload_fallback():
+    row = _meal_row()
+    # row already has mapped ingredient at index 0 (Rice, 100g, 2.7g P, 28g C, 0.3g F)
+    unmapped_ingredient = MagicMock()
+    unmapped_ingredient.food_reference_id = None
+    unmapped_ingredient.display_name = "Special Sauce"
+    unmapped_ingredient.quantity = 50
+    unmapped_ingredient.unit = "g"
+    unmapped_ingredient.food_reference = None
+    row.ingredients.append(unmapped_ingredient)
+
+    row.recipe_payload = {
+        "nutrition": {
+            "calories": 300.0,
+            "protein": 15.0,
+            "carbs": 35.0,
+            "fat": 8.0,
+            "fiber": 3.0,
+            "sugar": 2.0,
+        }
+    }
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncCatalogMealRepository(session)
+
+    result = await repo.get_meal("catalog-1")
+
+    assert result is not None
+    assert result.protein_g == 15
+    assert result.carbs_g == 35
+    assert result.fat_g == 8
+    assert result.fiber_g == 3
+    assert result.sugar_g == 2
+    assert result.calories == 266
+
+
+@pytest.mark.asyncio
+async def test_get_meal_mixed_ingredients_without_payload_nutrition_falls_back_to_mapped_totals():
+    from decimal import Decimal
+
+    row = _meal_row()
+    unmapped_ingredient = MagicMock()
+    unmapped_ingredient.food_reference_id = None
+    unmapped_ingredient.display_name = "Special Sauce"
+    unmapped_ingredient.quantity = 50
+    unmapped_ingredient.unit = "g"
+    unmapped_ingredient.food_reference = None
+    row.ingredients.append(unmapped_ingredient)
+    row.recipe_payload = None
+
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncCatalogMealRepository(session)
+
+    result = await repo.get_meal("catalog-1")
+
+    assert result is not None
+    assert result.protein_g == Decimal("2.7")
+    assert result.carbs_g == Decimal("28.0")
+    assert result.fat_g == Decimal("0.3")
