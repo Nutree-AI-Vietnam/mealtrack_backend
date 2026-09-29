@@ -1,10 +1,40 @@
 import importlib
+from unittest.mock import AsyncMock
 
 import pytest
 
 
 class _CacheStub:
     redis = object()
+
+
+@pytest.mark.asyncio
+async def test_recipe_fdc_loader_keeps_successful_records_when_another_lookup_fails(
+    monkeypatch,
+):
+    mod = importlib.import_module("src.api.dependencies.event_bus")
+    import src.api.base_dependencies as deps
+
+    food_data = AsyncMock()
+    food_data.api_key = "configured"
+    food_data.get_food_details.side_effect = [
+        {"fdcId": 123, "foodNutrients": []},
+        RuntimeError("USDA lookup failed"),
+    ]
+
+    class _Mapper:
+        def map_food_details(self, item):
+            return {
+                "fdc_id": item["fdcId"],
+                "extra_nutrients": {"iron": {"amount": 1.2, "unit": "mg"}},
+            }
+
+    monkeypatch.setattr(deps, "get_food_data_service", lambda: food_data)
+    monkeypatch.setattr(deps, "get_food_mapping_service", _Mapper)
+
+    result = await mod._catalog_recipe_fdc_micronutrient_loader([123, 456])
+
+    assert result == {123: {"iron": {"amount": 1.2, "unit": "mg"}}}
 
 
 def test_provider_budget_does_not_depend_on_optional_cache_flag(monkeypatch):

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
+    CatalogRecipeMicronutrientEnrichmentService,
+    FdcMicronutrientLoader,
+    MicronutrientEstimator,
+)
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     recipe_excluded_by_allergen,
@@ -23,8 +28,19 @@ class RecipePage:
 class WeeklyRecipeService:
     """Apply bounded, case-insensitive read filters to catalog projections."""
 
-    def __init__(self, uow_factory):
+    def __init__(
+        self,
+        uow_factory,
+        *,
+        micronutrient_estimator: MicronutrientEstimator | None = None,
+        fdc_micronutrient_loader: FdcMicronutrientLoader | None = None,
+    ):
         self.uow_factory = uow_factory
+        self.micronutrient_enrichment = CatalogRecipeMicronutrientEnrichmentService(
+            uow_factory,
+            estimator=micronutrient_estimator,
+            fdc_loader=fdc_micronutrient_loader,
+        )
 
     async def list(
         self,
@@ -79,9 +95,19 @@ class WeeklyRecipeService:
             items=tuple(ordered[offset : offset + limit]), total=len(ordered)
         )
 
-    async def detail(self, recipe_id: str) -> CatalogMeal | None:
+    async def detail(
+        self,
+        recipe_id: str,
+        *,
+        enrich_micronutrients: bool = False,
+    ) -> CatalogMeal | None:
         async with self.uow_factory() as uow:
-            return await uow.catalog_recipes.get_meal_detail(recipe_id)
+            meal = await uow.catalog_recipes.get_meal_detail(recipe_id)
+            if meal is None:
+                return None
+        if not enrich_micronutrients:
+            return meal
+        return await self.micronutrient_enrichment.enrich(meal)
 
 
 def _matches_query(meal: CatalogMeal, query: str | None) -> bool:

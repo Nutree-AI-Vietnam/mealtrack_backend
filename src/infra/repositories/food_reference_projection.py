@@ -116,6 +116,7 @@ def food_reference_model_to_nutrition_projection(
         name_normalized=model.name_normalized,
         source_namespace=getattr(model, "source_namespace", None),
         source_food_id=getattr(model, "source_food_id", None),
+        fdc_id=model.fdc_id,
         servings=[
             FoodReferenceServingProjection(
                 name=item["name"],

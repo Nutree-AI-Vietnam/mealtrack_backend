@@ -5,12 +5,21 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 
+class RecipeMacroSummaryResponse(BaseModel):
+    calories: float
+    protein: float
+    carbs: float
+    fat: float
+    fiber: float
+
+
 class WeeklyRecipeSummaryResponse(BaseModel):
     id: str
     name: str
     image_url: str | None = None
     cook_time_minutes: int | None = None
     calories: int
+    nutrition_per_serving: RecipeMacroSummaryResponse | None = None
 
 
 class WeeklyMealSlotResponse(BaseModel):
@@ -80,6 +89,9 @@ class RecipeDetailNutritionResponse(BaseModel):
     fat: float
     fiber: float
     micros: dict[str, float] = Field(default_factory=dict)
+    micros_sources: dict[str, str] = Field(default_factory=dict)
+    micros_estimated: bool = False
+    micros_enrichment_loaded: bool = False
     score: int | None = None
 
 

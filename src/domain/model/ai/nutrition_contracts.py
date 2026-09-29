@@ -90,6 +90,34 @@ class AINutrientMicros(BaseModel):
     added_sugar: float | None = Field(None, ge=0)
 
 
+class AIRecipeMicronutrientEstimate(BaseModel):
+    """Optional per-serving recipe micronutrient estimates; omitted fields stay unknown."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    vitamin_a: float | None = Field(None, ge=0, le=100000)
+    vitamin_c: float | None = Field(None, ge=0, le=10000)
+    vitamin_d: float | None = Field(None, ge=0, le=10000)
+    vitamin_e: float | None = Field(None, ge=0, le=10000)
+    vitamin_k: float | None = Field(None, ge=0, le=10000)
+    thiamin: float | None = Field(None, ge=0, le=1000)
+    riboflavin: float | None = Field(None, ge=0, le=1000)
+    niacin: float | None = Field(None, ge=0, le=1000)
+    vitamin_b6: float | None = Field(None, ge=0, le=1000)
+    vitamin_b12: float | None = Field(None, ge=0, le=10000)
+    folate: float | None = Field(None, ge=0, le=100000)
+    calcium: float | None = Field(None, ge=0, le=10000)
+    iron: float | None = Field(None, ge=0, le=1000)
+    magnesium: float | None = Field(None, ge=0, le=10000)
+    phosphorus: float | None = Field(None, ge=0, le=10000)
+    potassium: float | None = Field(None, ge=0, le=100000)
+    sodium: float | None = Field(None, ge=0, le=100000)
+    zinc: float | None = Field(None, ge=0, le=1000)
+    selenium: float | None = Field(None, ge=0, le=10000)
+    saturated_fat: float | None = Field(None, ge=0, le=1000)
+    added_sugar: float | None = Field(None, ge=0, le=1000)
+
+
 class AIVisionNutritionMacros(AINutritionMacros):
     """Strict macronutrients contract for provider-facing vision responses."""
 

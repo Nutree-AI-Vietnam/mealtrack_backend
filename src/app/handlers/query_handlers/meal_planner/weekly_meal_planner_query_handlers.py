@@ -46,11 +46,24 @@ class ListRecipesQueryHandler(EventHandler):
 
 @handles(GetRecipeDetailQuery)
 class GetRecipeDetailQueryHandler(EventHandler):
-    def __init__(self, uow_factory: Any):
-        self.service = WeeklyRecipeService(uow_factory)
+    def __init__(
+        self,
+        uow_factory: Any,
+        *,
+        micronutrient_estimator=None,
+        fdc_micronutrient_loader=None,
+    ):
+        self.service = WeeklyRecipeService(
+            uow_factory,
+            micronutrient_estimator=micronutrient_estimator,
+            fdc_micronutrient_loader=fdc_micronutrient_loader,
+        )
 
     async def handle(self, query):
-        return await self.service.detail(query.recipe_id)
+        return await self.service.detail(
+            query.recipe_id,
+            enrich_micronutrients=getattr(query, "enrich_micronutrients", False),
+        )
 
 
 @handles(GetWeeklyGroceriesQuery)

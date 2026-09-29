@@ -32,6 +32,7 @@ class FoodReferenceNutritionProjection:
     name_normalized: str | None = None
     source_namespace: str | None = None
     source_food_id: str | None = None
+    fdc_id: int | None = None
     extra_nutrients: dict[str, Any] | None = None
 
 
@@ -74,6 +75,17 @@ class FoodReferenceRepositoryPort(Protocol):
         preserve_nutrient_units: bool = False,
     ) -> dict[int, FoodReferenceNutritionProjection]:
         """Return canonical projections for a deduplicated ID batch."""
+
+    async def get_by_ids(self, ref_ids: list[int]) -> list[dict[str, Any]]:
+        """Load verified public references for a bounded ID batch."""
+
+    async def update_usda_micronutrients(
+        self,
+        food_reference_id: int,
+        fdc_id: int,
+        extra_nutrients: dict[str, Any],
+    ) -> bool:
+        """Fill absent micronutrients on the exact linked USDA FDC reference."""
 
     async def list_catalog_seed_candidates(
         self,

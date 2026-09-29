@@ -233,11 +233,21 @@ handler/schema when implementing; the bullets below are the durable WHY.
   instead of overwriting a newer plan. AI proposals are non-mutating and
   include the `base_revision` they were generated from so clients can apply
   them only against the same plan version.
+- Weekly-plan recipe summaries include backend-derived calories and macros so
+  cards can render nutrition before loading full recipe details. Clients that
+  fetch groceries separately can pass `include_grocery_count=false` to the
+  current-plan, generate, and update endpoints to avoid a duplicate grocery
+  projection. Proposal responses include their grocery projection separately.
 - Recipe detail exposes ordered catalog steps, source metadata, equipment,
   ingredient grocery categories, serving metadata, and backend-derived
   nutrition. Grocery quantities scale by `people / base_servings` only when the
   catalog serving basis is known; otherwise the output is marked `unscaled`.
   Clients must not recalculate calories or macros.
+- `GET /v1/recipes/{recipe_id}` remains provider-free. An authenticated detail
+  screen can call `POST /v1/recipes/{recipe_id}/micronutrients/enrich` to fill
+  missing linked-reference nutrients from USDA FDC and then estimate only
+  remaining fields. AI estimates are marked per nutrient and never enter the
+  meal-log nutrition calculation.
 - Grocery output is a read-time projection keyed by canonical
   `food_reference_id` plus quantity dimension/unit. Weight and volume units are
   normalized only through exact conversions; count and unknown units remain

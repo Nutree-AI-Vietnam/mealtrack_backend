@@ -96,6 +96,44 @@ async def localize_catalog_meals(
     return tuple(localized_meals.get(meal.id, meal) for meal in original)
 
 
+async def localize_catalog_meal_names(
+    meals: Iterable[CatalogMeal],
+    *,
+    language: str,
+    translation_service: TextTranslationService | None,
+) -> tuple[CatalogMeal, ...]:
+    """Localize only the names needed by compact weekly-plan summaries."""
+    original = tuple(meals)
+    if language == "en" or translation_service is None or not original:
+        return original
+
+    summary_meals = [
+        replace(
+            meal,
+            cuisine="",
+            description=None,
+            summary=None,
+            equipment=None,
+            tag=None,
+            allergens=None,
+            ingredients=(),
+            steps=(),
+        )
+        for meal in original
+    ]
+    localized = await _localized_meals(
+        summary_meals,
+        language=language,
+        translation_service=translation_service,
+        include_ingredients=False,
+    )
+    if localized is None:
+        return original
+    return tuple(
+        replace(meal, name=localized.get(meal.id, meal).name) for meal in original
+    )
+
+
 async def localize_presentation_texts(
     texts: Iterable[str],
     *,
@@ -343,6 +381,9 @@ async def localize_grocery_categories(
     translations: dict[str, str] = {}
     missing: list[str] = []
     for text in set(item_names):
+        if language == "vi" and _is_vietnamese_text(text):
+            translations[text] = text
+            continue
         cached = _CATALOG_TRANSLATION_CACHE.get((language, text))
         if cached is not None:
             translations[text] = cached
