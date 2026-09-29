@@ -286,6 +286,25 @@ async def test_import_does_not_update_rank_for_same_content_under_another_key():
 
 
 @pytest.mark.asyncio
+async def test_import_with_overwrite_existing_rejects_same_content_under_different_key():
+    importer = _Importer(
+        refs_by_id={7: _reference()},
+        existing="same-content-different-key",
+        overwrite_existing=True,
+    )
+    manifest = _manifest()
+
+    summary = await importer.import_manifest(manifest)
+
+    assert summary.is_successful is False
+    assert summary.inserted == 0
+    assert any(
+        "content_hash already exists under a different catalog_key" in err
+        for err in summary.errors
+    )
+
+
+@pytest.mark.asyncio
 async def test_import_rejects_existing_catalog_key_with_changed_content():
     importer = _Importer(refs_by_id={7: _reference()}, existing="changed")
 

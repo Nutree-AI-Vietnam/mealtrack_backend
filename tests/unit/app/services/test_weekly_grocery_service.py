@@ -285,3 +285,53 @@ async def test_groceries_exclude_vietnamese_equipment_from_catalog_and_payload()
         deterministic_ingredient_id("Olive oil"),
     }
     assert slot_names == {"Tomato", "Olive oil"}
+
+
+@pytest.mark.asyncio
+async def test_unmapped_ingredients_are_not_doubled_in_groceries():
+    meal = CatalogMeal(
+        id="recipe-1",
+        catalog_key="recipe-1",
+        content_hash="f" * 64,
+        name="Phi lê cá điêu hồng",
+        cuisine="vietnamese",
+        description=None,
+        image_url=None,
+        protein_g=Decimal("60"),
+        carbs_g=Decimal("10"),
+        fat_g=Decimal("15"),
+        fiber_g=Decimal("1"),
+        base_servings=1,
+        serving_confidence="verified",
+        meal_types=("lunch", "dinner"),
+        ingredients=(
+            CatalogMealIngredient(
+                food_reference_id=None,
+                display_name="Phi lê cá điêu hồng",
+                quantity=Decimal("300"),
+                unit="g",
+                category="protein",
+            ),
+        ),
+        recipe_payload={
+            "ingredients": [
+                {
+                    "name": "Phi lê cá điêu hồng",
+                    "quantity": 300,
+                    "unit": "g",
+                    "food_reference_id": None,
+                }
+            ]
+        },
+    )
+
+    slot = _slot_from_meal(meal, plan_people=1, override=None)
+    assert len(slot.ingredients) == 1
+    assert slot.ingredients[0].name == "Phi lê cá điêu hồng"
+    assert slot.ingredients[0].quantity == Decimal("300")
+
+    grocery_service = WeeklyGroceryService()
+    items = grocery_service.project(_plan(), [meal])
+    fish_item = next(item for item in items if item.name == "Phi lê cá điêu hồng")
+    # For 2 people in _plan() with base_servings=1, total needed should be 2 * 300 = 600g (NOT 1200g doubled)
+    assert fish_item.total_needed == 600.0

@@ -265,8 +265,12 @@ def _slot_from_meal(
         if not _is_non_food_ingredient(ingredient.name, ingredient.category)
     ]
     existing_positions = {item.position for item in ingredients}
+    existing_names = {item.name.strip().casefold() for item in ingredients}
     payload = getattr(meal, "recipe_payload", None) or {}
     for raw in payload.get("ingredients") or []:
+        raw_name = str(raw.get("name") or "").strip()
+        if not raw_name or raw_name.casefold() in existing_names:
+            continue
         raw_pos = int(raw.get("position") or 0)
         if raw_pos and raw_pos in existing_positions:
             continue
@@ -275,7 +279,6 @@ def _slot_from_meal(
             "",
         ):
             continue
-        raw_name = str(raw.get("name") or "")
         raw_category = raw.get("category") or raw.get("type") or raw.get("kind")
         if raw.get("is_equipment") or _is_non_food_ingredient(raw_name, raw_category):
             continue

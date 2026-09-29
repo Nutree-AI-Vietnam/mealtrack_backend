@@ -444,6 +444,11 @@ class CatalogMealSeedImporter:
                     )
             elif not self._overwrite_existing:
                 return None
+            else:
+                raise CatalogSeedImportError(
+                    f"recipes[{index}] content_hash already exists under a different catalog_key: "
+                    f"{existing.catalog_key} (incoming: {catalog_key})"
+                )
 
         seed_ingredients = []
         for ingredient_index, item in enumerate(resolved_ingredients):
@@ -540,6 +545,13 @@ class CatalogMealSeedImporter:
                         f"{item.seed.catalog_key}"
                     )
                     continue
+                elif existing.catalog_key != item.seed.catalog_key:
+                    if self._overwrite_existing:
+                        errors.append(
+                            f"content_hash already exists under a different catalog_key: "
+                            f"{existing.catalog_key} (incoming: {item.seed.catalog_key})"
+                        )
+                        continue
                 skipped += 1
                 continue
             review = _near_duplicate_review(
