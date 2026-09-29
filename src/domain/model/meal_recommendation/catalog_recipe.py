@@ -17,7 +17,7 @@ from src.domain.services.meal_recommendation.ingredient_quantity_normalization i
 class CatalogMealIngredient:
     """Ingredient reference for a catalog meal."""
 
-    food_reference_id: int
+    food_reference_id: int | None
     display_name: str
     quantity: Decimal
     unit: str

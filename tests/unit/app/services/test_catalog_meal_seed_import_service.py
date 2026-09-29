@@ -105,6 +105,9 @@ class _Importer(CatalogMealSeedImporter):
         auto_resolve_threshold=0.92,
         resolve_all_best_effort=False,
         candidate_enricher=None,
+        allow_unmapped_ingredients=False,
+        overwrite_existing=False,
+        skip_existing=False,
     ):
         self.session = _Session()
         super().__init__(
@@ -114,6 +117,9 @@ class _Importer(CatalogMealSeedImporter):
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
             candidate_enricher=candidate_enricher,
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            overwrite_existing=overwrite_existing,
+            skip_existing=skip_existing,
         )
         self.refs_by_id = refs_by_id or {}
         self.refs_by_name = refs_by_name or {}
@@ -290,6 +296,38 @@ async def test_import_rejects_existing_catalog_key_with_changed_content():
 
 
 @pytest.mark.asyncio
+async def test_import_with_overwrite_existing_updates_changed_content():
+    importer = _Importer(
+        refs_by_id={7: _reference()},
+        existing="changed",
+        overwrite_existing=True,
+    )
+
+    summary = await importer.import_manifest(_manifest())
+
+    assert summary.is_successful is True
+    assert summary.inserted == 1
+    assert len(importer.session.added) == 1
+    assert importer.session.added[0].catalog_key == "vn-rice-breakfast"
+
+
+@pytest.mark.asyncio
+async def test_import_with_skip_existing_skips_changed_content():
+    importer = _Importer(
+        refs_by_id={7: _reference()},
+        existing="changed",
+        skip_existing=True,
+    )
+
+    summary = await importer.import_manifest(_manifest())
+
+    assert summary.is_successful is True
+    assert summary.inserted == 0
+    assert summary.skipped_existing == 1
+    assert importer.session.added == []
+
+
+@pytest.mark.asyncio
 async def test_import_reports_unresolved_food_reference_candidates():
     importer = _Importer(
         candidates=[
@@ -318,7 +356,10 @@ async def test_import_reports_unresolved_food_reference_candidates():
     assert summary.inserted == 0
     assert "needs_review" in summary.errors[0]
     assert summary.resolution_issues[0].candidates[0].food_reference_id == 1
-    assert summary.resolution_report()["issues"][0]["candidates"][0]["name"] == "White rice"
+    assert (
+        summary.resolution_report()["issues"][0]["candidates"][0]["name"]
+        == "White rice"
+    )
 
 
 @pytest.mark.asyncio
@@ -390,7 +431,10 @@ async def test_import_reports_every_unverified_exact_match_in_one_recipe():
     summary = await importer.import_manifest(manifest)
 
     assert summary.inserted == 0
-    assert [issue.normalized_name for issue in summary.resolution_issues] == ["rice", "egg"]
+    assert [issue.normalized_name for issue in summary.resolution_issues] == [
+        "rice",
+        "egg",
+    ]
     assert len(summary.errors) == 2
 
 
@@ -403,7 +447,10 @@ async def test_import_reports_pinned_unverified_reference_for_manifest_recovery(
     assert summary.inserted == 0
     assert "food_reference_not_verified" in summary.errors[0]
     assert summary.unverified_references[0].food_reference_id == 7
-    assert summary.resolution_report()["unverified_references"][0]["source"] == "catalog_seed"
+    assert (
+        summary.resolution_report()["unverified_references"][0]["source"]
+        == "catalog_seed"
+    )
 
 
 @pytest.mark.asyncio
@@ -599,3 +646,38 @@ async def test_import_metrics_are_bounded_and_do_not_include_catalog_content():
     assert "rice-breakfast" not in str(metrics.calls)
     assert "Rice Breakfast" not in str(metrics.calls)
     assert "content_hash" not in str(metrics.calls)
+
+
+@pytest.mark.asyncio
+async def test_import_allows_unmapped_ingredients_when_enabled():
+    manifest = {
+        "recipes": [
+            {
+                "recipe_key": "vn-dragonfruit-snack",
+                "cuisine": "vietnamese",
+                "name": "Dragonfruit Snack",
+                "meal_types": ["snack"],
+                "ingredients": [
+                    {
+                        "name": "Thanh Long Đỏ",
+                        "quantity": 150.0,
+                        "unit": "g",
+                        "category": "produce",
+                    }
+                ],
+            }
+        ]
+    }
+    importer = _Importer(allow_unmapped_ingredients=True)
+    summary = await importer.import_manifest(manifest)
+
+    assert summary.is_successful is True
+    assert summary.inserted == 1
+    assert len(importer.session.added) == 1
+    seed = importer.session.added[0]
+    assert seed.catalog_key == "vn-dragonfruit-snack"
+    assert len(seed.ingredients) == 1
+    assert seed.ingredients[0].food_reference_id is None
+    assert seed.ingredients[0].display_name == "Thanh Long Đỏ"
+    assert seed.ingredients[0].quantity == 150.0
+    assert seed.ingredients[0].category == "produce"

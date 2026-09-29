@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Mapping
 
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     matched_allergen_codes,
@@ -25,7 +25,7 @@ class IngredientProjection:
     """Nutrition-safe ingredient row written with the payload."""
 
     position: int
-    food_reference_id: int
+    food_reference_id: int | None
     display_name: str
     quantity: Decimal
     unit: str
@@ -86,9 +86,8 @@ def payload_digest(payload: Mapping) -> str:
 def is_nutrition_safe_ingredient(line: Mapping) -> bool:
     """Resolved, positive quantities are the only grocery and nutrition inputs."""
 
-    food_id = line.get("food_reference_id")
     quantity = line.get("quantity")
-    if food_id is None or quantity is None or quantity == "":
+    if quantity is None or quantity == "":
         return False
     try:
         amount = Decimal(str(quantity))
@@ -142,10 +141,11 @@ def publish_recipe(
         )
         if not is_nutrition_safe_ingredient(line):
             continue
+        food_ref_id = line.get("food_reference_id")
         projections.append(
             IngredientProjection(
                 position=next_position,
-                food_reference_id=int(line["food_reference_id"]),
+                food_reference_id=int(food_ref_id) if food_ref_id is not None else None,
                 display_name=str(line.get("name") or line.get("display_name") or ""),
                 quantity=Decimal(str(line["quantity"])),
                 unit=str(line.get("unit") or ""),
@@ -186,7 +186,7 @@ def publish_recipe(
         ingredients=tuple(projections),
         steps=tuple(
             StepProjection(
-                step_number=int(step["step"]),
+                step_number=int(str(step["step"])),
                 title=str(step.get("title") or f"Step {step['step']}"),
                 description=str(step["instruction"]),
             )

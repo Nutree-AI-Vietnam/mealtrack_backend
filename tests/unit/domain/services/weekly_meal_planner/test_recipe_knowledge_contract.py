@@ -552,8 +552,9 @@ async def test_seed_publish_uses_stored_aliases_and_allergen_links():
         assert bacon.ingredients[0].food_reference_id == food.id
         assert bacon.allergen_codes == ("peanut",)
         assert bacon.allergens == "peanut, contains nuts"
-        assert plain.allergen_codes == ()
-        assert plain.ingredients == ()
+        assert len(plain.ingredients) == 1
+        assert plain.ingredients[0].food_reference_id is None
+        assert plain.ingredients[0].display_name == "Unknown herb"
         generated = WeeklyPlanGenerationService().generate(
             [bacon, plain],
             user_id="user-1",

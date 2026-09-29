@@ -15,9 +15,7 @@ class WeeklyGroceryItemStateORM(Base, TimestampMixin):
         ForeignKey("weekly_meal_plans.id", ondelete="CASCADE"),
         nullable=False,
     )
-    food_reference_id = Column(
-        Integer, ForeignKey("food_reference.id", ondelete="RESTRICT"), nullable=False
-    )
+    food_reference_id = Column(Integer, nullable=False)
     checked = Column(Boolean, nullable=False, default=False, server_default="false")
     do_not_buy = Column(Boolean, nullable=False, default=False, server_default="false")
     manually_owned = Column(

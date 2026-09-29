@@ -20,6 +20,9 @@ from src.domain.model.weekly_meal_planner import (
 from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
     normalize_ingredient_quantity,
 )
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    deterministic_ingredient_id,
+)
 
 
 def _plan():
@@ -275,7 +278,10 @@ async def test_groceries_exclude_vietnamese_equipment_from_catalog_and_payload()
         ).ingredients
     }
 
-    assert calculated_names == {"Tomato"}
-    assert {item.name for item in proposal_items} == {"Tomato"}
-    assert {item.ingredient_id for item in proposal_items} == {7}
+    assert calculated_names == {"Tomato", "Olive oil"}
+    assert {item.name for item in proposal_items} == {"Tomato", "Olive oil"}
+    assert {item.ingredient_id for item in proposal_items} == {
+        7,
+        deterministic_ingredient_id("Olive oil"),
+    }
     assert slot_names == {"Tomato", "Olive oil"}

@@ -32,6 +32,9 @@ from src.domain.services.meal_recommendation.ingredient_quantity_conversion_serv
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
     normalize_food_name,
 )
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    deterministic_ingredient_id,
+)
 from src.observability import distribution_metric, increment_metric
 
 CatalogIngredientCandidateEnricher = Callable[[str], Awaitable[bool]]
@@ -258,6 +261,9 @@ class CatalogMealSeedImporter:
         resolve_all_best_effort: bool = False,
         candidate_enricher: CatalogIngredientCandidateEnricher | None = None,
         converter: IngredientQuantityConversionService | None = None,
+        allow_unmapped_ingredients: bool = False,
+        overwrite_existing: bool = False,
+        skip_existing: bool = False,
     ) -> None:
         self._catalog_repository = catalog_repository
         self._food_reference_repository = food_reference_repository
@@ -269,6 +275,9 @@ class CatalogMealSeedImporter:
         self._auto_resolve_threshold = auto_resolve_threshold
         self._resolve_all_best_effort = resolve_all_best_effort
         self._candidate_enricher = candidate_enricher
+        self._allow_unmapped_ingredients = allow_unmapped_ingredients
+        self._overwrite_existing = overwrite_existing
+        self._skip_existing = skip_existing
         self._enriched_names: set[str] = set()
         self._converter = converter or IngredientQuantityConversionService(
             allow_unverified=resolve_all_best_effort,
@@ -286,6 +295,9 @@ class CatalogMealSeedImporter:
         approved_mappings: dict[str, int],
         auto_resolve_threshold: float | None,
         resolve_all_best_effort: bool,
+        allow_unmapped_ingredients: bool = False,
+        overwrite_existing: bool = False,
+        skip_existing: bool = False,
     ) -> CatalogMealSeedImporter:
         """Create a request-specific importer using the same repository ports."""
 
@@ -297,6 +309,9 @@ class CatalogMealSeedImporter:
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
             candidate_enricher=self._candidate_enricher,
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            overwrite_existing=overwrite_existing,
+            skip_existing=skip_existing,
         )
 
     async def import_manifest(
@@ -412,24 +427,27 @@ class CatalogMealSeedImporter:
         existing = await self._find_existing(catalog_key, content_hash)
         if existing is not None:
             if existing.catalog_key == catalog_key:
-                if existing.content_hash != content_hash:
+                if existing.content_hash == content_hash or self._skip_existing:
+                    if "popularity_rank" in recipe:
+                        popularity_rank = _optional_popularity_rank(
+                            recipe.get("popularity_rank")
+                        )
+                        if not self._dry_run:
+                            self._pending_popularity_updates.append(
+                                (catalog_key, popularity_rank)
+                            )
+                    return None
+                elif not self._overwrite_existing:
                     raise CatalogSeedImportError(
                         f"recipes[{index}] catalog_key already exists with different content: "
                         f"{catalog_key}"
                     )
-                if "popularity_rank" in recipe:
-                    popularity_rank = _optional_popularity_rank(
-                        recipe.get("popularity_rank")
-                    )
-                    if not self._dry_run:
-                        self._pending_popularity_updates.append(
-                            (catalog_key, popularity_rank)
-                        )
-            return None
+            elif not self._overwrite_existing:
+                return None
 
         seed_ingredients = []
         for ingredient_index, item in enumerate(resolved_ingredients):
-            if item.food_reference_id is None:
+            if item.food_reference_id is None and not self._allow_unmapped_ingredients:
                 raise CatalogSeedImportError(
                     f"recipes[{index}] resolved ingredient is missing food_reference_id"
                 )
@@ -509,6 +527,13 @@ class CatalogMealSeedImporter:
                     existing.catalog_key == item.seed.catalog_key
                     and existing.content_hash != item.seed.content_hash
                 ):
+                    if self._overwrite_existing:
+                        to_insert.append(item)
+                        signatures.append(item.signature)
+                        continue
+                    if self._skip_existing:
+                        skipped += 1
+                        continue
                     errors.append(
                         "catalog_key already exists with different content: "
                         f"{item.seed.catalog_key}"
@@ -534,6 +559,34 @@ class CatalogMealSeedImporter:
         resolved: list[ResolvedIngredientQuantity] = []
         issues: list[CatalogSeedResolutionIssue] = []
         for ingredient_index, ingredient in enumerate(recipe.get("ingredients", [])):
+            food_ref_id = ingredient.get("food_reference_id")
+            norm_name = normalize_food_name(str(ingredient.get("name", "")).strip())
+            mapped_id = self._approved_mappings.get(norm_name)
+
+            if (
+                self._allow_unmapped_ingredients
+                and food_ref_id is None
+                and mapped_id is None
+            ):
+                resolved.append(
+                    ResolvedIngredientQuantity(
+                        food_reference_id=None,
+                        display_name=str(ingredient["name"]).strip(),
+                        quantity=float(ingredient["quantity"]),
+                        unit=str(ingredient["unit"]).strip(),
+                        grams=0.0,
+                        protein=0.0,
+                        carbs=0.0,
+                        fat=0.0,
+                        fiber=0.0,
+                        sugar=0.0,
+                        calories=0.0,
+                        display_only=True,
+                    )
+                )
+                continue
+
+            reference = None
             try:
                 reference = await self._resolve_food_reference(
                     ingredient,
@@ -542,34 +595,60 @@ class CatalogMealSeedImporter:
                     ingredient_index=ingredient_index,
                 )
             except CatalogSeedResolutionError as exc:
-                issues.append(exc.issue)
-                continue
-            try:
-                resolved.append(
-                    self._converter.resolve(
-                        reference=reference,
-                        quantity=float(ingredient["quantity"]),
-                        unit=str(ingredient["unit"]).strip(),
-                        display_name=str(ingredient["name"]).strip(),
-                    )
-                )
-            except IngredientQuantityConversionError as exc:
-                if exc.code == "food_reference_not_verified":
-                    raise CatalogSeedUnverifiedReferenceError(
-                        CatalogSeedUnverifiedReference(
-                            recipe_index=recipe_index,
-                            recipe_key=str(recipe["recipe_key"]).strip(),
-                            ingredient_index=ingredient_index,
-                            ingredient_name=str(ingredient["name"]).strip(),
-                            food_reference_id=reference.id,
-                            food_reference_name=reference.name,
-                            source=reference.source,
+                if not self._allow_unmapped_ingredients:
+                    issues.append(exc.issue)
+                    continue
+            except CatalogSeedResolutionErrors as exc:
+                if not self._allow_unmapped_ingredients:
+                    issues.extend(exc.issues)
+                    continue
+
+            if reference is not None:
+                try:
+                    resolved.append(
+                        self._converter.resolve(
+                            reference=reference,
+                            quantity=float(ingredient["quantity"]),
+                            unit=str(ingredient["unit"]).strip(),
+                            display_name=str(ingredient["name"]).strip(),
                         )
-                    ) from exc
-                raise CatalogSeedImportError(
-                    f"recipes[{recipe_index}].ingredients[{ingredient_index}] "
-                    f"{exc.code}: {exc}"
-                ) from exc
+                    )
+                    continue
+                except IngredientQuantityConversionError as exc:
+                    if not self._allow_unmapped_ingredients:
+                        if exc.code == "food_reference_not_verified":
+                            raise CatalogSeedUnverifiedReferenceError(
+                                CatalogSeedUnverifiedReference(
+                                    recipe_index=recipe_index,
+                                    recipe_key=str(recipe["recipe_key"]).strip(),
+                                    ingredient_index=ingredient_index,
+                                    ingredient_name=str(ingredient["name"]).strip(),
+                                    food_reference_id=reference.id,
+                                    food_reference_name=reference.name,
+                                    source=reference.source,
+                                )
+                            ) from exc
+                        raise CatalogSeedImportError(
+                            f"recipes[{recipe_index}].ingredients[{ingredient_index}] "
+                            f"{exc.code}: {exc}"
+                        ) from exc
+
+            resolved.append(
+                ResolvedIngredientQuantity(
+                    food_reference_id=None,
+                    display_name=str(ingredient["name"]).strip(),
+                    quantity=float(ingredient["quantity"]),
+                    unit=str(ingredient["unit"]).strip(),
+                    grams=0.0,
+                    protein=0.0,
+                    carbs=0.0,
+                    fat=0.0,
+                    fiber=0.0,
+                    sugar=0.0,
+                    calories=0.0,
+                    display_only=True,
+                )
+            )
         if issues:
             raise CatalogSeedResolutionErrors(issues)
         return resolved
@@ -886,6 +965,11 @@ def _content_hash(
             "food_reference_id": item.food_reference_id,
             "quantity": _canonical_decimal(item.quantity),
             "unit": normalize_catalog_text(item.unit),
+            **(
+                {"name": normalize_catalog_text(item.display_name)}
+                if item.food_reference_id is None
+                else {}
+            ),
         }
         for item in ingredients
     ]
@@ -914,7 +998,10 @@ def _content_hash(
         "ingredients": sorted(
             ingredient_payloads,
             key=lambda item: (
-                item["food_reference_id"],
+                item["food_reference_id"]
+                if item["food_reference_id"] is not None
+                else -1,
+                item.get("name", ""),
                 item["unit"],
                 item["quantity"],
             ),
@@ -997,7 +1084,10 @@ def _seed_signature(
         normalized_name=normalize_catalog_text(seed.name),
         normalized_cuisine=normalize_catalog_text(seed.cuisine),
         food_reference_ids=frozenset(
-            item.food_reference_id for item in seed.ingredients
+            item.food_reference_id
+            if item.food_reference_id is not None
+            else deterministic_ingredient_id(item.display_name)
+            for item in seed.ingredients
         ),
     )
 
@@ -1009,6 +1099,8 @@ def _near_duplicate_review(
 ) -> CatalogSeedReviewRequired | None:
     for existing in existing_signatures:
         if existing.content_hash == candidate.content_hash:
+            continue
+        if existing.catalog_key == candidate.catalog_key:
             continue
         if existing.normalized_name != candidate.normalized_name:
             continue
