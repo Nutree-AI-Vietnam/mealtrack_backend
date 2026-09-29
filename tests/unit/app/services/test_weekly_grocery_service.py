@@ -21,6 +21,12 @@ from src.domain.services.meal_recommendation.ingredient_quantity_normalization i
     normalize_ingredient_quantity,
 )
 from src.domain.services.weekly_meal_planner.grocery_projection import (
+    SYNTHETIC_INGREDIENT_ID_OFFSET,
+    GroceryIngredient,
+    GroceryInteraction,
+    GrocerySlot,
+    PantryAvailability,
+    aggregate_grocery,
     deterministic_ingredient_id,
 )
 
@@ -335,3 +341,62 @@ async def test_unmapped_ingredients_are_not_doubled_in_groceries():
     fish_item = next(item for item in items if item.name == "Phi lê cá điêu hồng")
     # For 2 people in _plan() with base_servings=1, total needed should be 2 * 300 = 600g (NOT 1200g doubled)
     assert fish_item.total_needed == 600.0
+
+
+def test_deterministic_ingredient_id_is_namespaced_to_prevent_collision():
+    names = [
+        "Water",
+        "Salt",
+        "Phi lê cá điêu hồng",
+        "Rau muống",
+        "Olive oil",
+    ]
+    for name in names:
+        val = deterministic_ingredient_id(name)
+        assert val >= SYNTHETIC_INGREDIENT_ID_OFFSET
+        assert val <= 2_147_483_647
+
+
+def test_unmapped_ingredient_does_not_collide_with_low_food_reference_id_pantry():
+    unmapped_line = GroceryIngredient(
+        position=0,
+        food_reference_id=None,
+        name="Special Herb",
+        quantity=Decimal("50"),
+        unit="g",
+        category="produce",
+    )
+    slot = GrocerySlot(
+        recipe_id="r1",
+        publication_status="published",
+        nutrition_status="ready",
+        is_active=True,
+        base_servings=1,
+        serving_confidence="verified",
+        people=1,
+        ingredients=(unmapped_line,),
+    )
+    pantry = [
+        PantryAvailability(
+            food_reference_id=7,
+            available_amount=Decimal("100"),
+            available_unit="g",
+        )
+    ]
+    interactions = [
+        GroceryInteraction(
+            food_reference_id=7,
+            checked=True,
+            do_not_buy=True,
+        )
+    ]
+    items = aggregate_grocery([slot], pantry, interactions)
+    assert len(items) == 1
+    herb_item = items[0]
+    assert herb_item.name == "Special Herb"
+    assert herb_item.ingredient_id >= SYNTHETIC_INGREDIENT_ID_OFFSET
+    assert herb_item.available_amount is None
+    assert herb_item.checked is False
+    assert herb_item.do_not_buy is False
+    assert herb_item.status == "needed"
+

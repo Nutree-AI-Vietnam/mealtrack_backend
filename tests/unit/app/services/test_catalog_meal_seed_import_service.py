@@ -812,3 +812,56 @@ async def test_conversion_error_on_matched_reference_raises_error_even_when_unma
     assert summary.is_successful is False
     assert summary.inserted == 0
     assert any("conversion" in err.lower() or "unit" in err.lower() for err in summary.errors)
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_duplicate_catalog_key_in_same_manifest():
+    manifest = {
+        "recipes": [
+            {
+                "recipe_key": "vn-duplicate-key",
+                "cuisine": "vietnamese",
+                "name": "Recipe One",
+                "meal_types": ["breakfast"],
+                "ingredients": [
+                    {
+                        "name": "Rice",
+                        "quantity": 100.0,
+                        "unit": "g",
+                        "food_reference_id": 7,
+                        "category": "produce",
+                    }
+                ],
+            },
+            {
+                "recipe_key": "vn-duplicate-key",
+                "cuisine": "vietnamese",
+                "name": "Recipe Two (Modified)",
+                "meal_types": ["lunch"],
+                "ingredients": [
+                    {
+                        "name": "Rice",
+                        "quantity": 150.0,
+                        "unit": "g",
+                        "food_reference_id": 7,
+                        "category": "produce",
+                    }
+                ],
+            },
+        ]
+    }
+    importer = _Importer(
+        refs_by_id={7: _reference(7, name="Rice")},
+        overwrite_existing=False,
+    )
+    summary = await importer.import_manifest(manifest)
+
+    assert summary.is_successful is False
+    assert summary.inserted == 0
+    assert summary.updated == 0
+    assert importer.session.added == []
+    assert any(
+        "duplicate catalog_key in manifest: vn-duplicate-key" in err
+        for err in summary.errors
+    )
+

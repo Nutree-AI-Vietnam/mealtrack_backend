@@ -328,7 +328,16 @@ class CatalogMealSeedImporter:
         review_required: list[CatalogSeedReviewRequired] = []
         prepared: list[_PreparedCatalogSeed] = []
         signatures = await self._catalog_repository.list_seed_signatures()
+        seen_catalog_keys: set[str] = set()
         for index, recipe in enumerate(manifest.get("recipes", [])):
+            if isinstance(recipe, dict) and "recipe_key" in recipe:
+                recipe_key = str(recipe["recipe_key"]).strip()
+                if recipe_key in seen_catalog_keys:
+                    errors.append(
+                        f"recipes[{index}] duplicate catalog_key in manifest: {recipe_key}"
+                    )
+                    continue
+                seen_catalog_keys.add(recipe_key)
             try:
                 prepared_seed = await self._prepare_recipe(recipe, index)
             except CatalogSeedResolutionErrors as exc:
@@ -564,7 +573,14 @@ class CatalogMealSeedImporter:
         skipped = 0
         errors: list[str] = []
         review_required: list[CatalogSeedReviewRequired] = []
+        seen_under_lock: set[str] = set()
         for item in prepared:
+            if item.seed.catalog_key in seen_under_lock:
+                errors.append(
+                    f"duplicate catalog_key under lock: {item.seed.catalog_key}"
+                )
+                continue
+            seen_under_lock.add(item.seed.catalog_key)
             existing = await self._find_existing(
                 item.seed.catalog_key,
                 item.seed.content_hash,

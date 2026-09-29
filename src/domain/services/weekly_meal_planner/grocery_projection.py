@@ -21,12 +21,14 @@ from src.domain.services.weekly_meal_planner.recipe_publication import (
     is_planner_eligible,
 )
 
+SYNTHETIC_INGREDIENT_ID_OFFSET = 1_000_000_000
+
 
 def deterministic_ingredient_id(name: str) -> int:
-    """Generate a stable positive 31-bit integer ID for an ingredient name."""
+    """Generate a stable positive 31-bit integer ID for an ingredient name, offset to avoid collision with database food_reference_id."""
     norm = unicodedata.normalize("NFC", (name or "").strip().lower())
-    val = zlib.crc32(norm.encode("utf-8")) & 0x7FFFFFFF
-    return val if val > 0 else 1
+    val = zlib.crc32(norm.encode("utf-8")) % 1_000_000_000
+    return SYNTHETIC_INGREDIENT_ID_OFFSET + (val if val > 0 else 1)
 
 
 @dataclass(frozen=True)
