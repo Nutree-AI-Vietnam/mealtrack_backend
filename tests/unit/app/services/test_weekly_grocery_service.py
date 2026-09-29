@@ -358,6 +358,26 @@ def test_deterministic_ingredient_id_is_namespaced_to_prevent_collision():
         assert val <= 2_147_483_647
 
 
+def test_deterministic_ingredient_id_zero_and_one_modulo_do_not_collide(monkeypatch):
+    import src.domain.services.weekly_meal_planner.grocery_projection as gp
+
+    monkeypatch.setattr(
+        gp.zlib,
+        "crc32",
+        lambda b: 1_000_000_000 if b == b"ing_zero" else 1_000_000_001,
+    )
+
+    id_zero = deterministic_ingredient_id("ing_zero")
+    id_one = deterministic_ingredient_id("ing_one")
+
+    assert id_zero == SYNTHETIC_INGREDIENT_ID_OFFSET
+    assert id_one == SYNTHETIC_INGREDIENT_ID_OFFSET + 1
+    assert id_zero != id_one
+
+    monkeypatch.undo()
+    assert deterministic_ingredient_id("") == SYNTHETIC_INGREDIENT_ID_OFFSET
+
+
 def test_unmapped_ingredient_does_not_collide_with_low_food_reference_id_pantry():
     unmapped_line = GroceryIngredient(
         position=0,
