@@ -148,7 +148,13 @@ class AsyncFoodReferenceRepository:
     async def get_nutrition_projections(
         self, food_reference_ids: list[int], *, for_update: bool = False
     ) -> dict[int, FoodReferenceNutritionProjection]:
-        ids = sorted({int(value) for value in food_reference_ids})
+        ids = sorted(
+            {
+                int(value)
+                for value in food_reference_ids
+                if isinstance(value, int) or (isinstance(value, str) and value.isdigit())
+            }
+        )
         if not ids:
             return {}
         statement = (
