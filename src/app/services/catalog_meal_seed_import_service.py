@@ -177,6 +177,7 @@ class CatalogSeedImportSummary:
         default_factory=tuple
     )
     inserted_catalog_keys: tuple[str, ...] = field(default_factory=tuple)
+    updated_catalog_keys: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def is_successful(self) -> bool:
@@ -245,6 +246,7 @@ class _PreparedCatalogSeed:
     recipe_index: int
     seed: CatalogMealSeedWrite
     signature: CatalogMealSeedSignature
+    is_overwrite: bool = False
 
 
 class CatalogMealSeedImporter:
@@ -356,14 +358,36 @@ class CatalogMealSeedImporter:
             prepared.append(prepared_seed)
             signatures.append(prepared_seed.signature)
         if errors or review_required or self._dry_run:
+            dry_inserted = (
+                len([p for p in prepared if not p.is_overwrite])
+                if self._dry_run and not errors
+                else 0
+            )
+            dry_updated = (
+                len([p for p in prepared if p.is_overwrite])
+                + len(self._pending_popularity_updates)
+                if self._dry_run and not errors
+                else 0
+            )
             summary = CatalogSeedImportSummary(
-                inserted=len(prepared) if self._dry_run and not errors else 0,
+                inserted=dry_inserted,
+                updated=dry_updated,
                 skipped_existing=skipped,
                 dry_run=self._dry_run,
                 errors=tuple(errors),
                 resolution_issues=tuple(resolution_issues),
                 unverified_references=tuple(unverified_references),
                 review_required=tuple(review_required),
+                inserted_catalog_keys=(
+                    tuple(p.seed.catalog_key for p in prepared if not p.is_overwrite)
+                    if self._dry_run and not errors
+                    else ()
+                ),
+                updated_catalog_keys=(
+                    tuple(p.seed.catalog_key for p in prepared if p.is_overwrite)
+                    if self._dry_run and not errors
+                    else ()
+                ),
             )
             _record_seed_import_metrics(summary, started)
             return summary
@@ -371,17 +395,25 @@ class CatalogMealSeedImporter:
         if prepared:
             (
                 to_insert,
+                to_update,
                 skipped_after_lock,
                 lock_errors,
                 lock_reviews,
             ) = await self._recheck_under_lock(prepared)
         else:
             await self._catalog_repository.lock_seed_import()
-            to_insert, skipped_after_lock, lock_errors, lock_reviews = [], 0, [], []
+            to_insert, to_update, skipped_after_lock, lock_errors, lock_reviews = (
+                [],
+                [],
+                0,
+                [],
+                [],
+            )
         skipped += skipped_after_lock
         if lock_errors or lock_reviews:
             summary = CatalogSeedImportSummary(
                 inserted=0,
+                updated=0,
                 skipped_existing=skipped,
                 dry_run=self._dry_run,
                 errors=tuple(lock_errors),
@@ -392,6 +424,8 @@ class CatalogMealSeedImporter:
 
         for item in to_insert:
             await self._catalog_repository.add_seed_meal(item.seed)
+        for item in to_update:
+            await self._catalog_repository.add_seed_meal(item.seed)
         for catalog_key, popularity_rank in self._pending_popularity_updates:
             await self._catalog_repository.update_popularity_rank(
                 catalog_key=catalog_key,
@@ -399,10 +433,11 @@ class CatalogMealSeedImporter:
             )
         summary = CatalogSeedImportSummary(
             inserted=len(to_insert),
-            updated=len(self._pending_popularity_updates),
+            updated=len(to_update) + len(self._pending_popularity_updates),
             skipped_existing=skipped,
             dry_run=self._dry_run,
             inserted_catalog_keys=tuple(item.seed.catalog_key for item in to_insert),
+            updated_catalog_keys=tuple(item.seed.catalog_key for item in to_update),
         )
         _record_seed_import_metrics(summary, started)
         return summary
@@ -425,6 +460,7 @@ class CatalogMealSeedImporter:
         resolved_ingredients = await self._resolve_ingredients(recipe, index)
         content_hash = _content_hash(recipe, resolved_ingredients)
         existing = await self._find_existing(catalog_key, content_hash)
+        is_overwrite = False
         if existing is not None:
             if existing.catalog_key == catalog_key:
                 if existing.content_hash == content_hash or self._skip_existing:
@@ -442,6 +478,8 @@ class CatalogMealSeedImporter:
                         f"recipes[{index}] catalog_key already exists with different content: "
                         f"{catalog_key}"
                     )
+                else:
+                    is_overwrite = True
             elif not self._overwrite_existing:
                 return None
             else:
@@ -504,6 +542,7 @@ class CatalogMealSeedImporter:
             recipe_index=index,
             seed=seed,
             signature=_seed_signature(seed, content_hash),
+            is_overwrite=is_overwrite,
         )
 
     async def _recheck_under_lock(
@@ -511,15 +550,17 @@ class CatalogMealSeedImporter:
         prepared: list[_PreparedCatalogSeed],
     ) -> tuple[
         list[_PreparedCatalogSeed],
+        list[_PreparedCatalogSeed],
         int,
         list[str],
         list[CatalogSeedReviewRequired],
     ]:
         if not prepared:
-            return [], 0, [], []
+            return [], [], 0, [], []
         await self._catalog_repository.lock_seed_import()
         signatures = await self._catalog_repository.list_seed_signatures()
         to_insert: list[_PreparedCatalogSeed] = []
+        to_update: list[_PreparedCatalogSeed] = []
         skipped = 0
         errors: list[str] = []
         review_required: list[CatalogSeedReviewRequired] = []
@@ -534,7 +575,7 @@ class CatalogMealSeedImporter:
                     and existing.content_hash != item.seed.content_hash
                 ):
                     if self._overwrite_existing:
-                        to_insert.append(item)
+                        to_update.append(item)
                         signatures.append(item.signature)
                         continue
                     if self._skip_existing:
@@ -562,7 +603,7 @@ class CatalogMealSeedImporter:
                 continue
             to_insert.append(item)
             signatures.append(item.signature)
-        return to_insert, skipped, errors, review_required
+        return to_insert, to_update, skipped, errors, review_required
 
     async def _resolve_ingredients(
         self,

@@ -325,9 +325,89 @@ async def test_import_with_overwrite_existing_updates_changed_content():
     summary = await importer.import_manifest(_manifest())
 
     assert summary.is_successful is True
-    assert summary.inserted == 1
+    assert summary.inserted == 0
+    assert summary.updated == 1
+    assert summary.updated_catalog_keys == ("vn-rice-breakfast",)
     assert len(importer.session.added) == 1
     assert importer.session.added[0].catalog_key == "vn-rice-breakfast"
+
+
+@pytest.mark.asyncio
+async def test_import_with_overwrite_existing_dry_run_reports_updated():
+    importer = _Importer(
+        refs_by_id={7: _reference()},
+        existing="changed",
+        overwrite_existing=True,
+    )
+    importer._dry_run = True
+
+    summary = await importer.import_manifest(_manifest())
+
+    assert summary.is_successful is True
+    assert summary.inserted == 0
+    assert summary.updated == 1
+    assert summary.updated_catalog_keys == ("vn-rice-breakfast",)
+    assert summary.dry_run is True
+    assert importer.session.added == []
+
+
+@pytest.mark.asyncio
+async def test_import_mixed_new_and_overwritten_recipes_counts_accurately():
+    manifest = {
+        "recipes": [
+            {
+                "recipe_key": "vn-existing",
+                "cuisine": "vietnamese",
+                "name": "Existing Meal",
+                "meal_types": ["breakfast"],
+                "ingredients": [
+                    {
+                        "name": "Rice",
+                        "quantity": 100.0,
+                        "unit": "g",
+                        "food_reference_id": 7,
+                        "category": "produce",
+                    }
+                ],
+            },
+            {
+                "recipe_key": "vn-new",
+                "cuisine": "vietnamese",
+                "name": "New Meal",
+                "meal_types": ["lunch"],
+                "ingredients": [
+                    {
+                        "name": "Rice",
+                        "quantity": 150.0,
+                        "unit": "g",
+                        "food_reference_id": 7,
+                        "category": "produce",
+                    }
+                ],
+            },
+        ]
+    }
+    importer = _Importer(
+        refs_by_id={7: _reference()},
+        overwrite_existing=True,
+    )
+
+    async def _mock_find_existing(catalog_key, content_hash):
+        if catalog_key == "vn-existing":
+            return SimpleNamespace(catalog_key="vn-existing", content_hash="old-hash")
+        return None
+
+    importer._find_existing = _mock_find_existing
+
+    summary = await importer.import_manifest(manifest)
+
+    assert summary.is_successful is True
+    assert summary.inserted == 1
+    assert summary.updated == 1
+    assert summary.inserted_catalog_keys == ("vn-new",)
+    assert summary.updated_catalog_keys == ("vn-existing",)
+    assert len(importer.session.added) == 2
+
 
 
 @pytest.mark.asyncio
