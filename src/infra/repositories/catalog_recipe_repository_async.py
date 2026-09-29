@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import unicodedata
 from collections.abc import Iterable
 from decimal import Decimal
@@ -543,6 +544,16 @@ def _meal_to_domain(row: MealCatalogORM, *, include_steps: bool = False) -> Cata
     )
 
 
+def _safe_float(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return f if math.isfinite(f) else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
     totals = {
         "protein": 0.0,
@@ -573,7 +584,7 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
         totals["fiber"] += resolved.fiber
         totals["sugar"] += resolved.sugar
         totals["calories"] += resolved.calories
-    has_unmapped_ingredients = not row.ingredients or any(
+    has_unmapped_ingredients = any(
         (ingredient.food_reference_id is None or ingredient.food_reference is None)
         and projection_nutrition_quantity(
             {
@@ -587,36 +598,37 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
     )
     if has_unmapped_ingredients and isinstance(row.recipe_payload, dict):
         nutr = row.recipe_payload.get("nutrition")
-        if isinstance(nutr, dict) and (
-            nutr.get("calories") is not None
-            or nutr.get("protein") is not None
-            or nutr.get("carbs") is not None
-            or nutr.get("fat") is not None
-        ):
-            p = float(nutr.get("protein", 0.0))
-            c = float(nutr.get("carbs", 0.0))
-            f = float(nutr.get("fat", 0.0))
-            fib = float(nutr.get("fiber", 0.0))
-            s = float(nutr.get("sugar", 0.0))
-            raw_cals = nutr.get("calories")
-            cal = (
-                float(raw_cals)
-                if raw_cals is not None
-                else Macros.raw_total_calories(p, c, f, fib)
-            )
-            return ResolvedIngredientQuantity(
-                food_reference_id=None,
-                display_name=cast(str, row.name),
-                quantity=1,
-                unit="meal",
-                grams=0,
-                protein=p,
-                carbs=c,
-                fat=f,
-                fiber=fib,
-                sugar=s,
-                calories=cal,
-            )
+        if isinstance(nutr, dict):
+            raw_p = _safe_float(nutr.get("protein"))
+            raw_c = _safe_float(nutr.get("carbs"))
+            raw_f = _safe_float(nutr.get("fat"))
+            raw_fib = _safe_float(nutr.get("fiber"))
+            raw_s = _safe_float(nutr.get("sugar"))
+            raw_cals = _safe_float(nutr.get("calories"))
+            if any(v is not None for v in (raw_cals, raw_p, raw_c, raw_f)):
+                p = raw_p or 0.0
+                c = raw_c or 0.0
+                f = raw_f or 0.0
+                fib = raw_fib or 0.0
+                s = raw_s or 0.0
+                cal = (
+                    raw_cals
+                    if raw_cals is not None
+                    else Macros.raw_total_calories(p, c, f, fib)
+                )
+                return ResolvedIngredientQuantity(
+                    food_reference_id=None,
+                    display_name=cast(str, row.name),
+                    quantity=1,
+                    unit="meal",
+                    grams=0,
+                    protein=p,
+                    carbs=c,
+                    fat=f,
+                    fiber=fib,
+                    sugar=s,
+                    calories=cal,
+                )
     return ResolvedIngredientQuantity(
         food_reference_id=None,
         display_name=cast(str, row.name),

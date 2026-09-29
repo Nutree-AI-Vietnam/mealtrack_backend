@@ -1,3 +1,4 @@
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -375,6 +376,93 @@ async def test_get_meal_mixed_ingredients_without_payload_nutrition_falls_back_t
     row.ingredients.append(unmapped_ingredient)
     row.recipe_payload = None
 
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncCatalogMealRepository(session)
+
+    result = await repo.get_meal("catalog-1")
+
+    assert result is not None
+    assert result.protein_g == Decimal("2.7")
+    assert result.carbs_g == Decimal("28.0")
+    assert result.fat_g == Decimal("0.3")
+
+
+@pytest.mark.asyncio
+async def test_get_meal_with_zero_ingredients_does_not_use_payload_fallback():
+    row = _meal_row()
+    row.ingredients = []  # No ingredients in the recipe
+    row.recipe_payload = {
+        "nutrition": {
+            "calories": 400.0,
+            "protein": 25.0,
+            "carbs": 50.0,
+            "fat": 10.0,
+        }
+    }
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncCatalogMealRepository(session)
+
+    result = await repo.get_meal("catalog-1")
+
+    assert result is not None
+    assert result.protein_g == 0
+    assert result.carbs_g == 0
+    assert result.fat_g == 0
+    assert result.fiber_g == 0
+    assert result.sugar_g == 0
+    assert result.calories == 0
+
+
+@pytest.mark.asyncio
+async def test_get_meal_with_unmapped_ingredients_handles_non_numeric_payload_nutrition():
+    row = _meal_row()
+    unmapped_ingredient = MagicMock()
+    unmapped_ingredient.food_reference_id = None
+    unmapped_ingredient.display_name = "Herb"
+    unmapped_ingredient.quantity = 10
+    unmapped_ingredient.unit = "g"
+    unmapped_ingredient.food_reference = None
+    row.ingredients = [unmapped_ingredient]
+    row.recipe_payload = {
+        "nutrition": {
+            "calories": "N/A",
+            "protein": None,
+            "carbs": "invalid",
+            "fat": 5.0,
+        }
+    }
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncCatalogMealRepository(session)
+
+    result = await repo.get_meal("catalog-1")
+
+    assert result is not None
+    assert result.fat_g == 5.0
+    assert result.protein_g == 0.0
+    assert result.carbs_g == 0.0
+    # Calories computed via Macros.raw_total_calories(0, 0, 5, 0) == 45
+    assert result.calories == 45
+
+
+@pytest.mark.asyncio
+async def test_get_meal_with_unmapped_ingredients_completely_invalid_payload_falls_back():
+    row = _meal_row()
+    unmapped_ingredient = MagicMock()
+    unmapped_ingredient.food_reference_id = None
+    unmapped_ingredient.display_name = "Special Sauce"
+    unmapped_ingredient.quantity = 50
+    unmapped_ingredient.unit = "g"
+    unmapped_ingredient.food_reference = None
+    # row already has index 0 mapped ingredient (Rice: 2.7g P, 28g C, 0.3g F)
+    row.ingredients.append(unmapped_ingredient)
+    row.recipe_payload = {
+        "nutrition": {
+            "calories": "N/A",
+            "protein": "N/A",
+            "carbs": "invalid",
+            "fat": None,
+        }
+    }
     session = _AsyncSession([_Result(one=row)])
     repo = AsyncCatalogMealRepository(session)
 
