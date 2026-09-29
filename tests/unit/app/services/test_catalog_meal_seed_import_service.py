@@ -910,3 +910,114 @@ async def test_import_normalizes_ingredient_category_to_db_check_constraint():
     added_seed = importer.session.added[0]
     categories = [item.category for item in added_seed.ingredients]
     assert categories == ["produce", "protein", "pantry"]
+
+
+def test_content_hash_changes_when_nutrition_changes():
+    base_recipe = {
+        "name": "PHỞ",
+        "cuisine": "Vietnamese",
+        "meal_types": ["lunch", "breakfast"],
+        "nutrition": {
+            "calories": 300,
+            "protein": 20,
+            "carbs": 40,
+            "fat": 5,
+        },
+    }
+    updated_nutrition_recipe = {
+        **base_recipe,
+        "nutrition": {
+            "calories": 350,
+            "protein": 25,
+            "carbs": 40,
+            "fat": 5,
+        },
+    }
+    no_nutrition_recipe = {
+        "name": "PHỞ",
+        "cuisine": "Vietnamese",
+        "meal_types": ["lunch", "breakfast"],
+    }
+    equivalent_nutrition_recipe = {
+        **base_recipe,
+        "nutrition": {
+            "fat": 5.0,
+            "calories": 300.0,
+            "protein": 20.0,
+            "carbs": 40.0,
+        },
+    }
+    ingredients = [_resolved_ingredient(quantity=100)]
+
+    assert _content_hash(base_recipe, ingredients) != _content_hash(
+        updated_nutrition_recipe, ingredients
+    )
+    assert _content_hash(base_recipe, ingredients) != _content_hash(
+        no_nutrition_recipe, ingredients
+    )
+    assert _content_hash(base_recipe, ingredients) == _content_hash(
+        equivalent_nutrition_recipe, ingredients
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_with_overwrite_existing_updates_recipe_when_only_nutrition_changes():
+    old_recipe = {
+        "recipe_key": "vn-pho-nutrition",
+        "cuisine": "vietnamese",
+        "name": "Pho Bo",
+        "meal_types": ["breakfast"],
+        "nutrition": {
+            "calories": 300,
+            "protein": 20,
+            "carbs": 40,
+            "fat": 5,
+        },
+        "ingredients": [
+            {
+                "name": "Rice",
+                "quantity": 100.0,
+                "unit": "g",
+                "food_reference_id": 7,
+                "category": "produce",
+            }
+        ],
+    }
+    ingredients = [_resolved_ingredient(food_reference_id=7, quantity=100)]
+    old_hash = _content_hash(old_recipe, ingredients)
+
+    new_manifest = {
+        "recipes": [
+            {
+                **old_recipe,
+                "nutrition": {
+                    "calories": 380,
+                    "protein": 28,
+                    "carbs": 40,
+                    "fat": 8,
+                },
+            }
+        ]
+    }
+    importer = _Importer(
+        refs_by_id={7: _reference(7, name="Rice")},
+        overwrite_existing=True,
+    )
+
+    async def _mock_find_existing(catalog_key, content_hash):
+        if catalog_key == "vn-pho-nutrition":
+            return SimpleNamespace(
+                catalog_key="vn-pho-nutrition", content_hash=old_hash
+            )
+        return None
+
+    importer._find_existing = _mock_find_existing
+
+    summary = await importer.import_manifest(new_manifest)
+
+    assert summary.is_successful is True
+    assert summary.inserted == 0
+    assert summary.updated == 1
+    assert summary.updated_catalog_keys == ("vn-pho-nutrition",)
+    assert len(importer.session.added) == 1
+    assert importer.session.added[0].nutrition["calories"] == 380

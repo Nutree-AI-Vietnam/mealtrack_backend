@@ -1028,6 +1028,20 @@ def normalize_catalog_text(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).split()).casefold()
 
 
+def _canonical_nutrition(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    canonical: dict[str, str] = {}
+    for key, val in sorted(value.items()):
+        if val is None:
+            continue
+        try:
+            canonical[str(key)] = _canonical_decimal(float(val))
+        except (ValueError, TypeError):
+            canonical[str(key)] = str(val)
+    return canonical or None
+
+
 def _content_hash(
     recipe: dict[str, Any],
     ingredients: list[ResolvedIngredientQuantity],
@@ -1051,21 +1065,24 @@ def _content_hash(
         "cuisine": normalize_catalog_text(str(recipe["cuisine"])),
         "meal_types": sorted(recipe["meal_types"]),
         "details": {
-            key: recipe.get(key)
-            for key in (
-                "source_name",
-                "source_url",
-                "prep_time_minutes",
-                "cook_time_minutes",
-                "tag",
-                "allergens",
-                "summary",
-                "equipment",
-                "base_servings",
-                "serving_source",
-                "serving_confidence",
-                "steps",
-            )
+            **{
+                key: recipe.get(key)
+                for key in (
+                    "source_name",
+                    "source_url",
+                    "prep_time_minutes",
+                    "cook_time_minutes",
+                    "tag",
+                    "allergens",
+                    "summary",
+                    "equipment",
+                    "base_servings",
+                    "serving_source",
+                    "serving_confidence",
+                    "steps",
+                )
+            },
+            "nutrition": _canonical_nutrition(recipe.get("nutrition")),
         },
         "ingredients": sorted(
             ingredient_payloads,

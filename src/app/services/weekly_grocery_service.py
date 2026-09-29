@@ -282,9 +282,16 @@ def _slot_from_meal(
         raw_category = raw.get("category") or raw.get("type") or raw.get("kind")
         if raw.get("is_equipment") or _is_non_food_ingredient(raw_name, raw_category):
             continue
+        assigned_pos = (
+            raw_pos
+            if raw_pos and raw_pos not in existing_positions
+            else max(existing_positions, default=0) + 1
+        )
+        existing_positions.add(assigned_pos)
+        existing_names.add(raw_name.casefold())
         ingredients.append(
             GroceryIngredient(
-                position=int(raw.get("position") or len(ingredients) + 1),
+                position=assigned_pos,
                 food_reference_id=raw.get("food_reference_id"),
                 name=raw_name,
                 quantity=_decimal_or_none(raw.get("quantity")),

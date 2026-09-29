@@ -27,6 +27,7 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     GrocerySlot,
     PantryAvailability,
     aggregate_grocery,
+    apply_recipe_override,
     deterministic_ingredient_id,
 )
 
@@ -400,3 +401,84 @@ def test_unmapped_ingredient_does_not_collide_with_low_food_reference_id_pantry(
     assert herb_item.do_not_buy is False
     assert herb_item.status == "needed"
 
+
+def test_slot_from_meal_non_contiguous_positions_does_not_collide_and_override_works_correctly():
+    meal = CatalogMeal(
+        id="recipe-non-contiguous",
+        catalog_key="recipe-non-contiguous",
+        content_hash="c" * 64,
+        name="Chicken Bowl",
+        cuisine="vietnamese",
+        description=None,
+        image_url=None,
+        protein_g=Decimal("40"),
+        carbs_g=Decimal("50"),
+        fat_g=Decimal("10"),
+        fiber_g=Decimal("2"),
+        base_servings=1,
+        serving_confidence="verified",
+        meal_types=("lunch", "dinner"),
+        ingredients=(
+            CatalogMealIngredient(
+                food_reference_id=7,
+                display_name="Rice",
+                quantity=Decimal("100"),
+                unit="g",
+                category="pantry",
+                position=1,
+            ),
+            CatalogMealIngredient(
+                food_reference_id=8,
+                display_name="Chicken",
+                quantity=Decimal("200"),
+                unit="g",
+                category="protein",
+                position=3,  # non-contiguous gap at 2
+            ),
+        ),
+        recipe_payload={
+            "ingredients": [
+                {
+                    "name": "Special Sauce",
+                    "quantity": 50,
+                    "unit": "g",
+                    "food_reference_id": None,
+                },
+                {
+                    "name": "Garnish Herb",
+                    "quantity": 10,
+                    "unit": "g",
+                    "food_reference_id": None,
+                },
+                {
+                    # duplicate payload entry with same name should be skipped
+                    "name": "Special Sauce",
+                    "quantity": 50,
+                    "unit": "g",
+                    "food_reference_id": None,
+                },
+            ]
+        },
+    )
+
+    slot = _slot_from_meal(meal, plan_people=1, override=None)
+    assert len(slot.ingredients) == 4
+    positions = [item.position for item in slot.ingredients]
+    assert len(set(positions)) == 4
+    assert positions == [1, 3, 4, 5]
+
+    sauce = next(item for item in slot.ingredients if item.name == "Special Sauce")
+    assert sauce.position == 4  # Does not collide with position 3!
+
+    # Now verify that applying an override for position 3 removes ONLY Chicken, not Special Sauce
+    override = {
+        "removed_ingredients": [{"position": 3}],
+        "ingredient_changes": [],
+    }
+    slot_with_override = _slot_from_meal(meal, plan_people=1, override=override)
+    remaining_after_override = apply_recipe_override(
+        slot_with_override.ingredients, slot_with_override.recipe_override
+    )
+    remaining_names = [item.name for item in remaining_after_override]
+    assert remaining_names == ["Rice", "Special Sauce", "Garnish Herb"]
+    assert "Chicken" not in remaining_names
