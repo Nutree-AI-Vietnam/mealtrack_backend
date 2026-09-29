@@ -700,3 +700,35 @@ async def test_import_allows_unmapped_ingredients_when_enabled():
     assert seed.ingredients[0].display_name == "Thanh Long Đỏ"
     assert seed.ingredients[0].quantity == 150.0
     assert seed.ingredients[0].category == "produce"
+
+
+@pytest.mark.asyncio
+async def test_conversion_error_on_matched_reference_raises_error_even_when_unmapped_allowed():
+    manifest = {
+        "recipes": [
+            {
+                "recipe_key": "vn-bad-unit",
+                "cuisine": "vietnamese",
+                "name": "Bad Unit Meal",
+                "meal_types": ["lunch"],
+                "ingredients": [
+                    {
+                        "name": "Rice",
+                        "quantity": 100.0,
+                        "unit": "unconvertible_bogus_unit",
+                        "food_reference_id": 7,
+                        "category": "produce",
+                    }
+                ],
+            }
+        ]
+    }
+    importer = _Importer(
+        refs_by_id={7: _reference(7, name="Rice")},
+        allow_unmapped_ingredients=True,
+    )
+    summary = await importer.import_manifest(manifest)
+
+    assert summary.is_successful is False
+    assert summary.inserted == 0
+    assert any("conversion" in err.lower() or "unit" in err.lower() for err in summary.errors)

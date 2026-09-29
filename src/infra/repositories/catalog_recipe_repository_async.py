@@ -573,13 +573,11 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
         totals["fiber"] += resolved.fiber
         totals["sugar"] += resolved.sugar
         totals["calories"] += resolved.calories
-    if (
-        totals["calories"] == 0.0
-        and totals["protein"] == 0.0
-        and totals["carbs"] == 0.0
-        and totals["fat"] == 0.0
-        and isinstance(row.recipe_payload, dict)
-    ):
+    has_food_refs = any(
+        ingredient.food_reference_id is not None and ingredient.food_reference is not None
+        for ingredient in row.ingredients
+    )
+    if not has_food_refs and isinstance(row.recipe_payload, dict):
         nutr = row.recipe_payload.get("nutrition")
         if isinstance(nutr, dict) and (
             nutr.get("calories") is not None

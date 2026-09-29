@@ -265,3 +265,63 @@ async def test_get_meal_scopes_to_active_catalog_row():
     statement = str(session.statement)
     assert "meal_catalog.id" in statement
     assert "meal_catalog.is_active" in statement
+
+
+@pytest.mark.asyncio
+async def test_get_meal_mapped_zero_macro_ingredients_do_not_use_payload_fallback():
+    row = _meal_row()
+    ref = row.ingredients[0].food_reference
+    ref.protein_100g = 0.0
+    ref.carbs_100g = 0.0
+    ref.fat_100g = 0.0
+    ref.fiber_100g = 0.0
+    ref.sugar_100g = 0.0
+    row.recipe_payload = {
+        "nutrition": {
+            "calories": 250.0,
+            "protein": 15.0,
+            "carbs": 30.0,
+            "fat": 5.0,
+        }
+    }
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncCatalogMealRepository(session)
+
+    result = await repo.get_meal("catalog-1")
+
+    assert result is not None
+    assert result.protein_g == 0
+    assert result.carbs_g == 0
+    assert result.fat_g == 0
+    assert result.calories == 0
+
+
+@pytest.mark.asyncio
+async def test_get_meal_unmapped_ingredients_uses_payload_fallback():
+    row = _meal_row()
+    row.ingredients[0].food_reference_id = None
+    row.ingredients[0].food_reference = None
+    row.recipe_payload = {
+        "nutrition": {
+            "calories": 250.0,
+            "protein": 15.0,
+            "carbs": 30.0,
+            "fat": 5.0,
+            "fiber": 2.0,
+            "sugar": 1.0,
+        }
+    }
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncCatalogMealRepository(session)
+
+    result = await repo.get_meal("catalog-1")
+
+    assert result is not None
+    assert result.protein_g == 15
+    assert result.carbs_g == 30
+    assert result.fat_g == 5
+    assert result.fiber_g == 2
+    assert result.sugar_g == 1
+    assert result.calories == 221
+
+

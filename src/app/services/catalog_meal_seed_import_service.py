@@ -628,8 +628,8 @@ class CatalogMealSeedImporter:
                     )
                     continue
                 except IngredientQuantityConversionError as exc:
-                    if not self._allow_unmapped_ingredients:
-                        if exc.code == "food_reference_not_verified":
+                    if exc.code == "food_reference_not_verified":
+                        if not self._allow_unmapped_ingredients:
                             raise CatalogSeedUnverifiedReferenceError(
                                 CatalogSeedUnverifiedReference(
                                     recipe_index=recipe_index,
@@ -641,6 +641,7 @@ class CatalogMealSeedImporter:
                                     source=reference.source,
                                 )
                             ) from exc
+                    else:
                         raise CatalogSeedImportError(
                             f"recipes[{recipe_index}].ingredients[{ingredient_index}] "
                             f"{exc.code}: {exc}"
