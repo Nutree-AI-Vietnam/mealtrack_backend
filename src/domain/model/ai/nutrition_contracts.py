@@ -91,31 +91,31 @@ class AINutrientMicros(BaseModel):
 
 
 class AIRecipeMicronutrientEstimate(BaseModel):
-    """Optional per-serving recipe micronutrient estimates; omitted fields stay unknown."""
+    """Complete whole-recipe micronutrient estimate for a catalog recipe."""
 
     model_config = ConfigDict(extra="ignore")
 
-    vitamin_a: float | None = Field(None, ge=0, le=100000)
-    vitamin_c: float | None = Field(None, ge=0, le=10000)
-    vitamin_d: float | None = Field(None, ge=0, le=10000)
-    vitamin_e: float | None = Field(None, ge=0, le=10000)
-    vitamin_k: float | None = Field(None, ge=0, le=10000)
-    thiamin: float | None = Field(None, ge=0, le=1000)
-    riboflavin: float | None = Field(None, ge=0, le=1000)
-    niacin: float | None = Field(None, ge=0, le=1000)
-    vitamin_b6: float | None = Field(None, ge=0, le=1000)
-    vitamin_b12: float | None = Field(None, ge=0, le=10000)
-    folate: float | None = Field(None, ge=0, le=100000)
-    calcium: float | None = Field(None, ge=0, le=10000)
-    iron: float | None = Field(None, ge=0, le=1000)
-    magnesium: float | None = Field(None, ge=0, le=10000)
-    phosphorus: float | None = Field(None, ge=0, le=10000)
-    potassium: float | None = Field(None, ge=0, le=100000)
-    sodium: float | None = Field(None, ge=0, le=100000)
-    zinc: float | None = Field(None, ge=0, le=1000)
-    selenium: float | None = Field(None, ge=0, le=10000)
-    saturated_fat: float | None = Field(None, ge=0, le=1000)
-    added_sugar: float | None = Field(None, ge=0, le=1000)
+    vitamin_a: float = Field(..., ge=0, le=100000)
+    vitamin_c: float = Field(..., ge=0, le=10000)
+    vitamin_d: float = Field(..., ge=0, le=10000)
+    vitamin_e: float = Field(..., ge=0, le=10000)
+    vitamin_k: float = Field(..., ge=0, le=10000)
+    thiamin: float = Field(..., ge=0, le=1000)
+    riboflavin: float = Field(..., ge=0, le=1000)
+    niacin: float = Field(..., ge=0, le=1000)
+    vitamin_b6: float = Field(..., ge=0, le=1000)
+    vitamin_b12: float = Field(..., ge=0, le=10000)
+    folate: float = Field(..., ge=0, le=100000)
+    calcium: float = Field(..., ge=0, le=10000)
+    iron: float = Field(..., ge=0, le=1000)
+    magnesium: float = Field(..., ge=0, le=10000)
+    phosphorus: float = Field(..., ge=0, le=10000)
+    potassium: float = Field(..., ge=0, le=100000)
+    sodium: float = Field(..., ge=0, le=100000)
+    zinc: float = Field(..., ge=0, le=1000)
+    selenium: float = Field(..., ge=0, le=10000)
+    saturated_fat: float = Field(..., ge=0, le=1000)
+    added_sugar: float = Field(..., ge=0, le=1000)
 
 
 class AIVisionNutritionMacros(AINutritionMacros):

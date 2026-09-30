@@ -307,10 +307,12 @@ async def _catalog_recipe_micronutrient_estimator(meal, missing_fields, known_mi
         prompt=build_micronutrient_estimate_prompt(meal, missing_fields, known_micros),
         system_message=(
             "You are a careful nutrition data estimator. Use USDA FoodData Central "
-            "nutrient profiles as the reference standard. Return only supported "
-            "micronutrients in the requested units. Omit unknown values. These are "
-            "estimates, not verified laboratory measurements. Never change known "
-            "reference values or return macronutrients."
+            "nutrient profiles as the reference standard. Estimate a value for every "
+            "micronutrient field using the closest common USDA food profile when an "
+            "exact ingredient match is unavailable. Return numeric values for every "
+            "schema field in the requested units; do not omit fields or return null. "
+            "These are estimates, not verified laboratory measurements. Never change "
+            "known reference values or return macronutrients."
         ),
         response_type="json",
         max_tokens=700,

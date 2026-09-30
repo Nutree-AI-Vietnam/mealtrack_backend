@@ -294,7 +294,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
         if row is None:
             raise RuntimeError("Micronutrient enrichment claim could not be loaded")
-        if row.status == "ready" and row.micros:
+        if row.status == "ready" and _has_complete_micronutrient_values(row.micros):
             return "ready", None
         if inserted:
             return "claimed", claim_token
@@ -323,6 +323,8 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         micros: dict[str, float],
         sources: dict[str, str],
     ) -> bool:
+        if not _has_complete_micronutrient_values(micros):
+            return False
         current_recipe = await self._session.execute(
             select(MealCatalogORM.id)
             .where(MealCatalogORM.id == catalog_meal_id)
@@ -827,6 +829,21 @@ def _nutrition_totals(row: MealCatalogORM) -> ResolvedIngredientQuantity:
         sugar=totals["sugar"],
         calories=totals["calories"],
     )
+
+
+def _has_complete_micronutrient_values(values: dict[str, Any] | None) -> bool:
+    if not isinstance(values, dict):
+        return False
+    for field in Micros.__dataclass_fields__:
+        value = values.get(field)
+        if isinstance(value, bool) or value is None:
+            return False
+        try:
+            if not math.isfinite(float(value)) or float(value) < 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _nutrition_micros(row: MealCatalogORM) -> Micros | None:

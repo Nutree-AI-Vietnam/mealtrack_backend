@@ -50,7 +50,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
             meal, source_values
         )
         if cached is not None and claim_state == "ready":
-            loaded = _has_micronutrient_values(meal, cached)
+            loaded = _has_complete_micronutrients(meal, cached)
             return _with_estimate(meal, cached, source_labels, loaded=loaded)
         if claim_state == "pending":
             cached = await self._wait_for_cached_enrichment(
@@ -60,8 +60,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
                 meal,
                 cached,
                 source_labels,
-                loaded=_has_cached_micronutrient_values(cached)
-                or len(source_values) == len(MICRONUTRIENT_FIELDS),
+                loaded=_has_complete_micronutrients(meal, cached),
             )
         if claim_state != "claimed" or claim_token is None:
             return _with_estimate(
@@ -80,22 +79,31 @@ class CatalogRecipeMicronutrientEnrichmentService:
                 meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
             )
             source_labels = await self._reference_sources(meal)
+            cached_values = _cached_values(cached)
+            known_values = {**cached_values, **source_values}
             missing = tuple(
-                field for field in MICRONUTRIENT_FIELDS if field not in source_values
+                field for field in MICRONUTRIENT_FIELDS if field not in known_values
             )
             estimate = {}
             if self._estimator and missing:
                 if provider_semaphore is None:
-                    raw = await self._estimator(meal, missing, source_values)
+                    raw = await self._estimator(meal, missing, known_values)
                 else:
                     async with provider_semaphore:
-                        raw = await self._estimator(meal, missing, source_values)
+                        raw = await self._estimator(meal, missing, known_values)
                 estimate = _validated_estimate(raw, missing)
-            if not estimate and not source_values:
+            cached_micros = {**cached_values, **estimate, **source_values}
+            if not _has_all_micro_fields(cached_micros):
+                logger.warning(
+                    "catalog recipe micronutrient estimate incomplete recipe_id=%s "
+                    "missing_fields=%s",
+                    meal.id,
+                    sorted(set(MICRONUTRIENT_FIELDS) - set(cached_micros)),
+                )
                 await self._release_failed_claim(meal, claim_token)
-                return _with_estimate(meal, None, source_labels, loaded=False)
-            cached_micros = {**estimate, **source_values}
-            cached_sources = dict.fromkeys(estimate, "ai_estimate")
+                return _with_estimate(meal, cached, source_labels, loaded=False)
+            cached_sources = dict(cached.get("sources", {})) if cached else {}
+            cached_sources.update(dict.fromkeys(estimate, "ai_estimate"))
             cached_sources.update(source_labels)
             async with self._uow_factory() as uow:
                 saved = await uow.catalog_recipes.save_micronutrient_enrichment(
@@ -110,7 +118,9 @@ class CatalogRecipeMicronutrientEnrichmentService:
                     "micros": cached_micros,
                     "sources": cached_sources,
                 }
-                loaded = True
+            else:
+                await self._release_failed_claim(meal, claim_token)
+            loaded = saved and _has_complete_micronutrients(meal, cached)
         except Exception:
             logger.info(
                 "catalog recipe micronutrient enrichment failed recipe_id=%s",
@@ -168,11 +178,8 @@ class CatalogRecipeMicronutrientEnrichmentService:
                 catalog_meal_id=meal.id,
                 content_hash=meal.content_hash,
             )
-        source_values = meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
         source_labels = await self._reference_sources(meal)
-        loaded = _has_cached_micronutrient_values(cached) or len(
-            source_values
-        ) == len(MICRONUTRIENT_FIELDS)
+        loaded = _has_complete_micronutrients(meal, cached)
         return _with_estimate(meal, cached, source_labels, loaded=loaded)
 
     async def _wait_for_cached_enrichment(
@@ -207,7 +214,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
                     exc_info=True,
                 )
                 continue
-            if cached is not None:
+            if cached is not None and _has_complete_micronutrients(meal, cached):
                 return cached
             if state == "ready":
                 continue
@@ -292,7 +299,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
             )
             if len(source_values) == len(MICRONUTRIENT_FIELDS):
                 return None, "complete", None
-            if cached is not None and _has_micronutrient_values(meal, cached):
+            if cached is not None and _has_complete_micronutrients(meal, cached):
                 return cached, "ready", None
             if self._estimator is None and self._fdc_loader is None:
                 return None, "unavailable", None
@@ -309,7 +316,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
                     catalog_meal_id=meal.id,
                     content_hash=meal.content_hash,
                 )
-                if not _has_micronutrient_values(meal, cached):
+                if not _has_complete_micronutrients(meal, cached):
                     return cached, "unavailable", None
             return cached, state, claim_token
 
@@ -379,17 +386,19 @@ def _micros_from_reference(reference: dict[str, Any]) -> dict[str, float]:
     return micros.to_dict() if micros else {}
 
 
-def _has_micronutrient_values(meal: CatalogMeal, cached: dict | None) -> bool:
+def _cached_values(cached: dict | None) -> dict[str, float]:
+    values = cached.get("micros") if isinstance(cached, dict) else {}
+    return _validated_estimate(values, MICRONUTRIENT_FIELDS)
+
+
+def _has_all_micro_fields(values: dict[str, Any]) -> bool:
+    return all(field in values for field in MICRONUTRIENT_FIELDS)
+
+
+def _has_complete_micronutrients(meal: CatalogMeal, cached: dict | None) -> bool:
     source_values = meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
-    return _has_cached_micronutrient_values(cached) or bool(source_values)
-
-
-def _has_cached_micronutrient_values(cached: dict | None) -> bool:
-    cached_micros = cached.get("micros") if isinstance(cached, dict) else {}
-    if not isinstance(cached_micros, dict):
-        cached_micros = {}
-    estimate = _validated_estimate(cached_micros, MICRONUTRIENT_FIELDS)
-    return bool(estimate)
+    cached_values = _cached_values(cached)
+    return _has_all_micro_fields({**cached_values, **source_values})
 
 
 def _validated_estimate(raw: Any, missing_fields: tuple[str, ...]) -> dict[str, float]:
@@ -444,7 +453,7 @@ def build_micronutrient_estimate_prompt(
     missing_fields: tuple[str, ...],
     known_micros: dict[str, float],
 ) -> str:
-    """Build a compact prompt for missing per-serving micronutrients only."""
+    """Build a USDA-grounded prompt for missing whole-recipe micros."""
     ingredients = [
         {
             "name": ingredient.display_name,
@@ -453,18 +462,23 @@ def build_micronutrient_estimate_prompt(
         }
         for ingredient in meal.ingredients
     ]
+    servings = meal.base_servings or 1
     return (
-        "Estimate only missing micronutrients for this recipe serving. Use USDA "
-        "FoodData Central nutrient profiles as the reference standard. Known "
-        "values come from linked food references and must remain fixed. Do not "
-        "return macros or calories. Omit unknown fields; do not use zero for "
-        "unknown. Units: vitamin_a, vitamin_d, vitamin_k, vitamin_b12, folate, "
-        "selenium in mcg; vitamin_c, vitamin_e, thiamin, riboflavin, niacin, "
-        "vitamin_b6, calcium, iron, magnesium, phosphorus, potassium, sodium, "
-        "zinc in mg; saturated_fat and added_sugar in g. Ingredient quantities "
-        "shown are for one serving.\n"
+        "Estimate total micronutrients for the entire recipe using USDA FoodData "
+        "Central profiles as the reference standard. Return a non-negative numeric "
+        "value for every field in the response schema; never omit a field or return "
+        "null. For an unfamiliar ingredient, use the closest common USDA food "
+        "profile and estimate from its quantity. Use zero only when a nutrient is "
+        "negligible in one serving. Known linked-reference values are authoritative "
+        "and must be repeated unchanged. Do not return macros or calories. Units: "
+        "vitamin_a, vitamin_d, vitamin_k, vitamin_b12, folate, selenium in mcg; "
+        "vitamin_c, vitamin_e, thiamin, riboflavin, niacin, vitamin_b6, calcium, "
+        "iron, magnesium, phosphorus, potassium, sodium, zinc in mg; saturated_fat "
+        "and added_sugar in g. Ingredient quantities below are for the entire recipe. "
+        "Return nutrient totals for those quantities and do not divide by base servings.\n"
         f"Recipe: {meal.name}\nCuisine: {meal.cuisine}\n"
+        f"Base servings: {servings}\n"
         f"Ingredients: {ingredients}\n"
         f"Known linked-reference micros: {known_micros}\n"
-        f"Fields to estimate: {list(missing_fields)}"
+        f"Fields needing estimates: {list(missing_fields)}"
     )
