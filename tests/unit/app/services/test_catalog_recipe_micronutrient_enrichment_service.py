@@ -35,6 +35,9 @@ class _CatalogRepository:
     async def get_meal_detail(self, recipe_id):
         return self.meal
 
+    async def get_meals(self, recipe_ids):
+        return [self.meal] if self.meal.id in recipe_ids else []
+
     async def get_micronutrient_enrichment(self, *, catalog_meal_id, content_hash):
         return self.cached
 
@@ -98,7 +101,7 @@ def _uow_factory(catalog_repository, food_reference_repository):
 
 
 @pytest.mark.asyncio
-async def test_recipe_detail_estimates_missing_reference_micros_once_and_reuses_cache():
+async def test_plan_enrichment_estimates_missing_reference_micros_once_and_detail_reuses_cache():
     catalog = _CatalogRepository(_meal())
     food_references = _FoodReferenceRepository([], catalog)
     estimate_calls = []
@@ -107,13 +110,14 @@ async def test_recipe_detail_estimates_missing_reference_micros_once_and_reuses_
         estimate_calls.append((missing_fields, known_micros))
         return {"iron": 2.5, "vitamin_c": 8}
 
-    service = WeeklyRecipeService(
-        _uow_factory(catalog, food_references), micronutrient_estimator=estimate
-    )
+    uow_factory = _uow_factory(catalog, food_references)
+    service = WeeklyRecipeService(uow_factory, micronutrient_estimator=estimate)
 
-    first = await service.detail("catalog-1", enrich_micronutrients=True)
-    second = await service.detail("catalog-1", enrich_micronutrients=True)
+    ready = await service.micronutrient_enrichment.enrich_recipe_ids(["catalog-1"])
+    first = await service.detail("catalog-1")
+    second = await service.detail("catalog-1")
 
+    assert ready is True
     assert first is not None and second is not None
     assert first.nutrition_micros.to_dict() == {"vitamin_c": 8, "iron": 2.5}
     assert first.nutrition_micros_sources == {
@@ -126,6 +130,7 @@ async def test_recipe_detail_estimates_missing_reference_micros_once_and_reuses_
     assert len(estimate_calls) == 1
     assert estimate_calls[0][1] == {}
     assert len(estimate_calls[0][0]) == 21
+    assert catalog.claims == 1
 
 
 @pytest.mark.asyncio
@@ -166,8 +171,10 @@ async def test_linked_usda_micros_are_saved_and_take_precedence_over_ai_estimate
         fdc_micronutrient_loader=load_fdc,
     )
 
-    result = await service.detail("catalog-1", enrich_micronutrients=True)
+    ready = await service.micronutrient_enrichment.enrich_recipe_ids(["catalog-1"])
+    result = await service.detail("catalog-1")
 
+    assert ready is True
     assert result is not None
     assert result.nutrition_micros.to_dict() == {"iron": 3, "vitamin_c": 12}
     assert result.nutrition_micros_sources == {
@@ -239,7 +246,7 @@ async def test_fdc_id_alone_does_not_claim_existing_micros_are_usda_sourced():
     )
 
     result = await WeeklyRecipeService(_uow_factory(catalog, food_references)).detail(
-        "catalog-1", enrich_micronutrients=True
+        "catalog-1"
     )
 
     assert result is not None

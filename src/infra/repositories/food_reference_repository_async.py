@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any, cast
 
 from sqlalchemy import and_, func, or_, select
@@ -45,6 +46,24 @@ from src.infra.repositories.food_reference_projection import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _positive_food_reference_ids(values: Iterable[object]) -> list[int]:
+    """Normalize nullable batch IDs before constructing database predicates."""
+    ids: set[int] = set()
+    for value in values:
+        if value is None or isinstance(value, bool):
+            continue
+        if not isinstance(value, (int, str)):
+            continue
+        try:
+            food_reference_id = int(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if food_reference_id > 0:
+            ids.add(food_reference_id)
+    return sorted(ids)
+
 
 _FOOD_REFERENCE_LOAD_OPTIONS = (
     selectinload(FoodReferenceModel.serving_size_rows),
@@ -94,7 +113,7 @@ class AsyncFoodReferenceRepository:
 
     async def get_by_ids(self, ref_ids: list[int]) -> list[dict[str, Any]]:
         """Load verified public references; caller reorders as needed."""
-        ids = sorted({int(value) for value in ref_ids})
+        ids = _positive_food_reference_ids(ref_ids)
         if not ids:
             return []
         stmt = (
@@ -187,7 +206,7 @@ class AsyncFoodReferenceRepository:
         for_update: bool = False,
         preserve_nutrient_units: bool = False,
     ) -> dict[int, FoodReferenceNutritionProjection]:
-        ids = sorted({int(value) for value in food_reference_ids})
+        ids = _positive_food_reference_ids(food_reference_ids)
         if not ids:
             return {}
         statement = (

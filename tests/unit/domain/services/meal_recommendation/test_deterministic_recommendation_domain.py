@@ -30,7 +30,7 @@ def _catalog_meal(
     calories: int,
     *,
     cuisine: str = "vietnamese",
-    food_reference_id: int = 1,
+    food_reference_id: int | None = 1,
     status: str = "published",
 ) -> CatalogMeal:
     return CatalogMeal(
@@ -146,6 +146,22 @@ def test_scoring_stays_within_bounds():
     assert 0 <= score.score <= 1
 
 
+def test_scoring_ignores_unmapped_catalog_ingredients_with_affinity():
+    now = datetime.now(UTC)
+    affinity = IngredientAffinityService().build_profile(
+        [IngredientHistoryEvent(1, now, 100)], now=now
+    )
+
+    score = RecipeScoringService().score(
+        _catalog_meal("unmapped", "breakfast", 500, food_reference_id=None),
+        target_calories=500,
+        affinity=affinity,
+    )
+
+    assert 0 <= score.score <= 1
+    assert score.ingredient_fit == 0
+
+
 def test_optimizer_fallback_is_distance_ranked_after_tolerance_misses():
     affinity = IngredientAffinityService().build_profile(
         [IngredientHistoryEvent(99, datetime.now(UTC), 500)],
@@ -193,7 +209,34 @@ def test_three_day_optimizer_produces_9_slots_and_45_alternatives():
     for slot in result.slots:
         alternatives = result.alternatives[(slot.day_index, slot.meal_type)]
         assert len({item.catalog_meal.id for item in alternatives}) == 5
-        assert slot.catalog_meal.id not in {item.catalog_meal.id for item in alternatives}
+        assert slot.catalog_meal.id not in {
+            item.catalog_meal.id for item in alternatives
+        }
+
+
+def test_three_day_optimizer_handles_unmapped_ingredients_with_affinity():
+    now = datetime.now(UTC)
+    affinity = IngredientAffinityService().build_profile(
+        [IngredientHistoryEvent(1, now, 100)], now=now
+    )
+    catalog_meals = _candidate_pool() + [
+        _catalog_meal(
+            "breakfast-unmapped",
+            "breakfast",
+            500,
+            food_reference_id=None,
+        )
+    ]
+
+    result = ThreeDayPlanOptimizer().build_plan(
+        catalog_meals,
+        daily_calories=2000,
+        affinity=affinity,
+        cuisines={"vietnamese"},
+    )
+
+    assert not isinstance(result, MealRecommendationInsufficiency)
+    assert len(result.slots) == 9
 
 
 def test_three_day_optimizer_matches_normal_golden_ids_and_scores():
@@ -273,7 +316,10 @@ def test_three_day_optimizer_returns_typed_insufficiency_for_sparse_catalog():
     )
 
     assert isinstance(result, MealRecommendationInsufficiency)
-    assert result.reason == MealRecommendationInsufficiencyReason.NOT_ENOUGH_CURRENT_RECIPES
+    assert (
+        result.reason
+        == MealRecommendationInsufficiencyReason.NOT_ENOUGH_CURRENT_RECIPES
+    )
 
 
 def test_optimizer_is_repeatable_for_same_inputs():
@@ -282,7 +328,9 @@ def test_optimizer_is_repeatable_for_same_inputs():
     catalog_meals = _candidate_pool()
 
     first = optimizer.build_plan(catalog_meals, daily_calories=2000, affinity=profile)
-    second = optimizer.build_plan(list(reversed(catalog_meals)), daily_calories=2000, affinity=profile)
+    second = optimizer.build_plan(
+        list(reversed(catalog_meals)), daily_calories=2000, affinity=profile
+    )
 
     assert not isinstance(first, MealRecommendationInsufficiency)
     assert not isinstance(second, MealRecommendationInsufficiency)
@@ -386,8 +434,7 @@ def test_alternatives_widen_past_tolerance_when_pool_can_fill_count():
         item
         for item in ranked_pool
         if item.catalog_meal.id != "selected"
-        and abs(item.catalog_meal.calories - target_calories) / target_calories
-        <= 0.30
+        and abs(item.catalog_meal.calories - target_calories) / target_calories <= 0.30
     ]
 
     assert len(within_tolerance) == 2
@@ -448,16 +495,11 @@ def _expected_normal_alternatives():
         ("dinner-04", 0.8952),
         ("dinner-06", 0.8928),
     ]
-    return {
-        (day_index, "breakfast"): breakfast
-        for day_index in range(3)
-    } | {
-        (day_index, "lunch"): lunch
-        for day_index in range(3)
-    } | {
-        (day_index, "dinner"): dinner
-        for day_index in range(3)
-    }
+    return (
+        {(day_index, "breakfast"): breakfast for day_index in range(3)}
+        | {(day_index, "lunch"): lunch for day_index in range(3)}
+        | {(day_index, "dinner"): dinner for day_index in range(3)}
+    )
 
 
 def _expected_affinity_alternatives():
@@ -482,13 +524,8 @@ def _expected_affinity_alternatives():
         ("dinner-04", 0.860773),
         ("dinner-06", 0.858466),
     ]
-    return {
-        (day_index, "breakfast"): breakfast
-        for day_index in range(3)
-    } | {
-        (day_index, "lunch"): lunch
-        for day_index in range(3)
-    } | {
-        (day_index, "dinner"): dinner
-        for day_index in range(3)
-    }
+    return (
+        {(day_index, "breakfast"): breakfast for day_index in range(3)}
+        | {(day_index, "lunch"): lunch for day_index in range(3)}
+        | {(day_index, "dinner"): dinner for day_index in range(3)}
+    )

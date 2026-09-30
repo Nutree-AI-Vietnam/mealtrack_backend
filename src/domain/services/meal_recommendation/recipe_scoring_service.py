@@ -52,9 +52,13 @@ class RecipeScoringService:
         if target_calories <= 0:
             raise ValueError("target_calories must be positive")
 
-        calorie_distance = abs(catalog_meal.calories - target_calories) / target_calories
+        calorie_distance = (
+            abs(catalog_meal.calories - target_calories) / target_calories
+        )
         calorie_fit = max(0.0, 1.0 - min(calorie_distance, 1.0))
-        ingredient_fit = _ingredient_cosine(catalog_meal, affinity, ingredient_statistics)
+        ingredient_fit = _ingredient_cosine(
+            catalog_meal, affinity, ingredient_statistics
+        )
         ingredient_weight = 0.35 * _bounded(affinity.confidence)
         diversity_weight = 0.10
         calorie_weight = 0.90 - ingredient_weight
@@ -110,7 +114,10 @@ def _ingredient_cosine(
     meal_ids = {
         ingredient.food_reference_id
         for ingredient in catalog_meal.ingredients
-        if ingredient.food_reference_id > 0
+        if (
+            ingredient.food_reference_id is not None
+            and ingredient.food_reference_id > 0
+        )
     }
     if not meal_ids:
         return 0.0

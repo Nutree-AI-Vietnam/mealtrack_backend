@@ -19,9 +19,15 @@ def test_idf_counts_each_canonical_ingredient_once_per_meal():
     )
 
     assert stats.catalog_size == 3
-    assert stats.idf_by_food_reference_id[1] == pytest.approx(log((3 + 1) / (2 + 1)) + 1)
-    assert stats.idf_by_food_reference_id[2] == pytest.approx(log((3 + 1) / (1 + 1)) + 1)
-    assert stats.idf_by_food_reference_id[3] == pytest.approx(log((3 + 1) / (2 + 1)) + 1)
+    assert stats.idf_by_food_reference_id[1] == pytest.approx(
+        log((3 + 1) / (2 + 1)) + 1
+    )
+    assert stats.idf_by_food_reference_id[2] == pytest.approx(
+        log((3 + 1) / (1 + 1)) + 1
+    )
+    assert stats.idf_by_food_reference_id[3] == pytest.approx(
+        log((3 + 1) / (2 + 1)) + 1
+    )
     assert 0 not in stats.idf_by_food_reference_id
 
 
@@ -37,7 +43,16 @@ def test_idf_is_order_independent_and_empty_safe():
     assert service.build([]).idf_by_food_reference_id == {}
 
 
-def _meal(meal_id: str, food_reference_ids: tuple[int, ...]) -> CatalogMeal:
+def test_idf_ignores_unmapped_and_non_positive_food_references():
+    stats = CatalogIngredientStatisticsService().build(
+        [_meal("meal-1", (None, 0, -1, 7))]
+    )
+
+    assert stats.catalog_size == 1
+    assert stats.idf_by_food_reference_id == {7: pytest.approx(1.0)}
+
+
+def _meal(meal_id: str, food_reference_ids: tuple[int | None, ...]) -> CatalogMeal:
     return CatalogMeal(
         id=meal_id,
         catalog_key=f"key-{meal_id}",
