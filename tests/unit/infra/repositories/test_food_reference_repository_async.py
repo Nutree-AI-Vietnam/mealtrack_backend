@@ -1,3 +1,4 @@
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -286,6 +287,29 @@ async def test_get_nutrition_projection_returns_typed_food_reference_projection(
     assert result.is_verified is True
     assert result.protein_100g == pytest.approx(2.7)
     assert "food_reference.id" in str(session.statement)
+
+
+@pytest.mark.asyncio
+async def test_get_nutrition_projections_skips_null_and_deduplicates_ids():
+    row = _food_row(verified=True)
+    session = _AsyncSession([_Result(rows=[row])])
+    repo = AsyncFoodReferenceRepository(session)
+
+    result = await repo.get_nutrition_projections(cast(list[int], [None, 7, 7]))
+
+    assert set(result) == {7}
+    assert "food_reference.id IN" in str(session.statement)
+
+
+@pytest.mark.asyncio
+async def test_batch_reference_lookups_skip_invalid_ids_without_querying():
+    session = _AsyncSession([])
+    repo = AsyncFoodReferenceRepository(session)
+    invalid_ids = cast(list[int], [None, 0, -1, "not-an-id"])
+
+    assert await repo.get_nutrition_projections(invalid_ids) == {}
+    assert await repo.get_by_ids(invalid_ids) == []
+    assert session.statement is None
 
 
 @pytest.mark.asyncio

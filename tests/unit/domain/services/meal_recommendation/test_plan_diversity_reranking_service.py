@@ -69,7 +69,21 @@ def test_contextual_rerank_caps_work_to_top_30_candidates():
     assert {item.catalog_meal.id for item in result}.isdisjoint({"meal-30", "meal-31"})
 
 
-def _meal(meal_id: str, food_reference_ids: tuple[int, ...]) -> CatalogMeal:
+def test_weighted_overlap_ignores_unmapped_ingredients():
+    stats = CatalogIngredientStatisticsService().build(
+        [_meal("mapped", (1,)), _meal("unmapped", (None,))]
+    )
+
+    overlap = PlanDiversityRerankingService().weighted_overlap(
+        _meal("candidate", (None, 1)),
+        _meal("comparison", (1,)),
+        stats,
+    )
+
+    assert overlap == 1.0
+
+
+def _meal(meal_id: str, food_reference_ids: tuple[int | None, ...]) -> CatalogMeal:
     return CatalogMeal(
         id=meal_id,
         catalog_key=f"key-{meal_id}",
