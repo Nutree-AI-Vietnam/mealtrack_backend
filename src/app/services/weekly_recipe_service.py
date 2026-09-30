@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
@@ -32,14 +33,19 @@ class WeeklyRecipeService:
         self,
         uow_factory,
         *,
+        micronutrient_enrichment: CatalogRecipeMicronutrientEnrichmentService
+        | None = None,
         micronutrient_estimator: MicronutrientEstimator | None = None,
         fdc_micronutrient_loader: FdcMicronutrientLoader | None = None,
     ):
         self.uow_factory = uow_factory
-        self.micronutrient_enrichment = CatalogRecipeMicronutrientEnrichmentService(
-            uow_factory,
-            estimator=micronutrient_estimator,
-            fdc_loader=fdc_micronutrient_loader,
+        self.micronutrient_enrichment = (
+            micronutrient_enrichment
+            or CatalogRecipeMicronutrientEnrichmentService(
+                uow_factory,
+                estimator=micronutrient_estimator,
+                fdc_loader=fdc_micronutrient_loader,
+            )
         )
 
     async def list(
@@ -96,18 +102,23 @@ class WeeklyRecipeService:
         )
 
     async def detail(
-        self,
-        recipe_id: str,
-        *,
-        enrich_micronutrients: bool = False,
+        self, recipe_id: str, *, include_cached_micronutrients: bool = True
     ) -> CatalogMeal | None:
         async with self.uow_factory() as uow:
             meal = await uow.catalog_recipes.get_meal_detail(recipe_id)
             if meal is None:
                 return None
-        if not enrich_micronutrients:
+        if not include_cached_micronutrients:
             return meal
-        return await self.micronutrient_enrichment.enrich(meal)
+        return await self.micronutrient_enrichment.load_cached(meal)
+
+    async def summaries(self, recipe_ids: Iterable[str]) -> tuple[CatalogMeal, ...]:
+        ids = tuple(dict.fromkeys(recipe_id for recipe_id in recipe_ids if recipe_id))
+        if not ids:
+            return ()
+        async with self.uow_factory() as uow:
+            meals = await uow.catalog_recipes.get_meals(ids)
+        return tuple(meals)
 
 
 def _matches_query(meal: CatalogMeal, query: str | None) -> bool:

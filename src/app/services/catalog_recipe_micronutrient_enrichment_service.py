@@ -1,10 +1,11 @@
-"""Source-first micronutrient enrichment for catalog recipe detail."""
+"""Source-first micronutrient enrichment for catalog recipes."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from typing import Any
 
@@ -13,6 +14,8 @@ from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
 from src.domain.model.nutrition.micros import Micros
 
 logger = logging.getLogger(__name__)
+_PENDING_ENRICHMENT_WAIT_SECONDS = 90.0
+_PENDING_ENRICHMENT_POLL_SECONDS = 0.5
 MICRONUTRIENT_FIELDS = tuple(Micros.__dataclass_fields__)
 MicronutrientEstimator = Callable[
     [CatalogMeal, tuple[str, ...], dict[str, float]], Awaitable[dict[str, Any]]
@@ -34,25 +37,45 @@ class CatalogRecipeMicronutrientEnrichmentService:
         self._estimator = estimator
         self._fdc_loader = fdc_loader
 
-    async def enrich(self, meal: CatalogMeal) -> CatalogMeal:
+    async def enrich(
+        self,
+        meal: CatalogMeal,
+        *,
+        provider_semaphore: asyncio.Semaphore | None = None,
+        pending_deadline: float | None = None,
+    ) -> CatalogMeal:
         source_values = meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
         source_labels = await self._reference_sources(meal)
         cached, claim_state, claim_token = await self._load_or_claim(
             meal, source_values
         )
-        if cached is not None:
-            return _with_estimate(meal, cached, source_labels, loaded=True)
+        if cached is not None and claim_state == "ready":
+            loaded = _has_micronutrient_values(meal, cached)
+            return _with_estimate(meal, cached, source_labels, loaded=loaded)
+        if claim_state == "pending":
+            cached = await self._wait_for_cached_enrichment(
+                meal, deadline=pending_deadline
+            )
+            return _with_estimate(
+                meal,
+                cached,
+                source_labels,
+                loaded=_has_cached_micronutrient_values(cached)
+                or len(source_values) == len(MICRONUTRIENT_FIELDS),
+            )
         if claim_state != "claimed" or claim_token is None:
             return _with_estimate(
                 meal,
                 None,
                 source_labels,
-                loaded=claim_state == "unavailable" or claim_state == "ready",
+                loaded=claim_state in {"complete", "ready"},
             )
 
         loaded = False
         try:
-            meal = await self._hydrate_linked_fdc_references(meal)
+            meal = await self._hydrate_linked_fdc_references(
+                meal, provider_semaphore=provider_semaphore
+            )
             source_values = (
                 meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
             )
@@ -62,20 +85,30 @@ class CatalogRecipeMicronutrientEnrichmentService:
             )
             estimate = {}
             if self._estimator and missing:
-                raw = await self._estimator(meal, missing, source_values)
+                if provider_semaphore is None:
+                    raw = await self._estimator(meal, missing, source_values)
+                else:
+                    async with provider_semaphore:
+                        raw = await self._estimator(meal, missing, source_values)
                 estimate = _validated_estimate(raw, missing)
+            if not estimate and not source_values:
+                await self._release_failed_claim(meal, claim_token)
+                return _with_estimate(meal, None, source_labels, loaded=False)
+            cached_micros = {**estimate, **source_values}
+            cached_sources = dict.fromkeys(estimate, "ai_estimate")
+            cached_sources.update(source_labels)
             async with self._uow_factory() as uow:
                 saved = await uow.catalog_recipes.save_micronutrient_enrichment(
                     catalog_meal_id=meal.id,
                     content_hash=meal.content_hash,
                     claim_token=claim_token,
-                    micros=estimate,
-                    sources=dict.fromkeys(estimate, "ai_estimate"),
+                    micros=cached_micros,
+                    sources=cached_sources,
                 )
             if saved:
                 cached = {
-                    "micros": estimate,
-                    "sources": dict.fromkeys(estimate, "ai_estimate"),
+                    "micros": cached_micros,
+                    "sources": cached_sources,
                 }
                 loaded = True
         except Exception:
@@ -87,7 +120,111 @@ class CatalogRecipeMicronutrientEnrichmentService:
             await self._release_failed_claim(meal, claim_token)
         return _with_estimate(meal, cached, source_labels, loaded=loaded)
 
-    async def _hydrate_linked_fdc_references(self, meal: CatalogMeal) -> CatalogMeal:
+    async def enrich_recipe_ids(self, recipe_ids: Iterable[str]) -> bool:
+        """Enrich every recipe used by a saved plan with bounded concurrency."""
+        ids = sorted({str(recipe_id) for recipe_id in recipe_ids if recipe_id})
+        if not ids:
+            return True
+        try:
+            async with self._uow_factory() as uow:
+                meals = await uow.catalog_recipes.get_meals(ids)
+        except Exception:
+            logger.info(
+                "weekly-plan micronutrient recipes could not be loaded", exc_info=True
+            )
+            return False
+        # Plans can outlive a catalog release. Only currently active recipes
+        # participate in first-open readiness.
+        if not meals:
+            return True
+
+        provider_semaphore = asyncio.Semaphore(4)
+        loop = asyncio.get_running_loop()
+        pending_deadline = loop.time() + _PENDING_ENRICHMENT_WAIT_SECONDS
+
+        async def enrich_one(meal: CatalogMeal) -> bool:
+            try:
+                result = await self.enrich(
+                    meal,
+                    provider_semaphore=provider_semaphore,
+                    pending_deadline=pending_deadline,
+                )
+                return result.nutrition_micros_enrichment_loaded
+            except Exception:
+                logger.info(
+                    "weekly-plan micronutrient enrichment failed recipe_id=%s",
+                    meal.id,
+                    exc_info=True,
+                )
+                return False
+
+        readiness = await asyncio.gather(*(enrich_one(meal) for meal in meals))
+        return all(readiness)
+
+    async def load_cached(self, meal: CatalogMeal) -> CatalogMeal:
+        """Overlay persisted estimates without claiming work or calling providers."""
+        async with self._uow_factory() as uow:
+            cached = await uow.catalog_recipes.get_micronutrient_enrichment(
+                catalog_meal_id=meal.id,
+                content_hash=meal.content_hash,
+            )
+        source_values = meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
+        source_labels = await self._reference_sources(meal)
+        loaded = _has_cached_micronutrient_values(cached) or len(
+            source_values
+        ) == len(MICRONUTRIENT_FIELDS)
+        return _with_estimate(meal, cached, source_labels, loaded=loaded)
+
+    async def _wait_for_cached_enrichment(
+        self, meal: CatalogMeal, *, deadline: float | None = None
+    ) -> dict | None:
+        loop = asyncio.get_running_loop()
+        deadline = deadline or loop.time() + _PENDING_ENRICHMENT_WAIT_SECONDS
+        while loop.time() < deadline:
+            await asyncio.sleep(_PENDING_ENRICHMENT_POLL_SECONDS)
+            try:
+                async with self._uow_factory() as uow:
+                    repository = uow.catalog_recipes
+                    cached = await repository.get_micronutrient_enrichment(
+                        catalog_meal_id=meal.id,
+                        content_hash=meal.content_hash,
+                    )
+                    get_status = getattr(
+                        repository, "get_micronutrient_enrichment_status", None
+                    )
+                    state = (
+                        await get_status(
+                            catalog_meal_id=meal.id,
+                            content_hash=meal.content_hash,
+                        )
+                        if get_status is not None
+                        else "pending"
+                    )
+            except Exception:
+                logger.info(
+                    "pending micronutrient enrichment check failed recipe_id=%s",
+                    meal.id,
+                    exc_info=True,
+                )
+                continue
+            if cached is not None:
+                return cached
+            if state == "ready":
+                continue
+            if state != "pending":
+                return None
+        logger.info(
+            "pending micronutrient enrichment did not finish before timeout recipe_id=%s",
+            meal.id,
+        )
+        return None
+
+    async def _hydrate_linked_fdc_references(
+        self,
+        meal: CatalogMeal,
+        *,
+        provider_semaphore: asyncio.Semaphore | None = None,
+    ) -> CatalogMeal:
         if self._fdc_loader is None:
             return meal
         ids = sorted(
@@ -117,7 +254,11 @@ class CatalogRecipeMicronutrientEnrichmentService:
                     return refreshed
             return meal
         try:
-            fetched = await self._fdc_loader(fdc_ids)
+            if provider_semaphore is None:
+                fetched = await self._fdc_loader(fdc_ids)
+            else:
+                async with provider_semaphore:
+                    fetched = await self._fdc_loader(fdc_ids)
         except Exception:
             logger.info("linked USDA micronutrient lookup failed", exc_info=True)
             return meal
@@ -149,12 +290,12 @@ class CatalogRecipeMicronutrientEnrichmentService:
                 if get_cached is not None
                 else None
             )
-            if (
-                cached is not None
-                or (self._estimator is None and self._fdc_loader is None)
-                or len(source_values) == len(MICRONUTRIENT_FIELDS)
-            ):
-                return cached, "ready" if cached else "unavailable", None
+            if len(source_values) == len(MICRONUTRIENT_FIELDS):
+                return None, "complete", None
+            if cached is not None and _has_micronutrient_values(meal, cached):
+                return cached, "ready", None
+            if self._estimator is None and self._fdc_loader is None:
+                return None, "unavailable", None
             claim = getattr(repository, "claim_micronutrient_enrichment", None)
             if claim is None:
                 return None, "unavailable", None
@@ -168,6 +309,8 @@ class CatalogRecipeMicronutrientEnrichmentService:
                     catalog_meal_id=meal.id,
                     content_hash=meal.content_hash,
                 )
+                if not _has_micronutrient_values(meal, cached):
+                    return cached, "unavailable", None
             return cached, state, claim_token
 
     async def _reference_sources(self, meal: CatalogMeal) -> dict[str, str]:
@@ -234,6 +377,19 @@ def _micros_from_reference(reference: dict[str, Any]) -> dict[str, float]:
         reference.get("extra_nutrients"), validate_units=True
     )
     return micros.to_dict() if micros else {}
+
+
+def _has_micronutrient_values(meal: CatalogMeal, cached: dict | None) -> bool:
+    source_values = meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
+    return _has_cached_micronutrient_values(cached) or bool(source_values)
+
+
+def _has_cached_micronutrient_values(cached: dict | None) -> bool:
+    cached_micros = cached.get("micros") if isinstance(cached, dict) else {}
+    if not isinstance(cached_micros, dict):
+        cached_micros = {}
+    estimate = _validated_estimate(cached_micros, MICRONUTRIENT_FIELDS)
+    return bool(estimate)
 
 
 def _validated_estimate(raw: Any, missing_fields: tuple[str, ...]) -> dict[str, float]:

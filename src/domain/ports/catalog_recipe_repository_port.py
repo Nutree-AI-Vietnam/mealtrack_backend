@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -137,6 +138,10 @@ class CatalogMealRepositoryPort(ABC):
         """Return one active catalog meal."""
 
     @abstractmethod
+    async def get_meals(self, catalog_meal_ids: Iterable[str]) -> list[CatalogMeal]:
+        """Return active catalog meals for a bounded set of IDs."""
+
+    @abstractmethod
     async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
         """Return one active catalog meal with ordered detail steps."""
 
@@ -145,6 +150,12 @@ class CatalogMealRepositoryPort(ABC):
         self, *, catalog_meal_id: str, content_hash: str
     ) -> dict | None:
         """Return a cached micronutrient estimate for one recipe revision."""
+
+    @abstractmethod
+    async def get_micronutrient_enrichment_status(
+        self, *, catalog_meal_id: str, content_hash: str
+    ) -> str | None:
+        """Return readiness, backoff, or lease state for an enrichment claim."""
 
     @abstractmethod
     async def claim_micronutrient_enrichment(

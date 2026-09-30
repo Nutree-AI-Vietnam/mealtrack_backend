@@ -8,7 +8,15 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 
 from src.api.base_dependencies import (
     get_async_food_reference_repository,
@@ -51,6 +59,7 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
 )
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
+    EnrichWeeklyPlanMicronutrientsCommand,
     GenerateWeeklyMealPlanCommand,
     LogMealPlanSlotCommand,
     UpdateMealPlanPantryStockCommand,
@@ -60,6 +69,7 @@ from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
     GetRecipeDetailQuery,
+    GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
 )
@@ -106,7 +116,7 @@ async def get_current_weekly_plan(
         )
         if plan is None:
             raise HTTPException(status_code=404, detail="Weekly meal plan not found")
-        return await _plan_response(
+        return await _ready_plan_response(
             plan,
             event_bus,
             language=get_request_language(request),
@@ -162,7 +172,7 @@ async def generate_weekly_plan(
                 daily_calories=daily_calories,
             )
         )
-        return await _plan_response(
+        return await _ready_plan_response(
             plan,
             event_bus,
             language=get_request_language(request),
@@ -208,15 +218,57 @@ async def update_weekly_plan(
                 expected_revision=body.expected_revision,
             )
         )
-        return await _plan_response(
+        return await _ready_plan_response(
             plan,
             event_bus,
             language=get_request_language(request),
             translation_service=translation_service,
             include_grocery_count=include_grocery_count,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _http_error(exc) from exc
+
+
+async def _ensure_plan_micronutrients(event_bus, plan) -> bool:
+    recipe_ids = tuple(
+        sorted({slot.recipe_id for slot in plan.slots if slot.recipe_id})
+    )
+    if recipe_ids:
+        return await event_bus.send(
+            EnrichWeeklyPlanMicronutrientsCommand(recipe_ids=recipe_ids)
+        )
+    return True
+
+
+async def _ready_plan_response(
+    plan,
+    event_bus,
+    *,
+    language: str = "en",
+    translation_service=None,
+    include_grocery_count: bool = True,
+) -> WeeklyMealPlanResponse:
+    response, micronutrients_ready = await asyncio.gather(
+        _plan_response(
+            plan,
+            event_bus,
+            language=language,
+            translation_service=translation_service,
+            include_grocery_count=include_grocery_count,
+        ),
+        _ensure_plan_micronutrients(event_bus, plan),
+    )
+    if not micronutrients_ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "RECIPE_MICRONUTRIENTS_NOT_READY",
+                "message": "Recipe micronutrients are not ready yet. Please retry.",
+            },
+        )
+    return response
 
 
 @router.get("/v1/recipes", response_model=RecipeListResponse)
@@ -260,6 +312,8 @@ async def list_recipes(
         return RecipeListResponse(
             items=[_recipe_list_item(meal) for meal in meals], total=page.total
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _http_error(exc) from exc
 
@@ -287,16 +341,19 @@ async def get_recipe_detail(
 
 
 @router.post(
-    "/v1/recipes/{recipe_id}/micronutrients/enrich", response_model=RecipeDetailResponse
+    "/v1/recipes/{recipe_id}/micronutrients/enrich",
+    response_model=RecipeDetailResponse,
+    deprecated=True,
 )
 @limiter.limit("10/minute")
-async def enrich_recipe_detail_micronutrients(
+async def deprecated_enrich_recipe_detail_micronutrients(
     request: Request,
     recipe_id: str,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
     translation_service=Depends(get_text_translation_service),
 ):
+    """Compatibility endpoint; returns persisted detail without generating."""
     del user_id
     try:
         return await _recipe_detail_response(
@@ -539,14 +596,15 @@ async def _plan_response(
     include_grocery_count: bool = True,
 ) -> WeeklyMealPlanResponse:
     recipe_ids = {slot.recipe_id for slot in plan.slots if slot.recipe_id}
-    details = await asyncio.gather(
-        *(
-            event_bus.send(GetRecipeDetailQuery(recipe_id=recipe_id))
-            for recipe_id in recipe_ids
+    summaries = (
+        await event_bus.send(
+            GetRecipeSummariesQuery(recipe_ids=tuple(sorted(recipe_ids)))
         )
+        if recipe_ids
+        else ()
     )
     localized = await localize_catalog_meal_names(
-        (meal for meal in details if meal is not None),
+        summaries,
         language=language,
         translation_service=translation_service,
     )
