@@ -26,6 +26,7 @@ from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.commands.meal_catalog import LogCatalogMealCommand
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
+    EnrichWeeklyPlanMicronutrientsCommand,
     GenerateWeeklyMealPlanCommand,
     LogMealPlanSlotCommand,
     UpdateMealPlanPantryStockCommand,
@@ -127,6 +128,7 @@ from src.app.handlers.command_handlers.meal_catalog import (
 )
 from src.app.handlers.command_handlers.meal_planner import (
     AiAdjustMealPlanCommandHandler,
+    EnrichWeeklyPlanMicronutrientsCommandHandler,
     GenerateWeeklyMealPlanCommandHandler,
     LogMealPlanSlotCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
@@ -202,6 +204,7 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 from src.app.handlers.query_handlers.meal_planner import (
     GetCurrentWeeklyPlanQueryHandler,
     GetRecipeDetailQueryHandler,
+    GetRecipeSummariesQueryHandler,
     GetWeeklyGroceriesQueryHandler,
     ListRecipesQueryHandler,
 )
@@ -230,6 +233,7 @@ from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
     GetRecipeDetailQuery,
+    GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
 )
@@ -261,6 +265,9 @@ from src.app.queries.user.get_user_onboarding_status_query import (
     GetUserOnboardingStatusQuery,
 )
 from src.app.queries.weight import GetWeightEntriesQuery
+from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
+    CatalogRecipeMicronutrientEnrichmentService,
+)
 from src.app.services.meal_recommendation_history_projector import (
     MealRecommendationHistoryProjector,
 )
@@ -953,6 +960,13 @@ def get_configured_event_bus() -> EventBus:
         GetMealRecommendationSlotDetailQueryHandler(AsyncUnitOfWork),
     )
 
+    # Persist micronutrients after the plan response has been returned.
+    recipe_micronutrient_enrichment = CatalogRecipeMicronutrientEnrichmentService(
+        AsyncUnitOfWork,
+        estimator=_catalog_recipe_micronutrient_estimator,
+        fdc_loader=_catalog_recipe_fdc_micronutrient_loader,
+    )
+
     # Register weekly meal planner commands and queries.
     event_bus.register_handler(
         GenerateWeeklyMealPlanCommand,
@@ -961,6 +975,10 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UpdateWeeklyMealPlanCommand,
         UpdateWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        EnrichWeeklyPlanMicronutrientsCommand,
+        EnrichWeeklyPlanMicronutrientsCommandHandler(recipe_micronutrient_enrichment),
     )
     event_bus.register_handler(
         AiAdjustMealPlanCommand,
@@ -989,9 +1007,12 @@ def get_configured_event_bus() -> EventBus:
         GetRecipeDetailQuery,
         GetRecipeDetailQueryHandler(
             AsyncUnitOfWork,
-            micronutrient_estimator=_catalog_recipe_micronutrient_estimator,
-            fdc_micronutrient_loader=_catalog_recipe_fdc_micronutrient_loader,
+            micronutrient_enrichment=recipe_micronutrient_enrichment,
         ),
+    )
+    event_bus.register_handler(
+        GetRecipeSummariesQuery,
+        GetRecipeSummariesQueryHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetWeeklyGroceriesQuery,

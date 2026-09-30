@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from collections.abc import Awaitable, Callable
@@ -85,6 +86,47 @@ class CatalogRecipeMicronutrientEnrichmentService:
                 exc_info=True,
             )
             await self._release_failed_claim(meal, claim_token)
+        return _with_estimate(meal, cached, source_labels, loaded=loaded)
+
+    async def enrich_recipe_ids(self, recipe_ids) -> None:
+        """Enrich the recipes used by a saved plan with bounded concurrency."""
+        ids = sorted({str(recipe_id) for recipe_id in recipe_ids if recipe_id})
+        if not ids:
+            return
+        try:
+            async with self._uow_factory() as uow:
+                meals = await uow.catalog_recipes.get_meals(ids)
+        except Exception:
+            logger.info(
+                "weekly-plan micronutrient recipes could not be loaded", exc_info=True
+            )
+            return
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def enrich_one(meal: CatalogMeal) -> None:
+            async with semaphore:
+                try:
+                    await self.enrich(meal)
+                except Exception:
+                    logger.info(
+                        "weekly-plan micronutrient enrichment failed recipe_id=%s",
+                        meal.id,
+                        exc_info=True,
+                    )
+
+        await asyncio.gather(*(enrich_one(meal) for meal in meals))
+
+    async def load_cached(self, meal: CatalogMeal) -> CatalogMeal:
+        """Overlay persisted estimates without claiming work or calling providers."""
+        async with self._uow_factory() as uow:
+            cached = await uow.catalog_recipes.get_micronutrient_enrichment(
+                catalog_meal_id=meal.id,
+                content_hash=meal.content_hash,
+            )
+        source_values = meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
+        source_labels = await self._reference_sources(meal)
+        loaded = cached is not None or len(source_values) == len(MICRONUTRIENT_FIELDS)
         return _with_estimate(meal, cached, source_labels, loaded=loaded)
 
     async def _hydrate_linked_fdc_references(self, meal: CatalogMeal) -> CatalogMeal:

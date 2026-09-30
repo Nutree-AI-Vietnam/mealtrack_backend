@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -135,6 +136,10 @@ class CatalogMealRepositoryPort(ABC):
     @abstractmethod
     async def get_meal(self, catalog_meal_id: str) -> CatalogMeal | None:
         """Return one active catalog meal."""
+
+    @abstractmethod
+    async def get_meals(self, catalog_meal_ids: Iterable[str]) -> list[CatalogMeal]:
+        """Return active catalog meals for a bounded set of IDs."""
 
     @abstractmethod
     async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
