@@ -3,11 +3,19 @@ from decimal import Decimal
 import pytest
 
 from src.app.services.weekly_recipe_service import WeeklyRecipeService
+from src.domain.model.ai.nutrition_contracts import AIRecipeMicronutrientEstimate
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
+from src.domain.model.nutrition.micros import Micros
+
+MICRO_FIELDS = tuple(Micros.__dataclass_fields__)
 
 
-def _meal(*, ingredient=None, micros=None):
+def _complete_estimate(**overrides):
+    return {**dict.fromkeys(MICRO_FIELDS, 1.0), **overrides}
+
+
+def _meal(*, ingredient=None, micros=None, base_servings=4):
     return CatalogMeal(
         id="catalog-1",
         catalog_key="sample-recipe",
@@ -21,6 +29,7 @@ def _meal(*, ingredient=None, micros=None):
         fat_g=Decimal("3"),
         fiber_g=Decimal("2"),
         ingredients=(ingredient,) if ingredient else (),
+        base_servings=base_servings,
         nutrition_micros=micros,
     )
 
@@ -31,6 +40,7 @@ class _CatalogRepository:
         self.refreshed_meal = refreshed_meal or meal
         self.cached = None
         self.claims = 0
+        self.failed_claims = 0
 
     async def get_meal_detail(self, recipe_id):
         return self.meal
@@ -56,7 +66,7 @@ class _CatalogRepository:
     async def fail_micronutrient_enrichment(
         self, *, catalog_meal_id, content_hash, claim_token, retry_seconds
     ):
-        raise AssertionError("successful enrichment must not release its claim")
+        self.failed_claims += 1
 
 
 class _FoodReferenceRepository:
@@ -108,7 +118,7 @@ async def test_plan_enrichment_estimates_missing_reference_micros_once_and_detai
 
     async def estimate(meal, missing_fields, known_micros):
         estimate_calls.append((missing_fields, known_micros))
-        return {"iron": 2.5, "vitamin_c": 8}
+        return _complete_estimate(iron=2.5, vitamin_c=8)
 
     uow_factory = _uow_factory(catalog, food_references)
     service = WeeklyRecipeService(uow_factory, micronutrient_estimator=estimate)
@@ -119,11 +129,8 @@ async def test_plan_enrichment_estimates_missing_reference_micros_once_and_detai
 
     assert ready is True
     assert first is not None and second is not None
-    assert first.nutrition_micros.to_dict() == {"vitamin_c": 8, "iron": 2.5}
-    assert first.nutrition_micros_sources == {
-        "vitamin_c": "ai_estimate",
-        "iron": "ai_estimate",
-    }
+    assert first.nutrition_micros.to_dict() == _complete_estimate(vitamin_c=8, iron=2.5)
+    assert set(first.nutrition_micros_sources.values()) == {"ai_estimate"}
     assert first.nutrition_micros_estimated is True
     assert first.nutrition_micros_enrichment_loaded is True
     assert second.nutrition_micros.to_dict() == first.nutrition_micros.to_dict()
@@ -163,7 +170,7 @@ async def test_linked_usda_micros_are_saved_and_take_precedence_over_ai_estimate
 
     async def estimate(meal, missing_fields, known_micros):
         estimate_calls.append((missing_fields, known_micros))
-        return {"vitamin_c": 999, "iron": 3}
+        return _complete_estimate(vitamin_c=999, iron=3)
 
     service = WeeklyRecipeService(
         _uow_factory(catalog, food_references),
@@ -176,16 +183,54 @@ async def test_linked_usda_micros_are_saved_and_take_precedence_over_ai_estimate
 
     assert ready is True
     assert result is not None
-    assert result.nutrition_micros.to_dict() == {"iron": 3, "vitamin_c": 12}
-    assert result.nutrition_micros_sources == {
-        "iron": "ai_estimate",
-        "vitamin_c": "usda_fdc",
+    assert result.nutrition_micros.to_dict() == _complete_estimate(iron=3, vitamin_c=12)
+    assert result.nutrition_micros_sources["vitamin_c"] == "usda_fdc"
+    assert set(result.nutrition_micros_sources.values()) == {
+        "ai_estimate",
+        "usda_fdc",
     }
     assert result.nutrition_micros_estimated is True
     assert result.nutrition_micros_enrichment_loaded is True
     assert food_references.updated[0][:2] == (7, 12345)
     assert estimate_calls[0][1] == {"vitamin_c": 12}
     assert "vitamin_c" not in estimate_calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_incomplete_ai_estimate_does_not_mark_recipe_ready():
+    catalog = _CatalogRepository(_meal())
+    food_references = _FoodReferenceRepository([], catalog)
+
+    async def estimate(meal, missing_fields, known_micros):
+        return {}
+
+    service = WeeklyRecipeService(
+        _uow_factory(catalog, food_references), micronutrient_estimator=estimate
+    )
+
+    ready = await service.micronutrient_enrichment.enrich_recipe_ids(["catalog-1"])
+
+    assert ready is False
+    assert catalog.cached is None
+    assert catalog.failed_claims == 1
+
+
+def test_estimate_prompt_uses_whole_recipe_basis_and_requires_all_fields():
+    from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
+        build_micronutrient_estimate_prompt,
+    )
+
+    prompt = build_micronutrient_estimate_prompt(_meal(), MICRO_FIELDS, {})
+
+    assert "Ingredient quantities below are for the entire recipe" in prompt
+    assert "do not divide by base servings" in prompt
+    assert "never omit a field or return null" in prompt
+
+
+def test_estimate_schema_requires_every_micronutrient_field():
+    assert set(AIRecipeMicronutrientEstimate.model_json_schema()["required"]) == set(
+        MICRO_FIELDS
+    )
 
 
 @pytest.mark.asyncio

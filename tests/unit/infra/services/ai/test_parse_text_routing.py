@@ -44,6 +44,10 @@ def test_parse_text_routing_openai_only():
         manager = AIModelManager(settings)
         chain = manager.get_fallback_chain(ModelPurpose.PARSE_TEXT)
         assert chain == ["gpt-5.6-luna"]
+        assert manager.get_fallback_chain(ModelPurpose.RECIPE) == [
+            "gpt-5.6-luna",
+            "gpt-5.4-mini-2026-03-17",
+        ]
 
 
 def test_parse_text_routing_luna_primary_cf_fallback():
@@ -59,11 +63,11 @@ def test_parse_text_routing_luna_primary_cf_fallback():
             "@cf/meta/llama-3.1-8b-instruct",
         ]
 
-        # Contrast with other text purposes where CF is prepended
         recipe_chain = manager.get_fallback_chain(ModelPurpose.RECIPE)
         assert recipe_chain == [
-            "@cf/meta/llama-3.1-8b-instruct",
+            "gpt-5.6-luna",
             "gpt-5.4-mini-2026-03-17",
+            "@cf/meta/llama-3.1-8b-instruct",
         ]
 
 

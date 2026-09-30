@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.domain.model.nutrition.micros import Micros
 from src.infra.repositories.catalog_recipe_repository_async import (
     AsyncCatalogMealRepository,
 )
@@ -198,6 +199,63 @@ async def test_expired_micronutrient_claim_gets_a_new_fencing_token():
 
 
 @pytest.mark.asyncio
+async def test_partial_ready_micronutrient_cache_is_reclaimed_for_completion():
+    row = SimpleNamespace(
+        status="ready",
+        micros={"iron": 2.0},
+        claim_token=None,
+        lease_expires_at=None,
+        retry_after=None,
+    )
+    session = _AsyncSession([_Result(one=None), _Result(one=row)])
+    session.get_bind = MagicMock(
+        return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    )
+    session.flush = AsyncMock()
+
+    state, claim_token = await AsyncCatalogMealRepository(
+        session
+    ).claim_micronutrient_enrichment(
+        catalog_meal_id="catalog-1",
+        content_hash="a" * 64,
+        lease_seconds=90,
+    )
+
+    assert state == "claimed"
+    assert claim_token is not None
+    assert row.status == "pending"
+    session.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_complete_ready_micronutrient_cache_is_not_reclaimed():
+    row = SimpleNamespace(
+        status="ready",
+        micros=dict.fromkeys(Micros.__dataclass_fields__, 1.0),
+        claim_token=None,
+        lease_expires_at=None,
+        retry_after=None,
+    )
+    session = _AsyncSession([_Result(one=None), _Result(one=row)])
+    session.get_bind = MagicMock(
+        return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    )
+    session.flush = AsyncMock()
+
+    state, claim_token = await AsyncCatalogMealRepository(
+        session
+    ).claim_micronutrient_enrichment(
+        catalog_meal_id="catalog-1",
+        content_hash="a" * 64,
+        lease_seconds=90,
+    )
+
+    assert state == "ready"
+    assert claim_token is None
+    session.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_stale_micronutrient_claim_cannot_save_over_new_owner():
     row = SimpleNamespace(status="pending", claim_token="new-token")
     session = _AsyncSession([_Result(one="catalog-1"), _Result(one=row)])
@@ -208,13 +266,31 @@ async def test_stale_micronutrient_claim_cannot_save_over_new_owner():
         catalog_meal_id="catalog-1",
         content_hash="a" * 64,
         claim_token="old-token",
-        micros={"iron": 2.0},
-        sources={"iron": "ai_estimate"},
+        micros=dict.fromkeys(Micros.__dataclass_fields__, 1.0),
+        sources=dict.fromkeys(Micros.__dataclass_fields__, "ai_estimate"),
     )
 
     assert saved is False
     assert row.status == "pending"
     assert row.claim_token == "new-token"
+    session.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_partial_micronutrient_enrichment_cannot_be_saved_as_ready():
+    session = _AsyncSession([])
+    session.flush = AsyncMock()
+
+    saved = await AsyncCatalogMealRepository(session).save_micronutrient_enrichment(
+        catalog_meal_id="catalog-1",
+        content_hash="a" * 64,
+        claim_token="claim-token",
+        micros={"iron": 2.0},
+        sources={"iron": "ai_estimate"},
+    )
+
+    assert saved is False
+    assert session.statements == []
     session.flush.assert_not_awaited()
 
 
