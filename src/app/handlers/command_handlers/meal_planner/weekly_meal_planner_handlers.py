@@ -45,7 +45,9 @@ class EnrichWeeklyPlanMicronutrientsCommandHandler(EventHandler):
         self.micronutrient_enrichment = micronutrient_enrichment
 
     async def handle(self, command):
-        await self.micronutrient_enrichment.enrich_recipe_ids(command.recipe_ids)
+        return await self.micronutrient_enrichment.enrich_recipe_ids(
+            command.recipe_ids
+        )
 
 
 @handles(AiAdjustMealPlanCommand)

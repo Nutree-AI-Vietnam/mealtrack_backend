@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -9,7 +10,6 @@ from typing import Literal
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     Header,
     HTTPException,
@@ -116,7 +116,7 @@ async def get_current_weekly_plan(
         )
         if plan is None:
             raise HTTPException(status_code=404, detail="Weekly meal plan not found")
-        return await _plan_response(
+        return await _ready_plan_response(
             plan,
             event_bus,
             language=get_request_language(request),
@@ -138,7 +138,6 @@ async def get_current_weekly_plan(
 async def generate_weekly_plan(
     request: Request,
     body: GenerateWeeklyMealPlanRequest,
-    background_tasks: BackgroundTasks,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     include_grocery_count: bool = Query(default=True),
     user_id: str = Depends(get_current_user_id),
@@ -173,8 +172,7 @@ async def generate_weekly_plan(
                 daily_calories=daily_calories,
             )
         )
-        _schedule_plan_micronutrient_enrichment(background_tasks, event_bus, plan)
-        return await _plan_response(
+        return await _ready_plan_response(
             plan,
             event_bus,
             language=get_request_language(request),
@@ -193,7 +191,6 @@ async def update_weekly_plan(
     request: Request,
     plan_id: str,
     body: UpdateWeeklyMealPlanRequest,
-    background_tasks: BackgroundTasks,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     include_grocery_count: bool = Query(default=True),
     user_id: str = Depends(get_current_user_id),
@@ -221,29 +218,57 @@ async def update_weekly_plan(
                 expected_revision=body.expected_revision,
             )
         )
-        _schedule_plan_micronutrient_enrichment(background_tasks, event_bus, plan)
-        return await _plan_response(
+        return await _ready_plan_response(
             plan,
             event_bus,
             language=get_request_language(request),
             translation_service=translation_service,
             include_grocery_count=include_grocery_count,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _http_error(exc) from exc
 
 
-def _schedule_plan_micronutrient_enrichment(
-    background_tasks: BackgroundTasks, event_bus, plan
-) -> None:
+async def _ensure_plan_micronutrients(event_bus, plan) -> bool:
     recipe_ids = tuple(
         sorted({slot.recipe_id for slot in plan.slots if slot.recipe_id})
     )
     if recipe_ids:
-        background_tasks.add_task(
-            event_bus.send,
-            EnrichWeeklyPlanMicronutrientsCommand(recipe_ids=recipe_ids),
+        return await event_bus.send(
+            EnrichWeeklyPlanMicronutrientsCommand(recipe_ids=recipe_ids)
         )
+    return True
+
+
+async def _ready_plan_response(
+    plan,
+    event_bus,
+    *,
+    language: str = "en",
+    translation_service=None,
+    include_grocery_count: bool = True,
+) -> WeeklyMealPlanResponse:
+    response, micronutrients_ready = await asyncio.gather(
+        _plan_response(
+            plan,
+            event_bus,
+            language=language,
+            translation_service=translation_service,
+            include_grocery_count=include_grocery_count,
+        ),
+        _ensure_plan_micronutrients(event_bus, plan),
+    )
+    if not micronutrients_ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "RECIPE_MICRONUTRIENTS_NOT_READY",
+                "message": "Recipe micronutrients are not ready yet. Please retry.",
+            },
+        )
+    return response
 
 
 @router.get("/v1/recipes", response_model=RecipeListResponse)
@@ -287,6 +312,8 @@ async def list_recipes(
         return RecipeListResponse(
             items=[_recipe_list_item(meal) for meal in meals], total=page.total
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _http_error(exc) from exc
 

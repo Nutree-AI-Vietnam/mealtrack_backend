@@ -219,6 +219,27 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             return None
         return {"micros": dict(row.micros or {}), "sources": dict(row.sources or {})}
 
+    async def get_micronutrient_enrichment_status(
+        self, *, catalog_meal_id: str, content_hash: str
+    ) -> str | None:
+        row = await self._micronutrient_enrichment_row(catalog_meal_id, content_hash)
+        if row is None:
+            return None
+        now = datetime.now(UTC)
+        if (
+            row.status == "pending"
+            and row.lease_expires_at is not None
+            and row.lease_expires_at <= now
+        ):
+            return "lease_expired"
+        if (
+            row.status == "failed"
+            and row.retry_after is not None
+            and row.retry_after > now
+        ):
+            return "backoff"
+        return row.status
+
     async def claim_micronutrient_enrichment(
         self,
         *,
@@ -273,7 +294,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
         if row is None:
             raise RuntimeError("Micronutrient enrichment claim could not be loaded")
-        if row.status == "ready":
+        if row.status == "ready" and row.micros:
             return "ready", None
         if inserted:
             return "claimed", claim_token

@@ -960,7 +960,7 @@ def get_configured_event_bus() -> EventBus:
         GetMealRecommendationSlotDetailQueryHandler(AsyncUnitOfWork),
     )
 
-    # Persist micronutrients after the plan response has been returned.
+    # Complete plan recipe enrichment before returning the plan response.
     recipe_micronutrient_enrichment = CatalogRecipeMicronutrientEnrichmentService(
         AsyncUnitOfWork,
         estimator=_catalog_recipe_micronutrient_estimator,

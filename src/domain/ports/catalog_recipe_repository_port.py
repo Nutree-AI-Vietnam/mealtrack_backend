@@ -152,6 +152,12 @@ class CatalogMealRepositoryPort(ABC):
         """Return a cached micronutrient estimate for one recipe revision."""
 
     @abstractmethod
+    async def get_micronutrient_enrichment_status(
+        self, *, catalog_meal_id: str, content_hash: str
+    ) -> str | None:
+        """Return readiness, backoff, or lease state for an enrichment claim."""
+
+    @abstractmethod
     async def claim_micronutrient_enrichment(
         self,
         *,
