@@ -2,7 +2,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from fastapi import FastAPI, Request
@@ -170,7 +170,10 @@ def add_dev_auth_bypass(app: FastAPI) -> None:
 
         now = time.monotonic()
         cached = _cached_dev_user
-        if cached is not None and (now - _cached_dev_user_at) < _DEV_USER_CACHE_TTL_SECONDS:
+        if (
+            cached is not None
+            and (now - _cached_dev_user_at) < _DEV_USER_CACHE_TTL_SECONDS
+        ):
             request.state.user = cached
             return await call_next(request)
 
@@ -186,6 +189,8 @@ def add_dev_auth_bypass(app: FastAPI) -> None:
             _cached_dev_user = injected
             _cached_dev_user_at = now
             request.state.user = injected
+        elif cached is not None:
+            request.state.user = cached
 
         return await call_next(request)
 
@@ -202,8 +207,8 @@ async def _seed_dev_meals_async(user_id: str) -> None:
         # Check if there are any meals today for this user (use UTC to match created_at)
         from datetime import timedelta
 
-        today_utc = datetime.now(timezone.utc).date()
-        start_dt = datetime.combine(today_utc, datetime.min.time(), tzinfo=timezone.utc)
+        today_utc = datetime.now(UTC).date()
+        start_dt = datetime.combine(today_utc, datetime.min.time(), tzinfo=UTC)
         end_dt = start_dt + timedelta(days=1)
 
         existing = await session.scalar(
@@ -228,7 +233,7 @@ async def _seed_dev_meals_async(user_id: str) -> None:
             )
             meals_missing_ready = result.scalars().all()
             if meals_missing_ready:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 for m in meals_missing_ready:
                     m.ready_at = m.created_at or now
                     m.updated_at = now
@@ -249,7 +254,7 @@ async def _seed_dev_meals_async(user_id: str) -> None:
             )
             session.add(db_image)
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             db_meal = MealORM(
                 meal_id=meal_id,
                 user_id=user_id,

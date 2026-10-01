@@ -90,6 +90,34 @@ class AINutrientMicros(BaseModel):
     added_sugar: float | None = Field(None, ge=0)
 
 
+class AIRecipeMicronutrientEstimate(BaseModel):
+    """Complete whole-recipe micronutrient estimate for a catalog recipe."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    vitamin_a: float = Field(..., ge=0, le=100000)
+    vitamin_c: float = Field(..., ge=0, le=10000)
+    vitamin_d: float = Field(..., ge=0, le=10000)
+    vitamin_e: float = Field(..., ge=0, le=10000)
+    vitamin_k: float = Field(..., ge=0, le=10000)
+    thiamin: float = Field(..., ge=0, le=1000)
+    riboflavin: float = Field(..., ge=0, le=1000)
+    niacin: float = Field(..., ge=0, le=1000)
+    vitamin_b6: float = Field(..., ge=0, le=1000)
+    vitamin_b12: float = Field(..., ge=0, le=10000)
+    folate: float = Field(..., ge=0, le=100000)
+    calcium: float = Field(..., ge=0, le=10000)
+    iron: float = Field(..., ge=0, le=1000)
+    magnesium: float = Field(..., ge=0, le=10000)
+    phosphorus: float = Field(..., ge=0, le=10000)
+    potassium: float = Field(..., ge=0, le=100000)
+    sodium: float = Field(..., ge=0, le=100000)
+    zinc: float = Field(..., ge=0, le=1000)
+    selenium: float = Field(..., ge=0, le=10000)
+    saturated_fat: float = Field(..., ge=0, le=1000)
+    added_sugar: float = Field(..., ge=0, le=1000)
+
+
 class AIVisionNutritionMacros(AINutritionMacros):
     """Strict macronutrients contract for provider-facing vision responses."""
 

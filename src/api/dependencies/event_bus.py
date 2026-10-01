@@ -2,6 +2,7 @@
 Event bus dependency for FastAPI with proper type registrations.
 """
 
+import asyncio
 import logging
 
 from src.app.commands.cheat_day import MarkCheatDayCommand, UnmarkCheatDayCommand
@@ -25,6 +26,7 @@ from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.commands.meal_catalog import LogCatalogMealCommand
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
+    EnrichWeeklyPlanMicronutrientsCommand,
     GenerateWeeklyMealPlanCommand,
     LogMealPlanSlotCommand,
     UpdateMealPlanPantryStockCommand,
@@ -126,6 +128,7 @@ from src.app.handlers.command_handlers.meal_catalog import (
 )
 from src.app.handlers.command_handlers.meal_planner import (
     AiAdjustMealPlanCommandHandler,
+    EnrichWeeklyPlanMicronutrientsCommandHandler,
     GenerateWeeklyMealPlanCommandHandler,
     LogMealPlanSlotCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
@@ -201,6 +204,7 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 from src.app.handlers.query_handlers.meal_planner import (
     GetCurrentWeeklyPlanQueryHandler,
     GetRecipeDetailQueryHandler,
+    GetRecipeSummariesQueryHandler,
     GetWeeklyGroceriesQueryHandler,
     ListRecipesQueryHandler,
 )
@@ -229,6 +233,7 @@ from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
     GetRecipeDetailQuery,
+    GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
 )
@@ -260,6 +265,9 @@ from src.app.queries.user.get_user_onboarding_status_query import (
     GetUserOnboardingStatusQuery,
 )
 from src.app.queries.weight import GetWeightEntriesQuery
+from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
+    CatalogRecipeMicronutrientEnrichmentService,
+)
 from src.app.services.meal_recommendation_history_projector import (
     MealRecommendationHistoryProjector,
 )
@@ -281,6 +289,81 @@ logger = logging.getLogger(__name__)
 # Singleton event buses
 _food_search_event_bus: EventBus | None = None
 _configured_event_bus: EventBus | None = None
+
+
+async def _catalog_recipe_micronutrient_estimator(meal, missing_fields, known_micros):
+    """Estimate absent recipe micros through the configured recipe model."""
+    from src.api.base_dependencies import get_ai_model_manager
+    from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
+        build_micronutrient_estimate_prompt,
+    )
+    from src.domain.model.ai.model_purpose import ModelPurpose
+    from src.domain.model.ai.nutrition_contracts import (
+        AIRecipeMicronutrientEstimate,
+    )
+
+    return await get_ai_model_manager().generate(
+        purpose=ModelPurpose.RECIPE,
+        prompt=build_micronutrient_estimate_prompt(meal, missing_fields, known_micros),
+        system_message=(
+            "You are a careful nutrition data estimator. Use USDA FoodData Central "
+            "nutrient profiles as the reference standard. Estimate a value for every "
+            "micronutrient field using the closest common USDA food profile when an "
+            "exact ingredient match is unavailable. Return numeric values for every "
+            "schema field in the requested units; do not omit fields or return null. "
+            "These are estimates, not verified laboratory measurements. Never change "
+            "known reference values or return macronutrients."
+        ),
+        response_type="json",
+        max_tokens=700,
+        schema=AIRecipeMicronutrientEstimate,
+    )
+
+
+async def _catalog_recipe_fdc_micronutrient_loader(fdc_ids):
+    """Load micronutrients from the exact linked USDA FoodData Central records."""
+    from src.api.base_dependencies import (
+        get_food_data_service,
+        get_food_mapping_service,
+    )
+
+    if not fdc_ids:
+        return {}
+    food_data_service = get_food_data_service()
+    if not food_data_service.api_key:
+        return {}
+    semaphore = asyncio.Semaphore(5)
+
+    async def load_one(fdc_id):
+        try:
+            async with semaphore:
+                return fdc_id, await food_data_service.get_food_details(fdc_id)
+        except Exception:
+            logger.info(
+                "linked USDA micronutrient record unavailable fdc_id=%s",
+                fdc_id,
+                exc_info=True,
+            )
+            return None
+
+    responses = await asyncio.gather(*(load_one(fdc_id) for fdc_id in fdc_ids))
+    mapper = get_food_mapping_service()
+    nutrients_by_id = {}
+    for response in responses:
+        if response is None:
+            continue
+        requested_id, item = response
+        mapped = mapper.map_food_details(item)
+        fdc_id = mapped.get("fdc_id")
+        nutrients = mapped.get("extra_nutrients")
+        if (
+            fdc_id is not None
+            and int(fdc_id) == int(requested_id)
+            and isinstance(nutrients, dict)
+            and nutrients
+        ):
+            nutrients_by_id[int(requested_id)] = nutrients
+    return nutrients_by_id
 
 
 def _build_provider_budget(cache_service):
@@ -879,6 +962,13 @@ def get_configured_event_bus() -> EventBus:
         GetMealRecommendationSlotDetailQueryHandler(AsyncUnitOfWork),
     )
 
+    # Complete plan recipe enrichment before returning the plan response.
+    recipe_micronutrient_enrichment = CatalogRecipeMicronutrientEnrichmentService(
+        AsyncUnitOfWork,
+        estimator=_catalog_recipe_micronutrient_estimator,
+        fdc_loader=_catalog_recipe_fdc_micronutrient_loader,
+    )
+
     # Register weekly meal planner commands and queries.
     event_bus.register_handler(
         GenerateWeeklyMealPlanCommand,
@@ -887,6 +977,10 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         UpdateWeeklyMealPlanCommand,
         UpdateWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        EnrichWeeklyPlanMicronutrientsCommand,
+        EnrichWeeklyPlanMicronutrientsCommandHandler(recipe_micronutrient_enrichment),
     )
     event_bus.register_handler(
         AiAdjustMealPlanCommand,
@@ -907,13 +1001,22 @@ def get_configured_event_bus() -> EventBus:
         GetCurrentWeeklyPlanQuery,
         GetCurrentWeeklyPlanQueryHandler(AsyncUnitOfWork),
     )
+    redis_client = getattr(cache_service, "redis", None)
     event_bus.register_handler(
         ListRecipesQuery,
-        ListRecipesQueryHandler(AsyncUnitOfWork),
+        ListRecipesQueryHandler(AsyncUnitOfWork, redis_client=redis_client),
     )
     event_bus.register_handler(
         GetRecipeDetailQuery,
-        GetRecipeDetailQueryHandler(AsyncUnitOfWork),
+        GetRecipeDetailQueryHandler(
+            AsyncUnitOfWork,
+            micronutrient_enrichment=recipe_micronutrient_enrichment,
+            redis_client=redis_client,
+        ),
+    )
+    event_bus.register_handler(
+        GetRecipeSummariesQuery,
+        GetRecipeSummariesQueryHandler(AsyncUnitOfWork, redis_client=redis_client),
     )
     event_bus.register_handler(
         GetWeeklyGroceriesQuery,

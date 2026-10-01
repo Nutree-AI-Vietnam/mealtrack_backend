@@ -87,5 +87,8 @@ def _canonical_ids(catalog_meal: CatalogMeal) -> set[int]:
     return {
         ingredient.food_reference_id
         for ingredient in catalog_meal.ingredients
-        if ingredient.food_reference_id > 0
+        if (
+            ingredient.food_reference_id is not None
+            and ingredient.food_reference_id > 0
+        )
     }

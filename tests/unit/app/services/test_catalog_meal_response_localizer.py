@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -12,6 +13,7 @@ from src.app.services.catalog_meal_response_localizer import (
 from src.domain.model.meal_recommendation import (
     CatalogMeal,
     CatalogMealIngredient,
+    CatalogMealStep,
     PersistedMealRecommendationCandidate,
     PersistedMealRecommendationPlan,
     PersistedMealRecommendationSlot,
@@ -24,9 +26,16 @@ class _Translator:
         self.translations = translations
         self.calls: list[tuple[list[str], str]] = []
 
-    async def translate_texts(self, texts: list[str], target_lang: str) -> list[str]:
+    async def translate_texts(
+        self, texts: list[str], source_lang: str, target_lang: str
+    ) -> TranslationResult:
         self.calls.append((texts, target_lang))
-        return [self.translations.get(text, text) for text in texts]
+        return TranslationResult(
+            tuple(self.translations.get(text, text) for text in texts),
+            TranslationOutcome.TRANSLATED,
+            source_lang,
+            target_lang,
+        )
 
 
 class _FailingTranslator:
@@ -235,6 +244,66 @@ async def test_localize_catalog_meals_translates_names_and_can_skip_ingredients(
 
 
 @pytest.mark.asyncio
+async def test_localize_catalog_meals_keeps_vietnamese_recipe_copy_untouched():
+    meal = replace(
+        _meal("meal-vi"),
+        name="Rau má xào tỏi",
+        cuisine="Vietnamese",
+        description="Xào rau má với tỏi.",
+        summary="Món rau xanh đơn giản.",
+        ingredients=(),
+        steps=(
+            CatalogMealStep(
+                step_number=1,
+                title="Chuẩn bị nguyên liệu",
+                description="Rửa sạch rau má rồi để ráo.",
+            ),
+            CatalogMealStep(
+                step_number=2,
+                title="Xào rau má",
+                description="Phi thơm tỏi, cho rau má vào xào vừa chín.",
+            ),
+        ),
+    )
+    translator = _Translator({"Vietnamese": "Ẩm thực Việt Nam"})
+
+    localized = await localize_catalog_meals(
+        (meal,), language="vi", translation_service=translator
+    )
+
+    assert translator.calls == [(["Vietnamese"], "vi")]
+    assert localized[0].name == meal.name
+    assert localized[0].description == meal.description
+    assert localized[0].steps == meal.steps
+
+
+@pytest.mark.asyncio
+async def test_localize_catalog_meals_translates_allergen_guidance():
+    meal = replace(
+        _meal("meal-allergens"),
+        allergens="Fish (fish sauce). Check the ingredient label of each product.",
+    )
+    translator = _Translator(
+        {
+            "Rice Bowl": "Cơm tô",
+            "Vietnamese": "Việt Nam",
+            "Warm rice with vegetables": "Cơm nóng với rau",
+            "Rice": "Gạo",
+            meal.allergens: "Cá (nước mắm). Kiểm tra nhãn thành phần của từng sản phẩm.",
+        }
+    )
+
+    localized = await localize_catalog_meals(
+        (meal,), language="vi", translation_service=translator
+    )
+
+    assert meal.allergens in translator.calls[0][0]
+    assert localized[0].allergens == (
+        "Cá (nước mắm). Kiểm tra nhãn thành phần của từng sản phẩm."
+    )
+
+
+@pytest.mark.asyncio
 async def test_localize_catalog_meals_batches_page_then_reuses_cache():
     meals = (
         _meal("meal-1"),
@@ -292,7 +361,4 @@ async def test_localize_slot_falls_back_for_missing_translated_values():
         slot, language="vi", translation_service=_ShortTranslator()
     )
 
-    assert localized.selected.catalog_meal.name == "Cơm tô"
-    assert localized.selected.catalog_meal.cuisine == "Vietnamese"
-    assert localized.selected.catalog_meal.description == "Warm rice with vegetables"
-    assert localized.selected.catalog_meal.ingredients[0].display_name == "Rice"
+    assert localized.selected.catalog_meal == slot.selected.catalog_meal

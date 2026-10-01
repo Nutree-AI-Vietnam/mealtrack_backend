@@ -140,6 +140,17 @@ def get_image_store() -> ImageStorePort:
         current_settings = get_settings()
         if current_settings.IMAGE_STORE_PROVIDER.lower() == "cloudinary":
             _image_store = CloudinaryImageStore()
+        elif current_settings.IMAGE_STORE_PROVIDER.lower() == "local":
+            from src.infra.adapters.local_image_store import LocalImageStore
+
+            _image_store = LocalImageStore(
+                upload_dir=os.getenv("UPLOADS_DIR", "./uploads"),
+                base_url=getattr(
+                    current_settings,
+                    "LOCAL_IMAGE_STORE_BASE_URL",
+                    "http://localhost:8000",
+                ),
+            )
         else:
             _image_store = CloudflareImageStore()
     return _image_store
@@ -147,16 +158,43 @@ def get_image_store() -> ImageStorePort:
 
 def get_allowed_image_hosts() -> frozenset[str]:
     """Return authorized image hostnames for meal photo validation."""
+    from ipaddress import ip_address
+    from urllib.parse import urlsplit
+
     from src.infra.config.settings import get_settings
 
     hosts = {"res.cloudinary.com", "imagedelivery.net"}
     custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
     if custom_domain:
         cleaned = custom_domain.strip().lower()
-        if "://" in cleaned:
-            cleaned = cleaned.split("://", 1)[1]
-        clean_domain = cleaned.split("/")[0]
-        if clean_domain:
+        if "://" not in cleaned:
+            cleaned = f"//{cleaned}"
+        try:
+            clean_domain = (urlsplit(cleaned).hostname or "").rstrip(".")
+        except ValueError:
+            clean_domain = ""
+
+        local_suffixes = (
+            "localhost",
+            "local",
+            "localdomain",
+            "internal",
+            "lan",
+            "test",
+            "invalid",
+        )
+        is_local_domain = any(
+            clean_domain == suffix or clean_domain.endswith(f".{suffix}")
+            for suffix in local_suffixes
+        )
+        try:
+            ip_address(clean_domain)
+        except ValueError:
+            is_ip_literal = False
+        else:
+            is_ip_literal = True
+
+        if clean_domain and not is_local_domain and not is_ip_literal:
             hosts.add(clean_domain)
     return frozenset(hosts)
 
@@ -319,7 +357,7 @@ def get_catalog_food_reference_review_service(
 
 
 def get_catalog_image_generator() -> CloudflareWorkersImageGenerator:
-    """Return catalog image generator configured with Cloudflare and Cloudinary."""
+    """Return catalog image generator configured with Cloudflare Workers AI and Cloudflare Images."""
 
     try:
         return CloudflareWorkersImageGenerator(

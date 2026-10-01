@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
@@ -18,19 +20,27 @@ from src.app.commands.meal_planner import (
     GenerateWeeklyMealPlanCommand,
     UpdateWeeklyMealPlanCommand,
 )
+from src.app.services.weekly_grocery_service import WeeklyGroceryService
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
-)
-from src.domain.services.weekly_meal_planner.slot_rules import (
-    ensure_base_revision,
-    ensure_slot_coordinate,
 )
 from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanPreferences,
+    WeeklyMealPlanSlotAdjustment,
 )
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    resolve_allergen_preferences,
+)
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    DerivedGroceryItem,
+)
+from src.domain.services.weekly_meal_planner.slot_rules import (
+    ensure_base_revision,
+    ensure_slot_coordinate,
+)
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 
 
@@ -41,6 +51,7 @@ class WeeklyPlanAiProposal:
     proposed_plan: WeeklyMealPlan
     slot_changes: tuple[dict, ...]
     base_revision: int = 1
+    proposed_groceries: tuple[DerivedGroceryItem, ...] = ()
 
 
 class WeeklyMealPlanService:
@@ -56,6 +67,7 @@ class WeeklyMealPlanService:
         self.uow_factory = uow_factory
         self.generator = generator or WeeklyPlanGenerationService()
         self.ai_adjustment_provider = ai_adjustment_provider
+        self.grocery_service = WeeklyGroceryService()
 
     async def generate(self, command: GenerateWeeklyMealPlanCommand) -> WeeklyMealPlan:
         fingerprint = _fingerprint(command)
@@ -111,12 +123,22 @@ class WeeklyMealPlanService:
                 else:
                     if current.status.value == "confirmed":
                         raise WeeklyMealPlanConflictError()
+                    logged_coordinates = {
+                        (slot.day_index, slot.slot_index)
+                        for slot in current.slots
+                        if slot.is_logged
+                    }
+                    generated_slots = {
+                        coordinate: recipe_id
+                        for coordinate, recipe_id in recipe_ids.items()
+                        if coordinate not in logged_coordinates
+                    }
                     plan = await uow.weekly_meal_plans.update(
                         user_id=command.user_id,
                         plan_id=current.id,
                         people=command.preferences.people,
                         preferences=command.preferences,
-                        slots=recipe_ids,
+                        slots=generated_slots,
                     )
                 await uow.meal_write_operations.complete(
                     reservation, target_meal_id=plan.id, response={"plan_id": plan.id}
@@ -147,7 +169,76 @@ class WeeklyMealPlanService:
                     )
                 return plan
             try:
-                await self._validate_recipe_ids(uow, command.slots)
+                current = await uow.weekly_meal_plans.get_by_id(
+                    user_id=command.user_id, plan_id=command.plan_id
+                )
+                if current is None:
+                    raise ResourceNotFoundException("Weekly meal plan not found")
+                preferences = command.preferences or current.preferences
+                hard_preferences_changed = _hard_preferences_changed(
+                    current.preferences, preferences
+                )
+                expected_revision = (
+                    command.expected_revision
+                    if command.expected_revision is not None
+                    else current.revision
+                )
+                if command.slots or hard_preferences_changed:
+                    meals = await uow.catalog_recipes.list_active_meals()
+                    meals_by_id = {meal.id: meal for meal in meals}
+                    slots_by_coordinate = {
+                        (slot.day_index, slot.slot_index): slot
+                        for slot in current.slots
+                    }
+                    proposed_recipe_ids = {
+                        coordinate: slot.recipe_id
+                        for coordinate, slot in slots_by_coordinate.items()
+                    }
+                    for coordinate, recipe_id in (command.slots or {}).items():
+                        try:
+                            ensure_slot_coordinate(*coordinate)
+                        except ValueError as exc:
+                            raise ValidationException(
+                                "slot coordinate is invalid",
+                                error_code="WEEKLY_SLOT_INVALID",
+                            ) from exc
+                        proposed_recipe_ids[coordinate] = recipe_id
+                        if recipe_id is None:
+                            continue
+                        meal = meals_by_id.get(recipe_id)
+                        if meal is None:
+                            raise ValidationException(
+                                "recipe_id is not an active catalog recipe",
+                                error_code="RECIPE_NOT_FOUND",
+                            )
+                        if not self.generator.supports_slot(meal, coordinate[1]):
+                            raise ValidationException(
+                                "recipe is not suitable for the selected meal slot",
+                                error_code="RECIPE_SLOT_INELIGIBLE",
+                            )
+                        if not self.generator.is_hard_eligible(meal, preferences):
+                            raise ValidationException(
+                                "recipe conflicts with saved diet, allergy, or dislike preferences",
+                                error_code="RECIPE_INELIGIBLE",
+                            )
+                    if hard_preferences_changed:
+                        for coordinate, recipe_id in proposed_recipe_ids.items():
+                            slot = slots_by_coordinate[coordinate]
+                            if slot.is_logged or recipe_id is None:
+                                continue
+                            meal = meals_by_id.get(recipe_id)
+                            if meal is None or not self.generator.is_hard_eligible(
+                                meal, preferences
+                            ):
+                                raise ValidationException(
+                                    "preference change would leave an unlogged meal in conflict",
+                                    error_code="PLAN_PREFERENCE_CONFLICT",
+                                )
+                            if not self.generator.supports_slot(meal, coordinate[1]):
+                                raise ValidationException(
+                                    "preference change would leave a meal in the wrong slot",
+                                    error_code="PLAN_PREFERENCE_CONFLICT",
+                                )
                 plan = await uow.weekly_meal_plans.update(
                     user_id=command.user_id,
                     plan_id=command.plan_id,
@@ -155,7 +246,7 @@ class WeeklyMealPlanService:
                     preferences=command.preferences,
                     status=command.status,
                     slots=command.slots,
-                    expected_revision=command.expected_revision,
+                    expected_revision=expected_revision,
                 )
                 if plan is None:
                     raise ResourceNotFoundException("Weekly meal plan not found")
@@ -191,72 +282,177 @@ class WeeklyMealPlanService:
             if plan is None:
                 raise ResourceNotFoundException("Weekly meal plan not found")
             meals = await uow.catalog_recipes.list_active_meals()
-            if self.ai_adjustment_provider is not None:
-                return await self._provider_proposal(
-                    command=command, plan=plan, meals=tuple(meals)
+            profile = await uow.users.get_profile(command.user_id)
+            profile_allergies = _profile_values(profile, "allergies")
+            known_allergen_codes = ()
+            list_allergen_codes = getattr(
+                uow.catalog_recipes, "list_allergen_codes", None
+            )
+            if (
+                profile_allergies
+                or re.search(r"\ballerg(?:ic|y|ies)\b", prompt, re.IGNORECASE)
+            ) and callable(list_allergen_codes):
+                known_allergen_codes = tuple(await list_allergen_codes())
+        target = _target_coordinate(command)
+        slots_by_coordinate = {
+            (slot.day_index, slot.slot_index): slot for slot in plan.slots
+        }
+        if target is not None:
+            target_slot = slots_by_coordinate.get(target)
+            if target_slot is None:
+                raise ValidationException(
+                    "Target meal slot is invalid", error_code="AI_TARGET_INVALID"
                 )
-            updated_preferences = _preferences_from_prompt(plan.preferences, prompt)
+            if target_slot.is_logged:
+                raise ValidationException(
+                    "A logged meal cannot be replaced",
+                    error_code="AI_TARGET_LOGGED",
+                )
+        meals = tuple(meals)
+        request_preferences = _preferences_from_prompt(
+            plan.preferences, prompt, meals, known_allergen_codes
+        )
+        preferences, profile_dietary_preferences = _with_profile_context(
+            plan.preferences,
+            request_preferences,
+            profile,
+            meals,
+            request_explicitly_sets_diet=request_preferences.diet
+            != plan.preferences.diet,
+            known_allergen_codes=known_allergen_codes,
+        )
+        proposal_preferences = (
+            request_preferences if target is None else plan.preferences
+        )
+        if self.ai_adjustment_provider is not None:
+            return await self._provider_proposal(
+                command=command,
+                plan=plan,
+                meals=meals,
+                preferences=preferences,
+                proposal_preferences=proposal_preferences,
+                profile_dietary_preferences=profile_dietary_preferences,
+                target=target,
+            )
+        if target is not None:
+            old_slot = slots_by_coordinate[target]
+            candidates = [
+                meal
+                for meal in meals
+                if meal.id != old_slot.recipe_id
+                and self.generator.is_hard_eligible(meal, preferences)
+                and self.generator.supports_slot(meal, target[1])
+            ]
+            preferred_candidates = [
+                meal
+                for meal in candidates
+                if self.generator.is_soft_eligible(meal, preferences)
+            ]
+            if preferred_candidates:
+                candidates = preferred_candidates
+            candidates.sort(
+                key=lambda meal: (
+                    meal.popularity_rank
+                    if meal.popularity_rank is not None
+                    else 2_147_483_647,
+                    meal.id,
+                )
+            )
+            if not candidates:
+                raise _no_eligible_replacement()
+            replacement_id = candidates[0].id
+            proposed_slots = tuple(
+                _slot_with_recipe(slot, replacement_id)
+                if (slot.day_index, slot.slot_index) == target
+                else slot
+                for slot in plan.slots
+            )
+        else:
             selected = self.generator.generate(
                 meals,
                 user_id=command.user_id,
-                week_start_date=plan.week_start_date.isoformat(),
+                week_start_date=f"{plan.week_start_date.isoformat()}:{prompt.casefold()}",
                 daily_calories=plan.daily_calories or 2000,
-                preferences=updated_preferences,
+                preferences=preferences,
             )
+            recipe_ids = {
+                (item.day_index, item.slot_index): item.recipe_id for item in selected
+            }
             proposed_slots = tuple(
-                slot.__class__(
-                    id=slot.id,
-                    day_index=slot.day_index,
-                    slot_index=slot.slot_index,
-                    recipe_id={
-                        (item.day_index, item.slot_index): item.recipe_id
-                        for item in selected
-                    }.get((slot.day_index, slot.slot_index)),
-                    is_logged=slot.is_logged,
-                    logged_meal_id=slot.logged_meal_id,
-                    version=slot.version,
+                _slot_with_recipe(
+                    slot,
+                    slot.recipe_id
+                    if slot.is_logged
+                    else recipe_ids.get((slot.day_index, slot.slot_index)),
                 )
                 for slot in plan.slots
             )
-            proposed = plan.__class__(
-                id=plan.id,
-                user_id=plan.user_id,
-                week_start_date=plan.week_start_date,
-                status=plan.status,
-                people=updated_preferences.people,
-                preferences=updated_preferences,
-                timezone=plan.timezone,
-                slots=proposed_slots,
-                daily_calories=plan.daily_calories,
-                catalog_revision=plan.catalog_revision,
-                algorithm_version=plan.algorithm_version,
-                revision=plan.revision,
-                created_at=plan.created_at,
-                updated_at=plan.updated_at,
-            )
-            changes = tuple(
-                {
-                    "day_index": before.day_index,
-                    "slot_index": before.slot_index,
-                    "previous_recipe_id": before.recipe_id,
-                    "new_recipe_id": after.recipe_id,
-                    "action": "replace" if after.recipe_id else "clear",
-                }
-                for before, after in zip(plan.slots, proposed.slots, strict=True)
-                if before.recipe_id != after.recipe_id
-            )
-            return WeeklyPlanAiProposal(
-                base_revision=plan.revision,
-                explanation="Prepared a reviewable weekly plan proposal from your request.",
-                diff_summary=f"{len(changes)} meals changed",
-                proposed_plan=proposed,
-                slot_changes=changes,
-            )
+        if target is None and _hard_preferences_changed(plan.preferences, preferences):
+            self._validate_proposed_hard_preferences(proposed_slots, meals, preferences)
+        changes = tuple(
+            {
+                "day_index": before.day_index,
+                "slot_index": before.slot_index,
+                "previous_recipe_id": before.recipe_id,
+                "new_recipe_id": after.recipe_id,
+                "action": "replace" if after.recipe_id else "clear",
+            }
+            for before, after in zip(plan.slots, proposed_slots, strict=True)
+            if before.recipe_id != after.recipe_id
+        )
+        _validate_proposal_outcome(
+            plan=plan,
+            proposed_slots=proposed_slots,
+            changes=changes,
+            target=target,
+            prompt=prompt,
+            proposal_preferences=proposal_preferences,
+        )
+        proposed = plan.__class__(
+            id=plan.id,
+            user_id=plan.user_id,
+            week_start_date=plan.week_start_date,
+            status=plan.status,
+            people=proposal_preferences.people,
+            preferences=proposal_preferences,
+            timezone=plan.timezone,
+            slots=proposed_slots,
+            daily_calories=plan.daily_calories,
+            catalog_revision=plan.catalog_revision,
+            algorithm_version=plan.algorithm_version,
+            revision=plan.revision,
+            created_at=plan.created_at,
+            updated_at=plan.updated_at,
+        )
+        return WeeklyPlanAiProposal(
+            base_revision=plan.revision,
+            explanation="Prepared a reviewable weekly plan proposal from your request.",
+            diff_summary=f"{len(changes)} meals changed",
+            proposed_plan=proposed,
+            slot_changes=changes,
+            proposed_groceries=self.grocery_service.project(proposed, meals),
+        )
 
-    async def _provider_proposal(self, *, command, plan, meals):
+    async def _provider_proposal(
+        self,
+        *,
+        command,
+        plan,
+        meals,
+        preferences,
+        proposal_preferences,
+        profile_dietary_preferences,
+        target,
+    ):
         try:
             response = await self.ai_adjustment_provider.propose(
-                prompt=command.prompt, plan=plan, meals=meals
+                prompt=command.prompt,
+                plan=plan,
+                meals=meals,
+                preferences=preferences,
+                profile_dietary_preferences=profile_dietary_preferences,
+                target_day_index=target[0] if target else None,
+                target_slot_index=target[1] if target else None,
             )
         except ValidationError as exc:
             raise ValidationException(
@@ -284,10 +480,27 @@ class WeeklyMealPlanService:
             ) from exc
         available_ids = {meal.id for meal in meals}
         by_coordinate = {(slot.day_index, slot.slot_index): slot for slot in plan.slots}
+        response_changes = response.slot_changes
+        if target is not None:
+            current_recipe_id = by_coordinate[target].recipe_id
+            if _target_response_is_noop(response_changes, target, current_recipe_id):
+                requested_recipe = _requested_catalog_recipe(command.prompt, meals)
+                if (
+                    requested_recipe is not None
+                    and requested_recipe.id != current_recipe_id
+                ):
+                    response_changes = (
+                        WeeklyMealPlanSlotAdjustment(
+                            day_index=target[0],
+                            slot_index=target[1],
+                            action="replace",
+                            new_recipe_id=requested_recipe.id,
+                        ),
+                    )
         proposed = list(plan.slots)
         changes = []
         seen = set()
-        for change in response.slot_changes:
+        for change in response_changes:
             try:
                 ensure_slot_coordinate(change.day_index, change.slot_index)
             except ValueError as exc:
@@ -301,6 +514,11 @@ class WeeklyMealPlanService:
                     "AI returned duplicate or invalid weekly slot coordinates",
                     error_code="AI_OUTPUT_INVALID",
                 )
+            if target is not None and coordinate != target:
+                raise ValidationException(
+                    "AI changed a meal outside the requested slot",
+                    error_code="AI_OUTPUT_INVALID",
+                )
             seen.add(coordinate)
             current = by_coordinate[coordinate]
             if current.is_logged:
@@ -309,11 +527,42 @@ class WeeklyMealPlanService:
                     error_code="AI_OUTPUT_INVALID",
                 )
             new_recipe_id = change.new_recipe_id if change.action == "replace" else None
+            invalid_action = (
+                (change.action == "replace" and change.new_recipe_id is None)
+                or (change.action == "clear" and change.new_recipe_id is not None)
+                or (target is not None and change.action != "replace")
+            )
+            if invalid_action:
+                raise ValidationException(
+                    "AI returned an inconsistent recipe action",
+                    error_code="AI_OUTPUT_INVALID",
+                )
             if new_recipe_id is not None and new_recipe_id not in available_ids:
                 raise ValidationException(
                     "AI returned a recipe outside the active catalog",
                     error_code="AI_OUTPUT_INVALID",
                 )
+            if new_recipe_id is not None:
+                meal = next(meal for meal in meals if meal.id == new_recipe_id)
+                if not self.generator.is_hard_eligible(meal, preferences):
+                    raise ValidationException(
+                        "AI returned a recipe that conflicts with saved preferences",
+                        error_code="AI_OUTPUT_INELIGIBLE",
+                    )
+                if not self.generator.supports_slot(meal, coordinate[1]):
+                    raise ValidationException(
+                        "AI returned a recipe for the wrong meal type",
+                        error_code="AI_OUTPUT_INELIGIBLE",
+                    )
+            if change.action == "clear" and not _prompt_explicitly_requests_clear(
+                command.prompt
+            ):
+                raise ValidationException(
+                    "A meal replacement cannot leave a slot empty; no eligible recipe was returned",
+                    error_code="AI_OUTPUT_INCOMPLETE",
+                )
+            if new_recipe_id == current.recipe_id:
+                continue
             proposed[plan.slots.index(current)] = current.__class__(
                 id=current.id,
                 day_index=current.day_index,
@@ -337,8 +586,8 @@ class WeeklyMealPlanService:
             user_id=plan.user_id,
             week_start_date=plan.week_start_date,
             status=plan.status,
-            people=plan.people,
-            preferences=plan.preferences,
+            people=proposal_preferences.people,
+            preferences=proposal_preferences,
             timezone=plan.timezone,
             slots=tuple(proposed),
             daily_calories=plan.daily_calories,
@@ -348,31 +597,48 @@ class WeeklyMealPlanService:
             created_at=plan.created_at,
             updated_at=plan.updated_at,
         )
+        if target is None and _hard_preferences_changed(plan.preferences, preferences):
+            self._validate_proposed_hard_preferences(
+                proposed_plan.slots, meals, preferences
+            )
+        _validate_proposal_outcome(
+            plan=plan,
+            proposed_slots=proposed_plan.slots,
+            changes=changes,
+            target=target,
+            prompt=command.prompt,
+            proposal_preferences=proposal_preferences,
+        )
+        explanation = response.explanation
+        if proposal_preferences != plan.preferences:
+            explanation = (
+                f"{explanation} Confirming saves these preferences for this week; "
+                "your profile preferences are unchanged."
+            )
         return WeeklyPlanAiProposal(
             base_revision=plan.revision,
-            explanation=response.explanation,
+            explanation=explanation,
             diff_summary=f"{len(changes)} meals changed",
             proposed_plan=proposed_plan,
             slot_changes=tuple(changes),
+            proposed_groceries=self.grocery_service.project(proposed_plan, meals),
         )
 
-    async def _validate_recipe_ids(
-        self, uow, slots: dict[tuple[int, int], str | None] | None
-    ) -> None:
-        if not slots:
-            return
-        for (day_index, slot_index), recipe_id in slots.items():
-            if day_index not in range(7) or slot_index not in range(2):
+    def _validate_proposed_hard_preferences(self, slots, meals, preferences) -> None:
+        meals_by_id = {meal.id: meal for meal in meals}
+        for slot in slots:
+            if slot.is_logged or slot.recipe_id is None:
+                continue
+            meal = meals_by_id.get(slot.recipe_id)
+            if meal is None or not self.generator.is_hard_eligible(meal, preferences):
                 raise ValidationException(
-                    "slot coordinate is invalid", error_code="WEEKLY_SLOT_INVALID"
+                    "preference change would leave an unlogged meal in conflict",
+                    error_code="PLAN_PREFERENCE_CONFLICT",
                 )
-            if (
-                recipe_id is not None
-                and await uow.catalog_recipes.get_meal(recipe_id) is None
-            ):
+            if not self.generator.supports_slot(meal, slot.slot_index):
                 raise ValidationException(
-                    "recipe_id is not an active catalog recipe",
-                    error_code="RECIPE_NOT_FOUND",
+                    "preference change would leave a meal in the wrong slot",
+                    error_code="PLAN_PREFERENCE_CONFLICT",
                 )
 
     @staticmethod
@@ -391,9 +657,29 @@ class WeeklyMealPlanService:
 
 def _fingerprint(command) -> str:
     payload = {
-        key: value for key, value in vars(command).items() if key != "idempotency_key"
+        key: _fingerprint_value(value)
+        for key, value in vars(command).items()
+        if key != "idempotency_key"
     }
     return canonicalize_fingerprint(payload)
+
+
+def _fingerprint_value(value):
+    if isinstance(value, dict):
+        return {
+            (
+                ":".join(str(part) for part in key) if isinstance(key, tuple) else key
+            ): _fingerprint_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)) and not isinstance(value, str):
+        return [_fingerprint_value(item) for item in value]
+    if hasattr(value, "__dataclass_fields__"):
+        return {
+            field: _fingerprint_value(getattr(value, field))
+            for field in value.__dataclass_fields__
+        }
+    return value
 
 
 def _revision_key(revision) -> str:
@@ -407,23 +693,446 @@ def _revision_key(revision) -> str:
     )
 
 
+def _hard_preferences_changed(
+    before: WeeklyMealPlanPreferences, after: WeeklyMealPlanPreferences
+) -> bool:
+    return (
+        before.diet != after.diet
+        or before.dislikes != after.dislikes
+        or before.allergies != after.allergies
+    )
+
+
+def _no_eligible_replacement() -> ValidationException:
+    return ValidationException(
+        "No eligible replacement is available for this meal. Try another preference or choose a recipe manually.",
+        error_code="AI_NO_ELIGIBLE_REPLACEMENT",
+    )
+
+
+def _target_response_is_noop(changes, target, current_recipe_id) -> bool:
+    if not changes:
+        return True
+    return (
+        len(changes) == 1
+        and (changes[0].day_index, changes[0].slot_index) == target
+        and changes[0].action == "replace"
+        and changes[0].new_recipe_id == current_recipe_id
+    )
+
+
+def _requested_catalog_recipe(prompt: str, meals):
+    normalized_prompt = _normalize_recipe_request(prompt)
+    if not normalized_prompt:
+        return None
+    prompt_text = f" {normalized_prompt} "
+    matches = [
+        meal
+        for meal in meals
+        if (normalized_name := _normalize_recipe_request(meal.name))
+        and _has_non_excluded_recipe_mention(prompt_text, normalized_name)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _has_non_excluded_recipe_mention(prompt_text: str, normalized_name: str) -> bool:
+    pattern = re.compile(rf"(?<![a-z0-9]){re.escape(normalized_name)}(?![a-z0-9])")
+    for match in pattern.finditer(prompt_text):
+        prefix = prompt_text[: match.start()]
+        if re.search(
+            r"\b(?:no|not|never|avoid|without|except|other than|instead of|do not|don t)"
+            r"(?:\s+(?:to|want|use|choose|select|suggest|recommend|include|serve|eat))*\s*$",
+            prefix,
+        ):
+            continue
+        return True
+    return False
+
+
+def _normalize_recipe_request(value: str) -> str:
+    folded = (
+        unicodedata.normalize("NFKD", value)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .casefold()
+    )
+    return " ".join(re.findall(r"[a-z0-9]+", folded))
+
+
+def _profile_values(profile, field: str) -> tuple[str, ...]:
+    values = getattr(profile, field, None) if profile is not None else None
+    if not isinstance(values, (list, tuple, set)):
+        return ()
+    return tuple(
+        sorted(
+            {
+                _normalize_preference_text(value)
+                for value in values
+                if _normalize_preference_text(value)
+            }
+        )
+    )
+
+
+def _normalize_preference_text(value: object) -> str:
+    return (
+        unicodedata.normalize("NFKD", str(value))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .casefold()
+        .replace("_", " ")
+        .replace("-", " ")
+        .strip()
+    )
+
+
+def _with_profile_context(
+    plan_preferences,
+    request_preferences,
+    profile,
+    meals,
+    *,
+    request_explicitly_sets_diet: bool,
+    known_allergen_codes: tuple[str, ...] = (),
+):
+    # Saved profile diets are advisory context; strict diet constraints live in
+    # plan preferences or explicit requests parsed by _preferences_from_prompt.
+    profile_dietary_preferences = _profile_values(profile, "dietary_preferences")
+
+    allergies = set(request_preferences.allergies)
+    allergies.update(
+        _profile_allergy_codes(
+            _profile_values(profile, "allergies"), meals, known_allergen_codes
+        )
+    )
+    diet = request_preferences.diet
+    if (
+        plan_preferences.diet == "any"
+        and not request_explicitly_sets_diet
+        and diet == "any"
+    ):
+        if "vegetarian" in profile_dietary_preferences:
+            diet = "vegetarian"
+        elif "no pork" in profile_dietary_preferences:
+            diet = "no-pork"
+    return (
+        WeeklyMealPlanPreferences(
+            people=request_preferences.people,
+            diet=diet,
+            cooking_time=request_preferences.cooking_time,
+            cuisine=request_preferences.cuisine,
+            dislikes=request_preferences.dislikes,
+            allergies=tuple(sorted(allergies)),
+        ),
+        profile_dietary_preferences,
+    )
+
+
+def _profile_allergy_codes(
+    values: tuple[str, ...], meals, known_allergen_codes: tuple[str, ...] = ()
+) -> tuple[str, ...]:
+    known_codes = list(known_allergen_codes)
+    # Include observed codes for compatibility with catalog adapters that do not
+    # expose the global allergen reference.
+    for meal in meals:
+        for raw_code in getattr(meal, "allergen_codes", ()):
+            code = str(raw_code).strip()
+            if code:
+                known_codes.append(code)
+    resolved = resolve_allergen_preferences(values, known_codes)
+    if resolved is None:
+        raise ValidationException(
+            "A saved allergy cannot be checked against the available recipe data",
+            error_code="AI_PROFILE_ALLERGY_UNSUPPORTED",
+        )
+    return resolved
+
+
+def _validate_proposal_outcome(
+    *, plan, proposed_slots, changes, target, prompt: str, proposal_preferences
+) -> None:
+    if any(
+        change["action"] == "clear" for change in changes
+    ) and not _prompt_explicitly_requests_clear(prompt):
+        raise ValidationException(
+            "A replacement proposal cannot leave a meal slot empty",
+            error_code="AI_OUTPUT_INCOMPLETE",
+        )
+    if target is not None and not any(
+        (change["day_index"], change["slot_index"]) == target
+        and change["action"] == "replace"
+        for change in changes
+    ):
+        raise _no_eligible_replacement()
+    if target is None and not changes and proposal_preferences == plan.preferences:
+        raise ValidationException(
+            "No meal changes were proposed. The plan may already match that request.",
+            error_code="AI_NO_CHANGES",
+        )
+    if _prompt_requires_unique_recipes(prompt):
+        if target is not None:
+            target_slot = next(
+                slot
+                for slot in proposed_slots
+                if (slot.day_index, slot.slot_index) == target
+            )
+            if target_slot.recipe_id is not None and any(
+                slot.recipe_id == target_slot.recipe_id
+                for slot in proposed_slots
+                if (slot.day_index, slot.slot_index) != target
+            ):
+                raise ValidationException(
+                    "The available recipes cannot satisfy the no-repeat request for this meal",
+                    error_code="AI_CONSTRAINT_UNSATISFIED",
+                )
+            return
+        seen: set[str] = set()
+        for slot in proposed_slots:
+            if slot.recipe_id is None:
+                continue
+            if slot.recipe_id in seen and not slot.is_logged:
+                raise ValidationException(
+                    "The available recipes cannot satisfy the no-repeat request for this plan",
+                    error_code="AI_CONSTRAINT_UNSATISFIED",
+                )
+            seen.add(slot.recipe_id)
+
+
+def _prompt_requires_unique_recipes(prompt: str) -> bool:
+    lowered = _normalize_preference_text(prompt)
+    return bool(
+        re.search(
+            r"\b(?:no|without|avoid)\s+(?:any\s+)?repeats?\b|\bdo not repeat\b|\bdon t repeat\b",
+            lowered,
+        )
+    )
+
+
+def _prompt_explicitly_requests_clear(prompt: str) -> bool:
+    lowered = _normalize_preference_text(prompt)
+    lowered = re.sub(
+        r"\b(?:dont|do not|never)\s+(?:clear|remove|delete)\b", "", lowered
+    )
+    return bool(
+        re.search(
+            r"\b(?:clear|remove|delete)\s+(?:the\s+)?(?:meal|slot|lunch|dinner|it|this)\b|\bopen slot\b|\bleave\b.{0,20}\b(?:open|empty)\b|bo trong|xoa bua",
+            lowered,
+        )
+    )
+
+
 def _preferences_from_prompt(
-    current: WeeklyMealPlanPreferences, prompt: str
+    current: WeeklyMealPlanPreferences,
+    prompt: str,
+    meals=(),
+    known_allergen_codes: tuple[str, ...] = (),
 ) -> WeeklyMealPlanPreferences:
-    lowered = prompt.casefold()
+    lowered = (
+        unicodedata.normalize("NFKD", prompt)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .casefold()
+    )
+    says_vegan = bool(re.search(r"\bvegan\b", lowered)) and not bool(
+        re.search(r"\b(?:not|is not|isn't|never)\s+vegan\b", lowered)
+    )
+    if says_vegan:
+        raise ValidationException(
+            "Vegan preferences are not supported yet; choose vegetarian or another available option",
+            error_code="AI_PREFERENCE_UNSUPPORTED",
+        )
+    says_vegetarian = any(
+        re.search(rf"\b{re.escape(term)}\b", lowered)
+        for term in ("vegetarian", "meat-free", "meatless", "chay")
+    )
+    says_no_pork = any(
+        term in lowered
+        for term in (
+            "no pork",
+            "without pork",
+            "avoid pork",
+            "khong an thit heo",
+            "khong heo",
+            "khong lon",
+        )
+    )
     diet = (
-        "vegetarian" if "vegetarian" in lowered or "chay" in lowered else current.diet
+        "vegetarian"
+        if says_vegetarian
+        else "no-pork"
+        if says_no_pork and current.diet != "vegetarian"
+        else current.diet
     )
     cooking_time = (
         "30"
-        if "30" in lowered or "quick" in lowered or "nhanh" in lowered
+        if "30" in lowered
+        or "quick" in lowered
+        or "fast" in lowered
+        or "nhanh" in lowered
         else current.cooking_time
     )
+    allergies = set(current.allergies)
+    allergy_statement = _has_positive_allergy_statement(lowered)
+    allergen_codes = {
+        str(code).strip()
+        for meal in meals
+        for code in getattr(meal, "allergen_codes", ())
+    }
+    allergen_codes.update(str(code).strip() for code in known_allergen_codes)
+    allergen_codes.update(
+        {
+            "peanut",
+            "tree_nut",
+            "milk",
+            "egg",
+            "soy",
+            "wheat",
+            "gluten",
+            "fish",
+            "shellfish",
+            "sesame",
+        }
+    )
+    if allergy_statement:
+        resolved_allergies: set[str] = set()
+        allergy_subjects = _explicit_allergy_subjects(lowered)
+        if not allergy_subjects:
+            raise ValidationException(
+                "A requested allergy cannot be checked against the available recipe data",
+                error_code="AI_PREFERENCE_ALLERGY_UNSUPPORTED",
+            )
+        for subject in allergy_subjects:
+            resolved = resolve_allergen_preferences((subject,), allergen_codes)
+            if resolved is None:
+                raise ValidationException(
+                    "A requested allergy cannot be checked against the available recipe data",
+                    error_code="AI_PREFERENCE_ALLERGY_UNSUPPORTED",
+                )
+            resolved_allergies.update(resolved)
+        if not resolved_allergies:
+            raise ValidationException(
+                "A requested allergy cannot be checked against the available recipe data",
+                error_code="AI_PREFERENCE_ALLERGY_UNSUPPORTED",
+            )
+        allergies.update(resolved_allergies)
+    dislikes = set(current.dislikes)
+    ingredient_terms = {
+        ingredient.display_name.strip().casefold()
+        for meal in meals
+        for ingredient in getattr(meal, "ingredients", ())
+        if ingredient.display_name and len(ingredient.display_name.strip()) <= 80
+    }
+    ingredient_terms.update(allergen_codes)
+    for term in ingredient_terms:
+        variants = {term, f"{term}s" if not term.endswith("s") else term[:-1]}
+        for variant in variants:
+            if re.search(
+                rf"\b(?:no|without|avoid|exclude|skip|leave out|free of)\s+(?:any\s+)?{re.escape(variant)}\b|\b{re.escape(variant)}[- ]free\b",
+                lowered,
+            ):
+                dislikes.add(term)
+                break
     return WeeklyMealPlanPreferences(
         people=current.people,
         diet=diet,
         cooking_time=cooking_time,
         cuisine=current.cuisine,
-        dislikes=current.dislikes,
-        allergies=current.allergies,
+        dislikes=tuple(sorted(dislikes)),
+        allergies=tuple(sorted(allergies)),
+    )
+
+
+def _explicit_allergy_subjects(prompt: str) -> tuple[str, ...]:
+    parsed: list[str] = []
+    subject_matches = [
+        (match.start(), match.group(1), True)
+        for match in re.finditer(
+            r"\ballerg(?:ic|y|ies)\s+(?:(?:to|for|is|are|include|includes)\s+)?([^.!?;]+)",
+            prompt,
+        )
+    ]
+    subject_matches.extend(
+        (match.end() - len("allergy"), match.group(1), True)
+        for match in re.finditer(r"\b((?:[a-z0-9_'-]+\s+){1,6})allergy\b", prompt)
+    )
+    subject_matches.extend(
+        (match.start(), match.group(1), True)
+        for match in re.finditer(r"\ballergy\s*(?::|is)\s*([^.!?;]+)", prompt)
+    )
+    subject_matches.extend(
+        (match.start(1), match.group(1), False)
+        for match in _NO_ALLERGY_EXCEPTION_PATTERN.finditer(prompt)
+    )
+    for allergy_position, subject, check_negation in subject_matches:
+        if check_negation and _is_negated_allergy_mention(prompt, allergy_position):
+            continue
+        cleaned = re.sub(r"^(?:i am|i'm|i have|i've got|my)\s+", "", subject.strip())
+        cleaned = re.sub(r"^(?:a|an|the|food)\s+", "", cleaned)
+        for part in re.split(r"\s*(?:,|;|\band\b|\bor\b|\bbut\b)\s*", cleaned):
+            part = re.sub(r"^(?:and|or|but)\s+", "", part.strip())
+            if re.match(
+                r"^(?:but|please|so|because|avoid|no|not|without|change|switch|make|give|show|find|replace|recommend|suggest|prefer|like|enjoy|hate|dislike|could|can|don't like|do not like|don't want|do not want|don't eat|do not eat|i am|i'm|i have|i've got|i want|i prefer|i like|i enjoy|i hate|i dislike|i don't like|i do not like|i don't want|i do not want|i don't eat|i do not eat|i avoid|i would|i'd like|i can|i will|i need|i can't stand|i cannot stand)\b",
+                part,
+            ):
+                break
+            if part:
+                parsed.append(part)
+    return tuple(parsed)
+
+
+def _has_positive_allergy_statement(prompt: str) -> bool:
+    return bool(_NO_ALLERGY_EXCEPTION_PATTERN.search(prompt)) or any(
+        not _is_negated_allergy_mention(prompt, match.start())
+        for match in re.finditer(r"\ballerg(?:ic|y|ies)\b", prompt)
+    )
+
+
+def _is_negated_allergy_mention(prompt: str, position: int) -> bool:
+    prefix = prompt[:position]
+    boundaries = [
+        match.end() for match in re.finditer(r"[.!?;]|\b(?:but|and)\b", prefix)
+    ]
+    clause_prefix = prefix[max(boundaries, default=0) :]
+    return bool(
+        re.search(
+            r"\b(?:not|isn't|is\s+not|never|no\s+longer|no|don't\s+have|do\s+not\s+have)(?:\s+\w+){0,2}\s*$",
+            clause_prefix,
+        )
+    )
+
+
+_NO_ALLERGY_EXCEPTION_PATTERN = re.compile(
+    r"\b(?:no\s+allerg(?:y|ies)|(?:don't|do\s+not)\s+have\s+(?:any\s+)?allerg(?:y|ies))\b"
+    r"\s*(?:,|;)?\s*(?:except(?:\s+for)?|other\s+than|besides)\s+([^.!?;]+)"
+)
+
+
+def _target_coordinate(command: AiAdjustMealPlanCommand) -> tuple[int, int] | None:
+    day_index = command.target_day_index
+    slot_index = command.target_slot_index
+    if (day_index is None) != (slot_index is None):
+        raise ValidationException(
+            "Target day and meal slot must be provided together",
+            error_code="AI_TARGET_INVALID",
+        )
+    if day_index is None or slot_index is None:
+        return None
+    try:
+        ensure_slot_coordinate(day_index, slot_index)
+    except ValueError as exc:
+        raise ValidationException(
+            "Target meal slot is invalid", error_code="AI_TARGET_INVALID"
+        ) from exc
+    return (day_index, slot_index)
+
+
+def _slot_with_recipe(slot, recipe_id):
+    return slot.__class__(
+        id=slot.id,
+        day_index=slot.day_index,
+        slot_index=slot.slot_index,
+        recipe_id=recipe_id,
+        is_logged=slot.is_logged,
+        logged_meal_id=slot.logged_meal_id,
+        version=slot.version,
     )

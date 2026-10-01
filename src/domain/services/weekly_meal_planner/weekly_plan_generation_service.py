@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    normalize_allergen_code,
     recipe_excluded_by_allergen,
 )
 from src.domain.services.weekly_meal_planner.recipe_publication import (
@@ -52,20 +54,28 @@ class WeeklyPlanGenerationService:
 
         target = max(1, round(daily_calories / 2))
         result: list[GeneratedSlot] = []
+        used_counts: dict[str, int] = {}
         for day in range(7):
+            day_used: set[str] = set()
             for slot in range(2):
                 eligible = [
                     meal for meal in candidates if self._supports_slot(meal, slot)
                 ]
-                pool = eligible or candidates
+                if not eligible:
+                    result.append(GeneratedSlot(day, slot, None))
+                    continue
                 selected = min(
-                    pool,
+                    eligible,
                     key=lambda meal: (
+                        1 if meal.id in day_used else 0,
+                        used_counts.get(meal.id, 0),
                         abs(meal.calories - target),
                         self._stable_rank(meal, user_id, week_start_date, day, slot),
                         meal.id,
                     ),
                 )
+                used_counts[selected.id] = used_counts.get(selected.id, 0) + 1
+                day_used.add(selected.id)
                 result.append(GeneratedSlot(day, slot, selected.id))
         return tuple(result)
 
@@ -75,13 +85,21 @@ class WeeklyPlanGenerationService:
         preferences: WeeklyMealPlanPreferences,
     ) -> bool:
         haystack = _haystack(meal)
+        if _is_non_meal_recipe(meal):
+            return False
         if "lunch" not in meal.meal_types and "dinner" not in meal.meal_types:
             return False
         if preferences.diet == "vegetarian" and _contains_any(haystack, _MEAT_WORDS):
             return False
         if preferences.diet == "no-pork" and _contains_any(haystack, _PORK_WORDS):
             return False
-        if any(dislike in haystack for dislike in preferences.dislikes):
+        if any(dislike.casefold() in haystack for dislike in preferences.dislikes):
+            return False
+        meal_allergens = {normalize_allergen_code(code) for code in meal.allergen_codes}
+        if any(
+            normalize_allergen_code(dislike) in meal_allergens
+            for dislike in preferences.dislikes
+        ):
             return False
         if not is_planner_eligible(
             publication_status=meal.publication_status,
@@ -93,6 +111,27 @@ class WeeklyPlanGenerationService:
         if recipe_excluded_by_allergen(meal.allergen_codes, preferences.allergies):
             return False
         return True
+
+    def is_hard_eligible(
+        self,
+        meal: CatalogMeal,
+        preferences: WeeklyMealPlanPreferences,
+    ) -> bool:
+        """Expose the generation hard-filter for externally proposed swaps."""
+        return self._hard_eligible(meal, preferences)
+
+    def is_soft_eligible(
+        self,
+        meal: CatalogMeal,
+        preferences: WeeklyMealPlanPreferences,
+    ) -> bool:
+        """Check cuisine and cooking-time preferences for candidate ranking."""
+        return self._soft_eligible(meal, preferences)
+
+    @staticmethod
+    def supports_slot(meal: CatalogMeal, slot_index: int) -> bool:
+        """Return whether a catalog meal is suitable for lunch or dinner."""
+        return WeeklyPlanGenerationService._supports_slot(meal, slot_index)
 
     @staticmethod
     def _soft_eligible(
@@ -144,9 +183,82 @@ _MEAT_WORDS = frozenset(
         "bò",
         "cá",
         "tôm",
+        "tép",
+        "mực",
+        "sườn",
+        "heo",
+        "lợn",
+        "ba chỉ",
+        "cua",
+        "ốc",
+        "nghêu",
+        "sò",
+        "hàu",
+        "prawn",
+        "squid",
+        "octopus",
+        "crab",
+        "clam",
+        "oyster",
+        "seafood",
+        "oyster sauce",
+        "dầu hào",
     }
 )
 _PORK_WORDS = frozenset({"pork", "ham", "bacon", "sausage", "thịt heo", "thịt lợn"})
+_NON_MEAL_TITLE_WORDS = frozenset(
+    {
+        "beverage",
+        "cocktail",
+        "mocktail",
+        "drink",
+        "smoothie",
+        "juice",
+        "lemonade",
+        "milkshake",
+        "latte",
+        "soda",
+        "bingsu",
+        "pudding",
+        "dessert",
+        "ice cream",
+        "gelato",
+        "cheesecake",
+        "brownie",
+        "french toast",
+        "milo cube",
+        "bánh khoai mỡ",
+        "bánh tuyết",
+        "bắp rang",
+        "popcorn",
+        "bánh mì dẹt",
+        "flatbread",
+        "bánh con sùng",
+        "con sùng",
+        "muối chua",
+        "mẹo",
+        "sinh tố",
+        "nước ép",
+        "nước chanh",
+        "đá chanh",
+        "trà sữa",
+        "sữa macca",
+        "sữa",
+        "pha chế",
+        "bánh mì nướng quế",
+        "panna cotta",
+        "chè",
+        "cà phê",
+        "cafe",
+        "bài thuốc",
+        "thuốc trị",
+        "trị ho",
+        "cough remedy",
+        "herbal remedy",
+        "medicine",
+        "medicinal treatment",
+    }
+)
 
 
 def _haystack(meal: CatalogMeal) -> str:
@@ -156,7 +268,19 @@ def _haystack(meal: CatalogMeal) -> str:
 
 
 def _contains_any(value: str, words: Iterable[str]) -> bool:
-    return any(word in value for word in words)
+    return any(
+        re.search(rf"(?<!\w){re.escape(word)}(?!\w)", value) is not None
+        for word in words
+    )
+
+
+def _is_non_meal_recipe(meal: CatalogMeal) -> bool:
+    return is_non_meal_title(meal.name, meal.tag)
+
+
+def is_non_meal_title(title: str, tag: str | None = None) -> bool:
+    """Identify catalog titles that should not be offered as lunch or dinner."""
+    return _contains_any(f"{title} {tag or ''}".casefold(), _NON_MEAL_TITLE_WORDS)
 
 
 def _total_minutes(meal: CatalogMeal) -> int:

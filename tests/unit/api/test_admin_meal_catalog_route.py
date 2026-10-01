@@ -113,6 +113,22 @@ def test_generate_image_rejects_existing_image(monkeypatch):
     assert response.status_code == 409
 
 
+def test_generate_image_overwrites_existing_image_when_force_true(monkeypatch):
+    repository = _Repository(row=_row(image_url="https://old.test/x.jpg"))
+    generator = SimpleNamespace(
+        generate_url=AsyncMock(return_value="https://img.test/pho-new.jpg")
+    )
+    client = _client(repository, generator=generator)
+
+    response = client.post("/v1/admin/meal-catalog/catalog-1/generate-image?force=true")
+
+    assert response.status_code == 200
+    assert response.json()["image_url"] == "https://img.test/pho-new.jpg"
+    assert repository.saved_image_url == "https://img.test/pho-new.jpg"
+    generator.generate_url.assert_awaited_once()
+    repository.commit.assert_awaited_once()
+
+
 def test_admin_gate_is_required_for_catalog_view(monkeypatch):
     from src.api.dependencies import auth as auth_dep
 
@@ -159,13 +175,16 @@ class _Repository:
     async def get_meal_row(self, catalog_id):
         return self.row
 
-    async def set_missing_image_url(self, catalog_id, image_url):
+    async def set_image_url(self, catalog_id, image_url, *, force=False):
         if not self.write_succeeds:
             return False
         self.saved_image_url = image_url
         if self.row is not None:
             self.row.image_url = image_url
         return True
+
+    async def set_missing_image_url(self, catalog_id, image_url):
+        return await self.set_image_url(catalog_id, image_url, force=False)
 
     async def get_meal(self, catalog_id):
         return _projection(image_url=self.saved_image_url)

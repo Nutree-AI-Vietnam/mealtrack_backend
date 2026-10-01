@@ -64,9 +64,10 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
     ],
     ModelPurpose.GENERAL: [DEFAULT_OPENAI_MODEL],
     # ==========================================================================
-    # RECIPE TASKS: OpenAI fallback when CF text is configured
+    # RECIPE TASKS: Luna primary with the general OpenAI model as fallback.
     # ==========================================================================
     ModelPurpose.RECIPE: [
+        DEFAULT_PARSE_TEXT_MODEL,
         DEFAULT_OPENAI_MODEL,
     ],
 }
@@ -135,15 +136,25 @@ class AIModelManager:
             or DEFAULT_PARSE_TEXT_MODEL
         )
         self._providers["openai"] = openai
+        self._model_provider_overrides[DEFAULT_OPENAI_MODEL] = "openai"
+        self._model_provider_overrides[DEFAULT_PARSE_TEXT_MODEL] = "openai"
         self._model_provider_overrides[settings.OPENAI_TEXT_MODEL] = "openai"
         self._model_provider_overrides[settings.OPENAI_VISION_MODEL] = "openai"
         self._model_provider_overrides[parse_text_model] = "openai"
 
         self._append_model_for_purposes(
             settings.OPENAI_TEXT_MODEL,
-            TEXT_PURPOSES - {ModelPurpose.PARSE_TEXT},
+            TEXT_PURPOSES - {ModelPurpose.PARSE_TEXT, ModelPurpose.RECIPE},
             remove_models={DEFAULT_OPENAI_MODEL, settings.OPENAI_TEXT_MODEL},
         )
+        if settings.OPENAI_TEXT_MODEL != DEFAULT_PARSE_TEXT_MODEL:
+            recipe_chain = self._fallback_chains[ModelPurpose.RECIPE]
+            if DEFAULT_OPENAI_MODEL in recipe_chain:
+                recipe_chain[recipe_chain.index(DEFAULT_OPENAI_MODEL)] = (
+                    settings.OPENAI_TEXT_MODEL
+                )
+            elif settings.OPENAI_TEXT_MODEL not in recipe_chain:
+                recipe_chain.append(settings.OPENAI_TEXT_MODEL)
         self._prepend_model_for_purposes(
             parse_text_model,
             {ModelPurpose.PARSE_TEXT},
@@ -233,7 +244,7 @@ class AIModelManager:
         }
         for purpose in ModelPurpose:
             if purpose.value in configured:
-                if purpose == ModelPurpose.PARSE_TEXT:
+                if purpose in {ModelPurpose.PARSE_TEXT, ModelPurpose.RECIPE}:
                     self._append_model_for_purposes(cf_model, {purpose})
                 else:
                     self._prepend_model_for_purposes(cf_model, {purpose})

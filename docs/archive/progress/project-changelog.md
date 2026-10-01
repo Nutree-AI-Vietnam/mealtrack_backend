@@ -3,6 +3,17 @@
 **Status:** Stateful release notes — archived; not evergreen product authority  
 **Evergreen route:** see `docs/codebase-summary.md` and root `README.md`
 
+## 2026-09-30
+
+### Fixed
+
+- Weekly plan nutrition readiness now requires all 21 micronutrients before a
+  recipe is marked ready. Partial cache rows are reclaimed and completed, and
+  incomplete estimates cannot block readiness silently.
+- Recipe micronutrient estimates now route to Luna first with an OpenAI fallback,
+  require numeric values for the full schema, and use the catalog's full-recipe
+  ingredient quantity basis so linked USDA values and AI estimates stay aligned.
+
 ## 2026-08-21
 
 ### Fixed

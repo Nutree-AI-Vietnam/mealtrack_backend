@@ -229,10 +229,7 @@ class Settings(BaseSettings):
     REVENUECAT_SECRET_API_KEY: str | None = Field(default=None)
     REVENUECAT_WEBHOOK_SECRET: str | None = Field(default=None)
     WEB_FUNNEL_REVENUECAT_ENVIRONMENT: str = Field(default="")
-    WEB_FUNNEL_REDEMPTION_ENABLED: bool = Field(default=False)
-    WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED: bool = Field(default=True)
     WEB_FUNNEL_LEGACY_CLAIM_ENABLED: bool = Field(default=False)
-    WEB_FUNNEL_SILENT_LOGIN_ENABLED: bool = Field(default=False)
     WEB_FUNNEL_CLAIM_LINK_BASE_URL: str = Field(default="")
     WEB_FUNNEL_BFF_ORIGIN: str = Field(default="")
     WEB_FUNNEL_BFF_SHARED_SECRET: str = Field(default="")
@@ -243,7 +240,11 @@ class Settings(BaseSettings):
     # Image storage provider configuration
     IMAGE_STORE_PROVIDER: str = Field(
         default="cloudflare",
-        description="Image storage provider: 'cloudflare' or 'cloudinary'",
+        description="Image storage provider: 'cloudflare', 'cloudinary', or 'local'",
+    )
+    LOCAL_IMAGE_STORE_BASE_URL: str = Field(
+        default="http://localhost:8000",
+        description="Base URL for local image store delivery",
     )
     CLOUDFLARE_ACCOUNT_HASH: str = Field(
         default="",

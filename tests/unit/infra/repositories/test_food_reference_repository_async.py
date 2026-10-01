@@ -1,3 +1,4 @@
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -204,6 +205,57 @@ async def test_catalog_approval_rejects_invalid_reference_before_flag_write():
 
 
 @pytest.mark.asyncio
+async def test_update_usda_micronutrients_fills_only_missing_fields():
+    row = _food_row(verified=True)
+    row.fdc_id = 12345
+    row.extra_nutrients = {
+        "vitamin_c": {"amount": 5.0, "unit": "mg"},
+    }
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncFoodReferenceRepository(session)
+    repo._sync_normalized_children = AsyncMock()
+
+    updated = await repo.update_usda_micronutrients(
+        7,
+        12345,
+        {
+            "vitamin_c": {"amount": 53.2, "unit": "mg"},
+            "iron": {"amount": 0.1, "unit": "mg"},
+        },
+    )
+
+    assert updated is True
+    assert row.extra_nutrients == {
+        "vitamin_c": {"amount": 5.0, "unit": "mg"},
+        "iron": {"amount": 0.1, "unit": "mg", "source": "usda_fdc"},
+    }
+    repo._sync_normalized_children.assert_awaited_once_with(
+        row, {"extra_nutrients": row.extra_nutrients}
+    )
+    assert row.protein_100g == 2.7
+    assert row.carbs_100g == 28.0
+    assert row.fat_100g == 0.3
+
+
+@pytest.mark.asyncio
+async def test_update_usda_micronutrients_does_not_write_when_values_are_known():
+    row = _food_row(verified=True)
+    row.fdc_id = 12345
+    row.extra_nutrients = {"iron": {"amount": 2.0, "unit": "mg"}}
+    session = _AsyncSession([_Result(one=row)])
+    repo = AsyncFoodReferenceRepository(session)
+    repo._sync_normalized_children = AsyncMock()
+
+    updated = await repo.update_usda_micronutrients(
+        7, 12345, {"iron": {"amount": 9.0, "unit": "mg"}}
+    )
+
+    assert updated is False
+    assert row.extra_nutrients == {"iron": {"amount": 2.0, "unit": "mg"}}
+    repo._sync_normalized_children.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_verified_normalized_upsert_rejects_invalid_reference():
     session = _AsyncSession([_Result(rows=[])])
     repo = AsyncFoodReferenceRepository(session)
@@ -235,6 +287,29 @@ async def test_get_nutrition_projection_returns_typed_food_reference_projection(
     assert result.is_verified is True
     assert result.protein_100g == pytest.approx(2.7)
     assert "food_reference.id" in str(session.statement)
+
+
+@pytest.mark.asyncio
+async def test_get_nutrition_projections_skips_null_and_deduplicates_ids():
+    row = _food_row(verified=True)
+    session = _AsyncSession([_Result(rows=[row])])
+    repo = AsyncFoodReferenceRepository(session)
+
+    result = await repo.get_nutrition_projections(cast(list[int], [None, 7, 7]))
+
+    assert set(result) == {7}
+    assert "food_reference.id IN" in str(session.statement)
+
+
+@pytest.mark.asyncio
+async def test_batch_reference_lookups_skip_invalid_ids_without_querying():
+    session = _AsyncSession([])
+    repo = AsyncFoodReferenceRepository(session)
+    invalid_ids = cast(list[int], [None, 0, -1, "not-an-id"])
+
+    assert await repo.get_nutrition_projections(invalid_ids) == {}
+    assert await repo.get_by_ids(invalid_ids) == []
+    assert session.statement is None
 
 
 @pytest.mark.asyncio

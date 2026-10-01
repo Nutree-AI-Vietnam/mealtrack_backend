@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
-from src.domain.model.meal_recommendation.catalog_recipe import CatalogMeal
+from src.domain.model.meal_recommendation.catalog_recipe import (
+    CatalogMeal,
+    normalize_catalog_ingredient_category,
+)
 
 MAX_CATALOG_POPULARITY_RANK = 2_147_483_647
 
@@ -20,6 +25,13 @@ class CatalogMealSeedIngredientWrite:
     unit: str
     category: str = "pantry"
     food_reference_id: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "category",
+            normalize_catalog_ingredient_category(self.category),
+        )
 
 
 @dataclass(frozen=True)
@@ -47,6 +59,7 @@ class CatalogMealSeedWrite:
     serving_source: str | None = None
     serving_confidence: str = "unknown"
     steps: tuple[tuple[int, str, str], ...] = ()
+    nutrition: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +104,10 @@ class CatalogMealRepositoryPort(ABC):
     """Read/write contract for catalog meals during the rework."""
 
     @abstractmethod
+    async def list_allergen_codes(self) -> list[str]:
+        """Return canonical codes from the global allergen reference."""
+
+    @abstractmethod
     async def list_active_meals(
         self,
         *,
@@ -121,8 +138,57 @@ class CatalogMealRepositoryPort(ABC):
         """Return one active catalog meal."""
 
     @abstractmethod
+    async def get_meals(self, catalog_meal_ids: Iterable[str]) -> list[CatalogMeal]:
+        """Return active catalog meals for a bounded set of IDs."""
+
+    @abstractmethod
     async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
         """Return one active catalog meal with ordered detail steps."""
+
+    @abstractmethod
+    async def get_micronutrient_enrichment(
+        self, *, catalog_meal_id: str, content_hash: str
+    ) -> dict | None:
+        """Return a cached micronutrient estimate for one recipe revision."""
+
+    @abstractmethod
+    async def get_micronutrient_enrichment_status(
+        self, *, catalog_meal_id: str, content_hash: str
+    ) -> str | None:
+        """Return readiness, backoff, or lease state for an enrichment claim."""
+
+    @abstractmethod
+    async def claim_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        lease_seconds: int,
+    ) -> tuple[str, str | None]:
+        """Claim cold enrichment work and return a fencing token when claimed."""
+
+    @abstractmethod
+    async def save_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        claim_token: str,
+        micros: dict[str, float],
+        sources: dict[str, str],
+    ) -> bool:
+        """Save estimate only while the revision and claim token still match."""
+
+    @abstractmethod
+    async def fail_micronutrient_enrichment(
+        self,
+        *,
+        catalog_meal_id: str,
+        content_hash: str,
+        claim_token: str,
+        retry_seconds: int,
+    ) -> None:
+        """Release the claim and apply a bounded retry backoff."""
 
     @abstractmethod
     async def find_seed_existing(

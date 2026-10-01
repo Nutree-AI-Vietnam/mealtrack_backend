@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import pytest
+
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
@@ -58,6 +60,18 @@ def test_generation_covers_all_fourteen_weekly_coordinates_deterministically():
     assert {slot.recipe_id for slot in first} == {"tofu"}
 
 
+def test_generation_leaves_wrong_meal_type_slots_empty():
+    generated = WeeklyPlanGenerationService().generate(
+        [_meal("breakfast-only", "Oats", meal_types=("breakfast",))],
+        user_id="user-1",
+        week_start_date="2026-09-21",
+        daily_calories=1800,
+        preferences=WeeklyMealPlanPreferences(),
+    )
+
+    assert all(slot.recipe_id is None for slot in generated)
+
+
 def test_generation_leaves_slots_empty_when_hard_preference_has_no_match():
     meals = [_meal("chicken", "Chicken Bowl")]
     preferences = WeeklyMealPlanPreferences(diet="vegetarian")
@@ -72,3 +86,54 @@ def test_generation_leaves_slots_empty_when_hard_preference_has_no_match():
 
     assert len(result) == 14
     assert all(slot.recipe_id is None for slot in result)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Rosita cocktail",
+        "Ly đá chanh bạc hà",
+        "Sữa Macca",
+        "Sữa đậu xanh lá dứa",
+        "Chocolate tofu pudding",
+        "French toast with cinnamon",
+        "Bánh khoai mỡ chiên",
+        "Bánh tuyết thiên sứ",
+        "Bắp rang bơ",
+        "Latte hoa đậu biếc",
+        "Soda blue ocean",
+        "Bánh con sùng nước cốt dừa",
+    ],
+)
+def test_generation_excludes_beverages_and_desserts_from_main_meals(name):
+    generated = WeeklyPlanGenerationService().generate(
+        [_meal("not-a-main-meal", name)],
+        user_id="user-1",
+        week_start_date="2026-09-21",
+        daily_calories=2000,
+        preferences=WeeklyMealPlanPreferences(),
+    )
+
+    assert all(slot.recipe_id is None for slot in generated)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Mực một nắng",
+        "Tép muối xổi",
+        "Sườn chiên sả ớt",
+        "Cải thìa xào dầu hào",
+        "Tofu with shrimp",
+    ],
+)
+def test_vegetarian_generation_excludes_all_catalogued_seafood(name):
+    generated = WeeklyPlanGenerationService().generate(
+        [_meal("seafood", name)],
+        user_id="user-1",
+        week_start_date="2026-09-21",
+        daily_calories=2000,
+        preferences=WeeklyMealPlanPreferences(diet="vegetarian"),
+    )
+
+    assert all(slot.recipe_id is None for slot in generated)

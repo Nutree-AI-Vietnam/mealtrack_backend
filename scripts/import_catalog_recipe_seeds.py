@@ -34,7 +34,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--manifest",
-        default=str(Path(__file__).resolve().parent / "data" / "meal-recommendation-recipes.json"),
+        default=str(
+            Path(__file__).resolve().parent
+            / "data"
+            / "meal-recommendation-recipes.json"
+        ),
         help="Catalog recipe seed manifest JSON path.",
     )
     parser.add_argument(
@@ -91,6 +95,32 @@ def main() -> None:
             "from an unapproved source."
         ),
     )
+    parser.add_argument(
+        "--allow-unmapped-ingredients",
+        action="store_true",
+        default=True,
+        help="Allow ingredients without food_reference_id (default: True).",
+    )
+    parser.add_argument(
+        "--strict-food-reference",
+        action="store_true",
+        help="Disallow ingredients without food_reference_id.",
+    )
+    parser.add_argument(
+        "--skip-failed-recipes",
+        action="store_true",
+        help="Skip individual recipes that fail ingredient resolution and import only the clean ones.",
+    )
+    parser.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        help="Overwrite existing catalog recipes if content_hash differs.",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip recipes whose catalog_key already exists in the catalog.",
+    )
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest)
@@ -101,7 +131,9 @@ def main() -> None:
     with manifest_path.open("r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
-    expected_count = len(manifest.get("recipes", [])) if args.partial else args.expected_count
+    expected_count = (
+        len(manifest.get("recipes", [])) if args.partial else args.expected_count
+    )
     result = validate_catalog_seed_manifest(
         manifest,
         expected_recipe_count=expected_count,
@@ -132,8 +164,11 @@ def main() -> None:
     auto_resolve_threshold = (
         0.0
         if args.resolve_all_best_effort and args.auto_resolve_threshold is None
-        else (0.92 if args.auto_resolve_threshold is None else args.auto_resolve_threshold)
+        else (
+            0.92 if args.auto_resolve_threshold is None else args.auto_resolve_threshold
+        )
     )
+    allow_unmapped_ingredients = not args.strict_food_reference
     summary = asyncio.run(
         _run_import(
             manifest,
@@ -141,6 +176,10 @@ def main() -> None:
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=args.resolve_all_best_effort,
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            skip_failed_recipes=args.skip_failed_recipes,
+            overwrite_existing=args.overwrite_existing,
+            skip_existing=args.skip_existing,
         )
     )
     if args.resolver_report:
@@ -159,6 +198,7 @@ def main() -> None:
         print(f"- {error}", file=sys.stderr)
     print(f"db_import={'dry_run' if summary.dry_run else 'applied'}")
     print(f"inserted={summary.inserted}")
+    print(f"updated={summary.updated}")
     print(f"skipped_existing={summary.skipped_existing}")
     if not summary.is_successful:
         print("import=failed")
@@ -199,6 +239,10 @@ async def _run_import(
     approved_mappings: dict[str, int],
     auto_resolve_threshold: float,
     resolve_all_best_effort: bool,
+    allow_unmapped_ingredients: bool = True,
+    skip_failed_recipes: bool = False,
+    overwrite_existing: bool = False,
+    skip_existing: bool = False,
 ):
     async with AsyncUnitOfWork() as uow:
         if uow.session is None:
@@ -206,6 +250,35 @@ async def _run_import(
         await uow.session.execute(text("select 1"))
         catalog_repository = AsyncCatalogMealRepository(uow.session)
         food_reference_repository = AsyncFoodReferenceRepository(uow.session)
+
+        target_manifest = manifest
+        if skip_failed_recipes:
+            filter_importer = CatalogMealSeedImporter(
+                catalog_repository,
+                food_reference_repository,
+                dry_run=True,
+                approved_mappings=approved_mappings,
+                auto_resolve_threshold=auto_resolve_threshold,
+                resolve_all_best_effort=resolve_all_best_effort,
+                allow_unmapped_ingredients=allow_unmapped_ingredients,
+                overwrite_existing=overwrite_existing,
+                skip_existing=skip_existing,
+            )
+            clean_recipes = []
+            for idx, r in enumerate(manifest.get("recipes", [])):
+                try:
+                    prep = await filter_importer._prepare_recipe(r, idx)
+                    if prep is not None:
+                        clean_recipes.append(r)
+                except Exception:
+                    continue
+            print(
+                f"skip_failed_recipes: filtered {len(clean_recipes)} / {len(manifest.get('recipes', []))} clean recipes."
+            )
+            target_manifest = dict(manifest)
+            target_manifest["recipes"] = clean_recipes
+            target_manifest["expected_recipe_count"] = len(clean_recipes)
+
         preview = await CatalogMealSeedImporter(
             catalog_repository,
             food_reference_repository,
@@ -213,7 +286,10 @@ async def _run_import(
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
-        ).import_manifest(manifest)
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            overwrite_existing=overwrite_existing,
+            skip_existing=skip_existing,
+        ).import_manifest(target_manifest)
         if dry_run or not preview.is_successful:
             return preview
         summary = await CatalogMealSeedImporter(
@@ -223,7 +299,10 @@ async def _run_import(
             approved_mappings=approved_mappings,
             auto_resolve_threshold=auto_resolve_threshold,
             resolve_all_best_effort=resolve_all_best_effort,
-        ).import_manifest(manifest)
+            allow_unmapped_ingredients=allow_unmapped_ingredients,
+            overwrite_existing=overwrite_existing,
+            skip_existing=skip_existing,
+        ).import_manifest(target_manifest)
         if not summary.is_successful:
             await uow.rollback()
         return summary

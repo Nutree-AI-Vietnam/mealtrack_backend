@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 _CATALOG_TRANSLATION_CACHE: TTLCache[tuple[str, str], str] = TTLCache(
     maxsize=4096, ttl=6 * 3600
 )
+_VIETNAMESE_CHARACTERS = frozenset(
+    "ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ"
+)
 
 
 def clear_catalog_presentation_cache() -> None:
@@ -93,6 +96,60 @@ async def localize_catalog_meals(
     return tuple(localized_meals.get(meal.id, meal) for meal in original)
 
 
+async def localize_catalog_meal_names(
+    meals: Iterable[CatalogMeal],
+    *,
+    language: str,
+    translation_service: TextTranslationService | None,
+) -> tuple[CatalogMeal, ...]:
+    """Localize only the names needed by compact weekly-plan summaries."""
+    original = tuple(meals)
+    if language == "en" or translation_service is None or not original:
+        return original
+
+    summary_meals = [
+        replace(
+            meal,
+            cuisine="",
+            description=None,
+            summary=None,
+            equipment=None,
+            tag=None,
+            allergens=None,
+            ingredients=(),
+            steps=(),
+        )
+        for meal in original
+    ]
+    localized = await _localized_meals(
+        summary_meals,
+        language=language,
+        translation_service=translation_service,
+        include_ingredients=False,
+    )
+    if localized is None:
+        return original
+    return tuple(
+        replace(meal, name=localized.get(meal.id, meal).name) for meal in original
+    )
+
+
+async def localize_presentation_texts(
+    texts: Iterable[str],
+    *,
+    language: str,
+    translation_service: TextTranslationService | None,
+) -> tuple[str, ...]:
+    """Translate short user-facing copy, preserving source text on failure."""
+    original = tuple(texts)
+    if language == "en" or translation_service is None or not original:
+        return original
+    result = await translate_for_presentation(translation_service, original, language)
+    if result.outcome is not TranslationOutcome.TRANSLATED:
+        return original
+    return tuple(result.items)
+
+
 async def localize_meal_recommendation_slot(
     slot: PersistedMealRecommendationSlot,
     *,
@@ -134,8 +191,12 @@ async def _localized_meals(
     include_ingredients: bool = True,
 ) -> dict[str, CatalogMeal] | None:
     unique_meals = {meal.id: meal for meal in meals}
-    texts = _unique_display_texts(
-        unique_meals.values(), include_ingredients=include_ingredients
+    texts_by_meal = {
+        meal.id: _unique_display_texts((meal,), include_ingredients=include_ingredients)
+        for meal in unique_meals.values()
+    }
+    texts = list(
+        dict.fromkeys(text for values in texts_by_meal.values() for text in values)
     )
     if not texts:
         return dict(unique_meals)
@@ -143,6 +204,9 @@ async def _localized_meals(
     translations: dict[str, str] = {}
     missing: list[str] = []
     for text in texts:
+        if language == "vi" and _is_vietnamese_text(text):
+            translations[text] = text
+            continue
         cached = _CATALOG_TRANSLATION_CACHE.get((language, text))
         if cached is not None:
             translations[text] = cached
@@ -155,13 +219,13 @@ async def _localized_meals(
                 result = await translate_for_presentation(
                     translation_service, batch, language
                 )
-                if result.outcome is TranslationOutcome.UNAVAILABLE:
+                if result.outcome is not TranslationOutcome.TRANSLATED:
                     continue
                 cacheable = translation_is_cacheable(result)
+                if len(result.items) != len(batch):
+                    continue
                 for index, text in enumerate(batch):
-                    translated = (
-                        result.items[index] if index < len(result.items) else text
-                    )
+                    translated = result.items[index]
                     translations[text] = translated
                     if cacheable:
                         _CATALOG_TRANSLATION_CACHE[(language, text)] = translated
@@ -171,18 +235,24 @@ async def _localized_meals(
                 language,
                 type(exc).__name__,
             )
-            if not translations:
-                return None
 
-    if missing and not translations:
+    localized: dict[str, CatalogMeal] = {}
+    for meal_id, meal in unique_meals.items():
+        meal_texts = texts_by_meal[meal_id]
+        if any(text not in translations for text in meal_texts):
+            localized[meal_id] = meal
+            continue
+        localized[meal_id] = _replace_meal_display_text(meal, translations)
+
+    if all(localized[meal_id] is meal for meal_id, meal in unique_meals.items()):
         return None
+    return localized
 
-    for text in texts:
-        translations.setdefault(text, text)
-    return {
-        meal_id: _replace_meal_display_text(meal, translations)
-        for meal_id, meal in unique_meals.items()
-    }
+
+def _is_vietnamese_text(value: str) -> bool:
+    """Avoid treating Vietnamese catalog copy as English source text."""
+
+    return any(character.casefold() in _VIETNAMESE_CHARACTERS for character in value)
 
 
 def _unique_display_texts(
@@ -202,6 +272,8 @@ def _unique_display_texts(
             _append_unique(texts, meal.equipment)
         if meal.tag:
             _append_unique(texts, meal.tag)
+        if meal.allergens:
+            _append_unique(texts, meal.allergens)
         for step in meal.steps:
             _append_unique(texts, step.title)
             _append_unique(texts, step.description)
@@ -236,6 +308,9 @@ def _replace_meal_display_text(
             translations.get(meal.equipment, meal.equipment) if meal.equipment else None
         ),
         tag=translations.get(meal.tag, meal.tag) if meal.tag else None,
+        allergens=(
+            translations.get(meal.allergens, meal.allergens) if meal.allergens else None
+        ),
         ingredients=tuple(
             replace(
                 ingredient,
@@ -286,4 +361,61 @@ def _replace_candidate_catalog_meal(
         catalog_meal=localized_meals.get(
             candidate.catalog_meal.id, candidate.catalog_meal
         ),
+    )
+
+
+async def localize_grocery_categories(
+    categories: tuple[Any, ...] | list[Any],
+    *,
+    language: str,
+    translation_service: TextTranslationService | None,
+) -> tuple[Any, ...]:
+    """Translate item names in grocery categories when language is non-English."""
+    if language == "en" or translation_service is None or not categories:
+        return tuple(categories)
+
+    item_names = [item.name for cat in categories for item in cat.items if item.name]
+    if not item_names:
+        return tuple(categories)
+
+    translations: dict[str, str] = {}
+    missing: list[str] = []
+    for text in set(item_names):
+        if language == "vi" and _is_vietnamese_text(text):
+            translations[text] = text
+            continue
+        cached = _CATALOG_TRANSLATION_CACHE.get((language, text))
+        if cached is not None:
+            translations[text] = cached
+        else:
+            missing.append(text)
+
+    if missing:
+        try:
+            for batch in iter_translation_batches(missing):
+                result = await translate_for_presentation(
+                    translation_service, batch, language
+                )
+                if result.outcome is TranslationOutcome.UNAVAILABLE:
+                    continue
+                cacheable = translation_is_cacheable(result)
+                for index, text in enumerate(batch):
+                    translated = (
+                        result.items[index] if index < len(result.items) else text
+                    )
+                    translations[text] = translated
+                    if cacheable:
+                        _CATALOG_TRANSLATION_CACHE[(language, text)] = translated
+        except Exception as exc:
+            logger.warning("grocery localization failed: %s", exc)
+
+    return tuple(
+        replace(
+            cat,
+            items=tuple(
+                replace(item, name=translations.get(item.name, item.name))
+                for item in cat.items
+            ),
+        )
+        for cat in categories
     )

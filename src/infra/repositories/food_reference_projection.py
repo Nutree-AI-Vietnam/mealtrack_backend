@@ -90,6 +90,9 @@ def food_reference_model_to_integrity_data(model: FoodReferenceModel) -> dict[st
 
 def food_reference_model_to_nutrition_projection(
     model: FoodReferenceModel,
+    *,
+    preserve_nutrient_units: bool = False,
+    include_nutrients: bool = True,
 ) -> FoodReferenceNutritionProjection:
     """Convert a food reference ORM row to the domain recipe-publication shape."""
     return FoodReferenceNutritionProjection(
@@ -102,11 +105,18 @@ def food_reference_model_to_nutrition_projection(
         fat_100g=model.fat_100g,
         fiber_100g=model.fiber_100g or 0.0,
         sugar_100g=model.sugar_100g or 0.0,
-        extra_nutrients=food_reference_nutrients_to_dict(model),
+        extra_nutrients=(
+            food_reference_nutrients_to_dict(
+                model, preserve_units=preserve_nutrient_units
+            )
+            if include_nutrients
+            else model.extra_nutrients
+        ),
         density_g_ml=model.density,
         name_normalized=model.name_normalized,
         source_namespace=getattr(model, "source_namespace", None),
         source_food_id=getattr(model, "source_food_id", None),
+        fdc_id=model.fdc_id,
         servings=[
             FoodReferenceServingProjection(
                 name=item["name"],
@@ -244,11 +254,7 @@ def food_reference_allowed_units_to_dict(
                 "unit": row.name,
                 "gram_weight": row.grams,
                 "description": row.description or row.name,
-                **(
-                    {"display_description": row.name_vi}
-                    if row.name_vi
-                    else {}
-                ),
+                **({"display_description": row.name_vi} if row.name_vi else {}),
             }
             for row in raw_rows
             if row.grams is not None and row.grams > 0
@@ -294,28 +300,57 @@ def _raw_allowed_units(model: FoodReferenceModel) -> list[dict[str, Any]]:
     return _legacy_serving_sizes_to_allowed_units(model.serving_sizes)
 
 
-def food_reference_nutrients_to_dict(model: FoodReferenceModel) -> Any:
+def food_reference_nutrients_to_dict(
+    model: FoodReferenceModel, *, preserve_units: bool = False
+) -> Any:
     rows = getattr(model, "nutrient_rows", None)
     if not rows:
-        return model.extra_nutrients
+        return _strip_projection_markers(model.extra_nutrients, enabled=preserve_units)
     raw = model.extra_nutrients if isinstance(model.extra_nutrients, dict) else {}
-    projected = dict(raw)
+    projected = _strip_projection_markers(raw, enabled=preserve_units)
     for row in rows:
-        legacy_value = raw.get(row.nutrient_key)
+        legacy_value = projected.get(row.nutrient_key)
+        if preserve_units and row.unit is None and row.nutrient_key in projected:
+            projected[row.nutrient_key] = legacy_value
+            continue
         if isinstance(legacy_value, dict):
-            projected[row.nutrient_key] = {
+            nutrient = {
                 **legacy_value,
                 "amount": row.amount,
                 "unit": row.unit,
             }
-        elif row.nutrient_key in raw:
-            projected[row.nutrient_key] = row.amount
+            if preserve_units:
+                nutrient["_normalized_row"] = True
+            projected[row.nutrient_key] = nutrient
+        elif row.nutrient_key in projected:
+            projected[row.nutrient_key] = (
+                {
+                    "amount": row.amount,
+                    "unit": row.unit,
+                    "_normalized_row": True,
+                }
+                if preserve_units
+                else row.amount
+            )
         else:
-            projected[row.nutrient_key] = {
-                "amount": row.amount,
-                "unit": row.unit,
-            }
+            nutrient = {"amount": row.amount, "unit": row.unit}
+            if preserve_units:
+                nutrient["_normalized_row"] = True
+            projected[row.nutrient_key] = nutrient
     return projected
+
+
+def _strip_projection_markers(extra_nutrients: Any, *, enabled: bool) -> Any:
+    if not enabled or not isinstance(extra_nutrients, dict):
+        return extra_nutrients
+    return {
+        key: (
+            {name: value for name, value in raw.items() if name != "_normalized_row"}
+            if isinstance(raw, dict)
+            else raw
+        )
+        for key, raw in extra_nutrients.items()
+    }
 
 
 def as_optional_float(value: Any) -> float | None:

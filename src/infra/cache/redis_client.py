@@ -259,3 +259,40 @@ class RedisClient:
             return count
 
         return await self._with_client("INCR", operation, None, key)
+
+    async def mget(self, keys: list[str]) -> list[str | None]:
+        """Retrieve multiple cached values in a single round-trip."""
+        if not keys:
+            return []
+
+        async def operation(client: redis.Redis) -> list[str | None]:
+            raw_list = await client.mget(keys)
+            return [
+                val.decode() if isinstance(val, bytes) else val for val in raw_list
+            ]
+
+        return await self._with_client(
+            "MGET",
+            operation,
+            [None] * len(keys),
+            ",".join(keys[:3]),
+        )
+
+    async def mset_with_ttl(self, mapping: dict[str, str], ttl: int) -> bool:
+        """Store multiple key-value pairs with the same TTL using a pipeline."""
+        if not mapping:
+            return True
+
+        async def operation(client: redis.Redis) -> bool:
+            async with client.pipeline(transaction=False) as pipe:
+                for key, val in mapping.items():
+                    pipe.setex(key, ttl, val)
+                await pipe.execute()
+            return True
+
+        return await self._with_client(
+            "MSET_WITH_TTL",
+            operation,
+            False,
+            ",".join(list(mapping.keys())[:3]),
+        )

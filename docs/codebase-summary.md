@@ -93,10 +93,18 @@ Do not hand-maintain file, LOC, or endpoint counts in this document.
   CQRS commands/queries are under `src/app/commands/meal_planner/` and
   `src/app/queries/meal_planner/`, with persistence in
   `src/infra/database/models/weekly_meal_planner/` and
-  `src/infra/repositories/weekly_meal_plan_repository_async.py`.
+  `src/infra/repositories/weekly_meal_plan_repository_async.py`. The mobile
+  planner uses the persisted current-week record as its durable cache and only
+  generates when the week is missing or still an empty draft; generation keeps
+  logged slots intact and filters non-meal catalog candidates.
 - Recipe detail foundation: catalog metadata and immutable ordered steps extend
   `MealCatalogORM`; canonical nutrition still comes from linked food references
   and the catalog materializer.
+- Recipe micronutrients: normal plan and recipe preloads stay provider-free.
+  When an authenticated user opens recipe detail, the client explicitly posts
+  for USDA FoodData Central refresh of missing linked-reference nutrients,
+  then a revision-scoped AI fallback fills remaining fields. AI values are
+  marked per nutrient and stay out of meal logging.
 - Parse-text eval harness:
   `scripts/development/evaluate_parse_text_nutrition.py` with fixtures in
   `tests/fixtures/parse_text_nutrition_golden_cases.json`. Unmatched foods are

@@ -6,6 +6,7 @@ from src.app.events.base import EventHandler, handles
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
     GetRecipeDetailQuery,
+    GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
 )
@@ -27,8 +28,8 @@ class GetCurrentWeeklyPlanQueryHandler(EventHandler):
 
 @handles(ListRecipesQuery)
 class ListRecipesQueryHandler(EventHandler):
-    def __init__(self, uow_factory: Any):
-        self.service = WeeklyRecipeService(uow_factory)
+    def __init__(self, uow_factory: Any, redis_client: Any = None):
+        self.service = WeeklyRecipeService(uow_factory, redis_client=redis_client)
 
     async def handle(self, query):
         return await self.service.list(
@@ -36,6 +37,7 @@ class ListRecipesQueryHandler(EventHandler):
             diet=query.diet,
             max_cook_time=query.max_cook_time,
             cuisine=query.cuisine,
+            meal_type=query.meal_type,
             allergies=query.allergies,
             dislikes=query.dislikes,
             limit=query.limit,
@@ -45,11 +47,33 @@ class ListRecipesQueryHandler(EventHandler):
 
 @handles(GetRecipeDetailQuery)
 class GetRecipeDetailQueryHandler(EventHandler):
-    def __init__(self, uow_factory: Any):
-        self.service = WeeklyRecipeService(uow_factory)
+    def __init__(
+        self,
+        uow_factory: Any,
+        *,
+        micronutrient_enrichment=None,
+        redis_client=None,
+    ):
+        self.service = WeeklyRecipeService(
+            uow_factory,
+            micronutrient_enrichment=micronutrient_enrichment,
+            redis_client=redis_client,
+        )
 
     async def handle(self, query):
-        return await self.service.detail(query.recipe_id)
+        return await self.service.detail(
+            query.recipe_id,
+            include_cached_micronutrients=query.include_cached_micronutrients,
+        )
+
+
+@handles(GetRecipeSummariesQuery)
+class GetRecipeSummariesQueryHandler(EventHandler):
+    def __init__(self, uow_factory: Any, redis_client: Any = None):
+        self.service = WeeklyRecipeService(uow_factory, redis_client=redis_client)
+
+    async def handle(self, query):
+        return await self.service.summaries(query.recipe_ids)
 
 
 @handles(GetWeeklyGroceriesQuery)

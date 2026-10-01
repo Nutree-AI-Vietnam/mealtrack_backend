@@ -33,6 +33,7 @@ from src.app.queries.user import GetUserTimezoneQuery
 from src.domain.model.meal_recommendation import (
     PersistedMealRecommendationSlotMutationResult,
 )
+from src.domain.model.translation_result import TranslationOutcome, TranslationResult
 
 
 class _EventBus:
@@ -89,9 +90,14 @@ class _Translator:
     def __init__(self) -> None:
         self.calls = []
 
-    async def translate_texts(self, texts, target_lang):
-        self.calls.append((texts, target_lang))
-        return [f"vi:{text}" for text in texts]
+    async def translate_texts(self, texts, source_language, target_language):
+        self.calls.append((texts, source_language, target_language))
+        return TranslationResult(
+            tuple(f"vi:{text}" for text in texts),
+            TranslationOutcome.TRANSLATED,
+            source_language,
+            target_language,
+        )
 
 
 def _request(
@@ -265,6 +271,7 @@ async def test_get_plan_translates_catalog_text_from_request_language():
                 "Rice",
                 "Chicken Bowl",
             ],
+            "en",
             "vi",
         )
     ]
@@ -314,7 +321,9 @@ async def test_log_route_sends_recommended_meal_command():
     )
 
     command = next(
-        item for item in event_bus.commands if isinstance(item, LogRecommendedMealCommand)
+        item
+        for item in event_bus.commands
+        if isinstance(item, LogRecommendedMealCommand)
     )
     assert command.request_id == "log-1"
     assert command.language == "en"
@@ -337,7 +346,9 @@ async def test_log_route_forwards_request_language_to_command():
     )
 
     command = next(
-        item for item in event_bus.commands if isinstance(item, LogRecommendedMealCommand)
+        item
+        for item in event_bus.commands
+        if isinstance(item, LogRecommendedMealCommand)
     )
     assert command.language == "vi"
 
@@ -357,7 +368,9 @@ async def test_skip_route_sends_skip_slot_command():
     )
 
     command = next(
-        item for item in event_bus.commands if isinstance(item, SkipMealRecommendationSlotCommand)
+        item
+        for item in event_bus.commands
+        if isinstance(item, SkipMealRecommendationSlotCommand)
     )
     assert command.request_id == "skip-1"
     assert response.plan_id == "plan-1"

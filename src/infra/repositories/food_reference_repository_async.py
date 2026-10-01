@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, cast
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
     FoodReferenceSearchProjection,
@@ -40,9 +42,28 @@ from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_dict,
     food_reference_model_to_integrity_data,
     food_reference_model_to_nutrition_projection,
+    food_reference_nutrients_to_dict,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _positive_food_reference_ids(values: Iterable[object]) -> list[int]:
+    """Normalize nullable batch IDs before constructing database predicates."""
+    ids: set[int] = set()
+    for value in values:
+        if value is None or isinstance(value, bool):
+            continue
+        if not isinstance(value, (int, str)):
+            continue
+        try:
+            food_reference_id = int(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if food_reference_id > 0:
+            ids.add(food_reference_id)
+    return sorted(ids)
+
 
 _FOOD_REFERENCE_LOAD_OPTIONS = (
     selectinload(FoodReferenceModel.serving_size_rows),
@@ -92,7 +113,7 @@ class AsyncFoodReferenceRepository:
 
     async def get_by_ids(self, ref_ids: list[int]) -> list[dict[str, Any]]:
         """Load verified public references; caller reorders as needed."""
-        ids = sorted({int(value) for value in ref_ids})
+        ids = _positive_food_reference_ids(ref_ids)
         if not ids:
             return []
         stmt = (
@@ -103,6 +124,39 @@ class AsyncFoodReferenceRepository:
         )
         result = await self._session.execute(stmt)
         return [food_reference_model_to_dict(model) for model in result.scalars().all()]
+
+    async def update_usda_micronutrients(
+        self,
+        food_reference_id: int,
+        fdc_id: int,
+        extra_nutrients: dict[str, Any],
+    ) -> bool:
+        """Fill absent nutrients on the exact reference while its USDA ID matches."""
+        result = await self._session.execute(
+            select(FoodReferenceModel)
+            .where(FoodReferenceModel.id == food_reference_id)
+            .where(FoodReferenceModel.fdc_id == fdc_id)
+            .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
+            .with_for_update()
+        )
+        model = result.scalar_one_or_none()
+        if model is None or not extra_nutrients:
+            return False
+        existing = food_reference_nutrients_to_dict(model, preserve_units=True) or {}
+        known = extra_nutrients_to_micros(existing, validate_units=True)
+        known_fields = set(known.to_dict()) if known else set()
+        missing = {
+            key: ({**value, "source": "usda_fdc"} if isinstance(value, dict) else value)
+            for key, value in extra_nutrients.items()
+            if key not in known_fields
+        }
+        if not missing:
+            return False
+        merged = {**existing, **missing}
+        mutable_model = cast(Any, model)
+        mutable_model.extra_nutrients = merged
+        await self._sync_normalized_children(model, {"extra_nutrients": merged})
+        return True
 
     async def get_by_source_identities(
         self, identities: list[tuple[str, str]]
@@ -146,9 +200,13 @@ class AsyncFoodReferenceRepository:
         return food_reference_model_to_nutrition_projection(model) if model else None
 
     async def get_nutrition_projections(
-        self, food_reference_ids: list[int], *, for_update: bool = False
+        self,
+        food_reference_ids: list[int],
+        *,
+        for_update: bool = False,
+        preserve_nutrient_units: bool = False,
     ) -> dict[int, FoodReferenceNutritionProjection]:
-        ids = sorted({int(value) for value in food_reference_ids})
+        ids = _positive_food_reference_ids(food_reference_ids)
         if not ids:
             return {}
         statement = (
@@ -161,7 +219,9 @@ class AsyncFoodReferenceRepository:
             statement = statement.with_for_update()
         result = await self._session.execute(statement)
         return {
-            model.id: food_reference_model_to_nutrition_projection(model)
+            model.id: food_reference_model_to_nutrition_projection(
+                model, preserve_nutrient_units=preserve_nutrient_units
+            )
             for model in result.scalars().all()
         }
 

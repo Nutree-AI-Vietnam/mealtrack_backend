@@ -6,6 +6,16 @@ Neon's PgBouncer pooler doesn't handle DDL commits reliably.
 """
 
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Ensure .env is loaded for migrations
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
+else:
+    load_dotenv()
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine

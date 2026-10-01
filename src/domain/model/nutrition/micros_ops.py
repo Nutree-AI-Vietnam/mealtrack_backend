@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from src.domain.model.nutrition.micros import Micros
@@ -39,17 +40,38 @@ def mapping_from_micros(micros: Micros | None) -> dict[str, float] | None:
 
 def merge_micros(*parts: Micros | None) -> Micros | None:
     combined: dict[str, float] = {}
+    overflowed: set[str] = set()
     for part in parts:
         if is_empty(part):
             continue
         for name in _FIELDS:
             value = getattr(part, name)
-            if value is None:
+            if value is None or name in overflowed:
                 continue
-            combined[name] = combined.get(name, 0.0) + value
+            total = combined.get(name, 0.0) + value
+            if math.isfinite(total):
+                combined[name] = total
+            else:
+                combined.pop(name, None)
+                overflowed.add(name)
     if not combined:
         return None
     return Micros.from_dict(combined)
+
+
+def merge_micros_complete(*parts: Micros | None) -> Micros | None:
+    """Sum nutrient fields only when every contributing item supplies them."""
+    if not parts or any(not isinstance(part, Micros) for part in parts):
+        return None
+    complete = {}
+    for name in _FIELDS:
+        values = [getattr(part, name) for part in parts]
+        if any(value is None for value in values):
+            continue
+        total = sum(values)
+        if math.isfinite(total):
+            complete[name] = total
+    return Micros.from_dict(complete) if complete else None
 
 
 def scale_micros(micros: Micros | None, factor: float) -> Micros | None:
@@ -57,13 +79,16 @@ def scale_micros(micros: Micros | None, factor: float) -> Micros | None:
         return None
     if factor == 1:
         return micros
-    if factor <= 0:
+    if factor <= 0 or not math.isfinite(factor):
         return None
-    scaled = {
-        name: getattr(micros, name) * factor
-        for name in _FIELDS
-        if getattr(micros, name) is not None
-    }
+    scaled = {}
+    for name in _FIELDS:
+        value = getattr(micros, name)
+        if value is None:
+            continue
+        result = value * factor
+        if math.isfinite(result):
+            scaled[name] = result
     return Micros.from_dict(scaled) if scaled else None
 
 
@@ -74,6 +99,6 @@ def _as_non_negative_float(value: Any) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    if number < 0:
+    if number < 0 or not math.isfinite(number):
         return None
     return number

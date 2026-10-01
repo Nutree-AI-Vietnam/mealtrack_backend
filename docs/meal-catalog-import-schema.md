@@ -295,11 +295,10 @@ First test one prompt without calling Cloudflare:
 .venv/bin/python scripts/generate_catalog_meal_images.py --limit 1 --dry-run
 ```
 
-The tool reads `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, optional
-`CLOUDFLARE_WORKERS_AI_IMAGE_MODEL`, and the Cloudinary configuration from
-`.env`. URL responses can be persisted directly. Base64 responses are uploaded
-through `CloudinaryImageStore`, and the returned Cloudinary URL is stored in
-`meal_catalog.image_url`.
+The tool reads `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_HASH`,
+and optional `CLOUDFLARE_WORKERS_AI_IMAGE_MODEL` from `.env`. Images are generated via
+Cloudflare Workers AI, uploaded through `CloudflareImageStore`, and the resulting delivery URL
+(`https://imagedelivery.net/...`) is stored in `meal_catalog.image_url`.
 
 ## Bootstrap Mode
 

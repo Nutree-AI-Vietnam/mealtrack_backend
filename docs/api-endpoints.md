@@ -221,6 +221,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
   `weekly_meal_plans`, `weekly_meal_plan_slots`, and
   `weekly_meal_plan_pantry_items`; `/v1/recipes*` reads the existing immutable
   catalog rather than a duplicate recipe table.
+- Recipe alternatives may pass `meal_type=lunch` or `meal_type=dinner` to
+  `/v1/recipes`; the catalog filters candidates by that slot's eligibility.
 - Weeks are Monday-based and contain exactly 14 coordinates: day indexes 0–6
   with slot index 0 for lunch and 1 for dinner. The default week is resolved
   from the authenticated user's timezone. Generation and slot/preferences
@@ -231,22 +233,52 @@ handler/schema when implementing; the bullets below are the durable WHY.
   instead of overwriting a newer plan. AI proposals are non-mutating and
   include the `base_revision` they were generated from so clients can apply
   them only against the same plan version.
+- Weekly-plan recipe summaries include backend-derived calories and macros so
+  cards can render nutrition before loading full recipe details. Clients that
+  fetch groceries separately can pass `include_grocery_count=false` to the
+  current-plan, generate, and update endpoints to avoid a duplicate grocery
+  projection. Proposal responses include their grocery projection separately.
 - Recipe detail exposes ordered catalog steps, source metadata, equipment,
   ingredient grocery categories, serving metadata, and backend-derived
   nutrition. Grocery quantities scale by `people / base_servings` only when the
   catalog serving basis is known; otherwise the output is marked `unscaled`.
   Clients must not recalculate calories or macros.
+- `GET /v1/recipes/{recipe_id}` remains provider-free. An authenticated detail
+  screen can call `POST /v1/recipes/{recipe_id}/micronutrients/enrich` to fill
+  missing linked-reference nutrients from USDA FDC and then estimate only
+  remaining fields. AI estimates are marked per nutrient and never enter the
+  meal-log nutrition calculation.
 - Grocery output is a read-time projection keyed by canonical
   `food_reference_id` plus quantity dimension/unit. Weight and volume units are
   normalized only through exact conversions; count and unknown units remain
   separate and carry a confidence marker. Pantry quantities subtract only when
   their unit is compatible, producing `needed`, `need_more`, or `owned`
-  statuses. `to_buy_count` counts only `needed` and `need_more` items.
-- Ask Nutree returns an ephemeral structured proposal. The provider cannot
-  mutate a plan, change a logged slot, invent a recipe ID, or claim allergy
-  safety. Explicit diet, dislike, and allergy terms are hard generation
-  exclusions when they match catalog text; this is not canonical allergen
-  evaluation, so `allergy_evaluated=false` remains in recipe responses.
+  statuses. Each item returns `stock_amount`, `stock_kind`, `remaining`, and
+  per-day requirement/remaining amounts; available stock is allocated to
+  earlier plan days first so the by-day view does not reuse one quantity across
+  several days. `to_buy_count` counts only `needed` and `need_more` items.
+- Ask Nutree's proposal POST is non-mutating and returns `base_revision`, a
+  proposed plan, and slot changes. Optional `target_day_index` (0–6) and
+  `target_slot_index` (0 for lunch, 1 for dinner) must be supplied together:
+  both scope the proposal to exactly that existing, unlogged slot; neither
+  requests a week-wide proposal. A logged slot cannot be changed. Accept a
+  proposal by PATCHing the plan with `expected_revision` set to its
+  `base_revision`; send proposed changes in the PATCH `slots` format (map each
+  `new_recipe_id` to `recipe_id`) and include `proposed_plan.preferences` when
+  preferences changed. Only that accepted PATCH persists the changes and
+  updated preferences. Preferences are plan-scoped in weekly-plan JSON, not
+  user-profile data; a stale revision returns `409 WEEKLY_PLAN_STALE_REVISION`.
+- PATCHing `preferences` requires the complete preference object and `people`;
+  partial objects are rejected so omitted allergies or dislikes cannot silently
+  reset saved plan constraints. Preference changes are checked against every
+  unlogged meal before persistence; logged meals remain unchanged history.
+- Diet, allergy, dislike, and slot meal-type compatibility are hard recipe
+  eligibility constraints. Cuisine and cooking-time preferences are advisory:
+  matching recipes are preferred when available, without excluding otherwise
+  eligible options when none match. The provider cannot invent a recipe ID or
+  claim allergy safety; recipes with missing allergen codes are excluded when
+  an allergy is requested, but catalog allergen filtering is not canonical
+  safety evaluation, so recipe responses keep `allergy_evaluated=false`.
 - Logging a slot validates date/type and portion `0.5`, `1`, `1.5`, or `2`,
   materializes the normal backend-owned `Meal`, derives nutrition from scaled
   macros, and links the resulting meal to the weekly slot. Replays return the
@@ -310,18 +342,17 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Hash-only identity: SHA-256 of the canonical redeem URL (web
   `redemption-handoff.ts` and Dart `canonicalRedemptionLinkForHash` must match;
   nested `url` as-is). Raw URLs are never stored.
-- Flag off (`WEB_FUNNEL_SILENT_LOGIN_ENABLED=false`, default): RevenueCat
-  redemption link → Firebase passwordless email-link →
-  `POST /redemptions/preflight` (Bearer ID token) → redeem-once →
-  `POST /redemptions/finalize`.
-- Flag on: signed-out app may call unauthenticated
+- Always-on silent activation: RevenueCat redemption link → unauthenticated
   `POST /redemptions/session` `{ redemption_link_hash }` with **no**
-  `Authorization`. Response `{ version, custom_token }` is one-time. Client
-  signs in via AuthFlow, then the same preflight → redeem → finalize chain.
-  Session is IP-rate-limited; it must not bind `preflight_uid`.
+  `Authorization`. Response `{ version, custom_token }` can be reissued while
+  the paid redemption is unfinalized and nonterminal, so a lost response can
+  be retried. Client signs in automatically through AuthFlow, then runs
+  `POST /redemptions/preflight` → redeem-once →
+  `POST /redemptions/finalize`. Session is IP-rate-limited; it must not bind
+  `preflight_uid`.
 - Preflight/finalize require verified email and
-  `sign_in_provider` in `{google.com, apple.com, password}` plus gated
-  `custom` with claim `wf_silent_login`.
+  `sign_in_provider` in `{google.com, apple.com, password}` or `custom` with
+  claim `wf_silent_login`.
 - Legacy magic-claim routes remain gated by `WEB_FUNNEL_LEGACY_CLAIM_ENABLED`
   and are not the active flow.
 

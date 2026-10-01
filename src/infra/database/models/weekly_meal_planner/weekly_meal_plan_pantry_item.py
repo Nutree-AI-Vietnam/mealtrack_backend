@@ -26,9 +26,7 @@ class WeeklyMealPlanPantryItemORM(Base, TimestampMixin):
         ForeignKey("weekly_meal_plans.id", ondelete="CASCADE"),
         nullable=False,
     )
-    food_reference_id = Column(
-        Integer, ForeignKey("food_reference.id", ondelete="RESTRICT"), nullable=False
-    )
+    food_reference_id = Column(Integer, nullable=False)
     available_amount = Column(Numeric(12, 4), nullable=True)
     available_unit = Column(String(80), nullable=True)
 

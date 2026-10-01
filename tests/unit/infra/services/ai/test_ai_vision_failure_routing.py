@@ -99,7 +99,6 @@ def test_text_purposes_prefer_cf_and_fallback_to_openai(mock_circuit_breaker):
     for purpose in {
         ModelPurpose.BARCODE,
         ModelPurpose.MEAL_NAMES,
-        ModelPurpose.RECIPE,
         ModelPurpose.DISCOVERY,
         ModelPurpose.GENERAL,
     }:
@@ -107,6 +106,11 @@ def test_text_purposes_prefer_cf_and_fallback_to_openai(mock_circuit_breaker):
             "cf-text-model",
             "openai-text-model",
         ]
+    assert manager.get_fallback_chain(ModelPurpose.RECIPE)[:3] == [
+        "gpt-5.6-luna",
+        "openai-text-model",
+        "cf-text-model",
+    ]
     assert manager.get_fallback_chain(ModelPurpose.PARSE_TEXT)[:2] == [
         "openai-luna-model",
         "cf-text-model",
