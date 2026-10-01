@@ -338,3 +338,76 @@ async def test_slot_log_falls_back_to_plan_timezone_when_omitted():
 
     assert result.logged_meal_id == "meal-tz-test"
     assert captured_kwargs.get("timezone") == "Asia/Ho_Chi_Minh"
+
+
+@pytest.mark.asyncio
+async def test_slot_log_falls_back_to_fetched_plan_timezone_when_slot_plan_not_eagerly_loaded():
+    plan_obj = SimpleNamespace(
+        id="plan-1",
+        user_id="user-1",
+        week_start_date=date(2026, 9, 21),
+        timezone="Asia/Tokyo",
+    )
+    slot_obj = SimpleNamespace(
+        id="slot-0-0",
+        day_index=0,
+        slot_index=0,
+        catalog_meal_id="recipe-1",
+        is_logged=False,
+        plan=None,  # NOT eagerly loaded!
+    )
+    catalog_meal = SimpleNamespace(id="recipe-1", name="Phở bò")
+
+    mock_weekly_plans = SimpleNamespace(
+        get_slot_for_update=AsyncMock(return_value=slot_obj),
+        get_by_id=AsyncMock(return_value=plan_obj),
+        mark_slot_logged=AsyncMock(),
+        plan_exists=AsyncMock(return_value=True),
+    )
+    mock_catalog = _MockCatalogRecipes(meal=catalog_meal)
+    mock_ops = _MockWriteOperations()
+
+    captured_kwargs = {}
+
+    class _CaptureMaterializer:
+        async def materialize_from_catalog(self, uow, **kwargs):
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(
+                meal_id="meal-tz-test-fallback",
+                nutrition=SimpleNamespace(
+                    macros=SimpleNamespace(
+                        total_calories=500.0,
+                    )
+                ),
+            )
+
+    uow = SimpleNamespace(
+        weekly_meal_plans=mock_weekly_plans,
+        catalog_recipes=mock_catalog,
+        meal_write_operations=mock_ops,
+    )
+
+    class _UowFactory:
+        async def __aenter__(self):
+            return uow
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    service = WeeklyMealLoggingService(_UowFactory, materializer=_CaptureMaterializer())
+    cmd = LogMealPlanSlotCommand(
+        user_id="user-1",
+        plan_id="plan-1",
+        slot_id="slot-0-0",
+        idempotency_key="idem-key-tz-fallback",
+        meal_date=date(2026, 9, 21),
+        meal_type="lunch",
+        expected_recipe_id="recipe-1",
+        portion_multiplier=1.0,
+        timezone=None,
+    )
+
+    result = await service.log(cmd)
+
+    assert result.logged_meal_id == "meal-tz-test-fallback"
+    assert captured_kwargs.get("timezone") == "Asia/Tokyo"

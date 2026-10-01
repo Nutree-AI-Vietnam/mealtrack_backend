@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
     CatalogRecipeMicronutrientEnrichmentService,
@@ -23,10 +23,14 @@ from src.domain.services.weekly_meal_planner.weekly_plan_generation_service impo
     is_non_meal_title,
 )
 
-if TYPE_CHECKING:
-    from src.infra.cache.redis_client import RedisClient
-
 logger = logging.getLogger(__name__)
+
+
+class RecipeCachePort(Protocol):
+    """Protocol for multi-key recipe cache operations."""
+
+    async def mget(self, keys: list[str]) -> list[str | None]: ...
+    async def mset_with_ttl(self, mapping: dict[str, str], ttl: int) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -46,7 +50,7 @@ class WeeklyRecipeService:
         | None = None,
         micronutrient_estimator: MicronutrientEstimator | None = None,
         fdc_micronutrient_loader: FdcMicronutrientLoader | None = None,
-        redis_client: RedisClient | None = None,
+        redis_client: RecipeCachePort | None = None,
     ):
         self.uow_factory = uow_factory
         self.redis_client = redis_client

@@ -92,12 +92,12 @@ class WeeklyMealLoggingService:
                 ):
                     week_start_date = slot_plan.week_start_date
                 else:
-                    plan = await uow.weekly_meal_plans.get_by_id(
+                    slot_plan = await uow.weekly_meal_plans.get_by_id(
                         user_id=command.user_id, plan_id=command.plan_id
                     )
-                    if plan is None:
+                    if slot_plan is None:
                         raise ResourceNotFoundException("Weekly meal plan not found")
-                    week_start_date = plan.week_start_date
+                    week_start_date = slot_plan.week_start_date
 
                 expected_date = week_start_date + timedelta(days=slot.day_index)
                 expected_type = "lunch" if slot.slot_index == 0 else "dinner"
