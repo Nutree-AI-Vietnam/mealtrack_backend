@@ -3,6 +3,14 @@ name: Generate Catalog Meal Images
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Target environment (staging | production)"
+        required: true
+        type: choice
+        default: "staging"
+        options:
+          - staging
+          - production
       limit:
         description: "Maximum missing catalog meals to process"
         required: true
@@ -36,9 +44,9 @@ env:
 
 jobs:
   generate:
-    name: Generate Missing Catalog Meal Images
+    name: Generate Missing Catalog Meal Images (${{ inputs.environment }})
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ inputs.environment }}
     permissions:
       contents: read
 
@@ -59,13 +67,13 @@ jobs:
 
       - name: Validate required secrets
         env:
-          APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL }}
+          APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL || secrets.DATABASE_URL_DIRECT || secrets.DATABASE_URL }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_HASH: ${{ secrets.CLOUDFLARE_ACCOUNT_HASH }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          test -n "$APP_DATABASE_URL" || (echo "APP_DATABASE_URL secret is required" && exit 1)
+          test -n "$APP_DATABASE_URL" || (echo "Database URL secret (APP_DATABASE_URL / DATABASE_URL_DIRECT) is required" && exit 1)
           if [ "$DRY_RUN" != "true" ]; then
             test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "CLOUDFLARE_ACCOUNT_ID secret is required" && exit 1)
             test -n "$CLOUDFLARE_API_TOKEN" || (echo "CLOUDFLARE_API_TOKEN secret is required" && exit 1)
@@ -74,7 +82,7 @@ jobs:
 
       - name: Generate image URLs
         env:
-          APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL }}
+          APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL || secrets.DATABASE_URL_DIRECT || secrets.DATABASE_URL }}
           DB_CONNECTION_MODE: direct_pool
           IMAGE_STORE_PROVIDER: cloudflare
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
