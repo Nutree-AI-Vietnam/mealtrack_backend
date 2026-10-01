@@ -357,7 +357,7 @@ def get_catalog_food_reference_review_service(
 
 
 def get_catalog_image_generator() -> CloudflareWorkersImageGenerator:
-    """Return catalog image generator configured with Cloudflare and Cloudinary."""
+    """Return catalog image generator configured with Cloudflare Workers AI and Cloudflare Images."""
 
     try:
         return CloudflareWorkersImageGenerator(

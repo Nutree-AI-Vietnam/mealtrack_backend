@@ -60,6 +60,7 @@ async def list_admin_meal_catalog(
 )
 async def generate_admin_meal_catalog_image(
     catalog_id: str,
+    force: bool = False,
     repository=Depends(get_admin_meal_catalog_repository),
     generator_factory=Depends(get_catalog_image_generator_factory),
     _admin: str = Depends(require_admin_or_local),
@@ -67,7 +68,7 @@ async def generate_admin_meal_catalog_image(
     row = await repository.get_meal_row(catalog_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    if _has_image(row.image_url):
+    if not force and _has_image(row.image_url):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Catalog meal already has an image_url",
@@ -87,7 +88,7 @@ async def generate_admin_meal_catalog_image(
             detail="Catalog meal image generation failed",
         ) from exc
 
-    if not await repository.set_missing_image_url(catalog_id, image_url):
+    if not await repository.set_image_url(catalog_id, image_url, force=force):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Catalog meal already has an image_url",

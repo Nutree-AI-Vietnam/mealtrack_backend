@@ -90,15 +90,22 @@ class AsyncAdminMealCatalogRepository:
         )
         return result.scalar_one_or_none()
 
-    async def set_missing_image_url(self, catalog_id: str, image_url: str) -> bool:
-        result = await self._session.execute(
-            update(MealCatalogORM)
-            .where(MealCatalogORM.id == catalog_id)
-            .where(_missing_image_filter())
-            .values(image_url=image_url)
-        )
+    async def set_image_url(
+        self,
+        catalog_id: str,
+        image_url: str,
+        *,
+        force: bool = False,
+    ) -> bool:
+        stmt = update(MealCatalogORM).where(MealCatalogORM.id == catalog_id)
+        if not force:
+            stmt = stmt.where(_missing_image_filter())
+        result = await self._session.execute(stmt.values(image_url=image_url))
         await self._session.flush()
         return bool(result.rowcount)
+
+    async def set_missing_image_url(self, catalog_id: str, image_url: str) -> bool:
+        return await self.set_image_url(catalog_id, image_url, force=False)
 
     async def commit(self) -> None:
         await self._session.commit()
