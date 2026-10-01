@@ -14,4 +14,4 @@ class LogMealPlanSlotCommand(Command):
     meal_type: str
     expected_recipe_id: str
     portion_multiplier: float
-    timezone: str
+    timezone: str | None = None

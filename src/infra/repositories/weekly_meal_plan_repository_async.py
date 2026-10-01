@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import contains_eager, selectinload
 
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
@@ -200,7 +200,8 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             )
         )
         by_state = {
-            item.food_reference_id: item for item in state_result.scalars().all()
+            int(cast(Any, item.food_reference_id)): item
+            for item in state_result.scalars().all()
         }
         for update in updates:
             food_id = int(update["ingredient_id"])
@@ -221,12 +222,15 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             if any(
                 key in update for key in ("checked", "do_not_buy", "manually_owned")
             ):
-                state = by_state.get(food_id)
+                state = cast(Any, by_state.get(food_id))
                 if state is None:
-                    state = WeeklyGroceryItemStateORM(
-                        id=str(uuid.uuid4()),
-                        plan_id=plan_id,
-                        food_reference_id=food_id,
+                    state = cast(
+                        Any,
+                        WeeklyGroceryItemStateORM(
+                            id=str(uuid.uuid4()),
+                            plan_id=plan_id,
+                            food_reference_id=food_id,
+                        ),
                     )
                     self.session.add(state)
                     by_state[food_id] = state
@@ -279,21 +283,28 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         ]
 
     async def mark_slot_logged(
-        self, *, user_id: str, plan_id: str, slot_id: str, meal_id: str
+        self,
+        *,
+        user_id: str,
+        plan_id: str,
+        slot_id: str,
+        meal_id: str,
+        slot: WeeklyMealPlanSlotORM | None = None,
     ) -> None:
-        result = await self.session.execute(
-            select(WeeklyMealPlanSlotORM)
-            .join(WeeklyMealPlanORM)
-            .where(
-                WeeklyMealPlanSlotORM.id == slot_id,
-                WeeklyMealPlanSlotORM.plan_id == plan_id,
-                WeeklyMealPlanORM.user_id == user_id,
-            )
-            .with_for_update(of=WeeklyMealPlanSlotORM)
-        )
-        slot = result.scalar_one_or_none()
         if slot is None:
-            raise ValueError("weekly meal slot not found")
+            result = await self.session.execute(
+                select(WeeklyMealPlanSlotORM)
+                .join(WeeklyMealPlanORM)
+                .where(
+                    WeeklyMealPlanSlotORM.id == slot_id,
+                    WeeklyMealPlanSlotORM.plan_id == plan_id,
+                    WeeklyMealPlanORM.user_id == user_id,
+                )
+                .with_for_update(of=WeeklyMealPlanSlotORM)
+            )
+            slot = result.scalar_one_or_none()
+            if slot is None:
+                raise ValueError("weekly meal slot not found")
         slot = cast(Any, slot)
         slot.is_logged = True
         slot.logged_meal_id = meal_id
@@ -304,6 +315,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         result = await self.session.execute(
             select(WeeklyMealPlanSlotORM)
             .join(WeeklyMealPlanORM)
+            .options(contains_eager(WeeklyMealPlanSlotORM.plan))
             .where(
                 WeeklyMealPlanSlotORM.id == slot_id,
                 WeeklyMealPlanSlotORM.plan_id == plan_id,
@@ -312,6 +324,18 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             .with_for_update(of=WeeklyMealPlanSlotORM)
         )
         return result.scalar_one_or_none()
+
+    async def plan_exists(self, *, user_id: str, plan_id: str) -> bool:
+        stmt = (
+            select(WeeklyMealPlanORM.id)
+            .where(
+                WeeklyMealPlanORM.id == plan_id,
+                WeeklyMealPlanORM.user_id == user_id,
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
 
     async def _load(
         self,
