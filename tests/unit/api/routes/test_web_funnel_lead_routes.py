@@ -245,7 +245,6 @@ def _configure_redemption(monkeypatch):
     monkeypatch.setattr(
         web_funnel.settings, "WEB_FUNNEL_BFF_SHARED_SECRET", "bff-secret"
     )
-    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_REDEMPTION_ENABLED", True)
     monkeypatch.setattr(
         web_funnel.settings, "WEB_FUNNEL_REVENUECAT_ENVIRONMENT", "sandbox"
     )
@@ -517,11 +516,10 @@ async def test_correlation_hides_unverified_customer_as_not_found(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_correlation_blocks_new_checkout_when_admission_disabled(
+async def test_correlation_creates_new_redemption_for_verified_customer(
     monkeypatch,
 ):
     _configure_redemption(monkeypatch)
-    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED", False)
     monkeypatch.setattr(
         web_funnel,
         "_get_web_funnel_subscription_service",
@@ -533,19 +531,18 @@ async def test_correlation_blocks_new_checkout_when_admission_disabled(
         redemption_link_hash=web_funnel._hash("rc-example://redeem?token=opaque"),
     )
 
-    with pytest.raises(HTTPException) as error:
-        await web_funnel.correlate_revenuecat_customer(
-            _request(),
-            "lead-1",
-            payload,
-            "a" * 32,
-            "https://web.example",
-            "bff-secret",
-            session,
-        )
+    response = await web_funnel.correlate_revenuecat_customer(
+        _request(),
+        "lead-1",
+        payload,
+        "a" * 32,
+        "https://web.example",
+        "bff-secret",
+        session,
+    )
 
-    assert error.value.status_code == 404
-    assert not session.added
+    assert response["status"] == "payment_verified"
+    assert len(session.added) == 1
 
 
 def _custom_token():
@@ -623,7 +620,6 @@ async def test_redemption_finalization_accepts_silent_login_custom_with_claim(
     monkeypatch,
 ):
     _configure_redemption(monkeypatch)
-    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
     monkeypatch.setattr(
         web_funnel,
         "_get_web_funnel_subscription_service",
@@ -660,7 +656,6 @@ async def test_redemption_finalization_rejects_custom_without_silent_claim(
     monkeypatch,
 ):
     _configure_redemption(monkeypatch)
-    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
     captured = {}
 
     class RedemptionService:
@@ -691,7 +686,6 @@ async def test_redemption_preflight_accepts_silent_login_custom_with_claim(
     monkeypatch,
 ):
     _configure_redemption(monkeypatch)
-    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
     called = False
 
     class RedemptionService:
@@ -722,7 +716,6 @@ async def test_redemption_finalization_fills_email_from_admin_for_custom_jwt(
     monkeypatch,
 ):
     _configure_redemption(monkeypatch)
-    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
     monkeypatch.setattr(
         web_funnel,
         "_get_web_funnel_subscription_service",
