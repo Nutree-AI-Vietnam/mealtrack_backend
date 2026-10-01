@@ -41,11 +41,13 @@ class FakeIdentity:
     def __init__(self, uid="google-uid"):
         self.uid = uid
         self.emails: list[str] = []
+        self.mealtrack_uids: list[str | None] = []
 
     async def mint_for_email(self, email, *, mealtrack_uid):
         self.emails.append(email)
+        self.mealtrack_uids.append(mealtrack_uid)
         self.mealtrack_uid = mealtrack_uid
-        return "custom-token"
+        return f"custom-token-{len(self.emails)}"
 
 
 def _lead(status="payment_verified"):
@@ -78,11 +80,6 @@ def _binding(**extra):
     )
 
 
-def _enable(monkeypatch):
-    monkeypatch.setattr(session_route.settings, "WEB_FUNNEL_REDEMPTION_ENABLED", True)
-    monkeypatch.setattr(session_route.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
-
-
 def _request(host: str) -> Request:
     return Request(
         {
@@ -99,9 +96,13 @@ _create_session = session_route.create_redemption_session.__wrapped__
 
 
 @pytest.mark.asyncio
-async def test_session_mints_for_mealtrack_owner_and_omits_email(monkeypatch):
-    _enable(monkeypatch)
-    owner = User(firebase_uid="google-uid", email="buyer@example.com", username="b", password_hash="")
+async def test_session_mints_for_mealtrack_owner_and_omits_email():
+    owner = User(
+        firebase_uid="google-uid",
+        email="buyer@example.com",
+        username="b",
+        password_hash="",
+    )
     binding = _binding()
     identity = FakeIdentity()
     response = await _create_session(
@@ -110,7 +111,10 @@ async def test_session_mints_for_mealtrack_owner_and_omits_email(monkeypatch):
         SessionDb(binding, _lead(), owner),
         identity,
     )
-    assert response == {"version": "redemption_session_v1", "custom_token": "custom-token"}
+    assert response == {
+        "version": "redemption_session_v1",
+        "custom_token": "custom-token-1",
+    }
     assert "email" not in response
     assert identity.mealtrack_uid == "google-uid"
     assert binding.silent_login_minted_at is not None
@@ -119,18 +123,30 @@ async def test_session_mints_for_mealtrack_owner_and_omits_email(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_session_404_when_flag_off(monkeypatch):
-    monkeypatch.setattr(session_route.settings, "WEB_FUNNEL_REDEMPTION_ENABLED", True)
-    monkeypatch.setattr(session_route.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", False)
-    with pytest.raises(HTTPException) as error:
-        await _create_session(
-            _request("1.1.1.2"),
-            WebFunnelRedemptionPreflightRequest(redemption_link_hash="a" * 64),
-            SessionDb(_binding(), _lead()),
-            FakeIdentity(),
-        )
-    assert error.value.status_code == 404
-    assert error.value.detail == "Not found"
+async def test_session_retry_remints_when_committed_response_was_lost():
+    owner = User(
+        firebase_uid="google-uid",
+        email="buyer@example.com",
+        username="b",
+        password_hash="",
+    )
+    binding = _binding()
+    identity = FakeIdentity()
+    first_db = SessionDb(binding, _lead(), owner)
+    retry_db = SessionDb(binding, _lead(), owner)
+    request = _request("1.1.1.2")
+    payload = WebFunnelRedemptionPreflightRequest(redemption_link_hash="a" * 64)
+
+    # The first commit succeeds but its response is lost before the client reads it.
+    await _create_session(request, payload, first_db, identity)
+    response = await _create_session(request, payload, retry_db, identity)
+
+    assert first_db.committed is True
+    assert retry_db.committed is True
+    assert response["custom_token"] == "custom-token-2"
+    assert identity.emails == ["buyer@example.com", "buyer@example.com"]
+    assert identity.mealtrack_uids == ["google-uid", "google-uid"]
+    assert binding.silent_login_generation == 2
 
 
 @pytest.mark.asyncio
@@ -138,14 +154,12 @@ async def test_session_404_when_flag_off(monkeypatch):
     "kwargs,status",
     [
         ({"finalized_uid": "done"}, "payment_verified"),
-        ({"silent_login_minted_at": session_route.utcnow()}, "payment_verified"),
         ({}, "refunded"),
         ({}, "revoked"),
         ({}, "conflict"),
     ],
 )
-async def test_session_404_identical_for_terminal_and_consumed(monkeypatch, kwargs, status):
-    _enable(monkeypatch)
+async def test_session_404_identical_for_terminal_and_consumed(kwargs, status):
     with pytest.raises(HTTPException) as error:
         await _create_session(
             _request("1.1.1.3"),
@@ -158,8 +172,7 @@ async def test_session_404_identical_for_terminal_and_consumed(monkeypatch, kwar
 
 
 @pytest.mark.asyncio
-async def test_session_unknown_hash_404(monkeypatch):
-    _enable(monkeypatch)
+async def test_session_unknown_hash_404():
     with pytest.raises(HTTPException) as error:
         await _create_session(
             _request("1.1.1.4"),
@@ -171,8 +184,7 @@ async def test_session_unknown_hash_404(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_session_identity_unavailable_404_does_not_consume(monkeypatch):
-    _enable(monkeypatch)
+async def test_session_identity_unavailable_404_does_not_consume():
 
     class Boom:
         async def mint_for_email(self, _email, *, mealtrack_uid):
@@ -193,11 +205,8 @@ async def test_session_identity_unavailable_404_does_not_consume(monkeypatch):
     assert db.committed is False
 
 
-def test_silent_login_token_allowed_requires_claim_when_flag_on(monkeypatch):
-    monkeypatch.setattr(session_route.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", True)
+def test_silent_login_token_allowed_requires_claim():
     token = {"wf_silent_login": 1, "firebase": {"sign_in_provider": "custom"}}
     assert session_route.silent_login_token_allowed("custom", token) is True
     assert session_route.silent_login_token_allowed("custom", {"firebase": {}}) is False
-    monkeypatch.setattr(session_route.settings, "WEB_FUNNEL_SILENT_LOGIN_ENABLED", False)
-    assert session_route.silent_login_token_allowed("custom", token) is False
     assert session_route.silent_login_token_allowed("google.com", None) is True

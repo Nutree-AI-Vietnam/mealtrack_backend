@@ -1,4 +1,4 @@
-"""Unauthenticated hash → one-time custom token. Do not grow web_funnel.py."""
+"""Unauthenticated hash → retryable custom token. Do not grow web_funnel.py."""
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
@@ -9,7 +9,6 @@ from src.api.schemas.request.web_funnel_claim_requests import (
     WebFunnelRedemptionPreflightRequest,
 )
 from src.app.services.web_funnel_claim_common import claim_not_found, utcnow
-from src.infra.config.settings import settings
 from src.infra.database.config_async import get_async_db
 from src.infra.database.models.user.user import User
 from src.infra.database.models.web_funnel_claim import (
@@ -33,7 +32,7 @@ def _identity_service() -> WebFunnelRedemptionIdentityService:
 def silent_login_token_allowed(provider: object, token: dict | None) -> bool:
     if provider in {"google.com", "apple.com", "password"}:
         return True
-    if not settings.WEB_FUNNEL_SILENT_LOGIN_ENABLED or provider != "custom":
+    if provider != "custom":
         return False
     return bool(token) and token.get(SILENT_LOGIN_CLAIM) in (1, True)
 
@@ -46,19 +45,12 @@ async def create_redemption_session(
     db: AsyncSession = Depends(get_async_db),
     identity: WebFunnelRedemptionIdentityService = Depends(_identity_service),
 ):
-    if not (
-        settings.WEB_FUNNEL_REDEMPTION_ENABLED
-        and settings.WEB_FUNNEL_SILENT_LOGIN_ENABLED
-    ):
-        raise claim_not_found()
     binding = await db.scalar(
         select(WebFunnelRedemption)
         .where(WebFunnelRedemption.redemption_link_hash == payload.redemption_link_hash)
         .with_for_update()
     )
     if not binding or binding.finalized_uid:
-        raise claim_not_found()
-    if binding.silent_login_minted_at is not None:
         raise claim_not_found()
     lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
     if not lead or lead.status in _TERMINAL:

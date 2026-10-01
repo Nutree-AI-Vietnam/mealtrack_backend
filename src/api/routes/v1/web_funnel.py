@@ -108,7 +108,9 @@ def _require_fresh_token(token: dict) -> None:
         )
 
 
-def _is_supported_redemption_provider(provider: object, token: dict | None = None) -> bool:
+def _is_supported_redemption_provider(
+    provider: object, token: dict | None = None
+) -> bool:
     return silent_login_token_allowed(provider, token)
 
 
@@ -241,8 +243,6 @@ async def correlate_revenuecat_customer(
 ):
     """Bind an anonymous web customer only after a private provider read."""
     _require_bff_request(origin, bff_credential)
-    if not settings.WEB_FUNNEL_REDEMPTION_ENABLED:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     if (
         not settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT
         or not settings.REVENUECAT_SECRET_API_KEY
@@ -267,9 +267,6 @@ async def correlate_revenuecat_customer(
         .where(WebFunnelRedemption.lead_id == lead.id)
         .with_for_update()
     )
-    if existing is None and not settings.WEB_FUNNEL_CHECKOUT_ADMISSION_ENABLED:
-        # New checkout admission off: paid recovery for existing rows still works.
-        raise claim_not_found()
     if existing:
         if (
             existing.original_app_user_id != payload.app_user_id
@@ -316,8 +313,6 @@ async def preflight_revenuecat_redemption(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Bind a matching verified Firebase identity before redemption is consumed."""
-    if not settings.WEB_FUNNEL_REDEMPTION_ENABLED:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     _require_fresh_token(token)
     token = await hydrate_custom_email(token)
     uid, email = token.get("uid"), token.get("email")
@@ -353,8 +348,6 @@ async def finalize_revenuecat_redemption(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Finalize one provider-verified redemption from a fresh Firebase identity."""
-    if not settings.WEB_FUNNEL_REDEMPTION_ENABLED:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     if not payload.confirm_apply_purchase:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
