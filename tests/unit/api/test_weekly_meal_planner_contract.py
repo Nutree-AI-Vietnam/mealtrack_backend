@@ -59,18 +59,34 @@ def _plan():
     )
 
 
+_DEFAULT_PLAN = object()
+
+
 class _Bus:
-    def __init__(self, recipe=None, proposal=None):
+    def __init__(self, recipe=None, proposal=None, plan=_DEFAULT_PLAN):
         self.recipe = recipe
         self.proposal = proposal
+        self.plan = _plan() if plan is _DEFAULT_PLAN else plan
         self.recipe_query = None
         self.recipe_detail_query = None
+        self.budget_queries = []
+        self.generate_commands = []
 
     async def send(self, query):
         if query.__class__.__name__ == "GetUserTimezoneQuery":
             return "UTC"
         if query.__class__.__name__ == "GetCurrentWeeklyPlanQuery":
+            return self.plan
+        if query.__class__.__name__ == "GetWeeklyBudgetQuery":
+            self.budget_queries.append(query)
+            return {"adjusted_daily_calories": 2100}
+        if query.__class__.__name__ == "GenerateWeeklyMealPlanCommand":
+            self.generate_commands.append(query)
             return _plan()
+        if query.__class__.__name__ == "GetRecipeSummariesQuery":
+            return ()
+        if query.__class__.__name__ == "EnrichWeeklyPlanMicronutrientsCommand":
+            return None
         if query.__class__.__name__ == "GetRecipeDetailQuery":
             self.recipe_detail_query = query
             return self.recipe
@@ -94,13 +110,19 @@ class _FoodReferenceRepository:
         return self.projections
 
 
-def _app(recipe=None, bus=None, food_reference_repository=None, authenticated=True):
+def _app(
+    recipe=None,
+    bus=None,
+    food_reference_repository=None,
+    authenticated=True,
+    plan=_DEFAULT_PLAN,
+):
     app = FastAPI()
     app.add_middleware(AcceptLanguageMiddleware)
     app.include_router(router)
     if authenticated:
         app.dependency_overrides[get_current_user_id] = lambda: "user-1"
-    event_bus = bus or _Bus(recipe)
+    event_bus = bus or _Bus(recipe, plan=plan)
     app.dependency_overrides[get_configured_event_bus] = lambda: event_bus
     app.dependency_overrides[get_text_translation_service] = lambda: None
     app.dependency_overrides[get_async_food_reference_repository] = lambda: (
@@ -147,6 +169,29 @@ def test_current_plan_without_week_start_resolves_to_current_monday():
     body = response.json()
     assert body["id"] == "plan-1"
     assert "to_buy_count" in body
+
+
+def test_current_plan_auto_generates_when_missing():
+    bus = _Bus(plan=None)
+    response = TestClient(_app(bus=bus)).get("/v1/meal-plans/current")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "plan-1"
+    assert len(bus.generate_commands) == 1
+    assert bus.generate_commands[0].daily_calories == 2100
+    assert bus.generate_commands[0].preferences.people == 1
+
+
+def test_current_plan_returns_404_when_missing_and_auto_generate_false():
+    bus = _Bus(plan=None)
+    response = TestClient(_app(bus=bus)).get(
+        "/v1/meal-plans/current?auto_generate=false"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Weekly meal plan not found"
+    assert len(bus.generate_commands) == 0
 
 
 def test_current_plan_rejects_non_monday_week():

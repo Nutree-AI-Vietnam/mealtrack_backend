@@ -64,19 +64,42 @@ class WeeklyMealLoggingService:
             if reservation.state == "replay":
                 return _replay_result(reservation.response)
             try:
-                plan = await uow.weekly_meal_plans.get_by_id(
-                    user_id=command.user_id, plan_id=command.plan_id
-                )
-                if plan is None:
-                    raise ResourceNotFoundException("Weekly meal plan not found")
                 slot = await uow.weekly_meal_plans.get_slot_for_update(
                     user_id=command.user_id,
                     plan_id=command.plan_id,
                     slot_id=command.slot_id,
                 )
                 if slot is None:
+                    plan_exists = False
+                    if hasattr(uow.weekly_meal_plans, "plan_exists"):
+                        plan_exists = await uow.weekly_meal_plans.plan_exists(
+                            user_id=command.user_id, plan_id=command.plan_id
+                        )
+                    elif hasattr(uow.weekly_meal_plans, "get_by_id"):
+                        plan_exists = (
+                            await uow.weekly_meal_plans.get_by_id(
+                                user_id=command.user_id, plan_id=command.plan_id
+                            )
+                            is not None
+                        )
+                    if not plan_exists:
+                        raise ResourceNotFoundException("Weekly meal plan not found")
                     raise ResourceNotFoundException("Weekly meal slot not found")
-                expected_date = plan.week_start_date + timedelta(days=slot.day_index)
+
+                slot_plan = getattr(slot, "plan", None)
+                if slot_plan is not None and getattr(
+                    slot_plan, "week_start_date", None
+                ):
+                    week_start_date = slot_plan.week_start_date
+                else:
+                    slot_plan = await uow.weekly_meal_plans.get_by_id(
+                        user_id=command.user_id, plan_id=command.plan_id
+                    )
+                    if slot_plan is None:
+                        raise ResourceNotFoundException("Weekly meal plan not found")
+                    week_start_date = slot_plan.week_start_date
+
+                expected_date = week_start_date + timedelta(days=slot.day_index)
                 expected_type = "lunch" if slot.slot_index == 0 else "dinner"
                 if (
                     command.meal_date != expected_date
@@ -106,22 +129,34 @@ class WeeklyMealLoggingService:
                     raise ResourceNotFoundException(
                         "Planned recipe is no longer available"
                     )
+                effective_timezone = (
+                    command.timezone or getattr(slot_plan, "timezone", None) or "UTC"
+                )
                 meal = await self.materializer.materialize_from_catalog(
                     uow,
                     user_id=command.user_id,
                     catalog_meal=catalog_meal,
                     meal_date=command.meal_date,
                     meal_type=command.meal_type,
-                    timezone=command.timezone,
+                    timezone=effective_timezone,
                     portion_multiplier=command.portion_multiplier,
                     source="weekly_meal_planner",
                 )
-                await uow.weekly_meal_plans.mark_slot_logged(
-                    user_id=command.user_id,
-                    plan_id=command.plan_id,
-                    slot_id=command.slot_id,
-                    meal_id=meal.meal_id,
-                )
+                try:
+                    await uow.weekly_meal_plans.mark_slot_logged(
+                        user_id=command.user_id,
+                        plan_id=command.plan_id,
+                        slot_id=command.slot_id,
+                        meal_id=meal.meal_id,
+                        slot=slot,
+                    )
+                except TypeError:
+                    await uow.weekly_meal_plans.mark_slot_logged(
+                        user_id=command.user_id,
+                        plan_id=command.plan_id,
+                        slot_id=command.slot_id,
+                        meal_id=meal.meal_id,
+                    )
                 result = LogMealPlanSlotResult(
                     logged_meal_id=meal.meal_id,
                     slot_id=command.slot_id,

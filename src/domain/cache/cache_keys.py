@@ -213,3 +213,12 @@ class CacheKeys:
     @staticmethod
     def pattern_for_user(user_id: str) -> str:
         return f"user:{user_id}:*"
+
+    @staticmethod
+    def catalog_recipe(recipe_id: str) -> tuple[str, int]:
+        """Cache key for catalog recipe projection. 7 days TTL."""
+        return (f"catalog:recipe:{recipe_id}", CacheKeys.TTL_7_DAYS)
+
+    @staticmethod
+    def catalog_recipe_pattern() -> str:
+        return "catalog:recipe:*"

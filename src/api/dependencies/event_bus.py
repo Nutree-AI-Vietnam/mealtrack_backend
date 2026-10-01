@@ -1001,20 +1001,22 @@ def get_configured_event_bus() -> EventBus:
         GetCurrentWeeklyPlanQuery,
         GetCurrentWeeklyPlanQueryHandler(AsyncUnitOfWork),
     )
+    redis_client = getattr(cache_service, "redis", None)
     event_bus.register_handler(
         ListRecipesQuery,
-        ListRecipesQueryHandler(AsyncUnitOfWork),
+        ListRecipesQueryHandler(AsyncUnitOfWork, redis_client=redis_client),
     )
     event_bus.register_handler(
         GetRecipeDetailQuery,
         GetRecipeDetailQueryHandler(
             AsyncUnitOfWork,
             micronutrient_enrichment=recipe_micronutrient_enrichment,
+            redis_client=redis_client,
         ),
     )
     event_bus.register_handler(
         GetRecipeSummariesQuery,
-        GetRecipeSummariesQueryHandler(AsyncUnitOfWork),
+        GetRecipeSummariesQueryHandler(AsyncUnitOfWork, redis_client=redis_client),
     )
     event_bus.register_handler(
         GetWeeklyGroceriesQuery,
