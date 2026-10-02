@@ -148,6 +148,12 @@ class GroceryDayAmountResponse(BaseModel):
     remaining: float
 
 
+class GroceryDayNoteResponse(BaseModel):
+    day_index: int
+    needed_amount: float | None = None
+    covered: bool = False
+
+
 class GroceryItemResponse(BaseModel):
     ingredient_id: int
     name: str
@@ -159,6 +165,7 @@ class GroceryItemResponse(BaseModel):
     quantity_confidence: str
     remaining: float
     daily_amounts: list[GroceryDayAmountResponse] = Field(default_factory=list)
+    day_notes: list[GroceryDayNoteResponse] = Field(default_factory=list)
 
 
 class GroceryCategoryResponse(BaseModel):

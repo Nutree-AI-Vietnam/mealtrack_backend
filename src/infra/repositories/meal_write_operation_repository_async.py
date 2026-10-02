@@ -24,6 +24,7 @@ class MealWriteReservation:
     state: str
     target_meal_id: str | None = None
     response: dict | None = None
+    request_fingerprint: str | None = None
 
 
 class AsyncMealWriteOperationRepository:
@@ -114,21 +115,46 @@ class AsyncMealWriteOperationRepository:
 
         if row.request_fingerprint != request_fingerprint:
             return self._reservation(row, "fingerprint_conflict")
-        if row.status == "completed":
-            return self._reservation(row, "replay")
+        return await self._reservation_for_row(row, lease_seconds=lease_seconds)
+
+    async def adopt_fingerprint(
+        self,
+        reservation: MealWriteReservation,
+        *,
+        request_fingerprint: str,
+    ) -> MealWriteReservation:
+        """Keep an identical retry when an older hasher stored a different digest."""
+
+        row = await self._locked_row(reservation.operation_id)
+        if row is None:
+            raise RuntimeError("meal write idempotency reservation was not visible")
+        row.request_fingerprint = request_fingerprint
+        await self.session.flush()
+        return await self._reservation_for_row(row)
+
+    async def reopen_completed(
+        self,
+        reservation: MealWriteReservation,
+        *,
+        lease_seconds: int = 60,
+    ) -> MealWriteReservation:
+        """Run a completed generate again when its saved plan has no meals."""
+
+        row = await self._locked_row(reservation.operation_id)
+        if row is None:
+            raise RuntimeError("meal write idempotency reservation was not visible")
+        now = utc_now()
         if (
             row.status == "in_progress"
             and row.lease_expires_at
             and row.lease_expires_at > now
         ):
             return self._reservation(row, "in_progress")
-
         row.status = "in_progress"
         row.lease_owner = str(uuid.uuid4())
-        row.lease_generation += 1
+        row.lease_generation = int(row.lease_generation or 0) + 1
         row.lease_expires_at = now + timedelta(seconds=lease_seconds)
         row.response = None
-        row.target_meal_id = None
         await self.session.flush()
         return self._reservation(row, "acquired")
 
@@ -177,6 +203,31 @@ class AsyncMealWriteOperationRepository:
             and row.lease_generation == reservation.lease_generation
         )
 
+    async def _reservation_for_row(
+        self,
+        row: MealWriteOperationORM,
+        *,
+        lease_seconds: int = 60,
+    ) -> MealWriteReservation:
+        now = utc_now()
+        if row.status == "completed":
+            return self._reservation(row, "replay")
+        if (
+            row.status == "in_progress"
+            and row.lease_expires_at
+            and row.lease_expires_at > now
+        ):
+            return self._reservation(row, "in_progress")
+
+        row.status = "in_progress"
+        row.lease_owner = str(uuid.uuid4())
+        row.lease_generation = int(row.lease_generation or 0) + 1
+        row.lease_expires_at = now + timedelta(seconds=lease_seconds)
+        row.response = None
+        row.target_meal_id = None
+        await self.session.flush()
+        return self._reservation(row, "acquired")
+
     @staticmethod
     def _reservation(row: MealWriteOperationORM, state: str) -> MealWriteReservation:
         return MealWriteReservation(
@@ -186,4 +237,5 @@ class AsyncMealWriteOperationRepository:
             state=state,
             target_meal_id=row.target_meal_id,
             response=row.response,
+            request_fingerprint=row.request_fingerprint,
         )

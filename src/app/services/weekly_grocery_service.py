@@ -36,6 +36,7 @@ class GroceryItem:
     manually_owned: bool = False
     stock_kind: str | None = None
     daily_amounts: tuple[dict[str, int | float], ...] = ()
+    day_notes: tuple[dict[str, int | float | bool | None], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,13 @@ class WeeklyGroceryService:
             _pantry(pantry_rows),
             _interactions(interaction_rows),
         )
-        return _categories(derived)
+        day_line_loader = getattr(uow.weekly_meal_plans, "list_grocery_day_lines", None)
+        day_rows = (
+            await day_line_loader(user_id=plan.user_id, plan_id=plan.id)
+            if day_line_loader is not None
+            else []
+        )
+        return _categories(derived, day_rows)
 
 
 def _resolve_grocery_category(name: str, category: str | None) -> str:
@@ -340,7 +347,20 @@ def _interactions(rows: list[dict]) -> tuple[GroceryInteraction, ...]:
     )
 
 
-def _categories(items: tuple[DerivedGroceryItem, ...]) -> tuple[GroceryCategory, ...]:
+def _categories(
+    items: tuple[DerivedGroceryItem, ...],
+    day_rows: list[dict] | None = None,
+) -> tuple[GroceryCategory, ...]:
+    notes_by_food: dict[int, list[dict]] = defaultdict(list)
+    for row in day_rows or []:
+        amount = row.get("needed_amount")
+        notes_by_food[int(row["food_reference_id"])].append(
+            {
+                "day_index": int(row["day_index"]),
+                "needed_amount": None if amount is None else float(amount),
+                "covered": bool(row.get("covered", False)),
+            }
+        )
     grouped: dict[str, list[GroceryItem]] = defaultdict(list)
     for item in items:
         grouped[item.category].append(
@@ -372,6 +392,12 @@ def _categories(items: tuple[DerivedGroceryItem, ...]) -> tuple[GroceryCategory,
                         "remaining": daily_remaining,
                     }
                     for day_index, total_needed, daily_remaining in item.daily_amounts
+                ),
+                day_notes=tuple(
+                    sorted(
+                        notes_by_food.get(item.ingredient_id, []),
+                        key=lambda note: int(note["day_index"]),
+                    )
                 ),
             )
         )

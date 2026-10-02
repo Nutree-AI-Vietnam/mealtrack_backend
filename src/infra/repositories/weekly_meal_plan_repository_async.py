@@ -23,6 +23,7 @@ from src.domain.ports.weekly_meal_plan_repository_port import (
     WeeklyMealPlanRepositoryPort,
 )
 from src.infra.database.models.weekly_meal_planner import (
+    WeeklyGroceryDayLineORM,
     WeeklyGroceryItemStateORM,
     WeeklyMealPlanORM,
     WeeklyMealPlanPantryItemORM,
@@ -281,6 +282,71 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             }
             for item in result.scalars().all()
         ]
+
+    async def list_grocery_day_lines(self, *, user_id: str, plan_id: str) -> list[dict]:
+        result = await self.session.execute(
+            select(WeeklyGroceryDayLineORM)
+            .join(
+                WeeklyMealPlanORM,
+                WeeklyMealPlanORM.id == WeeklyGroceryDayLineORM.plan_id,
+            )
+            .where(
+                WeeklyGroceryDayLineORM.plan_id == plan_id,
+                WeeklyMealPlanORM.user_id == user_id,
+            )
+        )
+        return [
+            {
+                "food_reference_id": item.food_reference_id,
+                "day_index": item.day_index,
+                "needed_amount": item.needed_amount,
+                "covered": item.covered,
+            }
+            for item in result.scalars().all()
+        ]
+
+    async def replace_grocery_day_lines(
+        self,
+        *,
+        user_id: str,
+        plan_id: str,
+        ingredient_id: int,
+        lines: list[dict],
+    ) -> WeeklyMealPlan | None:
+        row = await self.get_for_update(user_id=user_id, plan_id=plan_id)
+        if row is None:
+            return None
+        existing = await self.session.execute(
+            select(WeeklyGroceryDayLineORM).where(
+                WeeklyGroceryDayLineORM.plan_id == plan_id,
+                WeeklyGroceryDayLineORM.food_reference_id == ingredient_id,
+            )
+        )
+        by_day = {int(item.day_index): item for item in existing.scalars().all()}
+        kept: set[int] = set()
+        for line in lines:
+            day_index = int(line["day_index"])
+            kept.add(day_index)
+            item = by_day.get(day_index)
+            if item is None:
+                self.session.add(
+                    WeeklyGroceryDayLineORM(
+                        id=str(uuid.uuid4()),
+                        plan_id=plan_id,
+                        food_reference_id=ingredient_id,
+                        day_index=day_index,
+                        needed_amount=line.get("needed_amount"),
+                        covered=bool(line.get("covered", False)),
+                    )
+                )
+                continue
+            item.needed_amount = line.get("needed_amount")
+            item.covered = bool(line.get("covered", False))
+        for day_index, item in by_day.items():
+            if day_index not in kept:
+                await self.session.delete(item)
+        await self.session.flush()
+        return _to_domain(row)
 
     async def mark_slot_logged(
         self,

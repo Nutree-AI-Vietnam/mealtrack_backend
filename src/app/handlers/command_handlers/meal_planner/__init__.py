@@ -3,6 +3,7 @@ from .weekly_meal_planner_handlers import (
     EnrichWeeklyPlanMicronutrientsCommandHandler,
     GenerateWeeklyMealPlanCommandHandler,
     LogMealPlanSlotCommandHandler,
+    UpdateGroceryDayLinesCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
     UpdateWeeklyMealPlanCommandHandler,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "EnrichWeeklyPlanMicronutrientsCommandHandler",
     "UpdateWeeklyMealPlanCommandHandler",
     "AiAdjustMealPlanCommandHandler",
+    "UpdateGroceryDayLinesCommandHandler",
     "UpdateMealPlanPantryStockCommandHandler",
     "LogMealPlanSlotCommandHandler",
 ]

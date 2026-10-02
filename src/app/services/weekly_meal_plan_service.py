@@ -78,7 +78,15 @@ class WeeklyMealPlanService:
                 idempotency_key=command.idempotency_key,
                 request_fingerprint=fingerprint,
             )
-            self._check_reservation(reservation)
+            if (
+                reservation.state == "fingerprint_conflict"
+                and reservation.request_fingerprint == _legacy_fingerprint(command)
+            ):
+                # Reservations written before preference fields were hashed
+                # individually still belong to this same generate request.
+                reservation = await uow.meal_write_operations.adopt_fingerprint(
+                    reservation, request_fingerprint=fingerprint
+                )
             if reservation.state == "replay":
                 plan = await uow.weekly_meal_plans.get_by_id(
                     user_id=command.user_id, plan_id=reservation.target_meal_id
@@ -88,7 +96,12 @@ class WeeklyMealPlanService:
                         "Weekly plan replay is missing its plan",
                         error_code="IDEMPOTENCY_REPLAY_INVALID",
                     )
-                return plan
+                if _plan_has_assigned_recipe(plan):
+                    return plan
+                reservation = await uow.meal_write_operations.reopen_completed(
+                    reservation
+                )
+            self._check_reservation(reservation)
             try:
                 await uow.weekly_meal_plans.lock_user_week(
                     user_id=command.user_id, week_start_date=command.week_start_date
@@ -662,6 +675,21 @@ def _fingerprint(command) -> str:
         if key != "idempotency_key"
     }
     return canonicalize_fingerprint(payload)
+
+
+def _legacy_fingerprint(command) -> str:
+    """Hash used when dataclass fields were stringified instead of expanded."""
+
+    payload = {
+        key: value
+        for key, value in vars(command).items()
+        if key != "idempotency_key"
+    }
+    return canonicalize_fingerprint(payload)
+
+
+def _plan_has_assigned_recipe(plan: WeeklyMealPlan) -> bool:
+    return any(slot.recipe_id for slot in plan.slots)
 
 
 def _fingerprint_value(value):
