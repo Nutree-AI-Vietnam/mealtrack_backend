@@ -81,6 +81,17 @@ class UpdateMealPlanPantryRequest(BaseModel):
     stock_updates: list[PantryStockUpdateRequest] = Field(max_length=100)
 
 
+class GroceryDayLineRequest(BaseModel):
+    day_index: int = Field(ge=0, le=6)
+    needed_amount: float | None = Field(default=None, ge=0, le=100000)
+    covered: bool = False
+
+
+class UpdateGroceryDayLinesRequest(BaseModel):
+    ingredient_id: int = Field(ge=1)
+    lines: list[GroceryDayLineRequest] = Field(max_length=7)
+
+
 class LogMealPlanSlotRequest(BaseModel):
     date: date
     meal_type: Literal["lunch", "dinner"]

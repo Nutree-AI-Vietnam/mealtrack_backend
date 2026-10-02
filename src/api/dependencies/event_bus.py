@@ -29,6 +29,7 @@ from src.app.commands.meal_planner import (
     EnrichWeeklyPlanMicronutrientsCommand,
     GenerateWeeklyMealPlanCommand,
     LogMealPlanSlotCommand,
+    UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
 )
@@ -131,6 +132,7 @@ from src.app.handlers.command_handlers.meal_planner import (
     EnrichWeeklyPlanMicronutrientsCommandHandler,
     GenerateWeeklyMealPlanCommandHandler,
     LogMealPlanSlotCommandHandler,
+    UpdateGroceryDayLinesCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
     UpdateWeeklyMealPlanCommandHandler,
 )
@@ -988,6 +990,10 @@ def get_configured_event_bus() -> EventBus:
             AsyncUnitOfWork,
             StructuredWeeklyMealPlanAdjustmentProvider(meal_generation_service),
         ),
+    )
+    event_bus.register_handler(
+        UpdateGroceryDayLinesCommand,
+        UpdateGroceryDayLinesCommandHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
         UpdateMealPlanPantryStockCommand,

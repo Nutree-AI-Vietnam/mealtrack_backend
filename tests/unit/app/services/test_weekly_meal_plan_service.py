@@ -1,16 +1,22 @@
+import hashlib
+import json
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
-from src.api.exceptions import ValidationException
+from src.api.exceptions import ConflictException, ValidationException
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
     GenerateWeeklyMealPlanCommand,
     UpdateWeeklyMealPlanCommand,
 )
-from src.app.services.weekly_meal_plan_service import WeeklyMealPlanService
+from src.app.services.weekly_meal_plan_service import (
+    WeeklyMealPlanService,
+    _fingerprint,
+    _legacy_fingerprint,
+)
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlan,
@@ -640,3 +646,121 @@ async def test_provider_can_follow_explicit_request_over_soft_cooking_time_prefe
     )
 
     assert proposal.proposed_plan.slots[3].recipe_id == "slow"
+
+
+def _generate_command(plan):
+    return GenerateWeeklyMealPlanCommand(
+        user_id=plan.user_id,
+        week_start_date=plan.week_start_date,
+        timezone=plan.timezone,
+        preferences=plan.preferences,
+        idempotency_key="weekly-plan-initial-2026-09-21",
+        daily_calories=plan.daily_calories or 2000,
+    )
+
+
+class _Reservation:
+    def __init__(self, state, *, fingerprint=None, target_meal_id="plan-1"):
+        self.state = state
+        self.request_fingerprint = fingerprint
+        self.target_meal_id = target_meal_id
+        self.operation_id = "op-1"
+
+
+class _GenerateUow(_Uow):
+    def __init__(self, plan, meals, reservation):
+        super().__init__(plan, meals)
+        self.reservation = reservation
+        self.adopted_fingerprint = None
+        self.reopened = False
+
+    async def reserve(self, **kwargs):
+        self.reserve_fingerprint = kwargs["request_fingerprint"]
+        return self.reservation
+
+    async def adopt_fingerprint(self, reservation, *, request_fingerprint):
+        self.adopted_fingerprint = request_fingerprint
+        return _Reservation("replay", fingerprint=request_fingerprint)
+
+    async def reopen_completed(self, reservation):
+        self.reopened = True
+        return _Reservation("acquired")
+
+
+def test_legacy_generate_fingerprint_stringifies_preferences():
+    command = _generate_command(_plan())
+    payload = {
+        key: value
+        for key, value in vars(command).items()
+        if key != "idempotency_key"
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+    assert "WeeklyMealPlanPreferences(" in encoded
+    assert _legacy_fingerprint(command) == hashlib.sha256(encoded.encode()).hexdigest()
+    assert _legacy_fingerprint(command) != _fingerprint(command)
+
+
+@pytest.mark.asyncio
+async def test_generate_replays_a_plan_that_already_has_meals():
+    plan = _plan()
+    uow = _GenerateUow(plan, (_meal("chicken", "Chicken"),), _Reservation("replay"))
+    service = WeeklyMealPlanService(lambda: uow)
+
+    result = await service.generate(_generate_command(plan))
+
+    assert result is plan
+    assert uow.reopened is False
+    assert uow.update_args is None
+
+
+@pytest.mark.asyncio
+async def test_generate_refills_a_completed_empty_draft():
+    plan = _plan(recipe_id=None)
+    uow = _GenerateUow(
+        plan,
+        (_meal("tofu", "Tofu"), _meal("lentils", "Lentil bowl")),
+        _Reservation("replay"),
+    )
+    service = WeeklyMealPlanService(lambda: uow)
+
+    await service.generate(_generate_command(plan))
+
+    assert uow.reopened is True
+    assert (0, 0) not in uow.update_args["slots"]
+    assert len(uow.update_args["slots"]) == 13
+
+
+@pytest.mark.asyncio
+async def test_generate_adopts_legacy_fingerprint_and_refills_empty_draft():
+    plan = _plan(recipe_id=None)
+    command = _generate_command(plan)
+    uow = _GenerateUow(
+        plan,
+        (_meal("tofu", "Tofu"), _meal("lentils", "Lentil bowl")),
+        _Reservation("fingerprint_conflict", fingerprint=_legacy_fingerprint(command)),
+    )
+    service = WeeklyMealPlanService(lambda: uow)
+
+    await service.generate(command)
+
+    assert uow.adopted_fingerprint == _fingerprint(command)
+    assert uow.reopened is True
+    assert uow.update_args["slots"]
+
+
+@pytest.mark.asyncio
+async def test_generate_rejects_a_reused_key_for_a_different_request():
+    plan = _plan()
+    uow = _GenerateUow(
+        plan,
+        (_meal("chicken", "Chicken"),),
+        _Reservation("fingerprint_conflict", fingerprint="different-request"),
+    )
+    service = WeeklyMealPlanService(lambda: uow)
+
+    with pytest.raises(ConflictException) as exc_info:
+        await service.generate(_generate_command(plan))
+
+    assert exc_info.value.error_code == "IDEMPOTENCY_KEY_REUSED"
+    assert uow.reopened is False
