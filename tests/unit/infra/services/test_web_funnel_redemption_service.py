@@ -307,6 +307,7 @@ async def test_finalization_accepts_preflight_bound_provider_identity_before_web
         redemption_link_hash=_link_hash(),
         idempotency_key="request-provider-before-webhook",
         environment="SANDBOX",
+        verified_provider_app_user_ids={"firebase-user"},
     )
 
     assert result == {
@@ -432,6 +433,7 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
         environment="SANDBOX",
         auth_provider="google.com",
         expires_at=expires,
+        verified_provider_app_user_ids={"$RCAnonymousID:mobile-original"},
     )
 
     user = next(item for item in session.added if isinstance(item, User))
@@ -442,6 +444,13 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
     )
     assert subscription.platform == "web"
     assert subscription.expires_at == expires
+    assert binding.provider_app_user_ids == sorted(
+        {
+            "$RCAnonymousID:mobile-original",
+            "$RCAnonymousID:web",
+            "google-user",
+        }
+    )
     assert result["access_status"] == "active"
     macros = result["macros"]
     assert macros["calories"] == pytest.approx(

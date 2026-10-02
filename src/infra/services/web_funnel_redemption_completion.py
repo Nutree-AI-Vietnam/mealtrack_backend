@@ -129,6 +129,7 @@ async def finalize_redemption(
     environment: str,
     auth_provider: str | None = None,
     expires_at=None,
+    verified_provider_app_user_ids: set[str] | None = None,
 ) -> dict:
     """Restore one paid lead once; hash + preflight UID select the exact row."""
     binding = await db.scalar(
@@ -143,20 +144,22 @@ async def finalize_redemption(
     if not binding:
         raise claim_not_found()
     aliases = set(binding.provider_app_user_ids or [])
-    if (
-        binding.original_app_user_id != original_app_user_id
-        and original_app_user_id not in aliases
-        and binding.verified_app_user_id != original_app_user_id
-        # The provider lookup is keyed by the preflight-bound Firebase UID.
-        # RevenueCat may make that UID the subscriber's original ID before
-        # the asynchronous PURCHASE_REDEEMED alias webhook is persisted.
-        and original_app_user_id != uid
-    ):
+    verified_aliases = verified_provider_app_user_ids or set()
+    known_app_user_ids = {
+        binding.original_app_user_id,
+        binding.verified_app_user_id,
+        *aliases,
+        *verified_aliases,
+    }
+    if original_app_user_id not in known_app_user_ids:
         raise claim_not_found()
     if binding.redeemer_uid and binding.redeemer_uid != uid:
         raise claim_not_found()
     binding.redeemer_uid = uid
     key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+    lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
+    if not lead or lead.status in {"refunded", "revoked", "conflict", "expired"}:
+        raise claim_not_found()
     if binding.finalized_uid:
         if binding.finalized_uid != uid:
             raise claim_conflict()
@@ -164,9 +167,6 @@ async def finalize_redemption(
             "version": "redemption_result_v1",
             "access_status": "active",
         }
-    lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
-    if not lead or lead.status in {"refunded", "revoked", "conflict"}:
-        raise claim_not_found()
     if email is None or _normalize_email(email) != _normalize_email(lead.email):
         raise claim_conflict()
     if expires_at is not None and expires_at <= utcnow():
@@ -284,6 +284,9 @@ async def finalize_redemption(
     else:
         subscription.status = "active"
         subscription.expires_at = expires_at
+    binding.provider_app_user_ids = sorted(
+        aliases | verified_aliases | {original_app_user_id, uid}
+    )
     binding.finalized_uid, binding.finalized_at = uid, utcnow()
     binding.finalization_key_hash, binding.result = key_hash, result
     lead.claimed_uid, lead.claimed_at, lead.status, lead.access_sync_status = (

@@ -338,7 +338,6 @@ async def preflight_revenuecat_redemption(
 
 
 @router.post("/redemptions/finalize")
-@limiter.limit("5/minute")
 async def finalize_revenuecat_redemption(
     request: Request,
     payload: WebFunnelRedemptionFinalizeRequest,
@@ -375,23 +374,65 @@ async def finalize_revenuecat_redemption(
         or not settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    subscriber = await _get_web_funnel_subscription_service().get_subscriber_info(uid)
+    service = _get_web_funnel_subscription_service()
+    binding = await db.scalar(
+        select(WebFunnelRedemption).where(
+            WebFunnelRedemption.environment
+            == settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
+            WebFunnelRedemption.redemption_link_hash == payload.redemption_link_hash,
+            WebFunnelRedemption.preflight_uid == uid,
+        )
+    )
+    if not binding:
+        raise claim_not_found()
+
+    subscriber = await service.get_subscriber_info(uid)
     original_app_user_id = _subscriber_original_app_user_id(subscriber)
     if (
         not original_app_user_id
         or verify_redeemed_customer(
             subscriber,
             original_app_user_id=original_app_user_id,
+            allowed_product_ids={binding.product_id},
         ).state
         is not RevenueCatVerificationState.VERIFIED
     ):
         raise claim_not_found()
+
+    known_app_user_ids = {
+        binding.original_app_user_id,
+        binding.verified_app_user_id,
+        *(binding.provider_app_user_ids or []),
+    }
+    if original_app_user_id not in known_app_user_ids:
+        # RevenueCat may report an older mobile anonymous ID as canonical after
+        # the web checkout customer is aliased. Confirm both IDs resolve to the
+        # same live customer and the exact product bound to this checkout.
+        source_subscriber = await service.get_subscriber_info(
+            binding.original_app_user_id
+        )
+        source_original_app_user_id = _subscriber_original_app_user_id(
+            source_subscriber
+        )
+        if (
+            not source_original_app_user_id
+            or source_original_app_user_id != original_app_user_id
+            or verify_redeemed_customer(
+                source_subscriber,
+                original_app_user_id=source_original_app_user_id,
+                allowed_product_ids={binding.product_id},
+            ).state
+            is not RevenueCatVerificationState.VERIFIED
+        ):
+            raise claim_not_found()
+
     response.headers["Cache-Control"] = "no-store"
     return await get_web_funnel_redemption_service().finalize(
         db,
         uid=uid,
         email=email,
         original_app_user_id=original_app_user_id,
+        verified_provider_app_user_ids={original_app_user_id},
         redemption_link_hash=payload.redemption_link_hash,
         idempotency_key=idempotency_key,
         environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
