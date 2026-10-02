@@ -22,7 +22,7 @@ from src.infra.services.web_funnel_redemption_identity import (
 )
 
 router = APIRouter(prefix="/v1/web-funnel", tags=["Web Funnel"])
-_TERMINAL = frozenset({"refunded", "revoked", "conflict"})
+_TERMINAL = frozenset({"refunded", "revoked", "conflict", "expired"})
 
 
 def _identity_service() -> WebFunnelRedemptionIdentityService:

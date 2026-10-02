@@ -32,7 +32,7 @@ class WebFunnelRedemptionService:
         if binding.redeemer_uid and binding.redeemer_uid != uid:
             return False
         lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
-        if not lead or lead.status in {"refunded", "revoked", "conflict"}:
+        if not lead or lead.status in {"refunded", "revoked", "conflict", "expired"}:
             return False
         if not lead.email.strip().lower() == email.strip().lower():
             return False

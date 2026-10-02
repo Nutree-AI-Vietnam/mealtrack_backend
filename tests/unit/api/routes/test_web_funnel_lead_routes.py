@@ -266,6 +266,22 @@ class VerifiedSubscriberService:
         }
 
 
+class FinalizationSession:
+    def __init__(self, *, original_app_user_id="$RCAnonymousID:customer"):
+        self.binding = WebFunnelRedemption(
+            environment="sandbox",
+            redemption_link_hash="a" * 64,
+            preflight_uid="firebase-uid",
+            original_app_user_id=original_app_user_id,
+            verified_app_user_id=original_app_user_id,
+            provider_app_user_ids=None,
+            product_id="web_monthly",
+        )
+
+    async def scalar(self, _statement):
+        return self.binding
+
+
 def test_correlation_requires_redemption_link_hash():
     with pytest.raises(ValueError):
         web_funnel.WebFunnelRevenueCatCorrelationRequest(
@@ -309,7 +325,7 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
         Response(),
         "x" * 16,
         token,
-        object(),
+        FinalizationSession(),
     )
 
     assert response["version"] == "redemption_result_v1"
@@ -317,12 +333,138 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
         "uid": "firebase-uid",
         "email": "buyer@example.com",
         "original_app_user_id": "$RCAnonymousID:customer",
+        "verified_provider_app_user_ids": {"$RCAnonymousID:customer"},
         "redemption_link_hash": "a" * 64,
         "idempotency_key": "x" * 16,
         "environment": "sandbox",
         "auth_provider": "google.com",
         "expires_at": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_verifies_unknown_canonical_alias_from_checkout_id(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    checkout_id = "$RCAnonymousID:web-checkout"
+    canonical_id = "$RCAnonymousID:mobile-original"
+    session = FinalizationSession(original_app_user_id=checkout_id)
+    provider_lookups = []
+    captured = {}
+
+    class AliasedSubscriberService:
+        async def get_subscriber_info(self, app_user_id):
+            provider_lookups.append(app_user_id)
+            return {
+                "subscriber": {
+                    "original_app_user_id": canonical_id,
+                    "entitlements": {
+                        "standard": {
+                            "product_identifier": "web_monthly",
+                            "expires_date": None,
+                        }
+                    },
+                }
+            }
+
+    class RedemptionService:
+        async def finalize(self, _db, **kwargs):
+            captured.update(kwargs)
+            return {"version": "redemption_result_v1", "access_status": "active"}
+
+    monkeypatch.setattr(
+        web_funnel,
+        "_get_web_funnel_subscription_service",
+        lambda: AliasedSubscriberService(),
+    )
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    token = {
+        "uid": "firebase-uid",
+        "email": "buyer@example.com",
+        "email_verified": True,
+        "iat": int(web_funnel.utcnow().timestamp()),
+        "firebase": {"sign_in_provider": "google.com"},
+    }
+
+    response = await web_funnel.finalize_revenuecat_redemption(
+        _request(),
+        web_funnel.WebFunnelRedemptionFinalizeRequest(
+            confirm_apply_purchase=True,
+            redemption_link_hash="a" * 64,
+        ),
+        Response(),
+        "x" * 16,
+        token,
+        session,
+    )
+
+    assert response["access_status"] == "active"
+    assert provider_lookups == ["firebase-uid", checkout_id]
+    assert captured["original_app_user_id"] == canonical_id
+    assert captured["verified_provider_app_user_ids"] == {canonical_id}
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_rejects_unrelated_canonical_customer(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+    session = FinalizationSession(original_app_user_id="$RCAnonymousID:web-checkout")
+    lookups = iter(["$RCAnonymousID:mobile-original", "$RCAnonymousID:other"])
+    captured = {}
+
+    class UnrelatedSubscriberService:
+        async def get_subscriber_info(self, _app_user_id):
+            return {
+                "subscriber": {
+                    "original_app_user_id": next(lookups),
+                    "entitlements": {
+                        "standard": {
+                            "product_identifier": "web_monthly",
+                            "expires_date": None,
+                        }
+                    },
+                }
+            }
+
+    class RedemptionService:
+        async def finalize(self, _db, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        web_funnel,
+        "_get_web_funnel_subscription_service",
+        lambda: UnrelatedSubscriberService(),
+    )
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    token = {
+        "uid": "firebase-uid",
+        "email": "buyer@example.com",
+        "email_verified": True,
+        "iat": int(web_funnel.utcnow().timestamp()),
+        "firebase": {"sign_in_provider": "google.com"},
+    }
+
+    with pytest.raises(HTTPException) as error:
+        await web_funnel.finalize_revenuecat_redemption(
+            _request(),
+            web_funnel.WebFunnelRedemptionFinalizeRequest(
+                confirm_apply_purchase=True,
+                redemption_link_hash="a" * 64,
+            ),
+            Response(),
+            "x" * 16,
+            token,
+            session,
+        )
+
+    assert error.value.status_code == 404
+    assert captured == {}
 
 
 @pytest.mark.asyncio
@@ -402,7 +544,7 @@ async def test_redemption_finalization_accepts_passwordless_email_identity(
         Response(),
         "x" * 16,
         token,
-        object(),
+        FinalizationSession(),
     )
 
     assert response["access_status"] == "active"
@@ -645,7 +787,7 @@ async def test_redemption_finalization_accepts_silent_login_custom_with_claim(
         Response(),
         "x" * 16,
         token,
-        object(),
+        FinalizationSession(),
     )
     assert response["access_status"] == "active"
     assert captured["auth_provider"] == "custom"
@@ -753,7 +895,7 @@ async def test_redemption_finalization_fills_email_from_admin_for_custom_jwt(
         Response(),
         "x" * 16,
         token,
-        object(),
+        FinalizationSession(),
     )
     assert response["access_status"] == "active"
     assert captured["email"] == "buyer@example.com"
