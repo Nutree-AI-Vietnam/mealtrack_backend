@@ -525,11 +525,38 @@ async def test_week_no_repeat_constraint_rejects_repeated_or_insufficient_output
 
 
 @pytest.mark.asyncio
-async def test_provider_rejects_new_hard_preference_if_unchanged_slots_conflict():
+async def test_provider_partial_answer_fills_remaining_hard_preference_conflicts():
     provider = _Provider((WeeklyMealPlanSlotAdjustment(1, 1, "replace", "tofu"),))
     service = _service(
-        _plan(), (_meal("chicken", "Chicken"), _meal("tofu", "Tofu")), provider
+        _plan(),
+        (
+            _meal("chicken", "Chicken"),
+            _meal("tofu", "Tofu", rank=2),
+            _meal("lentils", "Lentil bowl", rank=3),
+        ),
+        provider,
     )
+
+    proposal = await service.ai_proposal(
+        AiAdjustMealPlanCommand(
+            user_id="user-1", plan_id="plan-1", prompt="Make this week vegetarian"
+        )
+    )
+
+    by_coordinate = {
+        (slot.day_index, slot.slot_index): slot for slot in proposal.proposed_plan.slots
+    }
+    assert by_coordinate[(0, 0)].recipe_id == "chicken"
+    unlogged = [slot for slot in proposal.proposed_plan.slots if not slot.is_logged]
+    assert all(slot.recipe_id in {"tofu", "lentils"} for slot in unlogged)
+    assert {slot.recipe_id for slot in unlogged} == {"tofu", "lentils"}
+    assert len(proposal.slot_changes) == WEEKLY_PLAN_SLOT_COUNT - 1
+
+
+@pytest.mark.asyncio
+async def test_provider_rejects_new_hard_preference_when_no_recipe_fits():
+    provider = _Provider(())
+    service = _service(_plan(), (_meal("chicken", "Chicken"),), provider)
 
     with pytest.raises(ValidationException, match="leave an unlogged meal in conflict"):
         await service.ai_proposal(
