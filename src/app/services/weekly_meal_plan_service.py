@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 
@@ -595,6 +596,10 @@ class WeeklyMealPlanService:
                     "action": change.action,
                 }
             )
+        if target is None and _hard_preferences_changed(plan.preferences, preferences):
+            self._replace_hard_preference_conflicts(
+                proposed, changes, meals, preferences
+            )
         proposed_plan = plan.__class__(
             id=plan.id,
             user_id=plan.user_id,
@@ -637,6 +642,59 @@ class WeeklyMealPlanService:
             slot_changes=tuple(changes),
             proposed_groceries=self.grocery_service.project(proposed_plan, meals),
         )
+
+    def _replace_hard_preference_conflicts(
+        self, proposed: list, changes: list[dict], meals, preferences
+    ) -> None:
+        """Replace unlogged slots the provider left violating new hard preferences.
+
+        The provider only sees recipe names, so it misses meals whose conflict is
+        in the ingredients. Slots with no eligible recipe are left for
+        ``_validate_proposed_hard_preferences`` to report.
+        """
+        meals_by_id = {meal.id: meal for meal in meals}
+        usage = Counter(slot.recipe_id for slot in proposed if slot.recipe_id)
+        for index, slot in enumerate(proposed):
+            if slot.is_logged or slot.recipe_id is None:
+                continue
+            current = meals_by_id.get(slot.recipe_id)
+            if (
+                current is not None
+                and self.generator.is_hard_eligible(current, preferences)
+                and self.generator.supports_slot(current, slot.slot_index)
+            ):
+                continue
+            candidates = [
+                meal
+                for meal in meals
+                if self.generator.is_hard_eligible(meal, preferences)
+                and self.generator.supports_slot(meal, slot.slot_index)
+            ]
+            if not candidates:
+                continue
+            replacement = min(
+                candidates,
+                key=lambda meal: (
+                    not self.generator.is_soft_eligible(meal, preferences),
+                    usage[meal.id],
+                    meal.popularity_rank
+                    if meal.popularity_rank is not None
+                    else 2_147_483_647,
+                    meal.id,
+                ),
+            )
+            usage[slot.recipe_id] -= 1
+            usage[replacement.id] += 1
+            proposed[index] = _slot_with_recipe(slot, replacement.id)
+            changes.append(
+                {
+                    "day_index": slot.day_index,
+                    "slot_index": slot.slot_index,
+                    "previous_recipe_id": slot.recipe_id,
+                    "new_recipe_id": replacement.id,
+                    "action": "replace",
+                }
+            )
 
     def _validate_proposed_hard_preferences(self, slots, meals, preferences) -> None:
         meals_by_id = {meal.id: meal for meal in meals}

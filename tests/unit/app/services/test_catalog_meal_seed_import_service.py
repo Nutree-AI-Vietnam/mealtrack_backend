@@ -781,38 +781,51 @@ async def test_import_allows_unmapped_ingredients_when_enabled():
     assert seed.ingredients[0].category == "produce"
 
 
-@pytest.mark.asyncio
-async def test_conversion_error_on_matched_reference_raises_error_even_when_unmapped_allowed():
-    manifest = {
+def _count_unit_manifest():
+    return {
         "recipes": [
             {
-                "recipe_key": "vn-bad-unit",
+                "recipe_key": "vn-samyang",
                 "cuisine": "vietnamese",
-                "name": "Bad Unit Meal",
+                "name": "Mì cay Samyang",
                 "meal_types": ["lunch"],
                 "ingredients": [
                     {
-                        "name": "Rice",
-                        "quantity": 100.0,
-                        "unit": "unconvertible_bogus_unit",
+                        "name": "mì Samyang",
+                        "quantity": 1.0,
+                        "unit": "gói",
                         "food_reference_id": 7,
-                        "category": "produce",
+                        "category": "pantry",
                     }
                 ],
             }
         ]
     }
+
+
+@pytest.mark.asyncio
+async def test_unconvertible_count_unit_stays_display_only_when_unmapped_allowed():
     importer = _Importer(
         refs_by_id={7: _reference(7, name="Rice")},
         allow_unmapped_ingredients=True,
     )
-    summary = await importer.import_manifest(manifest)
+    summary = await importer.import_manifest(_count_unit_manifest())
+
+    assert summary.is_successful is True
+    ingredient = importer.session.added[0].ingredients[0]
+    assert ingredient.food_reference_id is None
+    assert ingredient.quantity == 1.0
+    assert ingredient.unit == "gói"
+
+
+@pytest.mark.asyncio
+async def test_unconvertible_unit_on_matched_reference_fails_in_strict_mode():
+    importer = _Importer(refs_by_id={7: _reference(7, name="Rice")})
+    summary = await importer.import_manifest(_count_unit_manifest())
 
     assert summary.is_successful is False
     assert summary.inserted == 0
-    assert any(
-        "conversion" in err.lower() or "unit" in err.lower() for err in summary.errors
-    )
+    assert any("unit" in err.lower() for err in summary.errors)
 
 
 @pytest.mark.asyncio
