@@ -6,6 +6,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
+WEEKLY_DAYS = 7
+# Slot order is breakfast, lunch, dinner.
+WEEKLY_SLOTS_PER_DAY = 3
+WEEKLY_PLAN_SLOT_COUNT = WEEKLY_DAYS * WEEKLY_SLOTS_PER_DAY
+SLOT_MEAL_TYPES: tuple[str, ...] = ("breakfast", "lunch", "dinner")
+
 
 def ensure_slot_coordinate(day_index: int, slot_index: int) -> None:
     if (
@@ -13,10 +19,16 @@ def ensure_slot_coordinate(day_index: int, slot_index: int) -> None:
         or isinstance(slot_index, bool)
         or not isinstance(day_index, int)
         or not isinstance(slot_index, int)
-        or not 0 <= day_index <= 6
-        or not 0 <= slot_index <= 1
+        or not 0 <= day_index < WEEKLY_DAYS
+        or not 0 <= slot_index < WEEKLY_SLOTS_PER_DAY
     ):
         raise ValueError("slot coordinate out of range")
+
+
+def meal_type_for_slot(slot_index: int) -> str:
+    """Return the meal type stored at a weekly slot coordinate."""
+    ensure_slot_coordinate(0, slot_index)
+    return SLOT_MEAL_TYPES[slot_index]
 
 
 class WeeklyMealPlanStatus(StrEnum):
@@ -103,13 +115,19 @@ class WeeklyMealPlan:
     def __post_init__(self) -> None:
         if self.week_start_date.weekday() != 0:
             raise ValueError("week_start_date must be a Monday")
-        if len(self.slots) != 14:
-            raise ValueError("weekly plans must contain exactly 14 slots")
+        if len(self.slots) != WEEKLY_PLAN_SLOT_COUNT:
+            raise ValueError(
+                f"weekly plans must contain exactly {WEEKLY_PLAN_SLOT_COUNT} slots"
+            )
         coordinates = {(slot.day_index, slot.slot_index) for slot in self.slots}
-        expected = {(day, slot) for day in range(7) for slot in range(2)}
+        expected = {
+            (day, slot)
+            for day in range(WEEKLY_DAYS)
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
+        }
         if coordinates != expected:
             raise ValueError(
-                "weekly plan slots must cover all lunch and dinner coordinates"
+                "weekly plan slots must cover breakfast, lunch, and dinner coordinates"
             )
 
 

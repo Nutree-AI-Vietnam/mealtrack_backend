@@ -127,7 +127,7 @@ def _plan(
                 recipe_override=override if day == 0 and slot == 0 else None,
             )
             for day in range(7)
-            for slot in range(2)
+            for slot in range(3)
         ),
     )
 
@@ -582,8 +582,8 @@ def test_stale_revision_and_slot_coordinates_are_rejected():
     with pytest.raises(ValueError, match="slot coordinate"):
         ensure_slot_coordinate(7, 0)
     with pytest.raises(ValueError, match="slot coordinate"):
-        ensure_slot_coordinate(0, 2)
-    ensure_slot_coordinate(6, 1)
+        ensure_slot_coordinate(0, 3)
+    ensure_slot_coordinate(6, 2)
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,8 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
 from src.domain.model.weekly_meal_planner import (
+    WEEKLY_DAYS,
+    WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
@@ -21,6 +23,9 @@ from src.domain.model.weekly_meal_planner import (
 )
 from src.domain.ports.weekly_meal_plan_repository_port import (
     WeeklyMealPlanRepositoryPort,
+)
+from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
+    WeeklyPlanGenerationService,
 )
 from src.infra.database.models.weekly_meal_planner import (
     WeeklyGroceryDayLineORM,
@@ -94,7 +99,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             timezone=timezone,
             daily_calories=daily_calories,
             catalog_revision=catalog_revision,
-            algorithm_version="v1",
+            algorithm_version=WeeklyPlanGenerationService.algorithm_version,
         )
         selected = recipe_ids or {}
         plan.slots = [
@@ -104,8 +109,8 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                 slot_index=slot,
                 catalog_meal_id=selected.get((day, slot)),
             )
-            for day in range(7)
-            for slot in range(2)
+            for day in range(WEEKLY_DAYS)
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
         ]
         self.session.add(plan)
         await self.session.flush()
@@ -121,6 +126,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         status: str | None = None,
         slots: dict[tuple[int, int], str | None] | None = None,
         expected_revision: int | None = None,
+        algorithm_version: str | None = None,
     ) -> WeeklyMealPlan:
         row = await self.get_for_update(user_id=user_id, plan_id=plan_id)
         if row is None:
@@ -176,8 +182,11 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                     )
                 slot.catalog_meal_id = recipe_id
                 slot.version += 1
+        if algorithm_version is not None:
+            row.algorithm_version = algorithm_version
         changed = any(
-            value is not None for value in (people, preferences, status)
+            value is not None
+            for value in (people, preferences, status, algorithm_version)
         ) or bool(slots)
         if changed:
             row.revision += 1

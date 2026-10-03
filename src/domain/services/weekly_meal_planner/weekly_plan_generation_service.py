@@ -1,4 +1,4 @@
-"""Deterministic lunch and dinner selection for a weekly plan."""
+"""Deterministic breakfast, lunch, and dinner selection for a weekly plan."""
 
 from __future__ import annotations
 
@@ -8,7 +8,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from src.domain.model.meal_recommendation import CatalogMeal
-from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
+from src.domain.model.weekly_meal_planner import (
+    WEEKLY_DAYS,
+    WEEKLY_SLOTS_PER_DAY,
+    WeeklyMealPlanPreferences,
+    meal_type_for_slot,
+)
+from src.domain.services.meal_recommendation.calorie_allocation_policy import (
+    CalorieAllocationPolicy,
+)
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     normalize_allergen_code,
     recipe_excluded_by_allergen,
@@ -28,7 +36,7 @@ class GeneratedSlot:
 class WeeklyPlanGenerationService:
     """Generate stable selections without provider calls or persistence."""
 
-    algorithm_version = "v1"
+    algorithm_version = "v2"
 
     def generate(
         self,
@@ -49,21 +57,24 @@ class WeeklyPlanGenerationService:
         candidates.sort(key=lambda meal: self._sort_key(meal, user_id, week_start_date))
         if not candidates:
             return tuple(
-                GeneratedSlot(day, slot, None) for day in range(7) for slot in range(2)
+                GeneratedSlot(day, slot, None)
+                for day in range(WEEKLY_DAYS)
+                for slot in range(WEEKLY_SLOTS_PER_DAY)
             )
 
-        target = max(1, round(daily_calories / 2))
+        targets = _slot_calorie_targets(daily_calories)
         result: list[GeneratedSlot] = []
         used_counts: dict[str, int] = {}
-        for day in range(7):
+        for day in range(WEEKLY_DAYS):
             day_used: set[str] = set()
-            for slot in range(2):
+            for slot in range(WEEKLY_SLOTS_PER_DAY):
                 eligible = [
                     meal for meal in candidates if self._supports_slot(meal, slot)
                 ]
                 if not eligible:
                     result.append(GeneratedSlot(day, slot, None))
                     continue
+                target = targets[slot]
                 selected = min(
                     eligible,
                     key=lambda meal: (
@@ -87,7 +98,10 @@ class WeeklyPlanGenerationService:
         haystack = _haystack(meal)
         if _is_non_meal_recipe(meal):
             return False
-        if "lunch" not in meal.meal_types and "dinner" not in meal.meal_types:
+        if not any(
+            meal_type_for_slot(slot) in meal.meal_types
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
+        ):
             return False
         if preferences.diet == "vegetarian" and _contains_any(haystack, _MEAT_WORDS):
             return False
@@ -130,7 +144,7 @@ class WeeklyPlanGenerationService:
 
     @staticmethod
     def supports_slot(meal: CatalogMeal, slot_index: int) -> bool:
-        """Return whether a catalog meal is suitable for lunch or dinner."""
+        """Return whether a catalog meal is suitable for this breakfast, lunch, or dinner slot."""
         return WeeklyPlanGenerationService._supports_slot(meal, slot_index)
 
     @staticmethod
@@ -148,7 +162,7 @@ class WeeklyPlanGenerationService:
 
     @staticmethod
     def _supports_slot(meal: CatalogMeal, slot_index: int) -> bool:
-        return ("lunch" if slot_index == 0 else "dinner") in meal.meal_types
+        return meal_type_for_slot(slot_index) in meal.meal_types
 
     @staticmethod
     def _sort_key(meal: CatalogMeal, user_id: str, week_start_date: str):
@@ -278,8 +292,15 @@ def _is_non_meal_recipe(meal: CatalogMeal) -> bool:
     return is_non_meal_title(meal.name, meal.tag)
 
 
+def _slot_calorie_targets(daily_calories: int) -> tuple[int, ...]:
+    allocations = CalorieAllocationPolicy().allocate(max(1, daily_calories))
+    return tuple(
+        allocations[meal_type_for_slot(slot)] for slot in range(WEEKLY_SLOTS_PER_DAY)
+    )
+
+
 def is_non_meal_title(title: str, tag: str | None = None) -> bool:
-    """Identify catalog titles that should not be offered as lunch or dinner."""
+    """Identify catalog titles that should not be offered as a planned meal."""
     return _contains_any(f"{title} {tag or ''}".casefold(), _NON_MEAL_TITLE_WORDS)
 
 

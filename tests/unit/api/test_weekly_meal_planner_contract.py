@@ -25,6 +25,8 @@ from src.domain.model.meal_recommendation.catalog_recipe import (
 )
 from src.domain.model.nutrition.micros import Micros
 from src.domain.model.weekly_meal_planner import (
+    WEEKLY_PLAN_SLOT_COUNT,
+    WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
@@ -52,7 +54,7 @@ def _plan():
                 recipe_id=None,
             )
             for day in range(7)
-            for slot in range(2)
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
         ),
         created_at=datetime(2026, 9, 20),
         updated_at=datetime(2026, 9, 20),
@@ -148,7 +150,7 @@ def _recipe(micros=None):
     )
 
 
-def test_current_plan_returns_fourteen_slots():
+def test_current_plan_returns_three_meals_each_day():
     response = TestClient(_app()).get(
         "/v1/meal-plans/current?week_start_date=2026-09-21"
     )
@@ -157,9 +159,10 @@ def test_current_plan_returns_fourteen_slots():
     body = response.json()
     assert body["revision"] == 1
     assert len(body["plan"]) == 7
-    assert sum(len(day) for day in body["plan"]) == 14
-    assert body["plan"][0][0]["slot_name"] == "lunch"
-    assert body["plan"][0][1]["slot_name"] == "dinner"
+    assert sum(len(day) for day in body["plan"]) == WEEKLY_PLAN_SLOT_COUNT
+    assert body["plan"][0][0]["slot_name"] == "breakfast"
+    assert body["plan"][0][1]["slot_name"] == "lunch"
+    assert body["plan"][0][2]["slot_name"] == "dinner"
 
 
 def test_current_plan_without_week_start_resolves_to_current_monday():
@@ -310,7 +313,7 @@ def test_recipe_detail_unmapped_ingredient_id_is_not_string_none():
 
 
 def test_recipe_list_forwards_requested_meal_type():
-    for meal_type in ("lunch", "dinner"):
+    for meal_type in ("breakfast", "lunch", "dinner"):
         bus = _Bus()
         response = TestClient(_app(bus=bus)).get(f"/v1/recipes?meal_type={meal_type}")
 
