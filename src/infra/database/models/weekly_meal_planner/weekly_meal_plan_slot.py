@@ -18,7 +18,7 @@ from src.infra.database.models.base import TimestampMixin
 
 
 class WeeklyMealPlanSlotORM(Base, TimestampMixin):
-    """One stable lunch or dinner coordinate in a weekly plan."""
+    """One breakfast, lunch, or dinner coordinate in a weekly plan."""
 
     __tablename__ = "weekly_meal_plan_slots"
 
@@ -53,6 +53,6 @@ class WeeklyMealPlanSlotORM(Base, TimestampMixin):
         ),
         Index("idx_weekly_meal_plan_slots_catalog", "catalog_meal_id"),
         CheckConstraint("day_index BETWEEN 0 AND 6", name="ck_weekly_slot_day_index"),
-        CheckConstraint("slot_index BETWEEN 0 AND 1", name="ck_weekly_slot_slot_index"),
+        CheckConstraint("slot_index BETWEEN 0 AND 2", name="ck_weekly_slot_slot_index"),
         CheckConstraint("version > 0", name="ck_weekly_slot_version"),
     )

@@ -14,6 +14,7 @@ from src.app.commands.meal_planner import LogMealPlanSlotCommand
 from src.app.services.recommended_meal_materialization_service import (
     RecommendedMealMaterializationService,
 )
+from src.domain.model.weekly_meal_planner import meal_type_for_slot
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 
 
@@ -100,7 +101,7 @@ class WeeklyMealLoggingService:
                     week_start_date = slot_plan.week_start_date
 
                 expected_date = week_start_date + timedelta(days=slot.day_index)
-                expected_type = "lunch" if slot.slot_index == 0 else "dinner"
+                expected_type = meal_type_for_slot(slot.slot_index)
                 if (
                     command.meal_date != expected_date
                     or command.meal_type != expected_type

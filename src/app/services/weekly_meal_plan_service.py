@@ -152,6 +152,7 @@ class WeeklyMealPlanService:
                         people=command.preferences.people,
                         preferences=command.preferences,
                         slots=generated_slots,
+                        algorithm_version=self.generator.algorithm_version,
                     )
                 await uow.meal_write_operations.complete(
                     reservation, target_meal_id=plan.id, response={"plan_id": plan.id}
@@ -681,9 +682,7 @@ def _legacy_fingerprint(command) -> str:
     """Hash used when dataclass fields were stringified instead of expanded."""
 
     payload = {
-        key: value
-        for key, value in vars(command).items()
-        if key != "idempotency_key"
+        key: value for key, value in vars(command).items() if key != "idempotency_key"
     }
     return canonicalize_fingerprint(payload)
 
@@ -943,7 +942,7 @@ def _prompt_explicitly_requests_clear(prompt: str) -> bool:
     )
     return bool(
         re.search(
-            r"\b(?:clear|remove|delete)\s+(?:the\s+)?(?:meal|slot|lunch|dinner|it|this)\b|\bopen slot\b|\bleave\b.{0,20}\b(?:open|empty)\b|bo trong|xoa bua",
+            r"\b(?:clear|remove|delete)\s+(?:the\s+)?(?:meal|slot|breakfast|lunch|dinner|it|this)\b|\bopen slot\b|\bleave\b.{0,20}\b(?:open|empty)\b|bo trong|xoa bua",
             lowered,
         )
     )
