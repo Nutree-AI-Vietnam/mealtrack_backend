@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -45,6 +46,11 @@ class WeeklyMealLoggingService:
             }
         )
         async with self.uow_factory() as uow:
+            if os.getenv("CATALOG_PUBLICATION_FENCING_ENABLED", "false").lower() in {
+                "true",
+                "1",
+            }:
+                await uow.catalog_recipes.lock_catalog_publication(shared=True)
             reservation = await uow.meal_write_operations.reserve(
                 user_id=command.user_id,
                 operation="weekly_meal_plan_slot_log",

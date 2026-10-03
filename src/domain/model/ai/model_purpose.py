@@ -13,3 +13,4 @@ class ModelPurpose(Enum):
     RECIPE = "recipe"
     DISCOVERY = "discovery"
     GENERAL = "general"
+    MEAL_PLAN_ADJUSTMENT = "meal_plan_adjustment"

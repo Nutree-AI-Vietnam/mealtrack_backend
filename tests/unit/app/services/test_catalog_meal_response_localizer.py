@@ -362,3 +362,49 @@ async def test_localize_slot_falls_back_for_missing_translated_values():
     )
 
     assert localized.selected.catalog_meal == slot.selected.catalog_meal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "locale,name,translated",
+    [("en", "Cơm gà", "Chicken rice"), ("vi", "Chicken rice", "Cơm gà")],
+)
+async def test_prepared_translations_serve_both_source_languages_without_provider(
+    locale, name, translated
+):
+    from src.app.services.catalog_meal_response_localizer import (
+        localize_catalog_meal_names,
+    )
+
+    class Persisted:
+        async def get_catalog_translations(self, meals, language):
+            assert language == locale
+            return {"meal": {name: translated}}
+
+        async def translate_texts(self, *_):
+            pytest.fail("Prepared GET presentation called a provider")
+
+    meal = _meal("meal", name)
+    result = await localize_catalog_meals(
+        (meal,), language=locale, translation_service=Persisted()
+    )
+    names = await localize_catalog_meal_names(
+        (meal,), language=locale, translation_service=Persisted()
+    )
+    assert result[0].name == names[0].name == translated
+    assert result[0].protein_g == meal.protein_g
+
+
+@pytest.mark.asyncio
+async def test_missing_preparation_keeps_canonical_text_without_jobs_or_provider():
+    class Pending:
+        async def get_catalog_translations(self, *_):
+            return {}
+
+        async def translate_texts(self, *_):
+            pytest.fail("Missing preparation called a provider")
+
+    meal = _meal("meal")
+    assert await localize_catalog_meals(
+        (meal,), language="vi", translation_service=Pending()
+    ) == (meal,)

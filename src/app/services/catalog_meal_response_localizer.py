@@ -21,6 +21,7 @@ from src.domain.model.meal_recommendation import (
     PersistedMealRecommendationSlot,
 )
 from src.domain.model.translation_result import TranslationOutcome
+from src.planner_observability import planner_timed
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ async def localize_meal_recommendation_plan(
     )
 
 
+@planner_timed("localization")
 async def localize_catalog_meals(
     meals: Iterable[CatalogMeal],
     *,
@@ -82,9 +84,18 @@ async def localize_catalog_meals(
     """Return localized presentation copies of catalog meals."""
 
     original = tuple(meals)
-    if language == "en" or translation_service is None or not original:
+    if translation_service is None or not original:
         return original
+    persisted_loader = getattr(translation_service, "get_catalog_translations", None)
+    if callable(persisted_loader):
+        mappings = await persisted_loader(original, language)
+        return tuple(
+            _replace_meal_display_text(meal, mappings.get(meal.id, {}))
+            for meal in original
+        )
 
+    if language == "en":
+        return original
     localized_meals = await _localized_meals(
         list(original),
         language=language,
@@ -96,6 +107,7 @@ async def localize_catalog_meals(
     return tuple(localized_meals.get(meal.id, meal) for meal in original)
 
 
+@planner_timed("localization")
 async def localize_catalog_meal_names(
     meals: Iterable[CatalogMeal],
     *,
@@ -104,9 +116,18 @@ async def localize_catalog_meal_names(
 ) -> tuple[CatalogMeal, ...]:
     """Localize only the names needed by compact weekly-plan summaries."""
     original = tuple(meals)
-    if language == "en" or translation_service is None or not original:
+    if translation_service is None or not original:
         return original
+    persisted_loader = getattr(translation_service, "get_catalog_translations", None)
+    if callable(persisted_loader):
+        mappings = await persisted_loader(original, language)
+        return tuple(
+            replace(meal, name=mappings.get(meal.id, {}).get(meal.name, meal.name))
+            for meal in original
+        )
 
+    if language == "en":
+        return original
     summary_meals = [
         replace(
             meal,
@@ -142,7 +163,7 @@ async def localize_presentation_texts(
 ) -> tuple[str, ...]:
     """Translate short user-facing copy, preserving source text on failure."""
     original = tuple(texts)
-    if language == "en" or translation_service is None or not original:
+    if translation_service is None or not original:
         return original
     result = await translate_for_presentation(translation_service, original, language)
     if result.outcome is not TranslationOutcome.TRANSLATED:
@@ -364,6 +385,7 @@ def _replace_candidate_catalog_meal(
     )
 
 
+@planner_timed("localization")
 async def localize_grocery_categories(
     categories: tuple[Any, ...] | list[Any],
     *,
@@ -373,6 +395,20 @@ async def localize_grocery_categories(
     """Translate item names in grocery categories when language is non-English."""
     if language == "en" or translation_service is None or not categories:
         return tuple(categories)
+
+    persisted_loader = getattr(translation_service, "get_grocery_translations", None)
+    if callable(persisted_loader):
+        persisted_translations = await persisted_loader(categories, language)
+        return tuple(
+            replace(
+                cat,
+                items=tuple(
+                    replace(item, name=persisted_translations.get(item.name, item.name))
+                    for item in cat.items
+                ),
+            )
+            for cat in categories
+        )
 
     item_names = [item.name for cat in categories for item in cat.items if item.name]
     if not item_names:

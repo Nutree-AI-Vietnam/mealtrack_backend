@@ -102,6 +102,7 @@ class _Uow:
         self.profile = profile
         self.is_open = False
         self.update_args = None
+        self.requested_meal_ids = []
 
     async def __aenter__(self):
         self.is_open = True
@@ -116,6 +117,10 @@ class _Uow:
 
     async def list_active_meals(self):
         return self.meals
+
+    async def get_meals(self, recipe_ids):
+        self.requested_meal_ids.append(tuple(recipe_ids))
+        return [meal for meal in self.meals if meal.id in recipe_ids]
 
     async def lock_user_week(self, **_):
         return None
@@ -194,6 +199,55 @@ def _service(plan, meals, provider=None, profile=None):
     return WeeklyMealPlanService(
         lambda: _Uow(plan, meals, profile), ai_adjustment_provider=provider
     )
+
+
+@pytest.mark.asyncio
+async def test_provider_proposal_reads_compact_candidates_and_hydrates_selected_ids_only(
+    monkeypatch,
+):
+    from dataclasses import replace
+
+    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
+    full_meals = (
+        _meal("chicken", "Chicken"),
+        _meal("tofu", "Tofu"),
+        _meal("unused", "Unused recipe"),
+    )
+    plan = _plan()
+    uows = []
+
+    class CompactUow(_Uow):
+        async def list_active_meals(self):
+            pytest.fail("Provider proposals must not hydrate the full catalog")
+
+        async def list_selection_candidates(self):
+            return tuple(
+                replace(meal, ingredients=(), steps=(), recipe_payload=None)
+                for meal in self.meals
+            )
+
+    def factory():
+        uow = CompactUow(plan, full_meals)
+        uows.append(uow)
+        return uow
+
+    provider = _Provider((WeeklyMealPlanSlotAdjustment(1, 0, "replace", "tofu"),))
+    service = WeeklyMealPlanService(factory, ai_adjustment_provider=provider)
+    proposal = await service.ai_proposal(
+        AiAdjustMealPlanCommand(
+            user_id="user-1",
+            plan_id=plan.id,
+            prompt="Replace this lunch with tofu",
+            target_day_index=1,
+            target_slot_index=0,
+        )
+    )
+    assert len(uows) == 2
+    assert not any(uow.is_open for uow in uows)
+    assert uows[0].requested_meal_ids == []
+    assert uows[1].requested_meal_ids == [("chicken", "tofu")]
+    assert all(not meal.ingredients for meal in provider.context["meals"])
+    assert proposal.proposed_groceries
 
 
 @pytest.mark.asyncio
@@ -593,6 +647,82 @@ async def test_patch_checks_new_hard_preferences_and_omits_unchanged_slots():
     assert updated is plan
     assert uow.update_args["slots"] is None
     assert uow.update_args["expected_revision"] == plan.revision
+    assert uow.requested_meal_ids == [("tofu",)]
+
+
+@pytest.mark.asyncio
+async def test_patch_fetches_only_deduplicated_replacements():
+    uow = _Uow(_plan(), (_meal("chicken", "Chicken"), _meal("tofu", "Tofu")))
+    await WeeklyMealPlanService(lambda: uow).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="swap",
+            slots={(1, 0): "tofu", (1, 1): "tofu", (2, 0): None},
+        )
+    )
+    assert uow.requested_meal_ids == [("tofu",)]
+    assert uow.update_args["slots"][(2, 0)] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_soft_preferences_do_not_load_catalog():
+    uow = _Uow(_plan(), ())
+    await WeeklyMealPlanService(lambda: uow).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="soft-prefs",
+            preferences=WeeklyMealPlanPreferences(cuisine="italian"),
+        )
+    )
+    assert uow.requested_meal_ids == []
+
+
+@pytest.mark.asyncio
+async def test_patch_hard_preferences_validate_unlogged_recipes_and_replacements():
+    from dataclasses import replace
+
+    plan = _plan(recipe_id="tofu")
+    plan = replace(
+        plan, slots=(replace(plan.slots[0], recipe_id="logged-only"), *plan.slots[1:])
+    )
+    uow = _Uow(plan, (_meal("tofu", "Tofu"), _meal("lentils", "Lentil bowl")))
+    await WeeklyMealPlanService(lambda: uow).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="hard-prefs",
+            preferences=WeeklyMealPlanPreferences(diet="vegetarian"),
+            slots={(1, 0): "lentils"},
+        )
+    )
+    assert uow.requested_meal_ids == [("lentils", "tofu")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "meal,expected",
+    [
+        (None, "RECIPE_NOT_FOUND"),
+        (_meal("tofu", "Tofu", meal_types=("dinner",)), "RECIPE_SLOT_INELIGIBLE"),
+        (_meal("tofu", "Tofu", allergen_codes=("peanut",)), "RECIPE_INELIGIBLE"),
+    ],
+)
+async def test_patch_selected_recipe_keeps_exact_validation_errors(meal, expected):
+    plan = _plan(WeeklyMealPlanPreferences(allergies=("peanut",)))
+    uow = _Uow(plan, () if meal is None else (meal,))
+    with pytest.raises(ValidationException) as exc:
+        await WeeklyMealPlanService(lambda: uow).update(
+            UpdateWeeklyMealPlanCommand(
+                user_id="user-1",
+                plan_id="plan-1",
+                idempotency_key="invalid",
+                slots={(1, 0): "tofu"},
+            )
+        )
+    assert exc.value.error_code == expected
+    assert uow.update_args is None
 
 
 @pytest.mark.asyncio
@@ -690,9 +820,7 @@ class _GenerateUow(_Uow):
 def test_legacy_generate_fingerprint_stringifies_preferences():
     command = _generate_command(_plan())
     payload = {
-        key: value
-        for key, value in vars(command).items()
-        if key != "idempotency_key"
+        key: value for key, value in vars(command).items() if key != "idempotency_key"
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -764,3 +892,68 @@ async def test_generate_rejects_a_reused_key_for_a_different_request():
 
     assert exc_info.value.error_code == "IDEMPOTENCY_KEY_REUSED"
     assert uow.reopened is False
+
+
+def test_week_shortlist_preserves_dinner_coverage_and_named_recipe():
+    from src.app.services.weekly_meal_plan_service import _ai_shortlist
+    from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
+
+    meals = tuple(
+        _meal(f"lunch-{i}", f"Lunch {i}", meal_types=("lunch",), rank=i)
+        for i in range(40)
+    )
+    dinner = _meal("dinner", "Rare dinner", meal_types=("dinner",), rank=100)
+    chosen = _ai_shortlist(
+        WeeklyPlanGenerationService(),
+        "replace Tuesday dinner",
+        (*meals, dinner),
+        WeeklyMealPlanPreferences(),
+        None,
+    )
+    assert len(chosen) == 40
+    assert dinner in chosen
+    named = _ai_shortlist(
+        WeeklyPlanGenerationService(),
+        "use Lunch 39",
+        (*meals, dinner),
+        WeeklyMealPlanPreferences(),
+        None,
+    )
+    assert named[0].id == "lunch-39"
+
+
+@pytest.mark.asyncio
+async def test_shortlist_widens_once_to_reach_lower_ranked_target_recipe():
+    class Provider:
+        calls = 0
+
+        async def propose(self, **context):
+            self.calls += 1
+            assert len(context["meals"]) <= 40
+            replacement = next(
+                (meal for meal in context["meals"] if meal.id == "desired"), None
+            )
+            return WeeklyMealPlanAdjustmentProposal(
+                base_revision=context["plan"].revision,
+                explanation="Ready",
+                slot_changes=(WeeklyMealPlanSlotAdjustment(1, 1, "replace", "desired"),)
+                if replacement
+                else (),
+            )
+
+    provider = Provider()
+    meals = tuple(_meal(f"recipe-{i}", f"Recipe {i}", rank=i) for i in range(45)) + (
+        _meal("desired", "Desired", rank=100),
+        _meal("chicken", "Chicken", rank=0),
+    )
+    result = await _service(_plan(), meals, provider).ai_proposal(
+        AiAdjustMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            prompt="something different",
+            target_day_index=1,
+            target_slot_index=1,
+        )
+    )
+    assert result.proposed_plan.slots[3].recipe_id == "desired"
+    assert provider.calls == 2

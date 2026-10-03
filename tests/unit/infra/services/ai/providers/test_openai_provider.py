@@ -55,6 +55,47 @@ def test_openai_provider_capabilities():
     assert AICapability.STRUCTURED_OUTPUT in provider.supported_capabilities
 
 
+def test_planner_uses_separate_cached_client_with_sdk_retries_disabled():
+    provider = _provider()
+    planner = provider._planner_langchain._llm(model="gpt-5.4-mini-2026-03-17")
+    shared = provider._langchain._llm(model="gpt-5.4-mini-2026-03-17")
+    assert planner is provider._planner_langchain._llm(model="gpt-5.4-mini-2026-03-17")
+    assert planner is not shared
+    assert planner.max_retries == 0
+    assert planner.root_async_client.max_retries == 0
+    assert shared.max_retries == 1
+    assert planner.request_timeout == 25
+    # Installed LangChain retains the per-attempt transport timeout when
+    # converting a request to Responses API input.
+    assert planner._get_request_payload("request", timeout=1.5)["timeout"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_planner_provider_bounds_transport_timeout_without_mutating_shared_client():
+    provider = _provider()
+    provider._planner_langchain.generate_structured = AsyncMock(
+        return_value=LangChainOpenAIResult(
+            parsed={"ok": True}, raw_message=SimpleNamespace()
+        )
+    )
+    provider._langchain.generate_structured = AsyncMock()
+    assert await provider.generate(
+        model="gpt-5.4-mini-2026-03-17",
+        prompt="request",
+        system_message="rules",
+        schema=VisionNutritionResponse,
+        purpose_hint="meal_plan_adjustment",
+        request_timeout_seconds=0.5,
+    ) == {"ok": True}
+    kwargs = provider._planner_langchain.generate_structured.await_args.kwargs
+    assert kwargs["request_kwargs"]["timeout"] == 0.5
+    assert kwargs["request_kwargs"]["prompt_cache_key"].startswith(
+        "mealtrack-test:meal_plan_adjustment:"
+    )
+    assert provider._langchain.generate_structured.await_count == 0
+    assert provider._langchain._max_retries == 1
+
+
 @pytest.mark.asyncio
 async def test_generate_structured_text_calls_adapter_with_prompt_cache_kwargs():
     provider = _provider()

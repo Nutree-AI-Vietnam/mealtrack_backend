@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta
+from functools import wraps
+from time import monotonic
 from typing import Literal
 
 from fastapi import (
@@ -21,7 +24,7 @@ from fastapi import (
 
 from src.api.base_dependencies import (
     get_async_food_reference_repository,
-    get_text_translation_service,
+    get_planner_translation_service,
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
@@ -81,7 +84,6 @@ from src.app.services.catalog_meal_response_localizer import (
     localize_catalog_meal_names,
     localize_catalog_meals,
     localize_grocery_categories,
-    localize_presentation_texts,
 )
 from src.domain.constants.languages import normalize_language
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
@@ -100,6 +102,8 @@ from src.domain.utils.timezone_utils import (
     is_valid_timezone,
     normalize_timezone,
 )
+from src.planner_observability import planner_timed
+from src.planner_request_policy import planner_deadline
 
 router = APIRouter(tags=["Weekly Meal Plans", "Recipes"])
 logger = logging.getLogger(__name__)
@@ -115,7 +119,7 @@ async def get_current_weekly_plan(
     auto_generate: bool = Query(default=True),
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
 ):
     try:
         header_tz = request.headers.get("X-Timezone")
@@ -133,12 +137,13 @@ async def get_current_weekly_plan(
                 raise HTTPException(
                     status_code=404, detail="Weekly meal plan not found"
                 )
-            budget = await event_bus.send(
+            budget = await _weekly_budget(
+                event_bus,
                 GetWeeklyBudgetQuery(
                     user_id=user_id,
                     target_date=datetime.now(get_zone_info(timezone)).date(),
                     header_timezone=timezone,
-                )
+                ),
             )
             daily_calories = (
                 int(round(budget.get("adjusted_daily_calories") or 0)) if budget else 0
@@ -158,9 +163,12 @@ async def get_current_weekly_plan(
                     daily_calories=daily_calories,
                 )
             )
-            background_tasks.add_task(
-                _safely_enrich_plan_micronutrients, event_bus, plan
-            )
+            if os.getenv(
+                "CATALOG_DURABLE_PREPARATION_ENABLED", "false"
+            ).lower() not in {"true", "1"}:
+                background_tasks.add_task(
+                    _safely_enrich_plan_micronutrients, event_bus, plan
+                )
 
         return await _plan_response(
             plan,
@@ -190,7 +198,7 @@ async def generate_weekly_plan(
     include_grocery_count: bool = Query(default=True),
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
 ):
     try:
         header_tz = request.headers.get("X-Timezone")
@@ -200,12 +208,13 @@ async def generate_weekly_plan(
             else await _timezone(event_bus, request, user_id)
         )
         week = _resolve_week(body.week_start_date, timezone)
-        budget = await event_bus.send(
+        budget = await _weekly_budget(
+            event_bus,
             GetWeeklyBudgetQuery(
                 user_id=user_id,
                 target_date=datetime.now(get_zone_info(timezone)).date(),
                 header_timezone=timezone,
-            )
+            ),
         )
         daily_calories = int(round(budget.get("adjusted_daily_calories") or 0))
         if daily_calories <= 0:
@@ -225,7 +234,13 @@ async def generate_weekly_plan(
                 daily_calories=daily_calories,
             )
         )
-        background_tasks.add_task(_safely_enrich_plan_micronutrients, event_bus, plan)
+        if os.getenv("CATALOG_DURABLE_PREPARATION_ENABLED", "false").lower() not in {
+            "true",
+            "1",
+        }:
+            background_tasks.add_task(
+                _safely_enrich_plan_micronutrients, event_bus, plan
+            )
         return await _plan_response(
             plan,
             event_bus,
@@ -250,7 +265,7 @@ async def update_weekly_plan(
     include_grocery_count: bool = Query(default=True),
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
 ):
     try:
         preferences = None
@@ -323,7 +338,7 @@ async def list_recipes(
     offset: int = Query(default=0, ge=0),
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
 ):
     del user_id
     try:
@@ -361,7 +376,7 @@ async def get_recipe_detail(
     request: Request,
     recipe_id: str,
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
 ):
     try:
         return await _recipe_detail_response(
@@ -388,7 +403,7 @@ async def deprecated_enrich_recipe_detail_micronutrients(
     recipe_id: str,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
 ):
     """Compatibility endpoint; returns persisted detail without generating."""
     del user_id
@@ -406,17 +421,46 @@ async def deprecated_enrich_recipe_detail_micronutrients(
         raise _http_error(exc) from exc
 
 
+def _bounded_ai_request(function):
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs.get("request") or next(
+            (arg for arg in args if isinstance(arg, Request)), None
+        )
+        started = (
+            getattr(request.state, "planner_started_at", monotonic())
+            if request is not None
+            else monotonic()
+        )
+        deadline = started + 30.0
+        try:
+            with planner_deadline(deadline):
+                async with asyncio.timeout_at(deadline):
+                    return await function(*args, **kwargs)
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error_code": "AI_MEAL_PLAN_UNAVAILABLE",
+                    "message": "AI meal plan adjustment exceeded its deadline",
+                },
+            ) from exc
+
+    return wrapped
+
+
 @router.post(
     "/v1/meal-plans/{plan_id}/ai-prompt", response_model=WeeklyAiProposalResponse
 )
 @limiter.limit("10/minute")
+@_bounded_ai_request
 async def ai_adjust_weekly_plan(
     request: Request,
     plan_id: str,
     body: AiAdjustMealPlanRequest,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
     food_reference_repository=Depends(get_async_food_reference_repository),
 ):
     try:
@@ -426,15 +470,12 @@ async def ai_adjust_weekly_plan(
                 user_id=user_id,
                 plan_id=plan_id,
                 prompt=body.prompt,
+                language=language,
                 target_day_index=body.target_day_index,
                 target_slot_index=body.target_slot_index,
             )
         )
-        explanation, diff_summary = await localize_presentation_texts(
-            (proposal.explanation, proposal.diff_summary),
-            language=language,
-            translation_service=translation_service,
-        )
+        explanation, diff_summary = proposal.explanation, proposal.diff_summary
         grocery_names_by_id: dict[int, str] = {}
         if normalize_language(language) == "vi" and proposal.proposed_groceries:
             source_names_by_id = {
@@ -505,7 +546,7 @@ async def get_weekly_groceries(
     plan_id: str,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    translation_service=Depends(get_text_translation_service),
+    translation_service=Depends(get_planner_translation_service),
 ):
     try:
         result = await event_bus.send(
@@ -667,6 +708,7 @@ def _resolve_week(value: date | None, timezone: str) -> date:
     return current_monday
 
 
+@planner_timed("response_projection")
 async def _plan_response(
     plan,
     event_bus,
@@ -712,7 +754,9 @@ async def _plan_response(
     if include_grocery_count and getattr(plan, "id", None):
         try:
             groceries_result = await event_bus.send(
-                GetWeeklyGroceriesQuery(user_id=plan.user_id, plan_id=plan.id)
+                GetWeeklyGroceriesQuery(
+                    user_id=plan.user_id, plan_id=plan.id, plan=plan
+                )
             )
             if groceries_result:
                 _, categories = groceries_result
@@ -909,3 +953,8 @@ def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, MealTrackException):
         return create_http_exception(exc)
     return handle_exception(exc)
+
+
+@planner_timed("budget")
+async def _weekly_budget(event_bus, query):
+    return await event_bus.send(query)

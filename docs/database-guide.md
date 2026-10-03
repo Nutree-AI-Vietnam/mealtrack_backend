@@ -111,6 +111,11 @@ instead of the request/runtime session factory.
 | **meal_catalog** | Curated catalog meals for recommendations | catalog_key, cuisine, meal_types, content_hash, base_servings, serving_confidence, is_active, image_url |
 | **meal_catalog_ingredients** | Catalog ingredients linked to canonical foods | catalog_meal_id, food_reference_id, display_name, quantity, unit |
 | **meal_catalog_steps** | Ordered immutable catalog cooking instructions | catalog_meal_id, step_number, title, description |
+| **catalog_publication_version** | Singleton publication fence with independent dependency counters | selection, ingredients, translation, enrichment |
+| **meal_catalog_projection** | Rebuildable compact recipe filters and authoritative macro summaries | catalog_meal_id, casefold text, suitability, macros, facet digests, independent dirty flags |
+| **meal_catalog_projection_allergens** | Casefolded hard constraints linked to canonical allergens | catalog_meal_id, allergen_id, code_normalized |
+| **catalog_preparation_jobs** | Durable projection/translation/micronutrient preparation | task, recipe, facet version, locale, contract, status, lease token, next attempt |
+| **catalog_recipe_translations** | Prepared locale overlays tied to source text inputs | catalog_meal_id, locale, input_facet_version, contract_version, translations |
 | **weekly_meal_plans** | Owner-scoped Monday-based weekly plan aggregate | user_id, week_start_date, status, revision, people, preferences |
 | **weekly_meal_plan_slots** | Durable lunch/dinner coordinates and diary links | plan_id, day_index, slot_index, catalog_meal_id, logged_meal_id |
 | **weekly_meal_plan_pantry_items** | Per-plan canonical pantry quantities | plan_id, food_reference_id, custom_amount, custom_unit, stock_kind |
@@ -203,6 +208,8 @@ migration/admin URLs.
 
 | Version | Changes |
 |---------|---------|
+| 20261003102324493409 | Add leased preparation jobs, versioned translations, micronutrient facet metadata, and source-change job publication |
+| 20261003042253928494 | Add catalog projections and publication fence; add internal weekly-slot version for final generation validation |
 | 20260921145751448341 | Add serving-aware grocery metadata, optimistic plan revisions, pantry units, and catalog recipe content snapshots |
 | 20260921053202014838 | Add weekly meal planner tables, catalog recipe detail fields, ordered catalog steps, and grocery categories |
 | 20260727000001 | Add meal-recommendation candidate lifecycle states |
@@ -254,6 +261,29 @@ concurrent requests.
 - `joinedload` / `selectinload` for known relationship paths
 - Direct-pool defaults: 3 base + 2 overflow connections per worker, recycled every 120 seconds
 - Redis cache-aside for frequently read data (see `external-services.md`)
+- Catalog browse filters use typed columns populated with Python `casefold()`;
+  PostgreSQL `C` collation preserves Python name/ID ordering. JSON summary
+  payloads are rebuildable and never own filter/count/order fields. Missing or
+  dirty query projections use the authoritative loader; dirty nutrition is
+  hydrated only for selected page IDs after SQL count and pagination. Selection
+  falls back until all active recipe query/nutrition projections are current.
+- With projected reads enabled, seed/import writes, popularity-rank updates and
+  admin image updates rebuild the affected recipe in the same transaction under
+  the exclusive publication fence. Direct SQL and food/reference dependency
+  writers invalidate synchronously, then use canonical fallback until bounded
+  reconciliation completes. Complete optimized cutover requires measured
+  coverage of those remaining publishers.
+- Catalog source writers acquire the singleton publication row before source
+  row locks, including direct SQL through PostgreSQL triggers. Generation takes
+  a shared fence before owner/week and ordered plan/slot locks. Food
+  micronutrient-only changes affect enrichment, while estimate/translation
+  result persistence does not invalidate its own source facet. Backfill is
+  bounded, restartable and commits each batch separately. See the
+  [catalog rollout runbook](./runbooks/meal-catalog-release.md#weekly-planner-catalog-optimization).
+- No new browsing/search indexes accompany these projections: actual local
+  PostgreSQL plans over 1,000 synthetic recipes used sequential scans/hash joins.
+  Measure deployed row distributions and round-trip latency before adding an
+  index through the migration CLI.
 - Local food search uses `food_reference.name_normalized`, a unique normalized-name
   constraint, and a `pg_trgm` GIN index. Results are verified-first,
   region/global scoped, bounded to 50, and deduplicated by normalized name.

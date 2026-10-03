@@ -14,6 +14,9 @@ from src.infra.database.config_async import AsyncSessionLocal
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
 )
+from src.infra.repositories.catalog_preparation_repository import (
+    AsyncCatalogPreparationRepository,
+)
 from src.infra.repositories.catalog_recipe_repository_async import (
     AsyncCatalogMealRepository,
 )
@@ -62,6 +65,7 @@ from src.infra.repositories.weekly_meal_plan_repository_async import (
     AsyncWeeklyMealPlanRepository,
 )
 from src.infra.repositories.weight_repository_async import AsyncWeightRepository
+from src.planner_observability import planner_timed
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +160,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.food_references = AsyncFoodReferenceRepository(session)
         self.food_reference_integrity = FoodReferenceIntegrityRepository(session)
         self.catalog_recipes = AsyncCatalogMealRepository(session)
+        self.catalog_preparation = AsyncCatalogPreparationRepository(session)
         self.meal_translations = AsyncMealTranslationRepository(session)
         self.promo_codes = PromoCodeRepository(session)
         self.referrals = ReferralRepository(session)
@@ -200,6 +205,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
             self.session = None
             self._session_lock.release()
 
+    @planner_timed("commit")
     async def commit(self) -> None:
         if self._read_only:
             raise RuntimeError("Cannot commit a read-only AsyncUnitOfWork")
