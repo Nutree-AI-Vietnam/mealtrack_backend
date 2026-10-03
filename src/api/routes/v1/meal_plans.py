@@ -6,7 +6,6 @@ import asyncio
 import logging
 import re
 from datetime import date, datetime, timedelta
-from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -38,6 +37,7 @@ from src.api.schemas.request.weekly_meal_planner_requests import (
     UpdateGroceryDayLinesRequest,
     UpdateMealPlanPantryRequest,
     UpdateWeeklyMealPlanRequest,
+    WeeklyPlannerMealType,
 )
 from src.api.schemas.response.weekly_meal_planner_responses import (
     GroceryCategoryResponse,
@@ -90,7 +90,10 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
 )
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.micros import Micros
-from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
+from src.domain.model.weekly_meal_planner import (
+    WeeklyMealPlanPreferences,
+    meal_type_for_slot,
+)
 from src.domain.services.nrf_score import nrf_coverage, nrf_quality
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     deterministic_ingredient_id,
@@ -316,7 +319,7 @@ async def list_recipes(
     diet: str | None = Query(default=None),
     max_cook_time: int | None = Query(default=None, ge=0, le=600),
     cuisine: str | None = Query(default=None, max_length=80),
-    meal_type: Literal["lunch", "dinner"] | None = Query(default=None),
+    meal_type: WeeklyPlannerMealType | None = Query(default=None),
     allergies: str = Query(default="", max_length=1000),
     dislikes: str = Query(default="", max_length=1000),
     limit: int = Query(default=20, ge=1, le=50),
@@ -744,7 +747,7 @@ def _slot_response(slot, meal: CatalogMeal | None) -> WeeklyMealSlotResponse:
         slot_id=slot.id,
         day_index=slot.day_index,
         slot_index=slot.slot_index,
-        slot_name="lunch" if slot.slot_index == 0 else "dinner",
+        slot_name=meal_type_for_slot(slot.slot_index),
         recipe=_recipe_summary(meal) if meal else None,
         is_logged=slot.is_logged,
         logged_meal_id=slot.logged_meal_id,

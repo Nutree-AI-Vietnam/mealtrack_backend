@@ -3,7 +3,12 @@ from decimal import Decimal
 import pytest
 
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
-from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
+from src.domain.model.weekly_meal_planner import (
+    WEEKLY_DAYS,
+    WEEKLY_PLAN_SLOT_COUNT,
+    WEEKLY_SLOTS_PER_DAY,
+    WeeklyMealPlanPreferences,
+)
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
 
 
@@ -33,8 +38,8 @@ def _meal(meal_id: str, name: str, meal_types=("lunch", "dinner"), *, popularity
     )
 
 
-def test_generation_covers_all_fourteen_weekly_coordinates_deterministically():
-    meals = [_meal("tofu", "Tofu")]
+def test_generation_covers_all_weekly_coordinates_deterministically():
+    meals = [_meal("tofu", "Tofu", meal_types=("breakfast", "lunch", "dinner"))]
     preferences = WeeklyMealPlanPreferences(diet="vegetarian")
 
     first = WeeklyPlanGenerationService().generate(
@@ -53,23 +58,33 @@ def test_generation_covers_all_fourteen_weekly_coordinates_deterministically():
     )
 
     assert first == second
-    assert len(first) == 14
+    assert len(first) == WEEKLY_PLAN_SLOT_COUNT
     assert {(slot.day_index, slot.slot_index) for slot in first} == {
-        (day, slot) for day in range(7) for slot in range(2)
+        (day, slot)
+        for day in range(WEEKLY_DAYS)
+        for slot in range(WEEKLY_SLOTS_PER_DAY)
     }
     assert {slot.recipe_id for slot in first} == {"tofu"}
 
 
-def test_generation_leaves_wrong_meal_type_slots_empty():
+def test_generation_assigns_each_meal_type_to_its_slot():
     generated = WeeklyPlanGenerationService().generate(
-        [_meal("breakfast-only", "Oats", meal_types=("breakfast",))],
+        [
+            _meal("oats", "Oats", meal_types=("breakfast",)),
+            _meal("tofu", "Tofu", meal_types=("lunch",)),
+            _meal("soup", "Soup", meal_types=("dinner",)),
+        ],
         user_id="user-1",
         week_start_date="2026-09-21",
         daily_calories=1800,
         preferences=WeeklyMealPlanPreferences(),
     )
 
-    assert all(slot.recipe_id is None for slot in generated)
+    by_slot = {
+        slot.slot_index: slot.recipe_id for slot in generated if slot.day_index == 0
+    }
+    assert by_slot == {0: "oats", 1: "tofu", 2: "soup"}
+    assert len(generated) == WEEKLY_PLAN_SLOT_COUNT
 
 
 def test_generation_leaves_slots_empty_when_hard_preference_has_no_match():
@@ -84,7 +99,7 @@ def test_generation_leaves_slots_empty_when_hard_preference_has_no_match():
         preferences=preferences,
     )
 
-    assert len(result) == 14
+    assert len(result) == WEEKLY_PLAN_SLOT_COUNT
     assert all(slot.recipe_id is None for slot in result)
 
 
