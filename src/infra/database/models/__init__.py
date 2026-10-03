@@ -115,6 +115,7 @@ from .web_funnel_claim import (
     WebFunnelRedemption,
 )
 from .weekly_meal_planner import (
+    WeeklyGroceryDayLineORM,
     WeeklyGroceryItemStateORM,
     WeeklyMealPlanORM,
     WeeklyMealPlanPantryItemORM,
@@ -205,6 +206,7 @@ __all__ = [
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",
     "WeeklyMealPlanPantryItemORM",
+    "WeeklyGroceryDayLineORM",
     "WeeklyGroceryItemStateORM",
     # Promo codes
     "PromoCode",

@@ -35,6 +35,7 @@ from src.api.schemas.request.weekly_meal_planner_requests import (
     AiAdjustMealPlanRequest,
     GenerateWeeklyMealPlanRequest,
     LogMealPlanSlotRequest,
+    UpdateGroceryDayLinesRequest,
     UpdateMealPlanPantryRequest,
     UpdateWeeklyMealPlanRequest,
 )
@@ -63,6 +64,7 @@ from src.app.commands.meal_planner import (
     EnrichWeeklyPlanMicronutrientsCommand,
     GenerateWeeklyMealPlanCommand,
     LogMealPlanSlotCommand,
+    UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
 )
@@ -556,6 +558,35 @@ async def update_weekly_pantry(
                 plan_id=plan_id,
                 idempotency_key=_idempotency_key(idempotency_key),
                 updates=[item.model_dump() for item in body.stock_updates],
+            )
+        )
+        return PantryUpdateResponse(**result)
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+@router.patch(
+    "/v1/meal-plans/{plan_id}/grocery-days",
+    response_model=PantryUpdateResponse,
+)
+@limiter.limit("30/minute")
+async def update_grocery_day_lines(
+    request: Request,
+    plan_id: str,
+    body: UpdateGroceryDayLinesRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+):
+    del request
+    try:
+        result = await event_bus.send(
+            UpdateGroceryDayLinesCommand(
+                user_id=user_id,
+                plan_id=plan_id,
+                idempotency_key=_idempotency_key(idempotency_key),
+                ingredient_id=body.ingredient_id,
+                lines=[item.model_dump() for item in body.lines],
             )
         )
         return PantryUpdateResponse(**result)
