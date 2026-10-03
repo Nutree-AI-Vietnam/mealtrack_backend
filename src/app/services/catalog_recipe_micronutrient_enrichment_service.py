@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from typing import Any
@@ -36,6 +37,16 @@ class CatalogRecipeMicronutrientEnrichmentService:
         self._uow_factory = uow_factory
         self._estimator = estimator
         self._fdc_loader = fdc_loader
+
+    async def compute(self, preparation):
+        """Compute a staged worker result without claims, sessions or persistence."""
+        from src.app.services.catalog_micronutrient_computer import (
+            compute_micronutrients,
+        )
+
+        return await compute_micronutrients(
+            preparation, estimator=self._estimator, fdc_loader=self._fdc_loader
+        )
 
     async def enrich(
         self,
@@ -135,6 +146,13 @@ class CatalogRecipeMicronutrientEnrichmentService:
         ids = sorted({str(recipe_id) for recipe_id in recipe_ids if recipe_id})
         if not ids:
             return True
+        if os.getenv("CATALOG_DURABLE_PREPARATION_ENABLED", "false").lower() in {
+            "true",
+            "1",
+        }:
+            async with self._uow_factory() as uow:
+                await uow.catalog_preparation.enqueue_for_recipes(ids)
+            return True
         try:
             async with self._uow_factory() as uow:
                 meals = await uow.catalog_recipes.get_meals(ids)
@@ -174,10 +192,16 @@ class CatalogRecipeMicronutrientEnrichmentService:
     async def load_cached(self, meal: CatalogMeal) -> CatalogMeal:
         """Overlay persisted estimates without claiming work or calling providers."""
         async with self._uow_factory() as uow:
-            cached = await uow.catalog_recipes.get_micronutrient_enrichment(
-                catalog_meal_id=meal.id,
-                content_hash=meal.content_hash,
-            )
+            if os.getenv("CATALOG_DURABLE_PREPARATION_ENABLED", "false").lower() in {
+                "true",
+                "1",
+            }:
+                cached = await uow.catalog_preparation.get_overlay(meal.id)
+            else:
+                cached = await uow.catalog_recipes.get_micronutrient_enrichment(
+                    catalog_meal_id=meal.id,
+                    content_hash=meal.content_hash,
+                )
         source_labels = await self._reference_sources(meal)
         loaded = _has_complete_micronutrients(meal, cached)
         return _with_estimate(meal, cached, source_labels, loaded=loaded)

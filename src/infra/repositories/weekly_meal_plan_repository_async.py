@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import date, datetime
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import contains_eager, selectinload
+from sqlalchemy.orm import contains_eager, noload, selectinload
 
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
@@ -29,6 +30,7 @@ from src.infra.database.models.weekly_meal_planner import (
     WeeklyMealPlanPantryItemORM,
     WeeklyMealPlanSlotORM,
 )
+from src.planner_observability import planner_timed
 
 
 class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
@@ -38,6 +40,15 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         self.session = session
 
     async def lock_user_week(self, *, user_id: str, week_start_date: date) -> None:
+        # Existing-row locks cannot serialize simultaneous creation of a missing week.
+        if self.session.get_bind().dialect.name == "postgresql":
+            digest = hashlib.sha256(
+                f"weekly-plan:{user_id}:{week_start_date.isoformat()}".encode()
+            ).digest()
+            key = int.from_bytes(digest[:8], "big", signed=True)
+            await self.session.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": key}
+            )
         await self.session.execute(
             select(WeeklyMealPlanORM.id)
             .where(
@@ -55,21 +66,36 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
     async def get_by_id(self, *, user_id: str, plan_id: str) -> WeeklyMealPlan | None:
         return await self._load(user_id=user_id, plan_id=plan_id)
 
+    @planner_timed("lock")
     async def get_for_update(
-        self, *, user_id: str, plan_id: str
+        self, *, user_id: str, plan_id: str, include_pantry: bool = True
     ) -> WeeklyMealPlanORM | None:
         result = await self.session.execute(
             select(WeeklyMealPlanORM)
             .options(
-                selectinload(WeeklyMealPlanORM.slots),
-                selectinload(WeeklyMealPlanORM.pantry_items),
+                selectinload(WeeklyMealPlanORM.slots).raiseload(
+                    WeeklyMealPlanSlotORM.catalog_meal
+                ),
+                selectinload(WeeklyMealPlanORM.pantry_items)
+                if include_pantry
+                else noload(WeeklyMealPlanORM.pantry_items),
             )
             .where(
                 WeeklyMealPlanORM.id == plan_id, WeeklyMealPlanORM.user_id == user_id
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         row = result.scalar_one_or_none()
+        if row is not None:
+            await self.session.execute(
+                select(WeeklyMealPlanSlotORM.id)
+                .where(WeeklyMealPlanSlotORM.plan_id == plan_id)
+                .order_by(
+                    WeeklyMealPlanSlotORM.day_index, WeeklyMealPlanSlotORM.slot_index
+                )
+                .with_for_update()
+            )
         return row
 
     async def create(
@@ -122,7 +148,9 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slots: dict[tuple[int, int], str | None] | None = None,
         expected_revision: int | None = None,
     ) -> WeeklyMealPlan:
-        row = await self.get_for_update(user_id=user_id, plan_id=plan_id)
+        row = await self.get_for_update(
+            user_id=user_id, plan_id=plan_id, include_pantry=False
+        )
         if row is None:
             return None  # type: ignore[return-value]
         row = cast(Any, row)
@@ -377,11 +405,30 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slot.version += 1
         await self.session.flush()
 
+    @planner_timed("lock")
     async def get_slot_for_update(self, *, user_id: str, plan_id: str, slot_id: str):
+        # Match mutation lock order: parent first, then slot. A fresh query below
+        # observes logging/swaps that committed while the parent lock was awaited.
+        await self.session.execute(
+            select(WeeklyMealPlanORM.id)
+            .where(
+                WeeklyMealPlanORM.id == plan_id, WeeklyMealPlanORM.user_id == user_id
+            )
+            .with_for_update()
+        )
         result = await self.session.execute(
             select(WeeklyMealPlanSlotORM)
             .join(WeeklyMealPlanORM)
-            .options(contains_eager(WeeklyMealPlanSlotORM.plan))
+            .options(
+                noload(WeeklyMealPlanSlotORM.catalog_meal),
+                contains_eager(WeeklyMealPlanSlotORM.plan).noload(
+                    WeeklyMealPlanORM.slots
+                ),
+                contains_eager(WeeklyMealPlanSlotORM.plan).noload(
+                    WeeklyMealPlanORM.pantry_items
+                ),
+            )
+            .execution_options(populate_existing=True)
             .where(
                 WeeklyMealPlanSlotORM.id == slot_id,
                 WeeklyMealPlanSlotORM.plan_id == plan_id,
@@ -403,6 +450,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
+    @planner_timed("plan_sql")
     async def _load(
         self,
         *,
@@ -413,8 +461,10 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         stmt = (
             select(WeeklyMealPlanORM)
             .options(
-                selectinload(WeeklyMealPlanORM.slots),
-                selectinload(WeeklyMealPlanORM.pantry_items),
+                selectinload(WeeklyMealPlanORM.slots).raiseload(
+                    WeeklyMealPlanSlotORM.catalog_meal
+                ),
+                noload(WeeklyMealPlanORM.pantry_items),
             )
             .where(WeeklyMealPlanORM.user_id == user_id)
         )

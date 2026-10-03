@@ -58,6 +58,27 @@ class AsyncMealWriteOperationRepository:
         )
         return len(operation_ids)
 
+    async def lookup(self, *, user_id: str, operation: str, idempotency_key: str):
+        """Inspect a claim without inserting or extending it during precomputation."""
+        result = await self.session.execute(
+            select(MealWriteOperationORM).where(
+                MealWriteOperationORM.user_id == user_id,
+                MealWriteOperationORM.operation == operation,
+                MealWriteOperationORM.idempotency_key == idempotency_key,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        state = "replay" if row.status == "completed" else "available"
+        if (
+            row.status == "in_progress"
+            and row.lease_expires_at
+            and row.lease_expires_at > utc_now()
+        ):
+            state = "in_progress"
+        return self._reservation(row, state)
+
     async def reserve(
         self,
         *,

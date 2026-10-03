@@ -10,3 +10,5 @@ class AiAdjustMealPlanCommand(Command):
     prompt: str
     target_day_index: int | None = None
     target_slot_index: int | None = None
+
+    language: str = "en"

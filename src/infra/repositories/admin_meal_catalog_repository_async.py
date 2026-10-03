@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -77,7 +79,9 @@ class AsyncAdminMealCatalogRepository:
 
     async def get_meal(self, catalog_id: str) -> AdminCatalogMealProjection | None:
         result = await self._session.execute(
-            select(MealCatalogORM).where(MealCatalogORM.id == catalog_id).options(_load_options())
+            select(MealCatalogORM)
+            .where(MealCatalogORM.id == catalog_id)
+            .options(_load_options())
         )
         row = result.scalar_one_or_none()
         return _projection(row) if row else None
@@ -97,11 +101,31 @@ class AsyncAdminMealCatalogRepository:
         *,
         force: bool = False,
     ) -> bool:
+        projected = os.getenv("CATALOG_PROJECTIONS_ENABLED", "false").casefold() in {
+            "true",
+            "1",
+            "yes",
+        }
+        if projected:
+            from src.infra.repositories.catalog_publication_fence import (
+                catalog_publication_version,
+            )
+
+            await catalog_publication_version(self._session, shared=False)
         stmt = update(MealCatalogORM).where(MealCatalogORM.id == catalog_id)
         if not force:
             stmt = stmt.where(_missing_image_filter())
-        result = await self._session.execute(stmt.values(image_url=image_url))
+        result = cast(
+            CursorResult,
+            await self._session.execute(stmt.values(image_url=image_url)),
+        )
         await self._session.flush()
+        if projected and result.rowcount:
+            from src.infra.repositories.catalog_projection_rebuilder import (
+                CatalogProjectionRebuilder,
+            )
+
+            await CatalogProjectionRebuilder(self._session).rebuild((catalog_id,))
         return bool(result.rowcount)
 
     async def set_missing_image_url(self, catalog_id: str, image_url: str) -> bool:
@@ -149,7 +173,9 @@ def _catalog_filters(
 
 
 def _missing_image_filter():
-    return or_(MealCatalogORM.image_url.is_(None), func.trim(MealCatalogORM.image_url) == "")
+    return or_(
+        MealCatalogORM.image_url.is_(None), func.trim(MealCatalogORM.image_url) == ""
+    )
 
 
 def _meal_type_column(meal_type: str):

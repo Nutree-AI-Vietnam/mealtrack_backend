@@ -88,6 +88,16 @@ from .weekly.weekly_macro_budget import WeeklyMacroBudgetORM
 BarcodeProductModel = FoodReferenceModel
 
 # AI Handshake guest trial quota
+from src.infra.database.models.meal_recommendation.catalog_preparation import (
+    CatalogPreparationJobORM,
+    CatalogRecipeTranslationORM,
+)
+from src.infra.database.models.meal_recommendation.catalog_projection import (
+    CatalogPublicationVersionORM,
+    MealCatalogProjectionAllergenORM,
+    MealCatalogProjectionORM,
+)
+
 from .ai_handshake_guest_trial_quota import AiHandshakeGuestTrialQuota
 
 # Chat coach
@@ -126,6 +136,11 @@ from .weekly_meal_planner import (
 from .weight_entry import WeightEntryORM
 
 __all__ = [
+    "CatalogPreparationJobORM",
+    "CatalogRecipeTranslationORM",
+    "CatalogPublicationVersionORM",
+    "MealCatalogProjectionORM",
+    "MealCatalogProjectionAllergenORM",
     # Base
     "BaseMixin",
     "PrimaryEntityMixin",

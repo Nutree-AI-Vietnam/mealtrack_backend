@@ -55,6 +55,9 @@ def _plan():
 
 
 class _Catalog:
+    async def get_meals(self, recipe_ids):
+        return [await self.get_meal(recipe_id) for recipe_id in recipe_ids]
+
     async def get_meal(self, recipe_id):
         return CatalogMeal(
             id=recipe_id,
@@ -100,6 +103,26 @@ class _Plans:
 class _Uow:
     catalog_recipes = _Catalog()
     weekly_meal_plans = _Plans()
+
+
+@pytest.mark.asyncio
+async def test_authoritative_batch_miss_does_not_fall_back_to_per_recipe_reads():
+    class MissingCatalog(_Catalog):
+        async def get_meals(self, recipe_ids):
+            self.requested_ids = set(recipe_ids)
+            return []
+
+        async def get_meal(self, recipe_id):
+            pytest.fail("A missing batch result must not trigger a per-ID retry")
+
+    catalog = MissingCatalog()
+    plan = _plan()
+    plan = replace(
+        plan, slots=tuple(replace(slot, recipe_id="deleted") for slot in plan.slots)
+    )
+    uow = type("Uow", (), {"catalog_recipes": catalog, "weekly_meal_plans": _Plans()})()
+    assert await WeeklyGroceryService().calculate(uow, plan) == ()
+    assert catalog.requested_ids == {"deleted"}
 
 
 @pytest.mark.asyncio

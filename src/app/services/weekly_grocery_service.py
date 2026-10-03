@@ -17,6 +17,7 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     PantryAvailability,
     aggregate_grocery,
 )
+from src.planner_observability import planner_timed
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class WeeklyGroceryService:
         ]
         return aggregate_grocery(slots, ())
 
+    @planner_timed("mapping")
     async def calculate(self, uow, plan: WeeklyMealPlan) -> tuple[GroceryCategory, ...]:
         slots: list[GrocerySlot] = []
         needed_ids = {
@@ -75,11 +77,13 @@ class WeeklyGroceryService:
         for slot in plan.slots:
             if slot.recipe_id is None:
                 continue
-            if slot.recipe_id not in meals_cache:
+            if slot.recipe_id not in meals_cache and not hasattr(
+                uow.catalog_recipes, "get_meals"
+            ):
                 meals_cache[slot.recipe_id] = await uow.catalog_recipes.get_meal(
                     slot.recipe_id
                 )
-            meal = meals_cache[slot.recipe_id]
+            meal = meals_cache.get(slot.recipe_id)
             if meal is None:
                 continue
             slots.append(
