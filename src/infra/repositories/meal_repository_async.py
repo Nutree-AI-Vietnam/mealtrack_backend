@@ -207,7 +207,9 @@ class AsyncMealRepository(MealRepositoryPort):
         )
         # .unique() required for joinedload to properly consolidate joined rows
         db_meal = result.unique().scalars().first()
-        return meal_orm_to_domain(db_meal) if db_meal else None
+        # selectinload reads nutrition in a second statement; a delete that
+        # commits in between leaves a READY row without nutrition -> not found.
+        return meal_orm_to_domain_if_hydratable(db_meal) if db_meal else None
 
     async def find_by_id_for_update(
         self, meal_id: str, projection: MealProjection = MealProjection.FULL

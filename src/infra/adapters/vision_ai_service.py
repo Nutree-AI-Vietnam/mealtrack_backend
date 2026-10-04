@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
     AIOutputValidationError,
     AIUnavailableError,
 )
@@ -123,7 +124,7 @@ class VisionAIService(VisionAIServicePort):
                 exc.validation_details,
             )
             raise
-        except AIUnavailableError:
+        except (AIUnavailableError, AIContentRejectedError):
             raise
         except Exception as e:
             raise RuntimeError(
@@ -150,7 +151,7 @@ class VisionAIService(VisionAIServicePort):
                 "structured_data": structured_data,
                 "strategy_used": strategy.get_strategy_name(),
             }
-        except AIUnavailableError:
+        except (AIUnavailableError, AIContentRejectedError):
             raise
         except Exception as e:
             raise RuntimeError(

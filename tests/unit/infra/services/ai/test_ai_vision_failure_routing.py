@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
     AIOutputValidationError,
     AIUnavailableError,
     AIVisionError,
@@ -362,3 +363,27 @@ class TestVisionFailureKindRouting:
             )
 
         mock_circuit_breaker.record_failure.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_content_rejection_stops_chain_without_circuit_break(
+        self,
+        manager_with_cf_vision,
+        mock_openai_provider,
+        mock_circuit_breaker,
+        mock_cf_vision_provider,
+    ):
+        mock_cf_vision_provider.generate_with_vision = AsyncMock(
+            side_effect=AIContentRejectedError(
+                "rejected", provider="cloudflare-workers-ai", model="cf-vision-model"
+            )
+        )
+
+        with pytest.raises(AIContentRejectedError):
+            await manager_with_cf_vision.generate_with_vision(
+                purpose=ModelPurpose.MEAL_SCAN,
+                prompt="analyze food",
+                image_data=b"fake_image",
+            )
+
+        mock_openai_provider.generate_with_vision.assert_not_called()
+        mock_circuit_breaker.record_failure.assert_not_called()

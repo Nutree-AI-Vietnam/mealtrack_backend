@@ -62,23 +62,6 @@ the error continues outside these meal mutations.
 
 ---
 
-### PostHog OTLP Exporter Returns HTTP 400
-
-**Problem:** `opentelemetry.exporter.otlp.proto.http.trace_exporter` logs
-`Failed to export span batch code: 400`.
-
-**Diagnosis:** The PostHog OTLP processor appends `/i/v0/ai/otel` to
-`POSTHOG_HOST`. The legacy `app.posthog.com` host is not the OTLP ingestion
-host.
-
-**Solutions:**
-1. Set `POSTHOG_HOST` to `https://us.i.posthog.com` (or the correct regional
-   ingestion host).
-2. Restart/redeploy the API after changing the environment variable.
-3. Confirm the 400 exporter logs stop and that traces appear in PostHog.
-
----
-
 ### Migration Conflicts
 
 **Problem:** `alembic upgrade head` fails with "heads are not equal"

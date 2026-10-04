@@ -98,16 +98,6 @@ log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 logger = logging.getLogger(__name__)
 
-_DEFAULT_POSTHOG_OTEL_HOST = "https://us.i.posthog.com"
-
-
-def _resolve_posthog_otel_host(raw_host: str | None) -> str:
-    """Return a PostHog ingestion host compatible with the OTLP processor."""
-    host = (raw_host or _DEFAULT_POSTHOG_OTEL_HOST).strip().rstrip("/")
-    if host.lower() in {"https://app.posthog.com", "http://app.posthog.com"}:
-        return _DEFAULT_POSTHOG_OTEL_HOST
-    return host or _DEFAULT_POSTHOG_OTEL_HOST
-
 
 async def warm_database_connection() -> None:
     """Warm the async database connection so cold Neon compute wakes before traffic."""
@@ -192,33 +182,6 @@ async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
     # Startup
     logger.info("Starting MealTrack API...")
-
-    # PostHog LLM Analytics via OpenTelemetry — must run before any LangChain calls
-    _posthog_key = os.getenv("POSTHOG_API_KEY")
-    if _posthog_key:
-        try:
-            from opentelemetry import trace
-            from opentelemetry.instrumentation.langchain import LangchainInstrumentor
-            from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-            from opentelemetry.sdk.trace import TracerProvider
-            from posthog.ai.otel import PostHogSpanProcessor
-
-            _otel_provider = TracerProvider(
-                resource=Resource(attributes={SERVICE_NAME: "mealtrack-backend"})
-            )
-            _otel_provider.add_span_processor(
-                PostHogSpanProcessor(
-                    api_key=_posthog_key,
-                    host=_resolve_posthog_otel_host(os.getenv("POSTHOG_HOST")),
-                )
-            )
-            trace.set_tracer_provider(_otel_provider)
-            LangchainInstrumentor().instrument()
-            logger.info("PostHog LLM Analytics instrumented via OpenTelemetry")
-        except Exception as e:
-            logger.warning(f"PostHog LLM Analytics init failed (non-fatal): {e}")
-    else:
-        logger.info("POSTHOG_API_KEY not set — LLM analytics disabled")
 
     # Initialize Firebase Admin SDK
     try:

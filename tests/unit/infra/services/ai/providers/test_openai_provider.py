@@ -1,9 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
+from openai import BadRequestError
 from pydantic import ValidationError
 
+from src.domain.exceptions.ai_exceptions import AIContentRejectedError
 from src.domain.model.ai.nutrition_contracts import VisionNutritionResponse
 from src.domain.ports.ai_provider_port import AICapability
 from src.infra.services.ai.ai_vision_errors import AIVisionError, AIVisionFailureKind
@@ -233,6 +236,67 @@ async def test_generate_with_vision_classifies_validation_errors():
     assert exc_info.value.kind == AIVisionFailureKind.schema_validation
     assert exc_info.value.provider == "openai"
     assert exc_info.value.model == "gpt-5.4-mini-2026-03-17"
+
+
+def _bad_request(code):
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+    )
+    return BadRequestError(
+        "Invalid prompt", response=response, body={"code": code, "message": "x"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_maps_invalid_prompt_to_content_rejected():
+    provider = _provider()
+    provider._langchain.generate_structured = AsyncMock(
+        side_effect=_bad_request("invalid_prompt")
+    )
+
+    with pytest.raises(AIContentRejectedError) as exc_info:
+        await provider.generate(
+            model="gpt-5.6-luna",
+            prompt="flagged",
+            system_message="Return JSON.",
+            schema=VisionNutritionResponse,
+        )
+
+    assert exc_info.value.provider == "openai"
+    assert exc_info.value.model == "gpt-5.6-luna"
+
+
+@pytest.mark.asyncio
+async def test_generate_with_vision_maps_invalid_prompt_to_content_rejected():
+    provider = _provider()
+    provider._langchain.generate_vision_structured = AsyncMock(
+        side_effect=_bad_request("invalid_prompt")
+    )
+
+    with pytest.raises(AIContentRejectedError):
+        await provider.generate_with_vision(
+            model="gpt-5.4-mini-2026-03-17",
+            prompt="Identify food.",
+            image_data=b"image-bytes",
+            system_message="Return JSON.",
+            schema=VisionNutritionResponse,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_other_bad_requests():
+    provider = _provider()
+    provider._langchain.generate_structured = AsyncMock(
+        side_effect=_bad_request("invalid_request_error")
+    )
+
+    with pytest.raises(BadRequestError):
+        await provider.generate(
+            model="gpt-5.6-luna",
+            prompt="hi",
+            system_message="Return JSON.",
+            schema=VisionNutritionResponse,
+        )
 
 
 @pytest.mark.asyncio

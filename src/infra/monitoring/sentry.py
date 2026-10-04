@@ -15,6 +15,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     sentry_sdk = None  # type: ignore[assignment]
 
+from src.domain.exceptions.ai_exceptions import (
+    CONTENT_REJECTION_ERROR_CODES,
+    AIContentRejectedError,
+)
 from src.infra.config.settings import settings
 from src.infra.monitoring.connectors import (
     filter_safe_attributes,
@@ -63,6 +67,7 @@ class SentryObservabilityConnector:
             "send_default_pii": settings.SENTRY_SEND_PII,
             "enable_logs": settings.SENTRY_ENABLE_LOGS,
             "enable_metrics": settings.SENTRY_ENABLE_METRICS,
+            "before_send": _drop_expected_events,
             "integrations": [
                 StarletteIntegration(
                     failed_request_status_codes={500, 501, 502, 504},
@@ -238,6 +243,23 @@ class SentryObservabilityConnector:
 def initialize_sentry() -> None:
     """Backward-compatible Sentry initialization wrapper."""
     SentryObservabilityConnector().initialize()
+
+
+def _drop_expected_events(
+    event: dict[str, Any], hint: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Drop provider safety-filter rejections of user input.
+
+    The LangChain integration captures the raw provider error before our
+    handlers map it to a 422, so it must be filtered here.
+    """
+    exc_info = hint.get("exc_info")
+    exc = exc_info[1] if exc_info else None
+    if isinstance(exc, AIContentRejectedError):
+        return None
+    if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
+        return None
+    return event
 
 
 def _normalize_message_level(level: str) -> SentryMessageLevel:

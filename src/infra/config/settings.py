@@ -402,12 +402,6 @@ class Settings(BaseSettings):
         description="Request-wide parse-text FatSecret deadline in seconds.",
     )
 
-    # Catalog meal recommendations analytics
-    MEAL_RECOMMENDATIONS_ANALYTICS_SALT: str = Field(
-        default="",
-        description="HMAC salt for PostHog recommendation identities; empty disables analytics.",
-    )
-
     # Affiliate integration
     AFFILIATE_INTEGRATION_ENABLED: bool = Field(
         default=False,
