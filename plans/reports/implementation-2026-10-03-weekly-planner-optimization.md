@@ -16,14 +16,14 @@ Updated: 2026-10-04. PR branch: `feature/weekly-meal-plan-backend-optimization`,
 | Check | Result | Evidence boundary |
 |---|---|---|
 | CI-aligned unit suite |3452 passed,57 warnings;79.50% coverage (required65%)|Project .venv Python3.13; fixtures/port doubles, no live-provider quality claim|
-| Full PostgreSQL suite |40 passed in18.30s|Disposable localhost PostgreSQL14; real SQL/locking/leases/commits, no Neon/load proof|
+| Full PostgreSQL suite |40 passed in22.71s|Disposable localhost PostgreSQL14; real SQL/locking/leases/commits, no Neon/load proof|
 | Post-final type-only regression |18 passed|Recipe cache and persisted localization|
 | Changed Python Ruff/format + compile |Passed|Only task files formatted; unrelated edits preserved|
 | Import contracts |4 kept,0 broken|New worker package included in import graph|
 | Architecture suite |20 passed,3 pre-existing failures|All offenders present in HEAD; route commits/admin repository allowlist and stale111<=46 services assertion|
 | Global mypy |1048 errors/160 files; HEAD1051/162|Normalized comparison finds0 introduced error instances and3 removed; not globally green|
 | Focused typing |New preparation/policy/presentation17 files, extra pool/root3 files, catalog12 files passed|Scoped checks, not a substitute for global result|
-| Migration rehearsal |Breakfast, projection, and preparation migration chain applied from base; optimization migrations down/down/up preserve 21 slots, plan/pantry/flags/daylines|Dedicated database; PostgreSQL 14 needed a local compatibility function for an older MySQL-era migration; schema contraction removes derived jobs/results, never user source state|
+| Migration rehearsal |Breakfast, mixed-version slot repair, projection, and preparation chain applied from base; optimization migrations down/down/up preserve 21 slots, plan/pantry/flags/daylines|Dedicated database; PostgreSQL 14 needed a local compatibility function for an older MySQL-era migration; schema contraction removes derived jobs/results, never user source state|
 | Reviewer |No remaining reviewed local code blocker|Pending release/capacity evidence stays open|
 
 Unit coverage tool's final gate reported79.51%; terminal line rounding may differ. Test warnings concern existing framework deprecations.

@@ -1,7 +1,7 @@
 """add versioned catalog planner projections
 
 Revision ID: 20261003042253928494
-Revises: 20261003103219857350
+Revises: 20261003160641390667
 Create Date: 2026-10-03 11:22:53.931390
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "20261003042253928494"
-down_revision: str | None = "20261003103219857350"
+down_revision: str | None = "20261003160641390667"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

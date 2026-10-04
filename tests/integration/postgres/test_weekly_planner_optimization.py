@@ -59,12 +59,12 @@ async def _seed(session, *, diverse=False):
         {
             "recipes": [
                 {
-                    "recipe_key": f"rice-{index}",
-                    "name": f"Rice {index}",
+                    "recipe_key": f"{meal_type}-rice-{index}",
+                    "name": f"{meal_type.title()} Rice {index}",
                     "cuisine": "vietnamese",
                     "base_servings": 1,
                     "serving_confidence": "verified",
-                    "meal_types": ["lunch", "dinner"],
+                    "meal_types": [meal_type],
                     "ingredients": [
                         {
                             "food_reference_id": reference["id"],
@@ -74,20 +74,27 @@ async def _seed(session, *, diverse=False):
                         }
                     ],
                 }
+                for meal_type in ("breakfast", "lunch", "dinner")
                 for index in range(2)
             ]
         }
     )
     meals = sorted(await catalog.list_active_meals(), key=lambda meal: meal.catalog_key)
+    meals_by_type = {
+        meal_type: [meal for meal in meals if meal_type in meal.meal_types]
+        for meal_type in ("breakfast", "lunch", "dinner")
+    }
     plan = await AsyncWeeklyMealPlanRepository(session).create(
         user_id=user_id,
         week_start_date=WEEK,
         timezone="UTC",
         preferences=WeeklyMealPlanPreferences(),
         recipe_ids={
-            (day, slot): meals[(day + slot) % 2 if diverse else 0].id
+            (day, slot): meals_by_type[("breakfast", "lunch", "dinner")[slot]][
+                (day + slot) % 2 if diverse else 0
+            ].id
             for day in range(7)
-            for slot in range(2)
+            for slot in range(3)
         },
     )
     await session.commit()
@@ -162,11 +169,16 @@ async def test_pantry_flags_day_lines_and_undo_survive_fresh_reads(
             loaded,
         )
         item = items[0].items[0]
+        expected_total = 7 * 3 * 100
         assert item.stock_amount == stock
-        assert item.total_needed == 1400
-        assert item.remaining == max(1400 - stock, 0)
+        assert item.total_needed == expected_total
+        assert item.remaining == max(expected_total - stock, 0)
         assert item.status == (
-            "owned" if stock >= 1400 else "needed" if stock == 0 else "need_more"
+            "owned"
+            if stock >= expected_total
+            else "needed"
+            if stock == 0
+            else "need_more"
         )
         assert item.checked and item.do_not_buy and item.manually_owned
         assert item.day_notes[0]["covered"]
