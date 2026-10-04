@@ -106,7 +106,7 @@ from src.domain.utils.timezone_utils import (
 )
 from src.planner_feature_flags import CATALOG_DURABLE_PREPARATION, planner_flag_enabled
 from src.planner_observability import planner_timed
-from src.planner_request_policy import planner_deadline
+from src.planner_request_policy import planner_deadline, timeout_until
 
 router = APIRouter(tags=["Weekly Meal Plans", "Recipes"])
 logger = logging.getLogger(__name__)
@@ -433,7 +433,7 @@ def _bounded_ai_request(function):
         deadline = started + 30.0
         try:
             with planner_deadline(deadline):
-                async with asyncio.timeout_at(deadline):
+                async with timeout_until(deadline):
                     return await function(*args, **kwargs)
         except TimeoutError as exc:
             raise HTTPException(

@@ -21,7 +21,7 @@ from src.planner_observability import (
     planner_request_context,
     record_planner_phase,
 )
-from src.planner_request_policy import planner_deadline
+from src.planner_request_policy import planner_deadline, timeout_until
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class RequestLoggerMiddleware:
                     + self.AI_REQUEST_TIMEOUT_SECONDS
                 )
                 with planner_deadline(deadline):
-                    async with asyncio.timeout_at(deadline):
+                    async with timeout_until(deadline):
                         await self.app(scope, receive, send_with_headers)
             else:
                 await self.app(scope, receive, send_with_headers)

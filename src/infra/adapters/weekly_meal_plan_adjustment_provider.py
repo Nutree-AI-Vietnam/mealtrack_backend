@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from time import monotonic
 from typing import Literal
@@ -21,7 +20,11 @@ from src.domain.model.weekly_meal_planner import (
     meal_type_for_slot,
 )
 from src.domain.ports.meal_generation_service_port import MealGenerationServicePort
-from src.planner_request_policy import current_deadline, planner_deadline
+from src.planner_request_policy import (
+    current_deadline,
+    planner_deadline,
+    timeout_until,
+)
 
 
 class WeeklyMealPlanAdjustmentResponse(BaseModel):
@@ -172,7 +175,7 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
         # the endpoint deadline. Never reset an earlier request deadline.
         if deadline is not None:
             with planner_deadline(deadline):
-                async with asyncio.timeout_at(deadline):
+                async with timeout_until(deadline):
                     result = await generation
         else:
             result = await generation

@@ -14,7 +14,11 @@ from src.domain.exceptions.ai_exceptions import (
 )
 from src.observability import increment_metric
 from src.planner_observability import planner_phase
-from src.planner_request_policy import consume_planner_retry, remaining_budget
+from src.planner_request_policy import (
+    consume_planner_retry,
+    remaining_budget,
+    timeout_until,
+)
 
 
 class PlannerGenerationPolicy:
@@ -44,7 +48,7 @@ class PlannerGenerationPolicy:
                 )
             acquired = True
             # This outer timeout includes admission, retry waits and both attempts.
-            async with asyncio.timeout_at(deadline):
+            async with timeout_until(deadline):
                 for attempt in range(2):
                     budget = deadline - monotonic()
                     if budget <= 0:

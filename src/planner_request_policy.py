@@ -1,5 +1,6 @@
 """One monotonic interactive planner deadline shared across request stages."""
 
+import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
 from time import monotonic
@@ -17,6 +18,11 @@ def remaining_budget(maximum: float) -> float:
     if remaining <= 0:
         raise TimeoutError("Planner request deadline expired")
     return remaining
+
+
+def timeout_until(deadline: float) -> asyncio.Timeout:
+    # Deadlines use time.monotonic(); event-loop clocks (e.g. uvloop) may not.
+    return asyncio.timeout(max(0.0, deadline - monotonic()))
 
 
 @contextmanager
