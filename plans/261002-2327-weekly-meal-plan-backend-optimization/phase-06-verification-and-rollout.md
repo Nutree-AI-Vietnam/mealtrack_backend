@@ -94,12 +94,12 @@ Release in reversible slices: narrow reads/pool correction → compact projectio
 - Unknown until execution: final SLOs, safe concurrency, worker/DB/provider capacity, backfill duration, locale readiness and actual device/persistence timing.
 - GET deprecation needs supported-client rollout and observed usage evidence; retain compatibility until then. No release or mobile completion is implied by this plan.
 
-## Verified Local Progress — 2026-10-03
+## Verified Local Progress — 2026-10-04
 
-- Final CI-aligned unit snapshot:3452 passed,56 warnings,79.51% coverage against65% gate. Subsequent type-only fixes passed18 relevant tests. PostgreSQL final full suite:40 passed in20.71s.
-- Changed Python Ruff/format, compileall and all4 import contracts pass. Three architecture failures are verified in HEAD: direct route commits, repository transaction allowlist, and111 domain services against stale46 cap.
-- Full mypy remains red:1048 errors in160 files versus1051 in162 at HEAD; normalized comparison finds zero introduced error instances. Focused new modules/projection typing passes.
-- Both generated migrations were upgraded/downgraded/re-upgraded on dedicated PostgreSQL14. A nonempty rollback rehearsal preserves14 slots, plan, pantry quantities/flags and grocery day lines exactly.
+- Final CI-aligned unit snapshot:3452 passed,57 warnings,79.50% coverage against65% gate. Breakfast-slot contract fixtures passed in that run. PostgreSQL final full suite:40 passed in18.30s.
+- Changed Python Ruff/format, compileall and all4 import contracts pass. Three architecture failures are verified in `delivery` HEAD: direct route commits, repository transaction allowlist, and111 domain services against stale46 cap.
+- Full mypy remains red:1048 errors in160 files versus1051 in162 at the original base; normalized comparison finds zero introduced error instances. Focused new modules/projection typing passes.
+- The breakfast, projection, and preparation migration chain was applied from an empty dedicated PostgreSQL 14 database through the repository migration CLI. The optimization migrations were downgraded/re-upgraded in a nonempty rollback rehearsal; all 21 slots, plan, pantry quantities/flags, and grocery day lines remained exact.
 - Eight-group authenticated load harness is prepared and scope-tested. Dedicated staging accounts/fixtures,50-user10-minute mixed load, real provider canaries, Neon/pooler RTT, queue readiness and physical-device reopen/Undo remain pending. No production migration or deployment ran.
 
 Evidence: [integrated report](../reports/implementation-2026-10-03-weekly-planner-optimization.md). Open composite acceptance criteria stay unchecked; local implementation does not establish release completion.

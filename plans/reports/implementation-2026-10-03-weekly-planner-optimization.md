@@ -1,6 +1,6 @@
 # Weekly meal-plan backend optimization — integrated local results
 
-Date: 2026-10-03. Checkout: `delivery`, initial HEAD `cbc3152297c5684e509769d0c226eea17d6409c5`. No commit/push/deploy was requested or performed. Existing supplied plan/performance-review files preserved; unrelated `scripts/import_breakfast_usda_fdc.py` left untouched.
+Updated: 2026-10-04. PR branch: `feature/weekly-meal-plan-backend-optimization`, based on `delivery` at `251ec30497e54e52eae36689e2bc396a638e8a5e` (which added the 21-slot breakfast/lunch/dinner contract). Isolated worktree preserves unrelated checkout changes. No deployment or production migration was run.
 
 ## Delivered ordered batches
 
@@ -15,23 +15,23 @@ Date: 2026-10-03. Checkout: `delivery`, initial HEAD `cbc3152297c5684e509769d0c2
 
 | Check | Result | Evidence boundary |
 |---|---|---|
-| CI-aligned unit suite |3452 passed,56 warnings;79.51% coverage (required65%)|Project .venv Python3.13; fixtures/port doubles, no live-provider quality claim|
-| Full PostgreSQL suite |40 passed in20.71s|Disposable localhost PostgreSQL14; real SQL/locking/leases/commits, no Neon/load proof (server stopped after checks)|
+| CI-aligned unit suite |3452 passed,57 warnings;79.50% coverage (required65%)|Project .venv Python3.13; fixtures/port doubles, no live-provider quality claim|
+| Full PostgreSQL suite |40 passed in18.30s|Disposable localhost PostgreSQL14; real SQL/locking/leases/commits, no Neon/load proof|
 | Post-final type-only regression |18 passed|Recipe cache and persisted localization|
 | Changed Python Ruff/format + compile |Passed|Only task files formatted; unrelated edits preserved|
 | Import contracts |4 kept,0 broken|New worker package included in import graph|
 | Architecture suite |20 passed,3 pre-existing failures|All offenders present in HEAD; route commits/admin repository allowlist and stale111<=46 services assertion|
 | Global mypy |1048 errors/160 files; HEAD1051/162|Normalized comparison finds0 introduced error instances and3 removed; not globally green|
 | Focused typing |New preparation/policy/presentation17 files, extra pool/root3 files, catalog12 files passed|Scoped checks, not a substitute for global result|
-| Migration rehearsal |Both generated migrations down/down/up preserve committed14slots, plan/pantry/flags/daylines|Dedicated database; schema contraction removes derived jobs/results, never user source state|
+| Migration rehearsal |Breakfast, projection, and preparation migration chain applied from base; optimization migrations down/down/up preserve 21 slots, plan/pantry/flags/daylines|Dedicated database; PostgreSQL 14 needed a local compatibility function for an older MySQL-era migration; schema contraction removes derived jobs/results, never user source state|
 | Reviewer |No remaining reviewed local code blocker|Pending release/capacity evidence stays open|
 
 Unit coverage tool's final gate reported79.51%; terminal line rounding may differ. Test warnings concern existing framework deprecations.
 
 ## Measured local improvements
 
-- Same14-slot shared-recipe PostgreSQL plan fixture:8 core SELECTs before→2 after. Fresh diverse fixture also2. Compact summaries add1 query on complete projections, separately tested. Endpoint auth/profile/budget/timezone/count/localization overhead and bytes were not benchmarked.
-- Synthetic10k selection median CPU:1350.443ms HEAD canonical→244.095ms optimized canonical→167.291ms compact (87.6% reduction), five repetitions with identical coordinates. Construction, SQL/mapping/provider/network/persistence excluded. See [catalog report](./catalog-projections-2026-10-03.md) and linked raw JSON.
+- A fresh shared/diverse 21-slot plan read issues two core SELECTs and hydrates neither catalog nor pantry. The pre-optimization 14-slot fixture issued eight SELECTs. Compact summaries add1 query on complete projections, separately tested. Endpoint auth/profile/budget/timezone/count/localization overhead and bytes were not benchmarked.
+- Historical synthetic14-slot selection median CPU:1350.443ms HEAD canonical→244.095ms optimized canonical→167.291ms compact (87.6% reduction), five repetitions with identical coordinates. This algorithm-only result predates breakfast integration and is not a 21-slot or endpoint latency claim. Construction, SQL/mapping/provider/network/persistence excluded. See [catalog report](./catalog-projections-2026-10-03.md) and linked raw JSON.
 - Actual PostgreSQL COUNT/page EXPLAIN on1000 synthetic recipes(900active):COUNT0.290–0.457ms,page0.330–2.363ms including offset800. Hash/sequential scans; no extra performance index justified or added. Integrity uniqueness constraints are required data guarantees.
 - Real one-connection pool test measures waiting checkout >=25ms while another session holds its sole slot, then completes; size1/overflow0 remain unchanged. This verifies measurement plumbing, not throughput.
 - Proposed endpoint/worker/provider budgets remain tunable targets. No measured deployed p50/p95/p99, payload reduction, maximum concurrency or provider savings is asserted.

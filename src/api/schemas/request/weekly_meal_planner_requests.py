@@ -5,6 +5,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.domain.model.weekly_meal_planner.weekly_meal_plan import (
+    WEEKLY_PLAN_SLOT_COUNT,
+    WEEKLY_SLOTS_PER_DAY,
+)
+
+WeeklyPlannerMealType = Literal["breakfast", "lunch", "dinner"]
+
 
 class WeeklyMealPlanPreferencesRequest(BaseModel):
     diet: Literal["any", "vegetarian", "no-pork"] = "any"
@@ -24,7 +31,7 @@ class GenerateWeeklyMealPlanRequest(BaseModel):
 
 class WeeklyMealPlanSlotUpdateRequest(BaseModel):
     day_index: int = Field(ge=0, le=6)
-    slot_index: int = Field(ge=0, le=1)
+    slot_index: int = Field(ge=0, le=WEEKLY_SLOTS_PER_DAY - 1)
     recipe_id: str | None = Field(default=None, max_length=36)
 
 
@@ -34,7 +41,7 @@ class UpdateWeeklyMealPlanRequest(BaseModel):
     status: Literal["draft", "confirmed"] | None = None
     preferences: WeeklyMealPlanPreferencesRequest | None = None
     slots: list[WeeklyMealPlanSlotUpdateRequest] = Field(
-        default_factory=list, max_length=14
+        default_factory=list, max_length=WEEKLY_PLAN_SLOT_COUNT
     )
 
     @field_validator("slots")
@@ -59,7 +66,9 @@ class UpdateWeeklyMealPlanRequest(BaseModel):
 class AiAdjustMealPlanRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=1000)
     target_day_index: int | None = Field(default=None, ge=0, le=6)
-    target_slot_index: int | None = Field(default=None, ge=0, le=1)
+    target_slot_index: int | None = Field(
+        default=None, ge=0, le=WEEKLY_SLOTS_PER_DAY - 1
+    )
 
     @model_validator(mode="after")
     def target_coordinates_are_paired(self):
@@ -94,6 +103,6 @@ class UpdateGroceryDayLinesRequest(BaseModel):
 
 class LogMealPlanSlotRequest(BaseModel):
     date: date
-    meal_type: Literal["lunch", "dinner"]
+    meal_type: WeeklyPlannerMealType
     expected_recipe_id: str = Field(min_length=1, max_length=128)
     portion_multiplier: Literal[0.5, 1.0, 1.5, 2.0] = 1.0

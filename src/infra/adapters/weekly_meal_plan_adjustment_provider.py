@@ -12,10 +12,13 @@ from pydantic import BaseModel, Field
 from src.domain.constants.languages import normalize_language
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.weekly_meal_planner import (
+    WEEKLY_PLAN_SLOT_COUNT,
+    WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlotAdjustment,
+    meal_type_for_slot,
 )
 from src.domain.ports.meal_generation_service_port import MealGenerationServicePort
 from src.planner_request_policy import current_deadline, planner_deadline
@@ -27,13 +30,13 @@ class WeeklyMealPlanAdjustmentResponse(BaseModel):
     explanation: str = Field(min_length=1, max_length=1000)
     diff_summary: str | None = Field(default=None, max_length=240)
     slot_changes: list[WeeklyMealPlanSlotAdjustmentResponse] = Field(
-        default_factory=list, max_length=14
+        default_factory=list, max_length=WEEKLY_PLAN_SLOT_COUNT
     )
 
 
 class WeeklyMealPlanSlotAdjustmentResponse(BaseModel):
     day_index: int = Field(ge=0, le=6)
-    slot_index: int = Field(ge=0, le=1)
+    slot_index: int = Field(ge=0, le=WEEKLY_SLOTS_PER_DAY - 1)
     action: Literal["replace", "clear"]
     new_recipe_id: str | None = Field(default=None, max_length=36)
 
@@ -91,7 +94,7 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
             target = {
                 "day_index": target_day_index,
                 "slot_index": target_slot_index,
-                "meal_type": "lunch" if target_slot_index == 0 else "dinner",
+                "meal_type": meal_type_for_slot(target_slot_index),
                 "current_recipe_id": current.recipe_id,
                 "current_recipe_name": target_meal.name if target_meal else None,
             }
@@ -107,6 +110,7 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                 {
                     "day_index": slot.day_index,
                     "slot_index": slot.slot_index,
+                    "meal_type": meal_type_for_slot(slot.slot_index),
                     "recipe_id": slot.recipe_id,
                     "recipe_name": (
                         meal_by_id[slot.recipe_id].name
@@ -138,7 +142,9 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                 f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}"
             ),
             system_message=(
-                "You propose reviewable changes to a weekly meal plan. Return only "
+                "You propose reviewable changes to a weekly meal plan with three "
+                "meals per day: slot 0 is breakfast, slot 1 is lunch, and slot 2 "
+                "is dinner. Return only "
                 "structured slot changes using IDs from available_recipes. Respect "
                 "diet, allergy, and dislike preferences as strict constraints; "
                 "use saved profile dietary preferences as ranking hints unless they "

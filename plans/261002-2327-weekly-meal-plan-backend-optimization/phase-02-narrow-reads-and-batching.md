@@ -80,7 +80,7 @@ Separate read projections from mutation loaders. Plan reads load slot identifier
 
 ## Verified Local Progress — 2026-10-03
 
-- Fresh shared/diverse 14-slot plan reads issue two core SELECTs and hydrate neither catalog nor pantry. Same local fixture before optimization issued eight SELECTs; auth/profile/timezone/budget/presentation are outside this comparison.
+- Fresh shared/diverse 21-slot plan reads issue two core SELECTs and hydrate neither catalog nor pantry. Same local fixture before optimization issued eight SELECTs; auth/profile/timezone/budget/presentation are outside this comparison.
 - Swap hydration uses deduplicated requested IDs; changed hard preferences additionally validate all unlogged selected IDs. Missing active recipes do not trigger per-ID fallback queries.
 - Grocery count reuses the owned domain plan. Fresh PostgreSQL full/zero/partial pantry, flags/day lines/Undo and swap/log/revision cases pass.
 

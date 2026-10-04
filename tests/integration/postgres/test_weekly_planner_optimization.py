@@ -211,6 +211,7 @@ async def test_concurrent_same_revision_swaps_allow_one_commit(
     pg_session, async_session_factory
 ):
     user_id, plan, _ = await _seed(pg_session)
+    initially_empty = sum(slot.recipe_id is None for slot in plan.slots)
 
     async def swap(coordinate):
         async with async_session_factory() as session:
@@ -235,7 +236,9 @@ async def test_concurrent_same_revision_swaps_allow_one_commit(
             user_id=user_id, plan_id=plan.id
         )
         assert loaded.revision == plan.revision + 1
-        assert sum(slot.recipe_id is None for slot in loaded.slots) == 1
+        assert (
+            sum(slot.recipe_id is None for slot in loaded.slots) == initially_empty + 1
+        )
 
 
 @pytest.mark.asyncio

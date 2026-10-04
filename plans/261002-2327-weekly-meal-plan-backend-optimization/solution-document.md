@@ -39,7 +39,7 @@ These are source/local findings, not production latency results. Live catalog si
 
 Preserve these invariants throughout:
 
-- Owner-scoped reads/writes; one Monday-based plan per user/week; exactly 14 stable lunch/dinner coordinates.
+- Owner-scoped reads/writes; one Monday-based plan per user/week; exactly 21 stable breakfast/lunch/dinner coordinates.
 - Explicit current-week generation; retain existing historical read behavior and future-week rejection.
 - Backend calorie authority: `P*4 + (C-fiber)*4 + fiber*2 + F*9`, with existing calculator exceptions and conversion rules.
 - Hard allergy/diet/dislike, publication and nutrition eligibility semantics; existing saved-profile semantics must survive AI changes.

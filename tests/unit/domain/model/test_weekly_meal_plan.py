@@ -3,6 +3,8 @@ from datetime import date
 import pytest
 
 from src.domain.model.weekly_meal_planner import (
+    WEEKLY_PLAN_SLOT_COUNT,
+    WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
@@ -19,11 +21,11 @@ def _slots():
             recipe_id=None,
         )
         for day in range(7)
-        for slot in range(2)
+        for slot in range(WEEKLY_SLOTS_PER_DAY)
     )
 
 
-def test_weekly_plan_requires_monday_and_exactly_fourteen_slots():
+def test_weekly_plan_requires_monday_and_exactly_twenty_one_slots():
     with pytest.raises(ValueError, match="Monday"):
         WeeklyMealPlan(
             id="plan",
@@ -36,7 +38,7 @@ def test_weekly_plan_requires_monday_and_exactly_fourteen_slots():
             slots=_slots(),
         )
 
-    with pytest.raises(ValueError, match="exactly 14"):
+    with pytest.raises(ValueError, match=f"exactly {WEEKLY_PLAN_SLOT_COUNT}"):
         WeeklyMealPlan(
             id="plan",
             user_id="user",

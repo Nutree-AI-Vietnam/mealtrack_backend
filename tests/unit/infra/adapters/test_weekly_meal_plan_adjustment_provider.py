@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.weekly_meal_planner import (
+    WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
@@ -64,7 +65,7 @@ def _plan():
                 id=f"{day}-{slot}", day_index=day, slot_index=slot, recipe_id=None
             )
             for day in range(7)
-            for slot in range(2)
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
         ),
         created_at=datetime(2026, 9, 28),
         updated_at=datetime(2026, 9, 28),

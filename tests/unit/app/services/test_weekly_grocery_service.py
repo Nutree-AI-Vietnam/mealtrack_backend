@@ -49,7 +49,7 @@ def _plan():
                 recipe_id="recipe-1" if day == 0 and slot == 0 else None,
             )
             for day in range(7)
-            for slot in range(2)
+            for slot in range(3)
         ),
     )
 

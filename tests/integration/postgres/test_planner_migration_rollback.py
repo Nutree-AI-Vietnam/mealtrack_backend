@@ -70,7 +70,7 @@ async def test_both_optimization_migrations_rollback_preserve_plan_pantry_and_sl
     await pg_session.commit()
     before = await _snapshot(async_session_factory)
     assert len(before["weekly_meal_plans"]) == 1
-    assert len(before["weekly_meal_plan_slots"]) == 14
+    assert len(before["weekly_meal_plan_slots"]) == 21
     assert before["weekly_meal_plan_pantry_items"]
     env = os.environ.copy()
     sync_url = test_database_url.replace(

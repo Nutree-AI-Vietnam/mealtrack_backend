@@ -84,9 +84,9 @@ Owner-scoped plan/profile → compact eligible shortlist → bounded cross-repli
 
 ## Verified Local Progress — 2026-10-03
 
-- Explicit purpose bypasses configured Cloudflare general routing. Eligible <=40 candidates retain named recipes and lunch/dinner coverage; at most one alternate <=40 window can reach lower-ranked candidates.
+- Explicit purpose bypasses configured Cloudflare general routing. Eligible <=40 candidates retain named recipes and breakfast/lunch/dinner coverage; at most one alternate <=40 window can reach lower-ranked candidates.
 - One request deadline <=30 seconds covers dependencies/response; provider/admission/widening share <=25 seconds. Dedicated SDK retries are zero; a shared budget permits at most one transient engine retry across both windows.
-- Current recipe metadata stays available outside the candidate budget; compact inputs hydrate only <=14 selected recipes for proposal groceries. Backend retains hard-constraint/coordinate/logged/revision validation and never auto-applies.
+- Current recipe metadata stays available outside the candidate budget; compact inputs hydrate only <=21 selected recipes for proposal groceries. Backend retains hard-constraint/coordinate/logged/revision validation and never auto-applies.
 - All supported fallback copy locales are static; provider explanation/diff request the locale. Provider safety/deadline/cancellation fixtures pass, but live semantic quality and prompt-cache/token savings are not measured.
 - Initial interactive allocation remains per process (default2, admission1s). Deployment must prove fixed workers×replicas allocation; shared leased interactive admission is required before autoscaling.
 

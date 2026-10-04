@@ -3,7 +3,7 @@ title: "Weekly Meal Plan Backend Optimization"
 description: "Reduce weekly-planner read, generation, AI, and catalog-preparation cost while preserving contracts and persisted correctness."
 status: in_progress
 priority: P1
-branch: "delivery"
+branch: "feature/weekly-meal-plan-backend-optimization"
 tags: [backend, database, api, refactor, critical]
 blockedBy: []
 blocks: []
@@ -16,7 +16,7 @@ source: skill
 
 ## Overview
 
-Implementation and local verification executed against checkout `cbc31522` on `delivery`. All six batches are integrated. Release evidence remains pending; all five new cutover flags default off.
+Implementation and local verification executed on `feature/weekly-meal-plan-backend-optimization`, based on `delivery` at `251ec304`. The latest breakfast/lunch/dinner contract is integrated. All six batches are locally verified; release evidence remains pending and all five new cutover flags default off.
 
 Read the [solution document](./solution-document.md) for architecture, proposed budgets, schema contracts, failure recovery, and rollout decisions. The [performance review](/Users/alexnguyen/Desktop/Nut/mealtrack_backend/plans/reports/meal-plan-performance-review-2026-10-02.md) supplies source traces and qualified SQLite/CPU measurements.
 
@@ -58,7 +58,7 @@ Read the [solution document](./solution-document.md) for architecture, proposed 
 ## Local Evidence — 2026-10-03
 
 - [Integrated results and changed-file manifest](../reports/implementation-2026-10-03-weekly-planner-optimization.md).
-- 3452 unit tests passed,79.51% coverage;40 PostgreSQL tests passed. Four import contracts and changed-file Ruff/compile pass. Existing architecture/global typing debt remains red and is documented.
+- 3452 unit tests passed,79.50% coverage;40 PostgreSQL tests passed against the merged 21-slot contract. Four import contracts and changed-file Ruff/format/compile pass. Existing architecture/global typing debt remains red and is documented.
 - Selection CPU improved87.6% on the10k synthetic fixture; plan core SELECTs8→2. Neither figure is a deployed endpoint percentile.
 - Direct/shared dependency synchronous projection coverage, fixed interactive deployment allocation, readiness backfill, authenticated mixed load/provider canaries and device reopen/Undo remain cutover gates.
 - Production deployment/migrations were not performed.

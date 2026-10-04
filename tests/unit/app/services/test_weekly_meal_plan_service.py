@@ -19,6 +19,8 @@ from src.app.services.weekly_meal_plan_service import (
 )
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.model.weekly_meal_planner import (
+    WEEKLY_PLAN_SLOT_COUNT,
+    WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanPreferences,
@@ -32,7 +34,7 @@ def _meal(
     meal_id: str,
     name: str,
     *,
-    meal_types=("lunch", "dinner"),
+    meal_types=("breakfast", "lunch", "dinner"),
     rank=1,
     cook_time_minutes=None,
     allergen_codes=(),
@@ -64,6 +66,10 @@ def _meal(
     )
 
 
+def _slot_offset(day: int, slot: int) -> int:
+    return day * WEEKLY_SLOTS_PER_DAY + slot
+
+
 def _plan(preferences=None, recipe_id="chicken"):
     slots = tuple(
         WeeklyMealPlanSlot(
@@ -75,7 +81,7 @@ def _plan(preferences=None, recipe_id="chicken"):
             logged_meal_id="logged-meal" if day == 0 and meal == 0 else None,
         )
         for day in range(7)
-        for meal in range(2)
+        for meal in range(WEEKLY_SLOTS_PER_DAY)
     )
     return WeeklyMealPlan(
         id="plan-1",
@@ -173,7 +179,7 @@ async def test_generation_fills_unlogged_slots_without_replacing_logged_meals():
     )
 
     generated_coordinates = set(uow.update_args["slots"])
-    assert len(generated_coordinates) == 13
+    assert len(generated_coordinates) == WEEKLY_PLAN_SLOT_COUNT - 1
     assert (0, 0) not in generated_coordinates
 
 
@@ -287,11 +293,12 @@ async def test_local_meal_proposal_changes_only_the_requested_slot():
     assert [
         (change["day_index"], change["slot_index"]) for change in proposal.slot_changes
     ] == [(2, 1)]
-    assert proposal.proposed_plan.slots[5].recipe_id == "tofu"
+    changed = _slot_offset(2, 1)
+    assert proposal.proposed_plan.slots[changed].recipe_id == "tofu"
     assert all(
         slot.recipe_id == "chicken"
         for index, slot in enumerate(proposal.proposed_plan.slots)
-        if index != 5
+        if index != changed
     )
     assert proposal.proposed_groceries
     assert all(item.total_needed > 0 for item in proposal.proposed_groceries)
@@ -381,7 +388,7 @@ async def test_profile_constraints_and_ranking_preferences_reach_target_proposal
         "vegetarian",
     )
     assert proposal.proposed_plan.preferences == plan.preferences
-    assert proposal.proposed_plan.slots[3].recipe_id == "tofu"
+    assert proposal.proposed_plan.slots[_slot_offset(1, 1)].recipe_id == "tofu"
 
 
 @pytest.mark.asyncio
@@ -403,8 +410,8 @@ async def test_one_meal_prompt_does_not_validate_or_rewrite_other_slots():
     )
 
     assert proposal.proposed_plan.preferences == plan.preferences
-    assert proposal.proposed_plan.slots[3].recipe_id == "tofu"
-    assert proposal.proposed_plan.slots[2].recipe_id == "chicken"
+    assert proposal.proposed_plan.slots[_slot_offset(1, 1)].recipe_id == "tofu"
+    assert proposal.proposed_plan.slots[_slot_offset(1, 0)].recipe_id == "chicken"
 
 
 @pytest.mark.asyncio
@@ -464,7 +471,7 @@ async def test_target_no_op_resolves_a_uniquely_named_catalog_recipe():
         )
     )
 
-    assert proposal.proposed_plan.slots[3].recipe_id == "egg-rice"
+    assert proposal.proposed_plan.slots[_slot_offset(1, 1)].recipe_id == "egg-rice"
     assert [
         (change["day_index"], change["slot_index"], change["new_recipe_id"])
         for change in proposal.slot_changes
@@ -775,7 +782,7 @@ async def test_provider_can_follow_explicit_request_over_soft_cooking_time_prefe
         )
     )
 
-    assert proposal.proposed_plan.slots[3].recipe_id == "slow"
+    assert proposal.proposed_plan.slots[_slot_offset(1, 1)].recipe_id == "slow"
 
 
 def _generate_command(plan):
@@ -856,7 +863,7 @@ async def test_generate_refills_a_completed_empty_draft():
 
     assert uow.reopened is True
     assert (0, 0) not in uow.update_args["slots"]
-    assert len(uow.update_args["slots"]) == 13
+    assert len(uow.update_args["slots"]) == WEEKLY_PLAN_SLOT_COUNT - 1
 
 
 @pytest.mark.asyncio
@@ -955,5 +962,10 @@ async def test_shortlist_widens_once_to_reach_lower_ranked_target_recipe():
             target_slot_index=1,
         )
     )
-    assert result.proposed_plan.slots[3].recipe_id == "desired"
+    target_slot = next(
+        slot
+        for slot in result.proposed_plan.slots
+        if slot.day_index == 1 and slot.slot_index == 1
+    )
+    assert target_slot.recipe_id == "desired"
     assert provider.calls == 2

@@ -18,6 +18,7 @@ from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
 )
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal_recommendation import CatalogMeal
+from src.domain.model.weekly_meal_planner import SLOT_MEAL_TYPES
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     recipe_excluded_by_allergen,
     resolve_allergen_preferences,
@@ -119,7 +120,7 @@ class WeeklyRecipeService:
             and _matches_time(meal, max_cook_time)
             and not _contains_terms(meal, dislikes)
             and not (
-                meal_type in {"lunch", "dinner"}
+                meal_type in set(SLOT_MEAL_TYPES)
                 and is_non_meal_title(meal.name, meal.tag)
             )
             and not recipe_excluded_by_allergen(meal.allergen_codes, allergen_codes)

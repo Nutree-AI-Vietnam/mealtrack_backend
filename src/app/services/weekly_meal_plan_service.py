@@ -28,6 +28,7 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
 from src.domain.model.weekly_meal_planner import (
+    WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanPreferences,
@@ -176,6 +177,7 @@ class WeeklyMealPlanService:
                         people=command.preferences.people,
                         preferences=command.preferences,
                         slots=generated_slots,
+                        algorithm_version=self.generator.algorithm_version,
                     )
                 await uow.meal_write_operations.complete(
                     reservation, target_meal_id=plan.id, response={"plan_id": plan.id}
@@ -1208,7 +1210,7 @@ def _prompt_explicitly_requests_clear(prompt: str) -> bool:
     )
     return bool(
         re.search(
-            r"\b(?:clear|remove|delete)\s+(?:the\s+)?(?:meal|slot|lunch|dinner|it|this)\b|\bopen slot\b|\bleave\b.{0,20}\b(?:open|empty)\b|bo trong|xoa bua",
+            r"\b(?:clear|remove|delete)\s+(?:the\s+)?(?:meal|slot|breakfast|lunch|dinner|it|this)\b|\bopen slot\b|\bleave\b.{0,20}\b(?:open|empty)\b|bo trong|xoa bua",
             lowered,
         )
     )
@@ -1470,7 +1472,7 @@ def _ai_shortlist(
     selected = [named] if named is not None else []
     pools = (
         [meal for meal in eligible if generator.supports_slot(meal, slot)]
-        for slot in ((target[1],) if target else (0, 1))
+        for slot in ((target[1],) if target else range(WEEKLY_SLOTS_PER_DAY))
     )
     iterators = [iter(pool) for pool in pools]
     seen = {meal.id for meal in selected}
