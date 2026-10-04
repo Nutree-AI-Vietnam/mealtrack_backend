@@ -122,6 +122,17 @@ class CatalogMealRepositoryPort(ABC):
     async def list_selection_candidates(self) -> list[CatalogMeal]:
         return await self.list_active_meals()
 
+    async def list_active_ingredient_names(self) -> list[str]:
+        """Ingredient vocabulary for prompts when candidates omit ingredients."""
+        return sorted(
+            {
+                ingredient.display_name
+                for meal in await self.list_active_meals()
+                for ingredient in meal.ingredients
+                if ingredient.display_name
+            }
+        )
+
     async def list_recipe_page(
         self,
         *,

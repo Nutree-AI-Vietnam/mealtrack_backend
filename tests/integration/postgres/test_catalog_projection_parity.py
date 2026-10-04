@@ -91,6 +91,24 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
 
 
 @pytest.mark.asyncio
+async def test_breakfast_browse_excludes_non_meal_titles_on_every_path(pg_session):
+    ids, _ = await seed_catalog(pg_session)
+    await pg_session.execute(text("UPDATE meal_catalog SET breakfast_eligible = true"))
+    await pg_session.commit()
+    projected = AsyncCatalogMealRepository(pg_session, projections_enabled=True)
+
+    dirty = await projected.list_recipe_page(meal_type="breakfast", limit=20)
+    await CatalogProjectionRebuilder(pg_session).rebuild(tuple(ids))
+    clean = await projected.list_recipe_page(meal_type="breakfast", limit=20)
+
+    assert not dirty.projected and clean.projected
+    for page in (dirty, clean):
+        names = [meal.name for meal in page.items]
+        assert "Tofu pudding" not in names
+        assert page.total == len(ids) - 1
+
+
+@pytest.mark.asyncio
 async def test_dirty_nutrition_retains_sql_totals_and_only_hydrates_page_ids(
     pg_session,
 ):

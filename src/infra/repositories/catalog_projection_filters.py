@@ -2,6 +2,7 @@
 
 from sqlalchemy import exists, false, select
 
+from src.domain.model.weekly_meal_planner import SLOT_MEAL_TYPES
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     normalize_allergen_code,
 )
@@ -38,7 +39,7 @@ def recipe_filters(
         if meal_type not in {"breakfast", "lunch", "dinner", "snack"}:
             raise ValueError(f"Unsupported meal_type: {meal_type}")
         clauses.append(getattr(Projection, f"{meal_type}_eligible").is_(True))
-        if meal_type in {"lunch", "dinner"}:
+        if meal_type in SLOT_MEAL_TYPES:
             clauses.append(Projection.non_meal.is_(False))
     if diet and diet != "any":
         if diet == "vegetarian":

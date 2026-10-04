@@ -71,6 +71,44 @@ async def test_shared_publication_fence_blocks_direct_sql_writer(
 
 
 @pytest.mark.asyncio
+async def test_reference_rows_without_recipes_leave_epochs_and_jobs_unchanged(
+    pg_session,
+):
+    ids, food_id = await seed_catalog(pg_session)
+    repo = AsyncCatalogMealRepository(pg_session)
+
+    async def jobs():
+        return (
+            await pg_session.execute(
+                text("SELECT count(*) FROM catalog_preparation_jobs")
+            )
+        ).scalar_one()
+
+    before, jobs_before = await repo.capture_catalog_publication_version(), await jobs()
+    await pg_session.execute(
+        text(
+            "INSERT INTO food_reference (name, name_normalized, protein_100g, carbs_100g,"
+            " fat_100g, fiber_100g, sugar_100g, source, region, is_verified, density)"
+            " VALUES ('Scanned snack', 'scanned snack', 1, 2, 3, 0, 0, 'fatsecret',"
+            " 'global', false, 1)"
+        )
+    )
+    await pg_session.execute(
+        text("UPDATE food_reference SET protein_100g = 4 WHERE name = 'Scanned snack'")
+    )
+    assert await repo.capture_catalog_publication_version() == before
+    assert await jobs() == jobs_before
+
+    await pg_session.execute(
+        text("UPDATE food_reference SET protein_100g = 9 WHERE id = :id"),
+        {"id": food_id},
+    )
+    after = await repo.capture_catalog_publication_version()
+    assert after.selection > before.selection
+    assert await jobs() == jobs_before + len(ids)
+
+
+@pytest.mark.asyncio
 async def test_rebuilt_facets_cover_micros_titles_and_normalized_steps(pg_session):
     ids, food_id = await seed_catalog(pg_session)
 

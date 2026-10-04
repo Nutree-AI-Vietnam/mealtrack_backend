@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import unicodedata
 from collections import Counter
@@ -47,6 +46,13 @@ from src.domain.services.weekly_meal_planner.slot_rules import (
     ensure_slot_coordinate,
 )
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
+from src.planner_feature_flags import (
+    CATALOG_DURABLE_PREPARATION,
+    CATALOG_PROJECTIONS,
+    CATALOG_PUBLICATION_FENCING,
+    WEEKLY_PLANNER_SHORT_GENERATION,
+    planner_flag_enabled,
+)
 from src.planner_observability import planner_phase, planner_timed
 from src.planner_request_policy import (
     planner_deadline,
@@ -86,10 +92,7 @@ class WeeklyMealPlanService:
 
     @planner_timed("service")
     async def generate(self, command: GenerateWeeklyMealPlanCommand) -> WeeklyMealPlan:
-        if os.getenv("WEEKLY_PLANNER_SHORT_GENERATION", "false").lower() in {
-            "true",
-            "1",
-        }:
+        if planner_flag_enabled(WEEKLY_PLANNER_SHORT_GENERATION):
             return await self._generate_prepared(command)
         fingerprint = _fingerprint(command)
         async with self.uow_factory() as uow:
@@ -323,6 +326,7 @@ class WeeklyMealPlanService:
                             for key, value in recipe_ids.items()
                             if key not in logged
                         },
+                        algorithm_version=self.generator.algorithm_version,
                         expected_revision=current.revision,
                     )
                 await uow.meal_write_operations.complete(
@@ -336,10 +340,7 @@ class WeeklyMealPlanService:
     async def update(self, command: UpdateWeeklyMealPlanCommand) -> WeeklyMealPlan:
         fingerprint = _fingerprint(command)
         async with self.uow_factory() as uow:
-            if os.getenv("CATALOG_PUBLICATION_FENCING_ENABLED", "false").lower() in {
-                "true",
-                "1",
-            }:
+            if planner_flag_enabled(CATALOG_PUBLICATION_FENCING):
                 await uow.catalog_recipes.lock_catalog_publication(shared=True)
             reservation = await uow.meal_write_operations.reserve(
                 user_id=command.user_id,
@@ -487,12 +488,16 @@ class WeeklyMealPlanService:
             compact_candidates = getattr(
                 uow.catalog_recipes, "list_selection_candidates", None
             )
+            ingredient_names: tuple[str, ...] = ()
             if (
                 self.ai_adjustment_provider is not None
                 and _projections_enabled()
                 and callable(compact_candidates)
             ):
                 meals = await compact_candidates()
+                ingredient_names = tuple(
+                    await uow.catalog_recipes.list_active_ingredient_names()
+                )
             else:
                 meals = await uow.catalog_recipes.list_active_meals()
             profile = await uow.users.get_profile(command.user_id)
@@ -523,7 +528,11 @@ class WeeklyMealPlanService:
                 )
         meals = tuple(meals)
         request_preferences = _preferences_from_prompt(
-            plan.preferences, prompt, meals, known_allergen_codes
+            plan.preferences,
+            prompt,
+            meals,
+            known_allergen_codes,
+            ingredient_names=ingredient_names,
         )
         preferences, profile_dietary_preferences = _with_profile_context(
             plan.preferences,
@@ -1279,6 +1288,8 @@ def _preferences_from_prompt(
     prompt: str,
     meals=(),
     known_allergen_codes: tuple[str, ...] = (),
+    *,
+    ingredient_names: tuple[str, ...] = (),
 ) -> WeeklyMealPlanPreferences:
     lowered = (
         unicodedata.normalize("NFKD", prompt)
@@ -1369,11 +1380,14 @@ def _preferences_from_prompt(
             )
         allergies.update(resolved_allergies)
     dislikes = set(current.dislikes)
-    ingredient_terms = {
-        ingredient.display_name.strip().casefold()
+    names = [
+        ingredient.display_name
         for meal in meals
         for ingredient in getattr(meal, "ingredients", ())
-        if ingredient.display_name and len(ingredient.display_name.strip()) <= 80
+    ]
+    names.extend(ingredient_names)
+    ingredient_terms = {
+        name.strip().casefold() for name in names if name and len(name.strip()) <= 80
     }
     ingredient_terms.update(allergen_codes)
     for term in ingredient_terms:
@@ -1550,14 +1564,11 @@ def _ai_shortlist(
 
 
 async def _enqueue_plan_preparation(uow, plan):
-    if os.getenv("CATALOG_DURABLE_PREPARATION_ENABLED", "false").lower() in {
-        "true",
-        "1",
-    }:
+    if planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
         await uow.catalog_preparation.enqueue_for_recipes(
             tuple(sorted({slot.recipe_id for slot in plan.slots if slot.recipe_id}))
         )
 
 
 def _projections_enabled():
-    return os.getenv("CATALOG_PROJECTIONS_ENABLED", "false").lower() in {"true", "1"}
+    return planner_flag_enabled(CATALOG_PROJECTIONS)

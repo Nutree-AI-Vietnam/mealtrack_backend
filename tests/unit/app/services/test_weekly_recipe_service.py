@@ -29,6 +29,7 @@ def _meal(recipe_id: str, name: str) -> CatalogMeal:
 class _Catalog:
     def __init__(self):
         self.get_meals_calls = []
+        self.fence_locks = 0
 
     async def list_active_meals(self, **kwargs):
         assert kwargs["meal_type"] == "dinner"
@@ -39,6 +40,10 @@ class _Catalog:
         )
 
     async def lock_catalog_publication(self, *, shared=True):
+        self.fence_locks += 1
+        return "test-v1"
+
+    async def capture_catalog_publication_version(self):
         return "test-v1"
 
     async def get_meals(self, ids):
@@ -103,6 +108,27 @@ async def test_summaries_hits_redis_and_fetches_only_missing(monkeypatch):
     key_r2 = "catalog:summary:v2:test-v1:r2"
     assert key_r2 in redis.mset_calls[0][0]
     assert redis.mset_calls[0][1] == CacheKeys.TTL_7_DAYS
+
+
+@pytest.mark.asyncio
+async def test_summaries_use_versioned_cache_without_fence_when_projections_off(
+    monkeypatch,
+):
+    monkeypatch.delenv("CATALOG_PROJECTIONS_ENABLED", raising=False)
+    cached = _meal("r1", "Cached Pho")
+    redis = _MockRedisClient(
+        {"catalog:summary:v2:test-v1:r1": json.dumps(cached.to_dict())}
+    )
+    catalog = _Catalog()
+
+    results = await WeeklyRecipeService(
+        lambda: _UnitOfWork(catalog), redis_client=redis
+    ).summaries(["r1", "r2"])
+
+    assert [meal.name for meal in results] == ["Cached Pho", "Meal r2"]
+    assert catalog.get_meals_calls == [["r2"]]
+    assert catalog.fence_locks == 0
+    assert "catalog:summary:v2:test-v1:r2" in redis.mset_calls[0][0]
 
 
 @pytest.mark.asyncio

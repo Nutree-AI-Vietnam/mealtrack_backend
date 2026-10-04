@@ -1,5 +1,6 @@
 """Authoritative list fallback while query projections reconcile."""
 
+from src.domain.model.weekly_meal_planner import SLOT_MEAL_TYPES
 from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
 
 
@@ -62,7 +63,7 @@ async def legacy_recipe_page(
             continue
         if any(term.strip().casefold() in browse for term in dislikes if term.strip()):
             continue
-        if meal_type in {"lunch", "dinner"} and is_non_meal_title(meal.name, meal.tag):
+        if meal_type in SLOT_MEAL_TYPES and is_non_meal_title(meal.name, meal.tag):
             continue
         if recipe_excluded_by_allergen(meal.allergen_codes, codes):
             continue

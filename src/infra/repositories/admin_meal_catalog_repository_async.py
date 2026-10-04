@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
@@ -19,6 +18,7 @@ from src.infra.database.models.meal_recommendation import (
     MealCatalogORM,
 )
 from src.infra.repositories.catalog_recipe_repository_async import _meal_to_domain
+from src.planner_feature_flags import CATALOG_PROJECTIONS, planner_flag_enabled
 
 
 @dataclass(frozen=True)
@@ -101,11 +101,7 @@ class AsyncAdminMealCatalogRepository:
         *,
         force: bool = False,
     ) -> bool:
-        projected = os.getenv("CATALOG_PROJECTIONS_ENABLED", "false").casefold() in {
-            "true",
-            "1",
-            "yes",
-        }
+        projected = planner_flag_enabled(CATALOG_PROJECTIONS)
         if projected:
             from src.infra.repositories.catalog_publication_fence import (
                 catalog_publication_version,

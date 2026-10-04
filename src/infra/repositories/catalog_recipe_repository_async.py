@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import os
 import unicodedata
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
@@ -59,6 +58,7 @@ from src.infra.database.models.meal_recommendation import (
 from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_nutrition_projection,
 )
+from src.planner_feature_flags import CATALOG_PROJECTIONS, planner_flag_enabled
 from src.planner_observability import planner_phase, planner_timed
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
@@ -77,8 +77,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     ):
         self._session = session
         self.projections_enabled = (
-            os.getenv("CATALOG_PROJECTIONS_ENABLED", "false").casefold()
-            in {"true", "1", "yes"}
+            planner_flag_enabled(CATALOG_PROJECTIONS)
             if projections_enabled is None
             else projections_enabled
         )
@@ -164,6 +163,19 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         return await CatalogProjectionRebuilder(self._session).reconcile_page(
             after_id=after_id, limit=limit
         )
+
+    async def list_active_ingredient_names(self) -> list[str]:
+        result = await self._execute_catalog(
+            select(MealCatalogIngredientORM.display_name)
+            .join(
+                MealCatalogORM,
+                MealCatalogORM.id == MealCatalogIngredientORM.catalog_meal_id,
+            )
+            .where(MealCatalogORM.is_active.is_(True))
+            .distinct()
+            .order_by(MealCatalogIngredientORM.display_name)
+        )
+        return [str(name) for name in result.scalars().all() if name]
 
     async def list_allergen_codes(self) -> list[str]:
         result = await self._execute_catalog(

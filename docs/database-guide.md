@@ -208,6 +208,7 @@ migration/admin URLs.
 
 | Version | Changes |
 |---------|---------|
+| 20261004125027631936 | Skip catalog epoch bumps and preparation jobs for reference rows used by no recipe; index claimable preparation jobs |
 | 20261003102324493409 | Add leased preparation jobs, versioned translations, micronutrient facet metadata, and source-change job publication |
 | 20261003042253928494 | Add catalog projections and publication fence; add internal weekly-slot version for final generation validation |
 | 20260921145751448341 | Add serving-aware grocery metadata, optimistic plan revisions, pantry units, and catalog recipe content snapshots |

@@ -232,6 +232,9 @@ async def test_provider_proposal_reads_compact_candidates_and_hydrates_selected_
                 for meal in self.meals
             )
 
+        async def list_active_ingredient_names(self):
+            return ("Chicken", "Tofu")
+
     def factory():
         uow = CompactUow(plan, full_meals)
         uows.append(uow)
@@ -660,6 +663,23 @@ def test_peanut_free_phrase_becomes_a_hard_ingredient_dislike():
     )
 
     assert preferences.dislikes == ("peanut",)
+
+
+def test_prompt_dislikes_use_ingredient_names_when_candidates_are_compact():
+    from dataclasses import replace
+
+    from src.app.services.weekly_meal_plan_service import _preferences_from_prompt
+
+    compact = replace(_meal("soup", "Soup"), ingredients=())
+
+    preferences = _preferences_from_prompt(
+        WeeklyMealPlanPreferences(),
+        "No mushrooms this week",
+        (compact,),
+        ingredient_names=("Mushroom", "Rice noodles"),
+    )
+
+    assert preferences.dislikes == ("mushroom",)
 
 
 @pytest.mark.asyncio

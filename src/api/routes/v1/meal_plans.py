@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from datetime import date, datetime, timedelta
 from functools import wraps
@@ -105,6 +104,7 @@ from src.domain.utils.timezone_utils import (
     is_valid_timezone,
     normalize_timezone,
 )
+from src.planner_feature_flags import CATALOG_DURABLE_PREPARATION, planner_flag_enabled
 from src.planner_observability import planner_timed
 from src.planner_request_policy import planner_deadline
 
@@ -166,9 +166,7 @@ async def get_current_weekly_plan(
                     daily_calories=daily_calories,
                 )
             )
-            if os.getenv(
-                "CATALOG_DURABLE_PREPARATION_ENABLED", "false"
-            ).lower() not in {"true", "1"}:
+            if not planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
                 background_tasks.add_task(
                     _safely_enrich_plan_micronutrients, event_bus, plan
                 )
@@ -237,10 +235,7 @@ async def generate_weekly_plan(
                 daily_calories=daily_calories,
             )
         )
-        if os.getenv("CATALOG_DURABLE_PREPARATION_ENABLED", "false").lower() not in {
-            "true",
-            "1",
-        }:
+        if not planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
             background_tasks.add_task(
                 _safely_enrich_plan_micronutrients, event_bus, plan
             )

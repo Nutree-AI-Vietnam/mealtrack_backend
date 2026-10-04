@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import os
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from typing import Any
@@ -13,6 +12,7 @@ from typing import Any
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
 from src.domain.model.nutrition.micros import Micros
+from src.planner_feature_flags import CATALOG_DURABLE_PREPARATION, planner_flag_enabled
 
 logger = logging.getLogger(__name__)
 _PENDING_ENRICHMENT_WAIT_SECONDS = 90.0
@@ -146,10 +146,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
         ids = sorted({str(recipe_id) for recipe_id in recipe_ids if recipe_id})
         if not ids:
             return True
-        if os.getenv("CATALOG_DURABLE_PREPARATION_ENABLED", "false").lower() in {
-            "true",
-            "1",
-        }:
+        if planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
             async with self._uow_factory() as uow:
                 await uow.catalog_preparation.enqueue_for_recipes(ids)
             return True
@@ -192,10 +189,7 @@ class CatalogRecipeMicronutrientEnrichmentService:
     async def load_cached(self, meal: CatalogMeal) -> CatalogMeal:
         """Overlay persisted estimates without claiming work or calling providers."""
         async with self._uow_factory() as uow:
-            if os.getenv("CATALOG_DURABLE_PREPARATION_ENABLED", "false").lower() in {
-                "true",
-                "1",
-            }:
+            if planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
                 cached = await uow.catalog_preparation.get_overlay(meal.id)
             else:
                 cached = await uow.catalog_recipes.get_micronutrient_enrichment(

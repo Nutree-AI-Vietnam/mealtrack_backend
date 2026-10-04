@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from time import monotonic
@@ -26,6 +25,7 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     is_non_meal_title,
 )
+from src.planner_feature_flags import CATALOG_PROJECTIONS, planner_flag_enabled
 from src.planner_observability import planner_phase, planner_timed
 
 logger = logging.getLogger(__name__)
@@ -83,10 +83,7 @@ class WeeklyRecipeService:
         offset=0,
     ) -> RecipePage:
         async with self.uow_factory() as uow:
-            if os.getenv("CATALOG_PROJECTIONS_ENABLED", "false").lower() in {
-                "true",
-                "1",
-            }:
+            if planner_flag_enabled(CATALOG_PROJECTIONS):
                 page = await uow.catalog_recipes.list_recipe_page(
                     query=query,
                     diet=diet,
@@ -163,12 +160,20 @@ class WeeklyRecipeService:
         missing_ids = list(ids)
         version = None
         async with self.uow_factory() as uow:
-            if self.redis_client is not None and os.getenv(
-                "CATALOG_PROJECTIONS_ENABLED", "false"
-            ).lower() in {"true", "1"}:
-                version = await uow.catalog_recipes.lock_catalog_publication(
-                    shared=True
-                )
+            if self.redis_client is not None:
+                if planner_flag_enabled(CATALOG_PROJECTIONS):
+                    version = await uow.catalog_recipes.lock_catalog_publication(
+                        shared=True
+                    )
+                else:
+                    # Reading the version before recipe rows keeps cached data at
+                    # least as new as its key, so no fence lock is needed.
+                    try:
+                        version = await (
+                            uow.catalog_recipes.capture_catalog_publication_version()
+                        )
+                    except NotImplementedError:
+                        version = None
             keys = [f"catalog:summary:v2:{version}:{mid}" for mid in ids]
             # Unversioned legacy cache rows cannot safely survive withdrawals.
             if cache_healthy and version is not None and self.redis_client is not None:

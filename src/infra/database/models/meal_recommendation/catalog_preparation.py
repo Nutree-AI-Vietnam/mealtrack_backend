@@ -6,10 +6,12 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -80,6 +82,13 @@ class CatalogPreparationJobORM(Base):
         CheckConstraint(
             "status != 'running' OR (claim_token IS NOT NULL AND lease_expires_at IS NOT NULL)",
             name="ck_catalog_preparation_running_lease",
+        ),
+        Index(
+            "ix_catalog_preparation_jobs_claimable",
+            "available_at",
+            "created_at",
+            "id",
+            postgresql_where=text("status IN ('pending', 'retry_wait', 'running')"),
         ),
     )
 

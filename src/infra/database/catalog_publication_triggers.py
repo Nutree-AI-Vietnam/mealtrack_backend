@@ -99,6 +99,10 @@ def publication_trigger_upgrade_sql() -> list[str]:
                 SELECT array_agg(catalog_meal_id) INTO recipe_ids FROM meal_catalog_ingredients
                     WHERE food_reference_id = ANY(food_ids);
             END IF;
+            -- Reference rows used by no recipe must not advance shared epochs.
+            IF cardinality(array_remove(COALESCE(recipe_ids, '{}'), NULL)) = 0 THEN
+                RETURN NULL;
+            END IF;
             IF selection_changed OR ingredients_changed OR translation_changed OR enrichment_changed THEN
                 UPDATE catalog_publication_version SET
                     selection = selection + selection_changed::int,

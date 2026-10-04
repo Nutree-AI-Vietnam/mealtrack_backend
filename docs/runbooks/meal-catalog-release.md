@@ -116,8 +116,9 @@ pantry/grocery state throughout this rollout.
 
 ### Expand and backfill
 
-1. Apply generated migrations `20261003042253928494` and
-   `20261003102324493409` through the schema workflow before enabling new paths.
+1. Apply generated migrations `20261003042253928494`,
+   `20261003102324493409`, and `20261004125027631936` through the schema
+   workflow before enabling new paths.
    Confirm one Alembic head and `catalog_publication_version` row `id=1`.
 2. Keep all five flags false initially: `CATALOG_PROJECTIONS_ENABLED`,
    `WEEKLY_PLANNER_SHORT_GENERATION`, `CATALOG_PUBLICATION_FENCING_ENABLED`,

@@ -4,7 +4,7 @@ import asyncio
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from tests.integration.postgres.test_weekly_planner_optimization import WEEK, _seed
 
 from src.app.commands.meal_planner import GenerateWeeklyMealPlanCommand
@@ -103,6 +103,39 @@ async def test_missing_week_generate_race_completes_one_atomic_plan(
         assert plans == [successes[0].id]
         assert len(operations) == 1 and operations[0].status == "completed"
         assert operations[0].target_meal_id == successes[0].id
+
+
+@pytest.mark.asyncio
+async def test_short_regeneration_records_current_algorithm_version(
+    pg_session,
+    async_session_factory,
+    monkeypatch,
+):
+    user_id, plan, _ = await _seed(pg_session)
+    await pg_session.execute(
+        update(WeeklyMealPlanORM)
+        .where(WeeklyMealPlanORM.id == plan.id)
+        .values(algorithm_version="stale")
+    )
+    await pg_session.commit()
+    monkeypatch.setenv("WEEKLY_PLANNER_SHORT_GENERATION", "true")
+    monkeypatch.setattr(
+        "src.infra.database.uow_async.AsyncSessionLocal", async_session_factory
+    )
+    service = WeeklyMealPlanService(AsyncUnitOfWork)
+
+    regenerated = await service.generate(_command(user_id, str(uuid4())))
+
+    assert regenerated.id == plan.id
+    async with async_session_factory() as session:
+        stored = (
+            await session.execute(
+                select(WeeklyMealPlanORM.algorithm_version).where(
+                    WeeklyMealPlanORM.id == plan.id
+                )
+            )
+        ).scalar_one()
+    assert stored == service.generator.algorithm_version
 
 
 @pytest.mark.asyncio
