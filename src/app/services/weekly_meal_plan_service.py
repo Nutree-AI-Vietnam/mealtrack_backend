@@ -962,7 +962,7 @@ class WeeklyMealPlanService:
                     "new_recipe_id": replacement.id,
                     "action": "replace",
                 }
-        )
+            )
 
     def _validate_proposed_hard_preferences(self, slots, meals, preferences) -> None:
         meals_by_id = {meal.id: meal for meal in meals}
