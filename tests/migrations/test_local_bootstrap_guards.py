@@ -243,3 +243,30 @@ def test_bootstrap_seeds_integrity_control_row_idempotently(monkeypatch) -> None
         ).one()
 
     assert row == (1, "nutrition_integrity_v1", 0)
+
+
+def test_bootstrap_seeds_catalog_publication_fence_idempotently(monkeypatch) -> None:
+    init_postgres_db = load_init_postgres_db(monkeypatch)
+    engine = sa.create_engine("sqlite:///:memory:")
+
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                """
+                CREATE TABLE catalog_publication_version (
+                    id INTEGER PRIMARY KEY,
+                    selection INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+        )
+        init_postgres_db.ensure_catalog_publication_control_row(connection)
+        connection.execute(
+            sa.text("UPDATE catalog_publication_version SET selection = 7 WHERE id = 1")
+        )
+        init_postgres_db.ensure_catalog_publication_control_row(connection)
+        row = connection.execute(
+            sa.text("SELECT id, selection FROM catalog_publication_version")
+        ).one()
+
+    assert row == (1, 7)
