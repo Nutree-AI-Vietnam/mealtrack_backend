@@ -1,6 +1,6 @@
 # Weekly meal-plan backend optimization — integrated local results
 
-Updated: 2026-10-04. PR branch: `feature/weekly-meal-plan-backend-optimization`, based on `delivery` at `251ec30497e54e52eae36689e2bc396a638e8a5e` (which added the 21-slot breakfast/lunch/dinner contract). Isolated worktree preserves unrelated checkout changes. No deployment or production migration was run.
+Updated: 2026-10-04. PR branch: `feature/weekly-meal-plan-backend-optimization`, reconciled with `delivery` through `08477c24` (including the 21-slot breakfast/lunch/dinner contract and two-slot repair migration). Isolated worktree preserves unrelated checkout changes. No deployment or production migration was run.
 
 ## Delivered ordered batches
 
@@ -16,7 +16,7 @@ Updated: 2026-10-04. PR branch: `feature/weekly-meal-plan-backend-optimization`,
 | Check | Result | Evidence boundary |
 |---|---|---|
 | CI-aligned unit suite |3452 passed,57 warnings;79.50% coverage (required65%)|Project .venv Python3.13; fixtures/port doubles, no live-provider quality claim|
-| Full PostgreSQL suite |40 passed in22.71s|Disposable localhost PostgreSQL14; real SQL/locking/leases/commits, no Neon/load proof|
+| Full PostgreSQL suite |40 passed in16.79s|Re-run after merging latest delivery; disposable localhost PostgreSQL14; real SQL/locking/leases/commits, no Neon/load proof|
 | Post-final type-only regression |18 passed|Recipe cache and persisted localization|
 | Changed Python Ruff/format + compile |Passed|Only task files formatted; unrelated edits preserved|
 | Import contracts |4 kept,0 broken|New worker package included in import graph|
