@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from src.api.base_dependencies import (
     get_async_food_reference_repository,
+    get_planner_translation_service,
     get_text_translation_service,
 )
 from src.api.dependencies.auth import get_current_user_id
@@ -132,6 +133,7 @@ def _app(
     event_bus = bus or _Bus(recipe, plan=plan)
     app.dependency_overrides[get_configured_event_bus] = lambda: event_bus
     app.dependency_overrides[get_text_translation_service] = lambda: None
+    app.dependency_overrides[get_planner_translation_service] = lambda: None
     app.dependency_overrides[get_async_food_reference_repository] = lambda: (
         food_reference_repository or _FoodReferenceRepository()
     )

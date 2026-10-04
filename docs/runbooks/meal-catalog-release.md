@@ -120,12 +120,14 @@ pantry/grocery state throughout this rollout.
    `20261003102324493409`, and `20261004125027631936` through the schema
    workflow before enabling new paths.
    Confirm one Alembic head and `catalog_publication_version` row `id=1`.
-2. Keep all five flags false initially: `CATALOG_PROJECTIONS_ENABLED`,
+2. Keep all four flags false initially: `CATALOG_PROJECTIONS_ENABLED`,
    `WEEKLY_PLANNER_SHORT_GENERATION`, `CATALOG_PUBLICATION_FENCING_ENABLED`,
-   `CATALOG_DURABLE_PREPARATION_ENABLED`, and
-   `CATALOG_PERSISTED_PRESENTATION_ENABLED`. Existing reads remain available;
+   and `CATALOG_DURABLE_PREPARATION_ENABLED`. Existing reads remain available;
    database publication/invalidation triggers are installed independently of
-   application flags.
+   application flags. Planner recipe text always reads prepared translation
+   overlays and never calls a provider; recipes without a current overlay for
+   the request locale show canonical catalog text. Complete step 4 for every
+   supported locale before the new API image serves traffic.
 3. Set `CATALOG_PROJECTION_DATABASE_URL` securely to the intended async
    PostgreSQL database and run bounded projection backfill:
 
@@ -194,8 +196,8 @@ writers remains a release gate for sustained optimized cutover; do not describe
 dirty fallback as complete synchronous projection coverage. Measure repair
 fanout, fallback rate and time to clean after those writes on staging.
 
-Enable one flag at a time on staging. Enable persisted presentation only after
-checking clean facet/locale/contract overlays; missing text/micros must fall
+Enable one flag at a time on staging. Before deploying, confirm no pending
+`translation` jobs remain for any supported locale; missing text/micros fall
 back to canonical data without provider calls. Enable publication fencing
 before short generation; compact candidate parity and canonical nutrition must
 be verified before enabling projected reads. Cover owner/week races with same

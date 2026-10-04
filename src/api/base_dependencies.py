@@ -48,10 +48,6 @@ from src.infra.repositories.catalog_recipe_repository_async import (
 from src.infra.repositories.food_reference_repository_async import (
     AsyncFoodReferenceRepository,
 )
-from src.planner_feature_flags import (
-    CATALOG_PERSISTED_PRESENTATION,
-    planner_flag_enabled,
-)
 
 if TYPE_CHECKING:
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
@@ -755,8 +751,6 @@ def get_web_funnel_redemption_service():
 def get_planner_translation_service():
     """Read prepared catalog text independently from other translation callers."""
 
-    if not planner_flag_enabled(CATALOG_PERSISTED_PRESENTATION):
-        return get_text_translation_service()
     from src.app.services.catalog_persisted_presentation_service import (
         CatalogPersistedPresentationService,
     )
