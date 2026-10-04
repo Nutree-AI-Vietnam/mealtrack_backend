@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
@@ -28,6 +29,29 @@ SentryMessageLevel = Literal["fatal", "critical", "error", "warning", "info", "d
 SentryLogLevel = Literal["fatal", "error", "warning", "info", "debug", "trace"]
 _SENTRY_MESSAGE_LEVELS = {"fatal", "critical", "error", "warning", "info", "debug"}
 _SENTRY_LOG_LEVELS = {"fatal", "error", "warning", "info", "debug", "trace"}
+
+
+def _drop_expected_chat_cancellation(
+    event: dict[str, Any], hint: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Drop client-disconnect cancellations from the chat error stream only."""
+    if event.get("transaction") != "/v1/chat/messages":
+        return event
+
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, tuple) or len(exc_info) < 2:
+        return event
+
+    error = exc_info[1]
+    if not isinstance(error, asyncio.CancelledError):
+        return event
+
+    for related_error in (error.__cause__, error.__context__):
+        if related_error is not None and not isinstance(
+            related_error, asyncio.CancelledError
+        ):
+            return event
+    return None
 
 
 class SentryObservabilityConnector:
@@ -61,6 +85,7 @@ class SentryObservabilityConnector:
             "traces_sample_rate": settings.SENTRY_TRACES_SAMPLE_RATE,
             "profiles_sample_rate": settings.SENTRY_PROFILES_SAMPLE_RATE,
             "send_default_pii": settings.SENTRY_SEND_PII,
+            "before_send": _drop_expected_chat_cancellation,
             "enable_logs": settings.SENTRY_ENABLE_LOGS,
             "enable_metrics": settings.SENTRY_ENABLE_METRICS,
             "integrations": [

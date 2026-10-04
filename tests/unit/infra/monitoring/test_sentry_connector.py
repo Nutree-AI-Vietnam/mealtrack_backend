@@ -1,5 +1,6 @@
 """Tests for the Sentry observability connector."""
 
+import asyncio
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
@@ -8,7 +9,10 @@ from src.infra.monitoring.connectors import (
     filter_safe_context,
     filter_safe_tags,
 )
-from src.infra.monitoring.sentry import SentryObservabilityConnector
+from src.infra.monitoring.sentry import (
+    SentryObservabilityConnector,
+    _drop_expected_chat_cancellation,
+)
 
 
 def test_filter_safe_context_drops_sensitive_and_complex_values():
@@ -118,10 +122,70 @@ def test_initialize_configures_integrations_and_release(monkeypatch):
     assert init_kwargs["enable_metrics"] is True
     assert init_kwargs["profile_session_sample_rate"] == 0.02
     assert init_kwargs["profile_lifecycle"] == "trace"
+    cancellation = asyncio.CancelledError("Cancelled via cancel scope")
     assert len(init_kwargs["integrations"]) == 4
     starlette, fastapi, *_ = init_kwargs["integrations"]
     assert starlette.failed_request_status_codes == {500, 501, 502, 504}
     assert fastapi.failed_request_status_codes == {500, 501, 502, 504}
+    assert (
+        init_kwargs["before_send"](
+            {
+                "transaction": "/v1/chat/messages",
+                "exception": {
+                    "values": [
+                        {
+                            "type": "CancelledError",
+                            "value": "Cancelled via cancel scope",
+                        }
+                    ]
+                },
+            },
+            {"exc_info": (asyncio.CancelledError, cancellation, None)},
+        )
+        is None
+    )
+
+
+def test_before_send_keeps_non_chat_and_non_cancellation_errors():
+    cancellation_event = {
+        "transaction": "/v1/chat/messages",
+        "exception": {"values": [{"type": "CancelledError"}]},
+    }
+    provider_error = {
+        "transaction": "/v1/chat/messages",
+        "exception": {"values": [{"type": "RuntimeError", "value": "boom"}]},
+    }
+    other_route = {**cancellation_event, "transaction": "/v1/meals/scan-by-url"}
+    cancellation = asyncio.CancelledError("cancelled")
+    hint = {"exc_info": (asyncio.CancelledError, cancellation, None)}
+
+    assert (
+        _drop_expected_chat_cancellation(
+            provider_error,
+            {"exc_info": (RuntimeError, RuntimeError("boom"), None)},
+        )
+        is provider_error
+    )
+    assert _drop_expected_chat_cancellation(other_route, hint) is other_route
+
+
+def test_before_send_keeps_chained_provider_failure_and_unverifiable_events():
+    provider_error = RuntimeError("provider failed")
+    cancellation = asyncio.CancelledError("cancelled")
+    cancellation.__cause__ = provider_error
+    event = {
+        "transaction": "/v1/chat/messages",
+        "exception": {"values": [{"type": "CancelledError"}]},
+    }
+
+    assert (
+        _drop_expected_chat_cancellation(
+            event,
+            {"exc_info": (asyncio.CancelledError, cancellation, None)},
+        )
+        is event
+    )
+    assert _drop_expected_chat_cancellation(event, {}) is event
 
 
 def test_initialize_omits_optional_profile_session_settings_when_unset(monkeypatch):
