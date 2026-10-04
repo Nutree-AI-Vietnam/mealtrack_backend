@@ -13,9 +13,6 @@ from src.app.services.catalog_food_reference_review_service import (
 )
 from src.app.services.catalog_meal_seed_import_service import CatalogMealSeedImporter
 from src.app.services.catalog_meal_snapshot_service import CatalogMealSnapshotService
-from src.app.services.meal_recommendation_analytics_service import (
-    MealRecommendationAnalyticsService,
-)
 from src.domain.parsers.vision_response_parser import VisionResponseParser
 from src.domain.ports.food_cache_service_port import FoodCacheServicePort
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
@@ -448,15 +445,6 @@ def get_parse_text_settings() -> dict[str, bool]:
             getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", False)
         ),
     }
-
-
-def get_meal_recommendation_analytics_service() -> MealRecommendationAnalyticsService:
-    """Return privacy-safe recommendation analytics."""
-    posthog_module = import_module("src.infra.adapters.posthog_adapter")
-    return MealRecommendationAnalyticsService(
-        salt=settings.MEAL_RECOMMENDATIONS_ANALYTICS_SALT,
-        adapter=posthog_module.PostHogAdapter(),
-    )
 
 
 # Food Reference Repository (replaces barcode_product_repository)

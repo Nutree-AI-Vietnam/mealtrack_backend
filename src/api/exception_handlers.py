@@ -16,10 +16,14 @@ from fastapi.responses import JSONResponse
 
 from src.api.exceptions import (
     MealTrackException,
+    content_rejected_http_exception,
     create_http_exception,
     handle_exception,
 )
-from src.domain.exceptions.ai_exceptions import AIUnavailableError
+from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
+    AIUnavailableError,
+)
 from src.domain.services.nutrition_calculation_service import (
     AuthoritativeUnitMismatchError,
 )
@@ -64,6 +68,17 @@ async def _ai_unavailable_handler(
                 "details": {"attempted_models": exc.attempted_models},
             }
         },
+    )
+
+
+async def _ai_content_rejected_handler(
+    request: Request, exc: AIContentRejectedError
+) -> JSONResponse:
+    """User input refused by the provider's safety filter — 422, no ERROR."""
+    http_exc = content_rejected_http_exception(exc)
+    return JSONResponse(
+        status_code=http_exc.status_code,
+        content={"detail": http_exc.detail},
     )
 
 
@@ -130,6 +145,10 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     # AIUnavailableError — degraded, WARNING only
     app.add_exception_handler(AIUnavailableError, _ai_unavailable_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(
+        AIContentRejectedError,
+        _ai_content_rejected_handler,  # type: ignore[arg-type]
+    )
 
     # Nutrition trust-boundary failures are expected request/provider outcomes.
     app.add_exception_handler(

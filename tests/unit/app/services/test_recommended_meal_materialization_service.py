@@ -376,6 +376,40 @@ async def test_materializer_scales_backend_macros_for_weekly_portions():
 
 
 @pytest.mark.asyncio
+async def test_materializer_skips_projection_lookup_for_unlinked_ingredients():
+    plan, slot = _plan_and_slot()
+    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    unlinked = CatalogMealIngredient(
+        food_reference_id=None,
+        display_name="Ingredient",
+        quantity=Decimal("100"),
+        unit="g",
+    )
+    catalog_meal = dataclasses.replace(
+        slot.selected.catalog_meal, ingredients=(unlinked, unlinked)
+    )
+    food_references = _FoodRefRepo({})
+    food_references.get_nutrition_projections = _fail_if_called
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        _Uow(food_references=food_references),
+        user_id=plan.user_id,
+        catalog_meal=catalog_meal,
+        meal_date=plan.start_date,
+        meal_type="lunch",
+        timezone="UTC",
+        source="weekly_meal_planner",
+    )
+
+    assert meal.nutrition is not None
+    assert meal.nutrition.macros.protein == 30
+
+
+async def _fail_if_called(*args, **kwargs):
+    raise AssertionError("projection lookup must not receive unlinked ingredients")
+
+
+@pytest.mark.asyncio
 async def test_materializer_scales_published_recipe_payload_without_mutating_catalog():
     plan, slot = _plan_and_slot()
     assert slot.selected is not None and slot.selected.catalog_meal is not None

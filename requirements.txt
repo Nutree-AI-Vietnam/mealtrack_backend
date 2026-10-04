@@ -12,8 +12,6 @@ langchain-cloudflare==0.3.4
 langchain-google-genai==4.2.5
 langgraph==1.2.8
 google-genai==2.8.0
-posthog[otel]==7.18.3
-opentelemetry-instrumentation-langchain==0.61.0
 
 # Vector search and embeddings
 pgvector==0.4.2

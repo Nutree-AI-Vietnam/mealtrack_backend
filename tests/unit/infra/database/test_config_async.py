@@ -160,6 +160,29 @@ def test_explicit_neon_pooler_mode_uses_null_pool(monkeypatch):
     assert cfg._IS_NEON_POOLER is True
 
 
+def test_neon_pooler_queue_pool_gets_pre_ping_and_recycle(monkeypatch):
+    monkeypatch.setenv(
+        "APP_DATABASE_URL",
+        "postgresql://user:pw@ep-xxx-pooler.us-east-1.aws.neon.tech/db",
+    )
+    monkeypatch.setenv("DB_CONNECTION_MODE", "neon_pooler")
+    monkeypatch.setenv("NEON_POOLER_USE_QUEUE_POOL", "true")
+    monkeypatch.setenv("ASYNC_POOL_SIZE_PER_WORKER", "7")
+    monkeypatch.setenv("ASYNC_POOL_RECYCLE", "90")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL_DIRECT", raising=False)
+
+    import src.infra.database.config_async as cfg
+
+    importlib.reload(cfg)
+    pool = cfg.async_engine.sync_engine.pool
+    assert isinstance(pool, AsyncAdaptedQueuePool)
+    assert pool._pre_ping is True
+    assert pool._recycle == 90
+    assert pool.size() == 7
+    assert cfg.CONNECTION_MODE == "neon_pooler"
+
+
 def test_connection_mode_exported(monkeypatch):
     monkeypatch.setenv("APP_DATABASE_URL", "postgresql://user:pw@host/db")
     monkeypatch.delenv("DATABASE_URL", raising=False)

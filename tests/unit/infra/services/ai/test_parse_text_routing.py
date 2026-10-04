@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from src.domain.exceptions.ai_exceptions import AIContentRejectedError
 from src.domain.model.ai.model_purpose import ModelPurpose
 from src.infra.services.ai.ai_model_manager import AIModelManager
 
@@ -128,3 +129,43 @@ async def test_parse_text_falls_back_to_cloudflare_on_primary_failure():
         assert result["items"][0]["name"] == "Phở bò"
         assert openai_mock.generate.called
         assert cf_mock.generate.called
+
+
+@pytest.mark.asyncio
+async def test_parse_text_content_rejection_stops_chain_without_fallback():
+    settings = _mock_settings(cf_enabled=True, cf_purposes="parse_text")
+
+    openai_mock = Mock()
+    openai_mock.generate = AsyncMock(
+        side_effect=AIContentRejectedError(
+            "rejected", provider="openai", model="gpt-5.6-luna"
+        )
+    )
+    cf_mock = Mock()
+    cf_mock.generate = AsyncMock(return_value={"items": []})
+
+    with (
+        patch(
+            "src.infra.services.ai.ai_model_manager.OpenAIProvider",
+            return_value=openai_mock,
+        ),
+        patch(
+            "src.infra.services.ai.ai_model_manager.CloudflareWorkersAIProvider",
+            return_value=cf_mock,
+        ),
+    ):
+        manager = AIModelManager(settings)
+        manager._circuit_breaker = Mock(
+            filter_available=Mock(side_effect=lambda models: models)
+        )
+
+        with pytest.raises(AIContentRejectedError):
+            await manager.generate(
+                purpose=ModelPurpose.PARSE_TEXT,
+                prompt="meal: something flagged",
+                system_message="system prompt",
+            )
+
+    assert openai_mock.generate.await_count == 1
+    cf_mock.generate.assert_not_called()
+    manager._circuit_breaker.record_failure.assert_not_called()

@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 
 from src.api.exceptions import handle_exception
 from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
     AIOutputValidationError,
     AIUnavailableError,
     MealResponseLocalizationError,
@@ -66,6 +67,21 @@ def test_handle_exception_ai_output_validation_returns_422_without_field_details
         "attempt_count": 2,
     }
     assert "quantity_g" not in str(exc.detail)
+
+
+def test_handle_exception_content_rejected_returns_422():
+    exc = handle_exception(
+        AIContentRejectedError(
+            "OpenAI rejected request content (code=invalid_prompt)",
+            provider="openai",
+            model="gpt-5.6-luna",
+        )
+    )
+
+    assert isinstance(exc, HTTPException)
+    assert exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert exc.detail["error_code"] == "AI_CONTENT_REJECTED"
+    assert "invalid_prompt" not in str(exc.detail)
 
 
 def test_handle_exception_localization_validation_returns_422_without_internal_details():
