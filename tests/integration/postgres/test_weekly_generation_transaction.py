@@ -47,7 +47,6 @@ async def test_missing_week_generate_race_completes_one_atomic_plan(
         delete(WeeklyMealPlanORM).where(WeeklyMealPlanORM.id == plan.id)
     )
     await pg_session.commit()
-    monkeypatch.setenv("WEEKLY_PLANNER_SHORT_GENERATION", "true")
     monkeypatch.setattr(
         "src.infra.database.uow_async.AsyncSessionLocal", async_session_factory
     )
@@ -118,7 +117,6 @@ async def test_short_regeneration_records_current_algorithm_version(
         .values(algorithm_version="stale")
     )
     await pg_session.commit()
-    monkeypatch.setenv("WEEKLY_PLANNER_SHORT_GENERATION", "true")
     monkeypatch.setattr(
         "src.infra.database.uow_async.AsyncSessionLocal", async_session_factory
     )
@@ -145,7 +143,6 @@ async def test_cancelled_precomputation_leaves_no_operation_reservation(
     monkeypatch,
 ):
     user_id, _, _ = await _seed(pg_session)
-    monkeypatch.setenv("WEEKLY_PLANNER_SHORT_GENERATION", "true")
     monkeypatch.setattr(
         "src.infra.database.uow_async.AsyncSessionLocal", async_session_factory
     )

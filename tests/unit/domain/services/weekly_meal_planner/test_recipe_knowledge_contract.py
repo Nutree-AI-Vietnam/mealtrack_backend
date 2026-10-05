@@ -54,8 +54,6 @@ from src.infra.repositories.catalog_recipe_repository_async import (
     AsyncCatalogMealRepository,
 )
 
-pytestmark = pytest.mark.usefixtures("planner_flags_off")
-
 _USER_ID = "11111111-1111-1111-1111-111111111111"
 
 
@@ -463,8 +461,14 @@ class _SyncAsyncSession:
     def add(self, instance):
         self._session.add(instance)
 
+    def add_all(self, instances):
+        self._session.add_all(instances)
+
     async def flush(self):
         self._session.flush()
+
+    def get_bind(self):
+        return self._session.get_bind()
 
 
 def _seed(
@@ -499,12 +503,24 @@ def _seed(
     )
 
 
+def _init_publication_fence(engine):
+    """Seed the singleton row the catalog projection migration inserts."""
+    from src.infra.database.models.meal_recommendation.catalog_projection import (
+        CatalogPublicationVersionORM,
+    )
+
+    with Session(engine) as session:
+        session.add(CatalogPublicationVersionORM(id=1))
+        session.commit()
+
+
 @pytest.mark.asyncio
 async def test_seed_publish_uses_stored_aliases_and_allergen_links():
     import src.infra.database.models  # noqa: F401
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
+    _init_publication_fence(engine)
     try:
         with Session(engine) as session:
             food = FoodReferenceModel(
@@ -592,6 +608,7 @@ def test_stale_revision_and_slot_coordinates_are_rejected():
 async def test_seed_publish_with_ai_estimated_nutrition_fallback():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
+    _init_publication_fence(engine)
     try:
         with Session(engine) as session:
             repository = AsyncCatalogMealRepository(_SyncAsyncSession(session))

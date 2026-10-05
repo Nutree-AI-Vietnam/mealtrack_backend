@@ -12,8 +12,6 @@ from src.api.exceptions import (
 from src.app.commands.meal_planner import LogMealPlanSlotCommand
 from src.app.services.weekly_meal_logging_service import WeeklyMealLoggingService
 
-pytestmark = pytest.mark.usefixtures("planner_flags_off")
-
 
 class _MockReservation:
     def __init__(self, state="new", response=None):
@@ -42,6 +40,9 @@ class _MockCatalogRecipes:
 
     async def get_meal(self, catalog_meal_id):
         return self.meal
+
+    async def lock_catalog_publication(self, *, shared=True):
+        return None
 
 
 class _MockMaterializer:
@@ -150,6 +151,7 @@ async def test_slot_log_plan_not_found_raises_not_found():
         get_by_id=AsyncMock(return_value=None),
     )
     uow = SimpleNamespace(
+        catalog_recipes=_MockCatalogRecipes(),
         weekly_meal_plans=mock_weekly_plans,
         meal_write_operations=_MockWriteOperations(),
     )
@@ -175,6 +177,7 @@ async def test_slot_log_slot_not_found_raises_not_found():
         plan_exists=AsyncMock(return_value=True),
     )
     uow = SimpleNamespace(
+        catalog_recipes=_MockCatalogRecipes(),
         weekly_meal_plans=mock_weekly_plans,
         meal_write_operations=_MockWriteOperations(),
     )
@@ -212,6 +215,7 @@ async def test_slot_log_already_logged_conflict():
         get_slot_for_update=AsyncMock(return_value=slot_obj),
     )
     uow = SimpleNamespace(
+        catalog_recipes=_MockCatalogRecipes(),
         weekly_meal_plans=mock_weekly_plans,
         meal_write_operations=_MockWriteOperations(),
     )
@@ -250,6 +254,7 @@ async def test_slot_log_date_mismatch_raises_validation_error():
         get_slot_for_update=AsyncMock(return_value=slot_obj),
     )
     uow = SimpleNamespace(
+        catalog_recipes=_MockCatalogRecipes(),
         weekly_meal_plans=mock_weekly_plans,
         meal_write_operations=_MockWriteOperations(),
     )

@@ -290,10 +290,10 @@ enrichment digests. Source tables and conversion/calorie domain services remain
 authoritative. Python casefold features preserve Unicode filter/order behavior.
 Missing or dirty mandatory query data invokes the complete authoritative read;
 nutrition dirtiness is hydrated after SQL pagination for selected IDs. Live
-activation joins reject withdrawn recipes immediately. The optimization flags
-default on and remain environment kill switches.
+activation joins reject withdrawn recipes immediately. These paths are always
+on; there are no runtime flags.
 
-When projections are enabled, seed/import, rank and admin image publishers
+Seed/import, rank and admin image publishers
 refresh the affected recipe before committing under the exclusive fence.
 Direct SQL and shared food/reference writers publish dirty state synchronously;
 canonical fallback preserves complete results until the worker or bounded

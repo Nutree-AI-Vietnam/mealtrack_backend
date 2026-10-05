@@ -6,12 +6,17 @@ import pytest
 from sqlalchemy import event, select, text
 
 from src.domain.model.weekly_meal_planner import WeeklyMealPlanPreferences
+from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    resolve_allergen_preferences,
+)
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     WeeklyPlanGenerationService,
 )
 from src.infra.database.models.meal_recommendation.catalog_projection import (
     MealCatalogProjectionORM,
 )
+from src.infra.repositories.catalog_projection_legacy_page import legacy_recipe_page
 from src.infra.repositories.catalog_projection_rebuilder import (
     CatalogProjectionRebuilder,
 )
@@ -25,13 +30,30 @@ pytestmark = pytest.mark.integration
 from tests.integration.postgres.catalog_projection_fixtures import seed_catalog
 
 
+async def _authoritative_page(repo, *, allergies=(), **options):
+    """Canonical-table page used as the projection fallback."""
+    known = await repo.list_allergen_codes() if allergies else ()
+    codes = resolve_allergen_preferences(allergies, known)
+    if codes is None:
+        return CatalogRecipePage((), 0)
+    page = {
+        "query": None,
+        "diet": None,
+        "max_cook_time": None,
+        "cuisine": None,
+        "meal_type": None,
+        "dislikes": (),
+        **options,
+    }
+    return await legacy_recipe_page(repo, codes=codes, **page)
+
+
 @pytest.mark.asyncio
 async def test_projected_filter_order_count_and_compact_generation_match_authority(
     pg_session,
 ):
     ids, _ = await seed_catalog(pg_session)
-    canonical = AsyncCatalogMealRepository(pg_session, projections_enabled=False)
-    projected = AsyncCatalogMealRepository(pg_session, projections_enabled=True)
+    projected = AsyncCatalogMealRepository(pg_session)
     filters = [
         {},
         {"query": "STRASSE"},
@@ -51,7 +73,9 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
     ]
     for options in filters:
         for offset in (0, 1, 99):
-            before = await canonical.list_recipe_page(**options, limit=2, offset=offset)
+            before = await _authoritative_page(
+                projected, **options, limit=2, offset=offset
+            )
             after = await projected.list_recipe_page(**options, limit=2, offset=offset)
             assert (after.total, [meal.id for meal in after.items]) == (
                 before.total,
@@ -66,7 +90,7 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
             ] == [
                 (meal.protein_g, meal.carbs_g, meal.calories) for meal in before.items
             ]
-    meals = await canonical.list_active_meals()
+    meals = await projected.list_active_meals()
     candidates = await projected.list_selection_candidates()
     assert {meal.id for meal in candidates} == set(ids)
     assert all(not meal.ingredients and meal.selection_features for meal in candidates)
@@ -95,7 +119,7 @@ async def test_breakfast_browse_excludes_non_meal_titles_on_every_path(pg_sessio
     ids, _ = await seed_catalog(pg_session)
     await pg_session.execute(text("UPDATE meal_catalog SET breakfast_eligible = true"))
     await pg_session.commit()
-    projected = AsyncCatalogMealRepository(pg_session, projections_enabled=True)
+    projected = AsyncCatalogMealRepository(pg_session)
 
     dirty = await projected.list_recipe_page(meal_type="breakfast", limit=20)
     await CatalogProjectionRebuilder(pg_session).rebuild(tuple(ids))
@@ -113,7 +137,7 @@ async def test_dirty_nutrition_retains_sql_totals_and_only_hydrates_page_ids(
     pg_session,
 ):
     ids, food_id = await seed_catalog(pg_session)
-    repo = AsyncCatalogMealRepository(pg_session, projections_enabled=True)
+    repo = AsyncCatalogMealRepository(pg_session)
     version = await repo.capture_catalog_publication_version()
     await pg_session.execute(
         text(
@@ -150,7 +174,7 @@ async def test_dirty_nutrition_retains_sql_totals_and_only_hydrates_page_ids(
 @pytest.mark.asyncio
 async def test_compact_summaries_use_one_select_and_backfill_is_restartable(pg_session):
     ids, _ = await seed_catalog(pg_session)
-    repo = AsyncCatalogMealRepository(pg_session, projections_enabled=True)
+    repo = AsyncCatalogMealRepository(pg_session)
     statements = []
 
     def record(_connection, _cursor, sql, _params, _context, _many):

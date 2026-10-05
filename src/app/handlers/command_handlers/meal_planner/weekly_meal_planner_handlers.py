@@ -4,7 +4,6 @@ from typing import Any
 
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
-    EnrichWeeklyPlanMicronutrientsCommand,
     GenerateWeeklyMealPlanCommand,
     LogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
@@ -12,14 +11,11 @@ from src.app.commands.meal_planner import (
     UpdateWeeklyMealPlanCommand,
 )
 from src.app.events.base import EventHandler, handles
-from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
-    CatalogRecipeMicronutrientEnrichmentService,
-)
-from src.app.services.weekly_meal_logging_service import WeeklyMealLoggingService
-from src.app.services.weekly_meal_plan_service import WeeklyMealPlanService
 from src.app.services.weekly_grocery_day_line_service import (
     WeeklyGroceryDayLineService,
 )
+from src.app.services.weekly_meal_logging_service import WeeklyMealLoggingService
+from src.app.services.weekly_meal_plan_service import WeeklyMealPlanService
 from src.app.services.weekly_pantry_service import WeeklyPantryService
 
 
@@ -39,19 +35,6 @@ class UpdateWeeklyMealPlanCommandHandler(EventHandler):
 
     async def handle(self, command):
         return await self.service.update(command)
-
-
-@handles(EnrichWeeklyPlanMicronutrientsCommand)
-class EnrichWeeklyPlanMicronutrientsCommandHandler(EventHandler):
-    def __init__(
-        self, micronutrient_enrichment: CatalogRecipeMicronutrientEnrichmentService
-    ):
-        self.micronutrient_enrichment = micronutrient_enrichment
-
-    async def handle(self, command):
-        return await self.micronutrient_enrichment.enrich_recipe_ids(
-            command.recipe_ids
-        )
 
 
 @handles(AiAdjustMealPlanCommand)

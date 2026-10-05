@@ -8,8 +8,6 @@ from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.micros import Micros
 
-pytestmark = pytest.mark.usefixtures("planner_flags_off")
-
 
 def _meal(recipe_id: str, name: str) -> CatalogMeal:
     return CatalogMeal(
@@ -79,16 +77,7 @@ class _MockRedisClient:
 
 
 @pytest.mark.asyncio
-async def test_dinner_browse_excludes_desserts_and_remedies():
-    page = await WeeklyRecipeService(lambda: _UnitOfWork()).list(meal_type="dinner")
-
-    assert [meal.name for meal in page.items] == ["Grilled tofu"]
-    assert page.total == 1
-
-
-@pytest.mark.asyncio
 async def test_summaries_hits_redis_and_fetches_only_missing(monkeypatch):
-    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
     cached_meal = _meal("r1", "Cached Pho")
     key_r1 = "catalog:summary:v2:test-v1:r1"
     redis = _MockRedisClient({key_r1: json.dumps(cached_meal.to_dict())})
@@ -113,29 +102,7 @@ async def test_summaries_hits_redis_and_fetches_only_missing(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_summaries_use_versioned_cache_without_fence_when_projections_off(
-    monkeypatch,
-):
-    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "false")
-    cached = _meal("r1", "Cached Pho")
-    redis = _MockRedisClient(
-        {"catalog:summary:v2:test-v1:r1": json.dumps(cached.to_dict())}
-    )
-    catalog = _Catalog()
-
-    results = await WeeklyRecipeService(
-        lambda: _UnitOfWork(catalog), redis_client=redis
-    ).summaries(["r1", "r2"])
-
-    assert [meal.name for meal in results] == ["Cached Pho", "Meal r2"]
-    assert catalog.get_meals_calls == [["r2"]]
-    assert catalog.fence_locks == 0
-    assert "catalog:summary:v2:test-v1:r2" in redis.mset_calls[0][0]
-
-
-@pytest.mark.asyncio
 async def test_summaries_all_hits_avoids_db(monkeypatch):
-    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
     m1 = _meal("r1", "Dish 1")
     m2 = _meal("r2", "Dish 2")
     redis = _MockRedisClient(
@@ -199,8 +166,6 @@ async def test_slow_optional_cache_falls_back_within_one_budget_and_skips_write(
 ):
     import asyncio
     from time import monotonic
-
-    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
 
     class SlowRedis(_MockRedisClient):
         async def mget(self, keys):

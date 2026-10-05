@@ -120,12 +120,11 @@ pantry/grocery state throughout this rollout.
    `20261003102324493409`, and `20261004125027631936` through the schema
    workflow before enabling new paths.
    Confirm one Alembic head and `catalog_publication_version` row `id=1`.
-2. All four flags default on: `CATALOG_PROJECTIONS_ENABLED`,
-   `WEEKLY_PLANNER_SHORT_GENERATION`, `CATALOG_PUBLICATION_FENCING_ENABLED`,
-   and `CATALOG_DURABLE_PREPARATION_ENABLED`. Set any of them to `false` to
-   return to the previous path. Until step 3 completes, missing projections use
-   the authoritative fallback. Database publication/invalidation triggers are
-   installed independently of application flags. Planner recipe text always
+2. Projected reads, publication fencing, short generation and durable
+   preparation are always on; there are no runtime flags. Until step 3
+   completes, missing projections use the authoritative fallback. Database
+   publication/invalidation triggers keep projections and preparation jobs in
+   step with source writes. Planner recipe text always
    reads prepared translation overlays and never calls a provider; recipes
    without a current overlay for the request locale show canonical catalog
    text until step 4 completes.
@@ -187,7 +186,7 @@ and hydrates selected IDs. Synchronous invalidation plus fallback protects
 legacy/direct publishers, but sustained optimized cutover also requires
 complete publisher/reconciliation coverage and measured source-update fanout.
 
-With `CATALOG_PROJECTIONS_ENABLED=true`, standard seed/import, popularity-rank
+Standard seed/import, popularity-rank
 and admin image writes refresh the affected recipe under the exclusive fence
 in the source transaction before commit. This currently covers three
 application publication paths. Direct SQL, food-reference, serving/nutrient and
@@ -199,11 +198,11 @@ writers remains a release gate for sustained optimized cutover; do not describe
 dirty fallback as complete synchronous projection coverage. Measure repair
 fanout, fallback rate and time to clean after those writes on staging.
 
-Enable one flag at a time on staging. Before deploying, confirm no pending
+Verify on staging before production. Before deploying, confirm no pending
 `translation` jobs remain for any supported locale; missing text/micros fall
-back to canonical data without provider calls. Enable publication fencing
-before short generation; compact candidate parity and canonical nutrition must
-be verified before enabling projected reads. Cover owner/week races with same
+back to canonical data without provider calls. Verify compact candidate parity
+and canonical nutrition against the backfilled projections. Cover owner/week
+races with same
 and different idempotency keys, atomic replay, publication/withdrawal during
 compute, and logging between compute and commit. Check fresh reads after
 swaps, grocery edits, stock changes and Undo. Keep code/compiler/test evidence
@@ -284,9 +283,9 @@ point, not production capacity proof.
 
 ### Rollback
 
-Set the optimized flags to `false` (and stop any standalone worker), then
-restore the prior
-application image if needed. Retain expanded schema, canonical source tables,
+There are no runtime switches: roll back by restoring the prior application
+image (and stopping any standalone worker). Retain expanded schema, canonical
+source tables,
 prepared overlays and durable jobs. Source triggers can continue to enqueue
 projection repair work while the worker is stopped; monitor backlog and replay
 bounded backfill before resuming. Canonical fallback remains available, and
