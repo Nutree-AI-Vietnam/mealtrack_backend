@@ -28,10 +28,15 @@ from src.infra.workers.catalog_preparation_runtime import (  # noqa: E402
 
 
 async def run(*, batch_size: int, max_batches: int, after_id: str | None):
+    # Inherited worker settings must not redirect the backfill target.
+    os.environ.pop("CATALOG_WORKER_DATABASE_URL", None)
+    os.environ.pop("CATALOG_WORKER_DB_CONNECTION_MODE", None)
     override = os.environ.get("CATALOG_PROJECTION_DATABASE_URL")
     if override:
         os.environ["CATALOG_WORKER_DATABASE_URL"] = override
     engine = create_worker_engine(capacity=1)
+    source = "CATALOG_PROJECTION_DATABASE_URL" if override else "application URL"
+    print(f"target host={engine.url.host} database={engine.url.database} ({source})")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     total = 0
     try:
