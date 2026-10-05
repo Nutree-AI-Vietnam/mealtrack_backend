@@ -1,7 +1,9 @@
-"""Explicit, bounded catalog backfill against a caller-selected database.
+"""Bounded catalog projection backfill.
 
-Set CATALOG_PROJECTION_DATABASE_URL, then invoke with --batch-size and
---max-batches. Resume from the printed after_id only after a committed batch.
+Uses the application database (APP_DATABASE_URL / DATABASE_URL) unless
+CATALOG_PROJECTION_DATABASE_URL selects another one. Invoke with --batch-size
+and --max-batches. Resume from the printed after_id only after a committed
+batch.
 """
 
 from __future__ import annotations
@@ -14,22 +16,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import src.infra.database.models  # noqa: F401, E402
 from src.infra.repositories.catalog_projection_rebuilder import (
     CatalogProjectionRebuilder,  # noqa: E402
 )
+from src.infra.workers.catalog_preparation_runtime import (  # noqa: E402
+    create_worker_engine,
+)
 
 
 async def run(*, batch_size: int, max_batches: int, after_id: str | None):
-    url = os.environ.get("CATALOG_PROJECTION_DATABASE_URL")
-    if not url:
-        raise SystemExit(
-            "Set CATALOG_PROJECTION_DATABASE_URL to select the backfill database"
-        )
-    url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    engine = create_async_engine(url)
+    override = os.environ.get("CATALOG_PROJECTION_DATABASE_URL")
+    if override:
+        os.environ["CATALOG_WORKER_DATABASE_URL"] = override
+    engine = create_worker_engine(capacity=1)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     total = 0
     try:
