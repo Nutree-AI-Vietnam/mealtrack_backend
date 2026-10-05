@@ -64,6 +64,9 @@ jobs:
 
       - name: 📊 Upload Coverage
         uses: codecov/codecov-action@v4
+        # fail_ci_if_error does not cover failures inside the action itself
+        # (e.g. TLS errors fetching the uploader); coverage is reported, not gated.
+        continue-on-error: true
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
