@@ -308,10 +308,11 @@ selection and slot state and atomically completes the operation ledger with the
 plan. An internal slot version detects logging without changing the public plan
 revision contract.
 
-Catalog preparation runs as an asyncio task inside each API process, started
-and stopped by the application lifespan, with its own reserved DB pool and
-provider admission (a standalone process remains available). PostgreSQL jobs
-carry leases, claim tokens,
+Catalog preparation runs when recipes are written: the seed import script, the
+admin import endpoint and the preparation backfill run all pending jobs to
+completion after committing, using a reserved DB pool. No worker runs between
+imports (a standalone process remains available). PostgreSQL jobs carry leases,
+claim tokens,
 attempt limits and source facet/locale/contract identity. Claims commit before
 provider work; result publication revalidates the current source under the
 publication fence. Prepared text and micronutrient overlays are optional;

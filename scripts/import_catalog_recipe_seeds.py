@@ -13,6 +13,7 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.app.services.catalog_meal_seed_import_service import CatalogMealSeedImporter
+from src.bootstrap.inline_catalog_preparation import prepare_pending_catalog
 from src.domain.services.meal_recommendation.catalog_recipe_seed_validator import (
     PRODUCTION_CUISINE_COUNTS,
     REQUIRED_CUISINES,
@@ -232,7 +233,15 @@ def _build_import_report(
     return report
 
 
-async def _run_import(
+async def _run_import(manifest: dict, **options):
+    summary = await _import_manifest(manifest, **options)
+    if not summary.dry_run and summary.is_successful:
+        prepared = await prepare_pending_catalog()
+        print(f"catalog_prepared_jobs={prepared}")
+    return summary
+
+
+async def _import_manifest(
     manifest: dict,
     *,
     dry_run: bool,

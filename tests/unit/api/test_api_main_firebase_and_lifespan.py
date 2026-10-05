@@ -1,5 +1,4 @@
 """Cover src.api.main: Firebase init branches and lifespan error paths."""
-
 import importlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,7 +22,6 @@ def _patch_lifespan_side_effects(main_mod):
     main_mod.warm_database_connection = _noop  # type: ignore[assignment]
     main_mod.initialize_cache_layer = _noop  # type: ignore[assignment]
     main_mod.shutdown_cache_layer = _noop  # type: ignore[assignment]
-    main_mod.start_embedded_catalog_preparation = _noop  # type: ignore[assignment]
     # Note: no scheduler stub — scheduler removed from lifespan
 
 
@@ -135,7 +133,9 @@ def test_initialize_firebase_from_json_string(monkeypatch):
     with patch.object(main.credentials, "Certificate", cert):
         main.initialize_firebase()
     init.assert_called_once()
-    cert.assert_called_once_with({"type": "service_account", "project_id": "p"})
+    cert.assert_called_once_with(
+        {"type": "service_account", "project_id": "p"}
+    )
 
 
 def test_initialize_firebase_invalid_json_string(monkeypatch):
@@ -155,9 +155,7 @@ def test_initialize_firebase_from_credentials_file(monkeypatch, tmp_path):
     main = _reload_main()
 
     cred_path = tmp_path / "sa.json"
-    cred_path.write_text(
-        '{"type":"service_account","project_id":"x"}', encoding="utf-8"
-    )
+    cred_path.write_text('{"type":"service_account","project_id":"x"}', encoding="utf-8")
 
     def _not_init():
         raise ValueError("not init")

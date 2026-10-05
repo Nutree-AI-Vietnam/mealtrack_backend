@@ -142,29 +142,29 @@ script prints `complete`; restarting without a cursor is safe and idempotent.
 It never commits a partial batch and accepts at most 500 recipes per batch.
 No database URL or secret should be copied into reports.
 
-4. Each API process runs the preparation worker in-process
-   (`CATALOG_PREPARATION_IN_PROCESS_ENABLED`, default on). It drains jobs that
-   triggers, plan generation and the backfill enqueue. Configure it with
-   `CATALOG_PREPARATION_CONCURRENCY` (default 1 per process),
-   `CATALOG_PREPARATION_GLOBAL_CAPACITY` (default 4 across all processes) and
-   `CATALOG_PREPARATION_LOCALES` (default `vi,en`). `CATALOG_WORKER_DATABASE_URL`
-   and `CATALOG_WORKER_DB_CONNECTION_MODE` optionally point its reserved pool
-   at a different endpoint. Enqueue the existing catalog once after deploying:
+4. Translations and micronutrients are prepared when recipes are written: the
+   seed import script and the admin `/v1/admin/meal-catalog/import` endpoint
+   run every pending preparation job to completion right after committing, for
+   the locales in `CATALOG_PREPARATION_LOCALES` (default `vi,en`). No worker
+   process runs between imports. Prepare the existing catalog once after
+   deploying (with `OPENAI_API_KEY` set):
 
 ```bash
 .venv/bin/python -m scripts.backfill_catalog_preparation \
   --page-size 100 --max-pages 10 --locales vi,en
 ```
 
-Preparation backfill rebuilds each selected projection and enqueues jobs in one
-transaction. Its `next_cursor` resumes via `--after-id`; replay deduplicates job
-identity by task, recipe, source facet, locale and contract. Supply OpenAI/USDA
-credentials through the secret store; missing provider dependencies keep
-canonical presentation and retry/failure state explicit. Budget connections:
-each API process adds `concurrency + 1` worker connections with no overflow on
-top of its request pool. `python -m scripts.catalog_preparation_worker` remains
-available as a standalone process (`--once` for a bounded pass); leases make it
-safe to run alongside the in-process workers.
+The backfill rebuilds each selected projection, queues jobs in one transaction,
+then runs them; `--enqueue-only` skips the run. Its `next_cursor` resumes via
+`--after-id`; replay deduplicates job identity by task, recipe, source facet,
+locale and contract. Without `OPENAI_API_KEY` the run is skipped and jobs stay
+pending, because provider-unconfigured failures are permanent and not
+re-queued. Catalog text changed outside these paths (direct SQL, food-reference
+edits) is queued by triggers and prepared by the next import or backfill run.
+`CATALOG_WORKER_DATABASE_URL` and `CATALOG_WORKER_DB_CONNECTION_MODE`
+optionally point the preparation pool at a different endpoint.
+`python -m scripts.catalog_preparation_worker` remains available as a
+standalone process.
 
 ### Cutover gates
 
@@ -284,8 +284,8 @@ point, not production capacity proof.
 
 ### Rollback
 
-Set the optimized flags and `CATALOG_PREPARATION_IN_PROCESS_ENABLED` to
-`false` (and stop any standalone worker), then restore the prior
+Set the optimized flags to `false` (and stop any standalone worker), then
+restore the prior
 application image if needed. Retain expanded schema, canonical source tables,
 prepared overlays and durable jobs. Source triggers can continue to enqueue
 projection repair work while the worker is stopped; monitor backlog and replay
