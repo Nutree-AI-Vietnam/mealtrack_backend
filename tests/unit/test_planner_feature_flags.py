@@ -15,6 +15,6 @@ def test_other_values_disable_flag(monkeypatch, value):
     assert not planner_flag_enabled(CATALOG_PROJECTIONS)
 
 
-def test_missing_flag_is_disabled(monkeypatch):
+def test_missing_flag_is_enabled(monkeypatch):
     monkeypatch.delenv(CATALOG_PROJECTIONS, raising=False)
-    assert not planner_flag_enabled(CATALOG_PROJECTIONS)
+    assert planner_flag_enabled(CATALOG_PROJECTIONS)

@@ -83,6 +83,9 @@ from src.api.routes.v1.web_funnel_redemption_session import (
 from src.api.routes.v1.webhooks import router as webhooks_router
 from src.api.routes.v1.weight_entries import router as weight_entries_router
 from src.api.routes.well_known import router as well_known_router
+from src.bootstrap.embedded_catalog_preparation import (
+    start_embedded_catalog_preparation,
+)
 from src.bootstrap.observability import initialize_observability
 from src.infra.config.settings import settings
 from src.infra.database.config_async import async_engine
@@ -246,11 +249,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Event bus eager init failed (non-fatal): %s", e)
 
+    catalog_preparation = None
+    try:
+        catalog_preparation = await start_embedded_catalog_preparation()
+    except Exception as e:
+        logger.warning("Catalog preparation failed to start (non-fatal): %s", e)
+
     logger.info("MealTrack API started successfully!")
     yield
 
     # Shutdown
     logger.info("Shutting down MealTrack API...")
+
+    if catalog_preparation is not None:
+        await catalog_preparation.stop()
 
     from src.bootstrap.integration_services import (
         drain_integration_event_publisher,

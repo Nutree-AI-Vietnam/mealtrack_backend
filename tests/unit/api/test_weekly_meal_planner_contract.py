@@ -38,6 +38,8 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     deterministic_ingredient_id,
 )
 
+pytestmark = pytest.mark.usefixtures("planner_flags_off")
+
 
 def _plan():
     return WeeklyMealPlan(

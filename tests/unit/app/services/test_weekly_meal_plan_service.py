@@ -29,6 +29,8 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanStatus,
 )
 
+pytestmark = pytest.mark.usefixtures("planner_flags_off")
+
 
 def _meal(
     meal_id: str,

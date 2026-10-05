@@ -290,8 +290,8 @@ enrichment digests. Source tables and conversion/calorie domain services remain
 authoritative. Python casefold features preserve Unicode filter/order behavior.
 Missing or dirty mandatory query data invokes the complete authoritative read;
 nutrition dirtiness is hydrated after SQL pagination for selected IDs. Live
-activation joins reject withdrawn recipes immediately. The optimization flag
-defaults off until backfill and publisher parity are verified.
+activation joins reject withdrawn recipes immediately. The optimization flags
+default on and remain environment kill switches.
 
 When projections are enabled, seed/import, rank and admin image publishers
 refresh the affected recipe before committing under the exclusive fence.
@@ -308,8 +308,10 @@ selection and slot state and atomically completes the operation ledger with the
 plan. An internal slot version detects logging without changing the public plan
 revision contract.
 
-Catalog preparation runs in a separate Python process with its own bounded DB
-pool and provider admission. PostgreSQL jobs carry leases, claim tokens,
+Catalog preparation runs as an asyncio task inside each API process, started
+and stopped by the application lifespan, with its own reserved DB pool and
+provider admission (a standalone process remains available). PostgreSQL jobs
+carry leases, claim tokens,
 attempt limits and source facet/locale/contract identity. Claims commit before
 provider work; result publication revalidates the current source under the
 publication fence. Prepared text and micronutrient overlays are optional;

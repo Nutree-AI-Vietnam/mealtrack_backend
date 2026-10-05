@@ -120,14 +120,15 @@ pantry/grocery state throughout this rollout.
    `20261003102324493409`, and `20261004125027631936` through the schema
    workflow before enabling new paths.
    Confirm one Alembic head and `catalog_publication_version` row `id=1`.
-2. Keep all four flags false initially: `CATALOG_PROJECTIONS_ENABLED`,
+2. All four flags default on: `CATALOG_PROJECTIONS_ENABLED`,
    `WEEKLY_PLANNER_SHORT_GENERATION`, `CATALOG_PUBLICATION_FENCING_ENABLED`,
-   and `CATALOG_DURABLE_PREPARATION_ENABLED`. Existing reads remain available;
-   database publication/invalidation triggers are installed independently of
-   application flags. Planner recipe text always reads prepared translation
-   overlays and never calls a provider; recipes without a current overlay for
-   the request locale show canonical catalog text. Complete step 4 for every
-   supported locale before the new API image serves traffic.
+   and `CATALOG_DURABLE_PREPARATION_ENABLED`. Set any of them to `false` to
+   return to the previous path. Until step 3 completes, missing projections use
+   the authoritative fallback. Database publication/invalidation triggers are
+   installed independently of application flags. Planner recipe text always
+   reads prepared translation overlays and never calls a provider; recipes
+   without a current overlay for the request locale show canonical catalog
+   text until step 4 completes.
 3. Set `CATALOG_PROJECTION_DATABASE_URL` securely to the intended async
    PostgreSQL database and run bounded projection backfill:
 
@@ -141,27 +142,29 @@ script prints `complete`; restarting without a cursor is safe and idempotent.
 It never commits a partial batch and accepts at most 500 recipes per batch.
 No database URL or secret should be copied into reports.
 
-4. Set `CATALOG_WORKER_DATABASE_URL` securely for the worker (or intentionally
-   reuse the normal application URL). If a separate worker endpoint uses Neon
-   pooler mode, set `CATALOG_WORKER_DB_CONNECTION_MODE` consistently. Backfill
-   preparation jobs and run a separate Python worker:
+4. Each API process runs the preparation worker in-process
+   (`CATALOG_PREPARATION_IN_PROCESS_ENABLED`, default on). It drains jobs that
+   triggers, plan generation and the backfill enqueue. Configure it with
+   `CATALOG_PREPARATION_CONCURRENCY` (default 1 per process),
+   `CATALOG_PREPARATION_GLOBAL_CAPACITY` (default 4 across all processes) and
+   `CATALOG_PREPARATION_LOCALES` (default `vi,en`). `CATALOG_WORKER_DATABASE_URL`
+   and `CATALOG_WORKER_DB_CONNECTION_MODE` optionally point its reserved pool
+   at a different endpoint. Enqueue the existing catalog once after deploying:
 
 ```bash
 .venv/bin/python -m scripts.backfill_catalog_preparation \
   --page-size 100 --max-pages 10 --locales vi,en
-.venv/bin/python -m scripts.catalog_preparation_worker \
-  --concurrency 2 --global-capacity 4 --lease-seconds 120 \
-  --provider-deadline-seconds 60 --locales vi,en
 ```
 
 Preparation backfill rebuilds each selected projection and enqueues jobs in one
 transaction. Its `next_cursor` resumes via `--after-id`; replay deduplicates job
-identity by task, recipe, source facet, locale and contract. `--once` runs a
-bounded worker pass for a canary. Supply OpenAI/USDA credentials through the
-secret store; missing provider dependencies keep canonical presentation and
-retry/failure state explicit. Budget worker connections separately: each
-process budgets up to `concurrency + 1` connections with no overflow, and global
-provider capacity applies across worker replicas.
+identity by task, recipe, source facet, locale and contract. Supply OpenAI/USDA
+credentials through the secret store; missing provider dependencies keep
+canonical presentation and retry/failure state explicit. Budget connections:
+each API process adds `concurrency + 1` worker connections with no overflow on
+top of its request pool. `python -m scripts.catalog_preparation_worker` remains
+available as a standalone process (`--once` for a bounded pass); leases make it
+safe to run alongside the in-process workers.
 
 ### Cutover gates
 
@@ -281,7 +284,8 @@ point, not production capacity proof.
 
 ### Rollback
 
-Disable optimized flags and stop the dedicated worker, then restore the prior
+Set the optimized flags and `CATALOG_PREPARATION_IN_PROCESS_ENABLED` to
+`false` (and stop any standalone worker), then restore the prior
 application image if needed. Retain expanded schema, canonical source tables,
 prepared overlays and durable jobs. Source triggers can continue to enqueue
 projection repair work while the worker is stopped; monitor backlog and replay

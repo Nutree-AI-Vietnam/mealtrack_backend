@@ -8,6 +8,8 @@ from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredi
 from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
 from src.domain.model.nutrition.micros import Micros
 
+pytestmark = pytest.mark.usefixtures("planner_flags_off")
+
 MICRO_FIELDS = tuple(Micros.__dataclass_fields__)
 
 

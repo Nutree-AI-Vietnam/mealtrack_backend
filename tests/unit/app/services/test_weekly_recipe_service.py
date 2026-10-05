@@ -8,6 +8,8 @@ from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.micros import Micros
 
+pytestmark = pytest.mark.usefixtures("planner_flags_off")
+
 
 def _meal(recipe_id: str, name: str) -> CatalogMeal:
     return CatalogMeal(
@@ -114,7 +116,7 @@ async def test_summaries_hits_redis_and_fetches_only_missing(monkeypatch):
 async def test_summaries_use_versioned_cache_without_fence_when_projections_off(
     monkeypatch,
 ):
-    monkeypatch.delenv("CATALOG_PROJECTIONS_ENABLED", raising=False)
+    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "false")
     cached = _meal("r1", "Cached Pho")
     redis = _MockRedisClient(
         {"catalog:summary:v2:test-v1:r1": json.dumps(cached.to_dict())}

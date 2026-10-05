@@ -54,6 +54,8 @@ from src.infra.repositories.catalog_recipe_repository_async import (
     AsyncCatalogMealRepository,
 )
 
+pytestmark = pytest.mark.usefixtures("planner_flags_off")
+
 _USER_ID = "11111111-1111-1111-1111-111111111111"
 
 

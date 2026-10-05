@@ -29,6 +29,7 @@ def client(monkeypatch) -> TestClient:
 
     main.initialize_cache_layer = _noop_async  # type: ignore[assignment]
     main.shutdown_cache_layer = _noop_async  # type: ignore[assignment]
+    main.start_embedded_catalog_preparation = _noop_async  # type: ignore[assignment]
 
     from src.api.base_dependencies import get_image_store
     from src.api.dependencies.auth import (

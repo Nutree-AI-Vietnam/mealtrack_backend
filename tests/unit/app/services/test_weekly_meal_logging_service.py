@@ -12,6 +12,8 @@ from src.api.exceptions import (
 from src.app.commands.meal_planner import LogMealPlanSlotCommand
 from src.app.services.weekly_meal_logging_service import WeeklyMealLoggingService
 
+pytestmark = pytest.mark.usefixtures("planner_flags_off")
+
 
 class _MockReservation:
     def __init__(self, state="new", response=None):
