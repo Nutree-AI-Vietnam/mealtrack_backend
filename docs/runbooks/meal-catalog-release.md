@@ -128,8 +128,9 @@ pantry/grocery state throughout this rollout.
    reads prepared translation overlays and never calls a provider; recipes
    without a current overlay for the request locale show canonical catalog
    text until step 4 completes.
-3. Set `CATALOG_PROJECTION_DATABASE_URL` securely to the intended async
-   PostgreSQL database and run bounded projection backfill:
+3. Run bounded projection backfill. It uses the application database
+   (`APP_DATABASE_URL`/`DATABASE_URL`); set `CATALOG_PROJECTION_DATABASE_URL`
+   only to target a different database:
 
 ```bash
 .venv/bin/python scripts/development/rebuild_catalog_projections.py \
