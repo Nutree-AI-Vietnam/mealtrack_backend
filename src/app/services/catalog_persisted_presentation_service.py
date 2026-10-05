@@ -16,19 +16,30 @@ class CatalogPersistedPresentationService:
             )
 
     async def get_grocery_translations(self, categories, language):
-        if normalize_language(language) != "vi":
+        locale = normalize_language(language)
+        if locale == "en":
             return {}
         items = [item for category in categories for item in category.items]
+        ingredient_ids = [item.ingredient_id for item in items]
         async with self.uow_factory() as uow:
-            references = await uow.food_references.get_display_projections(
-                [item.ingredient_id for item in items], language="en"
+            references = (
+                await uow.food_references.get_display_projections(
+                    ingredient_ids, language="en"
+                )
+                if locale == "vi"
+                else {}
+            )
+            prepared = await uow.catalog_preparation.load_ingredient_translations(
+                ingredient_ids, locale=locale
             )
         translated = {}
         for item in items:
-            reference = references.get(item.ingredient_id)
-            name = reference.get("name_vi") if reference else None
-            if name and name.strip():
-                translated[item.name] = name.strip()
+            reference = references.get(item.ingredient_id) or {}
+            name = str(reference.get("name_vi") or "").strip() or prepared.get(
+                item.ingredient_id
+            )
+            if name:
+                translated[item.name] = name
         return translated
 
     async def translate_texts(self, texts, *args):

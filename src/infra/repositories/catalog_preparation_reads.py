@@ -1,6 +1,6 @@
 """Current source snapshots and prepared overlays, with no provider side effects."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.domain.constants.languages import SUPPORTED_TRANSLATION_LANGUAGES
 from src.domain.ports.catalog_preparation_port import (
@@ -16,6 +16,9 @@ from src.infra.database.models.meal_recommendation.catalog_preparation import (
 )
 from src.infra.database.models.meal_recommendation.catalog_projection import (
     MealCatalogProjectionORM as Projection,
+)
+from src.infra.database.models.meal_recommendation.catalog_recipe import (
+    MealCatalogIngredientORM as Ingredient,
 )
 from src.infra.database.models.meal_recommendation.catalog_recipe import (
     MealCatalogORM as Source,
@@ -82,6 +85,44 @@ class CatalogPreparationReads:
             .all()
         )
         return {row.catalog_meal_id: dict(row.translations) for row in rows}
+
+    async def load_ingredient_translations(
+        self,
+        food_reference_ids,
+        *,
+        locale,
+        contract_version=PREPARATION_CONTRACT_VERSION,
+    ):
+        ids = tuple(dict.fromkeys(i for i in food_reference_ids if i is not None))
+        if not ids or locale not in SUPPORTED_TRANSLATION_LANGUAGES:
+            return {}
+        translated = func.jsonb_extract_path_text(
+            Translation.translations, Ingredient.display_name
+        )
+        rows = await self.session.execute(
+            select(Ingredient.food_reference_id, func.min(translated))
+            .join(
+                Translation,
+                Translation.catalog_meal_id == Ingredient.catalog_meal_id,
+            )
+            .join(
+                Projection,
+                Projection.catalog_meal_id == Translation.catalog_meal_id,
+            )
+            .join(Source, Source.id == Translation.catalog_meal_id)
+            .where(
+                Ingredient.food_reference_id.in_(ids),
+                Translation.locale == locale,
+                Translation.contract_version == contract_version,
+                Translation.input_facet_version == Projection.translation_digest,
+                Projection.translation_dirty.is_(False),
+                Projection.schema_version == 1,
+                Source.is_active.is_(True),
+                func.length(func.trim(translated)) > 0,
+            )
+            .group_by(Ingredient.food_reference_id)
+        )
+        return {ref_id: name.strip() for ref_id, name in rows}
 
     async def get_overlay(
         self, recipe_id, *, contract_version=PREPARATION_CONTRACT_VERSION

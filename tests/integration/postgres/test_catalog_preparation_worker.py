@@ -91,6 +91,28 @@ async def test_worker_provider_computation_runs_with_no_database_checkout(
 
 
 @pytest.mark.asyncio
+async def test_prepared_ingredient_names_are_readable_by_food_reference(
+    pg_session, async_session_factory
+):
+    ids, food_id = await seed_preparation(pg_session, task="translation")
+
+    class Computer:
+        async def compute(self, preparation):
+            return PreparationResult(
+                PreparationOutcome.READY,
+                {"translations": {preparation.meal.name: "Tên", "Tofu": " Đậu phụ "}},
+            )
+
+    assert await CatalogPreparationWorker(async_session_factory, Computer()).run_once()
+    async with async_session_factory() as session:
+        repo = AsyncCatalogPreparationRepository(session)
+        assert await repo.load_ingredient_translations(
+            [food_id, None], locale="vi"
+        ) == {food_id: "Đậu phụ"}
+        assert await repo.load_ingredient_translations([food_id], locale="fr") == {}
+
+
+@pytest.mark.asyncio
 async def test_blocked_snapshot_reclaimed_lease_never_starts_old_provider(
     pg_session, async_session_factory
 ):
