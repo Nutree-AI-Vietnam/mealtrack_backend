@@ -46,13 +46,6 @@ from src.domain.services.weekly_meal_planner.slot_rules import (
     ensure_slot_coordinate,
 )
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
-from src.planner_feature_flags import (
-    CATALOG_DURABLE_PREPARATION,
-    CATALOG_PROJECTIONS,
-    CATALOG_PUBLICATION_FENCING,
-    WEEKLY_PLANNER_SHORT_GENERATION,
-    planner_flag_enabled,
-)
 from src.planner_observability import planner_phase, planner_timed
 from src.planner_request_policy import (
     planner_deadline,
@@ -92,109 +85,6 @@ class WeeklyMealPlanService:
 
     @planner_timed("service")
     async def generate(self, command: GenerateWeeklyMealPlanCommand) -> WeeklyMealPlan:
-        if planner_flag_enabled(WEEKLY_PLANNER_SHORT_GENERATION):
-            return await self._generate_prepared(command)
-        fingerprint = _fingerprint(command)
-        async with self.uow_factory() as uow:
-            reservation = await uow.meal_write_operations.reserve(
-                user_id=command.user_id,
-                operation="weekly_meal_plan_generate",
-                idempotency_key=command.idempotency_key,
-                request_fingerprint=fingerprint,
-            )
-            if (
-                reservation.state == "fingerprint_conflict"
-                and reservation.request_fingerprint == _legacy_fingerprint(command)
-            ):
-                # Reservations written before preference fields were hashed
-                # individually still belong to this same generate request.
-                reservation = await uow.meal_write_operations.adopt_fingerprint(
-                    reservation, request_fingerprint=fingerprint
-                )
-            if reservation.state == "replay":
-                plan = await uow.weekly_meal_plans.get_by_id(
-                    user_id=command.user_id, plan_id=reservation.target_meal_id
-                )
-                if plan is None:
-                    raise ConflictException(
-                        "Weekly plan replay is missing its plan",
-                        error_code="IDEMPOTENCY_REPLAY_INVALID",
-                    )
-                if _plan_has_assigned_recipe(plan):
-                    return plan
-                reservation = await uow.meal_write_operations.reopen_completed(
-                    reservation
-                )
-            self._check_reservation(reservation)
-            try:
-                await uow.weekly_meal_plans.lock_user_week(
-                    user_id=command.user_id, week_start_date=command.week_start_date
-                )
-                current = await uow.weekly_meal_plans.get_current(
-                    user_id=command.user_id, week_start_date=command.week_start_date
-                )
-                if current is not None and current.status.value == "confirmed":
-                    raise WeeklyMealPlanConflictError()
-                revision = await uow.catalog_recipes.get_active_catalog_revision()
-                meals = await uow.catalog_recipes.list_active_meals()
-                selected = self._select_recipes(
-                    meals,
-                    user_id=command.user_id,
-                    week_start_date=command.week_start_date.isoformat(),
-                    daily_calories=command.daily_calories,
-                    preferences=command.preferences,
-                )
-                recipe_ids = {
-                    (slot.day_index, slot.slot_index): slot.recipe_id
-                    for slot in selected
-                }
-                revision_key = _revision_key(revision)
-                current = await uow.weekly_meal_plans.get_current(
-                    user_id=command.user_id, week_start_date=command.week_start_date
-                )
-                if current is None:
-                    plan = await uow.weekly_meal_plans.create(
-                        user_id=command.user_id,
-                        week_start_date=command.week_start_date,
-                        timezone=command.timezone,
-                        preferences=command.preferences,
-                        daily_calories=command.daily_calories,
-                        catalog_revision=revision_key,
-                        recipe_ids=recipe_ids,
-                    )
-                else:
-                    if current.status.value == "confirmed":
-                        raise WeeklyMealPlanConflictError()
-                    logged_coordinates = {
-                        (slot.day_index, slot.slot_index)
-                        for slot in current.slots
-                        if slot.is_logged
-                    }
-                    generated_slots = {
-                        coordinate: recipe_id
-                        for coordinate, recipe_id in recipe_ids.items()
-                        if coordinate not in logged_coordinates
-                    }
-                    plan = await uow.weekly_meal_plans.update(
-                        user_id=command.user_id,
-                        plan_id=current.id,
-                        people=command.preferences.people,
-                        preferences=command.preferences,
-                        slots=generated_slots,
-                        algorithm_version=self.generator.algorithm_version,
-                    )
-                await uow.meal_write_operations.complete(
-                    reservation, target_meal_id=plan.id, response={"plan_id": plan.id}
-                )
-                await _enqueue_plan_preparation(uow, plan)
-                return plan
-            except Exception:
-                await uow.meal_write_operations.release(reservation)
-                raise
-
-    async def _generate_prepared(
-        self, command: GenerateWeeklyMealPlanCommand
-    ) -> WeeklyMealPlan:
         """Select without a write claim; fence publication and owner/week at commit."""
         fingerprint = _fingerprint(command)
         for attempt in range(2):
@@ -340,8 +230,7 @@ class WeeklyMealPlanService:
     async def update(self, command: UpdateWeeklyMealPlanCommand) -> WeeklyMealPlan:
         fingerprint = _fingerprint(command)
         async with self.uow_factory() as uow:
-            if planner_flag_enabled(CATALOG_PUBLICATION_FENCING):
-                await uow.catalog_recipes.lock_catalog_publication(shared=True)
+            await uow.catalog_recipes.lock_catalog_publication(shared=True)
             reservation = await uow.meal_write_operations.reserve(
                 user_id=command.user_id,
                 operation="weekly_meal_plan_update",
@@ -489,11 +378,7 @@ class WeeklyMealPlanService:
                 uow.catalog_recipes, "list_selection_candidates", None
             )
             ingredient_names: tuple[str, ...] = ()
-            if (
-                self.ai_adjustment_provider is not None
-                and _projections_enabled()
-                and callable(compact_candidates)
-            ):
+            if self.ai_adjustment_provider is not None and callable(compact_candidates):
                 meals = await compact_candidates()
                 ingredient_names = tuple(
                     await uow.catalog_recipes.list_active_ingredient_names()
@@ -903,21 +788,16 @@ class WeeklyMealPlanService:
             or planner_copy(command.language, len(changes))[1],
             proposed_plan=proposed_plan,
             slot_changes=tuple(changes),
-            proposed_groceries=await self._proposal_groceries(proposed_plan, meals),
+            proposed_groceries=await self._proposal_groceries(proposed_plan),
         )
 
-    async def _proposal_groceries(self, plan, meals):
-        if _projections_enabled():
-            # Compact candidates carry constraint/nutrition features. Only the
-            # selected recipes in this 21-slot plan need canonical hydration.
-            async with self.uow_factory() as uow:
-                meals = await uow.catalog_recipes.get_meals(
-                    tuple(
-                        sorted(
-                            {slot.recipe_id for slot in plan.slots if slot.recipe_id}
-                        )
-                    )
-                )
+    async def _proposal_groceries(self, plan):
+        # Compact candidates carry constraint/nutrition features. Only the
+        # selected recipes in this 21-slot plan need canonical hydration.
+        async with self.uow_factory() as uow:
+            meals = await uow.catalog_recipes.get_meals(
+                tuple(sorted({slot.recipe_id for slot in plan.slots if slot.recipe_id}))
+            )
         return self.grocery_service.project(plan, meals)
 
     def _replace_hard_preference_conflicts(
@@ -1564,11 +1444,6 @@ def _ai_shortlist(
 
 
 async def _enqueue_plan_preparation(uow, plan):
-    if planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
-        await uow.catalog_preparation.enqueue_for_recipes(
-            tuple(sorted({slot.recipe_id for slot in plan.slots if slot.recipe_id}))
-        )
-
-
-def _projections_enabled():
-    return planner_flag_enabled(CATALOG_PROJECTIONS)
+    await uow.catalog_preparation.enqueue_for_recipes(
+        tuple(sorted({slot.recipe_id for slot in plan.slots if slot.recipe_id}))
+    )

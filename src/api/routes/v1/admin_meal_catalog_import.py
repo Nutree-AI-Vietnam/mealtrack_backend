@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +12,7 @@ from src.api.base_dependencies import (
     get_catalog_food_reference_review_service,
     get_catalog_meal_seed_importer,
     get_catalog_meal_snapshot_service,
+    get_catalog_preparer,
 )
 from src.api.dependencies.auth import require_admin_or_local
 from src.api.schemas.response.admin_meal_catalog_responses import (
@@ -29,6 +32,8 @@ from src.domain.services.meal_recommendation.catalog_recipe_seed_validator impor
     REQUIRED_CUISINES,
     validate_catalog_seed_manifest,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/admin/meal-catalog", tags=["Admin Meal Catalog"])
 
@@ -105,9 +110,13 @@ async def import_admin_meal_catalog(
     request: AdminMealCatalogImportRequest,
     db: AsyncSession = Depends(get_async_db),
     importer: CatalogMealSeedImporter = Depends(get_catalog_meal_seed_importer),
+    prepare_catalog=Depends(get_catalog_preparer),
     _admin: str = Depends(require_admin_or_local),
 ) -> AdminMealCatalogImportResponse:
-    """Import a validated manifest, or preview it when ``dry_run`` is true."""
+    """Import a validated manifest, or preview it when ``dry_run`` is true.
+
+    Applied imports translate and enrich the new recipes before responding.
+    """
 
     validation = _validate_manifest(request)
     if validation.errors:
@@ -130,6 +139,12 @@ async def import_admin_meal_catalog(
         return _response(validation, summary, applied=False)
     await db.commit()
     get_catalog_meal_snapshot_service().invalidate()
+    try:
+        await prepare_catalog()
+    except Exception:
+        # The import is committed; untranslated recipes show canonical text
+        # until the next import or backfill prepares them.
+        logger.exception("Catalog preparation after import failed")
     return _response(validation, summary, applied=True)
 
 

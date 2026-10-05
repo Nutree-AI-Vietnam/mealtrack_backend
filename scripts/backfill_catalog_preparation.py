@@ -5,6 +5,10 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from src.bootstrap.inline_catalog_preparation import (
+    preparation_locales,
+    prepare_pending_catalog,
+)
 from src.infra.repositories.catalog_preparation_repository import (
     AsyncCatalogPreparationRepository,
 )
@@ -36,6 +40,8 @@ async def run(args):
         print(f"preparation_jobs_inserted={total} next_cursor={cursor or ''}")
     finally:
         await engine.dispose()
+    if not args.enqueue_only:
+        print(f"catalog_prepared_jobs={await prepare_pending_catalog()}")
 
 
 def main():
@@ -43,7 +49,12 @@ def main():
     parser.add_argument("--page-size", type=int, default=100)
     parser.add_argument("--max-pages", type=int, default=10)
     parser.add_argument("--after-id")
-    parser.add_argument("--locales", default="vi")
+    parser.add_argument("--locales", default=",".join(preparation_locales()))
+    parser.add_argument(
+        "--enqueue-only",
+        action="store_true",
+        help="Queue jobs without translating/enriching them now",
+    )
     asyncio.run(run(parser.parse_args()))
 
 

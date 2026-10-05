@@ -11,7 +11,6 @@ from time import monotonic
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     Header,
     HTTPException,
@@ -63,7 +62,6 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
 )
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
-    EnrichWeeklyPlanMicronutrientsCommand,
     GenerateWeeklyMealPlanCommand,
     LogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
@@ -104,7 +102,6 @@ from src.domain.utils.timezone_utils import (
     is_valid_timezone,
     normalize_timezone,
 )
-from src.planner_feature_flags import CATALOG_DURABLE_PREPARATION, planner_flag_enabled
 from src.planner_observability import planner_timed
 from src.planner_request_policy import planner_deadline, timeout_until
 
@@ -116,7 +113,6 @@ logger = logging.getLogger(__name__)
 @limiter.limit("30/minute")
 async def get_current_weekly_plan(
     request: Request,
-    background_tasks: BackgroundTasks,
     week_start_date: date | None = Query(default=None),
     include_grocery_count: bool = Query(default=True),
     auto_generate: bool = Query(default=True),
@@ -166,10 +162,6 @@ async def get_current_weekly_plan(
                     daily_calories=daily_calories,
                 )
             )
-            if not planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
-                background_tasks.add_task(
-                    _safely_enrich_plan_micronutrients, event_bus, plan
-                )
 
         return await _plan_response(
             plan,
@@ -193,7 +185,6 @@ async def get_current_weekly_plan(
 @limiter.limit("10/minute")
 async def generate_weekly_plan(
     request: Request,
-    background_tasks: BackgroundTasks,
     body: GenerateWeeklyMealPlanRequest,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     include_grocery_count: bool = Query(default=True),
@@ -235,10 +226,6 @@ async def generate_weekly_plan(
                 daily_calories=daily_calories,
             )
         )
-        if not planner_flag_enabled(CATALOG_DURABLE_PREPARATION):
-            background_tasks.add_task(
-                _safely_enrich_plan_micronutrients, event_bus, plan
-            )
         return await _plan_response(
             plan,
             event_bus,
@@ -298,27 +285,6 @@ async def update_weekly_plan(
         raise
     except Exception as exc:
         raise _http_error(exc) from exc
-
-
-async def _safely_enrich_plan_micronutrients(event_bus, plan) -> None:
-    try:
-        await _ensure_plan_micronutrients(event_bus, plan)
-    except Exception:
-        logger.exception(
-            "Background micronutrient enrichment failed for plan %s",
-            getattr(plan, "id", None),
-        )
-
-
-async def _ensure_plan_micronutrients(event_bus, plan) -> bool:
-    recipe_ids = tuple(
-        sorted({slot.recipe_id for slot in plan.slots if slot.recipe_id})
-    )
-    if recipe_ids:
-        return await event_bus.send(
-            EnrichWeeklyPlanMicronutrientsCommand(recipe_ids=recipe_ids)
-        )
-    return True
 
 
 @router.get("/v1/recipes", response_model=RecipeListResponse)
