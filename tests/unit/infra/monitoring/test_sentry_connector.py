@@ -3,12 +3,41 @@
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
+from src.domain.exceptions.ai_exceptions import AIContentRejectedError
 from src.infra.monitoring.connectors import (
     filter_safe_attributes,
     filter_safe_context,
     filter_safe_tags,
 )
-from src.infra.monitoring.sentry import SentryObservabilityConnector
+from src.infra.monitoring.sentry import (
+    SentryObservabilityConnector,
+    _drop_expected_events,
+)
+
+
+class _ProviderError(Exception):
+    def __init__(self, code):
+        super().__init__("provider error")
+        self.code = code
+
+
+def _hint(exc):
+    return {"exc_info": (type(exc), exc, None)}
+
+
+def test_before_send_drops_content_rejections():
+    event = {"level": "error"}
+
+    assert _drop_expected_events(event, _hint(AIContentRejectedError("x"))) is None
+    assert _drop_expected_events(event, _hint(_ProviderError("invalid_prompt"))) is None
+
+
+def test_before_send_keeps_other_events():
+    event = {"level": "error"}
+
+    assert _drop_expected_events(event, _hint(_ProviderError("rate_limit"))) is event
+    assert _drop_expected_events(event, _hint(RuntimeError("boom"))) is event
+    assert _drop_expected_events(event, {}) is event
 
 
 def test_filter_safe_context_drops_sensitive_and_complex_values():
@@ -118,6 +147,7 @@ def test_initialize_configures_integrations_and_release(monkeypatch):
     assert init_kwargs["enable_metrics"] is True
     assert init_kwargs["profile_session_sample_rate"] == 0.02
     assert init_kwargs["profile_lifecycle"] == "trace"
+    assert init_kwargs["before_send"] is _drop_expected_events
     assert len(init_kwargs["integrations"]) == 4
     starlette, fastapi, *_ = init_kwargs["integrations"]
     assert starlette.failed_request_status_codes == {500, 501, 502, 504}

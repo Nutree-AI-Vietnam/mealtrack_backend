@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from time import perf_counter
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
-from src.api.base_dependencies import (
-    get_meal_recommendation_analytics_service,
-    get_text_translation_service,
-)
+from src.api.base_dependencies import get_text_translation_service
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.middleware.accept_language import get_request_language
@@ -20,8 +16,6 @@ from src.api.routes.v1.meal_recommendation_route_support import (
     LogRecommendedMealRequest,
     SkipMealRecommendationSlotRequest,
     SwapMealRecommendationSlotRequest,
-    capture_plan_events,
-    capture_slot_event,
     record_operation_latency,
     to_slot_detail_response,
     to_summary_response,
@@ -46,16 +40,12 @@ from src.app.services.catalog_meal_response_localizer import (
     localize_meal_recommendation_plan,
     localize_meal_recommendation_slot,
 )
-from src.app.services.meal_recommendation_analytics_service import (
-    MealRecommendationAnalyticsService,
-)
 from src.domain.exceptions.meal_recommendation_exceptions import (
     MealRecommendationCreationError,
 )
 from src.domain.utils.timezone_utils import get_zone_info
 
 router = APIRouter(prefix="/v1/meal-recommendations", tags=["Meal Recommendations"])
-logger = logging.getLogger(__name__)
 
 
 @router.post("/three-day", response_model=MealRecommendationPlanSummaryResponse)
@@ -65,9 +55,6 @@ async def create_three_day_recommendations(
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    analytics_service: MealRecommendationAnalyticsService = Depends(
-        get_meal_recommendation_analytics_service
-    ),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationPlanSummaryResponse:
     """Create or replay a durable three-day catalog recommendation plan."""
@@ -128,12 +115,6 @@ async def create_three_day_recommendations(
                 translation_service=translation_service,
             )
         )
-        await capture_plan_events(
-            analytics_service,
-            user_id=user_id,
-            plan=plan,
-            events=("plan_shown", "alternatives_shown"),
-        )
         metric_status = "success"
         return response
     except HTTPException as exc:
@@ -155,9 +136,6 @@ async def swap_meal_recommendation_slot(
     body: SwapMealRecommendationSlotRequest,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    analytics_service: MealRecommendationAnalyticsService = Depends(
-        get_meal_recommendation_analytics_service
-    ),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     started = perf_counter()
@@ -176,7 +154,9 @@ async def swap_meal_recommendation_slot(
         )
     except MealRecommendationCreationError as exc:
         metric_status = f"http_{exc.status_code}"
-        raise HTTPException(status_code=exc.status_code, detail=exc.public_detail) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.public_detail
+        ) from exc
     response = to_slot_detail_response(
         result.plan_id,
         await localize_meal_recommendation_slot(
@@ -185,16 +165,8 @@ async def swap_meal_recommendation_slot(
             translation_service=translation_service,
         ),
     )
-    await _capture_mutation_slot_event(
-        analytics_service=analytics_service,
-        user_id=user_id,
-        event="swap_selected",
-        plan_id=result.plan_id,
-    )
     metric_status = "success"
-    record_operation_latency(
-        "swap", started, metric_status, outcome=result.outcome
-    )
+    record_operation_latency("swap", started, metric_status, outcome=result.outcome)
     return response
 
 
@@ -210,9 +182,6 @@ async def log_recommended_meal(
     body: LogRecommendedMealRequest,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    analytics_service: MealRecommendationAnalyticsService = Depends(
-        get_meal_recommendation_analytics_service
-    ),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     started = perf_counter()
@@ -229,7 +198,9 @@ async def log_recommended_meal(
         )
     except MealRecommendationCreationError as exc:
         metric_status = f"http_{exc.status_code}"
-        raise HTTPException(status_code=exc.status_code, detail=exc.public_detail) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.public_detail
+        ) from exc
     response = to_slot_detail_response(
         result.plan_id,
         await localize_meal_recommendation_slot(
@@ -237,12 +208,6 @@ async def log_recommended_meal(
             language=get_request_language(request),
             translation_service=translation_service,
         ),
-    )
-    await _capture_mutation_slot_event(
-        analytics_service=analytics_service,
-        user_id=user_id,
-        event="meal_logged",
-        plan_id=result.plan_id,
     )
     metric_status = "success"
     record_operation_latency("log", started, metric_status)
@@ -261,9 +226,6 @@ async def skip_meal_recommendation_slot(
     body: SkipMealRecommendationSlotRequest,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    analytics_service: MealRecommendationAnalyticsService = Depends(
-        get_meal_recommendation_analytics_service
-    ),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     started = perf_counter()
@@ -279,7 +241,9 @@ async def skip_meal_recommendation_slot(
         )
     except MealRecommendationCreationError as exc:
         metric_status = f"http_{exc.status_code}"
-        raise HTTPException(status_code=exc.status_code, detail=exc.public_detail) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.public_detail
+        ) from exc
     response = to_slot_detail_response(
         result.plan_id,
         await localize_meal_recommendation_slot(
@@ -287,12 +251,6 @@ async def skip_meal_recommendation_slot(
             language=get_request_language(request),
             translation_service=translation_service,
         ),
-    )
-    await _capture_mutation_slot_event(
-        analytics_service=analytics_service,
-        user_id=user_id,
-        event="meal_skipped",
-        plan_id=result.plan_id,
     )
     metric_status = "success"
     record_operation_latency("skip", started, metric_status)
@@ -305,9 +263,6 @@ async def get_meal_recommendation_plan(
     request: Request,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    analytics_service: MealRecommendationAnalyticsService = Depends(
-        get_meal_recommendation_analytics_service
-    ),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationPlanSummaryResponse:
     """Read an owner-scoped durable recommendation plan."""
@@ -328,12 +283,6 @@ async def get_meal_recommendation_plan(
             translation_service=translation_service,
         )
     )
-    await capture_plan_events(
-        analytics_service,
-        user_id=user_id,
-        plan=plan,
-        events=("plan_shown", "alternatives_shown"),
-    )
     metric_status = "success"
     record_operation_latency("read", started, metric_status)
     return response
@@ -349,9 +298,6 @@ async def get_meal_recommendation_slot_detail(
     request: Request,
     user_id: str = Depends(get_current_user_id),
     event_bus=Depends(get_configured_event_bus),
-    analytics_service: MealRecommendationAnalyticsService = Depends(
-        get_meal_recommendation_analytics_service
-    ),
     translation_service=Depends(get_text_translation_service),
 ) -> MealRecommendationSlotDetailResponse:
     """Read one owner-scoped recommendation slot with alternatives."""
@@ -377,34 +323,6 @@ async def get_meal_recommendation_slot_detail(
             translation_service=translation_service,
         ),
     )
-    await capture_slot_event(
-        analytics_service,
-        user_id=user_id,
-        event="slot_detail_shown",
-        plan_id=plan_id,
-    )
     metric_status = "success"
     record_operation_latency("slot_detail", started, metric_status)
     return response
-
-
-async def _capture_mutation_slot_event(
-    *,
-    analytics_service: MealRecommendationAnalyticsService,
-    user_id: str,
-    event: str,
-    plan_id: str,
-) -> None:
-    try:
-        await capture_slot_event(
-            analytics_service,
-            user_id=user_id,
-            event=event,
-            plan_id=plan_id,
-        )
-    except Exception:
-        logger.warning(
-            "meal recommendation mutation analytics failed event=%s",
-            event,
-            exc_info=True,
-        )

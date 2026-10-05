@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
     AIOutputValidationError,
     AIUnavailableError,
     MealResponseLocalizationError,
@@ -117,6 +118,27 @@ def create_http_exception(exc: MealTrackException) -> HTTPException:
     )
 
 
+def content_rejected_http_exception(exc: AIContentRejectedError) -> HTTPException:
+    """422 for input the AI provider's safety filter refused to process."""
+    logger.warning(
+        "AI provider rejected request content: provider=%s model=%s",
+        exc.provider,
+        exc.model,
+        extra={"error_code": "AI_CONTENT_REJECTED"},
+    )
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error_code": "AI_CONTENT_REJECTED",
+            "message": (
+                "We couldn't analyze this content. "
+                "Please try a different photo or description."
+            ),
+            "details": {},
+        },
+    )
+
+
 def handle_exception(exc: Exception) -> HTTPException:
     """Convert any exception to an appropriate HTTPException.
 
@@ -145,6 +167,9 @@ def handle_exception(exc: Exception) -> HTTPException:
                 "details": {"attempted_models": exc.attempted_models},
             },
         )
+
+    if isinstance(exc, AIContentRejectedError):
+        return content_rejected_http_exception(exc)
 
     if isinstance(exc, AIOutputValidationError):
         logger.warning(

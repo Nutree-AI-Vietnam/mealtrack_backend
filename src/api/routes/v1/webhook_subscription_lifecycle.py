@@ -22,19 +22,9 @@ from src.app.events.affiliate.affiliate_events import (
 )
 from src.domain.ports.integration_event_publisher_port import require_event_publisher
 from src.domain.utils.timezone_utils import utc_now
-from src.infra.adapters.posthog_adapter import PostHogAdapter
 from src.infra.database.models.subscription import Subscription
 
 logger = logging.getLogger(__name__)
-
-POSTHOG_LIFECYCLE_EVENTS = {
-    "CANCELLATION": "subscription_cancelled",
-    "EXPIRATION": "subscription_expired",
-    "BILLING_ISSUE": "subscription_billing_issue",
-    "REFUND": "subscription_refunded",
-    "RENEWAL": "subscription_renewed",
-    "PRODUCT_CHANGE": "subscription_product_changed",
-}
 
 
 def _get_subscription_service():
@@ -171,7 +161,6 @@ async def handle_renewal(
         await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
         return
 
-    await capture_subscription_lifecycle_event(user, event, "RENEWAL", subscription)
     await _notify_affiliate(
         affiliate_handler,
         "subscription_renewal",
@@ -222,9 +211,6 @@ async def handle_cancellation(
             f"User {user.id} cancelled subscription (expires {subscription.expires_at})"
         )
 
-    await capture_subscription_lifecycle_event(
-        user, event, "CANCELLATION", subscription
-    )
     await _notify_affiliate(
         affiliate_handler,
         "subscription_canceled",
@@ -252,7 +238,6 @@ async def handle_expiration(
         subscription.updated_at = utc_now()
         logger.info(f"User {user.id} subscription expired")
 
-    await capture_subscription_lifecycle_event(user, event, "EXPIRATION", subscription)
     await _notify_affiliate(
         affiliate_handler,
         "subscription_expired",
@@ -280,9 +265,6 @@ async def handle_billing_issue(
         subscription.updated_at = utc_now()
         logger.warning(f"Billing issue for user {user.id}")
 
-    await capture_subscription_lifecycle_event(
-        user, event, "BILLING_ISSUE", subscription
-    )
     await _notify_affiliate(
         affiliate_handler,
         "subscription_billing_issue",
@@ -313,9 +295,6 @@ async def handle_product_change(
         subscription.updated_at = utc_now()
         logger.info(f"User {user.id} changed to {subscription.product_id}")
 
-    await capture_subscription_lifecycle_event(
-        user, event, "PRODUCT_CHANGE", subscription
-    )
     await _notify_affiliate(
         affiliate_handler,
         "subscription_product_changed",
@@ -340,7 +319,6 @@ async def handle_refund(uow, user, event, affiliate_handler=None, event_publishe
         subscription.updated_at = utc_now()
         logger.info(f"User {user.id} subscription refunded")
 
-    await capture_subscription_lifecycle_event(user, event, "REFUND", subscription)
     await _notify_affiliate(
         affiliate_handler,
         "subscription_refund",
@@ -356,37 +334,6 @@ async def handle_refund(uow, user, event, affiliate_handler=None, event_publishe
         user_id=str(user.id),
     )
     await revoke_referral_on_refund(uow, str(user.id))
-
-
-async def capture_subscription_lifecycle_event(
-    user, event, event_type, subscription
-) -> None:
-    """Mirror RevenueCat lifecycle webhooks into PostHog when configured."""
-    posthog_event = POSTHOG_LIFECYCLE_EVENTS.get(event_type)
-    if not posthog_event:
-        return
-
-    properties = {
-        "revenuecat_event_type": event_type,
-        "product_id": event.get("product_id")
-        or getattr(subscription, "product_id", None),
-        "platform": parse_platform(event.get("store")),
-        "store": event.get("store"),
-        "environment": event.get("environment"),
-        "subscription_status": getattr(subscription, "status", None),
-        "expiration_at_ms": event.get("expiration_at_ms"),
-        "purchased_at_ms": event.get("purchased_at_ms"),
-        "cancel_reason": event.get("cancel_reason"),
-        "period_type": event.get("period_type"),
-        "is_sandbox": event.get("environment") == "SANDBOX",
-    }
-    await PostHogAdapter().capture(
-        distinct_id=getattr(user, "firebase_uid", None) or str(user.id),
-        event=posthog_event,
-        properties={
-            key: value for key, value in properties.items() if value is not None
-        },
-    )
 
 
 async def get_or_create_subscription(uow, user, event):

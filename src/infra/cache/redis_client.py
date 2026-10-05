@@ -249,6 +249,14 @@ class RedisClient:
             return None
         return raw == "set"
 
+    async def incr(self, key: str) -> int | None:
+        """Atomically increment a counter, returning None if unavailable."""
+
+        async def operation(client: redis.Redis) -> int:
+            return await client.incr(key)
+
+        return await self._with_client("INCR", operation, None, key)
+
     async def incr_with_expiry(self, key: str, ttl: int) -> int | None:
         """Atomically increment a bounded counter, returning None if unavailable."""
 
@@ -267,9 +275,7 @@ class RedisClient:
 
         async def operation(client: redis.Redis) -> list[str | None]:
             raw_list = await client.mget(keys)
-            return [
-                val.decode() if isinstance(val, bytes) else val for val in raw_list
-            ]
+            return [val.decode() if isinstance(val, bytes) else val for val in raw_list]
 
         return await self._with_client(
             "MGET",

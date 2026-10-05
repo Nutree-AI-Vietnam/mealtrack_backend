@@ -14,6 +14,7 @@ from src.infra.repositories.weekly_meal_plan_repository_async import (
 )
 
 pytestmark = pytest.mark.integration
+PRE_OPTIMIZATION_REVISION = "20261003042253928494"
 TABLES = (
     "weekly_meal_plans",
     "weekly_meal_plan_slots",
@@ -82,9 +83,9 @@ async def test_both_optimization_migrations_rollback_preserve_plan_pantry_and_sl
         MIGRATION_DATABASE_URL=sync_url,
     )
 
-    def migrate(action):
+    def run(*command):
         subprocess.run(
-            [sys.executable, "migrations/cli.py", action],
+            [sys.executable, *command],
             env=env,
             check=True,
             capture_output=True,
@@ -92,9 +93,12 @@ async def test_both_optimization_migrations_rollback_preserve_plan_pantry_and_sl
         )
 
     try:
-        await asyncio.to_thread(migrate, "downgrade")
-        await asyncio.to_thread(migrate, "downgrade")
+        # Head is a merge revision, so a relative "-1" step is ambiguous;
+        # target the revision preceding both optimization migrations instead.
+        await asyncio.to_thread(
+            run, "-m", "alembic", "downgrade", PRE_OPTIMIZATION_REVISION
+        )
         assert await _snapshot(async_session_factory) == before
     finally:
-        await asyncio.to_thread(migrate, "upgrade")
+        await asyncio.to_thread(run, "-m", "alembic", "upgrade", "heads")
     assert await _snapshot(async_session_factory) == before

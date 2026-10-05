@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.infra.cache.meal_list_cache_service import MealListCacheService
+from src.infra.cache.redis_client import RedisClient
 
 
 @pytest.mark.unit
@@ -30,7 +31,7 @@ class TestMealListCacheService:
 
     @pytest.mark.asyncio
     async def test_increment_revision(self):
-        redis = MagicMock()
+        redis = MagicMock(spec_set=RedisClient)
         redis.incr = AsyncMock(return_value=6)
         service = MealListCacheService(redis_client=redis)
 

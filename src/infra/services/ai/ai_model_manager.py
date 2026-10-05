@@ -5,6 +5,7 @@ import threading
 from typing import Any, Optional
 
 from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
     AIOutputValidationError,
     AIUnavailableError,
 )
@@ -301,6 +302,14 @@ class AIModelManager:
             purpose, self._fallback_chains[ModelPurpose.GENERAL]
         ).copy()
 
+    @staticmethod
+    def _log_content_rejected(purpose: ModelPurpose, model: str) -> None:
+        # The same user input would be rejected again; stop the chain instead of
+        # spending the remaining fallbacks' latency on a guaranteed failure.
+        logger.warning(
+            "[AI-CONTENT-REJECTED] purpose=%s model=%s", purpose.value, model
+        )
+
     def _get_provider_for_model(self, model: str):
         """Get provider that owns a model, checking explicit overrides before prefix heuristics."""
         if model in self._model_provider_overrides:
@@ -377,6 +386,9 @@ class AIModelManager:
 
                 return result
 
+            except AIContentRejectedError:
+                self._log_content_rejected(purpose, model)
+                raise
             except Exception as e:
                 last_error = str(e)
                 error_code = provider.extract_error_code(e)
@@ -470,6 +482,9 @@ class AIModelManager:
 
                 return result
 
+            except AIContentRejectedError:
+                self._log_content_rejected(purpose, model)
+                raise
             except Exception as e:
                 last_error = str(e)
 

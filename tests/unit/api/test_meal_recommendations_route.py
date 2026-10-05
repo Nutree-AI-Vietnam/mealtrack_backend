@@ -66,17 +66,6 @@ class _EventBus:
         return _plan()
 
 
-class _Analytics:
-    def __init__(self):
-        self.events = []
-
-    async def capture_plan_response(self, *, user_id, event, plan):
-        self.events.append((user_id, event, plan.id))
-
-    async def capture_slot_response(self, **kwargs):
-        self.events.append(kwargs)
-
-
 class _TaskManager:
     def __init__(self):
         self.tasks = []
@@ -155,7 +144,6 @@ async def test_create_three_day_recommendations_rejects_blank_idempotency_key():
             request=_request(),
             idempotency_key="   ",
             user_id="user-1",
-            analytics_service=_Analytics(),
         )
 
     assert exc_info.value.status_code == 400
@@ -164,14 +152,12 @@ async def test_create_three_day_recommendations_rejects_blank_idempotency_key():
 @pytest.mark.asyncio
 async def test_create_three_day_recommendations_snapshots_target_and_timezone():
     event_bus = _EventBus()
-    analytics = _Analytics()
 
     response = await create_three_day_recommendations(
         request=_request(),
         idempotency_key=" key-1 ",
         user_id="user-1",
         event_bus=event_bus,
-        analytics_service=analytics,
     )
 
     command = next(
@@ -185,30 +171,6 @@ async def test_create_three_day_recommendations_snapshots_target_and_timezone():
     assert command.idempotency_key == "key-1"
     assert command.timezone == "Asia/Ho_Chi_Minh"
     assert command.daily_calories == 2150
-    assert [item[1] for item in analytics.events] == [
-        "plan_shown",
-        "alternatives_shown",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_create_three_day_recommendations_captures_analytics():
-    event_bus = _EventBus()
-    analytics = _Analytics()
-
-    response = await create_three_day_recommendations(
-        request=_request(),
-        idempotency_key="key-1",
-        user_id="user-1",
-        event_bus=event_bus,
-        analytics_service=analytics,
-    )
-
-    assert response.id == "plan-1"
-    assert [item[1] for item in analytics.events] == [
-        "plan_shown",
-        "alternatives_shown",
-    ]
 
 
 @pytest.mark.asyncio
@@ -218,7 +180,6 @@ async def test_get_plan_returns_owner_scoped_compact_summary():
         request=_request(),
         user_id="user-1",
         event_bus=_EventBus(),
-        analytics_service=_Analytics(),
     )
 
     assert response.id == "plan-1"
@@ -236,7 +197,6 @@ async def test_get_slot_detail_returns_one_hydrated_slot_with_alternatives():
         request=_request(),
         user_id="user-1",
         event_bus=_EventBus(),
-        analytics_service=_Analytics(),
     )
 
     assert response.plan_id == "plan-1"
@@ -254,7 +214,6 @@ async def test_get_plan_translates_catalog_text_from_request_language():
         request=_request(language="vi"),
         user_id="user-1",
         event_bus=_EventBus(),
-        analytics_service=_Analytics(),
         translation_service=translator,
     )
 
@@ -292,7 +251,6 @@ async def test_swap_route_sends_expected_selection_version_command():
         ),
         user_id="user-1",
         event_bus=event_bus,
-        analytics_service=_Analytics(),
     )
 
     command = next(
@@ -317,7 +275,6 @@ async def test_log_route_sends_recommended_meal_command():
         body=LogRecommendedMealRequest(request_id="log-1"),
         user_id="user-1",
         event_bus=event_bus,
-        analytics_service=_Analytics(),
     )
 
     command = next(
@@ -342,7 +299,6 @@ async def test_log_route_forwards_request_language_to_command():
         body=LogRecommendedMealRequest(request_id="log-1"),
         user_id="user-1",
         event_bus=event_bus,
-        analytics_service=_Analytics(),
     )
 
     command = next(
@@ -364,7 +320,6 @@ async def test_skip_route_sends_skip_slot_command():
         body=SkipMealRecommendationSlotRequest(request_id="skip-1"),
         user_id="user-1",
         event_bus=event_bus,
-        analytics_service=_Analytics(),
     )
 
     command = next(

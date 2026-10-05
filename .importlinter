@@ -273,7 +273,6 @@ ignore_imports =
     src.api.routes.v1.tdee -> src.infra.event_bus
     src.api.routes.v1.user_profiles -> src.infra.event_bus
     src.api.routes.v1.users -> src.infra.event_bus
-    src.api.routes.v1.webhook_subscription_lifecycle -> src.infra.adapters.posthog_adapter
     src.api.routes.v1.webhook_subscription_lifecycle -> src.infra.adapters.resend_email_adapter
     src.api.routes.v1.webhook_subscription_lifecycle -> src.infra.database.models.subscription
     src.api.routes.v1.webhook_lookup_parsing -> src.infra.database.models.user.user

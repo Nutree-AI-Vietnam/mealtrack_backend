@@ -23,9 +23,6 @@ from src.api.schemas.response.meal_recommendation_responses import (
     MealRecommendationSlotResponse,
     MealRecommendationSlotSummaryResponse,
 )
-from src.app.services.meal_recommendation_analytics_service import (
-    MealRecommendationAnalyticsService,
-)
 from src.domain.model.meal_recommendation import PersistedMealRecommendationPlan
 from src.domain.model.meal_recommendation.catalog_recipe import CatalogMeal
 from src.observability import distribution_metric, increment_metric
@@ -92,35 +89,6 @@ def record_operation_latency(
         attributes=attributes,
     )
     increment_metric("meal_recommendation.requests", attributes=attributes)
-
-
-async def capture_plan_events(
-    analytics_service: MealRecommendationAnalyticsService,
-    *,
-    user_id: str,
-    plan: PersistedMealRecommendationPlan,
-    events: tuple[str, ...],
-) -> None:
-    for event in events:
-        await analytics_service.capture_plan_response(
-            user_id=user_id,
-            event=event,
-            plan=plan,
-        )
-
-
-async def capture_slot_event(
-    analytics_service: MealRecommendationAnalyticsService,
-    *,
-    user_id: str,
-    event: str,
-    plan_id: str,
-) -> None:
-    await analytics_service.capture_slot_response(
-        user_id=user_id,
-        event=event,
-        plan_id=plan_id,
-    )
 
 
 def to_response(

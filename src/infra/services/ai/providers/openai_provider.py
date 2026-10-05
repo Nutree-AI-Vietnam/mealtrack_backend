@@ -9,10 +9,15 @@ from openai import (
     APIConnectionError,
     APIStatusError,
     APITimeoutError,
+    BadRequestError,
     RateLimitError,
 )
 from pydantic import ValidationError
 
+from src.domain.exceptions.ai_exceptions import (
+    CONTENT_REJECTION_ERROR_CODES,
+    AIContentRejectedError,
+)
 from src.domain.ports.ai_provider_port import AICapability, AIProviderPort
 from src.domain.services.ai_output_validation_service import summarize_validation_error
 from src.infra.adapters.ai_json_utils import extract_json as extract_ai_json
@@ -23,6 +28,22 @@ from src.infra.services.ai.openai_structured_generation_result import (
     OpenAIStructuredGenerationResult,
 )
 from src.observability import increment_metric
+
+
+def _content_rejection(
+    exc: BadRequestError, model: str
+) -> AIContentRejectedError | None:
+    if getattr(exc, "code", None) not in CONTENT_REJECTION_ERROR_CODES:
+        return None
+    increment_metric(
+        "ai.openai.content_rejected.count",
+        attributes={"ai_provider": "openai", "ai_model": model},
+    )
+    return AIContentRejectedError(
+        f"OpenAI rejected request content (code={exc.code})",
+        provider="openai",
+        model=model,
+    )
 
 
 class OpenAIProvider(AIProviderPort):
@@ -137,6 +158,31 @@ class OpenAIProvider(AIProviderPort):
         schema: type | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        try:
+            return await self._generate(
+                model,
+                prompt,
+                system_message,
+                response_type=response_type,
+                max_tokens=max_tokens,
+                schema=schema,
+                **kwargs,
+            )
+        except BadRequestError as exc:
+            if rejected := _content_rejection(exc, model):
+                raise rejected from exc
+            raise
+
+    async def _generate(
+        self,
+        model: str,
+        prompt: str,
+        system_message: str,
+        response_type: str = "json",
+        max_tokens: int | None = None,
+        schema: type | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         purpose_hint = kwargs.get("purpose_hint")
         prompt_cache_kwargs = self._prompt_cache_kwargs(
             model=model,
@@ -200,15 +246,20 @@ class OpenAIProvider(AIProviderPort):
             purpose_hint=purpose_hint,
             system_message=system_message,
         )
-        result = await self._langchain.generate_structured(
-            model=model,
-            prompt=prompt,
-            system_message=system_message,
-            schema=schema,
-            max_tokens=max_tokens,
-            request_kwargs=prompt_cache_kwargs,
-            store_override=store_responses,
-        )
+        try:
+            result = await self._langchain.generate_structured(
+                model=model,
+                prompt=prompt,
+                system_message=system_message,
+                schema=schema,
+                max_tokens=max_tokens,
+                request_kwargs=prompt_cache_kwargs,
+                store_override=store_responses,
+            )
+        except BadRequestError as exc:
+            if rejected := _content_rejection(exc, model):
+                raise rejected from exc
+            raise
         self._record_prompt_cache_usage(
             result.raw_message,
             model=model,
@@ -255,6 +306,10 @@ class OpenAIProvider(AIProviderPort):
                 max_tokens=max_tokens,
                 request_kwargs=prompt_cache_kwargs,
             )
+        except BadRequestError as exc:
+            if rejected := _content_rejection(exc, model):
+                raise rejected from exc
+            raise
         except ValidationError as exc:
             raise AIVisionError(
                 f"[OPENAI-VISION-SCHEMA-FAIL] provider=openai model={model}",
