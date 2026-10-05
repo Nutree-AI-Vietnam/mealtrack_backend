@@ -18,7 +18,6 @@ from src.infra.database.models.meal_recommendation import (
     MealCatalogORM,
 )
 from src.infra.repositories.catalog_recipe_repository_async import _meal_to_domain
-from src.planner_feature_flags import CATALOG_PROJECTIONS, planner_flag_enabled
 
 
 @dataclass(frozen=True)
@@ -101,13 +100,11 @@ class AsyncAdminMealCatalogRepository:
         *,
         force: bool = False,
     ) -> bool:
-        projected = planner_flag_enabled(CATALOG_PROJECTIONS)
-        if projected:
-            from src.infra.repositories.catalog_publication_fence import (
-                catalog_publication_version,
-            )
+        from src.infra.repositories.catalog_publication_fence import (
+            catalog_publication_version,
+        )
 
-            await catalog_publication_version(self._session, shared=False)
+        await catalog_publication_version(self._session, shared=False)
         stmt = update(MealCatalogORM).where(MealCatalogORM.id == catalog_id)
         if not force:
             stmt = stmt.where(_missing_image_filter())
@@ -116,7 +113,7 @@ class AsyncAdminMealCatalogRepository:
             await self._session.execute(stmt.values(image_url=image_url)),
         )
         await self._session.flush()
-        if projected and result.rowcount:
+        if result.rowcount:
             from src.infra.repositories.catalog_projection_rebuilder import (
                 CatalogProjectionRebuilder,
             )

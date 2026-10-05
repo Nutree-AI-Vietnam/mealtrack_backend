@@ -25,7 +25,7 @@ from tests.integration.postgres.catalog_projection_fixtures import seed_catalog
 @pytest.mark.asyncio
 async def test_dirty_query_falls_back_and_withdrawal_is_immediate(pg_session):
     ids, _ = await seed_catalog(pg_session)
-    repo = AsyncCatalogMealRepository(pg_session, projections_enabled=True)
+    repo = AsyncCatalogMealRepository(pg_session)
     await pg_session.execute(
         text("UPDATE meal_catalog SET name='Edited bowl' WHERE id=:id"), {"id": ids[0]}
     )

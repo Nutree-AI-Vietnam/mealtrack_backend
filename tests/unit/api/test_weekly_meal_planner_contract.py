@@ -386,9 +386,9 @@ def test_recipe_query_passes_meal_type_to_catalog_repository():
     class _CatalogRepository:
         meal_type = None
 
-        async def list_active_meals(self, *, cuisine=None, meal_type=None):
+        async def list_recipe_page(self, *, meal_type=None, **_):
             self.meal_type = meal_type
-            return []
+            return SimpleNamespace(items=(), total=0)
 
     class _UnitOfWork:
         def __init__(self, catalog_repository):
