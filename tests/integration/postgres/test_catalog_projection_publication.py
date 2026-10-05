@@ -29,7 +29,7 @@ async def test_seed_replacement_rank_and_admin_image_publish_clean_projection(
     pg_session, monkeypatch
 ):
     ids, food_id = await seed_catalog(pg_session)
-    repo = AsyncCatalogMealRepository(pg_session, projections_enabled=True)
+    repo = AsyncCatalogMealRepository(pg_session)
     source = (
         await pg_session.execute(
             select(MealCatalogORM).where(MealCatalogORM.id == ids[0])
@@ -74,7 +74,6 @@ async def test_seed_replacement_rank_and_admin_image_publish_clean_projection(
     row = await projection()
     assert row.popularity_rank == 1 and not row.query_dirty and not row.nutrition_dirty
     assert row.updated_at >= before_update
-    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
     admin = AsyncAdminMealCatalogRepository(pg_session)
     assert await admin.set_image_url(ids[0], "https://example.test/image.png")
     row = await projection()

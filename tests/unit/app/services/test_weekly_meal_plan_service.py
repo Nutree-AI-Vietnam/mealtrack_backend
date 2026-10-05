@@ -97,6 +97,13 @@ def _plan(preferences=None, recipe_id="chicken"):
     )
 
 
+_CATALOG_VERSION = SimpleNamespace(selection=1, ingredients=1)
+
+
+async def _noop_async(*_args, **_kwargs):
+    return None
+
+
 class _Uow:
     def __init__(self, plan, meals, profile=None):
         self.weekly_meal_plans = self
@@ -109,6 +116,7 @@ class _Uow:
         self.is_open = False
         self.update_args = None
         self.requested_meal_ids = []
+        self.catalog_preparation = SimpleNamespace(enqueue_for_recipes=_noop_async)
 
     async def __aenter__(self):
         self.is_open = True
@@ -123,6 +131,23 @@ class _Uow:
 
     async def list_active_meals(self):
         return self.meals
+
+    async def list_selection_candidates(self):
+        return self.meals
+
+    async def list_active_ingredient_names(self):
+        return sorted(
+            {item.display_name for meal in self.meals for item in meal.ingredients}
+        )
+
+    async def lookup(self, **_):
+        return None
+
+    async def capture_catalog_publication_version(self):
+        return _CATALOG_VERSION
+
+    async def lock_catalog_publication(self, *, shared=True):
+        return _CATALOG_VERSION
 
     async def get_meals(self, recipe_ids):
         self.requested_meal_ids.append(tuple(recipe_ids))
@@ -213,7 +238,6 @@ async def test_provider_proposal_reads_compact_candidates_and_hydrates_selected_
 ):
     from dataclasses import replace
 
-    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
     full_meals = (
         _meal("chicken", "Chicken"),
         _meal("tofu", "Tofu"),

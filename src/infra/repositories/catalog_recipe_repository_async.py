@@ -58,7 +58,6 @@ from src.infra.database.models.meal_recommendation import (
 from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_nutrition_projection,
 )
-from src.planner_feature_flags import CATALOG_PROJECTIONS, planner_flag_enabled
 from src.planner_observability import planner_phase, planner_timed
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
@@ -72,15 +71,8 @@ _CATALOG_CONVERTER = IngredientQuantityConversionService(
 class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     """Repository for active catalog meals."""
 
-    def __init__(
-        self, session: AsyncSession, *, projections_enabled: bool | None = None
-    ):
+    def __init__(self, session: AsyncSession):
         self._session = session
-        self.projections_enabled = (
-            planner_flag_enabled(CATALOG_PROJECTIONS)
-            if projections_enabled is None
-            else projections_enabled
-        )
 
     @planner_timed("catalog_sql")
     async def _execute_catalog(self, statement):
@@ -103,57 +95,25 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     async def get_meal_summaries(
         self, catalog_meal_ids: Iterable[str]
     ) -> list[CatalogMeal]:
-        from dataclasses import replace
-
         from src.infra.repositories.catalog_projection_repository import (
             CatalogProjectionRepository,
         )
 
-        if self.projections_enabled:
-            return await CatalogProjectionRepository(self).summaries(catalog_meal_ids)
-        return [
-            replace(meal, ingredients=(), steps=(), recipe_payload=None)
-            for meal in await self.get_meals(catalog_meal_ids)
-        ]
+        return await CatalogProjectionRepository(self).summaries(catalog_meal_ids)
 
     async def list_selection_candidates(self) -> list[CatalogMeal]:
         from src.infra.repositories.catalog_projection_repository import (
             CatalogProjectionRepository,
         )
 
-        if self.projections_enabled:
-            return await CatalogProjectionRepository(self).candidates()
-        return await self.list_active_meals()
+        return await CatalogProjectionRepository(self).candidates()
 
     async def list_recipe_page(self, **kwargs):
         from src.infra.repositories.catalog_projection_repository import (
             CatalogProjectionRepository,
         )
 
-        projection = CatalogProjectionRepository(self)
-        if self.projections_enabled:
-            return await projection.page(**kwargs)
-        known = await self.list_allergen_codes() if kwargs.get("allergies") else ()
-        from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
-        from src.domain.services.weekly_meal_planner.allergen_constraint import (
-            resolve_allergen_preferences,
-        )
-
-        codes = resolve_allergen_preferences(kwargs.pop("allergies", ()), known)
-        if codes is None:
-            return CatalogRecipePage((), 0)
-        defaults = {
-            "query": None,
-            "diet": None,
-            "max_cook_time": None,
-            "cuisine": None,
-            "meal_type": None,
-            "dislikes": (),
-            "limit": 20,
-            "offset": 0,
-        }
-        defaults.update(kwargs)
-        return await projection._legacy_page(codes=codes, **defaults)
+        return await CatalogProjectionRepository(self).page(**kwargs)
 
     async def rebuild_catalog_projection_page(self, *, after_id=None, limit=100):
         from src.infra.repositories.catalog_projection_rebuilder import (
@@ -522,8 +482,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
 
     async def add_seed_meal(self, seed: CatalogMealSeedWrite) -> None:
-        if self.projections_enabled:
-            await self.lock_catalog_publication(shared=False)
+        await self.lock_catalog_publication(shared=False)
         alias_rows = await self._food_alias_pairs()
         allergen_rows = await self._allergen_reference_rows()
         published = publish_recipe(
@@ -671,14 +630,11 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
                 serving_confidence=seed.serving_confidence,
             )
         await self._session.flush()
-        if self.projections_enabled:
-            from src.infra.repositories.catalog_projection_rebuilder import (
-                CatalogProjectionRebuilder,
-            )
+        from src.infra.repositories.catalog_projection_rebuilder import (
+            CatalogProjectionRebuilder,
+        )
 
-            await CatalogProjectionRebuilder(self._session).rebuild(
-                (cast(str, row.id),)
-            )
+        await CatalogProjectionRebuilder(self._session).rebuild((cast(str, row.id),))
 
     async def _food_alias_pairs(self) -> list[tuple[str, int]]:
         result = await self._execute_catalog(
@@ -693,25 +649,19 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     async def update_popularity_rank(
         self, *, catalog_key: str, popularity_rank: int | None
     ) -> None:
-        if self.projections_enabled:
-            await self.lock_catalog_publication(shared=False)
-        statement = (
+        await self.lock_catalog_publication(shared=False)
+        result = await self._execute_catalog(
             update(MealCatalogORM)
             .where(MealCatalogORM.catalog_key == catalog_key)
             .values(popularity_rank=popularity_rank)
+            .returning(MealCatalogORM.id)
         )
-        if self.projections_enabled:
-            statement = statement.returning(MealCatalogORM.id)
-        result = await self._execute_catalog(statement)
         await self._session.flush()
-        if self.projections_enabled:
-            from src.infra.repositories.catalog_projection_rebuilder import (
-                CatalogProjectionRebuilder,
-            )
+        from src.infra.repositories.catalog_projection_rebuilder import (
+            CatalogProjectionRebuilder,
+        )
 
-            await CatalogProjectionRebuilder(self._session).rebuild(
-                result.scalars().all()
-            )
+        await CatalogProjectionRebuilder(self._session).rebuild(result.scalars().all())
 
     async def lock_seed_import(self) -> None:
         await self._execute_catalog(

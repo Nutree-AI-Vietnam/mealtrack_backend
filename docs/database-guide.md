@@ -268,7 +268,7 @@ concurrent requests.
   dirty query projections use the authoritative loader; dirty nutrition is
   hydrated only for selected page IDs after SQL count and pagination. Selection
   falls back until all active recipe query/nutrition projections are current.
-- With projected reads enabled, seed/import writes, popularity-rank updates and
+- Seed/import writes, popularity-rank updates and
   admin image updates rebuild the affected recipe in the same transaction under
   the exclusive publication fence. Direct SQL and food/reference dependency
   writers invalidate synchronously, then use canonical fallback until bounded

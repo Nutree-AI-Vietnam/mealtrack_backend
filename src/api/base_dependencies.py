@@ -293,6 +293,13 @@ def get_admin_meal_catalog_repository(
     return AsyncAdminMealCatalogRepository(db)
 
 
+def get_catalog_preparer():
+    """Return the callable that prepares translations/micronutrients after writes."""
+    from src.bootstrap.inline_catalog_preparation import prepare_pending_catalog
+
+    return prepare_pending_catalog
+
+
 def get_catalog_meal_seed_importer(
     db: AsyncSession = Depends(get_async_db),
 ) -> CatalogMealSeedImporter:
