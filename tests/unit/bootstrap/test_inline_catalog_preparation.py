@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from src.bootstrap import catalog_preparation
@@ -69,6 +71,26 @@ async def test_max_jobs_bounds_the_run(monkeypatch):
     _install(monkeypatch, [True] * 10)
 
     assert await prepare_pending_catalog(concurrency=1, max_jobs=4) == 4
+
+
+@pytest.mark.asyncio
+async def test_max_jobs_holds_across_concurrent_lanes(monkeypatch):
+    _, created = _install(monkeypatch, [])
+    claimed = []
+
+    async def run_once():
+        claimed.append(1)
+        await asyncio.sleep(0)
+        return True
+
+    monkeypatch.setattr(
+        catalog_preparation_worker.CatalogPreparationWorker,
+        "run_once",
+        lambda self: run_once(),
+    )
+
+    assert await prepare_pending_catalog(concurrency=2, max_jobs=3) == 3
+    assert len(claimed) == 3
 
 
 @pytest.mark.asyncio

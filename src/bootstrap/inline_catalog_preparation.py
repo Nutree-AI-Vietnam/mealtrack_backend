@@ -53,13 +53,18 @@ async def prepare_pending_catalog(*, concurrency: int = 2, max_jobs: int = 5000)
             async def lane() -> None:
                 nonlocal processed
                 while processed < max_jobs:
+                    # Reserve the slot before awaiting so concurrent lanes
+                    # cannot all pass the check and overshoot max_jobs.
+                    processed += 1
                     try:
-                        if not await worker.run_once():
-                            return
+                        worked = await worker.run_once()
                     except Exception:
+                        processed -= 1
                         logger.exception("catalog preparation job failed")
                         return
-                    processed += 1
+                    if not worked:
+                        processed -= 1
+                        return
 
             await asyncio.gather(*(lane() for _ in range(concurrency)))
     finally:
