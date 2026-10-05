@@ -29,6 +29,7 @@ def _meal(recipe_id: str, name: str) -> CatalogMeal:
 class _Catalog:
     def __init__(self):
         self.get_meals_calls = []
+        self.fence_locks = 0
 
     async def list_active_meals(self, **kwargs):
         assert kwargs["meal_type"] == "dinner"
@@ -37,6 +38,13 @@ class _Catalog:
             _meal("dessert", "Chocolate tofu pudding"),
             _meal("remedy", "Herbal cough remedy"),
         )
+
+    async def lock_catalog_publication(self, *, shared=True):
+        self.fence_locks += 1
+        return "test-v1"
+
+    async def capture_catalog_publication_version(self):
+        return "test-v1"
 
     async def get_meals(self, ids):
         self.get_meals_calls.append(list(ids))
@@ -77,9 +85,10 @@ async def test_dinner_browse_excludes_desserts_and_remedies():
 
 
 @pytest.mark.asyncio
-async def test_summaries_hits_redis_and_fetches_only_missing():
+async def test_summaries_hits_redis_and_fetches_only_missing(monkeypatch):
+    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
     cached_meal = _meal("r1", "Cached Pho")
-    key_r1, _ = CacheKeys.catalog_recipe("r1")
+    key_r1 = "catalog:summary:v2:test-v1:r1"
     redis = _MockRedisClient({key_r1: json.dumps(cached_meal.to_dict())})
 
     catalog = _Catalog()
@@ -96,19 +105,41 @@ async def test_summaries_hits_redis_and_fetches_only_missing():
 
     # r2 should have been saved to Redis
     assert len(redis.mset_calls) == 1
-    key_r2, ttl = CacheKeys.catalog_recipe("r2")
+    key_r2 = "catalog:summary:v2:test-v1:r2"
     assert key_r2 in redis.mset_calls[0][0]
     assert redis.mset_calls[0][1] == CacheKeys.TTL_7_DAYS
 
 
 @pytest.mark.asyncio
-async def test_summaries_all_hits_avoids_db():
+async def test_summaries_use_versioned_cache_without_fence_when_projections_off(
+    monkeypatch,
+):
+    monkeypatch.delenv("CATALOG_PROJECTIONS_ENABLED", raising=False)
+    cached = _meal("r1", "Cached Pho")
+    redis = _MockRedisClient(
+        {"catalog:summary:v2:test-v1:r1": json.dumps(cached.to_dict())}
+    )
+    catalog = _Catalog()
+
+    results = await WeeklyRecipeService(
+        lambda: _UnitOfWork(catalog), redis_client=redis
+    ).summaries(["r1", "r2"])
+
+    assert [meal.name for meal in results] == ["Cached Pho", "Meal r2"]
+    assert catalog.get_meals_calls == [["r2"]]
+    assert catalog.fence_locks == 0
+    assert "catalog:summary:v2:test-v1:r2" in redis.mset_calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_summaries_all_hits_avoids_db(monkeypatch):
+    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
     m1 = _meal("r1", "Dish 1")
     m2 = _meal("r2", "Dish 2")
     redis = _MockRedisClient(
         {
-            CacheKeys.catalog_recipe("r1")[0]: json.dumps(m1.to_dict()),
-            CacheKeys.catalog_recipe("r2")[0]: json.dumps(m2.to_dict()),
+            "catalog:summary:v2:test-v1:r1": json.dumps(m1.to_dict()),
+            "catalog:summary:v2:test-v1:r2": json.dumps(m2.to_dict()),
         }
     )
 
@@ -158,3 +189,42 @@ def test_catalog_meal_serialization_roundtrip():
 
     assert original == restored
     assert restored.calories == original.calories
+
+
+@pytest.mark.asyncio
+async def test_slow_optional_cache_falls_back_within_one_budget_and_skips_write(
+    monkeypatch,
+):
+    import asyncio
+    from time import monotonic
+
+    monkeypatch.setenv("CATALOG_PROJECTIONS_ENABLED", "true")
+
+    class SlowRedis(_MockRedisClient):
+        async def mget(self, keys):
+            await asyncio.sleep(1)
+
+    redis = SlowRedis()
+    catalog = _Catalog()
+    start = monotonic()
+    result = await WeeklyRecipeService(
+        lambda: _UnitOfWork(catalog), redis_client=redis
+    ).summaries(["r1"])
+    assert monotonic() - start < 0.3
+    assert result[0].id == "r1"
+    assert redis.mset_calls == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_unversioned_cache_cannot_override_authoritative_summary():
+    redis = _MockRedisClient(
+        {
+            CacheKeys.catalog_recipe("r1")[0]: json.dumps(
+                _meal("r1", "Withdrawn old name").to_dict()
+            )
+        }
+    )
+    result = await WeeklyRecipeService(
+        lambda: _UnitOfWork(), redis_client=redis
+    ).summaries(["r1"])
+    assert result[0].name == "Meal r1"

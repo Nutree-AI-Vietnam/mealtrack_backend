@@ -5,12 +5,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from src.infra.database.connection_policy import (
     DatabaseConnectionPolicy,
     resolve_connection_policy,
 )
+from src.infra.database.planner_pool import PlannerNullPool, PlannerQueuePool
 
 load_dotenv()
 
@@ -89,36 +90,43 @@ _ASYNC_POOL_OVERFLOW = _policy.max_overflow
 _ASYNC_POOL_TOTAL_CAPACITY = _policy.total_capacity
 
 try:
-    if _policy.pool_class is NullPool:
-        async_engine = create_async_engine(
-            ASYNC_DATABASE_URL,
-            echo=False,
-            poolclass=_policy.pool_class,
-            connect_args=_connect_args,
-        )
+    # Neon mode can use either NullPool or a bounded local queue pool. Only
+    # queue pools accept capacity settings; select kwargs by class, not mode.
+    _pool_kwargs = {}
+    if issubclass(_policy.pool_class, AsyncAdaptedQueuePool):
+        _pool_kwargs = {
+            "pool_size": _policy.pool_size,
+            "max_overflow": _policy.max_overflow,
+            "pool_recycle": _policy.pool_recycle,
+            "pool_timeout": _policy.pool_timeout,
+            "pool_pre_ping": True,
+        }
+    async_engine = create_async_engine(
+        ASYNC_DATABASE_URL,
+        echo=False,
+        poolclass=PlannerQueuePool if _pool_kwargs else PlannerNullPool,
+        connect_args=_connect_args,
+        **_pool_kwargs,
+    )
+    _actual_pool_class = type(async_engine.sync_engine.pool).__name__
+    if _pool_kwargs:
         logger.info(
-            "Async engine: NullPool mode=%s (PgBouncer manages connection reuse)",
-            _policy.mode,
-        )
-    else:
-        # PgBouncer/Neon close idle server connections; pre_ping + recycle keep
-        # the local queue pool from handing out dead sockets.
-        async_engine = create_async_engine(
-            ASYNC_DATABASE_URL,
-            echo=False,
-            poolclass=_policy.pool_class,
-            pool_size=_policy.pool_size,
-            max_overflow=_policy.max_overflow,
-            pool_recycle=_policy.pool_recycle,
-            pool_timeout=_policy.pool_timeout,
-            pool_pre_ping=True,
-            connect_args=_connect_args,
-        )
-        logger.info(
-            "Async engine: AsyncAdaptedQueuePool mode=%s pool_size=%s max_overflow=%s",
+            "Async engine: %s mode=%s pool_size=%s max_overflow=%s "
+            "pool_timeout=%s pool_recycle=%s pre_ping=true workers=%s capacity=%s",
+            _actual_pool_class,
             _policy.mode,
             _policy.pool_size,
             _policy.max_overflow,
+            _policy.pool_timeout,
+            _policy.pool_recycle,
+            _policy.worker_count,
+            _policy.total_capacity,
+        )
+    else:
+        logger.info(
+            "Async engine: %s mode=%s (PgBouncer manages connection reuse)",
+            _actual_pool_class,
+            _policy.mode,
         )
 
     AsyncSessionLocal = async_sessionmaker(

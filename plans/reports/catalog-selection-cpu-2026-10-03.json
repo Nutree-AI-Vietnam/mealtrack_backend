@@ -1,0 +1,36 @@
+{
+  "baseline": "HEAD",
+  "repeats": 5,
+  "construction_timed": false,
+  "rows": [
+    {
+      "recipes": 200,
+      "baseline_median_cpu_ms": 26.078,
+      "optimized_median_cpu_ms": 4.198,
+      "compact_median_cpu_ms": 2.528,
+      "selection_digest": "13c36fff8eb12f82cf25ad2fa8d37cf71a0c1c604e917ea9680dfce260e0b3f2"
+    },
+    {
+      "recipes": 1000,
+      "baseline_median_cpu_ms": 140.015,
+      "optimized_median_cpu_ms": 31.115,
+      "compact_median_cpu_ms": 13.276,
+      "selection_digest": "39e9603148177bbdfdbbf47e47e7955636ab199fd287a418808bef33daa66a3c"
+    },
+    {
+      "recipes": 5000,
+      "baseline_median_cpu_ms": 759.437,
+      "optimized_median_cpu_ms": 110.277,
+      "compact_median_cpu_ms": 72.379,
+      "selection_digest": "6552c8b088ee9e1b9822fbf239f032cc14ff9cde013d9dccaa7216c9e25eea53"
+    },
+    {
+      "recipes": 10000,
+      "baseline_median_cpu_ms": 1350.443,
+      "optimized_median_cpu_ms": 244.095,
+      "compact_median_cpu_ms": 167.291,
+      "selection_digest": "7fd328d694077dccbd2ed4c2e4966a883931399bcfa158f70fa244996d3c73e2"
+    }
+  ],
+  "baseline_revision": "cbc3152297c5684e509769d0c226eea17d6409c5"
+}

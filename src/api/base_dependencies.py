@@ -734,3 +734,14 @@ def get_web_funnel_redemption_service():
     )
 
     return factory()
+
+
+def get_planner_translation_service():
+    """Read prepared catalog text independently from other translation callers."""
+
+    from src.app.services.catalog_persisted_presentation_service import (
+        CatalogPersistedPresentationService,
+    )
+    from src.infra.database.uow_async import AsyncUnitOfWork
+
+    return CatalogPersistedPresentationService(AsyncUnitOfWork.read_only)

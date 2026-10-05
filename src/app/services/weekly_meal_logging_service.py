@@ -16,6 +16,7 @@ from src.app.services.recommended_meal_materialization_service import (
 )
 from src.domain.model.weekly_meal_planner import meal_type_for_slot
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
+from src.planner_feature_flags import CATALOG_PUBLICATION_FENCING, planner_flag_enabled
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class WeeklyMealLoggingService:
             }
         )
         async with self.uow_factory() as uow:
+            if planner_flag_enabled(CATALOG_PUBLICATION_FENCING):
+                await uow.catalog_recipes.lock_catalog_publication(shared=True)
             reservation = await uow.meal_write_operations.reserve(
                 user_id=command.user_id,
                 operation="weekly_meal_plan_slot_log",

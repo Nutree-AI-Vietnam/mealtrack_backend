@@ -7,6 +7,9 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
+from src.domain.model.meal_recommendation.catalog_selection_features import (
+    CatalogSelectionFeatures,
+)
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros import Micros
 from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
@@ -127,6 +130,7 @@ class CatalogMeal:
     nutrition_micros_sources: dict[str, str] = field(default_factory=dict)
     nutrition_micros_estimated: bool = False
     nutrition_micros_enrichment_loaded: bool = False
+    selection_features: CatalogSelectionFeatures | None = None
 
     @property
     def calories(self) -> int:

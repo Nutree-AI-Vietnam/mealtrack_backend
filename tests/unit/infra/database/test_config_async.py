@@ -7,8 +7,9 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
 
 
 @pytest.fixture(autouse=True)
-def _reset_config_async_module():
+def _reset_config_async_module(monkeypatch):
     """Reload config_async after each test so module-level state never leaks."""
+    monkeypatch.setenv("NEON_POOLER_USE_QUEUE_POOL", "false")
     yield
     import src.infra.database.config_async as cfg
 
@@ -193,3 +194,67 @@ def test_connection_mode_exported(monkeypatch):
 
     importlib.reload(cfg)
     assert cfg.CONNECTION_MODE in ("direct_pool", "neon_pooler")
+
+
+@pytest.mark.parametrize("mode", ["direct_pool", "neon_queue", "neon_null"])
+def test_engine_actual_pool_settings_and_driver_safety(monkeypatch, caplog, mode):
+    neon = mode != "direct_pool"
+    queue = mode != "neon_null"
+    host = "ep-example-pooler.neon.tech" if neon else "ep-example.neon.tech"
+    monkeypatch.setenv(
+        "APP_DATABASE_URL",
+        f"postgresql://user:pw@{host}/db?sslmode=require&channel_binding=require",
+    )
+    monkeypatch.setenv("DB_CONNECTION_MODE", "neon_pooler" if neon else "direct_pool")
+    monkeypatch.setenv("NEON_POOLER_USE_QUEUE_POOL", str(mode == "neon_queue").lower())
+    monkeypatch.setenv("UVICORN_WORKERS", "3")
+    monkeypatch.setenv("ASYNC_POOL_SIZE_PER_WORKER", "7")
+    monkeypatch.setenv("ASYNC_POOL_MAX_OVERFLOW", "2")
+    monkeypatch.setenv("ASYNC_POOL_TIMEOUT", "17")
+    monkeypatch.setenv("ASYNC_POOL_RECYCLE", "91")
+    import src.infra.database.config_async as cfg
+
+    with caplog.at_level("INFO"):
+        importlib.reload(cfg)
+
+    pool = cfg.async_engine.sync_engine.pool
+    assert isinstance(pool, AsyncAdaptedQueuePool if queue else NullPool)
+    if queue:
+        assert pool.size() == 7
+        assert pool._max_overflow == 2
+        assert pool.timeout() == 17
+        assert pool._recycle == 91
+        assert pool._pre_ping is True
+        assert cfg._ASYNC_POOL_TOTAL_CAPACITY == 27
+    else:
+        assert cfg._pool_kwargs == {}
+        assert cfg._ASYNC_POOL_TOTAL_CAPACITY == 0
+
+    # Intercept at the dialect connect boundary: these are the kwargs the
+    # constructed engine will deliver to asyncpg, without opening a connection.
+    driver_kwargs = {}
+    sentinel = object()
+
+    def capture_connect(*args, **kwargs):
+        driver_kwargs.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        cfg.async_engine.sync_engine.dialect, "connect", capture_connect
+    )
+    assert pool._creator() is sentinel
+    assert driver_kwargs["ssl"] is True
+    assert "sslmode" not in driver_kwargs
+    assert "channel_binding" not in driver_kwargs
+    if neon:
+        assert driver_kwargs["prepared_statement_cache_size"] == 0
+    else:
+        assert "prepared_statement_cache_size" not in driver_kwargs
+    engine_logs = [
+        r.message for r in caplog.records if r.message.startswith("Async engine:")
+    ]
+    assert any(
+        f"Async engine: {type(pool).__name__} mode={cfg.CONNECTION_MODE}" in m
+        for m in engine_logs
+    )
+    assert all("pw" not in m and host not in m for m in engine_logs)

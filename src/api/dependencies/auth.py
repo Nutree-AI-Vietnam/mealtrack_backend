@@ -24,6 +24,7 @@ from src.bootstrap.integration_services import get_firebase_executor
 from src.domain.ports.cache_port import CachePort
 from src.infra.config.settings import settings
 from src.infra.database.config_async import AsyncSessionLocal
+from src.planner_observability import planner_timed
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ async def _verify_id_token(token: str, *, check_revoked: bool = False) -> dict:
     )
 
 
+@planner_timed("auth")
 async def verify_firebase_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -202,6 +204,7 @@ async def verify_firebase_uid_ownership(
     return firebase_uid
 
 
+@planner_timed("auth_lookup")
 async def get_current_user_id(
     request: Request,
     token: dict = Depends(verify_firebase_token),

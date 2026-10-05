@@ -66,6 +66,13 @@ class OpenAIProvider(AIProviderPort):
             max_retries=max_retries,
             store_responses=store_responses,
         )
+        # Keep planner transport policy separate from shared scan/parse clients.
+        self._planner_langchain = OpenAILangChainAdapter(
+            api_key=api_key,
+            request_timeout_seconds=25,
+            max_retries=0,
+            store_responses=store_responses,
+        )
         self._prompt_cache_policy = OpenAIPromptCachePolicy(
             enabled=prompt_cache_enabled,
             key_prefix=prompt_cache_key_prefix,
@@ -132,6 +139,14 @@ class OpenAIProvider(AIProviderPort):
                 unit="token",
                 attributes=attributes,
             )
+        if purpose_hint == "meal_plan_adjustment":
+            usage = _safe_usage(raw_message)
+            increment_metric(
+                "ai.planner.output_tokens",
+                usage.get("output_tokens", 0),
+                unit="token",
+                attributes=attributes,
+            )
 
     async def generate(
         self,
@@ -174,8 +189,14 @@ class OpenAIProvider(AIProviderPort):
             purpose_hint=purpose_hint,
             system_message=system_message,
         )
+        adapter = self._langchain
+        if purpose_hint == "meal_plan_adjustment":
+            adapter = self._planner_langchain
+            prompt_cache_kwargs["timeout"] = min(
+                25.0, kwargs.get("request_timeout_seconds", 25.0)
+            )
         if schema is not None:
-            result = await self._langchain.generate_structured(
+            result = await adapter.generate_structured(
                 model=model,
                 prompt=prompt,
                 system_message=system_message,
@@ -190,7 +211,7 @@ class OpenAIProvider(AIProviderPort):
             )
             return self._dump_parsed(result.parsed)
 
-        result = await self._langchain.generate_raw(
+        result = await adapter.generate_raw(
             model=model,
             prompt=prompt,
             system_message=system_message,

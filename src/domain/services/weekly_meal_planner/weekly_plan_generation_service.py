@@ -6,6 +6,7 @@ import hashlib
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.weekly_meal_planner import (
@@ -63,26 +64,31 @@ class WeeklyPlanGenerationService:
             )
 
         targets = _slot_calorie_targets(daily_calories)
+        slot_candidates = [
+            [
+                (meal, abs(meal.calories - targets[slot]))
+                for meal in candidates
+                if self._supports_slot(meal, slot)
+            ]
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
+        ]
         result: list[GeneratedSlot] = []
         used_counts: dict[str, int] = {}
         for day in range(WEEKLY_DAYS):
             day_used: set[str] = set()
             for slot in range(WEEKLY_SLOTS_PER_DAY):
-                eligible = [
-                    meal for meal in candidates if self._supports_slot(meal, slot)
-                ]
+                eligible = slot_candidates[slot]
                 if not eligible:
                     result.append(GeneratedSlot(day, slot, None))
                     continue
-                target = targets[slot]
-                selected = min(
+                selected, _ = min(
                     eligible,
-                    key=lambda meal: (
-                        1 if meal.id in day_used else 0,
-                        used_counts.get(meal.id, 0),
-                        abs(meal.calories - target),
-                        self._stable_rank(meal, user_id, week_start_date, day, slot),
-                        meal.id,
+                    key=lambda item: (
+                        1 if item[0].id in day_used else 0,
+                        used_counts.get(item[0].id, 0),
+                        item[1],
+                        self._stable_rank(item[0], user_id, week_start_date, day, slot),
+                        item[0].id,
                     ),
                 )
                 used_counts[selected.id] = used_counts.get(selected.id, 0) + 1
@@ -95,17 +101,23 @@ class WeeklyPlanGenerationService:
         meal: CatalogMeal,
         preferences: WeeklyMealPlanPreferences,
     ) -> bool:
-        haystack = _haystack(meal)
-        if _is_non_meal_recipe(meal):
+        features = meal.selection_features
+        haystack = features.haystack if features else _haystack(meal)
+        non_meal = features.non_meal if features else _is_non_meal_recipe(meal)
+        if non_meal:
             return False
         if not any(
             meal_type_for_slot(slot) in meal.meal_types
             for slot in range(WEEKLY_SLOTS_PER_DAY)
         ):
             return False
-        if preferences.diet == "vegetarian" and _contains_any(haystack, _MEAT_WORDS):
+        if preferences.diet == "vegetarian" and (
+            features.contains_meat if features else _contains_any(haystack, _MEAT_WORDS)
+        ):
             return False
-        if preferences.diet == "no-pork" and _contains_any(haystack, _PORK_WORDS):
+        if preferences.diet == "no-pork" and (
+            features.contains_pork if features else _contains_any(haystack, _PORK_WORDS)
+        ):
             return False
         if any(dislike.casefold() in haystack for dislike in preferences.dislikes):
             return False
@@ -282,9 +294,16 @@ def _haystack(meal: CatalogMeal) -> str:
 
 
 def _contains_any(value: str, words: Iterable[str]) -> bool:
-    return any(
-        re.search(rf"(?<!\w){re.escape(word)}(?!\w)", value) is not None
-        for word in words
+    words = tuple(sorted(words))
+    if not words:
+        return False
+    return _word_pattern(words).search(value) is not None
+
+
+@lru_cache(maxsize=32)
+def _word_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
+    return re.compile(
+        r"(?<!\w)(?:" + "|".join(re.escape(word) for word in words) + r")(?!\w)"
     )
 
 

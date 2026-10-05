@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from time import monotonic
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from src.domain.constants.languages import normalize_language
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.weekly_meal_planner import (
     WEEKLY_PLAN_SLOT_COUNT,
@@ -18,12 +20,18 @@ from src.domain.model.weekly_meal_planner import (
     meal_type_for_slot,
 )
 from src.domain.ports.meal_generation_service_port import MealGenerationServicePort
+from src.planner_request_policy import (
+    current_deadline,
+    planner_deadline,
+    timeout_until,
+)
 
 
 class WeeklyMealPlanAdjustmentResponse(BaseModel):
     """Bounded provider response; recipe IDs are validated by the app layer."""
 
     explanation: str = Field(min_length=1, max_length=1000)
+    diff_summary: str | None = Field(default=None, max_length=240)
     slot_changes: list[WeeklyMealPlanSlotAdjustmentResponse] = Field(
         default_factory=list, max_length=WEEKLY_PLAN_SLOT_COUNT
     )
@@ -40,7 +48,7 @@ WeeklyMealPlanAdjustmentResponse.model_rebuild()
 
 
 class StructuredWeeklyMealPlanAdjustmentProvider:
-    """Use the existing fallback-aware generation service for proposals."""
+    """Use the dedicated OpenAI planner policy for reviewable proposals."""
 
     def __init__(self, generation_service: MealGenerationServicePort):
         self.generation_service = generation_service
@@ -51,13 +59,28 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
         prompt: str,
         plan: WeeklyMealPlan,
         meals: tuple[CatalogMeal, ...],
+        current_meals: tuple[CatalogMeal, ...] = (),
         preferences: WeeklyMealPlanPreferences | None = None,
         profile_dietary_preferences: tuple[str, ...] = (),
         target_day_index: int | None = None,
         target_slot_index: int | None = None,
+        language: str = "en",
+        deadline: float | None = None,
     ) -> WeeklyMealPlanAdjustmentProposal:
+        if len(meals) > 40:
+            raise ValueError("Planner proposals require at most 40 eligible recipes")
+        language = normalize_language(language)
+        existing_deadline = current_deadline()
+        if existing_deadline is not None:
+            deadline = (
+                min(deadline, existing_deadline)
+                if deadline is not None
+                else existing_deadline
+            )
+        if deadline is not None and deadline <= monotonic():
+            raise TimeoutError("Planner request deadline expired")
         preferences = preferences or plan.preferences
-        meal_by_id = {meal.id: meal for meal in meals}
+        meal_by_id = {meal.id: meal for meal in (*meals, *current_meals)}
         target = None
         if target_day_index is not None and target_slot_index is not None:
             current = next(
@@ -80,6 +103,7 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
             }
         context = {
             "base_revision": plan.revision,
+            "response_language": language,
             "week_start_date": plan.week_start_date.isoformat(),
             "scope": "meal" if target is not None else "week",
             "target_slot": target,
@@ -112,10 +136,10 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                     "protein_g": float(meal.protein_g),
                     "calories": meal.calories,
                 }
-                for meal in meals[:200]
+                for meal in meals
             ],
         }
-        result = await self.generation_service.generate_meal_plan_async(
+        generation = self.generation_service.generate_meal_plan_async(
             prompt=(
                 f"User request: {prompt}\nPlan context JSON: "
                 f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}"
@@ -138,17 +162,28 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                 "week, change only slots requested by the user. Each action must be exactly "
                 "replace or clear; replace requires new_recipe_id and clear requires "
                 "new_recipe_id to be null. Keep explanation to one concise sentence "
-                "under 160 characters; do not list individual slot changes there."
+                "under 160 characters; do not list individual slot changes there. "
+                "Write explanation and diff_summary in response_language. "
+                "The diff_summary briefly states the number and kind of actual changes."
             ),
             response_type="json",
-            max_tokens=3000,
+            max_tokens=1800,
             schema=WeeklyMealPlanAdjustmentResponse,
-            model_purpose="general",
+            model_purpose="meal_plan_adjustment",
         )
+        # Explicit port callers can supply a deadline; request callers inherit
+        # the endpoint deadline. Never reset an earlier request deadline.
+        if deadline is not None:
+            with planner_deadline(deadline):
+                async with timeout_until(deadline):
+                    result = await generation
+        else:
+            result = await generation
         parsed = WeeklyMealPlanAdjustmentResponse.model_validate(result)
         return WeeklyMealPlanAdjustmentProposal(
             base_revision=plan.revision,
             explanation=parsed.explanation,
+            diff_summary=parsed.diff_summary,
             slot_changes=tuple(
                 WeeklyMealPlanSlotAdjustment(
                     day_index=change.day_index,

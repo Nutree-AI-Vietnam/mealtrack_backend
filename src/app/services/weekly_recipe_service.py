@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Protocol
 
 from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
@@ -23,6 +25,8 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     is_non_meal_title,
 )
+from src.planner_feature_flags import CATALOG_PROJECTIONS, planner_flag_enabled
+from src.planner_observability import planner_phase, planner_timed
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,7 @@ class WeeklyRecipeService:
             )
         )
 
+    @planner_timed("catalog_sql")
     async def list(
         self,
         *,
@@ -78,6 +83,19 @@ class WeeklyRecipeService:
         offset=0,
     ) -> RecipePage:
         async with self.uow_factory() as uow:
+            if planner_flag_enabled(CATALOG_PROJECTIONS):
+                page = await uow.catalog_recipes.list_recipe_page(
+                    query=query,
+                    diet=diet,
+                    max_cook_time=max_cook_time,
+                    cuisine=cuisine,
+                    meal_type=meal_type,
+                    dislikes=dislikes,
+                    allergies=allergies,
+                    limit=limit,
+                    offset=offset,
+                )
+                return RecipePage(items=page.items, total=page.total)
             meals = await uow.catalog_recipes.list_active_meals(
                 cuisine=cuisine,
                 meal_type=meal_type,
@@ -117,6 +135,7 @@ class WeeklyRecipeService:
             items=tuple(ordered[offset : offset + limit]), total=len(ordered)
         )
 
+    @planner_timed("catalog_sql")
     async def detail(
         self, recipe_id: str, *, include_cached_micronutrients: bool = True
     ) -> CatalogMeal | None:
@@ -128,58 +147,84 @@ class WeeklyRecipeService:
             return meal
         return await self.micronutrient_enrichment.load_cached(meal)
 
+    @planner_timed("catalog_sql")
     async def summaries(self, recipe_ids: Iterable[str]) -> tuple[CatalogMeal, ...]:
         ids = tuple(dict.fromkeys(recipe_id for recipe_id in recipe_ids if recipe_id))
         if not ids:
             return ()
 
+        # Optional Redis has one total budget; a slow read suppresses its write.
+        cache_deadline = monotonic() + 0.1
+        cache_healthy = self.redis_client is not None
         cached_meals: dict[str, CatalogMeal] = {}
-        missing_ids: list[str] = []
-
-        if self.redis_client is not None:
-            keys = [CacheKeys.catalog_recipe(mid)[0] for mid in ids]
-            try:
-                cached_raw = await self.redis_client.mget(keys)
-                for mid, raw in zip(ids, cached_raw, strict=False):
-                    if raw:
-                        try:
-                            data = json.loads(raw)
-                            cached_meals[mid] = CatalogMeal.from_dict(data)
-                        except Exception:
-                            missing_ids.append(mid)
-                    else:
-                        missing_ids.append(mid)
-            except Exception:
-                logger.warning(
-                    "Redis mget failed for catalog recipes; falling back to DB",
-                    exc_info=True,
+        missing_ids = list(ids)
+        version = None
+        async with self.uow_factory() as uow:
+            if self.redis_client is not None:
+                if planner_flag_enabled(CATALOG_PROJECTIONS):
+                    version = await uow.catalog_recipes.lock_catalog_publication(
+                        shared=True
+                    )
+                else:
+                    # Reading the version before recipe rows keeps cached data at
+                    # least as new as its key, so no fence lock is needed.
+                    try:
+                        version = await (
+                            uow.catalog_recipes.capture_catalog_publication_version()
+                        )
+                    except NotImplementedError:
+                        version = None
+            keys = [f"catalog:summary:v2:{version}:{mid}" for mid in ids]
+            # Unversioned legacy cache rows cannot safely survive withdrawals.
+            if cache_healthy and version is not None and self.redis_client is not None:
+                try:
+                    async with asyncio.timeout(
+                        max(0.001, cache_deadline - monotonic())
+                    ):
+                        with planner_phase("redis"):
+                            cached_raw = await self.redis_client.mget(keys)
+                    for mid, raw in zip(ids, cached_raw, strict=False):
+                        if raw:
+                            try:
+                                cached_meals[mid] = CatalogMeal.from_dict(
+                                    json.loads(raw)
+                                )
+                            except (ValueError, TypeError, KeyError):
+                                pass
+                    missing_ids = [mid for mid in ids if mid not in cached_meals]
+                except Exception:
+                    cache_healthy = False
+            if missing_ids:
+                loader = getattr(uow.catalog_recipes, "get_meal_summaries", None)
+                fetched = await (
+                    loader(missing_ids)
+                    if callable(loader)
+                    else uow.catalog_recipes.get_meals(missing_ids)
                 )
-                missing_ids = list(ids)
-        else:
-            missing_ids = list(ids)
-
-        if missing_ids:
-            async with self.uow_factory() as uow:
-                fetched = await uow.catalog_recipes.get_meals(missing_ids)
-            to_cache: dict[str, str] = {}
-            for meal in fetched:
-                cached_meals[meal.id] = meal
-                try:
-                    cache_key, _ = CacheKeys.catalog_recipe(meal.id)
-                    to_cache[cache_key] = json.dumps(meal.to_dict())
-                except Exception:
-                    pass
-            if to_cache and self.redis_client is not None:
-                try:
-                    await self.redis_client.mset_with_ttl(
-                        to_cache, CacheKeys.TTL_7_DAYS
-                    )
-                except Exception:
-                    logger.warning(
-                        "Redis mset_with_ttl failed for catalog recipes",
-                        exc_info=True,
-                    )
-
+                for meal in fetched:
+                    cached_meals[meal.id] = meal
+                remaining = cache_deadline - monotonic()
+                if (
+                    cache_healthy
+                    and version is not None
+                    and remaining > 0
+                    and self.redis_client is not None
+                ):
+                    mapping = {
+                        f"catalog:summary:v2:{version}:{meal.id}": json.dumps(
+                            meal.to_dict()
+                        )
+                        for meal in fetched
+                    }
+                    if mapping:
+                        try:
+                            async with asyncio.timeout(remaining):
+                                with planner_phase("redis"):
+                                    await self.redis_client.mset_with_ttl(
+                                        mapping, CacheKeys.TTL_7_DAYS
+                                    )
+                        except Exception:
+                            pass
         return tuple(cached_meals[mid] for mid in ids if mid in cached_meals)
 
 

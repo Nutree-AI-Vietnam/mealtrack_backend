@@ -31,6 +31,8 @@ class MealCatalogMicronutrientEnrichmentORM(Base):
         nullable=False,
     )
     content_hash = Column(String(64), nullable=False)
+    input_facet_version = Column(String(64), nullable=True)
+    preparation_contract_version = Column(String(32), nullable=True)
     micros = Column(_json_document(), nullable=False, default=dict)
     sources = Column(_json_document(), nullable=False, default=dict)
     status = Column(String(16), nullable=False)
@@ -43,6 +45,12 @@ class MealCatalogMicronutrientEnrichmentORM(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "catalog_meal_id",
+            "input_facet_version",
+            "preparation_contract_version",
+            name="uq_catalog_micronutrient_preparation",
+        ),
         UniqueConstraint(
             "catalog_meal_id",
             "content_hash",

@@ -84,9 +84,15 @@ class GetWeeklyGroceriesQueryHandler(EventHandler):
 
     async def handle(self, query):
         async with self.uow_factory() as uow:
-            plan = await uow.weekly_meal_plans.get_by_id(
-                user_id=query.user_id, plan_id=query.plan_id
-            )
+            plan = query.plan
+            if plan is not None and (
+                plan.user_id != query.user_id or plan.id != query.plan_id
+            ):
+                raise ValueError("grocery projection owner/plan mismatch")
+            if plan is None:
+                plan = await uow.weekly_meal_plans.get_by_id(
+                    user_id=query.user_id, plan_id=query.plan_id
+                )
             if plan is None:
                 return None
             return plan, await self.grocery_service.calculate(uow, plan)
