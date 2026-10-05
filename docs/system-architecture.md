@@ -271,10 +271,56 @@ otherwise marks quantities as unscaled. Slot logging reuses
 catalog-to-diary materialization with a portion multiplier, then links the
 created `Meal` in the same unit of work while retaining the catalog content
 hash used for the snapshot.
-Ask Nutree uses the existing structured AI fallback service as an untrusted
-proposal source. The application validates catalog IDs, coordinates, logged
+Ask Nutree uses a dedicated OpenAI planner purpose as an untrusted proposal
+source. A shared request deadline, bounded admission and an eligible shortlist
+cover preparation and provider work. The application validates catalog IDs, coordinates, logged
 slot immutability, hard preference exclusions, and the proposal base revision
 before returning the ephemeral diff; it never writes the plan directly.
+
+Saved-plan reads load persisted plan/slot state separately from selected compact
+recipe summaries; grocery inputs are loaded only when requested. Explicit
+generation remains current-week and deterministic, with exactly 14 stable
+lunch/dinner coordinates. Released callers retain the existing GET
+auto-generation compatibility contract; no scheduled user-plan generation or
+accepted-response contract is introduced.
+
+The catalog read model stores typed query columns, backend-derived macros,
+canonical allergen links and independent selection, ingredient, translation and
+enrichment digests. Source tables and conversion/calorie domain services remain
+authoritative. Python casefold features preserve Unicode filter/order behavior.
+Missing or dirty mandatory query data invokes the complete authoritative read;
+nutrition dirtiness is hydrated after SQL pagination for selected IDs. Live
+activation joins reject withdrawn recipes immediately. These paths are always
+on; there are no runtime flags.
+
+Seed/import, rank and admin image publishers
+refresh the affected recipe before committing under the exclusive fence.
+Direct SQL and shared food/reference writers publish dirty state synchronously;
+canonical fallback preserves complete results until the worker or bounded
+reconciler repairs them. Their sustained optimized coverage remains a cutover
+gate.
+
+A singleton publication fence serializes relevant catalog/dependency writes,
+including direct SQL through statement triggers. Short generation computes
+outside its final write scope, then takes the shared publication fence before
+the owner/week advisory lock and ordered plan/slot locks. It revalidates source
+selection and slot state and atomically completes the operation ledger with the
+plan. An internal slot version detects logging without changing the public plan
+revision contract.
+
+Catalog preparation runs when recipes are written: the seed import script, the
+admin import endpoint and the preparation backfill run all pending jobs to
+completion after committing, using a reserved DB pool. No worker runs between
+imports (a standalone process remains available). PostgreSQL jobs carry leases,
+claim tokens,
+attempt limits and source facet/locale/contract identity. Claims commit before
+provider work; result publication revalidates the current source under the
+publication fence. Prepared text and micronutrient overlays are optional;
+their read path uses persisted data or canonical fallback and performs no
+provider work. Micronutrient-only source edits leave selection macros current,
+and storing an estimate does not invalidate itself. This worker prepares shared
+catalog data, never scheduled user plans. Deployment and rollback gates live in
+the [catalog rollout runbook](./runbooks/meal-catalog-release.md#weekly-planner-catalog-optimization).
 
 ---
 

@@ -1,19 +1,11 @@
-import asyncio
 from datetime import date
 from decimal import Decimal
 
-import pytest
-from starlette.requests import Request
-
 from src.api.routes.v1.meal_recommendation_route_support import to_response
-from src.api.routes.v1.meal_recommendations import create_three_day_recommendations
 from src.api.schemas.response.meal_recommendation_responses import (
     MealRecommendationPlanResponse,
     MealRecommendationPlanSummaryResponse,
 )
-from src.app.commands.meal_recommendation import CreateThreeDayMealRecommendationCommand
-from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
-from src.app.queries.user import GetUserTimezoneQuery
 from src.domain.model.meal_recommendation import (
     CatalogMeal,
     CatalogMealIngredient,
@@ -21,34 +13,6 @@ from src.domain.model.meal_recommendation import (
     PersistedMealRecommendationPlan,
     PersistedMealRecommendationSlot,
 )
-
-
-class _EventBus:
-    def __init__(self, plan: PersistedMealRecommendationPlan):
-        self.plan = plan
-        self.commands = []
-
-    async def send(self, message):
-        self.commands.append(message)
-        if isinstance(message, GetUserTimezoneQuery):
-            return "Asia/Ho_Chi_Minh"
-        if isinstance(message, GetWeeklyBudgetQuery):
-            return {"adjusted_daily_calories": 2000}
-        if isinstance(message, CreateThreeDayMealRecommendationCommand):
-            return self.plan
-        raise AssertionError(f"unexpected message {message!r}")
-
-
-class _BlockingAnalytics:
-    def __init__(self):
-        self.started = asyncio.Event()
-        self.release = asyncio.Event()
-        self.events = []
-
-    async def capture_plan_response(self, *, user_id, event, plan):
-        self.events.append((user_id, event, plan.id))
-        self.started.set()
-        await self.release.wait()
 
 
 def test_current_response_contract_is_full_plan_with_hydrated_candidates():
@@ -84,51 +48,15 @@ def test_summary_openapi_schema_keeps_selected_ingredients_compact():
     definitions = schema["$defs"]
 
     slot_fields = definitions["MealRecommendationSlotSummaryResponse"]["properties"]
-    meal_fields = definitions["MealRecommendationCatalogMealSummaryResponse"]["properties"]
+    meal_fields = definitions["MealRecommendationCatalogMealSummaryResponse"][
+        "properties"
+    ]
 
     assert "alternatives" not in slot_fields
     assert "score" not in slot_fields
     assert "ingredients" in meal_fields
     assert "description" not in meal_fields
     assert "macros" in meal_fields
-
-
-@pytest.mark.asyncio
-async def test_create_route_waits_for_analytics_capture_before_returning():
-    analytics = _BlockingAnalytics()
-    task = asyncio.create_task(
-        create_three_day_recommendations(
-            request=_request(),
-            idempotency_key="key-1",
-            user_id="user-1",
-            event_bus=_EventBus(_full_plan()),
-            analytics_service=analytics,
-        )
-    )
-
-    await asyncio.wait_for(analytics.started.wait(), timeout=1)
-    assert not task.done()
-
-    analytics.release.set()
-    response = await task
-
-    assert response.id == "plan-baseline"
-    assert analytics.events == [
-        ("user-1", "plan_shown", "plan-baseline"),
-        ("user-1", "alternatives_shown", "plan-baseline"),
-    ]
-
-
-def _request() -> Request:
-    return Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/v1/meal-recommendations/three-day",
-            "client": ("127.0.0.1", 12345),
-            "headers": [(b"x-timezone", b"Asia/Ho_Chi_Minh")],
-        }
-    )
 
 
 def _json_size(response: MealRecommendationPlanResponse) -> int:
@@ -141,7 +69,9 @@ def _full_plan() -> PersistedMealRecommendationPlan:
         for position, meal_type in enumerate(("breakfast", "lunch", "dinner")):
             slot_number = day_index * 3 + position
             slot_id = f"slot-{slot_number}"
-            selected_meal = _catalog_meal(f"{meal_type}-selected-{day_index}", meal_type)
+            selected_meal = _catalog_meal(
+                f"{meal_type}-selected-{day_index}", meal_type
+            )
             selected = PersistedMealRecommendationCandidate(
                 id="plan-baseline" if slot_number == 0 else f"selected-{slot_number}",
                 slot_id=slot_id,

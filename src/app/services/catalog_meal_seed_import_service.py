@@ -699,6 +699,13 @@ class CatalogMealSeedImporter:
                                     source=reference.source,
                                 )
                             ) from exc
+                    elif (
+                        exc.code == "unresolved_quantity_unit"
+                        and self._allow_unmapped_ingredients
+                    ):
+                        # A count unit ("1 gói") with no gram serving stays
+                        # display-only rather than being relabelled as grams.
+                        pass
                     else:
                         raise CatalogSeedImportError(
                             f"recipes[{recipe_index}].ingredients[{ingredient_index}] "

@@ -138,11 +138,13 @@ def stamp_alembic_head(cfg: Config) -> None:
         raise RuntimeError("Unable to resolve Alembic head revision.")
 
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
                 CREATE TABLE IF NOT EXISTS alembic_version (
                     version_num VARCHAR(32) NOT NULL PRIMARY KEY
                 )
-                """))
+                """)
+        )
         conn.execute(text("DELETE FROM alembic_version"))
         conn.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
@@ -168,6 +170,76 @@ def ensure_integrity_control_row(connection) -> None:
     )
 
 
+def ensure_catalog_publication_control_row(connection) -> None:
+    """Seed the catalog publication fence when metadata bootstrap stamps head."""
+    if not inspect(connection).has_table("catalog_publication_version"):
+        return
+
+    connection.execute(
+        text(
+            """
+            INSERT INTO catalog_publication_version (id)
+            VALUES (1)
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
+    )
+
+
+def ensure_catalog_publication_triggers(connection) -> None:
+    """Install migration-owned triggers when metadata bootstrap stamps head."""
+    if connection.dialect.name != "postgresql":
+        return
+
+    from src.infra.database.catalog_publication_triggers import (
+        SOURCE_TABLES,
+        preparation_trigger_upgrade_sql,
+        publication_trigger_upgrade_sql,
+    )
+
+    tables = set(inspect(connection).get_table_names())
+    required_tables = {
+        *SOURCE_TABLES,
+        "catalog_publication_version",
+        "meal_catalog_projection",
+        "catalog_preparation_jobs",
+    }
+    if not required_tables.issubset(tables):
+        return
+
+    for statement in publication_trigger_upgrade_sql():
+        if statement.startswith("CREATE FUNCTION"):
+            statement = statement.replace(
+                "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1
+            )
+            connection.exec_driver_sql(statement)
+            continue
+
+        trigger_name = statement.split()[2]
+        table_name = statement.split(" ON ", maxsplit=1)[1].split()[0]
+        exists = connection.exec_driver_sql(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgrelid = to_regclass(%s) AND tgname = %s AND NOT tgisinternal
+            )
+            """,
+            (table_name, trigger_name),
+        ).scalar_one()
+        if not exists:
+            connection.exec_driver_sql(statement)
+
+    for statement in preparation_trigger_upgrade_sql():
+        connection.exec_driver_sql(statement)
+
+
+def ensure_control_rows(connection) -> None:
+    """Keep DB-owned singleton control rows present after any bootstrap path."""
+    ensure_integrity_control_row(connection)
+    ensure_catalog_publication_control_row(connection)
+    ensure_catalog_publication_triggers(connection)
+
+
 def main():
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", migration_url)
@@ -182,7 +254,7 @@ def main():
             validate_schema_matches_metadata()
             stamp_alembic_head(cfg)
             with engine.begin() as conn:
-                ensure_integrity_control_row(conn)
+                ensure_control_rows(conn)
             print("Done.")
             return
 
@@ -191,7 +263,7 @@ def main():
         )
         command.upgrade(cfg, "head")
         with engine.begin() as conn:
-            ensure_integrity_control_row(conn)
+            ensure_control_rows(conn)
         print("Done.")
         return
 
@@ -208,7 +280,7 @@ def main():
     print("  All tables created.")
 
     with engine.begin() as conn:
-        ensure_integrity_control_row(conn)
+        ensure_control_rows(conn)
 
     # 3. Stamp Alembic at head so future migrations apply correctly
     stamp_alembic_head(cfg)

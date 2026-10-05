@@ -58,6 +58,7 @@ from src.infra.database.models.meal_recommendation import (
 from src.infra.repositories.food_reference_projection import (
     food_reference_model_to_nutrition_projection,
 )
+from src.planner_observability import planner_phase, planner_timed
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
     allow_unverified=True,
@@ -73,8 +74,71 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     def __init__(self, session: AsyncSession):
         self._session = session
 
+    @planner_timed("catalog_sql")
+    async def _execute_catalog(self, statement):
+        return await self._session.execute(statement)
+
+    async def capture_catalog_publication_version(self):
+        from src.infra.repositories.catalog_publication_fence import (
+            catalog_publication_version,
+        )
+
+        return await catalog_publication_version(self._session)
+
+    async def lock_catalog_publication(self, *, shared: bool = True):
+        from src.infra.repositories.catalog_publication_fence import (
+            catalog_publication_version,
+        )
+
+        return await catalog_publication_version(self._session, shared=shared)
+
+    async def get_meal_summaries(
+        self, catalog_meal_ids: Iterable[str]
+    ) -> list[CatalogMeal]:
+        from src.infra.repositories.catalog_projection_repository import (
+            CatalogProjectionRepository,
+        )
+
+        return await CatalogProjectionRepository(self).summaries(catalog_meal_ids)
+
+    async def list_selection_candidates(self) -> list[CatalogMeal]:
+        from src.infra.repositories.catalog_projection_repository import (
+            CatalogProjectionRepository,
+        )
+
+        return await CatalogProjectionRepository(self).candidates()
+
+    async def list_recipe_page(self, **kwargs):
+        from src.infra.repositories.catalog_projection_repository import (
+            CatalogProjectionRepository,
+        )
+
+        return await CatalogProjectionRepository(self).page(**kwargs)
+
+    async def rebuild_catalog_projection_page(self, *, after_id=None, limit=100):
+        from src.infra.repositories.catalog_projection_rebuilder import (
+            CatalogProjectionRebuilder,
+        )
+
+        return await CatalogProjectionRebuilder(self._session).reconcile_page(
+            after_id=after_id, limit=limit
+        )
+
+    async def list_active_ingredient_names(self) -> list[str]:
+        result = await self._execute_catalog(
+            select(MealCatalogIngredientORM.display_name)
+            .join(
+                MealCatalogORM,
+                MealCatalogORM.id == MealCatalogIngredientORM.catalog_meal_id,
+            )
+            .where(MealCatalogORM.is_active.is_(True))
+            .distinct()
+            .order_by(MealCatalogIngredientORM.display_name)
+        )
+        return [str(name) for name in result.scalars().all() if name]
+
     async def list_allergen_codes(self) -> list[str]:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(AllergenReferenceORM.code).order_by(AllergenReferenceORM.code)
         )
         return [str(code) for code in result.scalars().all()]
@@ -99,8 +163,9 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             column = _meal_type_column(meal_type)
             stmt = stmt.where(column.is_(True))
 
-        result = await self._session.execute(stmt)
-        return [_meal_to_domain(row) for row in result.scalars().unique().all()]
+        result = await self._execute_catalog(stmt)
+        with planner_phase("mapping"):
+            return [_meal_to_domain(row) for row in result.scalars().unique().all()]
 
     async def list_popular_page(
         self,
@@ -113,7 +178,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         shuffle_seed: str | None = None,
     ) -> CatalogPopularPage:
         match = _browse_match_clause(query=query, cuisine=cuisine, meal_type=meal_type)
-        stats = await self._session.execute(
+        stats = await self._execute_catalog(
             select(
                 func.coalesce(
                     func.bool_or(MealCatalogORM.popularity_rank.is_not(None)), False
@@ -133,7 +198,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
                 unranked_count=int(unranked_count or 0),
             )
 
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(MealCatalogORM)
             .where(MealCatalogORM.is_active.is_(True))
             .where(match)
@@ -152,7 +217,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
 
     async def get_active_catalog_revision(self) -> CatalogMealRevision:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(
                 func.count(func.distinct(MealCatalogORM.id)),
                 func.max(MealCatalogORM.updated_at),
@@ -171,7 +236,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
 
     async def get_meal(self, catalog_meal_id: str) -> CatalogMeal | None:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(MealCatalogORM)
             .where(MealCatalogORM.id == catalog_meal_id)
             .where(MealCatalogORM.is_active.is_(True))
@@ -184,17 +249,19 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         ids = [mid for mid in catalog_meal_ids if mid]
         if not ids:
             return []
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(MealCatalogORM)
             .where(MealCatalogORM.id.in_(ids))
             .where(MealCatalogORM.is_active.is_(True))
             .options(*_catalog_meal_load_options())
+            .execution_options(populate_existing=True)
         )
         rows = result.scalars().all()
-        return [_meal_to_domain(row) for row in rows]
+        with planner_phase("mapping"):
+            return [_meal_to_domain(row) for row in rows]
 
     async def get_meal_detail(self, catalog_meal_id: str) -> CatalogMeal | None:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(MealCatalogORM)
             .where(MealCatalogORM.id == catalog_meal_id)
             .where(MealCatalogORM.is_active.is_(True))
@@ -206,7 +273,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     async def get_micronutrient_enrichment(
         self, *, catalog_meal_id: str, content_hash: str
     ) -> dict | None:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(MealCatalogMicronutrientEnrichmentORM).where(
                 MealCatalogMicronutrientEnrichmentORM.catalog_meal_id
                 == catalog_meal_id,
@@ -238,7 +305,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             and row.retry_after > now
         ):
             return "backoff"
-        return row.status
+        return cast(str, row.status)
 
     async def claim_micronutrient_enrichment(
         self,
@@ -278,7 +345,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
                 )
                 .returning(table.c.id)
             )
-            result = await self._session.execute(statement)
+            result = await self._execute_catalog(statement)
             inserted = result.scalar_one_or_none() is not None
         else:
             existing = await self._micronutrient_enrichment_row(
@@ -294,7 +361,9 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
         if row is None:
             raise RuntimeError("Micronutrient enrichment claim could not be loaded")
-        if row.status == "ready" and _has_complete_micronutrient_values(row.micros):
+        if row.status == "ready" and _has_complete_micronutrient_values(
+            cast(dict[str, Any] | None, row.micros)
+        ):
             return "ready", None
         if inserted:
             return "claimed", claim_token
@@ -325,7 +394,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
     ) -> bool:
         if not _has_complete_micronutrient_values(micros):
             return False
-        current_recipe = await self._session.execute(
+        current_recipe = await self._execute_catalog(
             select(MealCatalogORM.id)
             .where(MealCatalogORM.id == catalog_meal_id)
             .where(MealCatalogORM.content_hash == content_hash)
@@ -382,7 +451,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
         if for_update:
             statement = statement.with_for_update()
-        result = await self._session.execute(statement)
+        result = await self._execute_catalog(statement)
         return result.scalar_one_or_none()
 
     async def get_active_release(self):
@@ -396,7 +465,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         catalog_key: str,
         content_hash: str,
     ) -> CatalogMealSeedExisting | None:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(MealCatalogORM.catalog_key, MealCatalogORM.content_hash).where(
                 or_(
                     MealCatalogORM.catalog_key == catalog_key,
@@ -413,6 +482,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
 
     async def add_seed_meal(self, seed: CatalogMealSeedWrite) -> None:
+        await self.lock_catalog_publication(shared=False)
         alias_rows = await self._food_alias_pairs()
         allergen_rows = await self._allergen_reference_rows()
         published = publish_recipe(
@@ -441,7 +511,7 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             known_allergen_codes=[str(r.code) for r in allergen_rows],
             nutrition=seed.nutrition,
         )
-        existing_result = await self._session.execute(
+        existing_result = await self._execute_catalog(
             select(MealCatalogORM)
             .options(
                 selectinload(MealCatalogORM.ingredients),
@@ -560,36 +630,48 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
                 serving_confidence=seed.serving_confidence,
             )
         await self._session.flush()
+        from src.infra.repositories.catalog_projection_rebuilder import (
+            CatalogProjectionRebuilder,
+        )
+
+        await CatalogProjectionRebuilder(self._session).rebuild((cast(str, row.id),))
 
     async def _food_alias_pairs(self) -> list[tuple[str, int]]:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(FoodReferenceAliasORM.alias, FoodReferenceAliasORM.food_reference_id)
         )
         return [(str(alias), int(food_id)) for alias, food_id in result.all()]
 
     async def _allergen_reference_rows(self) -> list[AllergenReferenceORM]:
-        result = await self._session.execute(select(AllergenReferenceORM))
+        result = await self._execute_catalog(select(AllergenReferenceORM))
         return list(result.scalars().all())
 
     async def update_popularity_rank(
         self, *, catalog_key: str, popularity_rank: int | None
     ) -> None:
-        await self._session.execute(
+        await self.lock_catalog_publication(shared=False)
+        result = await self._execute_catalog(
             update(MealCatalogORM)
             .where(MealCatalogORM.catalog_key == catalog_key)
             .values(popularity_rank=popularity_rank)
+            .returning(MealCatalogORM.id)
         )
         await self._session.flush()
+        from src.infra.repositories.catalog_projection_rebuilder import (
+            CatalogProjectionRebuilder,
+        )
+
+        await CatalogProjectionRebuilder(self._session).rebuild(result.scalars().all())
 
     async def lock_seed_import(self) -> None:
-        await self._session.execute(
+        await self._execute_catalog(
             select(
                 func.pg_advisory_xact_lock(func.hashtext("meal_catalog_seed_import"))
             )
         )
 
     async def list_seed_signatures(self) -> list[CatalogMealSeedSignature]:
-        result = await self._session.execute(
+        result = await self._execute_catalog(
             select(MealCatalogORM)
             .options(selectinload(MealCatalogORM.ingredients))
             .order_by(MealCatalogORM.id)

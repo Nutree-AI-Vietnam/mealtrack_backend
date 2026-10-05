@@ -66,6 +66,25 @@ class AIUnavailableError(AIError):
         return " | ".join(parts)
 
 
+# Provider error codes meaning "the request content was refused by a safety filter".
+CONTENT_REJECTION_ERROR_CODES = frozenset(
+    {"invalid_prompt", "content_policy_violation", "content_filter"}
+)
+
+
+class AIContentRejectedError(AIError):
+    """Raised when a provider's safety filter rejects the user's input.
+
+    Deterministic for the given input: retrying or falling back only delays
+    the same outcome, so callers should surface it to the user immediately.
+    """
+
+    def __init__(self, message: str, *, provider: str = "", model: str = "") -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.model = model
+
+
 class AIPartialResultError(AIError):
     """Raised when batch operation has partial success."""
 

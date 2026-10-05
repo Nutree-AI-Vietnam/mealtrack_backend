@@ -4,11 +4,13 @@ from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.api.base_dependencies import (
     get_async_food_reference_repository,
+    get_planner_translation_service,
     get_text_translation_service,
 )
 from src.api.dependencies.auth import get_current_user_id
@@ -73,11 +75,14 @@ class _Bus:
         self.recipe_detail_query = None
         self.budget_queries = []
         self.generate_commands = []
+        self.current_queries = []
+        self.grocery_queries = []
 
     async def send(self, query):
         if query.__class__.__name__ == "GetUserTimezoneQuery":
             return "UTC"
         if query.__class__.__name__ == "GetCurrentWeeklyPlanQuery":
+            self.current_queries.append(query)
             return self.plan
         if query.__class__.__name__ == "GetWeeklyBudgetQuery":
             self.budget_queries.append(query)
@@ -96,6 +101,7 @@ class _Bus:
             self.recipe_query = query
             return SimpleNamespace(items=(), total=0)
         if query.__class__.__name__ == "GetWeeklyGroceriesQuery":
+            self.grocery_queries.append(query)
             return (_plan(), ())
         if query.__class__.__name__ == "AiAdjustMealPlanCommand":
             return self.proposal
@@ -127,6 +133,7 @@ def _app(
     event_bus = bus or _Bus(recipe, plan=plan)
     app.dependency_overrides[get_configured_event_bus] = lambda: event_bus
     app.dependency_overrides[get_text_translation_service] = lambda: None
+    app.dependency_overrides[get_planner_translation_service] = lambda: None
     app.dependency_overrides[get_async_food_reference_repository] = lambda: (
         food_reference_repository or _FoodReferenceRepository()
     )
@@ -195,6 +202,54 @@ def test_current_plan_returns_404_when_missing_and_auto_generate_false():
     assert response.status_code == 404
     assert response.json()["detail"] == "Weekly meal plan not found"
     assert len(bus.generate_commands) == 0
+
+
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("include_count", [False, True])
+def test_current_plan_legacy_generation_and_count_flags(missing, include_count):
+    bus = _Bus(plan=None) if missing else _Bus()
+    response = TestClient(_app(bus=bus)).get(
+        f"/v1/meal-plans/current?auto_generate=true&include_grocery_count={str(include_count).lower()}"
+    )
+
+    assert response.status_code == 200
+    assert len(bus.generate_commands) == int(missing)
+    assert len(bus.grocery_queries) == int(include_count)
+    assert response.json()["to_buy_count"] == (0 if include_count else None)
+    assert bus.current_queries[0].user_id == "user-1"
+    if include_count:
+        assert bus.grocery_queries[0].user_id == "user-1"
+        assert bus.grocery_queries[0].plan_id == "plan-1"
+
+
+def test_current_plan_defaults_preserve_generation_and_grocery_count():
+    bus = _Bus(plan=None)
+    response = TestClient(_app(bus=bus)).get("/v1/meal-plans/current")
+
+    assert response.status_code == 200
+    assert len(bus.generate_commands) == 1
+    assert len(bus.grocery_queries) == 1
+    assert response.json()["to_buy_count"] == 0
+
+
+def test_current_plan_read_only_mode_does_not_generate_existing_plan():
+    bus = _Bus()
+    response = TestClient(_app(bus=bus)).get(
+        "/v1/meal-plans/current?auto_generate=false&include_grocery_count=false"
+    )
+    assert response.status_code == 200
+    assert bus.generate_commands == []
+    assert bus.grocery_queries == []
+
+
+def test_current_plan_without_auth_does_not_dispatch():
+    bus = _Bus()
+    response = TestClient(_app(bus=bus, authenticated=False)).get(
+        "/v1/meal-plans/current"
+    )
+    assert response.status_code == 401
+    assert bus.current_queries == []
+    assert bus.generate_commands == []
 
 
 def test_current_plan_rejects_non_monday_week():
@@ -331,9 +386,9 @@ def test_recipe_query_passes_meal_type_to_catalog_repository():
     class _CatalogRepository:
         meal_type = None
 
-        async def list_active_meals(self, *, cuisine=None, meal_type=None):
+        async def list_recipe_page(self, *, meal_type=None, **_):
             self.meal_type = meal_type
-            return []
+            return SimpleNamespace(items=(), total=0)
 
     class _UnitOfWork:
         def __init__(self, catalog_repository):

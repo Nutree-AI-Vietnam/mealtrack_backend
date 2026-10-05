@@ -259,10 +259,9 @@ def parse_ingredient_line(raw_line: str) -> dict[str, Any]:
         "milliliter": "ml",
         "milliliters": "ml",
     }
+    # Count and spoon units ("gói", "quả", "tép", "muỗng canh") stay as written;
+    # relabelling them as grams turned "1 gói mì" into "1 g" on grocery lists.
     unit = unit_map.get(unit, unit)
-    # If unit is not standard weight or volume, default unit to 'g'
-    if unit not in {"g", "kg", "ml", "l", "oz", "lb"}:
-        unit = "g"
 
     # Category determination for check constraint ('protein', 'produce', 'pantry')
     lower = name.lower()

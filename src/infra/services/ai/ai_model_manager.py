@@ -5,12 +5,14 @@ import threading
 from typing import Any, Optional
 
 from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
     AIOutputValidationError,
     AIUnavailableError,
 )
 from src.domain.model.ai.model_purpose import ModelPurpose
 from src.domain.ports.ai_provider_port import AICapability
 from src.infra.services.ai.ai_vision_errors import AIVisionError, AIVisionFailureKind
+from src.infra.services.ai.planner_generation_policy import PlannerGenerationPolicy
 from src.infra.services.ai.provider_circuit_breaker import ProviderCircuitBreaker
 from src.infra.services.ai.providers.cloudflare_workers_ai_provider import (
     CloudflareWorkersAIProvider,
@@ -63,6 +65,7 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
         DEFAULT_OPENAI_MODEL,
     ],
     ModelPurpose.GENERAL: [DEFAULT_OPENAI_MODEL],
+    ModelPurpose.MEAL_PLAN_ADJUSTMENT: [DEFAULT_OPENAI_MODEL],
     # ==========================================================================
     # RECIPE TASKS: Luna primary with the general OpenAI model as fallback.
     # ==========================================================================
@@ -105,6 +108,7 @@ class AIModelManager:
         _settings = settings if settings is not None else get_settings()
 
         self._circuit_breaker = ProviderCircuitBreaker()
+        self._planner_policy = PlannerGenerationPolicy()
         self._providers: dict[str, Any] = {}
         self._model_provider_overrides: dict[str, str] = {}
 
@@ -136,6 +140,11 @@ class AIModelManager:
             or DEFAULT_PARSE_TEXT_MODEL
         )
         self._providers["openai"] = openai
+        # Planner owns one OpenAI model and its own retry/deadline policy. It
+        # cannot inherit general-purpose Cloudflare routing or fallback chains.
+        self._fallback_chains[ModelPurpose.MEAL_PLAN_ADJUSTMENT] = [
+            settings.OPENAI_TEXT_MODEL
+        ]
         self._model_provider_overrides[DEFAULT_OPENAI_MODEL] = "openai"
         self._model_provider_overrides[DEFAULT_PARSE_TEXT_MODEL] = "openai"
         self._model_provider_overrides[settings.OPENAI_TEXT_MODEL] = "openai"
@@ -243,7 +252,10 @@ class AIModelManager:
             p.strip().lower() for p in text_purposes_csv.split(",") if p.strip()
         }
         for purpose in ModelPurpose:
-            if purpose.value in configured:
+            if (
+                purpose.value in configured
+                and purpose != ModelPurpose.MEAL_PLAN_ADJUSTMENT
+            ):
                 if purpose in {ModelPurpose.PARSE_TEXT, ModelPurpose.RECIPE}:
                     self._append_model_for_purposes(cf_model, {purpose})
                 else:
@@ -264,7 +276,10 @@ class AIModelManager:
                 ", ".join(sorted(unknown)),
             )
         for purpose in ModelPurpose:
-            if purpose.value in configured:
+            if (
+                purpose.value in configured
+                and purpose != ModelPurpose.MEAL_PLAN_ADJUSTMENT
+            ):
                 self._append_model_for_purposes(cf_model, {purpose})
 
     def _append_model_for_purposes(
@@ -286,6 +301,14 @@ class AIModelManager:
         return self._fallback_chains.get(
             purpose, self._fallback_chains[ModelPurpose.GENERAL]
         ).copy()
+
+    @staticmethod
+    def _log_content_rejected(purpose: ModelPurpose, model: str) -> None:
+        # The same user input would be rejected again; stop the chain instead of
+        # spending the remaining fallbacks' latency on a guaranteed failure.
+        logger.warning(
+            "[AI-CONTENT-REJECTED] purpose=%s model=%s", purpose.value, model
+        )
 
     def _get_provider_for_model(self, model: str):
         """Get provider that owns a model, checking explicit overrides before prefix heuristics."""
@@ -309,6 +332,17 @@ class AIModelManager:
         Tries each model in the fallback chain until one succeeds.
         Records failures/successes in circuit breaker.
         """
+        if purpose == ModelPurpose.MEAL_PLAN_ADJUSTMENT:
+            return await self._planner_policy.generate(
+                provider=self._providers.get("openai"),
+                model=self.get_fallback_chain(purpose)[0],
+                circuit_breaker=self._circuit_breaker,
+                prompt=prompt,
+                system_message=system_message,
+                response_type=response_type,
+                max_tokens=max_tokens,
+                schema=schema,
+            )
         chain = self.get_fallback_chain(purpose)
         available = self._circuit_breaker.filter_available(chain)
 
@@ -352,6 +386,9 @@ class AIModelManager:
 
                 return result
 
+            except AIContentRejectedError:
+                self._log_content_rejected(purpose, model)
+                raise
             except Exception as e:
                 last_error = str(e)
                 error_code = provider.extract_error_code(e)
@@ -445,6 +482,9 @@ class AIModelManager:
 
                 return result
 
+            except AIContentRejectedError:
+                self._log_content_rejected(purpose, model)
+                raise
             except Exception as e:
                 last_error = str(e)
 

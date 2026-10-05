@@ -20,9 +20,12 @@ class WeeklyMealPlanAdjustmentProvider(Protocol):
         prompt: str,
         plan: WeeklyMealPlan,
         meals: tuple[CatalogMeal, ...],
+        current_meals: tuple[CatalogMeal, ...] = (),
         preferences: WeeklyMealPlanPreferences | None = None,
         profile_dietary_preferences: tuple[str, ...] = (),
         target_day_index: int | None = None,
         target_slot_index: int | None = None,
+        language: str = "en",
+        deadline: float | None = None,
     ) -> object:
         """Return provider output for deterministic application validation."""

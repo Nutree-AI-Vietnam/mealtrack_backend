@@ -27,7 +27,6 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Upstash Redis REST for Worker deletes | **Required for the Queue consumer** | Worker retries, then DLQ, on Redis/network/delete failures |
 | OpenAI translation | **Optional read-path localization** | Return canonical local/provider results without translated names; do not block startup or writes |
 | OpenAI, FatSecret, USDA, OFF, Brave, image stock APIs | **Optional enrichment** | Degrade to local/prior results when safe |
-| PostHog | **Optional analytics** | Skip capture |
 | Sentry | **Optional observability** | Local logs only; facade no-ops without DSN |
 | nutree-affiliate | **Optional partner** | Validate may return inactive; lifecycle events retry via outbox |
 
@@ -73,7 +72,6 @@ durable.
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
-| PostHog | `src/infra/adapters/posthog_adapter.py` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
 | Queue consumer | sibling `nutreeai_async` repository |
@@ -248,8 +246,7 @@ optional caches.
 - Expected 4xx domain failures are silent at ERROR level.
 - Severity contract: INFO = normal; WARNING = degrade/retry/slow; ERROR =
   user-impacting; CRITICAL = service unusable. Same privacy allowlist as above.
-- Use Sentry metrics for operational AI failure alerts; use PostHog for product
-  / LLM product traces — not P1 outage paging.
+- Use Sentry metrics for operational AI failure alerts.
 
 ### nutree-affiliate boundary
 

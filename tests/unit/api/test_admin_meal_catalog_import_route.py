@@ -84,7 +84,8 @@ def test_import_catalog_manifest_previews_then_commits(monkeypatch):
         return CatalogSeedImportSummary(dry_run=dry_run, inserted=1)
 
     monkeypatch.setattr(route_mod, "_run_importer", fake_run_importer)
-    client = _client(db)
+    preparer = AsyncMock(return_value=3)
+    client = _client(db, preparer=preparer)
 
     response = client.post("/v1/admin/meal-catalog/import", json=_request())
 
@@ -93,6 +94,45 @@ def test_import_catalog_manifest_previews_then_commits(monkeypatch):
     assert response.json()["inserted"] == 1
     assert calls == [True, False]
     db.commit.assert_awaited_once()
+    preparer.assert_awaited_once()
+
+
+def test_import_preparation_failure_still_reports_applied_import(monkeypatch):
+    db = AsyncMock()
+
+    async def fake_run_importer(db_arg, request, *, dry_run):
+        return CatalogSeedImportSummary(dry_run=dry_run, inserted=1)
+
+    monkeypatch.setattr(route_mod, "_run_importer", fake_run_importer)
+    preparer = AsyncMock(side_effect=RuntimeError("provider down"))
+
+    response = _client(db, preparer=preparer).post(
+        "/v1/admin/meal-catalog/import", json=_request()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+    db.commit.assert_awaited_once()
+
+
+def test_dry_run_import_does_not_prepare_catalog(monkeypatch):
+    db = AsyncMock()
+
+    async def fake_run_importer(db_arg, request, *, dry_run):
+        return CatalogSeedImportSummary(dry_run=dry_run, inserted=1)
+
+    monkeypatch.setattr(route_mod, "_run_importer", fake_run_importer)
+    preparer = AsyncMock(return_value=0)
+    payload = _request()
+    payload["dry_run"] = True
+
+    response = _client(db, preparer=preparer).post(
+        "/v1/admin/meal-catalog/import", json=payload
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is False
+    preparer.assert_not_awaited()
 
 
 def test_resolve_returns_structured_unverified_references(monkeypatch):
@@ -168,11 +208,16 @@ def test_enrich_catalog_candidates_rejects_invalid_manifest_without_commit():
     db.commit.assert_not_awaited()
 
 
-def _client(db, importer=object, reviewer=object):
+def _client(db, importer=object, reviewer=object, preparer=None):
     app = FastAPI()
     app.include_router(route_mod.router)
     app.dependency_overrides[get_async_db] = lambda: db
-    app.dependency_overrides[route_mod.get_catalog_meal_seed_importer] = lambda: importer
+    app.dependency_overrides[route_mod.get_catalog_meal_seed_importer] = lambda: (
+        importer
+    )
+    app.dependency_overrides[route_mod.get_catalog_preparer] = lambda: (
+        preparer or AsyncMock(return_value=0)
+    )
     app.dependency_overrides[route_mod.get_catalog_food_reference_review_service] = (
         lambda: reviewer
     )

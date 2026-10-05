@@ -46,6 +46,7 @@ class WeeklyMealLoggingService:
             }
         )
         async with self.uow_factory() as uow:
+            await uow.catalog_recipes.lock_catalog_publication(shared=True)
             reservation = await uow.meal_write_operations.reserve(
                 user_id=command.user_id,
                 operation="weekly_meal_plan_slot_log",

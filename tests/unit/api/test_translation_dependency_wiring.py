@@ -32,3 +32,17 @@ def test_neutral_translation_getter_is_process_scoped(monkeypatch):
 
     assert first is second
     assert first is not None
+
+
+def test_planner_translation_always_reads_persisted_overlays(monkeypatch):
+    import src.api.base_dependencies as deps
+    from src.app.services.catalog_persisted_presentation_service import (
+        CatalogPersistedPresentationService,
+    )
+
+    monkeypatch.delenv("CATALOG_PERSISTED_PRESENTATION_ENABLED", raising=False)
+    monkeypatch.setattr(deps.settings, "OPENAI_API_KEY", "test-key")
+
+    assert isinstance(
+        deps.get_planner_translation_service(), CatalogPersistedPresentationService
+    )

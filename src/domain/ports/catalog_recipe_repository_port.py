@@ -12,6 +12,9 @@ from src.domain.model.meal_recommendation.catalog_recipe import (
     CatalogMeal,
     normalize_catalog_ingredient_category,
 )
+from src.domain.model.meal_recommendation.catalog_selection_features import (
+    CatalogPublicationVersion,
+)
 
 MAX_CATALOG_POPULARITY_RANK = 2_147_483_647
 
@@ -100,8 +103,60 @@ class CatalogPopularPage:
     unranked_count: int
 
 
+@dataclass(frozen=True)
+class CatalogRecipePage:
+    items: tuple[CatalogMeal, ...]
+    total: int
+    projected: bool = False
+
+
 class CatalogMealRepositoryPort(ABC):
     """Read/write contract for catalog meals during the rework."""
+
+    async def get_meal_summaries(
+        self, catalog_meal_ids: Iterable[str]
+    ) -> list[CatalogMeal]:
+        """Bounded compatibility implementation for older repository adapters."""
+        return await self.get_meals(catalog_meal_ids)
+
+    async def list_selection_candidates(self) -> list[CatalogMeal]:
+        return await self.list_active_meals()
+
+    async def list_active_ingredient_names(self) -> list[str]:
+        """Ingredient vocabulary for prompts when candidates omit ingredients."""
+        return sorted(
+            {
+                ingredient.display_name
+                for meal in await self.list_active_meals()
+                for ingredient in meal.ingredients
+                if ingredient.display_name
+            }
+        )
+
+    async def list_recipe_page(
+        self,
+        *,
+        query: str | None = None,
+        diet: str | None = None,
+        max_cook_time: int | None = None,
+        cuisine: str | None = None,
+        meal_type: str | None = None,
+        dislikes: tuple[str, ...] = (),
+        allergies: tuple[str, ...] = (),
+        limit: int = 20,
+        offset: int = 0,
+    ) -> CatalogRecipePage:
+        """Apply every eligibility filter before counting and paging."""
+        raise NotImplementedError
+
+    async def capture_catalog_publication_version(self) -> CatalogPublicationVersion:
+        raise NotImplementedError
+
+    async def lock_catalog_publication(
+        self, *, shared: bool = True
+    ) -> CatalogPublicationVersion:
+        """Acquire the fence before owner/week and plan locks in final writes."""
+        raise NotImplementedError
 
     @abstractmethod
     async def list_allergen_codes(self) -> list[str]:

@@ -7,7 +7,8 @@ payloads, search text, or user identifiers into release notes.
 ## Preconditions
 
 - Confirm the target backend image SHA and GitHub Actions checks are green.
-- Confirm Render pre-deploy command is `python migrations/run.py`.
+- Apply schema through GitHub Actions **Migrate Database** and keep Render's
+  pre-deploy migration command cleared; see [schema migration](./schema-migration.md).
 - Confirm the database is PostgreSQL/Neon-compatible and extensions are enabled:
   `vector` and `pg_trgm`.
 - Confirm `scripts/data/meal-recommendation-recipes.json` and
@@ -105,3 +106,193 @@ the deployed revision separately before calling the browse surface released.
 Do not run destructive production downgrades by default. Use schema rollback
 only after the migration owner confirms data impact and the previous app image
 requires it.
+
+## Weekly planner catalog optimization
+
+The new schema and local verification do not prove staging readiness or live
+latency. Preserve current-week explicit generation, GET auto-generation
+compatibility, backend calorie authority, logged-slot conflicts and persisted
+pantry/grocery state throughout this rollout.
+
+### Expand and backfill
+
+1. Apply generated migrations `20261003042253928494`,
+   `20261003102324493409`, and `20261004125027631936` through the schema
+   workflow before enabling new paths.
+   Confirm one Alembic head and `catalog_publication_version` row `id=1`.
+2. Projected reads, publication fencing, short generation and durable
+   preparation are always on; there are no runtime flags. Until step 3
+   completes, missing projections use the authoritative fallback. Database
+   publication/invalidation triggers keep projections and preparation jobs in
+   step with source writes. Planner recipe text always
+   reads prepared translation overlays and never calls a provider; recipes
+   without a current overlay for the request locale show canonical catalog
+   text until step 4 completes.
+3. Set `CATALOG_PROJECTION_DATABASE_URL` securely to the intended async
+   PostgreSQL database and run bounded projection backfill:
+
+```bash
+.venv/bin/python scripts/development/rebuild_catalog_projections.py \
+  --batch-size 100 --max-batches 10
+```
+
+Resume with `--after-id` from the last **committed** batch. Repeat until the
+script prints `complete`; restarting without a cursor is safe and idempotent.
+It never commits a partial batch and accepts at most 500 recipes per batch.
+No database URL or secret should be copied into reports.
+
+4. Translations and micronutrients are prepared when recipes are written: the
+   seed import script and the admin `/v1/admin/meal-catalog/import` endpoint
+   run every pending preparation job to completion right after committing, for
+   the locales in `CATALOG_PREPARATION_LOCALES` (default `vi,en`). No worker
+   process runs between imports. Prepare the existing catalog once after
+   deploying (with `OPENAI_API_KEY` set):
+
+```bash
+.venv/bin/python -m scripts.backfill_catalog_preparation \
+  --page-size 100 --max-pages 10 --locales vi,en
+```
+
+The backfill rebuilds each selected projection, queues jobs in one transaction,
+then runs them; `--enqueue-only` skips the run. Its `next_cursor` resumes via
+`--after-id`; replay deduplicates job identity by task, recipe, source facet,
+locale and contract. Without `OPENAI_API_KEY` the run is skipped and jobs stay
+pending, because provider-unconfigured failures are permanent and not
+re-queued. Catalog text changed outside these paths (direct SQL, food-reference
+edits) is queued by triggers and prepared by the next import or backfill run.
+`CATALOG_WORKER_DATABASE_URL` and `CATALOG_WORKER_DB_CONNECTION_MODE`
+optionally point the preparation pool at a different endpoint.
+`python -m scripts.catalog_preparation_worker` remains available as a
+standalone process.
+
+### Cutover gates
+
+Query active projection completeness before enabling compact browse/selection:
+
+```sql
+SELECT
+  count(*) FILTER (WHERE p.catalog_meal_id IS NULL OR p.query_dirty
+                   OR p.schema_version <> 1) AS invalid_query,
+  count(*) FILTER (WHERE p.catalog_meal_id IS NULL OR p.nutrition_dirty
+                   OR p.schema_version <> 1) AS invalid_nutrition
+FROM meal_catalog c
+LEFT JOIN meal_catalog_projection p ON p.catalog_meal_id = c.id
+WHERE c.is_active;
+```
+
+Both counts must be zero for complete optimized selection. Dirty query data
+continues through authoritative fallback; dirty nutrition preserves SQL totals
+and hydrates selected IDs. Synchronous invalidation plus fallback protects
+legacy/direct publishers, but sustained optimized cutover also requires
+complete publisher/reconciliation coverage and measured source-update fanout.
+
+Standard seed/import, popularity-rank
+and admin image writes refresh the affected recipe under the exclusive fence
+in the source transaction before commit. This currently covers three
+application publication paths. Direct SQL, food-reference, serving/nutrient and
+allergen-reference writers synchronously invalidate rather than fully rebuild
+every affected recipe. Canonical fallback keeps their filter/order/count and
+macro results complete while the worker or bounded reconciler catches up.
+The requirement for synchronous complete projection publication across all
+writers remains a release gate for sustained optimized cutover; do not describe
+dirty fallback as complete synchronous projection coverage. Measure repair
+fanout, fallback rate and time to clean after those writes on staging.
+
+Verify on staging before production. Before deploying, confirm no pending
+`translation` jobs remain for any supported locale; missing text/micros fall
+back to canonical data without provider calls. Verify compact candidate parity
+and canonical nutrition against the backfilled projections. Cover owner/week
+races with same
+and different idempotency keys, atomic replay, publication/withdrawal during
+compute, and logging between compute and commit. Check fresh reads after
+swaps, grocery edits, stock changes and Undo. Keep code/compiler/test evidence
+separate from a deployed SHA and real staging endpoint/device evidence.
+
+Observe fixed-label phase metrics for pool checkout, SQL, mapping, selection,
+locks, commit, localization and AI attempts. Measure cold/warm p50/p95/p99,
+SQL bytes/counts, event-loop delay, projection fallback rate, worker queue age,
+attempts/expired leases, provider admission/timeouts, and lock duration. Measure
+deployed pool mode/capacity before changing API or worker replicas.
+
+Local evidence uses PostgreSQL 14 on a disposable localhost database. The
+combined integration suite passed 37 cases, including six projection/fence
+cases; a subsequent same-transaction publisher regression passed independently.
+Unicode and compact hard-filter unit cases passed independently. At 10,000 synthetic recipes,
+selection CPU improved while every generated coordinate remained equal to the
+baseline. Actual 1,000-row PostgreSQL COUNT/page plans did not justify a new
+index. These fixtures do not establish Neon plans, production catalog coverage,
+network latency, staging behavior or capacity at concurrent production load.
+Repeat EXPLAIN on representative deployed distributions before proposing an
+index, and use the generator CLI for any resulting schema change.
+
+### Authenticated workflow load
+
+`scripts/benchmarks/weekly_planner_load.py` measures eight fixed groups:
+`current`, `generate`, `plan_patch`, `ai_proposal`, `groceries`, `grocery_patch`,
+`slot_log`, and `recipes`. It requires a scenario file containing distinct
+preseeded test accounts and sequential HTTP steps; it does not create accounts
+or substitute IDs/revisions from earlier responses. Preseed each lane's current
+plan, valid patch revision, grocery state, pantry state and loggable slots in the
+dedicated environment. Store account JWTs only in the named environment
+variables, never in the JSON or reports. A minimal read-only lane is:
+
+```json
+{
+  "accounts": [{
+    "token_env": "TEST_PLANNER_TOKEN_01",
+    "locale": "en",
+    "workflows": [{
+      "group": "current",
+      "steps": [{
+        "method": "GET",
+        "path": "/v1/meal-plans/current?auto_generate=false",
+        "expected_status": [200]
+      }]
+    }]
+  }]
+}
+```
+
+Repeat account entries with distinct token variable names for the requested
+number of users. Every step uses a relative `/v1/` path and may supply `json`,
+`headers` and `expected_status`. Run reads first against dedicated staging:
+
+```bash
+.venv/bin/python scripts/benchmarks/weekly_planner_load.py \
+  --scenario /secure/path/planner-read-scenario.json \
+  --base-url "$PLANNER_LOAD_BASE_URL" --dedicated-test-target \
+  --users 50 --seconds 600
+```
+
+Read-only runs permit GET and require `auto_generate=false` on current-plan
+reads. For prepared mutation fixtures, add `--allow-test-mutations`; remote
+hosts also require `--dedicated-test-target`. Include actual AI proposal calls
+in a separate live-provider scenario with the same mutation opt-in, valid
+test-account fixtures and deployed provider deadlines. Separate cold and warm
+reads, deterministic generation, idempotent generation replay and provider
+calls. Repeated static idempotency headers measure replay; they do not measure
+fresh generation. Reset/reseed exhausted slot-log and revision-sensitive
+fixtures between runs, and expect specified conflict statuses where intentional.
+
+Capture per-group samples, p50/p95/p99, statuses, response bytes and unexpected
+responses alongside deployed SHA, flags, pool mode, cache state, worker load and
+provider timeout/attempt metrics. The CLI was locally compiled and guard-tested;
+authenticated staging and live-provider runs remain pending credentials and
+fixtures. Its default 50-user/600-second scenario is a measurement starting
+point, not production capacity proof.
+
+### Rollback
+
+There are no runtime switches: roll back by restoring the prior application
+image (and stopping any standalone worker). Retain expanded schema, canonical
+source tables,
+prepared overlays and durable jobs. Source triggers can continue to enqueue
+projection repair work while the worker is stopped; monitor backlog and replay
+bounded backfill before resuming. Canonical fallback remains available, and
+withdrawals continue to affect live source reads.
+
+Do not delete recipe rows, alter user plans, clear the operation ledger or run
+production downgrades as routine rollback. The migration owner must review any
+schema rollback and ensure no active binary/worker depends on removed tables or
+columns. A successful local upgrade/downgrade/upgrade cycle proves migration
+mechanics only.

@@ -14,6 +14,7 @@ from pymediator import SingletonRegistry
 from src.api.exceptions import MealTrackException
 from src.domain.events.base import DomainEvent, Event, EventHandler
 from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
     AIOutputValidationError,
     AIUnavailableError,
 )
@@ -121,7 +122,10 @@ class PyMediatorEventBus(EventBus):
             for param in signature.parameters.values()
             if param.default is inspect.Parameter.empty
             and param.kind
-            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
         ]
         if required_params:
             return handler
@@ -182,12 +186,15 @@ class PyMediatorEventBus(EventBus):
             MealTrackException,
             AIUnavailableError,
             AIOutputValidationError,
+            AIContentRejectedError,
             MealRecommendationCreationError,
         ) as e:
             # Controlled application exceptions and degraded AI-provider failures
             # are converted to proper HTTP responses by the API layer. Keep this
             # at debug so routine control flow does not produce duplicate ERRORs.
-            logger.debug(f"Application exception handling {event_type.__name__}: {str(e)}")
+            logger.debug(
+                f"Application exception handling {event_type.__name__}: {str(e)}"
+            )
             raise
         except Exception as e:
             logger.error(
@@ -229,9 +236,7 @@ class PyMediatorEventBus(EventBus):
                         f"Subscriber {i} for {event_type.__name__} failed: {result}",
                         exc_info=result,
                     )
-            logger.debug(
-                f"Processing completed for {event_type.__name__}"
-            )
+            logger.debug(f"Processing completed for {event_type.__name__}")
 
     def close(self):
         """Close event bus resources."""

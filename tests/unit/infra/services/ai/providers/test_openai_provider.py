@@ -1,9 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
+from openai import BadRequestError
 from pydantic import ValidationError
 
+from src.domain.exceptions.ai_exceptions import AIContentRejectedError
 from src.domain.model.ai.nutrition_contracts import VisionNutritionResponse
 from src.domain.ports.ai_provider_port import AICapability
 from src.infra.services.ai.ai_vision_errors import AIVisionError, AIVisionFailureKind
@@ -53,6 +56,47 @@ def test_openai_provider_capabilities():
     assert AICapability.TEXT_GENERATION in provider.supported_capabilities
     assert AICapability.VISION in provider.supported_capabilities
     assert AICapability.STRUCTURED_OUTPUT in provider.supported_capabilities
+
+
+def test_planner_uses_separate_cached_client_with_sdk_retries_disabled():
+    provider = _provider()
+    planner = provider._planner_langchain._llm(model="gpt-5.4-mini-2026-03-17")
+    shared = provider._langchain._llm(model="gpt-5.4-mini-2026-03-17")
+    assert planner is provider._planner_langchain._llm(model="gpt-5.4-mini-2026-03-17")
+    assert planner is not shared
+    assert planner.max_retries == 0
+    assert planner.root_async_client.max_retries == 0
+    assert shared.max_retries == 1
+    assert planner.request_timeout == 25
+    # Installed LangChain retains the per-attempt transport timeout when
+    # converting a request to Responses API input.
+    assert planner._get_request_payload("request", timeout=1.5)["timeout"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_planner_provider_bounds_transport_timeout_without_mutating_shared_client():
+    provider = _provider()
+    provider._planner_langchain.generate_structured = AsyncMock(
+        return_value=LangChainOpenAIResult(
+            parsed={"ok": True}, raw_message=SimpleNamespace()
+        )
+    )
+    provider._langchain.generate_structured = AsyncMock()
+    assert await provider.generate(
+        model="gpt-5.4-mini-2026-03-17",
+        prompt="request",
+        system_message="rules",
+        schema=VisionNutritionResponse,
+        purpose_hint="meal_plan_adjustment",
+        request_timeout_seconds=0.5,
+    ) == {"ok": True}
+    kwargs = provider._planner_langchain.generate_structured.await_args.kwargs
+    assert kwargs["request_kwargs"]["timeout"] == 0.5
+    assert kwargs["request_kwargs"]["prompt_cache_key"].startswith(
+        "mealtrack-test:meal_plan_adjustment:"
+    )
+    assert provider._langchain.generate_structured.await_count == 0
+    assert provider._langchain._max_retries == 1
 
 
 @pytest.mark.asyncio
@@ -233,6 +277,67 @@ async def test_generate_with_vision_classifies_validation_errors():
     assert exc_info.value.kind == AIVisionFailureKind.schema_validation
     assert exc_info.value.provider == "openai"
     assert exc_info.value.model == "gpt-5.4-mini-2026-03-17"
+
+
+def _bad_request(code):
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+    )
+    return BadRequestError(
+        "Invalid prompt", response=response, body={"code": code, "message": "x"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_maps_invalid_prompt_to_content_rejected():
+    provider = _provider()
+    provider._langchain.generate_structured = AsyncMock(
+        side_effect=_bad_request("invalid_prompt")
+    )
+
+    with pytest.raises(AIContentRejectedError) as exc_info:
+        await provider.generate(
+            model="gpt-5.6-luna",
+            prompt="flagged",
+            system_message="Return JSON.",
+            schema=VisionNutritionResponse,
+        )
+
+    assert exc_info.value.provider == "openai"
+    assert exc_info.value.model == "gpt-5.6-luna"
+
+
+@pytest.mark.asyncio
+async def test_generate_with_vision_maps_invalid_prompt_to_content_rejected():
+    provider = _provider()
+    provider._langchain.generate_vision_structured = AsyncMock(
+        side_effect=_bad_request("invalid_prompt")
+    )
+
+    with pytest.raises(AIContentRejectedError):
+        await provider.generate_with_vision(
+            model="gpt-5.4-mini-2026-03-17",
+            prompt="Identify food.",
+            image_data=b"image-bytes",
+            system_message="Return JSON.",
+            schema=VisionNutritionResponse,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_other_bad_requests():
+    provider = _provider()
+    provider._langchain.generate_structured = AsyncMock(
+        side_effect=_bad_request("invalid_request_error")
+    )
+
+    with pytest.raises(BadRequestError):
+        await provider.generate(
+            model="gpt-5.6-luna",
+            prompt="hi",
+            system_message="Return JSON.",
+            schema=VisionNutritionResponse,
+        )
 
 
 @pytest.mark.asyncio
