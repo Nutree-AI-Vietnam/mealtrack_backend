@@ -299,6 +299,15 @@ async def test_adapter_accepts_localized_equivalent_units(source, candidate, tar
             "en",
         ),
         ("Cho 1 lít nước ra cốc", "Pour 1 liter of water into a cup", "vi", "en"),
+        ("Thêm nửa muỗng cà phê muối", "Add half a teaspoon of salt", "vi", "en"),
+        ("Thêm nửa muỗng cafe bột ngọt", "Add 1/2 teaspoon MSG", "vi", "en"),
+        ("Chuẩn bị 7 cái ly sứ", "Prepare 7 medium-sized tea cups", "vi", "en"),
+        (
+            "Như ly đầu 1 cái, ly thứ hai 2 cái",
+            "1 in the first cup, 2 in the second",
+            "vi",
+            "en",
+        ),
     ],
 )
 def test_vietnamese_pairs_accept_classifier_and_spoon_variations(
@@ -332,6 +341,8 @@ def test_vietnamese_pairs_accept_classifier_and_spoon_variations(
             "vi",
             "en",
         ),
+        ("Thêm nửa muỗng cà phê muối", "Add a teaspoon of salt", "vi", "en"),
+        ("Chuẩn bị 7 cái ly", "Prepare 5 cups", "vi", "en"),
         ("Use 1 piece", "Usa 2 tazas", "en", "es"),
         ("Fry both sides twice", "Freír ambos lados 2 veces", "en", "es"),
     ],

@@ -85,7 +85,7 @@ _VIETNAMESE_CLASSIFIER_UNITS = frozenset(
     {"piece", "serving", "large", "medium", "small"}
 )
 _VIETNAMESE_GENERIC_UNIT_PATTERN = re.compile(
-    r"(?:(?<!\w)(?:thìa|muỗng|spoons?|spoonfuls?)|(?<=\d )bowls?|(?<=\d)bowls?)"
+    r"(?:(?<!\w)(?:thìa|muỗng|ly|spoons?|spoonfuls?)|(?<=\d )bowls?|(?<=\d)bowls?)"
     r"(?!\w)",
     re.IGNORECASE,
 )
@@ -100,11 +100,16 @@ _VIETNAMESE_GENERIC_UNIT_NORMALIZATION = {
     "spoonfuls": "spoon",
     "bowl": "cup",
     "bowls": "cup",
+    "ly": "cup",
     "portion": "serving",
     "portions": "serving",
 }
 _DIGIT_GLUED_UNIT_PATTERN = re.compile(r"(\d)([^\W\d_])")
+_FILLER_BREAK_PATTERN = re.compile(
+    r"[,.;:]|(?<!\w)(?:the|a|an|in|on|of|per|for|to|at)(?!\w)", re.IGNORECASE
+)
 _VIETNAMESE_NUMBER_WORDS = {
+    "nửa": "1/2",
     "một": "1",
     "hai": "2",
     "ba": "3",
@@ -124,16 +129,16 @@ _VIETNAMESE_NUMBER_WORD_PATTERN = re.compile(
 _SPELLED_MEASURE_PATTERNS = {
     "en": (
         re.compile(
-            r"(?<!\w)(?:a|an|one)(?=\s+(?:teaspoons?|tablespoons?|spoonfuls?|"
-            r"tsp|tbsp)(?!\w))",
+            r"(?<!\w)(?:half\s+an?|a|an|one)(?=\s+(?:teaspoons?|tablespoons?|"
+            r"spoonfuls?|tsp|tbsp)(?!\w))",
             re.IGNORECASE,
         ),
-        {"a": "1", "an": "1", "one": "1"},
+        {"half a": "1/2", "half an": "1/2", "a": "1", "an": "1", "one": "1"},
     ),
     "vi": (
         re.compile(
             r"(?<!\w)(?:" + "|".join(_VIETNAMESE_NUMBER_WORDS) + r")"
-            r"(?=\s+(?:thìa|muỗng)\s+(?:cà\s+phê|canh)(?!\w))",
+            r"(?=\s+(?:thìa|muỗng)\s+(?:cà\s+phê|cafe|canh)(?!\w))",
             re.IGNORECASE,
         ),
         _VIETNAMESE_NUMBER_WORDS,
@@ -641,7 +646,9 @@ def _spell_measures_as_digits(text: str, language: str) -> str:
     if language not in _SPELLED_MEASURE_PATTERNS:
         return text
     pattern, digits = _SPELLED_MEASURE_PATTERNS[language]
-    return pattern.sub(lambda match: digits[match.group().lower()], text)
+    return pattern.sub(
+        lambda match: digits[" ".join(match.group().lower().split())], text
+    )
 
 
 def _allowed_quantities(tokens: Sequence[str]) -> Counter[str]:
@@ -689,8 +696,14 @@ def _quantity_unit_signature(
             if quantity.end() <= start
             else text[end : quantity.start()]
         )
-        # Vietnamese pairs allow short fillers: "10 phút nữa" -> "10 more minutes".
-        if len(between.split()) <= (2 if relaxed else 0):
+        # Vietnamese pairs allow short fillers ("10 phút nữa" -> "10 more
+        # minutes"), but not across a clause break ("1 cái, ly thứ hai") or a
+        # new phrase ("2 in the second").
+        if not between.split() or (
+            relaxed
+            and len(between.split()) <= 2
+            and not _FILLER_BREAK_PATTERN.search(between)
+        ):
             pairs[
                 (quantity.group(), _normalize_unit_token(token, language, relaxed))
             ] += 1
