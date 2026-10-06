@@ -261,6 +261,122 @@ async def test_adapter_accepts_localized_equivalent_units(source, candidate, tar
     assert result.items == (candidate,)
 
 
+@pytest.mark.parametrize(
+    ("source", "candidate", "source_language", "target"),
+    [
+        ("2 quả cà chua", "2 tomatoes", "vi", "en"),
+        ("Chiên chín vàng 2 mặt", "Fry until golden on both sides", "vi", "en"),
+        ("1 thìa nước mắm", "1 tablespoon fish sauce", "vi", "en"),
+        ("1/2 muỗng hạt nêm", "1/2 teaspoon seasoning", "vi", "en"),
+        ("1 chén cơm", "1 bowl of rice", "vi", "en"),
+        ("Cắt thành miếng vừa ăn", "Cut into bite-size pieces", "vi", "en"),
+        ("2 tomatoes", "2 quả cà chua", "en", "vi"),
+        ("Cắt mỏng thịt heo", "Slice the pork thinly", "vi", "en"),
+        ("Nêm 1,5 muỗng cà phê hạt nêm", "Add 1.5 teaspoons seasoning", "vi", "en"),
+        ("Dùng 1.500 g gạo", "Use 1,500 g of rice", "vi", "en"),
+        ("Để khoảng 10 phút nữa", "Leave for about 10 more minutes", "vi", "en"),
+        ("Cho canh ra tô", "Pour the soup into a bowl", "vi", "en"),
+        ("Chiên mỗi mặt khoảng 2,3 phút", "Fry about 2-3 minutes per side", "vi", "en"),
+        ("Đổ 1,5 lít nước", "Pour in 1.5 liters of water", "vi", "en"),
+        ("Cho 20gr trà đen", "Add 20 g of black tea", "vi", "en"),
+        ("Thêm ½ phần bánh Oreo", "Add 1/2 of the Oreo crumbs", "vi", "en"),
+        ("1 phần khuấy với sữa", "Stir 1 portion with milk", "vi", "en"),
+        ("Xếp bánh Oreo", "Arrange the Oreo cookies, then the Oreo cream", "vi", "en"),
+        ("Cho vào tô 300ml nước", "Add 300 ml of water to a bowl", "vi", "en"),
+        ("Rắc một thìa cà phê hạt nêm", "Sprinkle 1 teaspoon of seasoning", "vi", "en"),
+        (
+            "Múc ra chén, thêm 1 thìa dầu",
+            "Ladle into a bowl, add a teaspoon of oil",
+            "vi",
+            "en",
+        ),
+        ("Thêm 1 thìa dầu", "Add 1 spoonful of oil", "vi", "en"),
+        ("Add 1 tablespoon of oil", "Thêm một thìa canh dầu", "en", "vi"),
+        (
+            "Thêm 80gr đường. Dùng muỗng khuấy đều",
+            "Add 80 g of sugar. Stir well with a spoon",
+            "vi",
+            "en",
+        ),
+        ("Cho 1 lít nước ra cốc", "Pour 1 liter of water into a cup", "vi", "en"),
+    ],
+)
+def test_vietnamese_pairs_accept_classifier_and_spoon_variations(
+    source, candidate, source_language, target
+):
+    adapter = OpenAITranslationAdapter(provider=None, model="translation-model")
+
+    assert adapter._safe_output(source, candidate, target, source_language)
+
+
+@pytest.mark.parametrize(
+    ("source", "candidate", "source_language", "target"),
+    [
+        ("Ướp 15 phút", "Marinate for 20 minutes", "vi", "en"),
+        ("Ướp 15 phút", "Marinate for 15 seconds", "vi", "en"),
+        ("1 thìa nước mắm", "1 cup fish sauce", "vi", "en"),
+        ("2 thìa nước mắm", "a spoon of fish sauce", "vi", "en"),
+        ("1 thìa dầu", "Add 2 spoonfuls of oil", "vi", "en"),
+        ("Chiên 2 mặt", "Fry 3 sides", "vi", "en"),
+        ("Nêm 1,5 muỗng cà phê", "Add 15 teaspoons", "vi", "en"),
+        ("Để 10 phút nữa", "Leave for 10 more seconds", "vi", "en"),
+        ("Để 10 phút", "Leave for 10 minutes and 5 seconds", "vi", "en"),
+        ("Chiên khoảng 2,5 phút", "Fry about 5 minutes", "vi", "en"),
+        ("Đổ 1 lít nước", "Pour in 1 cup of water", "vi", "en"),
+        ("Thêm ½ phần bánh", "Add 1/3 of the cake", "vi", "en"),
+        ("Xếp bánh Oreo", "Arrange the cookies", "vi", "en"),
+        ("Cho vào tô 300ml nước", "Add 300 g of water to a bowl", "vi", "en"),
+        (
+            "Rắc một thìa cà phê hạt nêm",
+            "Sprinkle 2 teaspoons of seasoning",
+            "vi",
+            "en",
+        ),
+        ("Use 1 piece", "Usa 2 tazas", "en", "es"),
+        ("Fry both sides twice", "Freír ambos lados 2 veces", "en", "es"),
+    ],
+)
+def test_relaxed_check_still_rejects_changed_quantities(
+    source, candidate, source_language, target
+):
+    adapter = OpenAITranslationAdapter(provider=None, model="translation-model")
+
+    assert not adapter._safe_output(source, candidate, target, source_language)
+
+
+@pytest.mark.asyncio
+async def test_vietnamese_unchanged_answer_confirmed_by_repair_is_accepted():
+    unchanged = OpenAIStructuredGenerationResult(
+        parsed=OpenAITranslationBatch(
+            items=[OpenAITranslationItem(index=0, text="Chanh")]
+        )
+    )
+    provider = AsyncMock()
+    provider.generate_structured_result.side_effect = [unchanged, unchanged]
+    adapter = OpenAITranslationAdapter(provider=provider, model="translation-model")
+
+    result = await adapter.translate_texts(["Chanh"], "en", "vi")
+
+    assert result.outcome is TranslationOutcome.TRANSLATED
+    assert provider.generate_structured_result.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unchanged_answer_for_other_languages_stays_partial():
+    unchanged = OpenAIStructuredGenerationResult(
+        parsed=OpenAITranslationBatch(
+            items=[OpenAITranslationItem(index=0, text="Chicken")]
+        )
+    )
+    provider = AsyncMock()
+    provider.generate_structured_result.side_effect = [unchanged, unchanged]
+    adapter = OpenAITranslationAdapter(provider=provider, model="translation-model")
+
+    result = await adapter.translate_texts(["Chicken"], "en", "fr")
+
+    assert result.outcome is TranslationOutcome.PARTIAL
+
+
 @pytest.mark.asyncio
 async def test_adapter_allows_reverse_translation_to_english_food_terms():
     provider = AsyncMock()
