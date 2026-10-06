@@ -67,16 +67,21 @@ async def prepare_pending_catalog(
                     processed += 1
                     try:
                         worked = await worker.run_once()
-                    except Exception:
+                    except Exception as exc:
                         processed -= 1
                         errors += 1
-                        logger.exception(
-                            "catalog preparation job failed (%s/%s in a row)",
+                        if errors >= max_consecutive_errors:
+                            logger.exception(
+                                "catalog preparation lane stopped after %s errors",
+                                errors,
+                            )
+                            return
+                        logger.warning(
+                            "catalog preparation job failed, retrying (%s/%s): %r",
                             errors,
                             max_consecutive_errors,
+                            exc,
                         )
-                        if errors >= max_consecutive_errors:
-                            return
                         await asyncio.sleep(retry_delay_seconds * errors)
                         continue
                     errors = 0
