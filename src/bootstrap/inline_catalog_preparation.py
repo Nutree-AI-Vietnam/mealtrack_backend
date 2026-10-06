@@ -15,11 +15,19 @@ def preparation_locales() -> tuple[str, ...]:
     return tuple(locale.strip() for locale in raw.split(",") if locale.strip())
 
 
-async def prepare_pending_catalog(*, concurrency: int = 2, max_jobs: int = 5000) -> int:
+async def prepare_pending_catalog(
+    *,
+    concurrency: int = 2,
+    max_jobs: int = 5000,
+    max_consecutive_errors: int = 5,
+    retry_delay_seconds: float = 2.0,
+) -> int:
     """Run every claimable preparation job to completion, then return.
 
     Jobs that fail are left in retry_wait with a future availability time, so
     the loop always ends; the next import or backfill picks them up again.
+    Infrastructure errors (e.g. a dropped database connection) are retried
+    with backoff; a lane stops after ``max_consecutive_errors`` in a row.
     """
     from src.bootstrap.catalog_preparation import build_preparation_computer
     from src.infra.config.settings import settings
@@ -52,16 +60,31 @@ async def prepare_pending_catalog(*, concurrency: int = 2, max_jobs: int = 5000)
 
             async def lane() -> None:
                 nonlocal processed
+                errors = 0
                 while processed < max_jobs:
                     # Reserve the slot before awaiting so concurrent lanes
                     # cannot all pass the check and overshoot max_jobs.
                     processed += 1
                     try:
                         worked = await worker.run_once()
-                    except Exception:
+                    except Exception as exc:
                         processed -= 1
-                        logger.exception("catalog preparation job failed")
-                        return
+                        errors += 1
+                        if errors >= max_consecutive_errors:
+                            logger.exception(
+                                "catalog preparation lane stopped after %s errors",
+                                errors,
+                            )
+                            return
+                        logger.warning(
+                            "catalog preparation job failed, retrying (%s/%s): %r",
+                            errors,
+                            max_consecutive_errors,
+                            exc,
+                        )
+                        await asyncio.sleep(retry_delay_seconds * errors)
+                        continue
+                    errors = 0
                     if not worked:
                         processed -= 1
                         return

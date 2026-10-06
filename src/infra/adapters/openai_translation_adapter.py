@@ -53,7 +53,7 @@ _LOCALIZED_UNIT_PATTERN = re.compile(
     r"cucharaditas?|tazas?|"
     r"livres?|onces?|tasses?|"
     r"gramm|kilogramm|pfund|unze|minuten|sekunden?|tassen?|"
-    r"gam|phút|giây|cốc|minutos?|segundos?|"
+    r"gam|gr|lít|phút|giây|cốc|minutos?|segundos?|"
     r"グラム|キログラム|ミリリットル|リットル|ポンド|オンス|大さじ|小さじ|"
     r"カップ|分間|分钟|毫升|千克|公斤|毫克|汤匙|茶匙|盎司)"
     r"(?![A-Za-z0-9_])",
@@ -79,6 +79,71 @@ _LOCALIZED_NUMERIC_UNIT_PATTERN = re.compile(
     r"portions|stück|scheibe)(?!\w))",
     re.IGNORECASE,
 )
+# Vietnamese counting words (quả, cái, miếng…) and bare "spoon"/"bowl" have no
+# exact counterpart, so pairs involving Vietnamese compare a coarser signature.
+_VIETNAMESE_CLASSIFIER_UNITS = frozenset(
+    {"piece", "serving", "large", "medium", "small"}
+)
+_VIETNAMESE_GENERIC_UNIT_PATTERN = re.compile(
+    r"(?:(?<!\w)(?:thìa|muỗng|ly|spoons?|spoonfuls?)|(?<=\d )bowls?|(?<=\d)bowls?)"
+    r"(?!\w)",
+    re.IGNORECASE,
+)
+_VIETNAMESE_GENERIC_UNIT_NORMALIZATION = {
+    "tbsp": "spoon",
+    "tsp": "spoon",
+    "thìa": "spoon",
+    "muỗng": "spoon",
+    "spoon": "spoon",
+    "spoons": "spoon",
+    "spoonful": "spoon",
+    "spoonfuls": "spoon",
+    "bowl": "cup",
+    "bowls": "cup",
+    "ly": "cup",
+    "portion": "serving",
+    "portions": "serving",
+}
+_DIGIT_GLUED_UNIT_PATTERN = re.compile(r"(\d)([^\W\d_])")
+_FILLER_BREAK_PATTERN = re.compile(
+    r"[,.;:]|(?<!\w)(?:the|a|an|in|on|of|per|for|to|at)(?!\w)", re.IGNORECASE
+)
+_VIETNAMESE_NUMBER_WORDS = {
+    "nửa": "1/2",
+    "một": "1",
+    "hai": "2",
+    "ba": "3",
+    "bốn": "4",
+    "năm": "5",
+    "sáu": "6",
+    "bảy": "7",
+    "tám": "8",
+    "chín": "9",
+    "mười": "10",
+}
+_VIETNAMESE_NUMBER_WORD_PATTERN = re.compile(
+    r"(?<!\w)(?:" + "|".join(_VIETNAMESE_NUMBER_WORDS) + r")(?!\w)", re.IGNORECASE
+)
+# "a teaspoon" / "một thìa cà phê" stand for 1 only before a word that is always
+# a measure; "with a spoon" or "into a cup" name the utensil.
+_SPELLED_MEASURE_PATTERNS = {
+    "en": (
+        re.compile(
+            r"(?<!\w)(?:half\s+an?|a|an|one)(?=\s+(?:teaspoons?|tablespoons?|"
+            r"spoonfuls?|tsp|tbsp)(?!\w))",
+            re.IGNORECASE,
+        ),
+        {"half a": "1/2", "half an": "1/2", "a": "1", "an": "1", "one": "1"},
+    ),
+    "vi": (
+        re.compile(
+            r"(?<!\w)(?:" + "|".join(_VIETNAMESE_NUMBER_WORDS) + r")"
+            r"(?=\s+(?:thìa|muỗng)\s+(?:cà\s+phê|cafe|canh)(?!\w))",
+            re.IGNORECASE,
+        ),
+        _VIETNAMESE_NUMBER_WORDS,
+    ),
+}
 _KNOWN_BRAND_PATTERN = re.compile(
     r"(?<!\w)(?:coca-cola|nutella|pepsi|kellogg's|oreo|nescafé|nestlé|"
     r"starbucks|mcdonald's|kfc)(?!\w)",
@@ -88,6 +153,7 @@ _UNIT_NORMALIZATION = {
     "mg": "mg",
     "mcg": "mcg",
     "g": "g",
+    "gr": "g",
     "gram": "g",
     "grams": "g",
     "gramme": "g",
@@ -168,6 +234,7 @@ _LOCALIZED_UNIT_NORMALIZATION = {
         "suất": "serving",
         "khẩu phần": "serving",
         "gam": "g",
+        "lít": "l",
         "phút": "min",
         "giây": "sec",
         "cốc": "cup",
@@ -383,6 +450,7 @@ class OpenAITranslationAdapter(TextTranslationPort):
                 target=target,
                 source=source,
                 indexes=missing,
+                accept_confirmed_unchanged="vi" in (source, target),
             )
             partial = partial or repair_result.incomplete or bool(missing)
         partial = partial or bool(missing)
@@ -448,12 +516,21 @@ class OpenAITranslationAdapter(TextTranslationPort):
         target: str,
         source: str,
         indexes: Sequence[int] | None = None,
+        accept_confirmed_unchanged: bool = False,
     ) -> list[int]:
         missing: list[int] = []
         for index in indexes or range(len(original)):
             candidate = by_index.get(index)
-            if candidate is None or not self._safe_output(
-                original[index], candidate, target, source
+            # A second unchanged answer means the word is shared by both
+            # languages (e.g. "Chanh" read as English), not untranslated.
+            confirmed = (
+                accept_confirmed_unchanged
+                and candidate is not None
+                and candidate.strip() == original[index].strip()
+            )
+            if candidate is None or not (
+                confirmed
+                or self._safe_output(original[index], candidate, target, source)
             ):
                 missing.append(index)
             else:
@@ -474,6 +551,8 @@ class OpenAITranslationAdapter(TextTranslationPort):
         limit = max(256, 4 * len(source.encode("utf-8")))
         if len(translated.encode("utf-8")) > limit:
             return False
+        if "vi" in (source_language, target):
+            return _vietnamese_pair_is_safe(source, translated, source_language, target)
         if Counter(_TOKEN_PATTERN.findall(source)) != Counter(
             _TOKEN_PATTERN.findall(translated)
         ):
@@ -507,6 +586,83 @@ class OpenAITranslationAdapter(TextTranslationPort):
         )
 
 
+def _vietnamese_pair_is_safe(
+    source: str, translated: str, source_language: str, target: str
+) -> bool:
+    """Coarser guard for Vietnamese, whose phrasing rarely maps word for word.
+
+    Numbers may turn into words ("2 mặt" -> "both sides") but never appear, a
+    unit only matters next to its quantity ("slice thinly" is a verb), and a
+    translation may not drop a quantity-unit pair or attach a new one.
+    """
+    source = _normalize_numbers(source)
+    translated = _spell_measures_as_digits(_normalize_numbers(translated), target)
+    # Spelled-out numbers ("một thìa") may legitimately become digits.
+    spelled = (
+        _VIETNAMESE_NUMBER_WORD_PATTERN.sub(
+            lambda match: _VIETNAMESE_NUMBER_WORDS[match.group().lower()], source
+        )
+        if source_language == "vi"
+        else source
+    )
+    source_tokens = _TOKEN_PATTERN.findall(source)
+    translated_tokens = _TOKEN_PATTERN.findall(translated)
+    if Counter(_quantity_token(t) for t in translated_tokens) - _allowed_quantities(
+        _TOKEN_PATTERN.findall(spelled)
+    ):
+        return False
+    if Counter(t for t in source_tokens if t.startswith("{")) != Counter(
+        t for t in translated_tokens if t.startswith("{")
+    ):
+        return False
+    source_pairs = _quantity_unit_signature(source, source_language, relaxed=True)
+    translated_pairs: Counter[tuple[str, str]] = Counter()
+    for (quantity, unit), count in _quantity_unit_signature(
+        translated, target, relaxed=True
+    ).items():
+        translated_pairs[(_quantity_token(quantity), unit)] += count
+    allowed_pairs: Counter[tuple[str, str]] = Counter()
+    for (quantity, unit), count in (
+        source_pairs | _quantity_unit_signature(spelled, source_language, relaxed=True)
+    ).items():
+        for alternative in _allowed_quantities([quantity]):
+            allowed_pairs[(alternative, unit)] += count
+    if translated_pairs - allowed_pairs or sum(translated_pairs.values()) < sum(
+        source_pairs.values()
+    ):
+        return False
+    return set(_KNOWN_BRAND_PATTERN.findall(source.lower())) == set(
+        _KNOWN_BRAND_PATTERN.findall(translated.lower())
+    )
+
+
+def _normalize_numbers(text: str) -> str:
+    text = text.replace("½", "1/2").replace("¼", "1/4").replace("¾", "3/4")
+    # "300ml" and "300 ml" are the same quantity.
+    return _DIGIT_GLUED_UNIT_PATTERN.sub(r"\1 \2", text)
+
+
+def _spell_measures_as_digits(text: str, language: str) -> str:
+    if language not in _SPELLED_MEASURE_PATTERNS:
+        return text
+    pattern, digits = _SPELLED_MEASURE_PATTERNS[language]
+    return pattern.sub(
+        lambda match: digits[" ".join(match.group().lower().split())], text
+    )
+
+
+def _allowed_quantities(tokens: Sequence[str]) -> Counter[str]:
+    allowed: Counter[str] = Counter()
+    for token in tokens:
+        allowed[_quantity_token(token)] += 1
+        # "2,3 phút" is a 2-3 minute range in Vietnamese, not 2.3 minutes.
+        low, comma, high = token.partition(",")
+        if comma and low.isdigit() and high.isdigit() and int(high) == int(low) + 1:
+            allowed[low] += 1
+            allowed[high] += 1
+    return allowed
+
+
 def _unit_signature(text: str, language: str) -> Counter[str]:
     return Counter(
         _normalize_unit_token(token, language)
@@ -514,14 +670,18 @@ def _unit_signature(text: str, language: str) -> Counter[str]:
     )
 
 
-def _quantity_unit_signature(text: str, language: str) -> Counter[tuple[str, str]]:
+def _quantity_unit_signature(
+    text: str, language: str, relaxed: bool = False
+) -> Counter[tuple[str, str]]:
     quantities = list(_TOKEN_PATTERN.finditer(text))
     pairs: Counter[tuple[str, str]] = Counter()
-    for start, end, token in _unit_matches(text, language):
+    for start, end, token in _unit_matches(text, language, relaxed):
+        # Vietnamese and English put the quantity first, so "tô 300 ml" pairs
+        # 300 with ml only.
         nearby = [
             quantity
             for quantity in quantities
-            if quantity.end() <= start or quantity.start() >= end
+            if quantity.end() <= start or (not relaxed and quantity.start() >= end)
         ]
         if not nearby:
             continue
@@ -536,15 +696,34 @@ def _quantity_unit_signature(text: str, language: str) -> Counter[tuple[str, str
             if quantity.end() <= start
             else text[end : quantity.start()]
         )
-        if not between.strip():
-            pairs[(quantity.group(), _normalize_unit_token(token, language))] += 1
+        # Vietnamese pairs allow short fillers ("10 phút nữa" -> "10 more
+        # minutes"), but not across a clause break ("1 cái, ly thứ hai") or a
+        # new phrase ("2 in the second").
+        if not between.split() or (
+            relaxed
+            and len(between.split()) <= 2
+            and not _FILLER_BREAK_PATTERN.search(between)
+        ):
+            pairs[
+                (quantity.group(), _normalize_unit_token(token, language, relaxed))
+            ] += 1
     return pairs
 
 
-def _unit_matches(text: str, language: str) -> list[tuple[int, int, str]]:
+def _quantity_token(token: str) -> str:
+    # Vietnamese swaps decimal and thousands separators (1,5 kg / 1.500 g).
+    return token.replace(",", ".")
+
+
+def _unit_matches(
+    text: str, language: str, relaxed: bool = False
+) -> list[tuple[int, int, str]]:
+    patterns: tuple[re.Pattern[str], ...] = (_UNIT_PATTERN, _LOCALIZED_UNIT_PATTERN)
+    if relaxed:
+        patterns += (_VIETNAMESE_GENERIC_UNIT_PATTERN,)
     matches = [
         (match.start(), match.end(), match.group())
-        for pattern in (_UNIT_PATTERN, _LOCALIZED_UNIT_PATTERN)
+        for pattern in patterns
         for match in pattern.finditer(text)
     ]
     for pattern in (_CJK_NUMERIC_UNIT_PATTERN, _LOCALIZED_NUMERIC_UNIT_PATTERN):
@@ -559,15 +738,25 @@ def _unit_matches(text: str, language: str) -> list[tuple[int, int, str]]:
         if any(candidate[0] < end and start < candidate[1] for start, end, _ in unique):
             continue
         unique.append(candidate)
+    if relaxed:
+        unique = [
+            match
+            for match in unique
+            if _normalize_unit_token(match[2], language, relaxed)
+            not in _VIETNAMESE_CLASSIFIER_UNITS
+        ]
     return unique
 
 
-def _normalize_unit_token(token: str, language: str) -> str:
+def _normalize_unit_token(token: str, language: str, relaxed: bool = False) -> str:
     normalized = token.lower()
-    return _UNIT_NORMALIZATION.get(
+    unit = _UNIT_NORMALIZATION.get(
         normalized,
         _LOCALIZED_UNIT_NORMALIZATION.get(language, {}).get(normalized, normalized),
     )
+    if relaxed:
+        return _VIETNAMESE_GENERIC_UNIT_NORMALIZATION.get(unit, unit)
+    return unit
 
 
 def _is_invariant_only(text: str) -> bool:
