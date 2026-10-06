@@ -494,9 +494,9 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         if row is None:
             return None
         if _is_late_legacy_row(row):
-            # Lock, then repair, so a concurrent writer cannot keep the 14-slot
-            # shape. Reading bumps the revision; an in-flight meal edit repairs
-            # inside its own lock and still matches the revision it loaded.
+            # Lock, then repair. Leave revision unchanged: the service loads
+            # the plan and then saves it with the revision the client sent.
+            # Bumping here makes that save a 409 and rolls the repair back.
             locked = await self.get_for_update(
                 user_id=user_id,
                 plan_id=cast(str, row.id),
@@ -504,9 +504,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             )
             if locked is None:
                 return None
-            if await self._repair_late_legacy_slots(locked):
-                locked.revision = int(locked.revision) + 1
-                await self.session.flush()
+            await self._repair_late_legacy_slots(locked)
             return _to_domain(locked)
         return _to_domain(row)
 

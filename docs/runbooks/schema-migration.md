@@ -51,8 +51,9 @@ the stored plans are valid.
 
 The current server also repairs that same shape when a plan is loaded or
 updated, so a three-slot deploy can serve those plans before this migration
-runs. A read bumps the plan revision. A meal or day-note write repairs inside
-the call and still accepts the revision the client loaded.
+runs. That in-request repair does not change the plan revision, so a save
+still matches the revision the client loaded. The migration below does bump
+revision, because it repairs plans that no open client has reloaded.
 
 For the bulk repair, first verify that every production writer is running the
 three-slot planner and drain older instances. Then apply the repair migration

@@ -78,6 +78,8 @@ async def test_repair_moves_lunch_and_dinner_and_can_be_read():
     loaded = _to_domain(plan)
     assert len(loaded.slots) == 21
     assert loaded.status is WeeklyMealPlanStatus.DRAFT
+    # The following save still sends this revision. A bump here would 409.
+    assert plan.revision == 4
     assert loaded.revision == 4
 
 
