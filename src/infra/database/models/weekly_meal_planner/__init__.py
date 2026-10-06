@@ -5,6 +5,7 @@ from .weekly_grocery_item_state import WeeklyGroceryItemStateORM
 from .weekly_meal_plan import WeeklyMealPlanORM
 from .weekly_meal_plan_pantry_item import WeeklyMealPlanPantryItemORM
 from .weekly_meal_plan_slot import WeeklyMealPlanSlotORM
+from .weekly_plan_late_legacy_slot_repair import WeeklyPlanLateLegacySlotRepairORM
 
 __all__ = [
     "WeeklyMealPlanORM",
@@ -12,4 +13,5 @@ __all__ = [
     "WeeklyMealPlanPantryItemORM",
     "WeeklyGroceryItemStateORM",
     "WeeklyGroceryDayLineORM",
+    "WeeklyPlanLateLegacySlotRepairORM",
 ]

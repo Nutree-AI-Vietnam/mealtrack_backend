@@ -67,6 +67,24 @@ def test_generation_covers_all_weekly_coordinates_deterministically():
     assert {slot.recipe_id for slot in first} == {"tofu"}
 
 
+def test_breakfast_uses_a_simple_dish_when_salmon_is_also_eligible():
+    generated = WeeklyPlanGenerationService().generate(
+        [
+            _meal("salmon", "Cháo cá hồi", meal_types=("breakfast",)),
+            _meal("eggs", "Trứng ốp la", meal_types=("breakfast",)),
+            _meal("tofu", "Tofu", meal_types=("lunch",)),
+            _meal("soup", "Canh rau", meal_types=("dinner",)),
+        ],
+        user_id="user-1",
+        week_start_date="2026-09-21",
+        daily_calories=1800,
+        preferences=WeeklyMealPlanPreferences(),
+    )
+
+    breakfasts = {slot.recipe_id for slot in generated if slot.slot_index == 0}
+    assert breakfasts == {"eggs"}
+
+
 def test_generation_assigns_each_meal_type_to_its_slot():
     generated = WeeklyPlanGenerationService().generate(
         [

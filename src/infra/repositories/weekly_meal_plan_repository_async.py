@@ -25,6 +25,9 @@ from src.domain.model.weekly_meal_planner import (
 from src.domain.ports.weekly_meal_plan_repository_port import (
     WeeklyMealPlanRepositoryPort,
 )
+from src.domain.services.weekly_meal_planner.late_legacy_slot_shape import (
+    is_late_legacy_two_slot_plan,
+)
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     WeeklyPlanGenerationService,
 )
@@ -160,6 +163,9 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         if row is None:
             return None  # type: ignore[return-value]
         row = cast(Any, row)
+        # Repair before the revision check. The client loaded this revision
+        # against the two-slot grid; dinner is slot 2 only after the shift.
+        await self._repair_late_legacy_slots(row)
         if expected_revision is not None and row.revision != expected_revision:
             raise WeeklyMealPlanConflictError(
                 "Weekly meal plan changed since it was loaded",
@@ -231,6 +237,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         row = await self.get_for_update(user_id=user_id, plan_id=plan_id)
         if row is None:
             return None  # type: ignore[return-value]
+        await self._repair_late_legacy_slots(row)
         by_food = {item.food_reference_id: item for item in row.pantry_items}
         state_result = await self.session.execute(
             select(WeeklyGroceryItemStateORM).where(
@@ -353,6 +360,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         row = await self.get_for_update(user_id=user_id, plan_id=plan_id)
         if row is None:
             return None
+        await self._repair_late_legacy_slots(row)
         existing = await self.session.execute(
             select(WeeklyGroceryDayLineORM).where(
                 WeeklyGroceryDayLineORM.plan_id == plan_id,
@@ -483,7 +491,66 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             stmt = stmt.where(WeeklyMealPlanORM.week_start_date == week_start_date)
         result = await self.session.execute(stmt)
         row = result.scalar_one_or_none()
-        return _to_domain(row) if row else None
+        if row is None:
+            return None
+        if _is_late_legacy_row(row):
+            # Lock, then repair, so a concurrent writer cannot keep the 14-slot
+            # shape. Reading bumps the revision; an in-flight meal edit repairs
+            # inside its own lock and still matches the revision it loaded.
+            locked = await self.get_for_update(
+                user_id=user_id,
+                plan_id=cast(str, row.id),
+                include_pantry=False,
+            )
+            if locked is None:
+                return None
+            if await self._repair_late_legacy_slots(locked):
+                locked.revision = int(locked.revision) + 1
+                await self.session.flush()
+            return _to_domain(locked)
+        return _to_domain(row)
+
+    async def _repair_late_legacy_slots(self, row: WeeklyMealPlanORM) -> bool:
+        """Move lunch/dinner to slots 1 and 2 and insert an empty breakfast.
+
+        Existing slot ids, recipes, and logged-meal links stay on their rows.
+        Returns whether this call changed the plan. A second call is a no-op.
+        """
+        if not _is_late_legacy_row(row):
+            return False
+        slots = list(row.slots)
+        dinners = [slot for slot in slots if int(slot.slot_index) == 1]
+        lunches = [slot for slot in slots if int(slot.slot_index) == 0]
+        for slot in dinners:
+            slot.slot_index = 2
+        await self.session.flush()
+        for slot in lunches:
+            slot.slot_index = 1
+        await self.session.flush()
+        plan_id = cast(str, row.id)
+        for day in range(WEEKLY_DAYS):
+            row.slots.append(
+                WeeklyMealPlanSlotORM(
+                    id=str(uuid.uuid4()),
+                    plan_id=plan_id,
+                    day_index=day,
+                    slot_index=0,
+                    is_logged=False,
+                    version=1,
+                )
+            )
+        await self.session.flush()
+        return True
+
+
+def _is_late_legacy_row(row: WeeklyMealPlanORM) -> bool:
+    data = cast(Any, row)
+    coordinates = {(int(slot.day_index), int(slot.slot_index)) for slot in data.slots}
+    return is_late_legacy_two_slot_plan(
+        algorithm_version=cast(str, data.algorithm_version),
+        status=cast(str, data.status),
+        coordinates=coordinates,
+    )
 
 
 def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
