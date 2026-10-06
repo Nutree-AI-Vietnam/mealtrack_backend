@@ -22,6 +22,7 @@ from src.infra.repositories.catalog_recipe_repository_async import (
 )
 from src.infra.repositories.chat_repository_async import AsyncChatRepository
 from src.infra.repositories.cheat_day_repository_async import AsyncCheatDayRepository
+from src.infra.repositories.vacation_repository_async import AsyncVacationRepository
 from src.infra.repositories.daily_target_snapshot_repository_async import (
     AsyncDailyTargetSnapshotRepository,
 )
@@ -148,6 +149,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.users = AsyncUserRepository(session)
         self.weekly_budgets = AsyncWeeklyBudgetRepository(session)
         self.cheat_days = AsyncCheatDayRepository(session)
+        self.vacations = AsyncVacationRepository(session)
         self.daily_target_snapshots = AsyncDailyTargetSnapshotRepository(session)
         self.subscriptions = AsyncSubscriptionRepository(session)
         self.notifications = AsyncNotificationRepository(session)

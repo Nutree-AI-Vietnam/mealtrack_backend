@@ -18,6 +18,12 @@ from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly import WeeklyMacroBudget
 from src.domain.services.daily_target_snapshot_service import maybe_write_today_snapshot
 from src.domain.services.meal_calorie_service import effective_meal_calories
+from src.domain.services.vacation_rules import (
+    VacationWindow,
+    covering,
+    quiet_day_hold,
+    to_window,
+)
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
 
 logger = logging.getLogger(__name__)
@@ -533,6 +539,9 @@ class WeeklyBudgetService:
         else:
             all_cheat_dates = cheat_dates
 
+        windows = await _vacation_windows(uow, user_id)
+        covered = covering(windows, target_date)
+
         if weekly_preload is not None:
             result = calc._apply_effective_adjusted_policy(
                 weekly_budget=weekly_budget,
@@ -550,6 +559,14 @@ class WeeklyBudgetService:
                 consumed_for_redistribution=weekly_preload.consumed_for_redistribution,
                 auto_adjust=auto_adjust,
             )
+            if covered is not None:
+                return replace(
+                    result,
+                    adjusted=_frozen_daily_targets(
+                        covered, result.adjusted.remaining_days
+                    ),
+                    show_logging_prompt=False,
+                )
             await maybe_write_today_snapshot(
                 uow, user_id, target_date, result.adjusted.calories, user_timezone
             )
@@ -558,6 +575,7 @@ class WeeklyBudgetService:
         past_end = target_date - timedelta(days=1)
         past_days_count = (target_date - week_start).days
         logged_past_days = 0
+        daily_counts: dict = {}
         if past_days_count > 0:
             daily_counts = await uow.meals.get_daily_meal_counts(
                 user_id,
@@ -642,6 +660,35 @@ class WeeklyBudgetService:
             }
         else:
             consumed_for_redistribution = consumed_before_today
+
+        if covered is not None:
+            return EffectiveAdjustedResult(
+                adjusted=_frozen_daily_targets(
+                    covered,
+                    calc.calculate_remaining_days(week_start, target_date),
+                ),
+                consumed_before_today=consumed_before_today,
+                consumed_total=consumed_total,
+                logged_past_days=logged_past_days,
+                skipped_days=0,
+                show_logging_prompt=False,
+            )
+
+        day = week_start
+        while day < target_date:
+            hold = quiet_day_hold(windows, day, day in daily_counts)
+            if hold is not None:
+                consumed_for_redistribution = {
+                    **consumed_for_redistribution,
+                    "calories": consumed_for_redistribution["calories"]
+                    + hold.frozen_calories,
+                    "protein": consumed_for_redistribution["protein"]
+                    + hold.frozen_protein,
+                    "carbs": consumed_for_redistribution["carbs"] + hold.frozen_carbs,
+                    "fat": consumed_for_redistribution["fat"] + hold.frozen_fat,
+                }
+                logged_past_days += 1
+            day += timedelta(days=1)
 
         result = calc._apply_effective_adjusted_policy(
             weekly_budget=weekly_budget,
@@ -866,3 +913,30 @@ class WeeklyBudgetService:
         if target_date > week_end:
             return 0
         return (week_end - target_date).days + 1
+
+
+def _frozen_daily_targets(
+    window: VacationWindow, remaining_days: int
+) -> AdjustedDailyTargets:
+    return AdjustedDailyTargets(
+        calories=round(window.frozen_calories, 1),
+        carbs=round(window.frozen_carbs, 1),
+        fat=round(window.frozen_fat, 1),
+        protein=round(window.frozen_protein, 1),
+        bmr_floor_active=False,
+        remaining_days=remaining_days,
+    )
+
+
+async def _vacation_windows(uow: Any, user_id: str) -> list[VacationWindow]:
+    repo = getattr(uow, "vacations", None)
+    finder = getattr(repo, "find_by_user", None)
+    if not callable(finder):
+        return []
+    try:
+        rows = await finder(user_id)
+    except TypeError:
+        return []
+    if not isinstance(rows, list):
+        return []
+    return [to_window(row) for row in rows]
