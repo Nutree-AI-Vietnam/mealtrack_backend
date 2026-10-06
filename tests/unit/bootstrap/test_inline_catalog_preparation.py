@@ -57,10 +57,24 @@ async def test_runs_jobs_until_none_are_claimable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_job_error_stops_the_lane_and_releases_the_engine(monkeypatch):
-    engine, _ = _install(monkeypatch, [True, RuntimeError("db down"), True])
+async def test_transient_error_is_retried(monkeypatch):
+    engine, _ = _install(monkeypatch, [True, ConnectionResetError(), True, True, False])
 
-    processed = await prepare_pending_catalog(concurrency=1)
+    processed = await prepare_pending_catalog(concurrency=1, retry_delay_seconds=0)
+
+    assert processed == 3
+    assert engine.disposed
+
+
+@pytest.mark.asyncio
+async def test_repeated_errors_stop_the_lane_and_release_the_engine(monkeypatch):
+    engine, _ = _install(
+        monkeypatch, [True, RuntimeError("db down"), RuntimeError("db down"), True]
+    )
+
+    processed = await prepare_pending_catalog(
+        concurrency=1, max_consecutive_errors=2, retry_delay_seconds=0
+    )
 
     assert processed == 1
     assert engine.disposed

@@ -832,6 +832,7 @@ class WeeklyMealPlanService:
             replacement = min(
                 candidates,
                 key=lambda meal: (
+                    self.generator.selection_rank(meal, slot.slot_index),
                     not self.generator.is_soft_eligible(meal, preferences),
                     usage[meal.id],
                     meal.popularity_rank
@@ -1412,6 +1413,7 @@ def _ai_shortlist(
     eligible.sort(
         key=lambda meal: (
             0 if named is not None and named.id == meal.id else 1,
+            generator.selection_rank(meal, target[1]) if target is not None else (0, 0),
             0 if generator.is_soft_eligible(meal, preferences) else 1,
             meal.popularity_rank if meal.popularity_rank is not None else 2_147_483_647,
             meal.id,
