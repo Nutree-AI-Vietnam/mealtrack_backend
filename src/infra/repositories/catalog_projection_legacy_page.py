@@ -21,6 +21,9 @@ async def legacy_recipe_page(
     from src.domain.services.weekly_meal_planner.allergen_constraint import (
         recipe_excluded_by_allergen,
     )
+    from src.domain.services.weekly_meal_planner.meal_practicality import (
+        practicality_rank,
+    )
     from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
         is_non_meal_title,
     )
@@ -70,6 +73,16 @@ async def legacy_recipe_page(
         filtered.append(meal)
     filtered.sort(
         key=lambda meal: (
+            practicality_rank(
+                meal.name,
+                meal_type,
+                total_minutes=int(meal.prep_time_minutes or 0)
+                + int(meal.cook_time_minutes or 0),
+                ingredient_count=len(meal.ingredients),
+                non_meal=is_non_meal_title(meal.name, meal.tag),
+            )
+            if meal_type in SLOT_MEAL_TYPES
+            else (0, 0),
             meal.popularity_rank is None,
             meal.popularity_rank or 0,
             meal.name.casefold(),

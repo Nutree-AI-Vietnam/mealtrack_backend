@@ -4,10 +4,12 @@ from dataclasses import replace
 
 from sqlalchemy import exists, func, or_, select
 
+from src.domain.model.weekly_meal_planner import SLOT_MEAL_TYPES
 from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_preferences,
 )
+from src.domain.services.weekly_meal_planner.meal_practicality import practicality_rank
 from src.infra.database.models.meal_recommendation.catalog_projection import (
     MealCatalogProjectionORM as Projection,
 )
@@ -147,6 +149,10 @@ class CatalogProjectionRepository:
             allergen_codes=codes,
         )
         base = self._base().where(*filters)
+        if meal_type in SLOT_MEAL_TYPES:
+            return await self._practical_page(
+                base, meal_type=meal_type, limit=limit, offset=offset
+            )
         total = (
             await self.repository._execute_catalog(
                 select(func.count()).select_from(base.subquery())
@@ -192,6 +198,69 @@ class CatalogProjectionRepository:
                 if row.catalog_meal_id in meals
             ),
             total,
+            projected=True,
+        )
+
+    async def _practical_page(self, base, *, meal_type: str, limit: int, offset: int):
+        """Page meal-time lists with everyday dishes ahead of fussy ones."""
+        scored = (
+            await self.repository._execute_catalog(
+                base.with_only_columns(
+                    Projection.catalog_meal_id,
+                    Projection.name_casefold,
+                    Projection.total_minutes,
+                    Projection.popularity_rank,
+                    Projection.non_meal,
+                )
+            )
+        ).all()
+        ranked = sorted(
+            scored,
+            key=lambda row: (
+                practicality_rank(
+                    row.name_casefold,
+                    meal_type,
+                    total_minutes=int(row.total_minutes or 0),
+                    non_meal=bool(row.non_meal),
+                ),
+                row.popularity_rank is None,
+                row.popularity_rank if row.popularity_rank is not None else 0,
+                row.name_casefold,
+                row.catalog_meal_id,
+            ),
+        )
+        page_ids = [row.catalog_meal_id for row in ranked[offset : offset + limit]]
+        if not page_ids:
+            return CatalogRecipePage((), len(ranked), projected=True)
+        rows = (
+            (
+                await self.repository._execute_catalog(
+                    self._base()
+                    .where(Projection.catalog_meal_id.in_(page_ids))
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        meals = {
+            row.catalog_meal_id: projection_to_meal(row)
+            for row in rows
+            if not row.nutrition_dirty
+        }
+        dirty = [row.catalog_meal_id for row in rows if row.nutrition_dirty]
+        if dirty:
+            meals.update(
+                {
+                    meal.id: replace(
+                        meal, ingredients=(), steps=(), recipe_payload=None
+                    )
+                    for meal in await self.repository.get_meals(dirty)
+                }
+            )
+        return CatalogRecipePage(
+            tuple(meals[meal_id] for meal_id in page_ids if meal_id in meals),
+            len(ranked),
             projected=True,
         )
 

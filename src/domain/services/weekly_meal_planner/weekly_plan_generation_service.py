@@ -22,6 +22,9 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
     normalize_allergen_code,
     recipe_excluded_by_allergen,
 )
+from src.domain.services.weekly_meal_planner.meal_practicality import (
+    practicality_rank,
+)
 from src.domain.services.weekly_meal_planner.recipe_publication import (
     is_planner_eligible,
 )
@@ -85,6 +88,7 @@ class WeeklyPlanGenerationService:
                     eligible,
                     key=lambda item: (
                         1 if item[0].id in day_used else 0,
+                        *_practicality(item[0], slot),
                         used_counts.get(item[0].id, 0),
                         item[1],
                         self._stable_rank(item[0], user_id, week_start_date, day, slot),
@@ -158,6 +162,11 @@ class WeeklyPlanGenerationService:
     def supports_slot(meal: CatalogMeal, slot_index: int) -> bool:
         """Return whether a catalog meal is suitable for this breakfast, lunch, or dinner slot."""
         return WeeklyPlanGenerationService._supports_slot(meal, slot_index)
+
+    @staticmethod
+    def selection_rank(meal: CatalogMeal, slot_index: int) -> tuple[int, int]:
+        """Prefer a simple meal that fits this slot over a closer calorie match."""
+        return _practicality(meal, slot_index)
 
     @staticmethod
     def _soft_eligible(
@@ -309,6 +318,19 @@ def _word_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
 
 def _is_non_meal_recipe(meal: CatalogMeal) -> bool:
     return is_non_meal_title(meal.name, meal.tag)
+
+
+def _practicality(meal: CatalogMeal, slot_index: int) -> tuple[int, int]:
+    features = meal.selection_features
+    non_meal = features.non_meal if features else _is_non_meal_recipe(meal)
+    minutes = _total_minutes(meal)
+    return practicality_rank(
+        meal.name,
+        meal_type_for_slot(slot_index),
+        total_minutes=minutes or None,
+        ingredient_count=len(meal.ingredients),
+        non_meal=non_meal,
+    )
 
 
 def _slot_calorie_targets(daily_calories: int) -> tuple[int, ...]:

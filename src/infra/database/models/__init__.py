@@ -130,6 +130,7 @@ from .weekly_meal_planner import (
     WeeklyMealPlanORM,
     WeeklyMealPlanPantryItemORM,
     WeeklyMealPlanSlotORM,
+    WeeklyPlanLateLegacySlotRepairORM,
 )
 
 # Weight tracking
@@ -220,6 +221,7 @@ __all__ = [
     "MovementEntryORM",
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",
+    "WeeklyPlanLateLegacySlotRepairORM",
     "WeeklyMealPlanPantryItemORM",
     "WeeklyGroceryDayLineORM",
     "WeeklyGroceryItemStateORM",
