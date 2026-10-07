@@ -1,4 +1,4 @@
-"""End an open vacation today, or cancel one that has not started."""
+"""Cancel an open vacation so today is a normal day."""
 
 import logging
 from typing import Any
@@ -33,12 +33,11 @@ class EndVacationCommandHandler(EventHandler[EndVacationCommand, dict[str, Any]]
                     message="There is no vacation to end.",
                     error_code="VACATION_NOT_FOUND",
                 )
-            if today < current.start_date:
+            if current.drop_today(today):
                 await uow.vacations.delete(current.vacation_id)
                 await uow.commit()
                 payload = None
             else:
-                current.ended_on = today
                 await uow.vacations.save(current)
                 await uow.commit()
                 payload = vacation_payload(current, today)
