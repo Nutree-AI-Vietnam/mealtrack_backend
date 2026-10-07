@@ -996,3 +996,96 @@ class TestGetEffectiveAdjustedDailyAsync:
             projection=MealProjection.MACROS_ONLY,
         )
         assert result.adjusted.calories > 0
+
+    @pytest.mark.asyncio
+    async def test_covered_day_keeps_frozen_targets(self):
+        from src.domain.model.vacation.vacation import Vacation
+
+        vacation = Vacation(
+            vacation_id="v1",
+            user_id="user123",
+            start_date=date(2026, 3, 11),
+            end_date=date(2026, 3, 15),
+            ended_on=None,
+            frozen_calories=1800,
+            frozen_protein=140,
+            frozen_carbs=180,
+            frozen_fat=60,
+            created_at=datetime(2026, 3, 11, tzinfo=UTC),
+        )
+        mock_uow = Mock()
+        mock_uow.cheat_days.find_by_user_and_date_range = AsyncMock(return_value=[])
+        mock_uow.vacations.find_by_user = AsyncMock(return_value=[vacation])
+        mock_uow.meals.get_daily_meal_counts = AsyncMock(return_value={})
+        mock_uow.meals.find_by_date_range = AsyncMock(return_value=[])
+
+        result = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=mock_uow,
+            user_id="user123",
+            week_start=date(2026, 3, 9),
+            target_date=date(2026, 3, 13),
+            weekly_budget=_make_budget(date(2026, 3, 9)),
+            base_daily_cal=2000,
+            base_daily_protein=150,
+            base_daily_carbs=250,
+            base_daily_fat=70,
+            bmr=1600,
+            user_timezone="UTC",
+        )
+
+        assert result.adjusted.calories == 1800
+        assert result.adjusted.protein == 140
+        assert result.show_logging_prompt is False
+
+    @pytest.mark.asyncio
+    async def test_quiet_vacation_days_count_as_held(self):
+        from src.domain.model.vacation.vacation import Vacation
+
+        vacation = Vacation(
+            vacation_id="v1",
+            user_id="user123",
+            start_date=date(2026, 3, 9),
+            end_date=date(2026, 3, 10),
+            ended_on=None,
+            frozen_calories=2000,
+            frozen_protein=150,
+            frozen_carbs=200,
+            frozen_fat=67,
+            created_at=datetime(2026, 3, 9, tzinfo=UTC),
+        )
+
+        def build(rows):
+            mock_uow = Mock()
+            mock_uow.cheat_days.find_by_user_and_date_range = AsyncMock(
+                return_value=[]
+            )
+            mock_uow.vacations.find_by_user = AsyncMock(return_value=rows)
+            mock_uow.meals.get_daily_meal_counts = AsyncMock(return_value={})
+            mock_uow.meals.find_by_date_range = AsyncMock(return_value=[])
+            return mock_uow
+
+        kwargs = {
+            "user_id": "user123",
+            "week_start": date(2026, 3, 9),
+            "target_date": date(2026, 3, 12),
+            "weekly_budget": _make_budget(date(2026, 3, 9)),
+            "base_daily_cal": 2000,
+            "base_daily_protein": 150,
+            "base_daily_carbs": 200,
+            "base_daily_fat": 67,
+            "bmr": 1600,
+            "user_timezone": "UTC",
+        }
+        held = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=build([vacation]),
+            **kwargs,
+        )
+        missed = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=build([]),
+            **kwargs,
+        )
+
+        assert held.logged_past_days == 2
+        assert held.show_logging_prompt is False
+        assert held.adjusted.calories == pytest.approx(2000, abs=50)
+        assert missed.show_logging_prompt is True

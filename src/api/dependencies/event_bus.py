@@ -69,6 +69,11 @@ from src.app.commands.user.sync_user_command import (
     UpdateUserLastAccessedCommand,
 )
 from src.app.commands.user.update_user_metrics_command import UpdateUserMetricsCommand
+from src.app.commands.vacation import (
+    EndVacationCommand,
+    ExtendVacationCommand,
+    SetVacationCommand,
+)
 from src.app.commands.weight import (
     AddWeightEntryCommand,
     DeleteWeightEntryCommand,
@@ -119,6 +124,12 @@ from src.app.handlers.command_handlers.add_weight_entry_command_handler import (
 from src.app.handlers.command_handlers.delete_weight_entry_command_handler import (
     DeleteWeightEntryCommandHandler,
 )
+from src.app.handlers.command_handlers.end_vacation_command_handler import (
+    EndVacationCommandHandler,
+)
+from src.app.handlers.command_handlers.extend_vacation_command_handler import (
+    ExtendVacationCommandHandler,
+)
 from src.app.handlers.command_handlers.mark_cheat_day_command_handler import (
     MarkCheatDayCommandHandler,
 )
@@ -138,6 +149,9 @@ from src.app.handlers.command_handlers.meal_recommendation import (
     LogRecommendedMealCommandHandler,
     SkipMealRecommendationSlotCommandHandler,
     SwapMealRecommendationSlotCommandHandler,
+)
+from src.app.handlers.command_handlers.set_vacation_command_handler import (
+    SetVacationCommandHandler,
 )
 from src.app.handlers.command_handlers.sync_weight_entries_command_handler import (
     SyncWeightEntriesCommandHandler,
@@ -193,6 +207,9 @@ from src.app.handlers.query_handlers.get_meal_recommendation_slot_detail_query_h
 )
 from src.app.handlers.query_handlers.get_nutrition_bulk_query_handler import (
     GetNutritionBulkQueryHandler,
+)
+from src.app.handlers.query_handlers.get_vacation_query_handler import (
+    GetVacationQueryHandler,
 )
 from src.app.handlers.query_handlers.get_weight_entries_query_handler import (
     GetWeightEntriesQueryHandler,
@@ -263,6 +280,7 @@ from src.app.queries.user.get_user_by_firebase_uid_query import (
 from src.app.queries.user.get_user_onboarding_status_query import (
     GetUserOnboardingStatusQuery,
 )
+from src.app.queries.vacation import GetVacationQuery
 from src.app.queries.weight import GetWeightEntriesQuery
 from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
     CatalogRecipeMicronutrientEnrichmentService,
@@ -1102,6 +1120,20 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
     event_bus.register_handler(GetCheatDaysQuery, GetCheatDaysQueryHandler())
+
+    event_bus.register_handler(
+        SetVacationCommand,
+        SetVacationCommandHandler(cache_service=cache_service),
+    )
+    event_bus.register_handler(
+        ExtendVacationCommand,
+        ExtendVacationCommandHandler(cache_service=cache_service),
+    )
+    event_bus.register_handler(
+        EndVacationCommand,
+        EndVacationCommandHandler(cache_service=cache_service),
+    )
+    event_bus.register_handler(GetVacationQuery, GetVacationQueryHandler())
 
     # Register weight entry handlers
     event_bus.register_handler(AddWeightEntryCommand, AddWeightEntryCommandHandler())
