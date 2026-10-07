@@ -55,11 +55,11 @@ NOTIFICATION_MESSAGES = {
             "trial_expiry": {
                 "2d": {
                     "title": "Nutree",
-                    "body": "Heads up, bro — trial ends in 2 days\nLock in your streak ⏳",
+                    "body": "Heads up, bro — your monthly plan renews in 2 days\nUpgrade to annual and claim this offer",
                 },
                 "1d": {
                     "title": "Nutree",
-                    "body": "Heads up, bro — your free trial ends soon\nKeep your progress going 🔥",
+                    "body": "Heads up, bro — your monthly plan renews soon\nUpgrade to annual and claim this offer",
                 },
             },
             "hydration_reminder": {
@@ -104,11 +104,11 @@ NOTIFICATION_MESSAGES = {
             "trial_expiry": {
                 "2d": {
                     "title": "Nutree",
-                    "body": "Heads up, mate — trial ends in 2 days\nLock in your streak ⏳",
+                    "body": "Heads up, mate — your monthly plan renews in 2 days\nUpgrade to annual and claim this offer",
                 },
                 "1d": {
                     "title": "Nutree",
-                    "body": "Heads up, mate — your free trial ends soon\nKeep your progress going 🔥",
+                    "body": "Heads up, mate — your monthly plan renews soon\nUpgrade to annual and claim this offer",
                 },
             },
             "hydration_reminder": {
@@ -155,11 +155,11 @@ NOTIFICATION_MESSAGES = {
             "trial_expiry": {
                 "2d": {
                     "title": "Nutree",
-                    "body": "Trial còn 2 ngày là hết hạn nha bro\nGiữ streak tiếp nào ⏳",
+                    "body": "Gói tháng của bro gia hạn sau 2 ngày\nNâng lên gói năm để nhận ưu đãi này",
                 },
                 "1d": {
                     "title": "Nutree",
-                    "body": "Sắp hết free trial rồi bro\nĐừng để mất tiến độ nha 🔥",
+                    "body": "Gói tháng của bro sắp gia hạn\nNâng lên gói năm để nhận ưu đãi này",
                 },
             },
             "hydration_reminder": {
@@ -204,11 +204,11 @@ NOTIFICATION_MESSAGES = {
             "trial_expiry": {
                 "2d": {
                     "title": "Nutree",
-                    "body": "Trial còn 2 ngày là hết hạn nha bạn ơi\nGiữ streak tiếp nào ⏳",
+                    "body": "Gói tháng của bạn gia hạn sau 2 ngày\nNâng lên gói năm để nhận ưu đãi này",
                 },
                 "1d": {
                     "title": "Nutree",
-                    "body": "Sắp hết free trial rồi bạn ơi\nĐừng để mất tiến độ nha 🔥",
+                    "body": "Gói tháng của bạn sắp gia hạn\nNâng lên gói năm để nhận ưu đãi này",
                 },
             },
             "hydration_reminder": {
