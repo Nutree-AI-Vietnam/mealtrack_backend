@@ -33,11 +33,11 @@ NOTIFICATION_MESSAGES_ZH = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "试用还剩2天\n继续保持你的连续记录 ⏳",
+                "body": "你的月度订阅将在2天后续订\n升级到年度方案，领取这次优惠",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "免费试用即将结束\n别让你的进度中断 🔥",
+                "body": "你的月度订阅即将续订\n升级到年度方案，领取这次优惠",
             },
         },
         "hydration_reminder": {
@@ -82,11 +82,11 @@ NOTIFICATION_MESSAGES_ZH = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "试用还剩2天\n继续保持你的连续记录 ⏳",
+                "body": "你的月度订阅将在2天后续订\n升级到年度方案，领取这次优惠",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "免费试用即将结束\n别让你的进度中断 🔥",
+                "body": "你的月度订阅即将续订\n升级到年度方案，领取这次优惠",
             },
         },
         "hydration_reminder": {
