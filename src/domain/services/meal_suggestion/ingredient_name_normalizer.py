@@ -32,6 +32,9 @@ _QUALIFIERS = [
     "minced",
 ]
 
+# Preparation and size descriptors that never identify a food on their own.
+FOOD_NAME_QUALIFIERS = frozenset(_QUALIFIERS)
+
 # Compiled once at module load: word-boundary anchored, case-insensitive.
 # Using \b ensures "raw" matches standalone "raw" but NOT "Strawberry" or "Freshwater".
 _QUAL_RE = re.compile(
