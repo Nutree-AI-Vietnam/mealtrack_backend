@@ -370,11 +370,11 @@ class CloudflareImageStore(ImageStorePort):
             "%Y-%m-%dT%H:%M:%SZ"
         )
         cf_id = self._to_cloudflare_id(image_id)
-        data = {"expiry": expiry, "id": cf_id}
+        files = {"expiry": (None, expiry), "id": (None, cf_id)}
 
         client = self._sync_client or httpx.Client(timeout=10.0)
         try:
-            resp = client.post(url, data=data, headers=headers)
+            resp = client.post(url, files=files, headers=headers)
         finally:
             if client is not self._sync_client:
                 client.close()
@@ -417,15 +417,15 @@ class CloudflareImageStore(ImageStorePort):
             "%Y-%m-%dT%H:%M:%SZ"
         )
         cf_id = self._to_cloudflare_id(image_id)
-        data = {"expiry": expiry, "id": cf_id}
+        files = {"expiry": (None, expiry), "id": (None, cf_id)}
 
         if self._client:
             resp = await self._client.post(
-                url, data=data, headers=headers, timeout=10.0
+                url, files=files, headers=headers, timeout=10.0
             )
         else:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(url, data=data, headers=headers)
+                resp = await client.post(url, files=files, headers=headers)
 
         if resp.status_code != 200:
             raise RuntimeError(
