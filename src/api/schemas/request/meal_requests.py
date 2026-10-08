@@ -702,7 +702,10 @@ def _validate_change_origin(change: FoodItemChangeRequest) -> None:
 class AttachMealPhotoRequest(BaseModel):
     """Request DTO for attaching an uploaded image to a meal."""
 
-    image_id: str = Field(..., description="Cloudinary upload image UUID")
+    image_id: str = Field(
+        ...,
+        description="Uploaded image UUID, optionally prefixed with 'mealtrack/' by Cloudflare",
+    )
     image_url: str = Field(
         ...,
         min_length=1,

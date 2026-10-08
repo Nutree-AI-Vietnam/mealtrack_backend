@@ -499,6 +499,103 @@ def test_delete_meal_photo_sends_delete_command(client: TestClient):
     assert command.user_id == "user_1"
 
 
+@pytest.mark.parametrize(
+    "request_image_id",
+    [
+        "6e26fa9e-248f-4e39-8d84-6cb9f7de7cd7",
+        "mealtrack/6e26fa9e-248f-4e39-8d84-6cb9f7de7cd7",
+    ],
+)
+def test_attach_meal_photo_normalizes_cloudflare_image_id(
+    client: TestClient, request_image_id: str
+):
+    import src.api.main as main
+    from src.api.dependencies.event_bus import get_configured_event_bus
+    from src.app.commands.meal.attach_meal_photo_command import AttachMealPhotoCommand
+
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+        return {"success": True, "meal_id": msg.meal_id, "image_url": msg.image_url}
+
+    main.app.dependency_overrides[get_configured_event_bus] = lambda: _Bus(send)
+
+    r = client.put(
+        "/v1/meals/meal_123/photo",
+        json={
+            "image_id": request_image_id,
+            "image_url": "https://imagedelivery.net/account/mealtrack/6e26fa9e-248f-4e39-8d84-6cb9f7de7cd7/public",
+            "image_format": "jpeg",
+            "size_bytes": 1024,
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    command = sent[0]
+    assert isinstance(command, AttachMealPhotoCommand)
+    assert command.image_id == "6e26fa9e-248f-4e39-8d84-6cb9f7de7cd7"
+    assert command.image_url.endswith(
+        "mealtrack/6e26fa9e-248f-4e39-8d84-6cb9f7de7cd7/public"
+    )
+
+
+def test_attach_meal_photo_rejects_invalid_image_id(client: TestClient):
+    import src.api.main as main
+    from src.api.dependencies.event_bus import get_configured_event_bus
+
+    called = {"send": False}
+
+    async def send(msg):
+        called["send"] = True
+        return None
+
+    main.app.dependency_overrides[get_configured_event_bus] = lambda: _Bus(send)
+
+    r = client.put(
+        "/v1/meals/meal_123/photo",
+        json={
+            "image_id": "mealtrack/not-a-uuid",
+            "image_url": "https://imagedelivery.net/account/mealtrack/not-a-uuid/public",
+            "image_format": "jpeg",
+            "size_bytes": 1024,
+        },
+    )
+
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["error_code"] == "INVALID_IMAGE_ID"
+    assert called["send"] is False
+
+
+def test_attach_meal_photo_validates_url_against_original_cloudflare_id(
+    client: TestClient,
+):
+    import src.api.main as main
+    from src.api.dependencies.event_bus import get_configured_event_bus
+
+    called = {"send": False}
+
+    async def send(msg):
+        called["send"] = True
+        return None
+
+    main.app.dependency_overrides[get_configured_event_bus] = lambda: _Bus(send)
+
+    r = client.put(
+        "/v1/meals/meal_123/photo",
+        json={
+            "image_id": "mealtrack/6e26fa9e-248f-4e39-8d84-6cb9f7de7cd7",
+            "image_url": "https://imagedelivery.net/account/6e26fa9e-248f-4e39-8d84-6cb9f7de7cd7/public",
+            "image_format": "jpeg",
+            "size_bytes": 1024,
+        },
+    )
+
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["error_code"] == "IMAGE_ID_URL_MISMATCH"
+    assert called["send"] is False
+
+
 def test_meals_manual_invalid_date_does_not_call_bus(monkeypatch, client: TestClient):
     import src.api.main as main
     from src.api.dependencies.event_bus import get_configured_event_bus
