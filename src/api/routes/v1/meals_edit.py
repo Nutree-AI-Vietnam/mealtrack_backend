@@ -19,6 +19,7 @@ from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.meals_route_helpers import (
     load_food_reference_display_projections,
+    normalize_uploaded_image_id,
 )
 from src.api.routes.v1.meals_route_helpers import (
     validate_uploaded_image_url as _validate_uploaded_meal_photo_url,
@@ -247,10 +248,11 @@ async def attach_meal_photo(
     Requires authentication - users can only modify their own meals.
     """
     _validate_uploaded_meal_photo_url(payload.image_url, payload.image_id)
+    image_id = normalize_uploaded_image_id(payload.image_id)
     command = AttachMealPhotoCommand(
         meal_id=meal_id,
         user_id=user_id,
-        image_id=payload.image_id,
+        image_id=image_id,
         image_url=payload.image_url,
         image_format=payload.image_format,
         size_bytes=payload.size_bytes,
