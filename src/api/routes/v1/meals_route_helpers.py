@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from src.api.exceptions import ValidationException
 from src.api.schemas.response.meal_responses import ParsedFoodItem
@@ -131,3 +132,16 @@ def validate_uploaded_image_url(image_url: str, image_id: str) -> None:
             error_code="IMAGE_ID_URL_MISMATCH",
             details={"image_id": image_id},
         )
+
+
+def normalize_uploaded_image_id(image_id: str) -> str:
+    """Return the UUID used by the domain from a provider upload ID."""
+    normalized_id = image_id.removeprefix("mealtrack/")
+    try:
+        return str(UUID(normalized_id))
+    except ValueError as exc:
+        raise ValidationException(
+            message="image_id must be a UUID, optionally prefixed with 'mealtrack/'",
+            error_code="INVALID_IMAGE_ID",
+            details={"image_id": image_id},
+        ) from exc

@@ -24,6 +24,7 @@ sequenceDiagram
 
     User->>API: POST /v1/meals/scan-by-url (or meal attach photo)
     Note over API: Validates image host (imagedelivery.net or res.cloudinary.com)
+    Note over API: For meal photo attachment, validates the original image ID and URL, then strips Cloudflare's optional mealtrack/ prefix before persistence
     API->>DB: Save meal & meal_images record
     API-->>User: 200 OK (Analyzed meal / Saved)
 ```
@@ -127,7 +128,7 @@ If you prefer branded URLs such as `https://images.nutree.ai/<image_id>/<variant
 | **Token Scopes** | Least privilege API tokens | ✅ Scoped strictly to `Account → Cloudflare Images: Edit` |
 | **Single-Use URLs** | Direct upload URLs must be one-time use | ✅ New upload URL generated per scan via `/v1/meals/upload-token` |
 | **URL Expiry** | Bounded between 2 minutes (120s) and 6 hours (21,600s) | ✅ Set to 300s (5 minutes) with `max(120, ttl)` lower-bound |
-| **Custom Image IDs** | Use UUIDs to correlate uploads before client completes | ✅ Backend pre-assigns `uuid.uuid4()` as Cloudflare image `id` |
+| **Custom Image IDs** | Use UUIDs to correlate uploads before client completes | ✅ Backend pre-assigns `uuid.uuid4()`; Cloudflare may return `mealtrack/<uuid>`, which the photo-attach API validates against the URL then normalizes to the bare UUID before persistence |
 | **File Constraints** | Max 10 MB per image; JPEG/PNG/WebP/GIF | ✅ Mobile compresses photos before upload; backend normalizes MIME types |
 | **Edge Optimization** | Use `f=auto` and `fit=scale-down` for CDN compression | ✅ `to_compressed_image_url` applies `w=768,fit=scale-down,f=auto` |
 | **Delivery Caching** | Cache variants at Cloudflare edge data centers | ✅ Immutable edge caching on variants; zero origin hits after first render |
