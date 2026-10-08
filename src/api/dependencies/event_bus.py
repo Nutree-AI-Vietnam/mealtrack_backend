@@ -3,6 +3,8 @@ Event bus dependency for FastAPI with proper type registrations.
 """
 
 import logging
+import time
+from typing import Any
 
 from src.app.commands.cheat_day import MarkCheatDayCommand, UnmarkCheatDayCommand
 from src.app.commands.ingredient import RecognizeIngredientCommand
@@ -267,6 +269,10 @@ from src.app.queries.weight import GetWeightEntriesQuery
 from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
     CatalogRecipeMicronutrientEnrichmentService,
 )
+from src.app.services.food_search_background_completion import (
+    FoodSearchBackgroundCompletions,
+)
+from src.app.services.food_search_translation_cache import CachedTextTranslation
 from src.app.services.meal_recommendation_history_projector import (
     MealRecommendationHistoryProjector,
 )
@@ -288,6 +294,18 @@ logger = logging.getLogger(__name__)
 # Singleton event buses
 _food_search_event_bus: EventBus | None = None
 _configured_event_bus: EventBus | None = None
+
+# Shared by both buses so an identical search in flight on either is joined.
+_food_search_background = FoodSearchBackgroundCompletions()
+
+# Every keystroke would otherwise pay a database round trip for the cache
+# namespace; a generation bump still reaches searches within a few seconds.
+_INTEGRITY_CONTEXT_TTL_SECONDS = 5.0
+_integrity_context_memo: tuple[float, dict[str, int | str]] | None = None
+
+# Food names repeat across searches and users; both buses share one cache of
+# their translations, rebuilt only if the translator itself is replaced.
+_food_search_translation: tuple[object, CachedTextTranslation] | None = None
 
 
 def _build_provider_budget(cache_service):
@@ -331,12 +349,36 @@ async def _load_popular_staple_food_references(
 
 async def _food_integrity_cache_context() -> dict[str, int | str]:
     """Read DB-owned cache namespace before any food-search cache access."""
+    global _integrity_context_memo
+    now = time.monotonic()
+    memo = _integrity_context_memo
+    if memo is not None and now - memo[0] < _INTEGRITY_CONTEXT_TTL_SECONDS:
+        return dict(memo[1])
     async with AsyncUnitOfWork() as uow:
         control = await uow.food_reference_integrity.get_active_control()
-        return {
+        context: dict[str, int | str] = {
             "policy_version": control.active_policy_version,
             "generation": control.catalog_integrity_generation,
         }
+    _integrity_context_memo = (now, context)
+    return dict(context)
+
+
+def _food_search_translation_service(service: Any | None) -> Any | None:
+    """Put the shared translation cache in front of the food search translator."""
+    global _food_search_translation
+    if service is None:
+        return None
+    current = _food_search_translation
+    if current is None or current[0] is not service:
+        current = (service, CachedTextTranslation(service))
+        _food_search_translation = current
+    return current[1]
+
+
+async def drain_food_search_background_work(timeout: float = 5.0) -> None:
+    """Let food searches still completing after their response finish."""
+    await _food_search_background.drain(timeout)
 
 
 def get_food_search_event_bus() -> EventBus:
@@ -396,10 +438,13 @@ def get_food_search_event_bus() -> EventBus:
             food_cache_service,
             food_mapping_service,
             fat_secret_service=fat_secret_service,
-            translation_service=text_translation_service,
+            translation_service=_food_search_translation_service(
+                text_translation_service
+            ),
             local_search=_search_local_food_references,
             integrity_context=_food_integrity_cache_context,
             uow_factory=AsyncUnitOfWork,
+            background=_food_search_background,
         ),
     )
     event_bus.register_handler(
@@ -697,10 +742,13 @@ def get_configured_event_bus() -> EventBus:
             food_cache_service,
             food_mapping_service,
             fat_secret_service=fat_secret_service,
-            translation_service=text_translation_service,
+            translation_service=_food_search_translation_service(
+                text_translation_service
+            ),
             local_search=_search_local_food_references,
             integrity_context=_food_integrity_cache_context,
             uow_factory=AsyncUnitOfWork,
+            background=_food_search_background,
         ),
     )
     event_bus.register_handler(

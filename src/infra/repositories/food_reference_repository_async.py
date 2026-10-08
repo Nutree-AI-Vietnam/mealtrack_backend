@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any, cast
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,11 +16,7 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
     FoodReferenceSearchProjection,
 )
-from src.domain.services.food_reference_identity import (
-    FATSECRET_NAMESPACE,
-    platform_identity_prefix,
-    platform_name_normalized,
-)
+from src.domain.services.food_reference_identity import platform_name_normalized
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
     normalize_food_name,
 )
@@ -33,6 +29,9 @@ from src.infra.repositories.food_reference_adopt import (
 )
 from src.infra.repositories.food_reference_integrity_repository import (
     FoodReferenceIntegrityRepository,
+)
+from src.infra.repositories.food_reference_local_search import (
+    build_local_search_statement,
 )
 from src.infra.repositories.food_reference_locale import FoodReferenceLocaleRepository
 from src.infra.repositories.food_reference_projection import (
@@ -69,6 +68,8 @@ _FOOD_REFERENCE_LOAD_OPTIONS = (
     selectinload(FoodReferenceModel.serving_size_rows),
     selectinload(FoodReferenceModel.nutrient_rows),
 )
+
+_MAX_SEARCH_PASSES = 4
 
 
 class AsyncFoodReferenceRepository:
@@ -370,67 +371,21 @@ class AsyncFoodReferenceRepository:
         region: str,
         limit: int,
     ) -> list[FoodReferenceSearchProjection]:
-        raw_query = str(query or "").strip()
-        identity_query = (
-            raw_query.lower()
-            if raw_query.lower().startswith(f"{FATSECRET_NAMESPACE}:")
-            else None
+        statement = build_local_search_statement(
+            query, region, self._integrity_repository.public_eligibility_clause()
         )
-        normalized_query = normalize_food_name(query)
-        if not normalized_query and not identity_query:
+        if statement is None:
             return []
 
         bounded_limit = min(max(limit, 1), 50)
-        like = f"%{normalized_query}%" if normalized_query else None
-        identity_prefix = f"{platform_identity_prefix(FATSECRET_NAMESPACE)}%"
-        display_match = (
-            or_(
-                FoodReferenceModel.name.ilike(like),
-                FoodReferenceModel.name_vi.ilike(like),
-            )
-            if like
-            else None
-        )
-        if identity_query:
-            key_match = func.lower(FoodReferenceModel.name_normalized) == identity_query
-            match_clause = (
-                or_(display_match, key_match)
-                if display_match is not None
-                else key_match
-            )
-            similarity_score = func.similarity(
-                FoodReferenceModel.name_normalized, identity_query
-            )
-        else:
-            key_match = and_(
-                FoodReferenceModel.name_normalized.ilike(like),
-                FoodReferenceModel.name_normalized.notlike(identity_prefix),
-            )
-            match_clause = (
-                or_(display_match, key_match)
-                if display_match is not None
-                else key_match
-            )
-            similarity_score = func.similarity(
-                FoodReferenceModel.name, normalized_query
-            )
-        base_stmt = (
-            select(FoodReferenceModel)
-            .where(self._integrity_repository.public_eligibility_clause())
-            .where(FoodReferenceModel.region.in_([region, "global"]))
-            .where(match_clause)
-            .options(*_FOOD_REFERENCE_LOAD_OPTIONS)
-            .order_by(
-                FoodReferenceModel.is_verified.desc(),
-                similarity_score.desc(),
-                FoodReferenceModel.id.asc(),
-            )
-        )
+        base_stmt = statement.options(*_FOOD_REFERENCE_LOAD_OPTIONS)
         fetch_size = max(bounded_limit * 3, 10)
         offset = 0
         projections: list[FoodReferenceSearchProjection] = []
         seen: set[str] = set()
-        while True:
+        # Rows failing the read-time integrity check are rare; a bounded number
+        # of passes keeps a pathological catalog from turning into a scan.
+        for _ in range(_MAX_SEARCH_PASSES):
             result = await self._session.execute(
                 base_stmt.limit(fetch_size).offset(offset)
             )
@@ -939,9 +894,6 @@ def _dedupe_search_projections(
     projections: list[FoodReferenceSearchProjection] = []
     for model in models:
         if not model.is_verified:
-            continue
-        materialized_status = getattr(model, "integrity_status", None)
-        if isinstance(materialized_status, str) and materialized_status != "valid":
             continue
         if (
             integrity_policy is not None

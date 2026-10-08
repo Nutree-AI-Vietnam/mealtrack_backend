@@ -19,7 +19,12 @@ from src.app.services.serving_label import (
 )
 from src.domain.constants.languages import normalize_language
 
-__all__ = ["localize_item_servings", "localize_serving_options"]
+__all__ = [
+    "localize_item_servings",
+    "localize_item_servings_deferred",
+    "localize_serving_options",
+    "persist_item_serving_labels",
+]
 
 
 def _empty_units(options: Any) -> list[dict[str, Any]]:
@@ -75,8 +80,52 @@ async def localize_item_servings(
     Returns newly cacheable phrase translations (English source → label).
     """
     normalized = normalize_language(language)
+    resolved, persistable = await _localize_item_servings(
+        items, normalized, translation_service, uow_factory
+    )
+    if persist and uow_factory is not None and persistable:
+        await _persist_labels(items, resolved, normalized, uow_factory)
+    return resolved
+
+
+async def localize_item_servings_deferred(
+    items: list[dict[str, Any]],
+    *,
+    language: str,
+    translation_service: Any | None,
+    uow_factory: Any | None = None,
+) -> tuple[dict[str, str], bool]:
+    """Localize ``allowed_units`` now and leave persisting to the caller.
+
+    Returns the applied labels and whether they are worth persisting, so a
+    caller can write them with :func:`persist_item_serving_labels` once the
+    items carry catalog ids, off the response path.
+    """
+    return await _localize_item_servings(
+        items, normalize_language(language), translation_service, uow_factory
+    )
+
+
+async def persist_item_serving_labels(
+    items: list[dict[str, Any]],
+    labels: dict[str, str],
+    *,
+    language: str,
+    uow_factory: Any | None,
+) -> None:
+    if not labels or uow_factory is None:
+        return
+    await _persist_labels(items, labels, normalize_language(language), uow_factory)
+
+
+async def _localize_item_servings(
+    items: list[dict[str, Any]],
+    normalized: str,
+    translation_service: Any | None,
+    uow_factory: Any | None,
+) -> tuple[dict[str, str], bool]:
     if not items or normalized == "en":
-        return {}
+        return {}, False
     cached = await _load_phrase_cache(items, normalized, uow_factory)
     canonical: dict[str, str] = {}
     leftovers: list[str] = []
@@ -95,16 +144,14 @@ async def localize_item_servings(
     )
     resolved = {**canonical, **fresh}
     if not resolved:
-        return {}
+        return {}, False
     for item in items:
         item["allowed_units"] = apply_serving_labels(
             _empty_units(item.get("allowed_units")),
             resolved,
             normalized,
         )
-    if persist and uow_factory is not None and (canonical or cacheable):
-        await _persist_labels(items, resolved, normalized, uow_factory)
-    return resolved
+    return resolved, bool(canonical) or cacheable
 
 
 async def _translate_leftovers(
