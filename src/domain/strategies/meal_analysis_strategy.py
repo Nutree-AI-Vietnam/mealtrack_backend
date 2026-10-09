@@ -65,7 +65,10 @@ class BasicAnalysisStrategy(MealAnalysisStrategy):
         return SystemPrompts.get_vision_analysis_prompt(self.language)
 
     def get_user_message(self) -> str:
-        return "Analyze this food image and provide nutritional information:"
+        return (
+            "Analyze this food image. Estimate the visible edible portion and "
+            "return totals for each food row."
+        )
 
     def get_strategy_name(self) -> str:
         return "BasicAnalysis"
@@ -87,8 +90,12 @@ class PortionAwareAnalysisStrategy(MealAnalysisStrategy):
     def get_user_message(self) -> str:
         return (
             f"Analyze this food image.\n"
-            f"Portion context: {self.portion_size} {self.unit}. "
-            f"Scale all nutrition values to match this portion."
+            f"User-supplied portion for the full meal: {self.portion_size} "
+            f"{self.unit}. Treat it as the total consumed portion. For a mass "
+            f"unit, distribute its grams across food rows so their quantities "
+            f"sum to that mass; for other units, estimate row grams that "
+            f"represent the stated portion. Scale every macro and micro total "
+            f"to its row quantity."
         )
 
     def get_strategy_name(self) -> str:
@@ -116,8 +123,9 @@ class IngredientAwareAnalysisStrategy(MealAnalysisStrategy):
         )
         return (
             f"Analyze this food image.\n"
-            f"Known ingredients: {ing_str}. "
-            f"Use this context to improve accuracy."
+            f"User-supplied known foods and amounts: {ing_str}. Keep each listed "
+            f"food and amount once. Estimate only missing foods or amounts from "
+            f"the image, and do not duplicate the whole dish."
         )
 
     def get_strategy_name(self) -> str:
@@ -139,8 +147,10 @@ class WeightAwareAnalysisStrategy(MealAnalysisStrategy):
     def get_user_message(self) -> str:
         return (
             f"Analyze this food image.\n"
-            f"Total weight: {self.weight_grams}g. "
-            f"Scale all nutrition values proportionally to this total weight."
+            f"User-supplied total edible consumed weight for the full meal: "
+            f"{self.weight_grams}g. Distribute it across food rows so their "
+            f"quantities sum to this weight; scale every macro and micro total "
+            f"to its row quantity."
         )
 
     def get_strategy_name(self) -> str:
@@ -339,9 +349,11 @@ class UserContextAwareAnalysisStrategy(MealAnalysisStrategy):
 
     def get_user_message(self) -> str:
         return (
-            f"Analyze this food image.\n"
-            f"User context: {self.user_description}. "
-            f"Provide accurate nutrition data for this meal."
+            f"Analyze this food image.\nUser-supplied meal facts: "
+            f"{self.user_description}. Apply stated food facts and amounts to "
+            f"the named foods; a stated whole-meal amount applies to the full "
+            f"meal. Use the image for visible portion evidence and do not infer "
+            f"unseen consumption. Return each food only once."
         )
 
     def get_strategy_name(self) -> str:

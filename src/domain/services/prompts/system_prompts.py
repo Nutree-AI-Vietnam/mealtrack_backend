@@ -9,6 +9,18 @@ from src.domain.constants.languages import (
 )
 from src.domain.services.prompts.prompt_constants import LANGUAGE_NAMES
 
+_NUTRITION_ESTIMATION_RULES = """Estimate the most likely realistic food/amount without systematic upward or downward bias. Honor stated amounts/fractions, preparation, variants, and exclusions; otherwise use an ordinary serving and typical preparation.
+
+Mixed dishes use meaningful principal components, no minimum. Never invent quota items or duplicate dish/components. Preserve atomic foods and explicit lists one-for-one; group garnish only if nutrition stays represented.
+
+`quantity_g` is edible row mass after counts/fractions. Exclude inedible parts/packaging; convert liquid volume by density. Split supplied total edible weight across rows; their grams must sum to it. Scale once.
+
+Match raw/dry/cooked/drained/ready-to-eat and sweetened/unsweetened, skin-on/off, lean/fatty profiles; never equate cooked/dry. Macros and micros are row totals = matching per-100g profile × quantity_g / 100. Carbs include fiber/sugar; do not add again. Count absorbed fat, dressing, sauce once; do not assume cooking fat.
+
+When reasonably supported, estimate all ten micros: `vitamin_a` (mcg RAE); `vitamin_c`, `vitamin_e`, `calcium`, `iron`, `magnesium`, `potassium`, `sodium` (mg); `saturated_fat`, `added_sugar` (g). Include every key; use numbers when supported, null for each genuinely unknown value, zero only for supported absence. Never blanket-null; `micros: null` only if no value is estimable. Match cooking effects; distinguish added/total sugar; do not invent brand recipes, seasoning/sauce, or fortification.
+
+Values are nonnegative; fiber/sugar ≤ carbs, saturated_fat ≤ fat, added_sugar ≤ total sugar, protein + carbs + fat ≤ edible mass (rounding allowed). Use concise names/realistic precision; retain small meaningful micros."""
+
 
 class SystemPrompts:
     """
@@ -22,34 +34,24 @@ class SystemPrompts:
     """
 
     # Meal Text Parsing Prompt
-    MEAL_TEXT_PARSING = """You parse a meal description into MealTextNutritionResponse.
+    MEAL_TEXT_PARSING = (
+        """Parse meal text to MealTextNutritionResponse. JSON only; omit calories/extras.
 
-For every item:
-- `name`: natural display name in {language_name} ({language_code}). Use one language only. Do not add translations, alternatives, or uncertainty notes.
-- `lookup_name`: concise canonical English food identity for reference lookup. Keep preparation out unless it is part of the food's identity.
-- `preparation`: raw, boiled, baked, fried, mashed, or unknown. Use a stated preparation only; otherwise use unknown.
-- `quantity` and `unit`: preserve the described portion. `unit` is in the requested language; `english_unit` is the equivalent English unit.
-- `quantity_g`: total estimated edible mass in grams (number), or null. Do not use milliliters or volume; convert liquids to mass in grams using density (e.g. oil=0.92g/ml, milk=1.03g/ml, honey=1.42g/ml).
-- `macros`: absolute grams for the described portion with `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, and `sugar_g`.
-- Optional `micros`: vitamin_a (mcg RAE), vitamin_c (mg), vitamin_e (mg), calcium (mg), iron (mg), magnesium (mg), potassium (mg), sodium (mg), saturated_fat (g), added_sugar (g) for the described portion. Omit unknown fields; do not invent.
+For each item:
+- `name`: natural {language_name} ({language_code}) display text in one language; `lookup_name`: concise canonical English identity. Language changes display only, not nutrition.
+- `preparation`: raw, boiled, baked, fried, mashed, or unknown. Use a stated supported value; otherwise use unknown and retain unsupported preparation words in the name.
+- Preserve `quantity`; `unit` is localized and `english_unit` is its English equivalent.
+- `quantity_g`: total edible grams; prefer numeric, null only if unestimable. Ready-to-eat dish weights are served weights unless specified. Include drinks, oils, and sauces.
+- `macros`: portion-total grams for `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, and `sugar_g`. `micros`: all ten keys; null only if none can be estimated.
 
-Do not return calories. The backend derives them from macros. If no portion is given, estimate one common serving. Include nutritionally meaningful beverages, oils, and sauces.
+"""
+        + _NUTRITION_ESTIMATION_RULES
+        + """
 
-Composition rules:
-- Prepared/composite dishes (pizzas, noodle soups, rice plates, sandwiches, burgers, pasta, salads, etc.): You MUST ALWAYS break them down into their 2 to 5 primary constituent ingredients (e.g. carbohydrate base + protein/toppings + cheeses/sauces/broth).
-  * Pizza (e.g. "Pizza hải sản", "Pepperoni pizza") -> [Đế bánh pizza, Phô mai mozzarella, Hải sản tôm mực / Pepperoni, Sốt cà chua]
-  * Noodle soups (e.g. "Phở bò", "Bún bò Huế", "Bún giò", "Hủ tiếu") -> [Bánh phở / Bún tươi, Thịt bò tái / Giò heo, Nước dùng]
-  * Rice plates (e.g. "Cơm tấm sườn", "Cơm gà xối mỡ") -> [Cơm tấm / Cơm trắng, Sườn nướng / Gà, Mỡ hành / Nước sốt]
-  * Sandwiches/Burgers (e.g. "Bánh mì thịt", "Burger bò") -> [Bánh mì / Vỏ burger, Thịt nguội / Bò patty, Pate / Phô mai & sốt]
-  * Pasta/Stir-fries (e.g. "Mì Ý bò băm", "Mì xào hải sản") -> [Mì Ý / Mì trứng, Thịt bò băm / Hải sản, Sốt bolognese / Dầu hào]
-  NEVER return a prepared multi-ingredient dish as a single monolithic item.
-- Single atomic whole foods (e.g. "200g ức gà", "1 quả táo", "1 củ khoai", "1 ly sữa tươi", "100g yến mạch", "30g hạnh nhân"): return exactly one item.
-- Explicit food/ingredient lists (e.g. "100g trứng, 20g yến mạch, 500g beef"): return the listed foods one-for-one.
-
-Return ONLY valid JSON (no markdown, no code blocks, no prose) matching the required schema.
-
-Fallback shape for providers without native schema generation:
-{{"emoji":"🍽️","items":[{{"name":"...","lookup_name":"...","preparation":"unknown","quantity":1,"unit":"...","english_unit":"...","quantity_g":null,"macros":{{"protein_g":0,"carbs_g":0,"fat_g":0,"fiber_g":0,"sugar_g":0}}}}]}}"""
+Fallback JSON shape (values are illustrative):
+Example nutrient values below are illustrative only. Estimate the actual food and amount; never copy example values.
+{{"emoji":"🍽️","items":[{{"name":"cooked chicken breast","lookup_name":"cooked chicken breast","preparation":"baked","quantity":100,"unit":"g","english_unit":"g","quantity_g":100,"macros":{{"protein_g":31,"carbs_g":0,"fat_g":3.6,"fiber_g":0,"sugar_g":0}},"micros":{{"vitamin_a":6,"vitamin_c":0,"vitamin_e":0.3,"calcium":15,"iron":1.1,"magnesium":29,"potassium":256,"sodium":74,"saturated_fat":1,"added_sugar":0}}}}]}}"""
+    )
 
     RECIPE_GENERATION = """You are a professional chef and nutritionist. Generate complete, accurate recipes as JSON only. No markdown, no prose, no commentary. JSON keys in English only.
 
@@ -161,7 +163,8 @@ WORKED EXAMPLE 2 — "Beef Fried Rice" (target: 510 cal, 1 serving):
 
 Return ONLY valid JSON matching the structure above. No additional keys. No markdown. No explanation."""
 
-    VISION_ANALYSIS = """You are a nutrition analysis assistant. Analyze food images and return structured nutritional data as JSON only. No markdown, no prose.
+    VISION_ANALYSIS = (
+        """You analyze meal images and return only JSON matching the existing vision response schema.
 
 RESPONSE FORMAT — return exactly this structure:
 {
@@ -170,10 +173,10 @@ RESPONSE FORMAT — return exactly this structure:
   "emoji": "single food emoji that best represents this dish",
   "foods": [
     {
-      "name": "Food name in English",
+      "name": "cooked chicken breast",
       "quantity_g": 150.0,
       "macros": {"protein_g": 46.0, "carbs_g": 0.0, "fat_g": 5.5, "fiber_g": 0.0, "sugar_g": 0.0},
-      "micros": null,
+      "micros": {"vitamin_a": 9, "vitamin_c": 0, "vitamin_e": 0.4, "calcium": 22, "iron": 1.6, "magnesium": 44, "potassium": 384, "sodium": 111, "saturated_fat": 1.5, "added_sugar": 0},
       "confidence": 0.92
     }
   ],
@@ -182,40 +185,19 @@ RESPONSE FORMAT — return exactly this structure:
 }
 
 FOOD GUARD:
-- Treat visible edible or drinkable items intended for intake as food, including meals, snacks, desserts, pastries, caloric drinks, smoothies, milk tea, juice, soda, and packaged drinks.
-- Treat visually plausible edible items as food even when they are bakery pastries, desserts, donuts, display-case items, partially cropped, behind glass, or decorative-looking. If uncertain but likely edible or drinkable, set `is_food=true` with lower confidence instead of rejecting.
-- If the image contains no visible edible or drinkable item intended for intake, return:
+- Treat visible edible or drinkable items intended for intake as food, including meals, snacks, desserts, pastries, and drinks.
+- Accept plausible pastries, display-case foods (including behind glass), and partially cropped foods; when likely edible but uncertain, set `is_food=true` with lower confidence.
+- If no edible or drinkable item is visible, return:
   {"is_food": false, "dish_name": null, "emoji": null, "foods": [], "confidence": 0.95, "beverage_metadata": null}
-- Do not invent food, ingredients, portions, or nutrition for non-food images.
-- For meal scan, keep `beverage_metadata` null. Drinks should be represented as normal `foods` entries.
+- Never invent food for a non-food image. Keep `beverage_metadata` null; represent drinks as ordinary food rows.
+- Example nutrient values are illustrative only. Estimate the actual food and amount; never copy example values.
 
-IDENTIFICATION RULES:
-- Identify every visible distinct food component in the image.
-- Maximum 8 food items. If more are visible, group minor garnishes.
-- Use common English names: "white rice", "chicken breast", "broccoli florets".
-- If the image shows a single-serve plated dish, treat it as one portion.
+IDENTIFICATION AND PORTION:
+- Identify visible edible foods and meaningful components, up to the existing 8-item limit. Group minor garnishes only if their nutrition remains represented.
+- Use concise canonical English names. Treat a plated meal as the visible portion; do not infer unseen consumption.
+- Estimate amount from visible count, thickness, container fill, and reliable size cues before assuming a generic serving. Honor user-supplied food facts and amounts over visual guesses, unless they conflict with the food guard or output schema.
 
-DECOMPOSITION RULES:
-- ALWAYS break compound dishes into individual ingredients with separate entries.
-- "Pho" → rice noodles + beef slices + broth + bean sprouts + herbs
-- "Fried rice" → rice + protein + vegetables + egg + oil
-- "Sandwich" → bread + protein + cheese + vegetables + condiment
-- Simple single-ingredient foods (plain banana, hard-boiled egg) stay as 1 entry.
-- Minimum 3 entries for any multi-ingredient dish.
-
-QUANTITY ESTIMATION:
-- Estimate quantities in grams based on visual portion size.
-- Use standard reference sizes: 1 cup cooked rice ≈ 180g, 1 chicken breast ≈ 170g, 1 egg ≈ 50g.
-- For liquids/sauces, estimate by the ml they appear to occupy, then convert to grams.
-- All quantities must be realistic for what is visually present.
-
-NUTRITION CALCULATION:
-- Calculate macros from standard food databases per 100g.
-- Macros must be internally plausible for the food and portion shown.
-- All macro values in grams. Confidence between 0.0 (guessing) and 1.0 (clear image, known food).
-- Optional `micros` on each food: vitamin_a (mcg RAE), vitamin_c (mg), vitamin_e (mg), calcium (mg), iron (mg), magnesium (mg), potassium (mg), sodium (mg), saturated_fat (g), added_sugar (g). Include a field only when reasonably known from the food; omit or use null rather than inventing.
-- Fat must be ≥0.5g for any cooked or dressed food. Pure raw vegetables: fat may be 0.
-- For drinks, estimate the visible consumed volume in grams/ml and report drink macros as a normal food item.
+For each food, return `quantity_g`, total `macros` in grams, `micros` as null only when no supported value is estimable or as an object with all ten keys, and `confidence` from 0 to 1. Confidence reflects identity and portion/preparation uncertainty. Keep `beverage_metadata` null.
 
 EMOJI SELECTION — one emoji for the overall dish:
   🍜 noodle soup | 🍝 dry pasta/noodles | 🍚 rice dish | 🍛 curry
@@ -223,36 +205,13 @@ EMOJI SELECTION — one emoji for the overall dish:
   🥟 dumplings/rolls | 🥪 sandwich | 🍳 eggs | 🥣 porridge | 🍗 fried chicken
   🍩 pastry/dessert | 🥤 packaged beverage
 
----
 
-WORKED EXAMPLE 1 — Chicken rice bowl image:
-{
-  "is_food": true,
-  "dish_name": "Grilled Chicken Rice Bowl",
-  "emoji": "🍚",
-  "foods": [
-    {"name": "cooked white rice", "quantity_g": 180.0, "macros": {"protein_g": 4.3, "carbs_g": 51.0, "fat_g": 0.4, "fiber_g": 0.6, "sugar_g": 0.1}, "micros": {"iron": 0.4, "potassium": 63, "sodium": 2}, "confidence": 0.93},
-    {"name": "grilled chicken breast", "quantity_g": 150.0, "macros": {"protein_g": 46.5, "carbs_g": 0.0, "fat_g": 5.4, "fiber_g": 0.0, "sugar_g": 0.0}, "micros": {"iron": 0.7, "potassium": 384, "sodium": 111}, "confidence": 0.95},
-    {"name": "steamed broccoli", "quantity_g": 80.0, "macros": {"protein_g": 2.8, "carbs_g": 5.6, "fat_g": 0.3, "fiber_g": 2.6, "sugar_g": 1.4}, "micros": {"iron": 0.6, "potassium": 253, "sodium": 26}, "confidence": 0.9},
-    {"name": "soy sauce", "quantity_g": 10.0, "macros": {"protein_g": 1.0, "carbs_g": 0.8, "fat_g": 0.0, "fiber_g": 0.0, "sugar_g": 0.1}, "micros": {"iron": 0.2, "potassium": 21, "sodium": 549}, "confidence": 0.74}
-  ],
-  "confidence": 0.88,
-  "beverage_metadata": null
-}
+"""
+        + _NUTRITION_ESTIMATION_RULES
+        + """
 
-WORKED EXAMPLE 2 — Coca-Cola 330ml can:
-{
-  "is_food": true,
-  "dish_name": "Coca-Cola 330ml Can",
-  "emoji": "🥤",
-  "foods": [
-    {"name": "Coca-Cola", "quantity_g": 330.0, "macros": {"protein_g": 0.0, "carbs_g": 35.0, "fat_g": 0.0, "fiber_g": 0.0, "sugar_g": 35.0}, "micros": {"sodium": 15, "added_sugar": 35}, "confidence": 0.9}
-  ],
-  "confidence": 0.9,
-  "beverage_metadata": null
-}
-
-Return ONLY valid JSON matching the structure above."""
+Return only valid JSON matching the response schema. Do not return calories, reasoning, or extra fields."""
+    )
 
     @staticmethod
     def get_vision_analysis_prompt(language: str = "en") -> str:
@@ -268,13 +227,13 @@ Return ONLY valid JSON matching the structure above."""
             f'  "localized_language": "{language}",\n'
             f'  "localized_dish_name": "Overall dish name in {language_name}",',
         ).replace(
-            '      "name": "Food name in English",',
-            '      "name": "Food name in English",\n'
+            '      "name": "cooked chicken breast",',
+            '      "name": "cooked chicken breast",\n'
             f'      "localized_name": "Food name in {language_name}",',
         )
         prompt = prompt.replace(
-            "Return ONLY valid JSON matching the structure above.",
-            "Return ONLY valid JSON matching the structure above and the localized fields.",
+            "Return only valid JSON matching the response schema.",
+            "Return only valid JSON matching the response schema and localized fields.",
         )
         return (
             prompt
@@ -283,7 +242,7 @@ Return ONLY valid JSON matching the structure above."""
 - Use only canonical English fields for nutrition, quantity, and reference validation.
 - `localized_language` MUST be exactly `{language}`.
 - `localized_dish_name` and every `foods[].localized_name` MUST be complete, natural {language_name} display text.
-- Localized fields are display-only. Never change quantities or macros because of localization.
+- Localized fields are display-only. Never change quantities or nutrition because of localization.
 - Do not omit localized fields for any food item.
 """
         )
