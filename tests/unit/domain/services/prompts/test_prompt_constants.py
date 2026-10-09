@@ -94,14 +94,13 @@ class TestFallbackMealNames:
 class TestBasicAnalysisPromptConstraints:
     """Test prompt constraints for basic analysis strategy."""
 
-    def test_basic_analysis_prompt_requires_json_only_and_no_prose(self):
-        """Ensure JSON-only output constraints are explicit in VISION_ANALYSIS."""
+    def test_basic_analysis_prompt_requires_json_schema_and_item_limit(self):
+        """Keep output JSON-only and within the vision food-item limit."""
 
         prompt = BasicAnalysisStrategy().get_analysis_prompt().lower()
 
-        assert "json only" in prompt
-        assert "no prose" in prompt
-        assert "maximum 8 food items" in prompt
+        assert "return only json matching the existing vision response schema" in prompt
+        assert "up to the existing 8-item limit" in prompt
 
     def test_basic_analysis_prompt_returns_vision_analysis(self):
         """BasicAnalysisStrategy must return SystemPrompts.VISION_ANALYSIS."""
@@ -134,15 +133,16 @@ class TestBasicAnalysisPromptConstraints:
         prompt = BasicAnalysisStrategy().get_analysis_prompt().lower()
 
         assert '"is_food"' in prompt
-        assert "no visible edible or drinkable item" in prompt
+        assert "if no edible or drinkable item is visible" in prompt
         assert "do not invent" in prompt
 
     def test_basic_analysis_prompt_accepts_ambiguous_bakery_foods(self):
         """Bakery/display-case foods should not be rejected as non-food."""
         prompt = BasicAnalysisStrategy().get_analysis_prompt().lower()
 
-        assert "bakery pastries" in prompt
-        assert "display-case items" in prompt
+        assert "plausible pastries" in prompt
+        assert "display-case foods" in prompt
+        assert "partially cropped foods" in prompt
         assert "behind glass" in prompt
         assert "lower confidence" in prompt
 
@@ -151,8 +151,8 @@ class TestBasicAnalysisPromptConstraints:
         prompt = BasicAnalysisStrategy().get_analysis_prompt().lower()
 
         assert "edible or drinkable items" in prompt
-        assert "caloric drinks" in prompt
-        assert "drinks should be represented as normal `foods` entries" in prompt
+        assert "visible edible or drinkable items" in prompt
+        assert "represent drinks as ordinary food rows" in prompt
         assert "if the image shows a packaged drink" not in prompt
         assert '"is_food": false,\n  "dish_name": "coca-cola' not in prompt
 

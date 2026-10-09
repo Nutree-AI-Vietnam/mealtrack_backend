@@ -1,30 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import Any
 
-from src.domain.parsers.vision_response_parser import (
-    GPTResponseParsingError,
-    VisionResponseParser,
+from src.domain.evaluation.prompt_eval_models import (
+    MACRO_FIELDS,
+    MICRO_ERROR_FLOORS,
+    MICRO_UNITS,
+    PromptEvalCase,
+    PromptEvalObservation,
+    PromptEvalResult,
 )
-
-
-@dataclass(frozen=True)
-class PromptEvalCase:
-    case_id: str
-    response_payload: dict
-
-
-@dataclass(frozen=True)
-class PromptEvalResult:
-    name: str
-    parse_success_rate: float
-    validation_success_rate: float
-    prompt_tokens_estimate: float
-    score: float
+from src.domain.evaluation.prompt_eval_scoring import score_candidate
+from src.domain.parsers.vision_response_parser import VisionResponseParser
 
 
 class PromptEvalLoop:
-    """Offline evaluator for ranking prompt candidates with parser fidelity and cost."""
+    """Evaluate prompt candidates while separating contract and provider evidence."""
 
     def __init__(self, parser: VisionResponseParser | None = None):
         self._parser = parser or VisionResponseParser()
@@ -33,50 +24,21 @@ class PromptEvalLoop:
         self,
         candidates: dict[str, str],
         cases: list[PromptEvalCase],
-        case_overrides: dict[str, dict[str, dict]] | None = None,
+        case_overrides: dict[str, dict[str, Any]] | None = None,
     ) -> list[PromptEvalResult]:
         if not cases:
             raise ValueError("cases must not be empty")
-
-        ranked: list[PromptEvalResult] = []
         overrides = case_overrides or {}
-
-        for name, prompt in candidates.items():
-            success_count = 0
-            validation_success_count = 0
-            candidate_overrides = overrides.get(name, {})
-
-            for case in cases:
-                payload = candidate_overrides.get(case.case_id, case.response_payload)
-                structured = payload.get("structured_data", {})
-
-                try:
-                    self._parser.validate_structured_data(structured)
-                    validation_success_count += 1
-                except GPTResponseParsingError:
-                    pass
-
-                try:
-                    self._parser.parse_to_nutrition(payload)
-                    success_count += 1
-                except GPTResponseParsingError:
-                    pass
-
-            parse_success_rate = success_count / len(cases)
-            validation_success_rate = validation_success_count / len(cases)
-            prompt_tokens_estimate = len(prompt) / 4.0
-            score = (parse_success_rate * 100.0) - (prompt_tokens_estimate / 100.0)
-
-            ranked.append(
-                PromptEvalResult(
-                    name=name,
-                    parse_success_rate=parse_success_rate,
-                    validation_success_rate=validation_success_rate,
-                    prompt_tokens_estimate=prompt_tokens_estimate,
-                    score=score,
-                )
+        ranked = [
+            score_candidate(
+                self._parser,
+                name,
+                prompt,
+                cases,
+                overrides.get(name, {}),
             )
-
+            for name, prompt in candidates.items()
+        ]
         return sorted(
             ranked,
             key=lambda item: (item.parse_success_rate, -item.prompt_tokens_estimate),
@@ -105,3 +67,14 @@ class PromptEvalLoop:
             )
         if failures:
             raise ValueError("; ".join(failures))
+
+
+__all__ = [
+    "MACRO_FIELDS",
+    "MICRO_ERROR_FLOORS",
+    "MICRO_UNITS",
+    "PromptEvalCase",
+    "PromptEvalLoop",
+    "PromptEvalObservation",
+    "PromptEvalResult",
+]
