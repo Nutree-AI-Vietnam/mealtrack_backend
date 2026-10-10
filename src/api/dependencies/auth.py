@@ -114,7 +114,7 @@ async def verify_firebase_token(
 
     try:
         # Firebase Admin verification is synchronous and may fetch public certs.
-        # Use a dedicated pool so Cloudinary/PIL work cannot starve auth.
+        # Use a dedicated pool so image and PIL work cannot starve auth.
         decoded_token = await _verify_id_token(token)
         logger.debug(
             "Successfully verified token for user: %s", decoded_token.get("uid")

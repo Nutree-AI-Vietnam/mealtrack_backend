@@ -187,8 +187,8 @@ class UploadMealImageImmediatelyHandler(
             language,
         )
 
-    def _validate_cloudinary_url(self, url: str) -> bool:
-        """Validate that the Cloudinary response is a valid HTTPS URL."""
+    def _validate_uploaded_image_url(self, url: str) -> bool:
+        """Validate that the stored image response is a valid HTTPS URL."""
         return url is not None and url.startswith("https://")
 
     def _capture_rejected_scan(
@@ -219,7 +219,7 @@ class UploadMealImageImmediatelyHandler(
         # Step 1: Generate image ID upfront
         image_id = str(uuid4())
 
-        # Step 2: Upload to Cloudinary FIRST (before any DB operations)
+        # Step 2: Upload the image before any DB operations
         logger.info(f"[UPLOAD-START] image_id={image_id}")
         start = time.time()
 
@@ -230,11 +230,11 @@ class UploadMealImageImmediatelyHandler(
                 image_id,
             )
         except Exception as e:
-            raise RuntimeError(f"Cloudinary upload failed: {e}") from e
+            raise RuntimeError(f"Image upload failed: {e}") from e
 
         # Step 3: Verify we got a valid URL back
-        if not self._validate_cloudinary_url(image_url):
-            raise RuntimeError("Cloudinary upload failed - invalid URL returned")
+        if not self._validate_uploaded_image_url(image_url):
+            raise RuntimeError("Image upload failed - invalid URL returned")
 
         upload_elapsed = time.time() - start
         logger.info(
@@ -248,7 +248,7 @@ class UploadMealImageImmediatelyHandler(
         try:
             analysis_result = await self._run_vision_analysis(command, image_id)
         except Exception as exc:
-            # Image uploaded but analysis failed - acceptable orphan in Cloudinary
+            # Image uploaded but analysis failed - the stored object can remain.
             if (
                 isinstance(exc, AIVisionError)
                 and exc.kind == AIVisionFailureKind.no_food

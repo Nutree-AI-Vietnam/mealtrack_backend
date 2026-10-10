@@ -233,14 +233,10 @@ class Settings(BaseSettings):
     WEB_FUNNEL_CLAIM_LINK_BASE_URL: str = Field(default="")
     WEB_FUNNEL_BFF_ORIGIN: str = Field(default="")
     WEB_FUNNEL_BFF_SHARED_SECRET: str = Field(default="")
-    CLOUDINARY_CLOUD_NAME: str | None = Field(default=None)
-    CLOUDINARY_API_KEY: str | None = Field(default=None)
-    CLOUDINARY_API_SECRET: str | None = Field(default=None)
-
     # Image storage provider configuration
     IMAGE_STORE_PROVIDER: str = Field(
         default="cloudflare",
-        description="Image storage provider: 'cloudflare', 'cloudinary', or 'local'",
+        description="Image storage provider: 'cloudflare' or 'local'",
     )
     LOCAL_IMAGE_STORE_BASE_URL: str = Field(
         default="http://localhost:8000",
@@ -261,6 +257,23 @@ class Settings(BaseSettings):
     CLOUDFLARE_FLEXIBLE_VARIANTS_ENABLED: bool = Field(
         default=False,
         description="Whether Cloudflare Images flexible variants are enabled on the account",
+    )
+    API_PUBLIC_BASE_URL: str = Field(
+        default="",
+        description="Public API origin used in meal photo upload URLs, such as https://api.nutreeai.com",
+    )
+    R2_ACCESS_KEY_ID: str = Field(
+        default="",
+        description="R2 S3 access key for meal photo uploads",
+    )
+    R2_SECRET_ACCESS_KEY: str = Field(
+        default="",
+        description="R2 S3 secret. Also signs meal photo upload URLs.",
+    )
+    R2_BUCKET: str = Field(default="", description="R2 bucket for meal photos")
+    R2_PUBLIC_BASE_URL: str = Field(
+        default="",
+        description="Public HTTPS origin that serves the meal photo bucket",
     )
 
     # CORS
