@@ -105,16 +105,3 @@ class ImageStorePort(ABC):
     ) -> dict:
         """Async version of generate_upload_signature."""
         pass
-
-    async def store_signed_upload(
-        self,
-        image_id: str,
-        expires_at: int,
-        signature: str,
-        content_type: str,
-        body: bytes,
-    ) -> str:
-        """Accept the current app's multipart upload and store it."""
-        raise NotImplementedError(
-            "This image store does not accept signed client uploads"
-        )
