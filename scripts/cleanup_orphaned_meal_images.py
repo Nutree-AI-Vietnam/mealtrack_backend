@@ -1,7 +1,7 @@
 """
 One-time cleanup script to mark orphaned meals as FAILED.
 
-Orphaned meals have image_ids that don't exist in Cloudinary.
+Orphaned meals have no stored image URL, or the stored URL no longer resolves.
 
 Usage:
     python scripts/cleanup_orphaned_meal_images.py          # Dry-run (default)
@@ -31,11 +31,10 @@ RATE_LIMIT_DELAY = 0.1  # 10 requests per second
 
 def find_orphaned_meals(
     session,
-    cloudinary,
     limit: int | None = None,
 ) -> list[str]:
     """
-    Find meals where the Cloudinary image no longer exists.
+    Find meals whose stored image is missing.
 
     Returns list of orphaned meal_ids.
     """
@@ -68,7 +67,7 @@ def find_orphaned_meals(
     orphans = []
     valid = 0
 
-    for i, (meal_id, image_id, _dish_name, url) in enumerate(candidates):
+    for i, (meal_id, _image_id, _dish_name, url) in enumerate(candidates):
         if i > 0 and i % 50 == 0:
             logger.info(
                 f"Progress: {i}/{len(candidates)} checked, {len(orphans)} orphans found"
@@ -77,13 +76,8 @@ def find_orphaned_meals(
         is_orphan = False
 
         if not url:
-            # No URL stored - check Cloudinary API
-            found_url = cloudinary.get_url(image_id)
-            if found_url is None:
-                is_orphan = True
-                logger.info(
-                    f"  - meal {meal_id}: image NOT FOUND (no URL, Cloudinary lookup failed)"
-                )
+            is_orphan = True
+            logger.info(f"  - meal {meal_id}: image NOT FOUND (no URL stored)")
         else:
             # URL exists - verify it's accessible
             try:
@@ -155,11 +149,10 @@ def main():
     from sqlalchemy.orm import sessionmaker
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.infra.adapters.cloudinary_image_store import CloudinaryImageStore
     from src.infra.database.config import SQLALCHEMY_DATABASE_URL
 
     parser = argparse.ArgumentParser(
-        description="Find and mark orphaned meals (missing Cloudinary images)"
+        description="Find and mark orphaned meals (missing stored images)"
     )
     parser.add_argument(
         "--execute",
@@ -179,10 +172,8 @@ def main():
     engine = create_engine(SQLALCHEMY_DATABASE_URL, echo=False)
     SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
-    cloudinary = CloudinaryImageStore()
-
     with SessionLocal() as session:
-        orphans = find_orphaned_meals(session, cloudinary, limit=args.limit)
+        orphans = find_orphaned_meals(session, limit=args.limit)
 
         if not orphans:
             logger.info("\nNo orphaned meals found!")

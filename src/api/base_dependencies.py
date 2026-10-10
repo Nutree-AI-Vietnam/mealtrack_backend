@@ -23,7 +23,6 @@ from src.infra.adapters.cloudflare_image_store import CloudflareImageStore
 from src.infra.adapters.cloudflare_workers_image_generator import (
     CloudflareWorkersImageGenerator,
 )
-from src.infra.adapters.cloudinary_image_store import CloudinaryImageStore
 from src.infra.adapters.food_cache_service import FoodCacheService
 from src.infra.adapters.food_data_service import FoodDataService
 from src.infra.adapters.open_food_facts_service import (
@@ -128,16 +127,14 @@ def get_image_store() -> ImageStorePort:
     Get the image store adapter instance (singleton).
 
     Returns:
-        ImageStorePort: The image store adapter (Cloudinary or Mock)
+        ImageStorePort: The image store adapter (Cloudflare Images or local)
     """
     global _image_store
     if _image_store is None:
         from src.infra.config.settings import get_settings
 
         current_settings = get_settings()
-        if current_settings.IMAGE_STORE_PROVIDER.lower() == "cloudinary":
-            _image_store = CloudinaryImageStore()
-        elif current_settings.IMAGE_STORE_PROVIDER.lower() == "local":
+        if current_settings.IMAGE_STORE_PROVIDER.lower() == "local":
             from src.infra.adapters.local_image_store import LocalImageStore
 
             _image_store = LocalImageStore(

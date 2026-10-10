@@ -18,7 +18,6 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Firebase Auth | **Required** | Fail fast (401) |
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
-| Cloudinary | **Best-effort media** | Degrade (fallback URL construction where coded) |
 | RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Premium route gates are not enforced yet |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
@@ -62,7 +61,7 @@ durable.
 |---------|-------------|
 | Settings / env | `src/infra/config/settings.py` |
 | Firebase Auth + FCM | `src/infra/services/firebase_service.py`, `firebase_auth_service.py`, `src/infra/services/push/` |
-| Cloudflare & Cloudinary images | `src/infra/adapters/cloudflare_image_store.py`, `cloudinary_image_store.py` (`docs/cloudflare-images-guide.md`) |
+| Cloudflare images and meal-photo R2 | `src/infra/adapters/cloudflare_image_store.py`, `r2_object_store.py` (`docs/cloudflare-images-guide.md`) |
 | AI routing / circuit breaker | `src/infra/services/ai/` (`ai_model_manager.py`, providers, adapters) |
 | Vision analysis | `src/infra/adapters/vision_ai_service.py` |
 | OpenAI prompt-cache policy | `src/infra/services/ai/openai_prompt_cache_policy.py` |

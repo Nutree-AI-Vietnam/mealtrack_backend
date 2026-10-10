@@ -344,7 +344,7 @@ def get_food_search_event_bus() -> EventBus:
     Get a lightweight event bus for food search operations (singleton).
 
     This event bus only registers food-related handlers and does NOT
-    initialize heavy services like Cloudinary, AI providers, etc.
+    initialize heavy services like image storage, AI providers, etc.
 
     Returns:
         EventBus: Lightweight event bus for food search
