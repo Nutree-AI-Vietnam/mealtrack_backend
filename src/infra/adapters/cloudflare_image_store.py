@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid
-from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 import httpx
 
 from src.domain.ports.image_store_port import ImageStorePort
+from src.infra.adapters.meal_photo_upload import issue_upload_ticket
 from src.infra.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -19,8 +18,8 @@ logger = logging.getLogger(__name__)
 class CloudflareImageStore(ImageStorePort):
     """Implementation of ImageStorePort using Cloudflare Images service.
 
-    Supports direct creator uploads, direct server-side uploads, on-the-fly variants,
-    and deletion.
+    Server-side saves still use the Cloudflare Images API. Client upload tokens
+    are signed locally and stored in R2, so they do not use that API quota.
     """
 
     def __init__(
@@ -34,6 +33,11 @@ class CloudflareImageStore(ImageStorePort):
         client: httpx.AsyncClient | None = None,
         sync_client: httpx.Client | None = None,
         timeout: float = 30.0,
+        api_public_base_url: str | None = None,
+        r2_access_key_id: str | None = None,
+        r2_secret_access_key: str | None = None,
+        r2_bucket: str | None = None,
+        r2_public_base_url: str | None = None,
     ) -> None:
         settings = get_settings()
         self._account_id = (
@@ -67,6 +71,29 @@ class CloudflareImageStore(ImageStorePort):
         self._client = client
         self._sync_client = sync_client
         self._timeout = timeout
+        self._api_public_base_url = (
+            api_public_base_url
+            if api_public_base_url is not None
+            else settings.API_PUBLIC_BASE_URL
+        ).strip()
+        self._r2_access_key_id = (
+            r2_access_key_id
+            if r2_access_key_id is not None
+            else settings.R2_ACCESS_KEY_ID
+        ).strip()
+        self._r2_secret_access_key = (
+            r2_secret_access_key
+            if r2_secret_access_key is not None
+            else settings.R2_SECRET_ACCESS_KEY
+        ).strip()
+        self._r2_bucket = (
+            r2_bucket if r2_bucket is not None else settings.R2_BUCKET
+        ).strip()
+        self._r2_public_base_url = (
+            r2_public_base_url
+            if r2_public_base_url is not None
+            else settings.R2_PUBLIC_BASE_URL
+        ).strip()
         self._base_api_url = (
             f"https://api.cloudflare.com/client/v4/accounts/{self._account_id}/images"
             if self._account_id
@@ -362,94 +389,34 @@ class CloudflareImageStore(ImageStorePort):
             return False
 
     def generate_upload_signature(self, image_id: str, ttl: int = 300) -> dict:
-        """Synchronously request a direct upload URL from Cloudflare Images."""
-        self._ensure_configured()
-        url = f"{self._base_api_url}/v2/direct_upload"
-        headers = {"Authorization": f"Bearer {self._api_token}"}
-        expiry = (datetime.now(UTC) + timedelta(seconds=max(120, ttl))).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
+        """Sign a client upload locally. Does not call Cloudflare Images."""
+        self._ensure_r2_upload_configured()
+        return issue_upload_ticket(
+            image_id=image_id,
+            ttl=ttl,
+            api_public_base_url=self._api_public_base_url,
+            signing_secret=self._r2_secret_access_key,
         )
-        cf_id = self._to_cloudflare_id(image_id)
-        files = {"expiry": (None, expiry), "id": (None, cf_id)}
-
-        client = self._sync_client or httpx.Client(timeout=10.0)
-        try:
-            resp = client.post(url, files=files, headers=headers)
-        finally:
-            if client is not self._sync_client:
-                client.close()
-
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Failed to generate Cloudflare upload URL: {resp.status_code} - {resp.text[:200]}"
-            )
-
-        payload = resp.json()
-        if not payload.get("success"):
-            raise RuntimeError(
-                f"Cloudflare direct upload failed: {payload.get('errors')}"
-            )
-
-        result = payload.get("result", {})
-        upload_url = result.get("uploadURL")
-        returned_id = result.get("id", cf_id)
-
-        return {
-            "image_id": returned_id,
-            "upload_url": upload_url,
-            "provider": "cloudflare",
-            "cloud_name": "",
-            "api_key": "",
-            "timestamp": int(time.time()),
-            "signature": "",
-            "folder": "mealtrack",
-            "public_id": f"mealtrack/{returned_id}",
-        }
 
     async def generate_upload_signature_async(
         self, image_id: str, ttl: int = 300
     ) -> dict:
-        """Asynchronously request a direct upload URL from Cloudflare Images."""
-        self._ensure_configured()
-        url = f"{self._base_api_url}/v2/direct_upload"
-        headers = {"Authorization": f"Bearer {self._api_token}"}
-        expiry = (datetime.now(UTC) + timedelta(seconds=max(120, ttl))).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        cf_id = self._to_cloudflare_id(image_id)
-        files = {"expiry": (None, expiry), "id": (None, cf_id)}
+        """Local signature. No network call."""
+        return self.generate_upload_signature(image_id, ttl)
 
-        if self._client:
-            resp = await self._client.post(
-                url, files=files, headers=headers, timeout=10.0
+    def _ensure_r2_upload_configured(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("API_PUBLIC_BASE_URL", self._api_public_base_url),
+                ("R2_ACCESS_KEY_ID", self._r2_access_key_id),
+                ("R2_SECRET_ACCESS_KEY", self._r2_secret_access_key),
+                ("R2_BUCKET", self._r2_bucket),
+                ("R2_PUBLIC_BASE_URL", self._r2_public_base_url),
             )
-        else:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(url, files=files, headers=headers)
-
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Failed to generate Cloudflare upload URL: {resp.status_code} - {resp.text[:200]}"
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "Missing R2 meal photo configuration: " + ", ".join(missing)
             )
-
-        payload = resp.json()
-        if not payload.get("success"):
-            raise RuntimeError(
-                f"Cloudflare direct upload failed: {payload.get('errors')}"
-            )
-
-        result = payload.get("result", {})
-        upload_url = result.get("uploadURL")
-        returned_id = result.get("id", cf_id)
-
-        return {
-            "image_id": returned_id,
-            "upload_url": upload_url,
-            "provider": "cloudflare",
-            "cloud_name": "",
-            "api_key": "",
-            "timestamp": int(time.time()),
-            "signature": "",
-            "folder": "mealtrack",
-            "public_id": f"mealtrack/{returned_id}",
-        }

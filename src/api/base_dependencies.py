@@ -155,45 +155,55 @@ def get_image_store() -> ImageStorePort:
 
 def get_allowed_image_hosts() -> frozenset[str]:
     """Return authorized image hostnames for meal photo validation."""
+    from src.infra.config.settings import get_settings
+
+    settings = get_settings()
+    hosts = {"res.cloudinary.com", "imagedelivery.net"}
+    for raw in (
+        getattr(settings, "CLOUDFLARE_CUSTOM_DOMAIN", ""),
+        getattr(settings, "R2_PUBLIC_BASE_URL", ""),
+    ):
+        hostname = _public_image_hostname(raw or "")
+        if hostname:
+            hosts.add(hostname)
+    return frozenset(hosts)
+
+
+def _public_image_hostname(raw: str) -> str:
     from ipaddress import ip_address
     from urllib.parse import urlsplit
 
-    from src.infra.config.settings import get_settings
-
-    hosts = {"res.cloudinary.com", "imagedelivery.net"}
-    custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
-    if custom_domain:
-        cleaned = custom_domain.strip().lower()
-        if "://" not in cleaned:
-            cleaned = f"//{cleaned}"
-        try:
-            clean_domain = (urlsplit(cleaned).hostname or "").rstrip(".")
-        except ValueError:
-            clean_domain = ""
-
-        local_suffixes = (
-            "localhost",
-            "local",
-            "localdomain",
-            "internal",
-            "lan",
-            "test",
-            "invalid",
-        )
-        is_local_domain = any(
-            clean_domain == suffix or clean_domain.endswith(f".{suffix}")
-            for suffix in local_suffixes
-        )
-        try:
-            ip_address(clean_domain)
-        except ValueError:
-            is_ip_literal = False
-        else:
-            is_ip_literal = True
-
-        if clean_domain and not is_local_domain and not is_ip_literal:
-            hosts.add(clean_domain)
-    return frozenset(hosts)
+    cleaned = raw.strip().lower()
+    if not cleaned:
+        return ""
+    if "://" not in cleaned:
+        cleaned = f"//{cleaned}"
+    try:
+        hostname = (urlsplit(cleaned).hostname or "").rstrip(".")
+    except ValueError:
+        return ""
+    local_suffixes = (
+        "localhost",
+        "local",
+        "localdomain",
+        "internal",
+        "lan",
+        "test",
+        "invalid",
+    )
+    is_local_domain = any(
+        hostname == suffix or hostname.endswith(f".{suffix}")
+        for suffix in local_suffixes
+    )
+    try:
+        ip_address(hostname)
+    except ValueError:
+        is_ip_literal = False
+    else:
+        is_ip_literal = True
+    if not hostname or is_local_domain or is_ip_literal:
+        return ""
+    return hostname
 
 
 # Vision Service (singleton pattern)
