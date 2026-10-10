@@ -262,6 +262,23 @@ class Settings(BaseSettings):
         default=False,
         description="Whether Cloudflare Images flexible variants are enabled on the account",
     )
+    API_PUBLIC_BASE_URL: str = Field(
+        default="",
+        description="Public API origin used in meal photo upload URLs, such as https://api.nutreeai.com",
+    )
+    R2_ACCESS_KEY_ID: str = Field(
+        default="",
+        description="R2 S3 access key for meal photo uploads",
+    )
+    R2_SECRET_ACCESS_KEY: str = Field(
+        default="",
+        description="R2 S3 secret. Also signs meal photo upload URLs.",
+    )
+    R2_BUCKET: str = Field(default="", description="R2 bucket for meal photos")
+    R2_PUBLIC_BASE_URL: str = Field(
+        default="",
+        description="Public HTTPS origin that serves the meal photo bucket",
+    )
 
     # CORS
     ALLOWED_ORIGINS: str = Field(

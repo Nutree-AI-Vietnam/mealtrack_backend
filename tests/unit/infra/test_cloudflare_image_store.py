@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 import respx
 
@@ -248,26 +249,38 @@ async def test_delete_async_success(cf_store):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_generate_upload_signature_async(cf_store):
-    respx.post(
-        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v2/direct_upload"
-    ).respond(
-        200,
-        json={
-            "success": True,
-            "result": {
-                "id": "new-upload-uuid",
-                "uploadURL": "https://upload.imagedelivery.net/upload-key-123",
-            },
-        },
+async def test_generate_upload_signature_async_does_not_call_cloudflare(
+    mock_cf_settings, monkeypatch
+):
+    route = respx.post(url__regex=r".*api.cloudflare.com.*").mock(
+        return_value=httpx.Response(429)
+    )
+    monkeypatch.setattr(
+        "src.infra.adapters.cloudflare_image_store.get_settings",
+        lambda: mock_cf_settings,
+    )
+    store = CloudflareImageStore(
+        account_id=mock_cf_settings.CLOUDFLARE_ACCOUNT_ID,
+        api_token=mock_cf_settings.CLOUDFLARE_API_TOKEN,
+        account_hash=mock_cf_settings.CLOUDFLARE_ACCOUNT_HASH,
+        custom_domain="media.test.com",
+        api_public_base_url="https://api.test",
+        r2_access_key_id="access",
+        r2_secret_access_key="secret",
+        r2_bucket="meal-photos",
+        r2_public_base_url="https://photos.example.com",
     )
 
-    token = await cf_store.generate_upload_signature_async("new-upload-uuid")
-    assert token["image_id"] == "new-upload-uuid"
-    assert token["upload_url"] == "https://upload.imagedelivery.net/upload-key-123"
-    assert token["provider"] == "cloudflare"
-    assert "public_id" in token
-    assert "cloud_name" in token
+    token = await store.generate_upload_signature_async("new-upload-uuid")
+
+    assert route.call_count == 0
+    assert token["provider"] == "r2"
+    assert token["upload_url"].startswith(
+        "https://api.test/v1/meals/direct-upload/new-upload-uuid?"
+    )
+    assert (
+        token["delivery_url"] == "https://photos.example.com/mealtrack/new-upload-uuid"
+    )
 
 
 @respx.mock

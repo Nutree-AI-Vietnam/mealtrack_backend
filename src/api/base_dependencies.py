@@ -160,8 +160,9 @@ def get_allowed_image_hosts() -> frozenset[str]:
 
     from src.infra.config.settings import get_settings
 
+    settings = get_settings()
     hosts = {"res.cloudinary.com", "imagedelivery.net"}
-    custom_domain = get_settings().CLOUDFLARE_CUSTOM_DOMAIN
+    custom_domain = settings.CLOUDFLARE_CUSTOM_DOMAIN
     if custom_domain:
         cleaned = custom_domain.strip().lower()
         if "://" not in cleaned:
@@ -193,6 +194,17 @@ def get_allowed_image_hosts() -> frozenset[str]:
 
         if clean_domain and not is_local_domain and not is_ip_literal:
             hosts.add(clean_domain)
+    r2_origin = getattr(settings, "R2_PUBLIC_BASE_URL", "") or ""
+    if r2_origin:
+        cleaned = r2_origin.strip().lower()
+        if "://" not in cleaned:
+            cleaned = f"//{cleaned}"
+        try:
+            r2_host = (urlsplit(cleaned).hostname or "").rstrip(".")
+        except ValueError:
+            r2_host = ""
+        if r2_host and "." in r2_host:
+            hosts.add(r2_host)
     return frozenset(hosts)
 
 
