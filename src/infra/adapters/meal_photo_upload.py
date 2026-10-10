@@ -43,7 +43,8 @@ def issue_upload_ticket(
 
 def upload_signature(secret: str, image_id: str, expires_at: int) -> str:
     message = f"{image_id}.{expires_at}".encode()
-    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+    key = secret.strip().encode()
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
 def ticket_is_valid(
