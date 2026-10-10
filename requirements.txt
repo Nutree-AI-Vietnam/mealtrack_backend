@@ -16,9 +16,6 @@ google-genai==2.8.0
 # Vector search and embeddings
 pgvector==0.4.2
 
-# Cloud storage
-cloudinary==1.44.2
-
 # HTTP client
 requests==2.34.2
 httpx==0.28.1

@@ -2,25 +2,44 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 import httpx
 
+from src.domain.exceptions.meal_photo_upload import MealPhotoUploadError
 from src.domain.ports.image_store_port import ImageStorePort
+from src.infra.adapters.r2_object_store import (
+    R2ObjectStore,
+    R2UploadError,
+    presigned_put_url,
+)
 from src.infra.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+_CLIENT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+_CLIENT_UPLOAD_TYPES = {
+    "image/jpeg": "image/jpeg",
+    "image/jpg": "image/jpeg",
+    "image/png": "image/png",
+    "image/webp": "image/webp",
+    "image/heic": "image/heic",
+    "image/heif": "image/heic",
+}
+_UPLOAD_TICKET_MAX_TTL_SECONDS = 3600
 
 
 class CloudflareImageStore(ImageStorePort):
     """Implementation of ImageStorePort using Cloudflare Images service.
 
-    Supports direct creator uploads, direct server-side uploads, on-the-fly variants,
-    and deletion.
+    Server-side saves still use the Cloudflare Images API. Client upload tokens
+    are signed locally and stored in R2, so they do not use that API quota.
     """
 
     def __init__(
@@ -34,6 +53,11 @@ class CloudflareImageStore(ImageStorePort):
         client: httpx.AsyncClient | None = None,
         sync_client: httpx.Client | None = None,
         timeout: float = 30.0,
+        api_public_base_url: str | None = None,
+        r2_access_key_id: str | None = None,
+        r2_secret_access_key: str | None = None,
+        r2_bucket: str | None = None,
+        r2_public_base_url: str | None = None,
     ) -> None:
         settings = get_settings()
         self._account_id = (
@@ -67,6 +91,29 @@ class CloudflareImageStore(ImageStorePort):
         self._client = client
         self._sync_client = sync_client
         self._timeout = timeout
+        self._api_public_base_url = (
+            api_public_base_url
+            if api_public_base_url is not None
+            else settings.API_PUBLIC_BASE_URL
+        ).strip()
+        self._r2_access_key_id = (
+            r2_access_key_id
+            if r2_access_key_id is not None
+            else settings.R2_ACCESS_KEY_ID
+        ).strip()
+        self._r2_secret_access_key = (
+            r2_secret_access_key
+            if r2_secret_access_key is not None
+            else settings.R2_SECRET_ACCESS_KEY
+        ).strip()
+        self._r2_bucket = (
+            r2_bucket if r2_bucket is not None else settings.R2_BUCKET
+        ).strip()
+        self._r2_public_base_url = (
+            r2_public_base_url
+            if r2_public_base_url is not None
+            else settings.R2_PUBLIC_BASE_URL
+        ).strip()
         self._base_api_url = (
             f"https://api.cloudflare.com/client/v4/accounts/{self._account_id}/images"
             if self._account_id
@@ -362,94 +409,123 @@ class CloudflareImageStore(ImageStorePort):
             return False
 
     def generate_upload_signature(self, image_id: str, ttl: int = 300) -> dict:
-        """Synchronously request a direct upload URL from Cloudflare Images."""
-        self._ensure_configured()
-        url = f"{self._base_api_url}/v2/direct_upload"
-        headers = {"Authorization": f"Bearer {self._api_token}"}
-        expiry = (datetime.now(UTC) + timedelta(seconds=max(120, ttl))).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
+        """Sign a direct R2 upload locally. Does not call Cloudflare Images."""
+        self._ensure_r2_upload_configured()
+        if not self._api_public_base_url:
+            raise ValueError("Missing R2 meal photo configuration: API_PUBLIC_BASE_URL")
+        key = f"mealtrack/{image_id}"
+        expires_in = max(120, ttl)
+        expires_at = int(time.time()) + expires_in
+        signature = _upload_ticket_signature(
+            self._r2_secret_access_key, image_id, expires_at
         )
-        cf_id = self._to_cloudflare_id(image_id)
-        files = {"expiry": (None, expiry), "id": (None, cf_id)}
-
-        client = self._sync_client or httpx.Client(timeout=10.0)
-        try:
-            resp = client.post(url, files=files, headers=headers)
-        finally:
-            if client is not self._sync_client:
-                client.close()
-
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Failed to generate Cloudflare upload URL: {resp.status_code} - {resp.text[:200]}"
-            )
-
-        payload = resp.json()
-        if not payload.get("success"):
-            raise RuntimeError(
-                f"Cloudflare direct upload failed: {payload.get('errors')}"
-            )
-
-        result = payload.get("result", {})
-        upload_url = result.get("uploadURL")
-        returned_id = result.get("id", cf_id)
-
+        upload_url = (
+            f"{self._api_public_base_url.rstrip('/')}/v1/meals/direct-upload/"
+            f"{quote(image_id, safe='')}?exp={expires_at}&sig={signature}"
+        )
         return {
-            "image_id": returned_id,
+            "image_id": image_id,
             "upload_url": upload_url,
-            "provider": "cloudflare",
+            "r2_upload_url": presigned_put_url(
+                account_id=self._account_id,
+                access_key_id=self._r2_access_key_id,
+                secret_access_key=self._r2_secret_access_key,
+                bucket=self._r2_bucket,
+                key=key,
+                expires_in=expires_in,
+                now=datetime.now(UTC),
+            ),
+            "delivery_url": f"{self._r2_public_base_url.rstrip('/')}/{quote(key, safe='/')}",
+            "provider": "r2",
             "cloud_name": "",
             "api_key": "",
-            "timestamp": int(time.time()),
-            "signature": "",
+            "timestamp": int(datetime.now(UTC).timestamp()),
+            "signature": signature,
             "folder": "mealtrack",
-            "public_id": f"mealtrack/{returned_id}",
+            "public_id": key,
         }
 
     async def generate_upload_signature_async(
         self, image_id: str, ttl: int = 300
     ) -> dict:
-        """Asynchronously request a direct upload URL from Cloudflare Images."""
-        self._ensure_configured()
-        url = f"{self._base_api_url}/v2/direct_upload"
-        headers = {"Authorization": f"Bearer {self._api_token}"}
-        expiry = (datetime.now(UTC) + timedelta(seconds=max(120, ttl))).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
+        """Local signature. No network call."""
+        return self.generate_upload_signature(image_id, ttl)
+
+    async def store_signed_upload(
+        self,
+        image_id: str,
+        expires_at: int,
+        signature: str,
+        content_type: str,
+        body: bytes,
+    ) -> str:
+        """Store the photo the current app posts to upload_url."""
+        self._ensure_r2_upload_configured()
+        try:
+            parsed_id = str(uuid.UUID(image_id))
+        except ValueError as exc:
+            raise MealPhotoUploadError(
+                "image_id must be a UUID", "INVALID_IMAGE_ID"
+            ) from exc
+        now = int(time.time())
+        if (
+            expires_at < now
+            or expires_at > now + _UPLOAD_TICKET_MAX_TTL_SECONDS
+            or not hmac.compare_digest(
+                _upload_ticket_signature(
+                    self._r2_secret_access_key, parsed_id, expires_at
+                ),
+                signature,
+            )
+        ):
+            raise MealPhotoUploadError(
+                "Upload link is invalid or expired",
+                "INVALID_UPLOAD_TICKET",
+            )
+        normalized_type = _CLIENT_UPLOAD_TYPES.get(
+            content_type.split(";")[0].strip().lower()
         )
-        cf_id = self._to_cloudflare_id(image_id)
-        files = {"expiry": (None, expiry), "id": (None, cf_id)}
-
-        if self._client:
-            resp = await self._client.post(
-                url, files=files, headers=headers, timeout=10.0
+        if normalized_type is None:
+            raise MealPhotoUploadError("Unsupported image type", "INVALID_FILE_TYPE")
+        if not body:
+            raise MealPhotoUploadError("Image file is empty", "EMPTY_FILE")
+        if len(body) > _CLIENT_UPLOAD_MAX_BYTES:
+            raise MealPhotoUploadError(
+                "File size exceeds maximum allowed (10 MB)",
+                "FILE_TOO_LARGE",
             )
-        else:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(url, files=files, headers=headers)
+        store = R2ObjectStore(
+            account_id=self._account_id,
+            access_key_id=self._r2_access_key_id,
+            secret_access_key=self._r2_secret_access_key,
+            bucket=self._r2_bucket,
+            public_base_url=self._r2_public_base_url,
+        )
+        try:
+            return await store.put(f"mealtrack/{parsed_id}", body, normalized_type)
+        except R2UploadError as exc:
+            raise MealPhotoUploadError(
+                "Image upload is temporarily unavailable. Please try again.",
+                "IMAGE_UPLOAD_UNAVAILABLE",
+            ) from exc
 
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Failed to generate Cloudflare upload URL: {resp.status_code} - {resp.text[:200]}"
+    def _ensure_r2_upload_configured(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("R2_ACCESS_KEY_ID", self._r2_access_key_id),
+                ("R2_SECRET_ACCESS_KEY", self._r2_secret_access_key),
+                ("R2_BUCKET", self._r2_bucket),
+                ("R2_PUBLIC_BASE_URL", self._r2_public_base_url),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "Missing R2 meal photo configuration: " + ", ".join(missing)
             )
 
-        payload = resp.json()
-        if not payload.get("success"):
-            raise RuntimeError(
-                f"Cloudflare direct upload failed: {payload.get('errors')}"
-            )
 
-        result = payload.get("result", {})
-        upload_url = result.get("uploadURL")
-        returned_id = result.get("id", cf_id)
-
-        return {
-            "image_id": returned_id,
-            "upload_url": upload_url,
-            "provider": "cloudflare",
-            "cloud_name": "",
-            "api_key": "",
-            "timestamp": int(time.time()),
-            "signature": "",
-            "folder": "mealtrack",
-            "public_id": f"mealtrack/{returned_id}",
-        }
+def _upload_ticket_signature(secret: str, image_id: str, expires_at: int) -> str:
+    message = f"{image_id}.{expires_at}".encode()
+    return hmac.new(secret.strip().encode(), message, hashlib.sha256).hexdigest()

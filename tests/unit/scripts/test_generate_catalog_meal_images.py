@@ -131,7 +131,7 @@ async def test_run_generation_failure_does_not_open_persistence_uow(monkeypatch,
     assert summary == {"selected": 1, "updated": 0, "skipped": 0, "failed": 1}
     assert events == ["uow_enter", "uow_exit"]
     persist.assert_not_awaited()
-    assert "cloudinary_signature_invalid" in capsys.readouterr().err
+    assert "image_upload_signature_invalid" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio
