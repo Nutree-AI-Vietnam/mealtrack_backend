@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
+from urllib.parse import parse_qs, urlparse
+
+import httpx
 import pytest
 import respx
 
@@ -268,11 +272,49 @@ def test_generate_upload_signature_is_local(mock_cf_settings, monkeypatch):
 
     assert token["provider"] == "r2"
     assert token["upload_url"].startswith(
+        "https://api.test/v1/meals/direct-upload/img-1?"
+    )
+    assert token["r2_upload_url"].startswith(
         "https://test-cf-account.r2.cloudflarestorage.com/meal-photos/mealtrack/img-1?"
     )
-    assert "X-Amz-Signature=" in token["upload_url"]
+    assert "X-Amz-Signature=" in token["r2_upload_url"]
     assert token["delivery_url"] == "https://photos.example.com/mealtrack/img-1"
-    assert "imagedelivery.net" not in token["upload_url"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_current_app_post_is_stored_in_r2(mock_cf_settings, monkeypatch):
+    monkeypatch.setattr(
+        "src.infra.adapters.cloudflare_image_store.get_settings",
+        lambda: mock_cf_settings,
+    )
+    store = CloudflareImageStore(
+        account_id="acct",
+        api_token="token",
+        account_hash="hash",
+        api_public_base_url="https://api.test",
+        r2_access_key_id="access",
+        r2_secret_access_key="secret\n",
+        r2_bucket="meal-photos",
+        r2_public_base_url="https://photos.example.com",
+    )
+    image_id = str(uuid.uuid4())
+    token = store.generate_upload_signature(image_id)
+    query = parse_qs(urlparse(token["upload_url"]).query)
+    put = respx.put(
+        url__regex=r"https://acct\.r2\.cloudflarestorage\.com/meal-photos/.*"
+    ).mock(return_value=httpx.Response(200))
+
+    public_url = await store.store_signed_upload(
+        image_id=image_id,
+        expires_at=int(query["exp"][0]),
+        signature=query["sig"][0],
+        content_type="image/jpeg",
+        body=b"image-bytes",
+    )
+
+    assert public_url == f"https://photos.example.com/mealtrack/{image_id}"
+    assert put.call_count == 1
 
 
 @pytest.mark.asyncio
