@@ -2,7 +2,7 @@
 Foods API routes: manual search/autocomplete, details, and barcode lookup.
 
 Uses a lightweight singleton event bus to avoid re-initializing
-heavy services (image storage, AI providers, etc.) on every request.
+heavy services (Cloudinary, AI providers, etc.) on every request.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request

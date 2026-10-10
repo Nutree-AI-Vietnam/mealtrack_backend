@@ -1,4 +1,4 @@
-"""Handler for scan-by-url: download the uploaded image → compress → AI bytes path."""
+"""Handler for scan-by-url: download Cloudinary image → compress → AI bytes path."""
 
 import asyncio
 import logging
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 @handles(ScanByUrlCommand)
 class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
-    """Download the uploaded image → compress → AI bytes path → persist Meal."""
+    """Download Cloudinary image → compress → AI bytes path → persist Meal."""
 
     def __init__(
         self,
@@ -185,7 +185,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         image_id = command.public_id.split("/")[-1]
 
         try:
-            # For meal scans, fetch an edge-compressed URL to avoid local PIL resizing
+            # For meal scans, fetch edge-compressed URL (Cloudflare/Cloudinary) to avoid local PIL resizing
             download_url = (
                 to_compressed_image_url(
                     command.image_url,

@@ -50,7 +50,7 @@ def to_compressed_image_url(
     custom_domain: str | None = None,
     flexible_variants_enabled: bool = True,
 ) -> str:
-    """Transform an image URL (Cloudflare Images, R2, or an existing Cloudinary URL) to deliver an edge-resized image.
+    """Transform an image URL (Cloudflare Images or Cloudinary) to deliver an edge-resized & compressed image.
 
     For Cloudflare Images:
         - Default: https://imagedelivery.net/<account_hash>/<image_id>/<variant>

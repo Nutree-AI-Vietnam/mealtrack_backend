@@ -180,7 +180,7 @@ rg "@handles" src/app/handlers/
 
 ### External Service Timeouts
 
-**Problem:** OpenAI, Cloudflare Workers AI, Firebase, RevenueCat, affiliate, or search provider requests timeout
+**Problem:** OpenAI, Cloudflare Workers AI, Cloudinary, Firebase, RevenueCat, affiliate, or search provider requests timeout
 
 **Solutions:**
 1. Verify provider-specific timeout settings in `src/infra/config/settings.py`.

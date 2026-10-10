@@ -19,4 +19,4 @@ class MealImageORM(Base, TimestampMixin):
     size_bytes = Column(Integer, nullable=False)
     width = Column(Integer, nullable=True)  # Changed to nullable
     height = Column(Integer, nullable=True)  # Changed to nullable
-    url = Column(Text, nullable=True)  # CDN image URL
+    url = Column(Text, nullable=True)  # Cloudinary / CDN image URL
