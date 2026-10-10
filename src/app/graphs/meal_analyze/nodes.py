@@ -88,7 +88,7 @@ async def _acquire_uploaded_image(
         image_id,
     )
     if not image_url or not image_url.startswith("https://"):
-        raise RuntimeError("Image upload failed - invalid URL returned")
+        raise RuntimeError("Cloudinary upload failed - invalid URL returned")
 
     runtime.acquired_image = AcquiredImage(
         image_id=image_id,

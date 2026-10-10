@@ -38,8 +38,8 @@ _UPLOAD_TICKET_MAX_TTL_SECONDS = 3600
 class CloudflareImageStore(ImageStorePort):
     """Implementation of ImageStorePort using Cloudflare Images service.
 
-    Server-side saves still use the Cloudflare Images API. Client upload tokens
-    are signed locally and stored in R2, so they do not use that API quota.
+    Server-side saves still use Cloudflare Images. Meal photo tokens are signed
+    locally and stored in R2 so upload-token does not use the Images API quota.
     """
 
     def __init__(
@@ -409,7 +409,7 @@ class CloudflareImageStore(ImageStorePort):
             return False
 
     def generate_upload_signature(self, image_id: str, ttl: int = 300) -> dict:
-        """Sign a direct R2 upload locally. Does not call Cloudflare Images."""
+        """Sign a meal photo upload locally. Does not call Cloudflare Images."""
         self._ensure_r2_upload_configured()
         if not self._api_public_base_url:
             raise ValueError("Missing R2 meal photo configuration: API_PUBLIC_BASE_URL")
@@ -448,7 +448,7 @@ class CloudflareImageStore(ImageStorePort):
     async def generate_upload_signature_async(
         self, image_id: str, ttl: int = 300
     ) -> dict:
-        """Local signature. No network call."""
+        """Local signature. No Cloudflare Images request."""
         return self.generate_upload_signature(image_id, ttl)
 
     async def store_signed_upload(

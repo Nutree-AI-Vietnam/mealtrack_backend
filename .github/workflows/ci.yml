@@ -58,6 +58,9 @@ jobs:
           CI: true
           TESTING: true
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
 
       - name: 📊 Upload Coverage
         uses: codecov/codecov-action@v4
