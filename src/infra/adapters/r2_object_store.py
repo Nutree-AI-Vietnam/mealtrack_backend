@@ -10,7 +10,7 @@ import hashlib
 import hmac
 import logging
 from datetime import UTC, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -43,6 +43,17 @@ class R2ObjectStore:
 
     def public_url(self, key: str) -> str:
         return f"{self._public_base_url}/{quote(key, safe='/')}"
+
+    def presigned_put_url(self, key: str, expires_in: int) -> str:
+        return presigned_put_url(
+            account_id=self._account_id,
+            access_key_id=self._access_key_id,
+            secret_access_key=self._secret_access_key,
+            bucket=self._bucket,
+            key=key,
+            expires_in=expires_in,
+            now=datetime.now(UTC),
+        )
 
     async def put(self, key: str, body: bytes, content_type: str) -> str:
         url, headers = signed_put_request(
@@ -120,6 +131,58 @@ def signed_put_request(
         "x-amz-date": amz_date,
         "x-amz-content-sha256": payload_hash,
     }
+
+
+def presigned_put_url(
+    *,
+    account_id: str,
+    access_key_id: str,
+    secret_access_key: str,
+    bucket: str,
+    key: str,
+    expires_in: int,
+    now: datetime,
+) -> str:
+    """Return a URL the phone can PUT to without calling our API again."""
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    datestamp = amz_date[:8]
+    host = f"{account_id.strip()}.r2.cloudflarestorage.com"
+    canonical_uri = f"/{quote(bucket.strip(), safe='')}/{quote(key, safe='/')}"
+    credential_scope = f"{datestamp}/auto/s3/aws4_request"
+    signed_headers = "host"
+    query = {
+        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+        "X-Amz-Credential": f"{access_key_id.strip()}/{credential_scope}",
+        "X-Amz-Date": amz_date,
+        "X-Amz-Expires": str(expires_in),
+        "X-Amz-SignedHeaders": signed_headers,
+    }
+    canonical_query = urlencode(sorted(query.items()), quote_via=quote)
+    canonical_request = "\n".join(
+        [
+            "PUT",
+            canonical_uri,
+            canonical_query,
+            f"host:{host}\n",
+            signed_headers,
+            "UNSIGNED-PAYLOAD",
+        ]
+    )
+    string_to_sign = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode()).hexdigest(),
+        ]
+    )
+    signature = hmac.new(
+        _signing_key(secret_access_key.strip(), datestamp),
+        string_to_sign.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    query["X-Amz-Signature"] = signature
+    return f"https://{host}{canonical_uri}?{urlencode(sorted(query.items()), quote_via=quote)}"
 
 
 def _signing_key(secret_access_key: str, datestamp: str) -> bytes:

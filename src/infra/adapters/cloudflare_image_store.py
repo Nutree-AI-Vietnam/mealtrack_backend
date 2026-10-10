@@ -4,27 +4,16 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 import httpx
 
-from src.domain.exceptions.meal_photo_upload import MealPhotoUploadError
 from src.domain.ports.image_store_port import ImageStorePort
-from src.infra.adapters.meal_photo_upload import issue_upload_ticket, ticket_is_valid
-from src.infra.adapters.r2_object_store import R2ObjectStore, R2UploadError
+from src.infra.adapters.r2_object_store import presigned_put_url
 from src.infra.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-
-_CLIENT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
-_CLIENT_UPLOAD_TYPES = {
-    "image/jpeg": "image/jpeg",
-    "image/jpg": "image/jpeg",
-    "image/png": "image/png",
-    "image/webp": "image/webp",
-    "image/heic": "image/heic",
-    "image/heif": "image/heic",
-}
 
 
 class CloudflareImageStore(ImageStorePort):
@@ -401,14 +390,30 @@ class CloudflareImageStore(ImageStorePort):
             return False
 
     def generate_upload_signature(self, image_id: str, ttl: int = 300) -> dict:
-        """Sign a client upload locally. Does not call Cloudflare Images."""
+        """Sign a direct R2 upload locally. Does not call Cloudflare Images."""
         self._ensure_r2_upload_configured()
-        return issue_upload_ticket(
-            image_id=image_id,
-            ttl=ttl,
-            api_public_base_url=self._api_public_base_url,
-            signing_secret=self._r2_secret_access_key,
-        )
+        key = f"mealtrack/{image_id}"
+        expires_in = max(120, ttl)
+        return {
+            "image_id": image_id,
+            "upload_url": presigned_put_url(
+                account_id=self._account_id,
+                access_key_id=self._r2_access_key_id,
+                secret_access_key=self._r2_secret_access_key,
+                bucket=self._r2_bucket,
+                key=key,
+                expires_in=expires_in,
+                now=datetime.now(UTC),
+            ),
+            "delivery_url": f"{self._r2_public_base_url.rstrip('/')}/{quote(key, safe='/')}",
+            "provider": "r2",
+            "cloud_name": "",
+            "api_key": "",
+            "timestamp": int(datetime.now(UTC).timestamp()),
+            "signature": "",
+            "folder": "mealtrack",
+            "public_id": key,
+        }
 
     async def generate_upload_signature_async(
         self, image_id: str, ttl: int = 300
@@ -416,63 +421,10 @@ class CloudflareImageStore(ImageStorePort):
         """Local signature. No network call."""
         return self.generate_upload_signature(image_id, ttl)
 
-    async def store_signed_upload(
-        self,
-        image_id: str,
-        expires_at: int,
-        signature: str,
-        content_type: str,
-        body: bytes,
-    ) -> str:
-        """Verify the upload ticket and store the photo in R2."""
-        self._ensure_r2_upload_configured()
-        try:
-            parsed_id = str(uuid.UUID(image_id))
-        except ValueError as exc:
-            raise MealPhotoUploadError(
-                "image_id must be a UUID", "INVALID_IMAGE_ID"
-            ) from exc
-        if not ticket_is_valid(
-            self._r2_secret_access_key, parsed_id, expires_at, signature
-        ):
-            raise MealPhotoUploadError(
-                "Upload link is invalid or expired",
-                "INVALID_UPLOAD_TICKET",
-            )
-
-        normalized_type = _CLIENT_UPLOAD_TYPES.get(
-            content_type.split(";")[0].strip().lower()
-        )
-        if normalized_type is None:
-            raise MealPhotoUploadError("Unsupported image type", "INVALID_FILE_TYPE")
-        if not body:
-            raise MealPhotoUploadError("Image file is empty", "EMPTY_FILE")
-        if len(body) > _CLIENT_UPLOAD_MAX_BYTES:
-            raise MealPhotoUploadError(
-                "File size exceeds maximum allowed (10 MB)",
-                "FILE_TOO_LARGE",
-            )
-
-        store = R2ObjectStore(
-            account_id=self._account_id,
-            access_key_id=self._r2_access_key_id,
-            secret_access_key=self._r2_secret_access_key,
-            bucket=self._r2_bucket,
-            public_base_url=self._r2_public_base_url,
-        )
-        try:
-            return await store.put(f"mealtrack/{parsed_id}", body, normalized_type)
-        except R2UploadError as exc:
-            raise MealPhotoUploadError(
-                "Image upload is temporarily unavailable. Please try again.",
-                "IMAGE_UPLOAD_UNAVAILABLE",
-            ) from exc
-
     def _ensure_r2_upload_configured(self) -> None:
         missing = [
             name
             for name, value in (
-                ("API_PUBLIC_BASE_URL", self._api_public_base_url),
                 ("R2_ACCESS_KEY_ID", self._r2_access_key_id),
                 ("R2_SECRET_ACCESS_KEY", self._r2_secret_access_key),
                 ("R2_BUCKET", self._r2_bucket),

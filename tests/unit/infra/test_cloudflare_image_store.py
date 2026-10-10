@@ -268,8 +268,10 @@ def test_generate_upload_signature_is_local(mock_cf_settings, monkeypatch):
 
     assert token["provider"] == "r2"
     assert token["upload_url"].startswith(
-        "https://api.test/v1/meals/direct-upload/img-1?"
+        "https://test-cf-account.r2.cloudflarestorage.com/meal-photos/mealtrack/img-1?"
     )
+    assert "X-Amz-Signature=" in token["upload_url"]
+    assert token["delivery_url"] == "https://photos.example.com/mealtrack/img-1"
     assert "imagedelivery.net" not in token["upload_url"]
 
 
