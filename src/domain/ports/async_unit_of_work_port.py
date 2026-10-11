@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     )
     from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
     from src.domain.ports.user_repository_port import UserRepositoryPort
+    from src.domain.ports.weekly_recap_repository_port import (
+        WeeklyRecapRepositoryPort,
+    )
 
 
 class AsyncUnitOfWorkPort(ABC):
@@ -56,6 +59,7 @@ class AsyncUnitOfWorkPort(ABC):
     meal_write_operations: Any
     chat: ChatRepositoryPort
     weekly_meal_plans: Any
+    weekly_recaps: WeeklyRecapRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:

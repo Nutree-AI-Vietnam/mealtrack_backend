@@ -1,0 +1,121 @@
+"""German weekly recap copy: slide headings, chips, plan and share.
+
+Keys ending in ``.one`` hold the singular form used when the count is 1.
+"""
+
+from __future__ import annotations
+
+DE_STORY = {
+    "intro.eyebrow.week": "Woche {n} mit Nutree",
+    "intro.big_unit.meals": "/ {n} Mahlzeiten erfasst",
+    "intro.big_unit.days": "/ {n} Tage",
+    "low_data.title": "Eine ruhige Woche.",
+    "low_data.sub": (
+        "Nur wenige Mahlzeiten wurden erfasst, daher kann Nutree noch kein "
+        "vollständiges Bild zeigen."
+    ),
+    "low_data.label": "Diese Woche",
+    "low_data.chip": "Ab {n} Mahlzeiten gibt es den vollen Rückblick",
+    "first_week.eyebrow": "Deine erste Woche mit Nutree",
+    "first_week.title": "Erste Woche geschafft!",
+    "first_week.sub": "Du hast den Anfang gemacht. Das hat Nutree über dich gelernt.",
+    "first_week.label": "Du hast losgelegt",
+    "first_week.chip": "Neues Abzeichen: Erste Woche",
+    "comeback.eyebrow": "Willkommen zurück",
+    "comeback.title": "Du bist zurück.",
+    "comeback.sub": (
+        "Diese Woche hast du wieder angefangen. Das allein ist schon großartig."
+    ),
+    "comeback.label": "Diese Woche",
+    "comeback.chip": "Deine {n}-Tage-Serie läuft",
+    "tough.title": "Eine harte Woche. Das ist okay.",
+    "tough.sub": (
+        "Solche Wochen gehören dazu. Schauen wir, was geholfen hat und was "
+        "dich gebremst hat."
+    ),
+    "tough.label": "Du bist drangeblieben",
+    "tough.chip": "Du hast nicht aufgegeben, und das zählt",
+    "perfect.title": "Diese Woche hattest du alles im Griff.",
+    "perfect.sub": "Jedes Ziel erreicht. Das ist selten.",
+    "perfect.label": "Du warst richtig konsequent",
+    "perfect.chip.first": "Deine erste perfekte Woche",
+    "perfect.chip.nth": "Perfekte Woche Nr. {n}",
+    "bulk.title": "Deine Muskelaufbau-Woche im Rückblick.",
+    "bulk.sub": "Du legst das Fundament. Hier ist deine Woche.",
+    "bulk.label": "Du warst richtig konsequent",
+    "bulk.chip": "{n} Einheiten Krafttraining",
+    "bulk.chip.one": "{n} Einheit Krafttraining",
+    "bulk.chip.record": "{n} Einheiten Krafttraining, dein neuer Rekord",
+    "bulk.chip.record.one": "{n} Einheit Krafttraining, dein neuer Rekord",
+    "steady.title": "Deine Woche im Rückblick.",
+    "steady.sub": "Was gut lief, was nicht und was du als Nächstes probieren kannst.",
+    "steady.label": "Du warst richtig konsequent",
+    "steady.chip.streak": "{n}-Tage-Serie",
+    "steady.chip.streak_record": "{n}-Tage-Serie, dein Rekord",
+    "chip.days_logged": "An {n}/{d} Tagen erfasst",
+    "wins.eyebrow": "Das lief gut",
+    "wins.title": "{n} Highlights dieser Woche.",
+    "wins.title.one": "{n} Highlight dieser Woche.",
+    "low_data.wins.eyebrow": "Was Nutree trotzdem auffiel",
+    "low_data.wins.title": "Aus {n} erfassten Mahlzeiten.",
+    "low_data.wins.title.one": "Aus einer erfassten Mahlzeit.",
+    "first_week.wins.eyebrow": "Das hat Nutree gelernt",
+    "first_week.wins.title": "Das bist du.",
+    "comeback.wins.eyebrow": "Ein starker Neustart",
+    "comeback.wins.title": "Du bist stark zurückgekommen.",
+    "tough.wins.eyebrow": "Trotzdem Lichtblicke",
+    "tough.wins.title": "{n} Dinge, die du gut gemacht hast.",
+    "tough.wins.title.one": "{n} Sache, die du gut gemacht hast.",
+    "perfect.wins.title": "Nichts auszusetzen.",
+    "wins.foot.workout": (
+        "Am {day} lagst du {kcal} kcal drüber, aber ein Workout und ein "
+        "leichterer Folgetag haben das ausgeglichen."
+    ),
+    "wins.foot.plain": (
+        "Am {day} lagst du {kcal} kcal drüber, aber ein leichterer Folgetag "
+        "hat das ausgeglichen."
+    ),
+    "grow.eyebrow": "Luft nach oben",
+    "grow.title_one": "Was dich bremst.",
+    "grow.title_n": "{n} Dinge, die dich bremsen.",
+    "tough.grow.eyebrow": "Was im Weg stand",
+    "tough.grow.title_one": "Was dir im Weg stand.",
+    "tough.grow.title_n": "{n} Dinge, die dir im Weg standen.",
+    "bulk.grow.eyebrow": "Einen Blick wert",
+    "bulk.grow.title_one": "Darauf solltest du achten.",
+    "bulk.grow.title_n": "{n} Dinge, auf die du achten solltest.",
+    "plan.title.many": "Probier nächste Woche diese {n} Dinge.",
+    "plan.title.2": "Probier nächste Woche nur 2 Dinge.",
+    "plan.title.1": "Probier nächste Woche nur eine Sache.",
+    "plan.title.keep": "Halte nächste Woche einfach den Rhythmus.",
+    "plan.title.challenge": "Leg nächste Woche eine Schippe drauf.",
+    "share.title.default": "Meine Woche im Rückblick.",
+    "share.title.first_week": "Meine erste Woche.",
+    "share.title.comeback": "Ich bin zurück.",
+    "share.title.perfect": "Meine perfekte Woche.",
+    "share.title.bulk": "Meine Muskelaufbau-Woche.",
+    "share.progress.cut": "Fortschritt beim Abnehmen",
+    "share.progress.bulk": "Fortschritt beim Muskelaufbau",
+    "share.progress.streak": "Aktuelle Serie",
+    "share.progress.week": "Woche {n} / {total}",
+    "share.progress.delta": "Diese Woche {delta}%",
+    "share.progress.same": "Unverändert",
+    "share.progress.streak_days": "{n} Tage",
+    "share.progress.streak_days.one": "{n} Tag",
+    "share.foot": "Nächste Woche: {items}.",
+    "stat.protein": "Protein / Tag",
+    "stat.on_budget": "Tage im Budget",
+    "stat.workouts": "Workouts",
+    "stat.workouts.one": "Workout",
+    "stat.water": "Tage genug getrunken",
+    "stat.streak": "Tage in Folge",
+    "stat.streak.one": "Tag in Folge",
+    "stat.meals": "Mahlzeiten erfasst",
+    "stat.dishes": "neue Gerichte",
+    "stat.dishes.one": "neues Gericht",
+    "stat.days_logged": "Tage erfasst",
+    "meal.breakfast": "Frühstück",
+    "meal.lunch": "Mittagessen",
+    "meal.dinner": "Abendessen",
+    "meal.snack": "Snack",
+}

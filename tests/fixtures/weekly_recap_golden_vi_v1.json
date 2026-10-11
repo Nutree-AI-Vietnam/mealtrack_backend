@@ -1,0 +1,1678 @@
+{
+ "source": "Claude Design c1a3dc7e wrap-engine.js generate(SAMPLES)",
+ "locale": "vi",
+ "notes": [
+  "bulk: plan title counts the 2 moves shown (design hardcodes 3)",
+  "comeback: good_start dropped (design fires it on an unlogged Monday); third share tile is days logged, not a repeated meals tile",
+  "calorie bars (steady, tough, perfect, bulk): a lower-is-better bar turns red only past 105% of target, as the day count allows (design: 100%)",
+  "bulk: a day under 90% of target isn't on budget, so 5/7 days (design 7/7); its bars carry floors at 2520",
+  "tough: weekend card averages only the days it names, (550+700+500)/3 = 583 (design shows the sample's hand-set weekend_delta of 600)",
+  "first_week: missed_meal carries the breakfast reminder time (510 = 8:30 AM); the reminder is for that meal at that time (design: the usual lunch hour)",
+  "empty foot strings are null; grow slides have no foot"
+ ],
+ "cases": [
+  {
+   "name": "steady",
+   "stats": {
+    "week_start": "2023-10-02",
+    "week_no": 14,
+    "account_days": 120,
+    "goal": "cut",
+    "budget": 1900,
+    "protein_target": 110,
+    "meals_by_day": [
+     3,
+     3,
+     2,
+     3,
+     3,
+     2,
+     3
+    ],
+    "kcal_by_day": [
+     1820,
+     1790,
+     1650,
+     1880,
+     1860,
+     2140,
+     1740
+    ],
+    "protein_by_day": [
+     118,
+     112,
+     96,
+     121,
+     115,
+     104,
+     118
+    ],
+    "water_by_day": [
+     2.4,
+     1.6,
+     2.6,
+     1.8,
+     1.5,
+     1.4,
+     2.5
+    ],
+    "fiber_avg": 14,
+    "streak": 7,
+    "budget_by_day": null,
+    "fiber_target": 25,
+    "water_target": 2.5,
+    "carbs_target": 60,
+    "week_days": 7,
+    "gap_before": 0,
+    "lunch_no_veg_days": 5,
+    "workouts": [
+     {
+      "day": 0,
+      "minutes": 35,
+      "kcal": 380,
+      "strength": false
+     },
+     {
+      "day": 2,
+      "minutes": 45,
+      "kcal": 310,
+      "strength": false
+     },
+     {
+      "day": 4,
+      "minutes": 40,
+      "kcal": 160,
+      "strength": false
+     },
+     {
+      "day": 5,
+      "minutes": 90,
+      "kcal": 570,
+      "strength": false
+     }
+    ],
+    "late_snack_days": [
+     1,
+     3,
+     4,
+     5
+    ],
+    "late_snack_kcal": 320,
+    "streak_is_record": true,
+    "workouts_is_record": true,
+    "photo_share": 0.7,
+    "unique_dishes": 12,
+    "top_dishes": [
+     {
+      "name": "Phở bò",
+      "count": 3,
+      "kcal": 450
+     }
+    ],
+    "common_log_hour": 12,
+    "common_meal": "lunch",
+    "missed_meal": null,
+    "sugary_drinks": 1,
+    "sugary_kcal": 280,
+    "weekend_delta": 120,
+    "under_days": [],
+    "training_day_kcal": 0.0,
+    "pre_workout_carbs": null,
+    "progress_pct": 0.53,
+    "progress_delta": 0.07,
+    "perfect_weeks_before": 0,
+    "had_first_week": false,
+    "cheat_days": []
+   },
+   "expected": {
+    "case_id": "steady",
+    "range": "2/10 – 8/10",
+    "week_start": "2023-10-02",
+    "slides": [
+     "intro",
+     "wins",
+     "grow",
+     "plan",
+     "share"
+    ],
+    "intro": {
+     "eyebrow": "Tuần thứ 14 cùng Nutree",
+     "title": "Tuần của bạn, gói gọn.",
+     "sub": "Điều bạn làm tốt, điều chưa tốt và nên thử gì tiếp.",
+     "label": "Bạn đã rất đều đặn",
+     "big": 19,
+     "big_unit": "/ 21 bữa đã ghi",
+     "meals_by_day": [
+      3,
+      3,
+      2,
+      3,
+      3,
+      2,
+      3
+     ],
+     "chip": {
+      "icon": "local_fire_department",
+      "text": "Chuỗi 7 ngày, kỷ lục của bạn"
+     }
+    },
+    "wins": {
+     "eyebrow": "Bạn làm tốt",
+     "title": "3 điểm sáng tuần này.",
+     "foot": "T7 dư 240 kcal, nhưng buổi tập và ngày sau ăn nhẹ đã cân bằng lại.",
+     "cards": [
+      {
+       "kind": "protein",
+       "icon": "egg_alt",
+       "title": "Protein đạt chuẩn",
+       "count": 112,
+       "suffix": "g",
+       "unit": "/ ngày (TB)",
+       "note": "Đạt mục tiêu 5/7 ngày",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         118,
+         112,
+         96,
+         121,
+         115,
+         104,
+         118
+        ],
+        "max": 139.15,
+        "target": 110,
+        "invert": false
+       }
+      },
+      {
+       "kind": "calories",
+       "icon": "local_fire_department",
+       "title": "Calo cân bằng",
+       "count": 1840,
+       "unit": "/ 1.900 kcal",
+       "note": "6/7 ngày trong ngân sách",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         1820,
+         1790,
+         1650,
+         1880,
+         1860,
+         2140,
+         1740
+        ],
+        "max": 2354,
+        "target": 1995,
+        "invert": true
+       }
+      },
+      {
+       "kind": "move",
+       "icon": "directions_run",
+       "title": "Vận động đều",
+       "count": 1420,
+       "prefix": "+",
+       "unit": "kcal đã đốt",
+       "note": "4 buổi tập · 210 phút",
+       "viz": {
+        "type": "dots",
+        "on": [
+         0,
+         2,
+         4,
+         5
+        ]
+       }
+      }
+     ]
+    },
+    "grow": {
+     "eyebrow": "Cần cải thiện",
+     "title": "3 điều kéo bạn lại.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "fiber",
+       "icon": "eco",
+       "title": "Thiếu chất xơ",
+       "count": 14,
+       "suffix": "g",
+       "unit": "/ 25g mỗi ngày",
+       "note": "Hầu hết bữa trưa thiếu rau.",
+       "viz": {
+        "type": "bar",
+        "v": 14,
+        "t": 25
+       }
+      },
+      {
+       "kind": "calm",
+       "icon": "bedtime",
+       "title": "Ăn vặt đêm khuya",
+       "count": 4,
+       "unit": "tối sau 22h",
+       "note": "Khoảng 320 kcal mỗi lần.",
+       "viz": {
+        "type": "dots",
+        "on": [
+         1,
+         3,
+         4,
+         5
+        ],
+        "color": "text"
+       }
+      },
+      {
+       "kind": "water",
+       "icon": "water_drop",
+       "title": "Uống chưa đủ nước",
+       "value": "2,0 L",
+       "unit": "/ 2,5 L mỗi ngày",
+       "note": "Đạt 2/7 ngày, ít nhất vào ngày bận.",
+       "viz": {
+        "type": "bar",
+        "v": 1.97,
+        "t": 2.5
+       }
+      }
+     ]
+    },
+    "plan": {
+     "title": "Tuần tới, thử 3 điều này.",
+     "moves": [
+      {
+       "kind": "fiber",
+       "icon": "eco",
+       "title": "Thêm rau vào bữa trưa",
+       "why": "Bữa trưa thiếu rau 5/7 ngày",
+       "impact": "+8g / ngày"
+      },
+      {
+       "kind": "calm",
+       "icon": "bedtime",
+       "title": "Không ăn vặt sau 22h",
+       "why": "4 tối tuần này",
+       "impact": "−320 kcal / lần"
+      },
+      {
+       "kind": "water",
+       "icon": "water_drop",
+       "title": "2 ly nước trước 12h",
+       "why": "Chỉ đạt mục tiêu 2/7 ngày",
+       "impact": "+0,5 L / ngày"
+      }
+     ]
+    },
+    "share": {
+     "title": "Tuần của tôi, gói gọn.",
+     "stats": [
+      [
+       "112g",
+       "protein / ngày"
+      ],
+      [
+       "6/7",
+       "ngày đúng ngân sách"
+      ],
+      [
+       "4",
+       "buổi tập"
+      ]
+     ],
+     "progress": {
+      "label": "Tiến độ giảm cân",
+      "pct": 0.53,
+      "sub": "Tuần này +7%"
+     },
+     "foot": "Tuần tới: thêm rau, bớt ăn vặt đêm."
+    }
+   }
+  },
+  {
+   "name": "bulk",
+   "stats": {
+    "week_start": "2023-10-02",
+    "week_no": 9,
+    "account_days": 120,
+    "goal": "bulk",
+    "budget": 2800,
+    "protein_target": 140,
+    "meals_by_day": [
+     3,
+     3,
+     3,
+     2,
+     3,
+     2,
+     2
+    ],
+    "kcal_by_day": [
+     2850,
+     2790,
+     2900,
+     2810,
+     2880,
+     2350,
+     2400
+    ],
+    "protein_by_day": [
+     150,
+     148,
+     142,
+     151,
+     145,
+     128,
+     158
+    ],
+    "water_by_day": [
+     2.6,
+     2.5,
+     2.7,
+     2.5,
+     2.6,
+     2.2,
+     2.4
+    ],
+    "fiber_avg": 24,
+    "streak": 12,
+    "budget_by_day": null,
+    "fiber_target": 25,
+    "water_target": 2.5,
+    "carbs_target": 60,
+    "week_days": 7,
+    "gap_before": 0,
+    "lunch_no_veg_days": 1,
+    "workouts": [
+     {
+      "day": 0,
+      "minutes": 60,
+      "kcal": 300,
+      "strength": true
+     },
+     {
+      "day": 1,
+      "minutes": 55,
+      "kcal": 290,
+      "strength": true
+     },
+     {
+      "day": 3,
+      "minutes": 50,
+      "kcal": 280,
+      "strength": true
+     },
+     {
+      "day": 4,
+      "minutes": 55,
+      "kcal": 310,
+      "strength": true
+     }
+    ],
+    "late_snack_days": [],
+    "late_snack_kcal": 0,
+    "streak_is_record": true,
+    "workouts_is_record": true,
+    "photo_share": 0.7,
+    "unique_dishes": 12,
+    "top_dishes": [
+     {
+      "name": "Cơm gà",
+      "count": 4,
+      "kcal": 620
+     }
+    ],
+    "common_log_hour": 12,
+    "common_meal": "lunch",
+    "missed_meal": null,
+    "sugary_drinks": 1,
+    "sugary_kcal": 280,
+    "weekend_delta": 120,
+    "under_days": [
+     5,
+     6
+    ],
+    "training_day_kcal": 2846,
+    "pre_workout_carbs": 30,
+    "progress_pct": 0.42,
+    "progress_delta": 0.06,
+    "perfect_weeks_before": 0,
+    "had_first_week": false,
+    "cheat_days": []
+   },
+   "expected": {
+    "case_id": "bulk",
+    "range": "2/10 – 8/10",
+    "week_start": "2023-10-02",
+    "slides": [
+     "intro",
+     "wins",
+     "grow",
+     "plan",
+     "share"
+    ],
+    "intro": {
+     "eyebrow": "Tuần thứ 9 cùng Nutree",
+     "title": "Tuần tăng cơ, gói gọn.",
+     "sub": "Bạn đang xây nền tảng. Đây là tuần của bạn.",
+     "label": "Bạn đã rất đều đặn",
+     "big": 18,
+     "big_unit": "/ 21 bữa đã ghi",
+     "meals_by_day": [
+      3,
+      3,
+      3,
+      2,
+      3,
+      2,
+      2
+     ],
+     "chip": {
+      "icon": "fitness_center",
+      "text": "4 buổi tạ, nhiều nhất từ trước tới nay"
+     }
+    },
+    "wins": {
+     "eyebrow": "Bạn làm tốt",
+     "title": "3 điểm sáng tuần này.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "protein",
+       "icon": "egg_alt",
+       "title": "Protein vượt mục tiêu",
+       "count": 146,
+       "suffix": "g",
+       "unit": "/ ngày (TB)",
+       "note": "Đạt mục tiêu 6/7 ngày",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         150,
+         148,
+         142,
+         151,
+         145,
+         128,
+         158
+        ],
+        "max": 181.7,
+        "target": 140,
+        "invert": false
+       }
+      },
+      {
+       "kind": "fat",
+       "icon": "bolt",
+       "title": "Đủ năng lượng ngày tập",
+       "count": 2846,
+       "unit": "/ 2.800 kcal",
+       "note": "4/4 ngày tập đủ calo",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         2850,
+         2790,
+         2900,
+         2810,
+         2880,
+         2350,
+         2400
+        ],
+        "max": 3190.0,
+        "target": 2800,
+        "invert": false
+       }
+      },
+      {
+       "kind": "calories",
+       "icon": "local_fire_department",
+       "title": "Calo cân bằng",
+       "count": 2711,
+       "unit": "/ 2.800 kcal",
+       "note": "5/7 ngày trong ngân sách",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         2850,
+         2790,
+         2900,
+         2810,
+         2880,
+         2350,
+         2400
+        ],
+        "max": 3190.0,
+        "target": 2940,
+        "invert": true,
+        "floors": [
+         2520,
+         2520,
+         2520,
+         2520,
+         2520,
+         2520,
+         2520
+        ]
+       }
+      }
+     ]
+    },
+    "grow": {
+     "eyebrow": "Cần chú ý",
+     "title": "2 điều cần chú ý.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "calories",
+       "icon": "weekend",
+       "title": "Ăn thiếu ngày nghỉ",
+       "count": 425,
+       "prefix": "−",
+       "unit": "kcal T7 & CN",
+       "note": "Cơ cần năng lượng để phục hồi.",
+       "viz": {
+        "type": "dots",
+        "on": [
+         5,
+         6
+        ],
+        "color": "delta_down"
+       }
+      },
+      {
+       "kind": "carbs",
+       "icon": "grain",
+       "title": "Carb trước tập thấp",
+       "count": 30,
+       "suffix": "g",
+       "unit": "/ 60g gợi ý",
+       "note": "Dễ đuối sức ở hiệp cuối.",
+       "viz": {
+        "type": "bar",
+        "v": 30,
+        "t": 60
+       }
+      }
+     ]
+    },
+    "plan": {
+     "title": "Tuần tới, thử 2 điều thôi.",
+     "moves": [
+      {
+       "kind": "fat",
+       "icon": "bakery_dining",
+       "title": "Thêm bữa phụ ngày nghỉ",
+       "why": "T7 & CN thiếu ~425 kcal",
+       "impact": "+450 kcal"
+      },
+      {
+       "kind": "carbs",
+       "icon": "grain",
+       "title": "Ăn carb 1h trước tập",
+       "why": "Mới đạt 30/60g",
+       "impact": "+30g / buổi"
+      }
+     ]
+    },
+    "share": {
+     "title": "Tuần tăng cơ của tôi.",
+     "stats": [
+      [
+       "146g",
+       "protein / ngày"
+      ],
+      [
+       "5/7",
+       "ngày đúng ngân sách"
+      ],
+      [
+       "18/21",
+       "bữa đã ghi"
+      ]
+     ],
+     "progress": {
+      "label": "Tiến độ tăng cơ",
+      "pct": 0.42,
+      "sub": "Tuần này +6%"
+     },
+     "foot": "Tuần tới: thêm bữa phụ ngày nghỉ, thêm carb trước tập."
+    }
+   }
+  },
+  {
+   "name": "first_week",
+   "stats": {
+    "week_start": "2023-10-02",
+    "week_no": 1,
+    "account_days": 6,
+    "goal": "cut",
+    "budget": 1900,
+    "protein_target": 110,
+    "meals_by_day": [
+     1,
+     2,
+     2,
+     3,
+     2,
+     2,
+     2
+    ],
+    "kcal_by_day": [
+     900,
+     1500,
+     1600,
+     1850,
+     1500,
+     1550,
+     1600
+    ],
+    "protein_by_day": [
+     40,
+     95,
+     100,
+     110,
+     96,
+     98,
+     102
+    ],
+    "water_by_day": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "fiber_avg": 16,
+    "streak": 7,
+    "budget_by_day": null,
+    "fiber_target": 25,
+    "water_target": 2.5,
+    "carbs_target": 60,
+    "week_days": 7,
+    "gap_before": 0,
+    "lunch_no_veg_days": 4,
+    "workouts": [],
+    "late_snack_days": [],
+    "late_snack_kcal": 0,
+    "streak_is_record": false,
+    "workouts_is_record": false,
+    "photo_share": 0.3,
+    "unique_dishes": 9,
+    "top_dishes": [
+     {
+      "name": "Cơm tấm",
+      "count": 3,
+      "kcal": 650
+     },
+     {
+      "name": "Phở bò",
+      "count": 2,
+      "kcal": 450
+     }
+    ],
+    "common_log_hour": 12,
+    "common_meal": "lunch",
+    "missed_meal": {
+     "meal_type": "breakfast",
+     "days": 5,
+     "remind_at": 510
+    },
+    "sugary_drinks": 1,
+    "sugary_kcal": 280,
+    "weekend_delta": 120,
+    "under_days": [],
+    "training_day_kcal": 0.0,
+    "pre_workout_carbs": null,
+    "progress_pct": 0.08,
+    "progress_delta": 0,
+    "perfect_weeks_before": 0,
+    "had_first_week": false,
+    "cheat_days": []
+   },
+   "expected": {
+    "case_id": "first_week",
+    "range": "2/10 – 8/10",
+    "week_start": "2023-10-02",
+    "slides": [
+     "intro",
+     "wins",
+     "plan",
+     "share"
+    ],
+    "intro": {
+     "eyebrow": "Tuần đầu tiên cùng Nutree",
+     "title": "Tuần đầu tiên, xong!",
+     "sub": "Bạn đã bắt đầu. Đây là những gì Nutree học được về bạn.",
+     "label": "Bạn đã bắt đầu",
+     "big": 14,
+     "big_unit": "/ 21 bữa đã ghi",
+     "meals_by_day": [
+      1,
+      2,
+      2,
+      3,
+      2,
+      2,
+      2
+     ],
+     "chip": {
+      "icon": "emoji_events",
+      "text": "Huy hiệu mới: Tuần đầu tiên"
+     }
+    },
+    "wins": {
+     "eyebrow": "Nutree học được",
+     "title": "Đây là bạn.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "calm",
+       "icon": "restaurant",
+       "title": "Món đã khám phá",
+       "count": 9,
+       "unit": "món khác nhau",
+       "note": "Nhiều nhất: Cơm tấm, Phở bò"
+      },
+      {
+       "kind": "protein",
+       "icon": "egg_alt",
+       "title": "Điểm mạnh: Protein",
+       "count": 92,
+       "suffix": "g",
+       "unit": "/ ngày (TB)",
+       "note": "Gần đạt mục tiêu 110g",
+       "viz": {
+        "type": "bar",
+        "v": 91.57,
+        "t": 110
+       }
+      },
+      {
+       "kind": "water",
+       "icon": "schedule",
+       "title": "Bạn hay ghi lúc",
+       "value": "12h–13h",
+       "unit": "trưa",
+       "note": "Bữa sáng hay bị quên nhất"
+      }
+     ]
+    },
+    "grow": null,
+    "plan": {
+     "title": "Tuần tới, thử 3 điều này.",
+     "moves": [
+      {
+       "kind": "fat",
+       "icon": "wb_sunny",
+       "title": "Ghi cả bữa sáng",
+       "why": "Bữa sáng bị quên 5/7 ngày",
+       "impact": "+1 bữa / ngày"
+      },
+      {
+       "kind": "carbs",
+       "icon": "notifications_active",
+       "title": "Nhắc ghi bữa sáng lúc 8h30",
+       "why": "Bữa bạn hay quên ghi nhất",
+       "impact": "Mỗi ngày"
+      },
+      {
+       "kind": "carbs",
+       "icon": "photo_camera",
+       "title": "Chụp ảnh thay vì gõ",
+       "why": "Nutree tự nhận diện món",
+       "impact": "Nhanh hơn"
+      }
+     ]
+    },
+    "share": {
+     "title": "Tuần đầu tiên của tôi.",
+     "stats": [
+      [
+       "9",
+       "món mới"
+      ],
+      [
+       "92g",
+       "protein / ngày"
+      ],
+      [
+       "14/21",
+       "bữa đã ghi"
+      ]
+     ],
+     "progress": {
+      "label": "Tiến độ giảm cân",
+      "pct": 0.08,
+      "sub": "Tuần 1 / 12"
+     },
+     "foot": "Tuần tới: ghi cả bữa sáng, bật nhắc ghi."
+    }
+   }
+  },
+  {
+   "name": "tough",
+   "stats": {
+    "week_start": "2023-10-02",
+    "week_no": 6,
+    "account_days": 120,
+    "goal": "cut",
+    "budget": 1900,
+    "protein_target": 110,
+    "meals_by_day": [
+     3,
+     3,
+     2,
+     2,
+     2,
+     1,
+     2
+    ],
+    "kcal_by_day": [
+     1880,
+     1850,
+     2150,
+     2300,
+     2450,
+     2600,
+     2400
+    ],
+    "protein_by_day": [
+     105,
+     100,
+     90,
+     88,
+     85,
+     70,
+     92
+    ],
+    "water_by_day": [
+     2,
+     1.8,
+     1.6,
+     1.5,
+     1.2,
+     1,
+     1.4
+    ],
+    "fiber_avg": 15,
+    "streak": 7,
+    "budget_by_day": null,
+    "fiber_target": 25,
+    "water_target": 2.5,
+    "carbs_target": 60,
+    "week_days": 7,
+    "gap_before": 0,
+    "lunch_no_veg_days": 4,
+    "workouts": [
+     {
+      "day": 1,
+      "minutes": 30,
+      "kcal": 200,
+      "strength": false
+     }
+    ],
+    "late_snack_days": [
+     3,
+     4,
+     5
+    ],
+    "late_snack_kcal": 350,
+    "streak_is_record": false,
+    "workouts_is_record": false,
+    "photo_share": 0.7,
+    "unique_dishes": 12,
+    "top_dishes": [
+     {
+      "name": "Phở bò",
+      "count": 3,
+      "kcal": 450
+     }
+    ],
+    "common_log_hour": 12,
+    "common_meal": "lunch",
+    "missed_meal": null,
+    "sugary_drinks": 6,
+    "sugary_kcal": 1700,
+    "weekend_delta": 600,
+    "under_days": [],
+    "training_day_kcal": 0.0,
+    "pre_workout_carbs": null,
+    "progress_pct": 0.3,
+    "progress_delta": -0.02,
+    "perfect_weeks_before": 0,
+    "had_first_week": false,
+    "cheat_days": []
+   },
+   "expected": {
+    "case_id": "tough",
+    "range": "2/10 – 8/10",
+    "week_start": "2023-10-02",
+    "slides": [
+     "intro",
+     "wins",
+     "grow",
+     "plan"
+    ],
+    "intro": {
+     "eyebrow": "Tuần thứ 6 cùng Nutree",
+     "title": "Một tuần khó. Không sao cả.",
+     "sub": "Ai cũng có tuần như vậy. Cùng xem điều gì đã giúp và điều gì cản bạn.",
+     "label": "Bạn vẫn có mặt",
+     "big": 15,
+     "big_unit": "/ 21 bữa đã ghi",
+     "meals_by_day": [
+      3,
+      3,
+      2,
+      2,
+      2,
+      1,
+      2
+     ],
+     "chip": {
+      "icon": "favorite",
+      "text": "Bạn chưa bỏ cuộc, vậy là tốt rồi"
+     }
+    },
+    "wins": {
+     "eyebrow": "Vẫn có điểm sáng",
+     "title": "2 điều bạn làm tốt.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "calm",
+       "icon": "edit_note",
+       "title": "Vẫn ghi mỗi ngày",
+       "count": 7,
+       "unit": "/ 7 ngày có ghi",
+       "note": "Không bỏ ngày nào",
+       "viz": {
+        "type": "dots",
+        "on": [
+         0,
+         1,
+         2,
+         3,
+         4,
+         5,
+         6
+        ]
+       }
+      },
+      {
+       "kind": "calories",
+       "icon": "local_fire_department",
+       "title": "Đầu tuần rất tốt",
+       "value": "T2–T3",
+       "unit": "trong ngân sách",
+       "note": "1.880 và 1.850 kcal",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         1880,
+         1850,
+         2150,
+         2300,
+         2450,
+         2600,
+         2400
+        ],
+        "max": 2860.0,
+        "target": 1995,
+        "invert": true
+       }
+      }
+     ]
+    },
+    "grow": {
+     "eyebrow": "Điều cản bạn",
+     "title": "2 điều cản bạn.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "fiber",
+       "icon": "eco",
+       "title": "Thiếu chất xơ",
+       "count": 15,
+       "suffix": "g",
+       "unit": "/ 25g mỗi ngày",
+       "note": "Hầu hết bữa trưa thiếu rau.",
+       "viz": {
+        "type": "bar",
+        "v": 15,
+        "t": 25
+       }
+      },
+      {
+       "kind": "calories",
+       "icon": "weekend",
+       "title": "Cuối tuần vượt ngân sách",
+       "count": 583,
+       "prefix": "+",
+       "unit": "kcal / ngày",
+       "note": "T6 – CN, chủ yếu từ ăn ngoài.",
+       "viz": {
+        "type": "dots",
+        "on": [
+         4,
+         5,
+         6
+        ],
+        "color": "delta_down"
+       }
+      }
+     ]
+    },
+    "plan": {
+     "title": "Tuần tới, thử 2 điều thôi.",
+     "moves": [
+      {
+       "kind": "fiber",
+       "icon": "eco",
+       "title": "Thêm rau vào bữa trưa",
+       "why": "Bữa trưa thiếu rau 4/7 ngày",
+       "impact": "+8g / ngày"
+      },
+      {
+       "kind": "carbs",
+       "icon": "photo_camera",
+       "title": "Chụp món trước khi ăn ngoài",
+       "why": "Biết calo trước, chọn dễ hơn",
+       "impact": "Mỗi bữa ăn ngoài"
+      }
+     ]
+    },
+    "share": null
+   }
+  },
+  {
+   "name": "comeback",
+   "stats": {
+    "week_start": "2023-10-02",
+    "week_no": 11,
+    "account_days": 120,
+    "goal": "cut",
+    "budget": 1900,
+    "protein_target": 110,
+    "meals_by_day": [
+     0,
+     0,
+     0,
+     2,
+     3,
+     2,
+     3
+    ],
+    "kcal_by_day": [
+     0,
+     0,
+     0,
+     1850,
+     1820,
+     2050,
+     1760
+    ],
+    "protein_by_day": [
+     0,
+     0,
+     0,
+     105,
+     112,
+     98,
+     110
+    ],
+    "water_by_day": [
+     0,
+     0,
+     0,
+     2.2,
+     2.5,
+     2,
+     2.4
+    ],
+    "fiber_avg": 18,
+    "streak": 4,
+    "budget_by_day": null,
+    "fiber_target": 25,
+    "water_target": 2.5,
+    "carbs_target": 60,
+    "week_days": 7,
+    "gap_before": 9,
+    "lunch_no_veg_days": 2,
+    "workouts": [
+     {
+      "day": 4,
+      "minutes": 30,
+      "kcal": 220,
+      "strength": false
+     }
+    ],
+    "late_snack_days": [],
+    "late_snack_kcal": 0,
+    "streak_is_record": false,
+    "workouts_is_record": false,
+    "photo_share": 0.7,
+    "unique_dishes": 12,
+    "top_dishes": [
+     {
+      "name": "Phở bò",
+      "count": 3,
+      "kcal": 450
+     }
+    ],
+    "common_log_hour": 12,
+    "common_meal": "lunch",
+    "missed_meal": null,
+    "sugary_drinks": 1,
+    "sugary_kcal": 280,
+    "weekend_delta": 120,
+    "under_days": [],
+    "training_day_kcal": 0.0,
+    "pre_workout_carbs": null,
+    "progress_pct": 0.36,
+    "progress_delta": 0,
+    "perfect_weeks_before": 0,
+    "had_first_week": false,
+    "cheat_days": []
+   },
+   "expected": {
+    "case_id": "comeback",
+    "range": "2/10 – 8/10",
+    "week_start": "2023-10-02",
+    "slides": [
+     "intro",
+     "wins",
+     "plan",
+     "share"
+    ],
+    "intro": {
+     "eyebrow": "Chào mừng trở lại",
+     "title": "Bạn đã quay lại.",
+     "sub": "Tuần này bạn đã bắt đầu lại. Thế là đủ tuyệt rồi.",
+     "label": "Tuần này bạn đã ghi",
+     "big": 4,
+     "big_unit": "/ 7 ngày",
+     "meals_by_day": [
+      0,
+      0,
+      0,
+      2,
+      3,
+      2,
+      3
+     ],
+     "chip": {
+      "icon": "local_fire_department",
+      "text": "Chuỗi 4 ngày đang chạy"
+     }
+    },
+    "wins": {
+     "eyebrow": "Khởi đầu tốt",
+     "title": "Bạn bắt đầu lại rất chắc.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "fat",
+       "icon": "local_fire_department",
+       "title": "Chuỗi mới",
+       "count": 4,
+       "unit": "ngày liên tiếp",
+       "note": "Còn 3 ngày nữa là chạm 7",
+       "viz": {
+        "type": "dots",
+        "on": [
+         6,
+         5,
+         4,
+         3
+        ]
+       }
+      }
+     ]
+    },
+    "grow": null,
+    "plan": {
+     "title": "Tuần tới, giữ nhịp thôi.",
+     "moves": [
+      {
+       "kind": "carbs",
+       "icon": "notifications_active",
+       "title": "Nhắc ghi bữa trưa lúc 12h",
+       "why": "Đúng giờ bạn hay ghi nhất",
+       "impact": "Mỗi ngày"
+      },
+      {
+       "kind": "fat",
+       "icon": "local_fire_department",
+       "title": "Chạm chuỗi 7 ngày",
+       "why": "Bạn đang ở ngày thứ 4",
+       "impact": "Còn 3 ngày"
+      }
+     ]
+    },
+    "share": {
+     "title": "Tôi đã quay lại.",
+     "stats": [
+      [
+       "4",
+       "ngày liên tiếp"
+      ],
+      [
+       "10/21",
+       "bữa đã ghi"
+      ],
+      [
+       "4/7",
+       "ngày có ghi"
+      ]
+     ],
+     "progress": {
+      "label": "Tiến độ giảm cân",
+      "pct": 0.36,
+      "sub": "Giữ nguyên"
+     },
+     "foot": "Tuần tới: bật nhắc ghi, chạm chuỗi 7 ngày."
+    }
+   }
+  },
+  {
+   "name": "low_data",
+   "stats": {
+    "week_start": "2023-10-02",
+    "week_no": 3,
+    "account_days": 120,
+    "goal": "cut",
+    "budget": 1900,
+    "protein_target": 110,
+    "meals_by_day": [
+     2,
+     1,
+     0,
+     0,
+     1,
+     0,
+     1
+    ],
+    "kcal_by_day": [
+     1400,
+     600,
+     0,
+     0,
+     650,
+     0,
+     700
+    ],
+    "protein_by_day": [
+     60,
+     30,
+     0,
+     0,
+     35,
+     0,
+     38
+    ],
+    "water_by_day": [
+     0.5,
+     0,
+     0,
+     0,
+     0.5,
+     0,
+     0
+    ],
+    "fiber_avg": 6,
+    "streak": 1,
+    "budget_by_day": null,
+    "fiber_target": 25,
+    "water_target": 2.5,
+    "carbs_target": 60,
+    "week_days": 7,
+    "gap_before": 0,
+    "lunch_no_veg_days": 3,
+    "workouts": [],
+    "late_snack_days": [],
+    "late_snack_kcal": 0,
+    "streak_is_record": false,
+    "workouts_is_record": false,
+    "photo_share": 0.6,
+    "unique_dishes": 4,
+    "top_dishes": [
+     {
+      "name": "Cơm tấm",
+      "count": 2,
+      "kcal": 650
+     }
+    ],
+    "common_log_hour": 12,
+    "common_meal": "lunch",
+    "missed_meal": null,
+    "sugary_drinks": 1,
+    "sugary_kcal": 280,
+    "weekend_delta": 120,
+    "under_days": [],
+    "training_day_kcal": 0.0,
+    "pre_workout_carbs": null,
+    "progress_pct": null,
+    "progress_delta": 0.07,
+    "perfect_weeks_before": 0,
+    "had_first_week": false,
+    "cheat_days": []
+   },
+   "expected": {
+    "case_id": "low_data",
+    "range": "2/10 – 8/10",
+    "week_start": "2023-10-02",
+    "slides": [
+     "intro",
+     "wins",
+     "plan"
+    ],
+    "intro": {
+     "eyebrow": "Tuần thứ 3 cùng Nutree",
+     "title": "Tuần này hơi vắng.",
+     "sub": "Chỉ vài bữa được ghi, nên Nutree chưa thể tổng kết đầy đủ.",
+     "label": "Tuần này bạn ghi",
+     "big": 5,
+     "big_unit": "/ 21 bữa đã ghi",
+     "meals_by_day": [
+      2,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1
+     ],
+     "chip": {
+      "icon": "info",
+      "text": "Ghi từ 10 bữa để có báo cáo đầy đủ"
+     }
+    },
+    "wins": {
+     "eyebrow": "Nutree vẫn thấy",
+     "title": "Từ 5 bữa bạn ghi.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "calm",
+       "icon": "restaurant",
+       "title": "Món bạn ghi nhiều nhất",
+       "value": "Cơm tấm",
+       "unit": "2 lần",
+       "note": "Khoảng 650 kcal mỗi phần"
+      },
+      {
+       "kind": "water",
+       "icon": "schedule",
+       "title": "Bạn hay ghi lúc",
+       "value": "12h–13h",
+       "unit": "trưa",
+       "note": "Thời điểm tốt để đặt nhắc"
+      }
+     ]
+    },
+    "grow": null,
+    "plan": {
+     "title": "Tuần tới, thử 1 điều.",
+     "moves": [
+      {
+       "kind": "carbs",
+       "icon": "notifications_active",
+       "title": "Nhắc ghi bữa trưa lúc 12h",
+       "why": "Đúng giờ bạn hay ghi nhất",
+       "impact": "Mỗi ngày"
+      }
+     ]
+    },
+    "share": null
+   }
+  },
+  {
+   "name": "perfect",
+   "stats": {
+    "week_start": "2023-10-02",
+    "week_no": 20,
+    "account_days": 120,
+    "goal": "cut",
+    "budget": 1900,
+    "protein_target": 110,
+    "meals_by_day": [
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3
+    ],
+    "kcal_by_day": [
+     1850,
+     1800,
+     1880,
+     1820,
+     1860,
+     1890,
+     1790
+    ],
+    "protein_by_day": [
+     115,
+     118,
+     112,
+     120,
+     116,
+     114,
+     119
+    ],
+    "water_by_day": [
+     2.6,
+     2.5,
+     2.7,
+     2.5,
+     2.8,
+     2.5,
+     2.6
+    ],
+    "fiber_avg": 27,
+    "streak": 21,
+    "budget_by_day": null,
+    "fiber_target": 25,
+    "water_target": 2.5,
+    "carbs_target": 60,
+    "week_days": 7,
+    "gap_before": 0,
+    "lunch_no_veg_days": 0,
+    "workouts": [
+     {
+      "day": 0,
+      "minutes": 40,
+      "kcal": 350,
+      "strength": false
+     },
+     {
+      "day": 2,
+      "minutes": 45,
+      "kcal": 320,
+      "strength": false
+     },
+     {
+      "day": 4,
+      "minutes": 40,
+      "kcal": 300,
+      "strength": false
+     }
+    ],
+    "late_snack_days": [],
+    "late_snack_kcal": 0,
+    "streak_is_record": true,
+    "workouts_is_record": true,
+    "photo_share": 0.7,
+    "unique_dishes": 12,
+    "top_dishes": [
+     {
+      "name": "Phở bò",
+      "count": 3,
+      "kcal": 450
+     }
+    ],
+    "common_log_hour": 12,
+    "common_meal": "lunch",
+    "missed_meal": null,
+    "sugary_drinks": 1,
+    "sugary_kcal": 280,
+    "weekend_delta": 120,
+    "under_days": [],
+    "training_day_kcal": 0.0,
+    "pre_workout_carbs": null,
+    "progress_pct": 0.78,
+    "progress_delta": 0.05,
+    "perfect_weeks_before": 0,
+    "had_first_week": false,
+    "cheat_days": []
+   },
+   "expected": {
+    "case_id": "perfect",
+    "range": "2/10 – 8/10",
+    "week_start": "2023-10-02",
+    "slides": [
+     "intro",
+     "wins",
+     "plan",
+     "share"
+    ],
+    "intro": {
+     "eyebrow": "Tuần thứ 20 cùng Nutree",
+     "title": "Tuần này, bạn làm chủ.",
+     "sub": "Mọi chỉ số đều đạt. Hiếm lắm đấy.",
+     "label": "Bạn đã rất đều đặn",
+     "big": 21,
+     "big_unit": "/ 21 bữa đã ghi",
+     "meals_by_day": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+     ],
+     "chip": {
+      "icon": "workspace_premium",
+      "text": "Tuần hoàn hảo đầu tiên của bạn"
+     }
+    },
+    "wins": {
+     "eyebrow": "Bạn làm tốt",
+     "title": "Không có gì để chê.",
+     "foot": null,
+     "cards": [
+      {
+       "kind": "protein",
+       "icon": "egg_alt",
+       "title": "Protein vượt mục tiêu",
+       "count": 116,
+       "suffix": "g",
+       "unit": "/ ngày (TB)",
+       "note": "Đạt mục tiêu 7/7 ngày",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         115,
+         118,
+         112,
+         120,
+         116,
+         114,
+         119
+        ],
+        "max": 138,
+        "target": 110,
+        "invert": false
+       }
+      },
+      {
+       "kind": "calories",
+       "icon": "local_fire_department",
+       "title": "Calo cân bằng",
+       "count": 1841,
+       "unit": "/ 1.900 kcal",
+       "note": "7/7 ngày trong ngân sách",
+       "viz": {
+        "type": "spark",
+        "vals": [
+         1850,
+         1800,
+         1880,
+         1820,
+         1860,
+         1890,
+         1790
+        ],
+        "max": 2079,
+        "target": 1995,
+        "invert": true
+       }
+      },
+      {
+       "kind": "move",
+       "icon": "directions_run",
+       "title": "Vận động đều",
+       "count": 970,
+       "prefix": "+",
+       "unit": "kcal đã đốt",
+       "note": "3 buổi tập · 125 phút",
+       "viz": {
+        "type": "dots",
+        "on": [
+         0,
+         2,
+         4
+        ]
+       }
+      }
+     ]
+    },
+    "grow": null,
+    "plan": {
+     "title": "Tuần tới, nâng cấp một chút.",
+     "moves": [
+      {
+       "kind": "fiber",
+       "icon": "eco",
+       "title": "Nâng chất xơ lên 30g",
+       "why": "Bạn đã đạt mục tiêu hiện tại",
+       "impact": "+5g / ngày"
+      }
+     ]
+    },
+    "share": {
+     "title": "Tuần hoàn hảo của tôi.",
+     "stats": [
+      [
+       "116g",
+       "protein / ngày"
+      ],
+      [
+       "7/7",
+       "ngày đúng ngân sách"
+      ],
+      [
+       "3",
+       "buổi tập"
+      ]
+     ],
+     "progress": {
+      "label": "Tiến độ giảm cân",
+      "pct": 0.78,
+      "sub": "Tuần này +5%"
+     },
+     "foot": "Tuần tới: nâng chất xơ lên 30g."
+    }
+   }
+  }
+ ]
+}
