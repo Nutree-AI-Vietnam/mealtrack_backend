@@ -80,9 +80,6 @@ run_tests() {
 
     # Use provided or mock values for API keys
     export GOOGLE_API_KEY="${GOOGLE_API_KEY:-mock-key-for-testing}"
-    export CLOUDINARY_CLOUD_NAME="${CLOUDINARY_CLOUD_NAME:-mock-cloud}"
-    export CLOUDINARY_API_KEY="${CLOUDINARY_API_KEY:-mock-api-key}"
-    export CLOUDINARY_API_SECRET="${CLOUDINARY_API_SECRET:-mock-api-secret}"
     export PINECONE_API_KEY="${PINECONE_API_KEY:-mock-api-key}"
 
     # Run pytest with coverage (exclude integration tests)

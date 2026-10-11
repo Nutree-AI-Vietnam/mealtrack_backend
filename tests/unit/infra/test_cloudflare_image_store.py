@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
+from urllib.parse import parse_qs, urlparse
+
+import httpx
 import pytest
 import respx
 
@@ -246,28 +250,99 @@ async def test_delete_async_success(cf_store):
     assert result is True
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_generate_upload_signature_async(cf_store):
-    respx.post(
-        "https://api.cloudflare.com/client/v4/accounts/test-cf-account/images/v2/direct_upload"
-    ).respond(
-        200,
-        json={
-            "success": True,
-            "result": {
-                "id": "new-upload-uuid",
-                "uploadURL": "https://upload.imagedelivery.net/upload-key-123",
-            },
-        },
+def test_generate_upload_signature_is_local(mock_cf_settings, monkeypatch):
+    monkeypatch.setattr(
+        "src.infra.adapters.cloudflare_image_store.get_settings",
+        lambda: mock_cf_settings,
+    )
+    store = CloudflareImageStore(
+        account_id=mock_cf_settings.CLOUDFLARE_ACCOUNT_ID,
+        api_token=mock_cf_settings.CLOUDFLARE_API_TOKEN,
+        account_hash=mock_cf_settings.CLOUDFLARE_ACCOUNT_HASH,
+        default_variant="public",
+        custom_domain="media.test.com",
+        api_public_base_url="https://api.test",
+        r2_access_key_id="access",
+        r2_secret_access_key="secret",
+        r2_bucket="meal-photos",
+        r2_public_base_url="https://photos.example.com",
     )
 
-    token = await cf_store.generate_upload_signature_async("new-upload-uuid")
-    assert token["image_id"] == "new-upload-uuid"
-    assert token["upload_url"] == "https://upload.imagedelivery.net/upload-key-123"
-    assert token["provider"] == "cloudflare"
-    assert "public_id" in token
-    assert "cloud_name" in token
+    token = store.generate_upload_signature("img-1")
+
+    assert token["provider"] == "r2"
+    assert token["upload_url"].startswith(
+        "https://api.test/v1/meals/direct-upload/img-1?"
+    )
+    assert token["r2_upload_url"].startswith(
+        "https://test-cf-account.r2.cloudflarestorage.com/meal-photos/mealtrack/img-1?"
+    )
+    assert "X-Amz-Signature=" in token["r2_upload_url"]
+    assert token["delivery_url"] == "https://photos.example.com/mealtrack/img-1"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_current_app_post_is_stored_in_r2(mock_cf_settings, monkeypatch):
+    monkeypatch.setattr(
+        "src.infra.adapters.cloudflare_image_store.get_settings",
+        lambda: mock_cf_settings,
+    )
+    store = CloudflareImageStore(
+        account_id="acct",
+        api_token="token",
+        account_hash="hash",
+        api_public_base_url="https://api.test",
+        r2_access_key_id="access",
+        r2_secret_access_key="secret\n",
+        r2_bucket="meal-photos",
+        r2_public_base_url="https://photos.example.com",
+    )
+    image_id = str(uuid.uuid4())
+    token = store.generate_upload_signature(image_id)
+    query = parse_qs(urlparse(token["upload_url"]).query)
+    put = respx.put(
+        url__regex=r"https://acct\.r2\.cloudflarestorage\.com/meal-photos/.*"
+    ).mock(return_value=httpx.Response(200))
+
+    public_url = await store.store_signed_upload(
+        image_id=image_id,
+        expires_at=int(query["exp"][0]),
+        signature=query["sig"][0],
+        content_type="image/jpeg",
+        body=b"image-bytes",
+    )
+
+    assert public_url == f"https://photos.example.com/mealtrack/{image_id}"
+    assert put.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_generate_upload_signature_async_does_not_call_cloudflare(
+    mock_cf_settings, monkeypatch
+):
+    route = respx.route(url__regex=r".*").mock(side_effect=AssertionError("network"))
+    monkeypatch.setattr(
+        "src.infra.adapters.cloudflare_image_store.get_settings",
+        lambda: mock_cf_settings,
+    )
+    store = CloudflareImageStore(
+        account_id=mock_cf_settings.CLOUDFLARE_ACCOUNT_ID,
+        api_token=mock_cf_settings.CLOUDFLARE_API_TOKEN,
+        account_hash=mock_cf_settings.CLOUDFLARE_ACCOUNT_HASH,
+        custom_domain="media.test.com",
+        api_public_base_url="https://api.test",
+        r2_access_key_id="access",
+        r2_secret_access_key="secret",
+        r2_bucket="meal-photos",
+        r2_public_base_url="https://photos.example.com",
+    )
+
+    token = await store.generate_upload_signature_async("img-1")
+
+    assert token["provider"] == "r2"
+    assert route.call_count == 0
 
 
 @respx.mock
