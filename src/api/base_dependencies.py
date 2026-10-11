@@ -23,6 +23,7 @@ from src.infra.adapters.cloudflare_image_store import CloudflareImageStore
 from src.infra.adapters.cloudflare_workers_image_generator import (
     CloudflareWorkersImageGenerator,
 )
+from src.infra.adapters.cloudinary_image_store import CloudinaryImageStore
 from src.infra.adapters.food_cache_service import FoodCacheService
 from src.infra.adapters.food_data_service import FoodDataService
 from src.infra.adapters.open_food_facts_service import (
@@ -127,14 +128,16 @@ def get_image_store() -> ImageStorePort:
     Get the image store adapter instance (singleton).
 
     Returns:
-        ImageStorePort: The image store adapter (Cloudflare Images or local)
+        ImageStorePort: The image store adapter (Cloudinary or Mock)
     """
     global _image_store
     if _image_store is None:
         from src.infra.config.settings import get_settings
 
         current_settings = get_settings()
-        if current_settings.IMAGE_STORE_PROVIDER.lower() == "local":
+        if current_settings.IMAGE_STORE_PROVIDER.lower() == "cloudinary":
+            _image_store = CloudinaryImageStore()
+        elif current_settings.IMAGE_STORE_PROVIDER.lower() == "local":
             from src.infra.adapters.local_image_store import LocalImageStore
 
             _image_store = LocalImageStore(
@@ -152,55 +155,57 @@ def get_image_store() -> ImageStorePort:
 
 def get_allowed_image_hosts() -> frozenset[str]:
     """Return authorized image hostnames for meal photo validation."""
+    from ipaddress import ip_address
+    from urllib.parse import urlsplit
+
     from src.infra.config.settings import get_settings
 
     settings = get_settings()
     hosts = {"res.cloudinary.com", "imagedelivery.net"}
-    for raw in (
-        getattr(settings, "CLOUDFLARE_CUSTOM_DOMAIN", ""),
-        getattr(settings, "R2_PUBLIC_BASE_URL", ""),
-    ):
-        hostname = _public_image_hostname(raw or "")
-        if hostname:
-            hosts.add(hostname)
+    custom_domain = settings.CLOUDFLARE_CUSTOM_DOMAIN
+    if custom_domain:
+        cleaned = custom_domain.strip().lower()
+        if "://" not in cleaned:
+            cleaned = f"//{cleaned}"
+        try:
+            clean_domain = (urlsplit(cleaned).hostname or "").rstrip(".")
+        except ValueError:
+            clean_domain = ""
+
+        local_suffixes = (
+            "localhost",
+            "local",
+            "localdomain",
+            "internal",
+            "lan",
+            "test",
+            "invalid",
+        )
+        is_local_domain = any(
+            clean_domain == suffix or clean_domain.endswith(f".{suffix}")
+            for suffix in local_suffixes
+        )
+        try:
+            ip_address(clean_domain)
+        except ValueError:
+            is_ip_literal = False
+        else:
+            is_ip_literal = True
+
+        if clean_domain and not is_local_domain and not is_ip_literal:
+            hosts.add(clean_domain)
+    r2_origin = getattr(settings, "R2_PUBLIC_BASE_URL", "") or ""
+    if r2_origin:
+        cleaned = r2_origin.strip().lower()
+        if "://" not in cleaned:
+            cleaned = f"//{cleaned}"
+        try:
+            r2_host = (urlsplit(cleaned).hostname or "").rstrip(".")
+        except ValueError:
+            r2_host = ""
+        if r2_host and "." in r2_host:
+            hosts.add(r2_host)
     return frozenset(hosts)
-
-
-def _public_image_hostname(raw: str) -> str:
-    from ipaddress import ip_address
-    from urllib.parse import urlsplit
-
-    cleaned = raw.strip().lower()
-    if not cleaned:
-        return ""
-    if "://" not in cleaned:
-        cleaned = f"//{cleaned}"
-    try:
-        hostname = (urlsplit(cleaned).hostname or "").rstrip(".")
-    except ValueError:
-        return ""
-    local_suffixes = (
-        "localhost",
-        "local",
-        "localdomain",
-        "internal",
-        "lan",
-        "test",
-        "invalid",
-    )
-    is_local_domain = any(
-        hostname == suffix or hostname.endswith(f".{suffix}")
-        for suffix in local_suffixes
-    )
-    try:
-        ip_address(hostname)
-    except ValueError:
-        is_ip_literal = False
-    else:
-        is_ip_literal = True
-    if not hostname or is_local_domain or is_ip_literal:
-        return ""
-    return hostname
 
 
 # Vision Service (singleton pattern)

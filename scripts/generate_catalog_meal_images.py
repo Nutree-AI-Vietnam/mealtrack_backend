@@ -157,7 +157,7 @@ def _error_code(exc: Exception) -> str:
     """Return an actionable error category without exposing provider details."""
     lowered = str(exc).lower()
     if "invalid signature" in lowered:
-        return "image_upload_signature_invalid"
+        return "cloudinary_signature_invalid"
     if "account_hash" in lowered or "account hash" in lowered:
         return "cloudflare_account_hash_missing"
     if "authentication error" in lowered or "unauthorized" in lowered:

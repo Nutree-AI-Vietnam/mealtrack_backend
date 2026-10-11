@@ -35,7 +35,7 @@ Stateful progress/history and superseded docs: [`docs/archive/`](./docs/archive/
 - **Core**: FastAPI 0.136.3 (Python 3.13.2), SQLAlchemy 2.0 async runtime (`AsyncSession`, `AsyncUnitOfWork`).
 - **Database**: PostgreSQL (Neon) with SQLAlchemy 2.0, Redis 7.0 for selective optional caching; required state is modeled separately.
 - **AI**: OpenAI via LangChain/Responses API as the default text and vision provider, with optional Cloudflare Workers AI routing for configured text purposes and vision fallback. Gemini packages remain in dependencies, but the runtime provider registry is OpenAI + Cloudflare.
-- **Infrastructure**: Firebase (JWT Auth), Cloudflare Images and R2 (image storage), RevenueCat (subscriptions).
+- **Infrastructure**: Firebase (JWT Auth), Cloudinary (image storage), RevenueCat (subscriptions).
 - **Event Bus**: PyMediator with singleton registry for CQRS.
 - **Testing**: pytest (unit-biased default config), ruff (linting), mypy (type checking).
 

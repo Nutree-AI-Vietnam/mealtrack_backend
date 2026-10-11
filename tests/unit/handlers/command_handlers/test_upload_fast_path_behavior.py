@@ -302,7 +302,7 @@ async def test_parallel_mode_marks_failed_when_upload_fails_but_analysis_succeed
 
     harness.handler.vision_service.analyze.side_effect = analyze_side_effect
 
-    with pytest.raises(RuntimeError, match="Image upload failed"):
+    with pytest.raises(RuntimeError, match="Cloudinary upload failed"):
         await harness.handler.handle(harness.command)
 
     # Upload-first flow: analysis never runs when upload fails
@@ -350,7 +350,7 @@ async def test_parallel_mode_prioritises_analysis_error_when_both_fail(
     harness.handler.vision_service.analyze.side_effect = analyze_side_effect
 
     # Upload-first: upload error is raised before analysis even runs
-    with pytest.raises(RuntimeError, match="Image upload failed"):
+    with pytest.raises(RuntimeError, match="Cloudinary upload failed"):
         await harness.handler.handle(harness.command)
 
     # No DB record created (upload-first flow aborts before any DB write)

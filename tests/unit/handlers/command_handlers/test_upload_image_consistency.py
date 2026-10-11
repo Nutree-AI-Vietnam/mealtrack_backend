@@ -40,7 +40,7 @@ async def test_upload_failure_does_not_create_db_record():
     # Cloudinary upload fails
     handler.image_store = MagicMock()
     handler.image_store.save_async = AsyncMock(
-        side_effect=Exception("Image upload failed")
+        side_effect=Exception("Cloudinary upload failed")
     )
 
     handler.vision_service = MagicMock()
@@ -52,7 +52,7 @@ async def test_upload_failure_does_not_create_db_record():
         content_type="image/jpeg",
     )
 
-    with pytest.raises(Exception, match="Image upload failed"):
+    with pytest.raises(Exception, match="Cloudinary upload failed"):
         await handler.handle(command)
 
     # Key assertion: meals.save should NOT have been called
@@ -94,7 +94,7 @@ async def test_invalid_cloudinary_url_does_not_create_db_record_or_log_url(caplo
     )
 
     with caplog.at_level("ERROR"):
-        with pytest.raises(RuntimeError, match="Image upload failed"):
+        with pytest.raises(RuntimeError, match="Cloudinary upload failed"):
             await handler.handle(command)
 
     mock_uow.meals.save.assert_not_called()
