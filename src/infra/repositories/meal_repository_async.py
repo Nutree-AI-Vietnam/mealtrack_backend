@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import DateTime, and_, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, joinedload, noload, selectinload
 
@@ -612,7 +612,11 @@ class AsyncMealRepository(MealRepositoryPort):
     ) -> list[date]:
         # Always PostgreSQL in async path
         if user_timezone and user_timezone != "UTC":
-            date_expr = func.date(func.timezone(user_timezone, MealORM.created_at))
+            # meal.created_at holds UTC without a zone. Taken bare, timezone()
+            # would read it as local time and move days by twice the offset
+            # (a 9 a.m. meal in Hanoi lands on the day before).
+            created_at = cast(MealORM.created_at, DateTime(timezone=True))
+            date_expr = func.date(func.timezone(user_timezone, created_at))
         else:
             date_expr = func.date(MealORM.created_at)
 
