@@ -390,6 +390,12 @@ class AIModelManager:
                 self._log_content_rejected(purpose, model)
                 raise
             except Exception as e:
+                if purpose == ModelPurpose.PARSE_TEXT and isinstance(
+                    e, AIOutputValidationError
+                ):
+                    # The application owns the single correction pass; a schema
+                    # error must not spend the provider-outage fallback budget.
+                    raise
                 last_error = str(e)
                 error_code = provider.extract_error_code(e)
 

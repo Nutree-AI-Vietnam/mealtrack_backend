@@ -179,6 +179,12 @@ class Settings(BaseSettings):
         default=False,
         description="Skip catalog/FatSecret lookups and keep AI macros only.",
     )
+    PARSE_TEXT_AI_TIMEOUT_SECONDS: float = Field(
+        default=10.0,
+        gt=0,
+        le=120,
+        description="Total parse-text request deadline, including correction and references.",
+    )
     OPENAI_TRANSLATION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
     OPENAI_REQUEST_TIMEOUT_SECONDS: int = Field(default=20)
@@ -410,9 +416,9 @@ class Settings(BaseSettings):
         description="Enable structured local/FatSecret resolution for parse-text.",
     )
     PARSE_TEXT_FATSECRET_TIMEOUT_SECONDS: float = Field(
-        default=3.0,
+        default=1.0,
         gt=0,
-        description="Request-wide parse-text FatSecret deadline in seconds.",
+        description="Maximum optional parse-text reference time within the total request deadline.",
     )
 
     # Affiliate integration

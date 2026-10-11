@@ -1,6 +1,9 @@
 import asyncio
+import copy
 import gc
 import time
+from dataclasses import asdict
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -47,9 +50,9 @@ def _valid_parse_text_response():
                 "quantity": 100,
                 "unit": "g",
                 "english_unit": "g",
-                "calories": 560,
+                "calories": 388,
                 "protein": 30,
-                "carbs": 80,
+                "carbs": 40,
                 "fat": 12,
             }
         ]
@@ -829,7 +832,7 @@ def _localized_item(name: str, lookup_name: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_parse_text_fail_closes_leaked_english_and_mixed_slash_names():
+async def test_parse_text_localizes_known_names_and_preserves_unknown_food_names():
     generation = _FakeMealGenerationService(
         responses=[
             {
@@ -862,7 +865,7 @@ async def test_parse_text_fail_closes_leaked_english_and_mixed_slash_names():
         "Bơ/Sốt mayonnaise",
         "Thịt",
         "Dưa Leo Chua",
-        "Nguyên liệu",
+        "Whey Isolate",
     ]
 
 
@@ -1049,11 +1052,16 @@ async def test_parse_text_retries_invalid_ai_output_once():
     )
 
     assert len(meal_generation_service.calls) == 2
+    retry_prompt = meal_generation_service.calls[1]["prompt"]
+    assert "Return the full corrected response" in retry_prompt
+    assert "items.0.quantity" in retry_prompt
+    assert "<previous_candidate_json>" in retry_prompt
+    assert '"quantity":150000' in retry_prompt
+    assert '"name":"Chicken breast"' in retry_prompt
     assert (
-        "Return the full corrected response"
-        in meal_generation_service.calls[1]["system_message"]
+        meal_generation_service.calls[1]["system_message"]
+        == (meal_generation_service.calls[0]["system_message"])
     )
-    assert "items.0.quantity" in meal_generation_service.calls[1]["system_message"]
     assert response.items[0].name == "Chicken breast"
     assert response.items[0].protein == 31
     assert response.total_carbs == 0
@@ -1427,14 +1435,14 @@ async def test_parse_text_potato_sentinel_never_returns_890_kcal_macros():
 
 
 @pytest.mark.asyncio
-async def test_parse_text_rejects_dense_fallback_when_ai_omits_quantity_g():
+async def test_parse_text_rejects_impossible_fallback_when_ai_omits_quantity_g():
     response_payload = {
         "items": [
             _parse_item(
                 name="Potato",
                 quantity=100,
                 unit="g",
-                macros={"protein": 0, "carbs": 0, "fat": 98.9},
+                macros={"protein": 2, "carbs": 17, "fat": 98.9},
             )
         ]
     }
@@ -1446,13 +1454,13 @@ async def test_parse_text_rejects_dense_fallback_when_ai_omits_quantity_g():
         fat_secret_service=_FakeFatSecretService(),
     )
 
-    response = await handler.handle(
-        ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
-    )
+    with pytest.raises(AIOutputValidationError) as error:
+        await handler.handle(
+            ParseMealTextCommand(text="100g potato", user_id="user-1", language="en")
+        )
 
-    assert response.items == []
-    assert response.unmatched_terms == []
-    assert len(meal_generation_service.calls) == 1
+    assert error.value.attempt_count == 2
+    assert len(meal_generation_service.calls) == 2
 
 
 @pytest.mark.asyncio
@@ -1779,8 +1787,8 @@ async def test_parse_text_adopt_never_writes_generic_sentinel_to_catalog():
         )
     )
 
-    # In response, fail-closed localization applies "Nguyên liệu" for user display
-    assert response.items[0].name == "Nguyên liệu"
+    # Keep the specific food identity when no localized catalog name is available.
+    assert response.items[0].name == "Unknown exotic potato"
     assert len(food_references.adopt_calls) == 1
     adopt_call = food_references.adopt_calls[0]
     assert adopt_call.get("locale_name") != "Nguyên liệu"
@@ -1836,3 +1844,349 @@ async def test_pure_ai_mode_bypasses_fatsecret_and_db_lookups():
     assert response.emoji == "🥩"
     # Verify zero FatSecret adopt calls occurred
     assert len(food_references.adopt_calls) == 0
+
+
+def _granola_response(*, carbs=6):
+    return {
+        "emoji": "🥣",
+        "items": [
+            {
+                "name": "Granola",
+                "lookup_name": "Granola",
+                "quantity": 10,
+                "quantity_g": 10,
+                "unit": "g",
+                "macros": {
+                    "protein_g": 1,
+                    "carbs_g": carbs,
+                    "fat_g": 2,
+                    "fiber_g": 1,
+                    "sugar_g": 2,
+                },
+                "micros": {
+                    "vitamin_a": 0,
+                    "vitamin_c": None,
+                    "vitamin_e": 0.2,
+                    "calcium": 5,
+                    "iron": 0.3,
+                    "magnesium": 15,
+                    "potassium": 35,
+                    "sodium": 0,
+                    "saturated_fat": 0.4,
+                    "added_sugar": 1,
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pure_ai_mode", [True, False])
+async def test_reported_macro_mass_violation_is_corrected_once(pure_ai_mode):
+    generation = _FakeMealGenerationService(
+        responses=[_granola_response(carbs=8), _granola_response()]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation,
+        fat_secret_service=_FakeFatSecretService(),
+        pure_ai_mode=pure_ai_mode,
+    )
+
+    response = await handler.handle(ParseMealTextCommand(text="10g granola"))
+
+    assert len(generation.calls) == 2
+    retry_prompt = generation.calls[1]["prompt"]
+    assert "items.0.macros" in retry_prompt
+    assert "<previous_candidate_json>" in retry_prompt
+    assert '"quantity":10' in retry_prompt
+    assert '"carbs_g":8' in retry_prompt
+    assert (
+        generation.calls[1]["system_message"] == (generation.calls[0]["system_message"])
+    )
+    assert [(item.protein, item.carbs, item.fat) for item in response.items] == [
+        (1, 6, 2)
+    ]
+    assert response.items[0].quantity == 10
+    assert response.items[0].source_snapshot["extra_nutrients"]["iron"] == 3
+
+
+@pytest.mark.asyncio
+async def test_provider_schema_candidate_is_preserved_for_correction_retry():
+    candidate = '{"items":[{"name":"Granola","quantity":10,"unit":"g","macros":{"protein_g":1,"carbs_g":6,"fat_g":2}}]}'
+    generation = _FakeMealGenerationService(
+        responses=[
+            AIOutputValidationError(
+                "invalid provider schema",
+                purpose="parse_text",
+                attempt_count=1,
+                validation_details=["items.0.quantity"],
+                candidate_payload=candidate,
+            ),
+            _granola_response(),
+        ]
+    )
+    handler = ParseMealTextHandler(generation, pure_ai_mode=True)
+
+    response = await handler.handle(ParseMealTextCommand(text="10g granola"))
+
+    assert len(generation.calls) == 2
+    assert '"name":"Granola"' in generation.calls[1]["prompt"]
+    assert '"quantity":10' in generation.calls[1]["prompt"]
+    assert response.items[0].name == "Granola"
+
+
+@pytest.mark.asyncio
+async def test_slow_optional_reference_stage_cannot_consume_response_reserve():
+    generation = _FakeMealGenerationService()
+    original_generate = generation.generate_meal_plan_async
+
+    async def delayed_generate(**kwargs):
+        await asyncio.sleep(0.16)
+        return await original_generate(**kwargs)
+
+    async def stalled_local_lookup(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    generation.generate_meal_plan_async = delayed_generate
+    handler = ParseMealTextHandler(
+        generation,
+        food_reference_batch_lookup=stalled_local_lookup,
+        pure_ai_mode=False,
+        ai_timeout_seconds=0.5,
+        reference_timeout_seconds=0.5,
+    )
+
+    started = time.monotonic()
+    response = await handler.handle(ParseMealTextCommand(text="10g granola"))
+
+    assert response.items[0].origin == "custom"
+    assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.asyncio
+async def test_repeated_physical_failure_is_typed_and_never_cached():
+    generation = _FakeMealGenerationService(
+        responses=[_granola_response(carbs=8), _granola_response(carbs=8)]
+    )
+    cache = AsyncMock()
+    cache.get.return_value = None
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation, cache_service=cache
+    )
+
+    with pytest.raises(AIOutputValidationError) as error:
+        await handler.handle(ParseMealTextCommand(text="10g granola"))
+
+    assert error.value.attempt_count == 2
+    assert error.value.purpose == "parse_text"
+    assert len(generation.calls) == 2
+    cache.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_valid_twenty_item_parse_preserves_every_row_with_one_generation():
+    generation = _FakeMealGenerationService(
+        responses=[{"items": [_parse_item(name=f"food-{i}") for i in range(20)]}]
+    )
+    handler = ParseMealTextHandler(meal_generation_service=generation)
+
+    response = await handler.handle(ParseMealTextCommand(text="a list of twenty foods"))
+
+    assert [item.name for item in response.items] == [f"food-{i}" for i in range(20)]
+    assert response.total_protein == 40
+    assert response.total_carbs == 340
+    assert response.total_fat == pytest.approx(2)
+    assert len(generation.calls) == 1
+    assert generation.calls[0]["max_tokens"] >= 8192
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_result", [None, RuntimeError("lookup failed")])
+async def test_reference_failure_keeps_all_rows_in_original_order(
+    monkeypatch, failed_result
+):
+    generation = _FakeMealGenerationService(
+        responses=[{"items": [_parse_item(name=name) for name in ("A", "B", "C")]}]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation, pure_ai_mode=False
+    )
+
+    async def lookup(item, **kwargs):
+        if item["name"] == "B":
+            if isinstance(failed_result, Exception):
+                raise failed_result
+            return failed_result
+        return item
+
+    monkeypatch.setattr(handler, "_cascade_lookup", lookup)
+    response = await handler.handle(ParseMealTextCommand(text="A, B, C"))
+
+    assert [item.name for item in response.items] == ["A", "B", "C"]
+    assert response.items[1].origin == "custom"
+    assert response.items[1].protein == 2
+    assert response.total_protein == 6
+    assert response.total_carbs == 51
+    assert response.total_fat == pytest.approx(0.3)
+    assert len(generation.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True])
+async def test_failed_reference_mutation_restores_pristine_ai_estimate(
+    monkeypatch, raises
+):
+    generation = _FakeMealGenerationService(responses=[_granola_response()])
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation, pure_ai_mode=False
+    )
+
+    async def corrupt_reference(item, **kwargs):
+        item.update(protein=12, canonical_name="Wrong reference", food_reference_id=999)
+        item["portion_micros"]["iron"] = 999
+        if raises:
+            raise RuntimeError("failed after mutation")
+        return item
+
+    monkeypatch.setattr(handler, "_cascade_lookup", corrupt_reference)
+    response = await handler.handle(ParseMealTextCommand(text="10g granola"))
+
+    item = response.items[0]
+    assert (item.name, item.canonical_name) == ("Granola", "Granola")
+    assert (item.protein, item.carbs, item.fat) == (1, 6, 2)
+    assert item.food_reference_id is None
+    assert item.origin == "custom"
+    assert item.source_snapshot["extra_nutrients"]["iron"] == 3
+    assert len(generation.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_ai_deadline_cancels_inflight_generation_without_retry():
+    cancelled = asyncio.Event()
+
+    async def waiting_provider(**kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    generation = _FakeMealGenerationService()
+    generation.generate_meal_plan_async = AsyncMock(side_effect=waiting_provider)
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation, ai_timeout_seconds=0.01
+    )
+
+    with pytest.raises(AIUnavailableError) as error:
+        await handler.handle(ParseMealTextCommand(text="10g granola"))
+
+    assert error.value.last_error == "timeout"
+    assert cancelled.is_set()
+    assert generation.generate_meal_plan_async.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_propagates_and_cleans_up_generation():
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def waiting_provider(**kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    generation = _FakeMealGenerationService()
+    generation.generate_meal_plan_async = AsyncMock(side_effect=waiting_provider)
+    handler = ParseMealTextHandler(meal_generation_service=generation)
+    task = asyncio.create_task(handler.handle(ParseMealTextCommand(text="10g granola")))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cancelled.is_set()
+    assert generation.generate_meal_plan_async.await_count == 1
+
+
+class _MemoryParseCache:
+    def __init__(self):
+        self.values = {}
+        self.get_keys = []
+        self.set_keys = []
+
+    async def get(self, key):
+        self.get_keys.append(key)
+        return copy.deepcopy(self.values.get(key))
+
+    async def set(self, key, data, ttl_seconds):
+        self.set_keys.append(key)
+        self.values[key] = copy.deepcopy(data)
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_matches_complete_cold_response_and_avoids_generation():
+    generation = _FakeMealGenerationService(responses=[_granola_response()])
+    cache = _MemoryParseCache()
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation, cache_service=cache
+    )
+    command = ParseMealTextCommand(text="10g granola", user_id="user-1")
+
+    cold = await handler.handle(command)
+    hit = await handler.handle(command)
+
+    assert asdict(hit) == asdict(cold)
+    assert len(generation.calls) == 1
+    assert len(cache.set_keys) == 1
+    extras = hit.items[0].source_snapshot["extra_nutrients"]
+    assert extras["sodium"] == 0
+    assert "vitamin_c" not in extras
+    assert extras["added_sugar"] == 10
+    assert extras["saturated_fat"] == 4
+
+
+@pytest.mark.asyncio
+async def test_refinement_bypasses_cache_reads_and_writes():
+    generation = _FakeMealGenerationService(responses=[_granola_response()])
+    cache = AsyncMock()
+    handler = ParseMealTextHandler(
+        meal_generation_service=generation, cache_service=cache
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="keep this meal", current_items=[_parse_item()])
+    )
+
+    assert len(response.items) == 1
+    assert len(generation.calls) == 1
+    cache.get.assert_not_awaited()
+    cache.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cache_separates_reference_mode_guest_model_and_prompt_policy():
+    cache = _MemoryParseCache()
+    contexts = [
+        (True, None, "model-a", True),
+        (True, "user-1", "model-a", True),
+        (False, "user-1", "model-a", True),
+        (True, "user-1", "model-b", True),
+        (False, "user-1", "model-a", False),
+    ]
+    generations = []
+    for pure, user_id, model, structured in contexts:
+        generation = _FakeMealGenerationService(responses=[_granola_response()])
+        generations.append(generation)
+        handler = ParseMealTextHandler(
+            meal_generation_service=generation,
+            pure_ai_mode=pure,
+            structured_reference_enabled=structured,
+            cache_namespace=model,
+            cache_service=cache,
+        )
+        await handler.handle(ParseMealTextCommand(text="10g granola", user_id=user_id))
+
+    assert all(len(generation.calls) == 1 for generation in generations)
+    assert len(set(cache.get_keys)) == len(contexts)
+    assert all("granola" not in key and "user-1" not in key for key in cache.get_keys)

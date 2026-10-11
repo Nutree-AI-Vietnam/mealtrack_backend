@@ -118,7 +118,8 @@ def test_get_configured_event_bus_is_singleton(monkeypatch):
     monkeypatch.setattr(deps, "get_food_data_service", lambda: object())
     monkeypatch.setattr(deps, "get_food_mapping_service", lambda: object())
     monkeypatch.setattr(deps, "get_fat_secret_service_instance", lambda: object())
-    monkeypatch.setattr(deps, "get_cache_service", lambda: _CacheStub())
+    cache = _CacheStub()
+    monkeypatch.setattr(deps, "get_cache_service", lambda: cache)
     monkeypatch.setattr(deps, "get_suggestion_orchestration_service", lambda: object())
     monkeypatch.setattr(deps, "get_meal_translation_service", lambda: object())
 
@@ -190,12 +191,28 @@ def test_get_configured_event_bus_is_singleton(monkeypatch):
         if hasattr(mod, name):
             monkeypatch.setattr(mod, name, lambda *a, **k: object())
 
+    parse_handler_kwargs = []
+
+    def parse_handler(**kwargs):
+        parse_handler_kwargs.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(mod, "ParseMealTextHandler", parse_handler)
+    monkeypatch.setattr(mod.settings, "PARSE_TEXT_AI_TIMEOUT_SECONDS", 17.0)
+    monkeypatch.setattr(
+        mod.settings, "OPENAI_PARSE_TEXT_MODEL", "configured-parse-model"
+    )
+
     bus1 = mod.get_configured_event_bus()
     bus2 = mod.get_configured_event_bus()
     assert bus1 is bus2
     # Sanity: lots of registrations should have happened.
     assert len(bus1.handlers) > 10
     assert len(bus1.subscriptions) == 0
+    assert len(parse_handler_kwargs) == 1
+    assert parse_handler_kwargs[0]["cache_service"] is cache
+    assert parse_handler_kwargs[0]["ai_timeout_seconds"] == 17.0
+    assert "configured-parse-model" in parse_handler_kwargs[0]["cache_namespace"]
 
     from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 

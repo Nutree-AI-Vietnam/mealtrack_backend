@@ -109,11 +109,17 @@ class AIOutputValidationError(AIError):
         purpose: str,
         attempt_count: int,
         validation_details: list[str] | None = None,
+        candidate_payload: str | None = None,
     ) -> None:
         super().__init__(message)
         self.purpose = purpose
         self.attempt_count = attempt_count
         self.validation_details = validation_details or []
+        # Bounded raw assistant text is used only to build parse-text correction
+        # prompts; it is deliberately omitted from the public error string.
+        self.candidate_payload = (
+            candidate_payload[:16_000] if candidate_payload else None
+        )
 
     def __str__(self) -> str:
         parts = [

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -17,6 +18,7 @@ from pydantic import ValidationError
 from src.domain.exceptions.ai_exceptions import (
     CONTENT_REJECTION_ERROR_CODES,
     AIContentRejectedError,
+    AIOutputValidationError,
 )
 from src.domain.ports.ai_provider_port import AICapability, AIProviderPort
 from src.domain.services.ai_output_validation_service import summarize_validation_error
@@ -172,6 +174,21 @@ class OpenAIProvider(AIProviderPort):
             if rejected := _content_rejection(exc, model):
                 raise rejected from exc
             raise
+        except (ValidationError, OutputParserException) as exc:
+            if kwargs.get("purpose_hint") != "parse_text":
+                raise
+            details = (
+                summarize_validation_error(exc)
+                if isinstance(exc, ValidationError)
+                else ["unparseable_ai_json"]
+            )
+            raise AIOutputValidationError(
+                "Invalid parse-text structured output",
+                purpose="parse_text",
+                attempt_count=1,
+                validation_details=details,
+                candidate_payload=getattr(exc, "parse_text_candidate_output", None),
+            ) from exc
 
     async def _generate(
         self,

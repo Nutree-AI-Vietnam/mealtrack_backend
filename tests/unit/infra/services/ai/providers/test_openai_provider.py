@@ -3,11 +3,18 @@ from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from langchain_core.exceptions import OutputParserException
 from openai import BadRequestError
 from pydantic import ValidationError
 
-from src.domain.exceptions.ai_exceptions import AIContentRejectedError
-from src.domain.model.ai.nutrition_contracts import VisionNutritionResponse
+from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
+    AIOutputValidationError,
+)
+from src.domain.model.ai.nutrition_contracts import (
+    MealTextNutritionResponse,
+    VisionNutritionResponse,
+)
 from src.domain.ports.ai_provider_port import AICapability
 from src.infra.services.ai.ai_vision_errors import AIVisionError, AIVisionFailureKind
 from src.infra.services.ai.langchain_openai_adapter import LangChainOpenAIResult
@@ -56,6 +63,75 @@ def test_openai_provider_capabilities():
     assert AICapability.TEXT_GENERATION in provider.supported_capabilities
     assert AICapability.VISION in provider.supported_capabilities
     assert AICapability.STRUCTURED_OUTPUT in provider.supported_capabilities
+
+
+def _parse_schema_error():
+    with pytest.raises(ValidationError) as error:
+        MealTextNutritionResponse.model_validate(
+            {
+                "items": [
+                    {
+                        "name": "PRIVATE FOOD INPUT",
+                        "quantity": 150000,
+                        "unit": "g",
+                        "macros": {"protein_g": 1, "carbs_g": 6, "fat_g": 2},
+                    }
+                ]
+            }
+        )
+    return error.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "adapter_error",
+    [_parse_schema_error(), OutputParserException("PRIVATE RAW JSON INPUT")],
+    ids=["schema-error", "unparseable-json"],
+)
+async def test_parse_text_adapter_errors_become_sanitized_correction_errors(
+    adapter_error,
+):
+    adapter_error.parse_text_candidate_output = (
+        '{"items":[{"name":"Granola","quantity":10,"unit":"g"}]}'
+    )
+    provider = _provider()
+    provider._langchain.generate_structured = AsyncMock(side_effect=adapter_error)
+
+    with pytest.raises(AIOutputValidationError) as error:
+        await provider.generate(
+            model="gpt-5.6-luna",
+            prompt="10g granola",
+            system_message="Return JSON.",
+            schema=MealTextNutritionResponse,
+            purpose_hint="parse_text",
+        )
+
+    assert error.value.purpose == "parse_text"
+    assert error.value.attempt_count == 1
+    assert error.value.validation_details
+    assert "PRIVATE" not in str(error.value)
+    assert "150000" not in str(error.value)
+    assert error.value.__cause__ is adapter_error
+    assert error.value.candidate_payload == adapter_error.parse_text_candidate_output
+    assert provider._langchain.generate_structured.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_non_parse_schema_error_keeps_existing_provider_contract():
+    provider = _provider()
+    adapter_error = _parse_schema_error()
+    provider._langchain.generate_structured = AsyncMock(side_effect=adapter_error)
+
+    with pytest.raises(ValidationError) as error:
+        await provider.generate(
+            model="gpt-5.6-luna",
+            prompt="Recipe",
+            system_message="Return JSON.",
+            schema=MealTextNutritionResponse,
+            purpose_hint="recipe",
+        )
+
+    assert error.value is adapter_error
 
 
 def test_planner_uses_separate_cached_client_with_sdk_retries_disabled():

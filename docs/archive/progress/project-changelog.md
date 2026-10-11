@@ -3,6 +3,25 @@
 **Status:** Stateful release notes — archived; not evergreen product authority  
 **Evergreen route:** see `docs/codebase-summary.md` and root `README.md`
 
+## 2026-10-11
+
+### Fixed
+
+- Parse-text now preserves the AI's specific food name when no deterministic
+  localized label is available. Prompt guidance covers clear food-name typos,
+  and the cache namespace prevents previously generic names from being reused.
+
+## 2026-10-12
+
+### Fixed
+
+- Parse-text rejects physically impossible portions and asks the configured
+  model for one bounded correction while preserving the full candidate list.
+  Complete responses now use a validated, versioned cache with bounded reads
+  and writes, and optional reference lookups cannot consume the response-time
+  reserve. Refinements apply as one complete cart replacement in Flutter while
+  retaining unchanged item identity and manual nutrition overrides.
+
 ## 2026-09-30
 
 ### Fixed
