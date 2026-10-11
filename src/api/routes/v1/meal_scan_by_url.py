@@ -1,4 +1,4 @@
-"""POST /v1/meals/scan-by-url — analyze a Cloudinary-hosted meal image via bytes path."""
+"""POST /v1/meals/scan-by-url — analyze an uploaded meal image via the bytes path."""
 
 import logging
 from datetime import datetime
@@ -46,7 +46,6 @@ class FoodLabelScanByUrlRequest(BaseModel):
 
 
 _validate_image_url = validate_uploaded_image_url
-_validate_cloudinary_url = validate_uploaded_image_url
 
 
 def _parse_target_date(target_date: str | None):
@@ -77,7 +76,7 @@ async def _scan_by_url(
     label_crop_image_id: str | None = None,
     crop_metadata: dict[str, Any] | None = None,
 ) -> DetailedMealResponse:
-    _validate_cloudinary_url(image_url, image_id)
+    _validate_image_url(image_url, image_id)
     if bool(label_crop_image_url) != bool(label_crop_image_id):
         raise ValidationException(
             message="label_crop_image_url and label_crop_image_id must be supplied together",
@@ -89,7 +88,7 @@ async def _scan_by_url(
         )
     label_crop_public_id = None
     if label_crop_image_url and label_crop_image_id:
-        _validate_cloudinary_url(label_crop_image_url, label_crop_image_id)
+        _validate_image_url(label_crop_image_url, label_crop_image_id)
         label_crop_public_id = f"mealtrack/{label_crop_image_id}"
 
     parsed_target_date = _parse_target_date(target_date)
@@ -159,7 +158,7 @@ async def scan_meal_by_url(
     event_bus: Any = Depends(get_configured_event_bus),
     food_reference_repository=Depends(get_async_food_reference_repository),
 ):
-    """Analyze a meal image already uploaded to Cloudinary via the safe bytes-download path."""
+    """Analyze a meal image that was already uploaded, via the safe bytes-download path."""
     try:
         if body.scan_mode != "scanner":
             raise ValidationException(
@@ -198,7 +197,7 @@ async def scan_food_label_by_url(
     event_bus: Any = Depends(get_configured_event_bus),
     food_reference_repository=Depends(get_async_food_reference_repository),
 ):
-    """Analyze a Cloudinary-hosted Nutrition Facts label."""
+    """Analyze an uploaded Nutrition Facts label."""
     try:
         return await _scan_by_url(
             request=request,

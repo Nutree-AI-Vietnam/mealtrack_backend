@@ -1537,12 +1537,30 @@ async def test_parse_text_uses_normalized_refinement_items_in_prompt():
             text="update potato",
             user_id="user-1",
             language="en",
-            current_items=[{"name": "potato", "unit": " piece "}],
+            current_items=[
+                {
+                    "name": "potato",
+                    "quantity": 2,
+                    "unit": " piece ",
+                    "protein": 4,
+                    "carbs": 34,
+                    "fat": 0.2,
+                }
+            ],
         )
     )
 
-    assert '"unit": "piece"' in meal_generation_service.calls[0]["prompt"]
-    assert '"unit": " piece "' not in meal_generation_service.calls[0]["prompt"]
+    prompt = meal_generation_service.calls[0]["prompt"]
+    assert '"unit": "piece"' in prompt
+    assert '"unit": " piece "' not in prompt
+    assert '"protein": 4' in prompt
+    assert (
+        "Preserve each unchanged item's supplied name, amount, unit, and macros"
+        in prompt
+    )
+    assert "scale that item's supplied macros by the amount ratio" in prompt
+    assert "prior micros are not included" in prompt
+    assert "exact micro preservation is not possible" in prompt
 
 
 @pytest.mark.asyncio

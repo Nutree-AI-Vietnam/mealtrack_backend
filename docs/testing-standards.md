@@ -6,19 +6,70 @@
 Prefer targeted paths; broad unscoped `pytest` can hit duplicate-package import
 collisions.
 
-Parse-text release gates are separate from HTTP contract tests:
+Meal-scan and parse-text prompt evaluations are separate from HTTP contract
+tests and from the unit CI gate. Run the offline checks with:
 
 ```bash
+python scripts/development/evaluate_meal_analyze_prompt_candidates.py --mode contract
 python scripts/development/evaluate_parse_text_nutrition.py --mode offline
-pytest tests/unit/domain/services/test_meal_text_nutrition_eval_loop.py \
+pytest tests/unit/domain/services/meal_analysis/test_prompt_eval_loop.py \
+  tests/unit/domain/strategies/test_meal_analysis_strategy.py \
+  tests/unit/domain/services/test_meal_text_nutrition_eval_loop.py \
+  tests/unit/scripts/test_evaluate_meal_analyze_prompt_candidates.py \
   tests/unit/scripts/test_evaluate_parse_text_nutrition.py -v
 ```
 
-Offline evaluation is deterministic and network-free. Reports default to an
-OS temporary file with mode `0600`, refuse overwrite, and stay aggregate-only.
-Live mode is staging-only, requires `ENVIRONMENT=staging`,
-`PARSE_TEXT_LIVE_EVAL_ENABLED=true`, and `--confirm-live-staging`, and never
-runs in CI.
+These are **offline contract checks**, not prompt-accuracy evaluations. Meal
+scan checks response parsing and schema validation. Parse-text replays the
+synthetic fixture corpus through the handler with fixture AI/reference results
+to check its output contract. Offline fixture timings do not measure provider
+or end-to-end staging speed; offline runs do not establish calorie, portion,
+meal-detection, or micronutrient accuracy. Reports default to an OS temporary
+file with mode `0600`, refuse overwrite, and contain aggregate data rather than
+raw inputs.
+
+Provider-grounded prompt comparison requires a separately reviewed corpus and
+frozen baseline/candidate prompt snapshots. For meal scan, the manifest must
+include privacy-approved, hashed photos and reviewed food, calorie, macro,
+micronutrient, and food/non-food references. For each food case, a complete
+nutrition reference includes all five macros and all ten micronutrients with
+an explicit known, unknown, or masked state. Every micronutrient must have at
+least one known reference in both development and held-out splits. For
+parse-text, the manifest also contains reviewed inputs, expected items,
+quantities, and calories. A complete comparison corpus has 30 cases per feature: 20
+development cases (10 English and 10 Vietnamese) and 10 held-out cases (5 per
+language). The evaluator reports nutrition references as incomplete when these
+conditions are not met, even when the case-count/language split is balanced.
+Compare the development split first; reserve held-out for the final comparison.
+Provider runs are paired, capped at 50 generations and 300 seconds, and reports
+identify provider observations. Parse-text `provider-only` measures
+raw model output without lookups or writes; `live` exercises the handler and
+configured lookup providers as a separate staging gate.
+
+Do not run a provider mode until the corpus has passed its required human and
+privacy review and the staging run is explicitly authorized. Meal scan requires
+`ENVIRONMENT=staging` and `--confirm-provider-evaluation`. Parse-text `live` and
+`provider-only` require `ENVIRONMENT=staging`,
+`PARSE_TEXT_LIVE_EVAL_ENABLED=true`, and `--confirm-live-staging`. Provider
+prompt-comparison modes also require the corresponding `--manifest`,
+`--baseline-prompt`, and `--candidate-prompt` files. Parse-text live mode uses
+the checked-in fixture corpus and reserves worst-case search/detail capacity
+against its 25-call limits; the runner can admit fewer cases than `--max-cases`
+requests. Reports written inside the repository must target a git-ignored path.
+Never treat a prompt character-count reduction or an offline timing as measured
+provider latency or as evidence of better accuracy.
+
+The provider comparison entrypoints are:
+
+```text
+scripts/development/evaluate_meal_analyze_prompt_candidates.py --mode provider
+scripts/development/evaluate_parse_text_nutrition.py --mode provider-only
+```
+
+These lines identify staging-only modes; they are not complete runnable
+commands. Supply the reviewed manifest and frozen prompt snapshot paths plus the
+confirmation flags above only after the provider-evaluation gate is approved.
+Provider calls are never part of CI.
 
 ---
 

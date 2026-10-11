@@ -41,14 +41,10 @@ def test_dry_run_does_not_modify_database():
     ]
     mock_session.execute.return_value = mock_result
 
-    # Mock Cloudinary - img-1 not found, img-2 URL returns 404
-    mock_cloudinary = MagicMock()
-    mock_cloudinary.get_url.return_value = None  # img-1 not found
-
     with patch("requests.head") as mock_head:
         mock_head.return_value = MagicMock(status_code=404)  # img-2 URL dead
 
-        orphans = find_orphaned_meals(mock_session, mock_cloudinary)
+        orphans = find_orphaned_meals(mock_session)
 
     assert len(orphans) == 2
     assert "meal-1" in orphans

@@ -31,8 +31,7 @@ sequenceDiagram
 
 ### Key Architectural Characteristics
 - **Zero Backend Bandwidth Bottleneck**: The backend never proxies large image binary streams; clients upload directly to Cloudflare's nearest edge data center.
-- **Zero-Downtime Dual-Provider**: The backend and mobile client simultaneously support both Cloudflare Images (`imagedelivery.net` or custom domain) and legacy Cloudinary (`res.cloudinary.com`).
-- **Instant Rollback**: Setting `IMAGE_STORE_PROVIDER=cloudinary` instantly switches future uploads back to Cloudinary without code changes or restarts.
+- **Meal photos**: New uploads are stored in R2 when the R2 settings are present. Catalog images and older Cloudflare Images stay on Images. Already stored `res.cloudinary.com` photos still load.
 
 ---
 
@@ -43,7 +42,7 @@ sequenceDiagram
 Cloudflare Images automatically reuses your existing `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` configured for Workers AI. You only need to add `CLOUDFLARE_ACCOUNT_HASH`:
 
 ```bash
-# Provider toggle: 'cloudflare' (default) or 'cloudinary'
+# Provider toggle: 'cloudflare' (default) or 'local'
 IMAGE_STORE_PROVIDER=cloudflare
 
 # Reuses existing Cloudflare credentials:
@@ -138,49 +137,23 @@ If you prefer branded URLs such as `https://images.nutree.ai/<image_id>/<variant
 
 ## 5. Mobile Client Implementation (`nutree_ai`)
 
-The mobile client handles both providers transparently via `CloudinaryUploadService` (aliased as `ImageUploadService` in `lib/features/meal_scanner/data/services/cloudinary_upload_service.dart`):
+The mobile client uploads through `ImageUploadService` (`lib/features/meal_scanner/data/services/image_upload_service.dart`):
 
 1. **Token Fetch**: Calls `GET /v1/meals/upload-token`.
-2. **Provider Detection**:
-   - If `token.uploadUrl` is present: performs a direct multipart `POST` to Cloudflare Direct Upload URL. Parses `result.variants.first` or `result.id`.
-   - If `token.uploadUrl` is absent (legacy backend or rollback): executes legacy Cloudinary signed upload to `https://api.cloudinary.com/v1_1/<cloud_name>/image/upload`.
+2. **Upload**:
+   - If `r2_upload_url` and `delivery_url` are present: `PUT`s the bytes straight to R2 and uses `delivery_url`.
+   - Otherwise posts multipart `file` to `upload_url` and reads `result.variants` or `secure_url`.
 3. **Progress Reporting**: Streams byte transfer progress through Riverpod state (`meal_upload_progress_provider`).
 
 ---
 
-## 6. Offline Database Migration
+## 6. Existing photo URLs
 
-To migrate historical meal photos from Cloudinary (`res.cloudinary.com`) to Cloudflare Images (`imagedelivery.net`), use `scripts/migrate_cloudinary_to_cloudflare.py`:
-
-```bash
-# 1. Dry run to inspect how many images need migration without writing to DB or Cloudflare
-uv run python scripts/migrate_cloudinary_to_cloudflare.py --dry-run
-
-# 2. Test migration on a small subset (e.g. 5 meals)
-uv run python scripts/migrate_cloudinary_to_cloudflare.py --execute --limit 5
-
-# 3. Execute full batch migration in production / staging
-uv run python scripts/migrate_cloudinary_to_cloudflare.py --execute --batch-size 50
-```
-
-### Migration Script Behavior
-- Queries `meal_images` records matching `%res.cloudinary.com%`.
-- Downloads image bytes from Cloudinary.
-- Uploads image to Cloudflare Images using `image_id`.
-- Obtains the Cloudflare delivery URL and updates both `meal_images.url` and corresponding `meals.image_url`.
-- Commits transaction per batch.
+Photos already stored on Cloudflare Images and on `res.cloudinary.com` stay where they are. Scan-by-url still accepts those hosts. New meal photos go to R2 when `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, and `API_PUBLIC_BASE_URL` are set. Leave `IMAGE_STORE_PROVIDER=cloudflare`.
 
 ---
 
-## 7. Rollback & Troubleshooting
-
-### Emergency Rollback
-If Cloudflare Images encounters an outage or configuration failure:
-1. In your deployment environment, set:
-   ```bash
-   IMAGE_STORE_PROVIDER=cloudinary
-   ```
-2. Restart the backend service. All new upload tokens will revert to Cloudinary signed uploads. Existing Cloudflare images in the database will still load properly since `meal_scan_by_url` and `meals_edit` allow both hosts.
+## 7. Troubleshooting
 
 ### Common Error Codes
 

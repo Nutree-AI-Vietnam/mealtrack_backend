@@ -710,7 +710,7 @@ class AttachMealPhotoRequest(BaseModel):
         ...,
         min_length=1,
         max_length=255,
-        description="Cloudinary secure URL returned after upload",
+        description="Public URL returned after the meal photo upload",
     )
     image_format: Literal["jpeg", "png"] = Field(
         "jpeg", description="Uploaded image format"

@@ -230,8 +230,15 @@ class ParseMealTextHandler(
         if validated_current_items:
             context = json.dumps(validated_current_items, ensure_ascii=False)
             sanitized_text += (
-                f"\n\nCurrent meal items:\n{context}\n\n"
-                "Update the meal based on my request above. Return the COMPLETE updated list."
+                f"\n\nCurrent meal items (amounts and macros; prior micros are not "
+                f"included):\n{context}\n\n"
+                "Apply my request and return the complete updated list. Preserve "
+                "each unchanged item's supplied name, amount, unit, and macros. "
+                "Add or remove requested foods once. For an amount-only edit, "
+                "scale that item's supplied macros by the amount ratio and keep "
+                "other items unchanged. Estimate micros for each final food, "
+                "state, and amount; prior micros are absent, so exact micro "
+                "preservation is not possible."
             )
 
         # Build messages with locale-aware food names

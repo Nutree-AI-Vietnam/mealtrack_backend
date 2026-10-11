@@ -48,6 +48,38 @@ def test_weight_aware_user_message_contains_weight():
     assert "280" in msg
 
 
+def test_scan_context_messages_scope_and_scale_supplied_amounts():
+    from src.domain.strategies.meal_analysis_strategy import (
+        IngredientAwareAnalysisStrategy,
+        PortionAwareAnalysisStrategy,
+        UserContextAwareAnalysisStrategy,
+        WeightAwareAnalysisStrategy,
+    )
+
+    portion = PortionAwareAnalysisStrategy(350.0, "g").get_user_message()
+    assert "full meal" in portion
+    assert "quantities sum to that mass" in portion
+    assert "every macro and micro total" in portion
+
+    weight = WeightAwareAnalysisStrategy(280.0).get_user_message()
+    assert "total edible consumed weight" in weight
+    assert "quantities sum to this weight" in weight
+    assert "every macro and micro total" in weight
+
+    ingredients = IngredientAwareAnalysisStrategy(
+        [{"name": "rice", "quantity": 200, "unit": "g"}]
+    ).get_user_message()
+    assert "Keep each listed food and amount once" in ingredients
+    assert "do not duplicate the whole dish" in ingredients
+
+    context = UserContextAwareAnalysisStrategy(
+        "half the chicken, all the rice"
+    ).get_user_message()
+    assert "named foods" in context
+    assert "whole-meal amount applies to the full meal" in context
+    assert "do not infer unseen consumption" in context
+
+
 def test_food_label_strategy_prompt_contains_multilingual_label_rules():
     from src.domain.strategies.meal_analysis_strategy import (
         FoodLabelImageAnalysisStrategy,

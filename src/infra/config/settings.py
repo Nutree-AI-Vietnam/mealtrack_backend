@@ -233,14 +233,10 @@ class Settings(BaseSettings):
     WEB_FUNNEL_CLAIM_LINK_BASE_URL: str = Field(default="")
     WEB_FUNNEL_BFF_ORIGIN: str = Field(default="")
     WEB_FUNNEL_BFF_SHARED_SECRET: str = Field(default="")
-    CLOUDINARY_CLOUD_NAME: str | None = Field(default=None)
-    CLOUDINARY_API_KEY: str | None = Field(default=None)
-    CLOUDINARY_API_SECRET: str | None = Field(default=None)
-
     # Image storage provider configuration
     IMAGE_STORE_PROVIDER: str = Field(
         default="cloudflare",
-        description="Image storage provider: 'cloudflare', 'cloudinary', or 'local'",
+        description="Image storage provider: 'cloudflare' or 'local'",
     )
     LOCAL_IMAGE_STORE_BASE_URL: str = Field(
         default="http://localhost:8000",
