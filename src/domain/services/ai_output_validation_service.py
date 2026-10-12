@@ -63,7 +63,7 @@ def validate_parse_text_nutrition(
         local_unit = canonicalize_mass_volume_unit(item.get("unit"))
         unit = (
             local_unit
-            if local_unit in {"g", "kg", "oz", "lb"}
+            if local_unit in {"g", "kg", "oz", "lb", "ml", "l"}
             else canonicalize_mass_volume_unit(item.get("english_unit") or item["unit"])
         )
         if unit in {"g", "kg", "oz", "lb"}:
@@ -76,6 +76,18 @@ def validate_parse_text_nutrition(
                     f"{prefix}.quantity_g: must match the stated mass amount"
                 )
             mass = explicit_mass
+        elif mass is None and unit in {"ml", "l"}:
+            mass = convert_quantity_to_grams(
+                item["quantity"], unit, item.get("lookup_name") or item["name"]
+            )
+        elif mass is None and (
+            carbs + macros["protein_g"] + fat
+            > item["quantity"] * 100 + MACRO_ROUNDING_TOLERANCE_G
+        ):
+            details.append(
+                f"{prefix}.quantity_g: required because portion-total macros exceed "
+                "the default countable serving weight"
+            )
         if mass is not None:
             if not math.isfinite(mass) or mass <= 0:
                 details.append(f"{prefix}.quantity_g: must be finite and positive")

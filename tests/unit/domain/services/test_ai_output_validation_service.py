@@ -195,8 +195,66 @@ def test_parse_text_volume_uses_estimated_edible_mass():
     assert payload["items"][0]["quantity_g"] == 182
 
 
-def test_parse_text_unknown_count_mass_still_checks_subsets():
-    payload = _text_portion(quantity=1, unit="slice", quantity_g=None)
+@pytest.mark.parametrize("unit", ["plate", "cup", "cups", "cup cooked", "tsp"])
+def test_parse_text_requires_grams_when_count_fallback_cannot_hold_macros(unit):
+    payload = _text_portion(
+        quantity=1,
+        unit=unit,
+        english_unit=unit,
+        quantity_g=None,
+        macros={"protein_g": 20, "carbs_g": 90, "fat_g": 25},
+    )
+
+    with pytest.raises(AIOutputValidationError) as error:
+        validate_parse_text_nutrition(payload)
+
+    assert any("quantity_g" in detail for detail in error.value.validation_details)
+
+
+def test_parse_text_allows_convertible_volume_without_estimated_grams():
+    payload = _text_portion(
+        quantity=200,
+        unit="ml",
+        quantity_g=None,
+        macros={"protein_g": 10, "carbs_g": 30, "fat_g": 20},
+    )
+
+    validate_parse_text_nutrition(payload)
+
+
+def test_parse_text_volume_without_grams_uses_food_density_for_physical_check():
+    payload = _text_portion(
+        name="Olive oil",
+        quantity=100,
+        unit="ml",
+        quantity_g=None,
+        macros={"protein_g": 0, "carbs_g": 0, "fat_g": 100},
+    )
+
+    with pytest.raises(AIOutputValidationError) as error:
+        validate_parse_text_nutrition(payload)
+
+    assert any("macros" in detail for detail in error.value.validation_details)
+
+
+def test_parse_text_local_volume_unit_precedes_mismatched_english_unit():
+    payload = _text_portion(
+        name="Olive oil",
+        quantity=100,
+        unit="ml",
+        english_unit="cup",
+        quantity_g=None,
+        macros={"protein_g": 0, "carbs_g": 0, "fat_g": 100},
+    )
+
+    with pytest.raises(AIOutputValidationError) as error:
+        validate_parse_text_nutrition(payload)
+
+    assert any("macros" in detail for detail in error.value.validation_details)
+
+
+def test_parse_text_countable_units_with_grams_still_check_subsets():
+    payload = _text_portion(quantity=1, unit="slice", quantity_g=10)
     validate_parse_text_nutrition(payload)
     payload["items"][0]["macros"]["fiber_g"] = 8
 

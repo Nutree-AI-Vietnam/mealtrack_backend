@@ -1464,6 +1464,65 @@ async def test_parse_text_rejects_impossible_fallback_when_ai_omits_quantity_g()
 
 
 @pytest.mark.asyncio
+async def test_parse_text_retries_countable_portion_without_grams_before_fallback():
+    initial_item = _parse_item(
+        name="Pasta",
+        quantity=1,
+        unit="plate",
+        macros={"protein": 20, "carbs": 90, "fat": 25},
+    )
+    corrected_item = {**initial_item, "quantity_g": 250}
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[
+            {"items": [initial_item]},
+            {"items": [corrected_item]},
+        ]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_FakeFatSecretService(),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="1 plate pasta", user_id="user-1", language="en")
+    )
+
+    assert len(meal_generation_service.calls) == 2
+    assert "items.0.quantity_g" in meal_generation_service.calls[1]["prompt"]
+    assert response.items[0].quantity == 250
+
+
+@pytest.mark.asyncio
+async def test_parse_text_returns_typed_error_if_countable_retry_still_omits_grams():
+    response_payload = {
+        "items": [
+            _parse_item(
+                name="Pasta",
+                quantity=1,
+                unit="plate",
+                macros={"protein": 20, "carbs": 90, "fat": 25},
+            )
+        ]
+    }
+    meal_generation_service = _FakeMealGenerationService(
+        responses=[response_payload, response_payload]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=meal_generation_service,
+        fat_secret_service=_FakeFatSecretService(),
+    )
+
+    with pytest.raises(AIOutputValidationError) as error:
+        await handler.handle(
+            ParseMealTextCommand(text="1 plate pasta", user_id="user-1", language="en")
+        )
+
+    assert len(meal_generation_service.calls) == 2
+    assert error.value.attempt_count == 2
+    assert any("quantity_g" in detail for detail in error.value.validation_details)
+
+
+@pytest.mark.asyncio
 async def test_parse_text_caps_total_provider_searches_and_ai_generations():
     """Expected red: current handler applies provider limits per item, not per request."""
     response_payload = {
