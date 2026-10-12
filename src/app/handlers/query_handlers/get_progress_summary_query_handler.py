@@ -24,6 +24,7 @@ from src.app.queries.progress.get_progress_summary_query import GetProgressSumma
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.cache_port import CachePort
+from src.domain.services.hydration_intake import orphan_drink_day_totals
 from src.domain.services.progress_summary_window import (
     PROGRESS_SUMMARY_CAP_DAYS,
     clamp_progress_window,
@@ -123,11 +124,13 @@ class GetProgressSummaryQueryHandler(
         hydration_by_day = await uow.hydration_entries.sum_ml_by_date_range(
             user_id, start, end, user_timezone=user_tz_str
         )
-        drink_macros_by_day = await uow.hydration_entries.sum_macros_by_date_range(
+        hydration_entries = await uow.hydration_entries.find_by_date_range(
             user_id, start, end, user_timezone=user_tz_str
         )
-        drink_micros_by_day = await uow.hydration_entries.sum_micros_by_date_range(
-            user_id, start, end, user_timezone=user_tz_str
+        if not isinstance(hydration_entries, list):
+            hydration_entries = []
+        drink_macros_by_day, drink_micros_by_day = orphan_drink_day_totals(
+            hydration_entries, meals_by_day, user_tz_str
         )
         movement_by_day = await fetch_movement_by_day(
             uow, user_id, start, end, user_tz_str, user_tz

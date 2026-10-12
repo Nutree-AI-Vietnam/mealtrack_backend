@@ -439,6 +439,15 @@ class Settings(BaseSettings):
         description="Timeout for affiliate HTTP calls (validate + send_event). 10s covers vercel dev cold starts.",
     )
 
+    # Weekly recap ("Weekly Wrapped")
+    WEEKLY_RECAP_CONFIG_JSON: str = Field(
+        default="",
+        description=(
+            "JSON object overriding weekly recap thresholds by RecapConfig field "
+            'name, e.g. {"low_data_meals": 8}. Empty keeps the design defaults.'
+        ),
+    )
+
     # Referral system (multi-currency)
     REFERRAL_COMMISSIONS: dict = Field(
         default={"USD": 2, "VND": 50000, "EUR": 1.8, "default": 2},

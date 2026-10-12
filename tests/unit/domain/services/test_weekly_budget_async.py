@@ -447,6 +447,62 @@ class TestCalculateWeeklyConsumedAsync:
 
         assert result["calories"] == 500
 
+    @pytest.mark.asyncio
+    async def test_orphan_drink_joins_weekly_consumed_once(self):
+        """A legacy coffee row must not drop coconut or count coffee twice."""
+        from types import SimpleNamespace
+
+        coffee = _ready_meal(
+            protein=0,
+            carbs=0,
+            fat=0.3,
+            created_at=datetime(2026, 10, 12, 1, tzinfo=UTC),
+        )
+        coffee.meal_id = "coffee"
+        food = _ready_meal(
+            protein=19.6,
+            carbs=27.5,
+            fat=17.1,
+            created_at=datetime(2026, 10, 12, 5, tzinfo=UTC),
+        )
+        food.meal_id = "food"
+        logged = datetime(2026, 10, 12, 1, tzinfo=UTC)
+        coconut = SimpleNamespace(
+            legacy_meal_id=None,
+            protein_g=0,
+            carbs_g=9.6,
+            fat_g=0.6,
+            fiber_g=0,
+            sugar_g=9.6,
+            logged_at=logged,
+        )
+        coffee_entry = SimpleNamespace(
+            legacy_meal_id="coffee",
+            protein_g=0,
+            carbs_g=0,
+            fat_g=0.3,
+            fiber_g=0,
+            sugar_g=0,
+            logged_at=logged,
+        )
+        mock_uow = Mock()
+        mock_uow.meals.find_by_date_range = AsyncMock(return_value=[coffee, food])
+        mock_uow.hydration_entries.find_by_date_range = AsyncMock(
+            return_value=[coffee_entry, coconut]
+        )
+        mock_uow.movement_entries = _FakeMovementEntries([])
+
+        result = await WeeklyBudgetService.calculate_weekly_consumed_async(
+            uow=mock_uow,
+            user_id="user123",
+            week_start=date(2026, 10, 12),
+            user_timezone="Asia/Ho_Chi_Minh",
+        )
+
+        assert result["protein"] == pytest.approx(19.6)
+        assert result["carbs"] == pytest.approx(37.1)
+        assert result["fat"] == pytest.approx(18.0)
+
 
 class TestGetEffectiveAdjustedDailyAsync:
     """Test get_effective_adjusted_daily_async method."""

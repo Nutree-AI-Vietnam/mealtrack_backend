@@ -10,6 +10,13 @@ from src.domain.utils.timezone_utils import format_iso_utc, utc_now
 
 from .enums import NotificationType
 
+# Meal reminder times a user starts with, in minutes from midnight
+DEFAULT_MEAL_REMINDER_MINUTES = {
+    "breakfast": 510,  # 8:30 AM
+    "lunch": 690,  # 11:30 AM
+    "dinner": 1080,  # 6:00 PM
+}
+
 # Map notification types to their corresponding preference fields
 NOTIFICATION_TYPE_TO_FIELD = {
     NotificationType.MEAL_REMINDER_BREAKFAST: "meal_reminders_enabled",
@@ -79,9 +86,9 @@ class NotificationPreferences:
             meal_reminders_enabled=True,
             daily_summary_enabled=True,
             hydration_reminders_enabled=True,
-            breakfast_time_minutes=510,  # 8:30 AM
-            lunch_time_minutes=690,  # 11:30 AM
-            dinner_time_minutes=1080,  # 6:00 PM
+            breakfast_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["breakfast"],
+            lunch_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["lunch"],
+            dinner_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["dinner"],
             daily_summary_time_minutes=1260,  # 9:00 PM
             language="en",
             created_at=utc_now(),

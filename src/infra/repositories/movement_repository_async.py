@@ -1,11 +1,12 @@
 """Async movement repository."""
 
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.movement import MovementEntry
+from src.domain.utils.timezone_utils import get_zone_info
 from src.infra.database.models.movement_entry import MovementEntryORM
 from src.infra.mappers.movement_entry_mapper import (
     movement_entry_domain_to_orm,
@@ -146,3 +147,24 @@ class AsyncMovementRepository:
             )
         )
         return result.rowcount > 0
+
+    async def max_updated_at_for_local_day(
+        self,
+        date_obj: date,
+        user_id: str,
+        user_timezone: str | None = None,
+    ) -> datetime | None:
+        """Newest workout write whose log time falls on the local day."""
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
+        start_dt = datetime.combine(
+            date_obj, datetime.min.time(), tzinfo=tz
+        ).astimezone(UTC)
+        end_dt = start_dt + timedelta(days=1)
+        result = await self.session.execute(
+            select(func.max(MovementEntryORM.updated_at)).where(
+                MovementEntryORM.user_id == user_id,
+                MovementEntryORM.logged_at >= start_dt,
+                MovementEntryORM.logged_at < end_dt,
+            )
+        )
+        return result.scalar_one_or_none()

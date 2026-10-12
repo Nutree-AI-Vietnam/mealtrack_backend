@@ -378,7 +378,9 @@ async def test_cache_read_failure_is_non_fatal():
         side_effect=RuntimeError("attached to a different loop")
     )
 
-    result = await handler._try_get_cached_result("u1", date(2026, 4, 18), 1, True)
+    result = await handler._try_get_cached_result(
+        "u1", date(2026, 4, 18), 1, True, "||"
+    )
 
     assert result is None
 
@@ -388,7 +390,10 @@ async def test_stale_daily_target_cache_is_rejected():
     handler = _make_handler()
     handler.cache_service.get_json = AsyncMock(return_value={"target_revision": 1})
 
-    assert await handler._try_get_cached_result("u1", date(2026, 4, 18), 2, True) is None
+    assert (
+        await handler._try_get_cached_result("u1", date(2026, 4, 18), 2, True, "||")
+        is None
+    )
 
 
 @pytest.mark.asyncio

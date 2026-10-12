@@ -157,6 +157,7 @@ from src.app.handlers.query_handlers import (
     GetFavoriteMealsQueryHandler,
     GetFoodDetailsQueryHandler,
     GetJourneyProgressQueryHandler,
+    GetLatestWeeklyRecapQueryHandler,
     GetMealByIdQueryHandler,
     GetMealsByDateQueryHandler,
     GetMovementCatalogQueryHandler,
@@ -245,6 +246,7 @@ from src.app.queries.notification import GetNotificationPreferencesQuery
 from src.app.queries.nutrition import GetActivitiesPresenceQuery, GetNutritionBulkQuery
 from src.app.queries.progress import (
     GetJourneyProgressQuery,
+    GetLatestWeeklyRecapQuery,
     GetProgressRecapQuery,
     GetProgressSummaryQuery,
 )
@@ -275,6 +277,7 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityPolicy
+from src.domain.services.weekly_recap import RecapConfig
 from src.infra.adapters.weekly_meal_plan_adjustment_provider import (
     StructuredWeeklyMealPlanAdjustmentProvider,
 )
@@ -1123,9 +1126,17 @@ def get_configured_event_bus() -> EventBus:
             cache_service=cache_service,
         ),
     )
+    progress_summary_handler = GetProgressSummaryQueryHandler(
+        cache_service=cache_service
+    )
+    event_bus.register_handler(GetProgressSummaryQuery, progress_summary_handler)
     event_bus.register_handler(
-        GetProgressSummaryQuery,
-        GetProgressSummaryQueryHandler(cache_service=cache_service),
+        GetLatestWeeklyRecapQuery,
+        GetLatestWeeklyRecapQueryHandler(
+            uow_factory=AsyncUnitOfWork,
+            summary_handler=progress_summary_handler,
+            config=RecapConfig.from_json(settings.WEEKLY_RECAP_CONFIG_JSON),
+        ),
     )
     from src.app.commands.progress import GenerateProgressRecapCommand
     from src.app.handlers.command_handlers.generate_progress_recap_command_handler import (

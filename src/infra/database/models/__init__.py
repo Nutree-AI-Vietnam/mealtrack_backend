@@ -133,6 +133,9 @@ from .weekly_meal_planner import (
     WeeklyPlanLateLegacySlotRepairORM,
 )
 
+# Weekly recaps
+from .weekly_recap import WeeklyRecapORM
+
 # Weight tracking
 from .weight_entry import WeightEntryORM
 
@@ -225,6 +228,8 @@ __all__ = [
     "WeeklyMealPlanPantryItemORM",
     "WeeklyGroceryDayLineORM",
     "WeeklyGroceryItemStateORM",
+    # Weekly recaps
+    "WeeklyRecapORM",
     # Promo codes
     "PromoCode",
     "PromoCodeRedemption",
