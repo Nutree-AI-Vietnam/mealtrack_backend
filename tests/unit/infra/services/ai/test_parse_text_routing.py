@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.domain.exceptions.ai_exceptions import AIContentRejectedError
+from src.domain.exceptions.ai_exceptions import (
+    AIContentRejectedError,
+    AIOutputValidationError,
+)
 from src.domain.model.ai.model_purpose import ModelPurpose
 from src.infra.services.ai.ai_model_manager import AIModelManager
 
@@ -168,4 +171,44 @@ async def test_parse_text_content_rejection_stops_chain_without_fallback():
 
     assert openai_mock.generate.await_count == 1
     cf_mock.generate.assert_not_called()
+    manager._circuit_breaker.record_failure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_parse_text_schema_failure_returns_to_application_without_fallback():
+    settings = _mock_settings(cf_enabled=True, cf_purposes="parse_text")
+    invalid = AIOutputValidationError(
+        "Invalid structured output",
+        purpose="parse_text",
+        attempt_count=1,
+        validation_details=["items.0.quantity: invalid value"],
+    )
+    openai_mock = Mock(generate=AsyncMock(side_effect=invalid))
+    cf_mock = Mock(generate=AsyncMock(return_value={"items": []}))
+    with (
+        patch(
+            "src.infra.services.ai.ai_model_manager.OpenAIProvider",
+            return_value=openai_mock,
+        ),
+        patch(
+            "src.infra.services.ai.ai_model_manager.CloudflareWorkersAIProvider",
+            return_value=cf_mock,
+        ),
+    ):
+        manager = AIModelManager(settings)
+        manager._circuit_breaker = Mock(
+            filter_available=Mock(side_effect=lambda models: models)
+        )
+
+        with pytest.raises(AIOutputValidationError) as error:
+            await manager.generate(
+                purpose=ModelPurpose.PARSE_TEXT,
+                prompt="meal: 10g granola",
+                system_message="Return structured nutrition.",
+            )
+
+    assert error.value is invalid
+    assert openai_mock.generate.await_count == 1
+    cf_mock.generate.assert_not_awaited()
+    openai_mock.extract_error_code.assert_not_called()
     manager._circuit_breaker.record_failure.assert_not_called()

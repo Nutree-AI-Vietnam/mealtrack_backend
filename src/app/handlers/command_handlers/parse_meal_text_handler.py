@@ -3,14 +3,14 @@ Handler for parsing natural language meal text into structured food items.
 """
 
 import asyncio
-import hashlib
+import copy
 import json
 import logging
 import os
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
@@ -21,12 +21,15 @@ from src.app.handlers.command_handlers.meal_text_parsing_utils import (
 )
 from src.app.schemas.meal_schemas import ParsedFoodItemDto, ParseMealTextResponseDto
 from src.app.services.food_display_name import (
-    apply_fail_closed_display_names,
     apply_glossary_display_names,
     needs_display_localization,
 )
 from src.app.services.parse_text_custom_estimate import apply_custom_estimate
-from src.domain.model.nutrition.extra_nutrients import extras_from_portion_micros
+from src.app.services.parse_text_response_cache import (
+    parse_text_cache_key,
+    read_parse_text_cache,
+    write_parse_text_cache,
+)
 from src.app.services.serving_label_localizer import localize_item_servings
 from src.domain.exceptions.ai_exceptions import (
     AIOutputValidationError,
@@ -35,11 +38,16 @@ from src.domain.exceptions.ai_exceptions import (
 from src.domain.model.ai.nutrition_contracts import (
     MealTextNutritionResponse,
 )
+from src.domain.model.nutrition.extra_nutrients import (
+    extra_nutrients_to_micros,
+    extras_from_portion_micros,
+)
 from src.domain.model.nutrition.macros import Macros
 from src.domain.ports.meal_generation_service_port import MealGenerationServicePort
 from src.domain.services.ai_output_validation_service import (
-    build_validation_retry_prompt,
+    build_parse_text_correction_prompt,
     validate_ai_output,
+    validate_parse_text_nutrition,
 )
 from src.domain.services.emoji_validator import validate_emoji
 from src.domain.services.nutrition_calculation_service import (
@@ -48,7 +56,6 @@ from src.domain.services.nutrition_calculation_service import (
     _convert_with_allowed_units,
     _normalize_unit,
     canonicalize_mass_volume_unit,
-    clamp_nutrition_values,
     convert_quantity_to_grams,
     fallback_custom_serving_options,
     normalize_unit_for_manual_save,
@@ -74,6 +81,8 @@ from src.domain.services.prompts.system_prompts import SystemPrompts
 logger = logging.getLogger(__name__)
 PARSE_TEXT_VALIDATION_PURPOSE = "parse_text"
 MAX_VALIDATION_ATTEMPTS = 2
+PARSE_TEXT_RESPONSE_RESERVE_SECONDS = 0.3
+CACHE_STAGE_TIMEOUT_SECONDS = 0.05
 MAX_PROVIDER_SEARCHES = 5
 MAX_PROVIDER_DETAILS = 5
 MAX_PROVIDER_CONCURRENCY = 3
@@ -120,6 +129,10 @@ class _ParseTextRequestBudget:
     ai_generations: int = 0
     provider_searches: int = 0
     provider_details: int = 0
+    ai_seconds: float = 0.0
+    reference_seconds: float = 0.0
+    cache_hit: bool = False
+    request_deadline: float | None = None
     semaphore: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_PROVIDER_CONCURRENCY)
     )
@@ -127,16 +140,9 @@ class _ParseTextRequestBudget:
 
 def _parse_text_fatsecret_timeout_seconds() -> float:
     try:
-        return max(0.01, float(os.getenv("PARSE_TEXT_FATSECRET_TIMEOUT_SECONDS", "3")))
+        return max(0.01, float(os.getenv("PARSE_TEXT_FATSECRET_TIMEOUT_SECONDS", "1")))
     except ValueError:
-        return 3.0
-
-
-def _parse_text_cache_key(text: str, language: str | None) -> str:
-    norm_text = " ".join(text.strip().lower().split())
-    norm_lang = (language or "en").strip().lower()
-    digest = hashlib.sha256(norm_text.encode("utf-8")).hexdigest()[:24]
-    return f"parse_text:{norm_lang}:{digest}"
+        return 1.0
 
 
 @handles(ParseMealTextCommand)
@@ -152,9 +158,12 @@ class ParseMealTextHandler(
         food_reference_batch_lookup: Any | None = None,
         structured_reference_enabled: bool = True,
         cache_service: Any | None = None,
-        cache_ttl_seconds: int = 604800,
+        cache_ttl_seconds: int = 3600,
         uow_factory: Any | None = None,
         pure_ai_mode: bool | None = None,
+        ai_timeout_seconds: float = 10.0,
+        cache_namespace: str = "",
+        reference_timeout_seconds: float | None = None,
     ):
         self._meal_generation_service = meal_generation_service
         self._fat_secret_service = fat_secret_service
@@ -163,6 +172,9 @@ class ParseMealTextHandler(
         self._cache_service = cache_service
         self._cache_ttl_seconds = cache_ttl_seconds
         self._uow_factory = uow_factory
+        self._ai_timeout_seconds = ai_timeout_seconds
+        self._cache_namespace = cache_namespace
+        self._reference_timeout_seconds = reference_timeout_seconds
         self._pure_ai_mode = (
             pure_ai_mode
             if pure_ai_mode is not None
@@ -170,6 +182,40 @@ class ParseMealTextHandler(
         )
 
     async def handle(self, command: ParseMealTextCommand) -> ParseMealTextResponseDto:
+        started = time.monotonic()
+        budget = _ParseTextRequestBudget()
+        status = "error"
+        budget.request_deadline = started + self._ai_timeout_seconds
+        try:
+            response = await asyncio.wait_for(
+                self._handle(command, budget), timeout=self._ai_timeout_seconds
+            )
+            status = "success"
+            return response
+        except TimeoutError as exc:
+            raise AIUnavailableError(
+                "Parse-text request deadline exceeded", last_error="timeout"
+            ) from exc
+        finally:
+            logger.info(
+                "[PARSE-TEXT-COMPLETE] status=%s mode=%s refinement=%s "
+                "cache_hit=%s total_ms=%.1f ai_ms=%.1f reference_ms=%.1f "
+                "ai_generations=%s provider_searches=%s provider_details=%s",
+                status,
+                "pure_ai" if self._pure_ai_mode else "reference",
+                bool(command.current_items),
+                budget.cache_hit,
+                (time.monotonic() - started) * 1000,
+                budget.ai_seconds * 1000,
+                budget.reference_seconds * 1000,
+                budget.ai_generations,
+                budget.provider_searches,
+                budget.provider_details,
+            )
+
+    async def _handle(
+        self, command: ParseMealTextCommand, budget: _ParseTextRequestBudget
+    ) -> ParseMealTextResponseDto:
         # Sanitize user input
         sanitized_text = sanitize_user_description(command.text)
         if not sanitized_text:
@@ -177,54 +223,33 @@ class ParseMealTextHandler(
         validated_current_items = validate_refinement_items(command.current_items)
 
         # Check utterance query cache for non-refinement queries
-        cache_key = _parse_text_cache_key(sanitized_text, command.language)
-        if not validated_current_items and self._cache_service:
-            try:
-                cached_data = await self._cache_service.get(cache_key)
-                if isinstance(cached_data, dict) and "items" in cached_data:
-                    cached_items = [
-                        ParsedFoodItemDto(
-                            name=item.get("name", "Unknown"),
-                            quantity=float(item.get("quantity") or 1.0),
-                            unit=item.get("unit", "serving"),
-                            protein=float(item.get("protein") or 0.0),
-                            carbs=float(item.get("carbs") or 0.0),
-                            fat=float(item.get("fat") or 0.0),
-                            fiber=float(item.get("fiber") or 0.0),
-                            sugar=float(item.get("sugar") or 0.0),
-                            data_source=item.get("data_source"),
-                            fdc_id=item.get("fdc_id"),
-                            allowed_units=item.get("allowed_units"),
-                            food_id=item.get("food_id"),
-                            food_reference_id=item.get("food_reference_id"),
-                            origin=item.get("origin"),
-                            source_namespace=item.get("source_namespace"),
-                            source_food_id=item.get("source_food_id"),
-                            nutrition_basis=item.get("nutrition_basis"),
-                            nutrition_contract_version=item.get(
-                                "nutrition_contract_version"
-                            ),
-                            calories_per_100g=item.get("calories_per_100g"),
-                            protein_per_100g=item.get("protein_per_100g"),
-                            carbs_per_100g=item.get("carbs_per_100g"),
-                            fat_per_100g=item.get("fat_per_100g"),
-                            fiber_per_100g=item.get("fiber_per_100g"),
-                            sugar_per_100g=item.get("sugar_per_100g"),
-                            canonical_name=item.get("canonical_name"),
-                            source_snapshot=item.get("source_snapshot"),
-                        )
-                        for item in cached_data.get("items", [])
-                    ]
-                    return ParseMealTextResponseDto(
-                        items=cached_items,
-                        total_protein=float(cached_data.get("total_protein") or 0.0),
-                        total_carbs=float(cached_data.get("total_carbs") or 0.0),
-                        total_fat=float(cached_data.get("total_fat") or 0.0),
-                        emoji=cached_data.get("emoji"),
-                        unmatched_terms=cached_data.get("unmatched_terms") or [],
-                    )
-            except Exception as exc:
-                logger.debug("parse_text cache read failed: %s", exc)
+        system_prompt = SystemPrompts.get_meal_text_parsing_prompt(
+            language=command.language
+        )
+        cache_context = (
+            f"{self._cache_namespace}:{self._pure_ai_mode}:"
+            f"{self._structured_reference_enabled}:{command.user_id is None}:"
+            f"{NUTRITION_INTEGRITY_POLICY_VERSION}:{system_prompt}"
+        )
+        cache_key = parse_text_cache_key(
+            sanitized_text, command.language, cache_context
+        )
+        if not validated_current_items:
+            cache_time = min(
+                CACHE_STAGE_TIMEOUT_SECONDS,
+                max(
+                    0.0,
+                    (budget.request_deadline or time.monotonic())
+                    - time.monotonic()
+                    - PARSE_TEXT_RESPONSE_RESERVE_SECONDS,
+                ),
+            )
+            cached_response = await read_parse_text_cache(
+                self._cache_service, cache_key, timeout_seconds=cache_time
+            )
+            if cached_response is not None:
+                budget.cache_hit = True
+                return cached_response
 
         # Add refinement context if current_items provided
         if validated_current_items:
@@ -241,37 +266,55 @@ class ParseMealTextHandler(
                 "preservation is not possible."
             )
 
-        # Build messages with locale-aware food names
-        system_prompt = SystemPrompts.get_meal_text_parsing_prompt(
-            language=command.language
-        )
-
         user_envelope = f"language: {command.language or 'en'}\nmeal: {sanitized_text}"
-
-        budget = _ParseTextRequestBudget()
-        validated_payload, raw_payload = await self._generate_parse_text_payload(
-            prompt=user_envelope,
-            system_prompt=system_prompt,
-            budget=budget,
-        )
+        ai_started = time.monotonic()
+        try:
+            validated_payload, raw_payload = await asyncio.wait_for(
+                self._generate_parse_text_payload(
+                    prompt=user_envelope,
+                    system_prompt=system_prompt,
+                    budget=budget,
+                ),
+                timeout=max(
+                    0.001,
+                    (budget.request_deadline or time.monotonic())
+                    - time.monotonic()
+                    - PARSE_TEXT_RESPONSE_RESERVE_SECONDS,
+                ),
+            )
+        except TimeoutError as exc:
+            raise AIUnavailableError(
+                "Parse-text AI deadline exceeded", last_error="timeout"
+            ) from exc
+        finally:
+            budget.ai_seconds = time.monotonic() - ai_started
         emoji = validate_emoji(validated_payload.get("emoji"))
         parsed_items = self._to_flat_parse_text_items(validated_payload, raw_payload)
         enhanced_items = []
         if self._pure_ai_mode:
             for item in parsed_items:
-                resolved = apply_custom_estimate(item) or item
-                enhanced_items.append(resolved)
+                enhanced_items.append(self._require_custom_estimate(item))
         else:
+            reference_started = time.monotonic()
             if budget.deadline is None:
-                budget.deadline = (
-                    time.monotonic() + _parse_text_fatsecret_timeout_seconds()
+                budget.deadline = min(
+                    budget.request_deadline or time.monotonic(),
+                    (budget.request_deadline or time.monotonic())
+                    - PARSE_TEXT_RESPONSE_RESERVE_SECONDS,
+                    time.monotonic()
+                    + (
+                        self._reference_timeout_seconds
+                        if self._reference_timeout_seconds is not None
+                        else _parse_text_fatsecret_timeout_seconds()
+                    ),
                 )
             local_references = await self._find_local_references(
                 parsed_items, budget, command.language
             )
+
             async def _lookup_one(item: dict[str, Any]) -> dict[str, Any] | None:
                 return await self._cascade_lookup(
-                    item,
+                    copy.deepcopy(item),
                     budget=budget,
                     local_reference=local_references.get(
                         normalize_food_lookup_name(
@@ -284,20 +327,25 @@ class ParseMealTextHandler(
                 *(_lookup_one(item) for item in parsed_items),
                 return_exceptions=True,
             )
-            for result in results:
-                if isinstance(result, Exception):
+            for original, result in zip(parsed_items, results, strict=True):
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
+                if isinstance(result, BaseException):
                     logger.debug(
                         "parse_text cascade lookup failed: %s",
                         type(result).__name__,
                     )
-                    continue
+                    result = None
                 if result is not None:
-                    enhanced_items.append(result)
+                    try:
+                        self._validate_resolved_item(result)
+                    except AIOutputValidationError:
+                        result = None
+                enhanced_items.append(result or self._require_custom_estimate(original))
+            budget.reference_seconds = time.monotonic() - reference_started
 
-        # Clamp nutrition to physically plausible ranges
+        # Portions have already passed physical validation; keep them unchanged.
         for item in enhanced_items:
-            clamped = clamp_nutrition_values(item)
-            item.update(clamped)
             self._retain_canonical_name(item)
             self._attach_per_100g_snapshot(item)
 
@@ -306,25 +354,39 @@ class ParseMealTextHandler(
         total_carbs = sum(item.get("carbs", 0) for item in enhanced_items)
         total_fat = sum(item.get("fat", 0) for item in enhanced_items)
 
-        # Localize names for non-English users (1-turn deterministic only)
+        # Keep AI food identities when no deterministic display translation exists.
         if command.language and command.language != "en":
             for item in enhanced_items:
                 item["name"] = self._extract_display_name(
                     item.get("name", "Unknown"), command.language
                 )
             apply_glossary_display_names(enhanced_items, command.language)
-            apply_fail_closed_display_names(enhanced_items, command.language)
 
         if not self._pure_ai_mode:
-            await self._adopt_fatsecret_items(enhanced_items, command)
-            if command.language and command.language != "en":
-                await localize_item_servings(
-                    enhanced_items,
-                    language=command.language,
-                    translation_service=None,
-                    uow_factory=self._uow_factory,
-                    persist=True,
-                )
+            finalization_started = time.monotonic()
+            remaining = (budget.deadline or finalization_started) - finalization_started
+            if remaining > 0:
+                try:
+                    async with asyncio.timeout(remaining):
+                        await self._adopt_fatsecret_items(enhanced_items, command)
+                        if command.language and command.language != "en":
+                            await localize_item_servings(
+                                enhanced_items,
+                                language=command.language,
+                                translation_service=None,
+                                uow_factory=self._uow_factory,
+                                persist=True,
+                            )
+                except TimeoutError:
+                    logger.debug("parse_text optional finalization deadline reached")
+            budget.reference_seconds += time.monotonic() - finalization_started
+
+        # Serving localization changes display labels, not their gram weights.
+        # Keep the full response cache snapshot in sync with those labels.
+        for item in enhanced_items:
+            snapshot = item.get("source_snapshot")
+            if isinstance(snapshot, dict) and item.get("allowed_units") is not None:
+                snapshot["allowed_units"] = copy.deepcopy(item["allowed_units"])
 
         # Build response items
         items = [
@@ -371,20 +433,70 @@ class ParseMealTextHandler(
             emoji=emoji,
             unmatched_terms=[],
         )
-        if not validated_current_items and self._cache_service:
-            try:
-                await self._cache_service.set(
-                    cache_key,
-                    asdict(response_dto),
-                    ttl_seconds=self._cache_ttl_seconds,
-                )
-            except Exception as exc:
-                logger.debug("parse_text cache write failed: %s", exc)
+        if not validated_current_items:
+            cache_time = min(
+                CACHE_STAGE_TIMEOUT_SECONDS,
+                max(
+                    0.0,
+                    (budget.request_deadline or time.monotonic())
+                    - time.monotonic()
+                    - PARSE_TEXT_RESPONSE_RESERVE_SECONDS,
+                ),
+            )
+            await write_parse_text_cache(
+                self._cache_service,
+                cache_key,
+                response_dto,
+                self._cache_ttl_seconds,
+                timeout_seconds=cache_time,
+            )
 
         return response_dto
 
+    @staticmethod
+    def _require_custom_estimate(item: dict[str, Any]) -> dict[str, Any]:
+        resolved = apply_custom_estimate(item)
+        if resolved is None:
+            raise AIOutputValidationError(
+                "Parse-text item has no valid nutrition estimate",
+                purpose="parse_text",
+                attempt_count=1,
+                validation_details=["items: invalid custom portion"],
+            )
+        return resolved
+
+    def _validate_resolved_item(self, item: dict[str, Any]) -> None:
+        grams = self._quantity_in_grams(
+            item, str(item.get("lookup_name") or item["name"])
+        )
+        micros = item.get("portion_micros")
+        if item.get("extra_nutrients"):
+            effective_micros = extra_nutrients_to_micros(
+                item["extra_nutrients"], factor=grams / 100
+            )
+            micros = effective_micros.to_dict() if effective_micros else None
+        validate_parse_text_nutrition(
+            {
+                "items": [
+                    {
+                        **item,
+                        "quantity_g": grams,
+                        "macros": {
+                            f"{key}_g": item.get(key, 0)
+                            for key in ("protein", "carbs", "fat", "fiber", "sugar")
+                        },
+                        "micros": micros,
+                    }
+                ]
+            }
+        )
+
     def _attach_per_100g_snapshot(self, item: dict[str, Any]) -> None:
         """Expose the validated density used to derive the displayed portion."""
+        allowed_units = item.get("allowed_units") or fallback_custom_serving_options(
+            item.get("unit") or "serving", item.get("name") or ""
+        )
+        item["allowed_units"] = allowed_units
         quantity_g = item.get("quantity_g")
         if quantity_g is None:
             quantity_g = self._quantity_in_grams(
@@ -424,16 +536,14 @@ class ParseMealTextHandler(
             "fiber_per_100g": item["fiber_per_100g"],
             "sugar_per_100g": item["sugar_per_100g"],
             "calories_per_100g": item["calories_per_100g"],
-            "allowed_units": item.get("allowed_units") or [],
+            "allowed_units": copy.deepcopy(allowed_units),
             "origin": item.get("origin"),
             "source_namespace": item.get("source_namespace"),
             "source_food_id": item.get("source_food_id"),
         }
         extras = item.get("extra_nutrients")
         if not extras:
-            extras = extras_from_portion_micros(
-                item.get("portion_micros"), quantity_g
-            )
+            extras = extras_from_portion_micros(item.get("portion_micros"), quantity_g)
             if extras:
                 item["extra_nutrients"] = extras
         if extras:
@@ -470,6 +580,8 @@ class ParseMealTextHandler(
         budget: _ParseTextRequestBudget | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         retry_system_prompt = system_prompt
+        original_prompt = prompt
+        previous_response = None
         for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
             if budget is not None:
                 if budget.ai_generations >= 2:
@@ -485,18 +597,20 @@ class ParseMealTextHandler(
                     prompt=prompt,
                     system_message=retry_system_prompt,
                     response_type="json",
-                    max_tokens=2048,
+                    max_tokens=8192,
                     schema=MealTextNutritionResponse,
                     model_purpose="parse_text",
                     thinking_budget=0,
                 )
                 raw_payload = self._extract_parse_text_payload(raw)
+                previous_response = raw_payload
                 validated_payload = validate_ai_output(
                     raw_payload,
                     schema=MealTextNutritionResponse,
                     purpose=PARSE_TEXT_VALIDATION_PURPOSE,
                     attempt_count=attempt,
                 )
+                validate_parse_text_nutrition(validated_payload, attempt_count=attempt)
                 if attempt > 1:
                     logger.info(
                         "[AI-OUTPUT-VALIDATION-RETRY-SUCCESS] purpose=%s attempt=%s",
@@ -510,6 +624,13 @@ class ParseMealTextHandler(
                     last_error=type(exc).__name__,
                 ) from exc
             except AIOutputValidationError as exc:
+                if previous_response is None and exc.candidate_payload:
+                    try:
+                        previous_response = self._extract_parse_text_payload(
+                            json.loads(exc.candidate_payload)
+                        )
+                    except (ValueError, TypeError, AIOutputValidationError):
+                        previous_response = None
                 logger.warning(
                     "[AI-OUTPUT-VALIDATION-FAILED] purpose=%s attempt=%s details=%s",
                     PARSE_TEXT_VALIDATION_PURPOSE,
@@ -523,7 +644,10 @@ class ParseMealTextHandler(
                         attempt_count=attempt,
                         validation_details=exc.validation_details,
                     ) from exc
-                retry_system_prompt = build_validation_retry_prompt(system_prompt, exc)
+                prompt = build_parse_text_correction_prompt(
+                    original_prompt, previous_response, exc
+                )
+                retry_system_prompt = system_prompt
 
         raise RuntimeError("Failed to parse meal text after validation retry")
 

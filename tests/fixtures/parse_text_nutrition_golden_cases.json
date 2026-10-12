@@ -97,7 +97,7 @@
     "language": "en",
     "expected_drop": true,
     "expected_unmatched_terms": [],
-    "ai_payload": {"items": [{"name": "Potato", "lookup_name": "potato", "quantity": 100, "quantity_g": 100, "unit": "g", "macros": {"protein_g": 0, "carbs_g": 0, "fat_g": 98.9}}]},
+    "ai_payload": {"items": [{"name": "Potato", "lookup_name": "potato", "quantity": 100, "quantity_g": 100, "unit": "g", "macros": {"protein_g": 0, "carbs_g": 0, "fat_g": 101}}]},
     "provider_candidates": [],
     "provider_details": {}
   },

@@ -687,6 +687,10 @@ def get_configured_event_bus() -> EventBus:
             ],
             pure_ai_mode=parse_text_settings.get("pure_ai_mode", True),
             uow_factory=AsyncUnitOfWork,
+            cache_service=cache_service,
+            ai_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
+            cache_namespace=settings.OPENAI_PARSE_TEXT_MODEL,
+            reference_timeout_seconds=settings.PARSE_TEXT_FATSECRET_TIMEOUT_SECONDS,
         ),
     )
 

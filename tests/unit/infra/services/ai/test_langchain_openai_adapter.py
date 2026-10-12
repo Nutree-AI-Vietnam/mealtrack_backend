@@ -99,7 +99,7 @@ def _adapter(monkeypatch, *, store_responses: bool = False):
     )
 
 
-def _adapter_with_parsing_error(monkeypatch):
+def _adapter_with_parsing_error(monkeypatch, raw_content="raw model text"):
     class FakeChatOpenAI:
         def __init__(self, **kwargs):
             pass
@@ -108,7 +108,7 @@ def _adapter_with_parsing_error(monkeypatch):
             structured = MagicMock()
             structured.ainvoke = AsyncMock(
                 return_value={
-                    "raw": SimpleNamespace(content=""),
+                    "raw": SimpleNamespace(content=raw_content),
                     "parsed": None,
                     "parsing_error": ValueError("invalid structured output"),
                 }
@@ -254,8 +254,8 @@ async def test_vision_uses_multimodal_human_message_with_data_url(monkeypatch):
     assert isinstance(messages[1], HumanMessage)
     assert messages[1].content[0] == {"type": "text", "text": "Identify food."}
     assert messages[1].content[1]["type"] == "image_url"
-    assert messages[1].content[1]["image_url"]["url"].startswith(
-        "data:image/png;base64,"
+    assert (
+        messages[1].content[1]["image_url"]["url"].startswith("data:image/png;base64,")
     )
     assert messages[1].content[1]["image_url"]["url"].endswith("aW1hZ2UtYnl0ZXM=")
     assert messages[1].content[1]["image_url"]["detail"] == "high"
@@ -297,7 +297,7 @@ def test_usage_extractors_return_zero_when_missing(monkeypatch):
 async def test_structured_text_raises_parsing_error(monkeypatch):
     adapter = _adapter_with_parsing_error(monkeypatch)
 
-    with pytest.raises(ValueError, match="invalid structured output"):
+    with pytest.raises(ValueError, match="invalid structured output") as error:
         await adapter.generate_structured(
             model="gpt-5.4-mini-2026-03-17",
             prompt="Chicken rice bowl",
@@ -306,6 +306,31 @@ async def test_structured_text_raises_parsing_error(monkeypatch):
             max_tokens=None,
             request_kwargs={},
         )
+
+    assert error.value.parse_text_candidate_output == "raw model text"
+
+
+@pytest.mark.asyncio
+async def test_structured_text_captures_responses_api_content_blocks(monkeypatch):
+    adapter = _adapter_with_parsing_error(
+        monkeypatch,
+        raw_content=[
+            {"type": "text", "text": '{"items":[{"name":"Granola"}]}'},
+            {"type": "refusal", "refusal": "not included"},
+        ],
+    )
+
+    with pytest.raises(ValueError) as error:
+        await adapter.generate_structured(
+            model="gpt-5.4-mini-2026-03-17",
+            prompt="10g granola",
+            system_message="Return canonical JSON.",
+            schema=VisionNutritionResponse,
+            max_tokens=None,
+            request_kwargs={},
+        )
+
+    assert error.value.parse_text_candidate_output == '{"items":[{"name":"Granola"}]}'
 
 
 @pytest.mark.asyncio

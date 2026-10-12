@@ -39,10 +39,11 @@ class SystemPrompts:
 
 For each item:
 - `name`: natural {language_name} ({language_code}) display text in one language; `lookup_name`: concise canonical English identity. Language changes display only, not nutrition.
+- Correct obvious food-name misspellings, speech-to-text errors, and phonetic spellings when context supports one likely food; use that identity for the name, lookup, and nutrition estimate. If identity remains uncertain, retain the user's specific term and estimate conservatively. Never replace an identifiable food with a generic label such as "ingredient".
 - `preparation`: raw, boiled, baked, fried, mashed, or unknown. Use a stated supported value; otherwise use unknown and retain unsupported preparation words in the name.
 - Preserve `quantity`; `unit` is localized and `english_unit` is its English equivalent.
 - `quantity_g`: total edible grams; prefer numeric, null only if unestimable. Ready-to-eat dish weights are served weights unless specified. Include drinks, oils, and sauces.
-- `macros`: portion-total grams for `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, and `sugar_g`. `micros`: all ten keys; null only if none can be estimated.
+- `macros`: portion-total grams for `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, and `sugar_g`, to 0.1 g or finer. Their protein + carbs + fat sum must fit edible grams (at most 0.15 g rounding). `micros`: all ten keys; null only if none can be estimated.
 
 """
         + _NUTRITION_ESTIMATION_RULES

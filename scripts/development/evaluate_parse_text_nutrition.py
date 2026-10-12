@@ -43,6 +43,7 @@ from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
 from src.app.handlers.command_handlers.parse_meal_text_handler import (
     ParseMealTextHandler,
 )
+from src.domain.exceptions.ai_exceptions import AIOutputValidationError
 from src.domain.model.ai.nutrition_contracts import MAX_TEXT_PARSE_ITEMS
 from src.domain.services.meal_text_nutrition_eval_loop import (
     ParseTextEvalCase,
@@ -201,7 +202,7 @@ class _CountingLiveProvider:
 
 
 async def _run_drop_case(case: ParseTextDropCase) -> None:
-    """Unmatched foods are dropped and must not contribute kcal."""
+    """Impossible estimates reject the whole parse instead of returning no row."""
     eval_case = ParseTextEvalCase(
         case_id=case.case_id,
         text=case.text,
@@ -215,11 +216,14 @@ async def _run_drop_case(case: ParseTextDropCase) -> None:
         provider_details=case.provider_details,
         local_reference=case.local_reference,
     )
-    observation = await _run_case(eval_case, live=False)
+    try:
+        observation = await _run_case(eval_case, live=False)
+    except AIOutputValidationError:
+        return
     response = observation.response
     if response.items:
         raise ValueError(
-            f"{case.case_id}: dropped foods must not appear in parse-text items"
+            f"{case.case_id}: impossible food estimate must reject the whole parse"
         )
     if float(response.total_calories or 0.0) != 0.0:
         raise ValueError(f"{case.case_id}: unmatched foods must not contribute kcal")
