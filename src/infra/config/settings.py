@@ -457,6 +457,10 @@ class Settings(BaseSettings):
         default={"USD": 25000, "EUR": 27000, "default": 25000},
         description="Fixed exchange rates to VND for wallet conversion",
     )
+    OPEN_WEARABLES_API_URL: str = Field(default="")
+    OPEN_WEARABLES_API_KEY: str = Field(default="")
+    OPEN_WEARABLES_APP_ID: str = Field(default="")
+    OPEN_WEARABLES_APP_SECRET: str = Field(default="")
 
     @field_validator("CLOUDFLARE_CUSTOM_DOMAIN", mode="before")
     @classmethod
