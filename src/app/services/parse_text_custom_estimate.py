@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.domain.exceptions.ai_exceptions import AIOutputValidationError
+from src.domain.services.ai_output_validation_service import (
+    validate_parse_text_nutrition,
+)
 from src.domain.services.nutrition_calculation_service import (
     MASS_VOLUME_CANONICAL_UNITS,
     _normalize_unit,
@@ -14,7 +18,6 @@ from src.domain.services.nutrition_integrity_policy import (
     NUTRITION_INTEGRITY_POLICY_VERSION,
     normalize_serving_options,
 )
-from src.domain.services.nutrition_resolver import validate_ai_fallback
 
 CUSTOM_COUNT_GRAMS = 100.0
 CUSTOM_KG_THRESHOLD_G = 1000.0
@@ -36,7 +39,8 @@ def apply_custom_estimate(item: dict[str, Any]) -> dict[str, Any] | None:
 
     Countable misses bind those portion totals to 100 g × count. There is no
     trusted original gram weight, so macros are not rescaled from cup/slice
-    heuristics. Density validation still drops impossible rows.
+    heuristics. Physical validation rejects impossible rows without a food-name
+    allowlist that would reject legitimate unfamiliar energy-dense estimates.
     """
     quantity_g = custom_estimate_quantity_g(item)
     if quantity_g is None:
@@ -45,15 +49,27 @@ def apply_custom_estimate(item: dict[str, Any]) -> dict[str, Any] | None:
     carbs = float(item.get("carbs") or 0.0)
     fat = float(item.get("fat") or 0.0)
     fiber = float(item.get("fiber") or 0.0)
-    lookup_name = str(item.get("lookup_name") or item.get("name") or "")
-    if not validate_ai_fallback(
-        name=lookup_name,
-        protein=protein,
-        carbs=carbs,
-        fat=fat,
-        fiber=fiber,
-        quantity_g=quantity_g,
-    ):
+    try:
+        validate_parse_text_nutrition(
+            {
+                "items": [
+                    {
+                        "quantity": quantity_g,
+                        "quantity_g": quantity_g,
+                        "unit": "g",
+                        "macros": {
+                            "protein_g": protein,
+                            "carbs_g": carbs,
+                            "fat_g": fat,
+                            "fiber_g": fiber,
+                            "sugar_g": float(item.get("sugar") or 0),
+                        },
+                        "micros": item.get("portion_micros"),
+                    }
+                ]
+            }
+        )
+    except AIOutputValidationError:
         return None
 
     if quantity_g >= CUSTOM_KG_THRESHOLD_G:

@@ -63,6 +63,13 @@ class OpenAILangChainAdapter:
         )
         parsing_error = response.get("parsing_error")
         if parsing_error is not None:
+            raw_message = response.get("raw")
+            raw_content = self.text(raw_message)
+            if raw_content:
+                try:
+                    parsing_error.parse_text_candidate_output = raw_content[:16_000]
+                except (AttributeError, TypeError):
+                    pass
             raise parsing_error
         return LangChainOpenAIResult(
             parsed=_validate_parsed(schema, response["parsed"]),

@@ -1,5 +1,5 @@
 from src.app.services.food_display_name import (
-    apply_fail_closed_display_names,
+    apply_glossary_display_names,
     leftover_display_names,
     needs_display_localization,
 )
@@ -17,7 +17,7 @@ def test_leftover_display_names_collects_english_slash_segments():
     assert leftovers == ["Vietnamese Baguette", "mayo"]
 
 
-def test_fail_closed_replaces_english_and_mixed_slash_names():
+def test_glossary_localizes_known_names_and_preserves_unknown_food_names():
     items = [
         {"name": "Cilantro"},
         {"name": "Pork Pâté"},
@@ -26,13 +26,13 @@ def test_fail_closed_replaces_english_and_mixed_slash_names():
         {"name": "Thịt"},
     ]
 
-    apply_fail_closed_display_names(items, "vi")
+    apply_glossary_display_names(items, "vi")
 
     assert [item["name"] for item in items] == [
         "Rau mùi",
         "Pate heo",
         "Bơ/Sốt mayonnaise",
-        "Nguyên liệu",
+        "Whey Isolate",
         "Thịt",
     ]
-    assert not any(needs_display_localization(item["name"], "vi") for item in items)
+    assert needs_display_localization(items[3]["name"], "vi")

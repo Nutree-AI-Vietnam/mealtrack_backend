@@ -25,6 +25,19 @@ def test_extra_nutrients_aliases_and_nested_amount():
     assert micros.saturated_fat == 1.5
 
 
+def test_extra_nutrients_convert_explicit_noncanonical_units():
+    micros = extra_nutrients_to_micros(
+        {
+            "iron": {"amount": 4000, "unit": "mcg"},
+            "saturated_fat": {"amount": 4000, "unit": "mg"},
+        }
+    )
+
+    assert micros is not None
+    assert micros.iron == pytest.approx(4)
+    assert micros.saturated_fat == pytest.approx(4)
+
+
 def test_strict_extra_nutrients_converts_supported_units_and_rejects_unknown_units():
     micros = extra_nutrients_to_micros(
         {

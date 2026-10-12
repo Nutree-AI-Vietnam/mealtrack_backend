@@ -102,6 +102,10 @@ def extra_nutrients_to_micros(
         if amount is None:
             continue
         has_explicit_unit = isinstance(raw, dict) and raw.get("unit") is not None
+        if has_explicit_unit and not validate_units:
+            amount = convert_nutrient_amount(amount, raw.get("unit"), field)
+            if amount is None:
+                continue
         if validate_units:
             if isinstance(raw, dict) and not has_explicit_unit:
                 continue

@@ -8,9 +8,7 @@ from typing import Any
 
 _SEGMENT_SPLIT = re.compile(r"([/|,;&]+)")
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z']*")
-_ENGLISH_CONNECTORS = re.compile(
-    r"\b(and|with|of|the|in|from|style)\b", re.IGNORECASE
-)
+_ENGLISH_CONNECTORS = re.compile(r"\b(and|with|of|the|in|from|style)\b", re.IGNORECASE)
 _NON_GLOSSARY = re.compile(r"[^a-z]+")
 
 _CLEAR_ENGLISH_FOOD_TOKENS = frozenset(
@@ -24,14 +22,6 @@ _ROMANIZED_VIETNAMESE_TOKENS = frozenset(
     "lang luoc mam nem ngam ngo nuoc nuong pho quang rau tay thit tieu toi tom "
     "tuoi xao xoi".split()
 )
-_GENERIC_FALLBACK = {
-    "vi": "Nguyên liệu",
-    "es": "Ingrediente",
-    "fr": "Ingrédient",
-    "de": "Zutat",
-    "ja": "食材",
-    "zh": "食材",
-}
 _GLOSSARY = {
     "vi": {
         "apple": "Táo",
@@ -118,9 +108,7 @@ def apply_localized_display_names(
             item["name"] = updated
 
 
-def apply_glossary_display_names(
-    items: list[dict[str, Any]], language: str
-) -> None:
+def apply_glossary_display_names(items: list[dict[str, Any]], language: str) -> None:
     """Apply deterministic display names for known leftover English foods."""
     mapping = {
         leftover: localized
@@ -131,28 +119,9 @@ def apply_glossary_display_names(
         apply_localized_display_names(items, mapping, language)
 
 
-def apply_fail_closed_display_names(
-    items: list[dict[str, Any]], language: str
-) -> None:
-    """Replace remaining English leftovers with a glossary or generic fallback."""
-    leftovers = leftover_display_names(items, language)
-    if not leftovers:
-        return
-    generic = fallback_localized_name(language)
-    mapping = {
-        leftover: glossary_localized_name(leftover, language) or generic
-        for leftover in leftovers
-    }
-    apply_localized_display_names(items, mapping, language)
-
-
 def glossary_localized_name(name: str, language: str) -> str | None:
     folded = _NON_GLOSSARY.sub(" ", fold_latin_display_name(name).lower()).strip()
     return _GLOSSARY.get(language, {}).get(folded)
-
-
-def fallback_localized_name(language: str) -> str:
-    return _GENERIC_FALLBACK.get(language, "Nguyên liệu")
 
 
 def _iter_segments(name: str) -> list[str]:
