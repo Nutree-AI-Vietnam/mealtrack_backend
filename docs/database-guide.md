@@ -131,6 +131,7 @@ instead of the request/runtime session factory.
 | **saved_suggestion_steps** | Saved suggestion recipe steps | saved_suggestion_id, instruction, duration_minutes, position |
 | **weekly_macro_budgets** | Weekly target/consumed facts | user_id, week_start_date, target macros, consumed macros |
 | **cheat_days** | User cheat day markers | user_id, date, marked_at |
+| **weekly_recaps** | Write-once weekly recap per user per Monday week | user_id, week_start, case_id, locale, stats (WeekStats snapshot), payload (rendered story) |
 | **weight_entries** | Weight history | user_id, weight_kg, recorded_at |
 | **movement_entries** | Movement logs | user_id, activity_name, duration_min, kcal_burned, logged_at |
 | **referral_codes** | Referral code ownership | user_id, code, created_at |

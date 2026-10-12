@@ -22,6 +22,7 @@ from .get_provider_food_details_query_handler import (
 )
 from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
 from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
+from .get_latest_weekly_recap_query_handler import GetLatestWeeklyRecapQueryHandler
 from .get_progress_recap_query_handler import GetProgressRecapQueryHandler
 from .get_progress_summary_query_handler import GetProgressSummaryQueryHandler
 
@@ -105,4 +106,5 @@ __all__ = [
     "GetJourneyProgressQueryHandler",
     "GetProgressSummaryQueryHandler",
     "GetProgressRecapQueryHandler",
+    "GetLatestWeeklyRecapQueryHandler",
 ]
