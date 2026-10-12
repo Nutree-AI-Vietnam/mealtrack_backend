@@ -17,6 +17,7 @@ from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly import WeeklyMacroBudget
 from src.domain.services.daily_target_snapshot_service import maybe_write_today_snapshot
+from src.domain.services.hydration_intake import add_unrepresented_drink_totals
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
 
@@ -144,6 +145,18 @@ class WeeklyBudgetService:
             exclude_dates=exclude_dates,
             user_timezone=user_timezone,
         )
+        drink_entries = await WeeklyBudgetService._week_hydration_entries(
+            uow, user_id, week_start, week_end, user_timezone
+        )
+        consumed = add_unrepresented_drink_totals(
+            consumed,
+            meals,
+            drink_entries,
+            end_date=end_date,
+            exclude_date=exclude_date,
+            exclude_dates=exclude_dates,
+            user_timezone=user_timezone,
+        )
 
         movement_kcal = await WeeklyBudgetService._calculate_movement_kcal_async(
             uow=uow,
@@ -157,6 +170,33 @@ class WeeklyBudgetService:
         consumed["calories"] -= movement_kcal
 
         return consumed
+
+    @staticmethod
+    async def _week_hydration_entries(
+        uow: Any,
+        user_id: str,
+        week_start: date,
+        week_end: date,
+        user_timezone: str | None,
+    ) -> list[Any]:
+        """Entry-only drinks for the week. Missing repos return an empty list."""
+        repo = getattr(uow, "hydration_entries", None)
+        find = getattr(repo, "find_by_date_range", None) if repo is not None else None
+        if find is None:
+            return []
+        try:
+            entries = await find(
+                user_id,
+                week_start,
+                week_end,
+                user_timezone=user_timezone,
+            )
+        except TypeError:
+            try:
+                entries = await find(user_id, week_start, week_end)
+            except TypeError:
+                return []
+        return entries if isinstance(entries, list) else []
 
     @staticmethod
     async def _calculate_movement_kcal_async(
@@ -591,9 +631,17 @@ class WeeklyBudgetService:
             end_date=week_end,
             user_timezone=user_timezone,
         )
+        drink_entries = await calc._week_hydration_entries(
+            uow, user_id, week_start, week_end, user_timezone
+        )
 
-        food_total = calc._aggregate_meals_consumed(
+        food_total = add_unrepresented_drink_totals(
+            calc._aggregate_meals_consumed(
+                all_week_meals,
+                user_timezone=user_timezone,
+            ),
             all_week_meals,
+            drink_entries,
             user_timezone=user_timezone,
         )
         movement_total = calc._sum_movement_from_daily_map(
@@ -606,8 +654,14 @@ class WeeklyBudgetService:
             "calories": food_total["calories"] - movement_total,
         }
 
-        food_before_today = calc._aggregate_meals_consumed(
+        food_before_today = add_unrepresented_drink_totals(
+            calc._aggregate_meals_consumed(
+                all_week_meals,
+                end_date=past_end,
+                user_timezone=user_timezone,
+            ),
             all_week_meals,
+            drink_entries,
             end_date=past_end,
             user_timezone=user_timezone,
         )
@@ -623,8 +677,15 @@ class WeeklyBudgetService:
 
         past_cheat_dates = [d for d in all_cheat_dates if d < target_date]
         if past_cheat_dates:
-            food_for_redistribution = calc._aggregate_meals_consumed(
+            food_for_redistribution = add_unrepresented_drink_totals(
+                calc._aggregate_meals_consumed(
+                    all_week_meals,
+                    end_date=past_end,
+                    exclude_dates=past_cheat_dates,
+                    user_timezone=user_timezone,
+                ),
                 all_week_meals,
+                drink_entries,
                 end_date=past_end,
                 exclude_dates=past_cheat_dates,
                 user_timezone=user_timezone,

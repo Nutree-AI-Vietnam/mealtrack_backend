@@ -35,14 +35,11 @@ def build_progress_day_row(
     fiber = 0.0
     calories = 0.0
     meal_count = 0
-    has_legacy_hydration = False
     day_micros = None
     for meal in meals:
         if meal.status == MealStatus.INACTIVE:
             continue
         meal_count += 1
-        if getattr(meal, "meal_type", None) == "hydration":
-            has_legacy_hydration = True
         if meal.nutrition and meal.status in (MealStatus.READY, MealStatus.ENRICHING):
             macros = meal.nutrition.macros
             if macros:
@@ -58,7 +55,7 @@ def build_progress_day_row(
                     getattr(meal.nutrition, "food_items", None),
                 ),
             )
-    if drink_macros is not None and not has_legacy_hydration:
+    if drink_macros is not None:
         protein += drink_macros.protein or 0.0
         carbs += drink_macros.carbs or 0.0
         fat += drink_macros.fat or 0.0
