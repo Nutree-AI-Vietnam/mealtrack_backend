@@ -124,21 +124,23 @@ def test_drink_macros_add_when_no_legacy_hydration_meal():
     assert row["logged_status"] == "partial"
 
 
-def test_legacy_hydration_meals_skip_drink_macros():
+def test_legacy_hydration_meal_still_adds_unrepresented_drink_macros():
+    """Caller passes drinks that are not already a meal. Both must count."""
     row = build_progress_day_row(
         date(2026, 9, 1),
-        meals=[_meal(5.0, 10.0, 0.0, fiber=1.0, meal_type="hydration")],
+        meals=[_meal(0.0, 0.0, 0.3, meal_type="hydration")],
         burned_calories=0.0,
-        hydration_ml=400,
+        hydration_ml=433,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
-        drink_macros=Macros(protein=20.0, carbs=8.0, fat=1.0, fiber=2.0),
+        drink_macros=Macros(protein=0.0, carbs=9.6, fat=0.6),
     )
-    assert row["protein_g"] == 5.0
-    assert row["fiber_g"] == 1.0
+    assert row["fat_g"] == 0.9
+    assert row["carbs_g"] == 9.6
+    assert row["protein_g"] == 0.0
 
 
 def test_nrf_quality_uses_protein_and_fiber_without_micros():

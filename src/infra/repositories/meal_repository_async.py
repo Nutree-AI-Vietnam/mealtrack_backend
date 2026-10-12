@@ -318,6 +318,27 @@ class AsyncMealRepository(MealRepositoryPort):
         # multiplies parent rows; unique() collapses them before mapping.
         return _map_domain_hydratable_meals(result.unique().scalars().all())
 
+    async def max_updated_at_for_local_day(
+        self,
+        date_obj: date,
+        user_id: str,
+        user_timezone: str | None = None,
+    ) -> datetime | None:
+        """Newest meal write on a local day, including edits and deletes' siblings."""
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
+        start_dt = datetime.combine(date_obj, datetime.min.time(), tzinfo=tz).astimezone(
+            UTC
+        )
+        end_dt = start_dt + timedelta(days=1)
+        result = await self.session.execute(
+            select(func.max(MealORM.updated_at)).where(
+                MealORM.user_id == user_id,
+                MealORM.created_at >= start_dt,
+                MealORM.created_at < end_dt,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def find_activities_by_date(
         self,
         date_obj: date,

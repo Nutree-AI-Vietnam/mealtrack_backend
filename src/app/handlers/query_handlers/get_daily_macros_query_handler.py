@@ -22,6 +22,10 @@ from src.domain.model.nutrition.micros_ops import merge_micros
 from src.domain.model.user import MacroPreset, MacroTargets
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.hydration_goal_service import resolve_hydration_goal_ml
+from src.domain.services.hydration_intake import (
+    intake_watermark,
+    unrepresented_hydration_entries,
+)
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.services.nrf_score import highlight_amounts
 from src.domain.services.tdee_service import TdeeCalculationService
@@ -34,6 +38,17 @@ from src.domain.utils.timezone_utils import (
 from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
+
+
+async def _repo_timestamp(repo: Any, method: str, *args: Any) -> datetime | None:
+    """Read one log timestamp, ignoring mocks and repositories without the query."""
+    if repo is None:
+        return None
+    fn = getattr(repo, method, None)
+    if fn is None:
+        return None
+    value = await fn(*args)
+    return value if isinstance(value, datetime) else None
 
 
 @handles(GetDailyMacrosQuery)
@@ -97,11 +112,18 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 await uow.users.get_weekly_auto_adjust(query.user_id)
             )
 
-            # Cache-aside BEFORE meal aggregation. Returning a Redis hit after
-            # computing fresh totals discarded those totals and could leave
-            # clients with stale consumed=0 while meals already existed.
+            # A 24h cache is safe only while its log fingerprint still matches
+            # the newest meal, drink, and workout on this local day. A missed
+            # invalidation must recompute instead of serving the morning total.
+            logs_watermark = await self._logs_watermark(
+                uow, query.user_id, target_date, user_tz_str
+            )
             cached_result = await self._try_get_cached_result(
-                query.user_id, target_date, target_revision, auto_adjust
+                query.user_id,
+                target_date,
+                target_revision,
+                auto_adjust,
+                logs_watermark,
             )
             if cached_result is not None:
                 return cached_result
@@ -119,14 +141,11 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             total_calories = 0.0
             meal_count = 0
             meals_with_nutrition = 0
-            has_legacy_hydration = False
             day_micros = None
 
             for meal in meals:
                 if meal.status == MealStatus.INACTIVE:
                     continue
-                if meal.meal_type == "hydration":
-                    has_legacy_hydration = True
                 meal_count += 1
                 if meal.nutrition and meal.status in [
                     MealStatus.READY,
@@ -146,25 +165,35 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                         ),
                     )
 
-            if not has_legacy_hydration:
-                hydration_entries = await uow.hydration_entries.find_by_date(
-                    target_date,
-                    user_id=query.user_id,
-                    user_timezone=user_tz_str,
+            hydration_entries = await uow.hydration_entries.find_by_date(
+                target_date,
+                user_id=query.user_id,
+                user_timezone=user_tz_str,
+            )
+            if not isinstance(hydration_entries, list):
+                hydration_entries = []
+            for entry in unrepresented_hydration_entries(hydration_entries, meals):
+                drink = Macros(
+                    protein=entry.protein_g or 0,
+                    carbs=entry.carbs_g or 0,
+                    fat=entry.fat_g or 0,
+                    fiber=entry.fiber_g or 0,
                 )
-                for entry in hydration_entries:
-                    meal_count += 1
-                    meals_with_nutrition += 1
-                    total_protein += entry.protein_g or 0
-                    total_carbs += entry.carbs_g or 0
-                    total_fat += entry.fat_g or 0
-                    total_calories += Macros(
-                        protein=entry.protein_g or 0,
-                        carbs=entry.carbs_g or 0,
-                        fat=entry.fat_g or 0,
-                        fiber=entry.fiber_g or 0,
-                    ).total_calories
-                    day_micros = merge_micros(day_micros, entry.micros)
+                if (
+                    drink.total_calories == 0
+                    and not drink.protein
+                    and not drink.carbs
+                    and not drink.fat
+                    and entry.micros is None
+                ):
+                    continue
+                meal_count += 1
+                meals_with_nutrition += 1
+                total_protein += drink.protein
+                total_carbs += drink.carbs
+                total_fat += drink.fat
+                total_calories += drink.total_calories
+                day_micros = merge_micros(day_micros, entry.micros)
 
             # Pre-fetch weekly budget eagerly here (must be inside this UoW — fetching it
             # later would require a second connection open). Only consumed when target_calories
@@ -288,7 +317,9 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             ),
         }
 
-        await self._write_cache(query.user_id, target_date, result)
+        if logs_watermark is not None:
+            result["intake_watermark"] = logs_watermark
+            await self._write_cache(query.user_id, target_date, result)
         return result
 
     async def _get_weekly_context(
@@ -377,14 +408,44 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             logger.warning(f"Could not fetch weekly budget context: {e}")
             return None
 
+    async def _logs_watermark(self, uow, user_id: str, target_date: date, user_tz: str):
+        """None when the fingerprint cannot be read, so the cache is not trusted."""
+        try:
+            meal_at = await _repo_timestamp(
+                getattr(uow, "meals", None),
+                "max_updated_at_for_local_day",
+                target_date,
+                user_id,
+                user_tz,
+            )
+            hydration_at = await _repo_timestamp(
+                getattr(uow, "hydration_entries", None),
+                "max_updated_at_for_local_day",
+                target_date,
+                user_id,
+                user_tz,
+            )
+            movement_at = await _repo_timestamp(
+                getattr(uow, "movement_entries", None),
+                "max_updated_at_for_local_day",
+                target_date,
+                user_id,
+                user_tz,
+            )
+        except Exception as exc:
+            logger.warning("Failed to fingerprint logs for %s: %s", user_id, exc)
+            return None
+        return intake_watermark(meal_at, hydration_at, movement_at)
+
     async def _try_get_cached_result(
         self,
         user_id: str,
         target_date: date,
         revision: int | None,
         auto_adjust: bool,
+        logs_watermark: str | None,
     ):
-        if not self.cache_service:
+        if not self.cache_service or logs_watermark is None:
             return None
         cache_key, _ = CacheKeys.daily_macros(user_id, target_date)
         try:
@@ -392,6 +453,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             if (
                 revision is not None
                 and cached
+                and cached.get("intake_watermark") == logs_watermark
                 and cached.get("target_revision") == revision
                 and WeeklyBudgetService.auto_adjust_enabled(
                     cached.get("weekly_auto_adjust", True)
