@@ -628,6 +628,35 @@ class ChatTurnOrchestrator:
                 )
 
             citations = _citations_for(final_text, chunks)
+            ready_payload = _reply_payload(
+                suggestions=suggestions,
+                follow_ups=[],
+                discover_session_id=discover_session_id,
+                intent=intent,
+                citations=citations,
+                nutrition_snapshot=(
+                    context.to_nutrition_snapshot()
+                    if context.has_complete_nutrition
+                    else None
+                ),
+            )
+            ready_payload.pop("follow_ups", None)
+            yield ChatSseEvent(
+                event="message.ready",
+                data={
+                    "assistant_message_id": claim.assistant_message.id,
+                    "citations": [
+                        {
+                            "label": item.label,
+                            "source_key": item.source_key,
+                            "title": item.title,
+                            "canonical_uri": item.canonical_uri,
+                        }
+                        for item in citations
+                    ],
+                    **ready_payload,
+                },
+            )
             follow_ups = await self._generate_follow_ups(
                 locale=resolved_locale,
                 intent=intent,

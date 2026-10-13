@@ -1321,6 +1321,34 @@ async def test_older_turns_are_sent_as_memory_not_live_history():
 
 
 @pytest.mark.asyncio
+async def test_reply_is_ready_before_follow_up_chips():
+    follow_ups = _FakeFollowUps([{"label": "Another idea", "action": "next_meal"}])
+    orchestrator = _orchestrator(
+        _FakeRepo(claim=_claim()),
+        completion=_FakeCompletion(["Fiber helps a meal last longer. "]),
+        follow_ups=follow_ups,
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Help me compare two options",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    names = [event.event for event in events]
+    assert names.index("message.ready") < names.index("message.completed")
+    ready = next(event for event in events if event.event == "message.ready")
+    completed = next(event for event in events if event.event == "message.completed")
+    assert "follow_ups" not in ready.data
+    assert completed.data["follow_ups"][0]["label"] == "Another idea"
+    assert follow_ups.calls
+
+
+@pytest.mark.asyncio
 async def test_follow_up_can_quote_the_previous_meal_card():
     now = utc_now()
     prior = ChatMessage(
