@@ -1228,6 +1228,35 @@ async def test_typed_meal_question_fetches_cards_without_a_tool_call():
 
 
 @pytest.mark.asyncio
+async def test_empty_meal_catalog_replaces_the_picking_line():
+    """No card means no invented dish. The picking line is replaced and the model is not called."""
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=[], meal_slot="lunch")
+    )
+    completion = _FakeCompletion(["Try a 900 kcal burger. "])
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    events = await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+    deltas = [event for event in events if event.event == "message.delta"]
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert deltas[0].data["delta"].startswith("I'm picking")
+    replaced = next(event for event in deltas if event.data.get("replace") is True)
+    assert replaced.data["delta"] == (
+        "I couldn't find a lunch that fits what's left. "
+        "Try another meal, or tell me what to change."
+    )
+    assert repo.completed["content"] == replaced.data["delta"]
+    assert "I'm picking" not in repo.completed["content"]
+    assert "900" not in repo.completed["content"]
+    assert "burger" not in repo.completed["content"].casefold()
+    assert completion.stream_calls == 0
+    assert completed.data["suggestions"] == []
+    assert completed.data["intent"] == "next_meal"
+
+
+@pytest.mark.asyncio
 async def test_meal_reply_keeps_a_model_sentence_that_names_the_card():
     cards = _three_cards()
     next_meals = _FakeNextMeals(

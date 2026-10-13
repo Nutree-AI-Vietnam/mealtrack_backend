@@ -71,6 +71,7 @@ from src.domain.services.chat.next_meal_intro import (
     eaten_today_name,
     next_meal_ack,
     next_meal_intro,
+    next_meal_unavailable,
     with_eaten_today,
 )
 from src.domain.services.chat.policy import (
@@ -650,6 +651,27 @@ class ChatTurnOrchestrator:
                 sentences.append(meal_reply)
                 generation["text"] = meal_reply
                 generation["blocked"] = False
+            elif should_prefetch_next_meal and not suggestions:
+                # The picking line is already on screen. A model sentence here
+                # would invent a dish, because there is no card to name.
+                unavailable = next_meal_unavailable(
+                    locale=resolved_locale, slot=meal_slot
+                )
+                streamed_text = "".join(sentences).strip()
+                sentences.clear()
+                sentences.append(unavailable)
+                generation["text"] = unavailable
+                generation["blocked"] = False
+                generation["tools"] = None
+                if unavailable != streamed_text:
+                    yield ChatSseEvent(
+                        event="message.delta",
+                        data={
+                            "assistant_message_id": claim.assistant_message.id,
+                            "delta": unavailable,
+                            "replace": True,
+                        },
+                    )
             else:
                 # Keep streaming until no tool calls are emitted (max 2 iterations)
                 max_tool_iterations = 1 if direct_invoke else 2

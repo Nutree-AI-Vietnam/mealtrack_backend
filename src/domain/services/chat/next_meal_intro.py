@@ -26,6 +26,30 @@ def next_meal_ack(*, locale: str, slot: str) -> str:
     return f"I'm picking {label} that fits what's left."
 
 
+def next_meal_unavailable(*, locale: str, slot: str) -> str:
+    """Shown when a meal was requested and no card came back.
+
+    No dish name and no nutrition numbers, so the reply cannot invent a meal.
+    """
+    vi = locale == "vi"
+    label = _slot_label(slot, vi=vi)
+    if vi:
+        return (
+            f"Mình chưa tìm được {label} vừa với phần còn lại. "
+            "Bạn thử bữa khác, hoặc nói mình cần đổi gì."
+        )
+    if slot == "snack":
+        noun = "a snack"
+    elif slot in _SLOT_LABELS:
+        noun = f"a {label}"
+    else:
+        noun = "a meal"
+    return (
+        f"I couldn't find {noun} that fits what's left. "
+        "Try another meal, or tell me what to change."
+    )
+
+
 def eaten_today_name(
     meals: Sequence[Any],
     *,

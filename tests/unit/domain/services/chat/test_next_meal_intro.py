@@ -2,6 +2,7 @@ from src.domain.services.chat.next_meal_intro import (
     eaten_today_name,
     next_meal_ack,
     next_meal_intro,
+    next_meal_unavailable,
     with_eaten_today,
 )
 
@@ -65,6 +66,20 @@ def test_ack_names_the_slot_without_a_number() -> None:
     )
     assert "kcal" not in next_meal_ack(locale="vi", slot="breakfast")
     assert "bữa sáng" in next_meal_ack(locale="vi", slot="breakfast")
+
+
+def test_unavailable_names_the_slot_and_invents_no_dish() -> None:
+    text = next_meal_unavailable(locale="en", slot="lunch")
+    assert text == (
+        "I couldn't find a lunch that fits what's left. "
+        "Try another meal, or tell me what to change."
+    )
+    assert "kcal" not in text
+    snack = next_meal_unavailable(locale="en", slot="snack")
+    assert snack.startswith("I couldn't find a snack")
+    vi = next_meal_unavailable(locale="vi", slot="dinner")
+    assert "bữa tối" in vi
+    assert "kcal" not in vi
 
 
 def test_intro_names_a_meal_already_logged_today() -> None:
