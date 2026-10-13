@@ -161,6 +161,7 @@ def test_grounding_includes_free_text_contract_when_intent_missing() -> None:
     assert "completely enough to be useful" in text
     assert "would fit anyone" in text
     assert "tap Log on it" in text
+    assert "authoritative portions" in text
     assert "Do not list recipe cards" in text
 
 

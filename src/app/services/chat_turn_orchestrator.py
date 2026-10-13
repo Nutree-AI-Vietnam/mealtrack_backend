@@ -1745,22 +1745,15 @@ def _history_turns(messages: list[ChatMessage]) -> list[ChatHistoryTurn]:
     for message in messages:
         content = (message.content or "").strip()
         if message.role == ChatMessageRole.ASSISTANT:
-            names = [
-                str(card.get("name")).strip()
+            notes = [
+                _meal_card_history_note(card)
                 for card in message.suggestions()
                 if isinstance(card, dict) and str(card.get("name") or "").strip()
-            ]
-            if names:
-                note = _meal_card_history_note(
-                    next(
-                        card
-                        for card in message.suggestions()
-                        if isinstance(card, dict)
-                        and str(card.get("name") or "").strip() == names[0]
-                    )
-                )
-                if note not in content:
-                    content = f"{content}\n{note}".strip()
+            ][:3]
+            missing = [note for note in notes if note not in content]
+            if missing:
+                content = f"{content}\n" + "\n".join(missing)
+                content = content.strip()
         if not content:
             continue
         turns.append(ChatHistoryTurn(role=message.role, content=content))

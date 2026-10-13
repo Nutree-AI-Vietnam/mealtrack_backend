@@ -1676,6 +1676,44 @@ def test_history_remembers_the_meal_card_macros():
     assert "32g protein" in turns[0].content
 
 
+def test_history_remembers_every_shown_meal_card():
+    from src.app.services.chat_turn_orchestrator import _history_turns
+
+    now = utc_now()
+    message = ChatMessage(
+        id="a1",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="Try one of these.",
+        reply_payload={
+            "suggestions": [
+                {
+                    "name": "Salmon rice",
+                    "calories": 420,
+                    "protein_g": 32,
+                    "carbs_g": 40,
+                    "fat_g": 11,
+                },
+                {
+                    "name": "Tofu bowl",
+                    "calories": 380,
+                    "protein_g": 28,
+                    "carbs_g": 35,
+                    "fat_g": 14,
+                },
+            ]
+        },
+    )
+    turns = _history_turns([message])
+    assert "Salmon rice" in turns[0].content
+    assert "32g protein" in turns[0].content
+    assert "Tofu bowl" in turns[0].content
+    assert "28g protein" in turns[0].content
+
+
 def test_history_remembers_the_meal_card_name():
     from src.app.services.chat_turn_orchestrator import _history_turns
 
