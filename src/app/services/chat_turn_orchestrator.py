@@ -740,10 +740,14 @@ class ChatTurnOrchestrator:
             increment_metric("chat.turn.cancelled")
             raise
         except ChatProviderUnavailableError as exc:
-            await self._fail(
-                claim.assistant_message.id,
-                "CHAT_PROVIDER_UNAVAILABLE",
-                generation_id=claim.assistant_message.generation_id,
+            await self._save_partial_or_fail(
+                claim,
+                sentences=sentences,
+                generation=generation,
+                suggestions=suggestions,
+                discover_session_id=discover_session_id,
+                intent=intent,
+                error_code="CHAT_PROVIDER_UNAVAILABLE",
             )
             increment_metric(
                 "chat.turn.failed", attributes={"code": "CHAT_PROVIDER_UNAVAILABLE"}
@@ -767,10 +771,14 @@ class ChatTurnOrchestrator:
                 },
                 exc_info=True,
             )
-            await self._fail(
-                claim.assistant_message.id,
-                "CHAT_TURN_FAILED",
-                generation_id=claim.assistant_message.generation_id,
+            await self._save_partial_or_fail(
+                claim,
+                sentences=sentences,
+                generation=generation,
+                suggestions=suggestions,
+                discover_session_id=discover_session_id,
+                intent=intent,
+                error_code="CHAT_TURN_FAILED",
             )
             yield ChatSseEvent(
                 event="message.error",
@@ -1328,6 +1336,51 @@ class ChatTurnOrchestrator:
         except Exception:
             logger.info("chat follow-up generation failed", extra={"intent": intent})
             return []
+
+    async def _save_partial_or_fail(
+        self,
+        claim: ChatTurnClaim,
+        *,
+        sentences: list[str],
+        generation: dict[str, Any],
+        suggestions: list[dict[str, Any]],
+        discover_session_id: str | None,
+        intent: str | None,
+        error_code: str,
+    ) -> None:
+        """Keep text the client already saw, otherwise mark the turn failed."""
+        partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
+        if partial:
+            try:
+                saved = await self._complete(
+                    claim.assistant_message,
+                    content=partial,
+                    usage=generation["usage"],
+                    citations=[],
+                    provider_response_id=generation.get("provider_response_id"),
+                    reply_payload=_reply_payload(
+                        suggestions=suggestions,
+                        follow_ups=[],
+                        discover_session_id=discover_session_id,
+                        intent=intent,
+                    ),
+                )
+            except Exception:
+                saved = None
+            if saved is not None:
+                return
+            await self._fail(
+                claim.assistant_message.id,
+                error_code,
+                generation_id=claim.assistant_message.generation_id,
+                content=partial,
+            )
+            return
+        await self._fail(
+            claim.assistant_message.id,
+            error_code,
+            generation_id=claim.assistant_message.generation_id,
+        )
 
     async def _fail(
         self,

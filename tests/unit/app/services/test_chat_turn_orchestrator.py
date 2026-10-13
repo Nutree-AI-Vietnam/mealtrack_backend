@@ -1049,6 +1049,23 @@ async def test_typed_meal_question_fetches_cards_without_a_tool_call():
 
 
 @pytest.mark.asyncio
+async def test_provider_drop_keeps_the_partial_reply():
+    class _DropAfterSentence:
+        async def stream(self, **kwargs):
+            del kwargs
+            yield ChatCompletionDelta(text="Here is a start. ")
+            raise RuntimeError("socket dropped")
+
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=_DropAfterSentence())
+    events = await _stream(orchestrator, content="Cite protein guidance")
+    assert events[-1].event == "message.error"
+    assert repo.completed is not None
+    assert "Here is a start" in repo.completed["content"]
+    assert repo.failed is None
+
+
+@pytest.mark.asyncio
 async def test_cancel_persists_partial_reply_and_releases_the_turn():
     class _CancelAfterSentence:
         async def stream(self, **kwargs):
