@@ -104,6 +104,7 @@ def test_repository_ports_are_async_contracts():
             "fail_assistant_message",
             "reopen_assistant_message",
             "count_user_turns_since",
+            "save_thread_summary",
             "clear_thread",
             "delete_user_chat",
         ],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from src.domain.model.chat import CHAT_HISTORY_LIMIT, ChatMessage, ChatMessageRole
 
@@ -13,13 +14,57 @@ _LINE_CHARS = 160
 _MEMORY_CHARS = 1400
 
 
+@dataclass(frozen=True, slots=True)
+class CoachMemory:
+    """Prompt text, plus the message id to store when the summary should advance."""
+
+    text: str | None = None
+    through_message_id: str | None = None
+
+
 def earlier_conversation(messages: Sequence[ChatMessage]) -> str | None:
     """Return older turns as untrusted memory. The newest window stays in history."""
-    lines = [_memory_line(message) for message in messages]
-    visible = [line for line in lines if line]
+    return rolling_memory(messages).text
+
+
+def rolling_memory(
+    messages: Sequence[ChatMessage],
+    *,
+    stored_summary: str | None = None,
+    summary_through_message_id: str | None = None,
+) -> CoachMemory:
+    """Merge the saved summary with turns that just fell out of the live window."""
+    visible = [
+        (message.id, line)
+        for message in messages
+        if (line := _memory_line(message)) is not None
+    ]
+    stored = (stored_summary or "").strip() or None
     if len(visible) <= CHAT_HISTORY_LIMIT:
-        return None
-    return _cap(visible[:-CHAT_HISTORY_LIMIT])
+        return CoachMemory(text=stored)
+
+    overflow = visible[:-CHAT_HISTORY_LIMIT]
+    new_lines = _lines_after(overflow, summary_through_message_id)
+    merged: list[str] = []
+    if stored:
+        merged.extend(line for line in stored.splitlines() if line.strip())
+    merged.extend(new_lines)
+    text = _cap(merged) if merged else None
+    through = overflow[-1][0] if new_lines else None
+    return CoachMemory(text=text, through_message_id=through)
+
+
+def _lines_after(
+    overflow: Sequence[tuple[str, str]],
+    summary_through_message_id: str | None,
+) -> list[str]:
+    if not summary_through_message_id:
+        return [line for _, line in overflow]
+    for index, (message_id, _) in enumerate(overflow):
+        if message_id == summary_through_message_id:
+            return [line for _, line in overflow[index + 1 :]]
+    # The marker is older than this page, so those lines are already stored.
+    return []
 
 
 def _memory_line(message: ChatMessage) -> str | None:

@@ -6,7 +6,7 @@ from src.domain.model.chat import (
     ChatMessageRole,
     ChatMessageStatus,
 )
-from src.domain.services.chat.memory import earlier_conversation
+from src.domain.services.chat.memory import earlier_conversation, rolling_memory
 
 
 def _message(index: int, *, role: ChatMessageRole, content: str) -> ChatMessage:
@@ -89,3 +89,45 @@ def test_earlier_conversation_names_a_card_without_its_calories() -> None:
     assert memory is not None
     assert "Salmon rice" in memory
     assert "410" not in memory
+
+
+def test_rolling_memory_keeps_a_saved_summary_and_only_new_overflow() -> None:
+    older = [
+        _message(index, role=ChatMessageRole.USER, content=f"note {index}")
+        for index in range(CHAT_HISTORY_LIMIT + 2)
+    ]
+    first = rolling_memory(older)
+    assert first.through_message_id == older[1].id
+    assert first.text is not None
+    assert "note 0" in first.text
+
+    extended = [
+        *older,
+        _message(CHAT_HISTORY_LIMIT + 2, role=ChatMessageRole.USER, content="note new"),
+        _message(
+            CHAT_HISTORY_LIMIT + 3,
+            role=ChatMessageRole.ASSISTANT,
+            content="noted",
+        ),
+    ]
+    second = rolling_memory(
+        extended,
+        stored_summary=first.text,
+        summary_through_message_id=first.through_message_id,
+    )
+    assert second.text is not None
+    assert "note 0" in second.text
+    assert "note 2" in second.text
+    assert "note 3" in second.text
+    assert "note new" not in second.text
+    assert second.through_message_id == extended[3].id
+
+
+def test_rolling_memory_returns_the_saved_summary_inside_the_live_window() -> None:
+    messages = [
+        _message(index, role=ChatMessageRole.USER, content=f"note {index}")
+        for index in range(3)
+    ]
+    memory = rolling_memory(messages, stored_summary="User: no cilantro")
+    assert memory.text == "User: no cilantro"
+    assert memory.through_message_id is None

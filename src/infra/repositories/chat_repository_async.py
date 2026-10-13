@@ -402,6 +402,24 @@ class AsyncChatRepository(ChatRepositoryPort):
         )
         return int(result.scalar_one())
 
+    async def save_thread_summary(
+        self,
+        *,
+        thread_id: str,
+        summary: str,
+        through_message_id: str,
+    ) -> None:
+        now = utc_now()
+        await self.session.execute(
+            update(ChatThreadORM)
+            .where(ChatThreadORM.id == thread_id)
+            .values(
+                summary=summary,
+                summary_through_message_id=through_message_id,
+                updated_at=now,
+            )
+        )
+
     async def clear_thread(self, user_id: str) -> ChatThread:
         thread = await self.get_or_create_thread(user_id)
         now = utc_now()

@@ -61,7 +61,7 @@ from src.domain.services.chat.coach_functions import (
 )
 from src.domain.services.chat.meal_request import is_meal_suggestion_request
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
-from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, earlier_conversation
+from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
@@ -416,7 +416,18 @@ class ChatTurnOrchestrator:
             history_messages = await self._completed_history(
                 claim.thread.id, exclude_message_id=claim.user_message.id
             )
-            earlier = earlier_conversation(history_messages)
+            memory = rolling_memory(
+                history_messages,
+                stored_summary=claim.thread.summary,
+                summary_through_message_id=claim.thread.summary_through_message_id,
+            )
+            if memory.through_message_id and memory.text:
+                await self._save_thread_summary(
+                    claim.thread.id,
+                    memory.text,
+                    memory.through_message_id,
+                )
+            earlier = memory.text
             history = _history_turns(history_messages)
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
@@ -1431,6 +1442,23 @@ class ChatTurnOrchestrator:
         except Exception:
             logger.info("chat follow-up generation failed", extra={"intent": intent})
             return []
+
+    async def _save_thread_summary(
+        self, thread_id: str, summary: str, through_message_id: str
+    ) -> None:
+        try:
+            async with self._uow_factory() as uow:
+                repo = _chat_repo(uow)
+                await repo.save_thread_summary(
+                    thread_id=thread_id,
+                    summary=summary,
+                    through_message_id=through_message_id,
+                )
+        except Exception:
+            logger.info(
+                "chat thread summary save failed",
+                extra={"thread_id": thread_id},
+            )
 
     async def _attach_follow_ups(
         self, message_id: str, follow_ups: list[dict[str, str]]

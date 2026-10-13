@@ -132,6 +132,16 @@ class ChatRepositoryPort(ABC):
         """Count user messages created at or after *since*."""
 
     @abstractmethod
+    async def save_thread_summary(
+        self,
+        *,
+        thread_id: str,
+        summary: str,
+        through_message_id: str,
+    ) -> None:
+        """Remember turns that have fallen out of the live history window."""
+
+    @abstractmethod
     async def clear_thread(self, user_id: str) -> ChatThread:
         """Delete messages and summary while preserving the one-thread identity."""
 

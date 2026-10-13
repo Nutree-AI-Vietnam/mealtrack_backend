@@ -81,6 +81,9 @@ class _FakeRepo:
     async def attach_follow_ups(self, **kwargs):
         self.attached_follow_ups = kwargs
 
+    async def save_thread_summary(self, **kwargs):
+        self.saved_summary = kwargs
+
     async def fail_assistant_message(self, **kwargs):
         self.failed = kwargs
         return self.claim.assistant_message
@@ -1279,6 +1282,36 @@ def test_history_keeps_the_latest_forty_turns():
     assert len(turns) == CHAT_HISTORY_LIMIT
     assert turns[0].content == "turn 10"
     assert turns[-1].content == "turn 49"
+
+
+@pytest.mark.asyncio
+async def test_saved_summary_is_included_before_the_live_window():
+    from dataclasses import replace
+
+    claim = _claim()
+    claim = replace(
+        claim,
+        thread=replace(claim.thread, summary="User: no cilantro"),
+    )
+    completion = _RecordingCompletion(["Noted. "])
+    orchestrator = _orchestrator(
+        _FakeRepo(claim=claim, history=[]),
+        completion=completion,
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="What can I cook tonight?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    assert any(event.event == "message.completed" for event in events)
+    assert completion.kwargs is not None
+    assert "no cilantro" in completion.kwargs["grounding_message"]
 
 
 @pytest.mark.asyncio
