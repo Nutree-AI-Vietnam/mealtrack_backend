@@ -247,6 +247,7 @@ class ChatUserContext:
     food_calories: float | None = None
     movement_kcal_burned: float | None = None
     local_date: str | None = None
+    preferred_name: str | None = None
 
     @property
     def has_complete_nutrition(self) -> bool:
@@ -276,6 +277,7 @@ class ChatUserContext:
             "as_of": self.as_of,
             "locale": self.locale,
             "timezone": self.timezone,
+            "preferred_name": self.preferred_name,
             "safety": {
                 "allergies": self.allergies,
                 "health_conditions": self.health_conditions,

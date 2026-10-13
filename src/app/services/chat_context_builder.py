@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from src.app.handlers.query_handlers.get_daily_macros_query_handler import (
     GetDailyMacrosQueryHandler,
@@ -44,6 +45,32 @@ from src.domain.utils.timezone_utils import (
 )
 
 
+def coach_preferred_name(
+    display_name: str | None, first_name: str | None
+) -> str | None:
+    """Name the coach may use. Display name wins over the legal first name."""
+    for raw in (display_name, first_name):
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
+async def _preferred_name(uow: Any, user_id: str) -> str | None:
+    users = getattr(uow, "users", None)
+    if users is None:
+        return None
+    try:
+        user = await users.find_by_id(UUID(user_id))
+    except Exception:
+        return None
+    if user is None:
+        return None
+    return coach_preferred_name(
+        getattr(user, "display_name", None),
+        getattr(user, "first_name", None),
+    )
+
+
 class ChatContextBuilder:
     """Personal facts are not RAG; they come from Nutree's SQL projections."""
 
@@ -77,6 +104,7 @@ class ChatContextBuilder:
                 local_now
             )
             recent_meals = await self._recent_meals(uow, user_id, today, timezone)
+            preferred_name = await _preferred_name(uow, user_id)
 
         profile, tdee, daily, weekly_budget = await asyncio.gather(
             self._safe_profile(user_id, missing),
@@ -153,6 +181,7 @@ class ChatContextBuilder:
             food_calories=_num(food_calories),
             movement_kcal_burned=_num(movement_kcal_burned),
             local_date=today.isoformat(),
+            preferred_name=preferred_name,
         )
 
     async def _recent_meals(

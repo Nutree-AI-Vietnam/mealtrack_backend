@@ -153,3 +153,64 @@ async def test_build_gathers_context_concurrently() -> None:
         "daily_start",
         "weekly_start",
     }
+
+
+def test_coach_preferred_name_uses_display_name_then_first_name() -> None:
+    from src.app.services.chat_context_builder import coach_preferred_name
+
+    assert coach_preferred_name("  Alex  ", "Alexander") == "Alex"
+    assert coach_preferred_name("", "Alexander") == "Alexander"
+    assert coach_preferred_name(None, None) is None
+
+
+@pytest.mark.asyncio
+async def test_build_includes_preferred_name() -> None:
+    class _User:
+        display_name = "Alex"
+        first_name = "Alexander"
+
+    class _Users:
+        async def find_by_id(self, user_id):
+            return _User()
+
+    class _NamedUow(_Uow):
+        users = _Users()
+
+    builder = ChatContextBuilder(uow_factory=lambda: _NamedUow())
+    builder._recent_meals = AsyncMock(return_value=[])
+    builder._safe_profile = AsyncMock(return_value={"profile": {}})
+    builder._safe_tdee = AsyncMock(return_value={"tdee": 2200})
+    builder._safe_daily = AsyncMock(
+        return_value={
+            "target_calories": 1800,
+            "target_macros": {"protein": 140, "carbs": 180, "fat": 60},
+            "total_calories": 900,
+            "food_calories": 900,
+            "movement_kcal_burned": 0,
+            "total_protein": 90,
+            "total_carbs": 100,
+            "total_fat": 40,
+        }
+    )
+    builder._weekly_handler.handle = AsyncMock(
+        return_value={
+            "adjusted_daily_calories": 1800,
+            "adjusted_daily_carbs": 180,
+            "adjusted_daily_fat": 60,
+            "daily_protein": 140,
+            "remaining_days": 4,
+        }
+    )
+
+    with patch(
+        "src.app.services.chat_context_builder.resolve_user_timezone_async",
+        new=AsyncMock(return_value="UTC"),
+    ):
+        context = await builder.build(
+            user_id="11111111-1111-1111-1111-111111111111",
+            locale="en",
+            header_timezone="UTC",
+        )
+
+    assert context.preferred_name == "Alex"
+    assert context.to_prompt_dict()["preferred_name"] == "Alex"
