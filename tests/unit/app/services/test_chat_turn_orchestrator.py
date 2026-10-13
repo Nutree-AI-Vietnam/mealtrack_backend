@@ -88,7 +88,9 @@ class _FakeRepo:
             return None
         claim, intent = self.reopen_result
         requested = (kwargs.get("content") or "").strip()
-        if requested and requested != (claim.user_message.content or "").strip():
+        stored = (claim.user_message.content or "").strip()
+        changed = bool(requested) and requested != stored
+        if changed:
             claim = ChatTurnClaim(
                 kind=claim.kind,
                 thread=claim.thread,
@@ -105,7 +107,7 @@ class _FakeRepo:
                 ),
                 assistant_message=claim.assistant_message,
             )
-        return claim, intent
+        return claim, intent, changed
 
     async def count_user_turns_since(self, **kwargs):
         used = self.turns_used
@@ -1152,6 +1154,36 @@ async def test_regenerate_with_new_text_edits_the_stored_question():
     assert prepared.content == "What about soup?"
     assert "Soup fits" in completed.data.get("text", repo.completed["content"])
     assert "Soup fits" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_edited_question_drops_the_previous_meal_intent():
+    claim = _claim()
+    repo = _FakeRepo(claim=claim)
+    repo.reopen_result = (claim, "next_meal")
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")
+    )
+    completion = _FakeCompletion(["Protein stays at your Nutree target. "])
+    orchestrator = _orchestrator(repo, completion=completion, next_meals=next_meals)
+
+    prepared = await orchestrator.prepare_regeneration(
+        user_id="u1",
+        assistant_message_id="m-asst",
+        content="Cite protein guidance",
+        locale="en",
+        header_timezone="UTC",
+        user_language="en",
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_prepared(user_id="u1", prepared=prepared)
+    ]
+    completed = next(event for event in events if event.event == "message.completed")
+    assert prepared.intent is None
+    assert next_meals.calls == []
+    assert completed.data.get("intent") is None
+    assert completed.data["suggestions"] == []
 
 
 @pytest.mark.asyncio

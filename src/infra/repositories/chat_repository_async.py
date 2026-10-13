@@ -298,7 +298,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         assistant_message_id: str,
         lease_expires_at: datetime,
         content: str | None = None,
-    ) -> tuple[ChatTurnClaim, str | None] | None:
+    ) -> tuple[ChatTurnClaim, str | None, bool] | None:
         thread = await self._get_thread_row(user_id)
         if thread is None:
             return None
@@ -316,7 +316,9 @@ class AsyncChatRepository(ChatRepositoryPort):
         if user_row is None or user_row.role != ChatMessageRole.USER.value:
             return None
 
+        stored = (user_row.content or "").strip()
         edited = (content or "").strip()
+        content_changed = bool(edited) and edited != stored
         if edited:
             user_row.content = edited[:CHAT_MAX_USER_MESSAGE_CHARS]
             user_row.updated_at = now
@@ -344,7 +346,7 @@ class AsyncChatRepository(ChatRepositoryPort):
             user_message=_to_message(user_row),
             assistant_message=_to_message(latest),
         )
-        return claim, prior_intent
+        return claim, prior_intent, content_changed
 
     async def _latest_completed_assistant(
         self, thread_id: str

@@ -289,7 +289,7 @@ class ChatTurnOrchestrator:
             )
         if reopened is None:
             raise ChatRegenerateNotAllowedError()
-        claim, prior_intent = reopened
+        claim, prior_intent, content_changed = reopened
         if self._circuit_is_open():
             await self._fail(
                 claim.assistant_message.id,
@@ -315,7 +315,8 @@ class ChatTurnOrchestrator:
             locale=resolved_locale,
             header_timezone=header_timezone,
             started=started,
-            intent=prior_intent,
+            # An edited question must not keep the previous chip intent.
+            intent=None if content_changed else prior_intent,
             slot_acquired=slot_acquired,
         )
 

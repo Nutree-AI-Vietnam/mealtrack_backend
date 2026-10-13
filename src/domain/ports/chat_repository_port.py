@@ -105,11 +105,11 @@ class ChatRepositoryPort(ABC):
         assistant_message_id: str,
         lease_expires_at: datetime,
         content: str | None = None,
-    ) -> tuple[ChatTurnClaim, str | None] | None:
+    ) -> tuple[ChatTurnClaim, str | None, bool] | None:
         """Reopen the latest completed assistant so it can be generated again.
 
-        Returns the claim plus the previous reply intent, or None when the
-        message cannot be regenerated.
+        Returns the claim, the previous reply intent, and whether the stored
+        question text changed. None when the message cannot be regenerated.
         """
 
     @abstractmethod
