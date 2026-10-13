@@ -133,6 +133,22 @@ class _FakeUow:
         return None
 
 
+class _RecordingCompletion:
+    def __init__(self, chunks: list[str]):
+        self.chunks = chunks
+        self.kwargs: dict | None = None
+
+    async def stream(self, **kwargs):
+        self.kwargs = kwargs
+        for chunk in self.chunks:
+            yield ChatCompletionDelta(text=chunk)
+        yield ChatCompletionDelta(
+            text="",
+            usage=ChatUsage(input_tokens=10, output_tokens=4, model="gpt-5.6-luna"),
+            done=True,
+        )
+
+
 class _FakeCompletion:
     def __init__(self, chunks: list[str], tool_calls=None):
         self.chunks = chunks
@@ -1260,6 +1276,48 @@ def test_history_keeps_the_latest_forty_turns():
     assert len(turns) == CHAT_HISTORY_LIMIT
     assert turns[0].content == "turn 10"
     assert turns[-1].content == "turn 49"
+
+
+@pytest.mark.asyncio
+async def test_older_turns_are_sent_as_memory_not_live_history():
+    from src.domain.model.chat import CHAT_HISTORY_LIMIT
+
+    now = utc_now()
+    history = [
+        ChatMessage(
+            id=f"old-{index}",
+            thread_id="t1",
+            role=ChatMessageRole.USER,
+            status=ChatMessageStatus.COMPLETED,
+            created_at=now,
+            updated_at=now,
+            content=f"prefer no cilantro {index}",
+        )
+        for index in range(CHAT_HISTORY_LIMIT + 2)
+    ]
+    completion = _RecordingCompletion(["Noted. "])
+    orchestrator = _orchestrator(
+        _FakeRepo(claim=_claim(), history=history),
+        completion=completion,
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="What can I cook tonight?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    assert any(event.event == "message.completed" for event in events)
+    assert completion.kwargs is not None
+    assert len(completion.kwargs["history"]) == CHAT_HISTORY_LIMIT
+    grounding = completion.kwargs["grounding_message"]
+    assert "prefer no cilantro 0" in grounding
+    assert "EARLIER CONVERSATION" in grounding
+    assert "prefer no cilantro 0" not in completion.kwargs["history"][0].content
 
 
 @pytest.mark.asyncio

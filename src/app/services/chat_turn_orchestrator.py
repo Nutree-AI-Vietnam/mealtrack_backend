@@ -61,6 +61,7 @@ from src.domain.services.chat.coach_functions import (
 )
 from src.domain.services.chat.meal_request import is_meal_suggestion_request
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
+from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, earlier_conversation
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
@@ -415,6 +416,7 @@ class ChatTurnOrchestrator:
             history_messages = await self._completed_history(
                 claim.thread.id, exclude_message_id=claim.user_message.id
             )
+            earlier = earlier_conversation(history_messages)
             history = _history_turns(history_messages)
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
@@ -520,6 +522,7 @@ class ChatTurnOrchestrator:
                     intent=intent,
                     meal_candidates=suggestions,
                     traceable_meals=_traceable_meals(suggestions, history_messages),
+                    earlier=earlier,
                 ):
                     if not delta_text:
                         continue
@@ -1209,7 +1212,7 @@ class ChatTurnOrchestrator:
             repo = _chat_repo(uow)
             messages = await repo.list_recent_completed_history(
                 thread_id=thread_id,
-                limit=CHAT_HISTORY_LIMIT + 1,
+                limit=CHAT_MEMORY_FETCH + 1,
             )
         return [message for message in messages if message.id != exclude_message_id]
 
@@ -1224,13 +1227,18 @@ class ChatTurnOrchestrator:
         intent: str | None = None,
         meal_candidates: list[dict[str, Any]] | None = None,
         traceable_meals: list[dict[str, Any]] | None = None,
+        earlier: str | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
 
         instructions = stable_system_instructions()
         grounding = build_grounding_message(
-            context, chunks, intent=intent, meal_candidates=meal_candidates
+            context,
+            chunks,
+            intent=intent,
+            meal_candidates=meal_candidates,
+            earlier=earlier,
         )
         cache_kwargs = {}
         if self._cache_policy is not None:
