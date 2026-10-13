@@ -150,6 +150,8 @@ def test_stable_instructions_are_versioned_and_forbid_mutation():
     assert "programming" in text
     assert "Answer first" in text
     assert "recent_meals" in text
+    assert "treat it as eaten" in text
+    assert "tap Log on a card" in text
     assert "Never take calorie or macro numbers from it" in text
 
 
@@ -157,6 +159,8 @@ def test_grounding_includes_free_text_contract_when_intent_missing() -> None:
     text = build_grounding_message(_context(), [])
     assert "COACH INTENT free_text" in text
     assert "completely enough to be useful" in text
+    assert "would fit anyone" in text
+    assert "tap Log on it" in text
     assert "Do not list recipe cards" in text
 
 
