@@ -1,4 +1,4 @@
-from src.domain.services.chat.next_meal_intro import next_meal_intro
+from src.domain.services.chat.next_meal_intro import next_meal_ack, next_meal_intro
 
 
 def test_intro_names_the_other_meals_and_skips_calories() -> None:
@@ -26,6 +26,14 @@ def test_intro_uses_vietnamese_for_one_dinner() -> None:
         slot="dinner",
     )
     assert text == ("Cơm cá hồi hợp cho bữa tối. Chạm thẻ để xem công thức và ghi bữa.")
+
+
+def test_ack_names_the_slot_without_a_number() -> None:
+    assert next_meal_ack(locale="en", slot="dinner") == (
+        "I'm picking dinner that fits what's left."
+    )
+    assert "kcal" not in next_meal_ack(locale="vi", slot="breakfast")
+    assert "bữa sáng" in next_meal_ack(locale="vi", slot="breakfast")
 
 
 def test_intro_is_absent_without_a_name() -> None:

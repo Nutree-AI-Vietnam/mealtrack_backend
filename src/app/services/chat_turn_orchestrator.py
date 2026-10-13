@@ -63,7 +63,7 @@ from src.domain.services.chat.follow_up_schema import ensure_follow_ups
 from src.domain.services.chat.meal_request import is_meal_suggestion_request
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
-from src.domain.services.chat.next_meal_intro import next_meal_intro
+from src.domain.services.chat.next_meal_intro import next_meal_ack, next_meal_intro
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
@@ -439,6 +439,15 @@ class ChatTurnOrchestrator:
                 resolved is not None and resolved.name == FUNCTION_SUGGEST_NEXT_MEAL
             )
             if should_prefetch_next_meal and self._next_meals is not None:
+                ack = next_meal_ack(locale=resolved_locale, slot=meal_slot)
+                sentences.append(ack)
+                yield ChatSseEvent(
+                    event="message.delta",
+                    data={
+                        "assistant_message_id": claim.assistant_message.id,
+                        "delta": ack,
+                    },
+                )
                 try:
                     batch = await self._next_meals.fetch(
                         user_id=user_id,

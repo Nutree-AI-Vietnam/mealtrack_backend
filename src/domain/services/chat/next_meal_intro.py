@@ -13,6 +13,17 @@ _SLOT_LABELS = {
 }
 
 
+def next_meal_ack(*, locale: str, slot: str) -> str:
+    """First line while cards are still being chosen. No nutrition numbers."""
+    vi = locale == "vi"
+    label = _slot_label(slot, vi=vi)
+    if vi:
+        return f"Mình đang chọn {label} vừa với phần còn lại."
+    if slot == "snack":
+        return "I'm picking a snack that fits what's left."
+    return f"I'm picking {label} that fits what's left."
+
+
 def next_meal_intro(
     suggestions: Sequence[Mapping[str, Any]],
     *,

@@ -1122,6 +1122,50 @@ async def test_typed_meal_question_fetches_cards_without_a_tool_call():
 
 
 @pytest.mark.asyncio
+async def test_meal_ack_streams_before_cards_are_ready():
+    class _SlowMeals:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def fetch(self, **kwargs):
+            del kwargs
+            self.started.set()
+            await self.release.wait()
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="dinner"
+            )
+
+    meals = _SlowMeals()
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), next_meals=meals)
+    events: list = []
+
+    async def collect() -> None:
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="What should I eat next?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        ):
+            events.append(event)
+
+    task = asyncio.create_task(collect())
+    await asyncio.wait_for(meals.started.wait(), timeout=2)
+    deltas = [
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    ]
+    assert any("I'm picking" in delta for delta in deltas)
+    assert all("Egg rice bowl" not in delta for delta in deltas)
+    meals.release.set()
+    await task
+    assert any("Egg rice bowl" in event.data.get("delta", "") for event in events)
+
+
+@pytest.mark.asyncio
 async def test_meal_intro_is_sent_before_food_photos():
     class _Meals:
         def __init__(self) -> None:
@@ -1154,8 +1198,13 @@ async def test_meal_intro_is_sent_before_food_photos():
         user_language="en",
     ):
         if event.event == "message.delta" and not intro_seen:
-            assert meals.events == ["fetch"]
+            assert meals.events == []
+            assert "I'm picking" in event.data.get("delta", "")
             intro_seen = True
+        elif event.event == "message.delta" and "Egg rice bowl" in event.data.get(
+            "delta", ""
+        ):
+            assert meals.events == ["fetch"]
         events.append(event)
     completed = next(event for event in events if event.event == "message.completed")
     assert intro_seen
