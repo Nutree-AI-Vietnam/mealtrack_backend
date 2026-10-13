@@ -134,11 +134,17 @@ def ensure_follow_ups(
     has_suggestions: bool,
     suggestion_names: Sequence[str] = (),
 ) -> list[dict[str, str]]:
-    """Keep model chips, and fill at least two when that call is short or fails."""
+    """Keep model chips, and fill at least two when that call is short or fails.
+
+    A shown meal gets a third chip so cook, ingredients, and a change can all
+    sit under the card.
+    """
     chips = sanitize_follow_ups(raw)
     if len(chips) >= 2:
         return chips
-    seen = {chip["action"] for chip in chips}
+    target = 3 if has_suggestions else 2
+    seen_actions = {chip["action"] for chip in chips if chip["action"] != ASK_ACTION}
+    seen_labels = {chip["label"].casefold() for chip in chips}
     for chip in _fallback_chips(
         locale=locale,
         intent=intent,
@@ -146,11 +152,16 @@ def ensure_follow_ups(
         has_suggestions=has_suggestions,
         suggestion_names=suggestion_names,
     ):
-        if chip["action"] in seen:
-            continue
+        if chip["action"] == ASK_ACTION:
+            if chip["label"].casefold() in seen_labels:
+                continue
+            seen_labels.add(chip["label"].casefold())
+        else:
+            if chip["action"] in seen_actions:
+                continue
+            seen_actions.add(chip["action"])
         chips.append(chip)
-        seen.add(chip["action"])
-        if len(chips) >= 2:
+        if len(chips) >= target:
             break
     return chips
 
@@ -166,9 +177,10 @@ def _fallback_chips(
     vi = locale == "vi"
     chips: list[dict[str, str]] = []
     if has_suggestions:
-        named = _higher_protein_chip(suggestion_names, vi=vi)
-        if named is not None:
-            chips.append(named)
+        for kind in ("cook", "ingredients", "protein"):
+            named = _named_ask_chip(suggestion_names, kind=kind, vi=vi)
+            if named is not None:
+                chips.append(named)
     ordered: list[str] = []
     if has_suggestions or intent == "next_meal":
         ordered.append("next_meal")
@@ -187,8 +199,10 @@ def _fallback_chips(
     return chips
 
 
-def _higher_protein_chip(names: Sequence[str], *, vi: bool) -> dict[str, str] | None:
-    """A tap that changes the featured dish, not another generic meal search."""
+def _named_ask_chip(
+    names: Sequence[str], *, kind: str, vi: bool
+) -> dict[str, str] | None:
+    """A tap about the featured dish: cook it, list it, or change it."""
     featured = ""
     for name in names:
         cleaned = " ".join(str(name).split())
@@ -197,7 +211,14 @@ def _higher_protein_chip(names: Sequence[str], *, vi: bool) -> dict[str, str] | 
             break
     if not featured:
         return None
-    label = f"Làm {featured} nhiều đạm hơn" if vi else f"Make {featured} higher protein"
+    if kind == "cook":
+        label = f"Cách nấu {featured}?" if vi else f"How do I cook {featured}?"
+    elif kind == "ingredients":
+        label = f"Có gì trong {featured}?" if vi else f"What's in {featured}?"
+    else:
+        label = (
+            f"Làm {featured} nhiều đạm hơn" if vi else f"Make {featured} higher protein"
+        )
     if not _MIN_ASK_CHARS <= len(label) <= _MAX_LABEL_CHARS:
         return None
     if _NUMBERED_CLAIM_RE.search(label) or _MUTATION_CLAIM_RE.search(label):

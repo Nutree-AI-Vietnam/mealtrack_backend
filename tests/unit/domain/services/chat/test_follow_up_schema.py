@@ -4,6 +4,11 @@ from src.domain.services.chat.follow_up_schema import (
     ensure_follow_ups,
     sanitize_follow_ups,
 )
+from src.domain.services.chat.meal_request import (
+    is_cook_request,
+    is_ingredient_request,
+    is_meal_refinement,
+)
 
 
 def test_sanitize_keeps_valid_unique_actions() -> None:
@@ -110,11 +115,15 @@ def test_failed_meal_follow_ups_name_the_featured_dish() -> None:
         has_suggestions=True,
         suggestion_names=["Egg rice bowl", "Yogurt cup"],
     )
-    assert chips[0] == {
-        "label": "Make Egg rice bowl higher protein",
-        "action": "ask",
-    }
-    assert chips[1]["action"] == "next_meal"
+    assert [chip["label"] for chip in chips] == [
+        "How do I cook Egg rice bowl?",
+        "What's in Egg rice bowl?",
+        "Make Egg rice bowl higher protein",
+    ]
+    assert {chip["action"] for chip in chips} == {"ask"}
+    assert is_cook_request(chips[0]["label"])
+    assert is_ingredient_request(chips[1]["label"])
+    assert is_meal_refinement(chips[2]["label"])
 
     vietnamese = ensure_follow_ups(
         [],
@@ -124,8 +133,11 @@ def test_failed_meal_follow_ups_name_the_featured_dish() -> None:
         has_suggestions=True,
         suggestion_names=["Cơm cá hồi"],
     )
-    assert vietnamese[0]["label"] == "Làm Cơm cá hồi nhiều đạm hơn"
-    assert vietnamese[0]["action"] == "ask"
+    assert [chip["label"] for chip in vietnamese] == [
+        "Cách nấu Cơm cá hồi?",
+        "Có gì trong Cơm cá hồi?",
+        "Làm Cơm cá hồi nhiều đạm hơn",
+    ]
 
 
 def test_ensure_follow_ups_fills_a_failed_generation() -> None:
