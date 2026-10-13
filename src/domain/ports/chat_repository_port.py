@@ -96,6 +96,15 @@ class ChatRepositoryPort(ABC):
         """Store chips on an already completed assistant without reopening it."""
 
     @abstractmethod
+    async def save_reply_suggestions(
+        self,
+        *,
+        message_id: str,
+        suggestions: list[dict[str, Any]],
+    ) -> None:
+        """Replace meal cards on a completed reply, including photos added later."""
+
+    @abstractmethod
     async def fail_assistant_message(
         self,
         *,

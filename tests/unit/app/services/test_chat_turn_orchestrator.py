@@ -81,6 +81,9 @@ class _FakeRepo:
     async def attach_follow_ups(self, **kwargs):
         self.attached_follow_ups = kwargs
 
+    async def save_reply_suggestions(self, **kwargs):
+        self.saved_suggestions = kwargs
+
     async def save_thread_summary(self, **kwargs):
         self.saved_summary = kwargs
 
@@ -1205,6 +1208,8 @@ async def test_meal_intro_is_sent_before_food_photos():
             "delta", ""
         ):
             assert meals.events == ["fetch"]
+        elif event.event == "message.ready":
+            assert "images" not in meals.events
         events.append(event)
     completed = next(event for event in events if event.event == "message.completed")
     assert intro_seen

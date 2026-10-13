@@ -640,9 +640,6 @@ class ChatTurnOrchestrator:
                     generation["tool_calls"] = None
                     generation["tools"] = None
 
-            if suggestions:
-                suggestions = await self._attach_meal_images(suggestions)
-
             final_text = "".join(sentences).strip()
             usage = generation["usage"]
             provider_response_id = generation["provider_response_id"]
@@ -726,6 +723,18 @@ class ChatTurnOrchestrator:
                     **ready_payload,
                 },
             )
+            if suggestions:
+                imaged = await self._attach_meal_images(suggestions)
+                if imaged is not suggestions:
+                    suggestions = imaged
+                    await self._store_meal_suggestions(completed.id, suggestions)
+                    yield ChatSseEvent(
+                        event="message.suggestions",
+                        data={
+                            "assistant_message_id": completed.id,
+                            "suggestions": suggestions,
+                        },
+                    )
             follow_ups = await self._generate_follow_ups(
                 locale=resolved_locale,
                 intent=intent,
@@ -783,7 +792,11 @@ class ChatTurnOrchestrator:
                         }
                         for item in citations
                     ],
-                    **_completed_sidecar(completed, follow_ups),
+                    **_completed_sidecar(
+                        completed,
+                        follow_ups,
+                        suggestions=suggestions,
+                    ),
                 },
             )
         except asyncio.CancelledError:
@@ -1492,6 +1505,22 @@ class ChatTurnOrchestrator:
             return suggestions
         return updated
 
+    async def _store_meal_suggestions(
+        self, message_id: str, suggestions: list[dict[str, Any]]
+    ) -> None:
+        try:
+            async with self._uow_factory() as uow:
+                repo = _chat_repo(uow)
+                await repo.save_reply_suggestions(
+                    message_id=message_id,
+                    suggestions=suggestions,
+                )
+        except Exception:
+            logger.info(
+                "chat meal photo save failed",
+                extra={"assistant_message_id": message_id},
+            )
+
     async def _save_thread_summary(
         self, thread_id: str, summary: str, through_message_id: str
     ) -> None:
@@ -1732,11 +1761,16 @@ def _hydrate_message_citations(
 
 
 def _completed_sidecar(
-    message: ChatMessage, follow_ups: list[dict[str, str]]
+    message: ChatMessage,
+    follow_ups: list[dict[str, str]],
+    *,
+    suggestions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     payload = reply_sidecar(message)
     if follow_ups:
         payload["follow_ups"] = follow_ups
+    if suggestions:
+        payload["suggestions"] = suggestions
     return payload
 
 

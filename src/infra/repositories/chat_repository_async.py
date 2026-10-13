@@ -275,6 +275,21 @@ class AsyncChatRepository(ChatRepositoryPort):
         row.updated_at = utc_now()
         await self.session.flush()
 
+    async def save_reply_suggestions(
+        self,
+        *,
+        message_id: str,
+        suggestions: list[dict[str, Any]],
+    ) -> None:
+        row = await self.session.get(ChatMessageORM, message_id)
+        if row is None or row.status != ChatMessageStatus.COMPLETED.value:
+            return
+        payload = dict(row.reply_payload or {})
+        payload["suggestions"] = suggestions
+        row.reply_payload = payload
+        row.updated_at = utc_now()
+        await self.session.flush()
+
     async def fail_assistant_message(
         self,
         *,
