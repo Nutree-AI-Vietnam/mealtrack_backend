@@ -29,9 +29,10 @@ _OUTPUT_CONTRACTS: dict[str, str] = {
     "next_meal": (
         "COACH INTENT next_meal.\n"
         "The app displays the featured meal card below, and any other options under it with their calories. "
-        "Write 2 short sentences: introduce the featured meal warmly in the user's language and say why it fits. "
+        "Write 2 short sentences: name the featured meal and say why it fits this person's day. "
+        "You may mention that card's calorie number once. It is already printed on the card. "
+        "Do not mention any other calorie or gram number. "
         "If other options were returned, name them in a few words so the user knows they can tap one. "
-        "Do not repeat exact kcal or gram numbers. "
         "Tell the user they can tap a card to see the recipe and log it. "
         "Never claim you logged or saved a meal."
     ),
