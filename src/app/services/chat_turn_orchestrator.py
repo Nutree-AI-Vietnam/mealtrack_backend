@@ -633,6 +633,9 @@ class ChatTurnOrchestrator:
                             slot=meal_slot,
                             user_text=trimmed,
                             eaten_today=eaten,
+                            remaining_protein_g=context.remaining_protein_g,
+                            remaining_carbs_g=context.remaining_carbs_g,
+                            remaining_fat_g=context.remaining_fat_g,
                         )
                         or ""
                     )

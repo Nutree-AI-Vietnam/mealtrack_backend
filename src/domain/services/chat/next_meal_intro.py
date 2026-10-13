@@ -182,8 +182,15 @@ def next_meal_intro(
     slot: str,
     user_text: str | None = None,
     eaten_today: str | None = None,
+    remaining_protein_g: float | None = None,
+    remaining_carbs_g: float | None = None,
+    remaining_fat_g: float | None = None,
 ) -> str | None:
-    """Name the featured meal and the other choices. Do not include calories."""
+    """Name the featured meal and the other choices.
+
+    One remaining macro may be named, and only when the caller supplies it.
+    Calories are left off this sentence.
+    """
     names = [
         str(card.get("name")).strip()
         for card in suggestions
@@ -228,8 +235,53 @@ def next_meal_intro(
             parts.append(f"Hôm nay bạn đã ghi {eaten}.")
         else:
             parts.append(f"You already logged {eaten} today.")
+    budget = _open_macro_line(
+        locale=locale,
+        protein_g=remaining_protein_g,
+        carbs_g=remaining_carbs_g,
+        fat_g=remaining_fat_g,
+    )
+    if budget is not None:
+        parts.append(budget)
     parts.append(body)
     return " ".join(parts)
+
+
+def _open_macro_line(
+    *,
+    locale: str,
+    protein_g: float | None,
+    carbs_g: float | None,
+    fat_g: float | None,
+) -> str | None:
+    """The macro with the most room left. No invented figure."""
+    choices: list[tuple[str, float]] = []
+    for key, value in (
+        ("protein", protein_g),
+        ("carbs", carbs_g),
+        ("fat", fat_g),
+    ):
+        amount = _positive_amount(value)
+        if amount is not None:
+            choices.append((key, amount))
+    if not choices:
+        return None
+    key, amount = max(choices, key=lambda item: item[1])
+    shown = str(int(amount)) if amount == int(amount) else f"{amount:.1f}"
+    if locale == "vi":
+        label = {"protein": "đạm", "carbs": "tinh bột", "fat": "chất béo"}[key]
+        return f"Hôm nay bạn còn {shown}g {label}."
+    label = {"protein": "protein", "carbs": "carbs", "fat": "fat"}[key]
+    return f"You still have {shown}g {label} open today."
+
+
+def _positive_amount(value: float | None) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    amount = float(value)
+    if amount != amount or amount <= 0 or amount in (float("inf"), float("-inf")):
+        return None
+    return amount
 
 
 def _dish_label(value: Any) -> str | None:

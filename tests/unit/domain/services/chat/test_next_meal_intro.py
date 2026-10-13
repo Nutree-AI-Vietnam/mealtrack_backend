@@ -132,6 +132,25 @@ def test_unavailable_names_the_slot_and_invents_no_dish() -> None:
     assert "kcal" not in vi
 
 
+def test_intro_names_the_macro_with_the_most_room() -> None:
+    cards = [{"name": "Egg rice bowl"}, {"name": "Yogurt cup"}]
+    text = next_meal_intro(
+        cards,
+        locale="en",
+        slot="lunch",
+        remaining_protein_g=50,
+        remaining_carbs_g=12,
+        remaining_fat_g=8,
+    )
+    assert text is not None
+    assert "You still have 50g protein open today." in text
+    assert "12g" not in text
+    assert "kcal" not in text
+    quiet = next_meal_intro(cards, locale="en", slot="lunch")
+    assert quiet is not None
+    assert "open today" not in quiet
+
+
 def test_intro_names_a_meal_already_logged_today() -> None:
     text = next_meal_intro(
         [

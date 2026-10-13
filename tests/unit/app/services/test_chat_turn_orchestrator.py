@@ -1473,6 +1473,7 @@ async def test_meal_reply_drops_a_sentence_that_invents_calories():
 
     content = repo.completed["content"]
     assert "Egg rice bowl fits lunch." in content
+    assert "You still have 80g carbs open today." in content
     assert "999" not in content
 
 
