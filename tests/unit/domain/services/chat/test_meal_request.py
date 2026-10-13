@@ -58,6 +58,9 @@ def test_meal_refinements(text: str) -> None:
     [
         "Why is lunch the better fit?",
         "How do I get more protein?",
+        "Which of these is higher protein?",
+        "Is the tofu higher protein?",
+        "So sánh món nào nhiều đạm hơn?",
         "What's left?",
         "Cite protein guidance",
         "",

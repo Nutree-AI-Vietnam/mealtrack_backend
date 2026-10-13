@@ -1001,6 +1001,35 @@ async def test_why_question_after_a_meal_does_not_refresh_cards():
 
 
 @pytest.mark.asyncio
+async def test_comparison_question_does_not_refresh_meal_cards():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try the tofu bowl.",
+        reply_payload={
+            "intent": "next_meal",
+            "suggestions": [{"name": "Tofu bowl", "calories": 420}],
+        },
+    )
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    completion = _FakeCompletion(["The tofu bowl has more protein. "])
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    events = await _stream(orchestrator, content="Which of these is higher protein?")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert next_meals.calls == []
+    assert completed.data.get("intent") != "next_meal"
+
+
+@pytest.mark.asyncio
 async def test_typed_dinner_fetches_next_meal_without_chip():
     next_meals = _FakeNextMeals(
         NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")

@@ -108,6 +108,40 @@ _EXPLAIN_PREFIXES: tuple[str, ...] = (
     "lam sao",
 )
 
+# Comparison questions mention the same words as a change request
+# ("higher protein") but should stay a written answer.
+_QUESTION_MARKERS: tuple[str, ...] = (
+    "which ",
+    "compare ",
+    "difference",
+    "between the",
+    "is the ",
+    "is it ",
+    "are these ",
+    "are they ",
+    "cái nào",
+    "cai nao",
+    "món nào",
+    "mon nao",
+    "so sánh",
+    "so sanh",
+)
+
+_IMPERATIVE_HINTS: tuple[str, ...] = (
+    "make ",
+    "skip ",
+    "swap ",
+    "leave out",
+    "don't ",
+    "do not ",
+    "without ",
+    "instead of",
+    "đổi",
+    "doi ",
+    "bỏ",
+    "thay ",
+)
+
 # A named slot plus one of these is a suggestion request ("more breakfast ideas")
 # without also matching nutrition questions that merely mention dinner.
 _SLOT_REQUEST_TOKENS: tuple[str, ...] = (
@@ -142,6 +176,10 @@ def is_meal_refinement(text: str) -> bool:
     if not normalized:
         return False
     if any(normalized.startswith(prefix) for prefix in _EXPLAIN_PREFIXES):
+        return False
+    if any(marker in normalized for marker in _QUESTION_MARKERS) and not any(
+        hint in normalized for hint in _IMPERATIVE_HINTS
+    ):
         return False
     return any(phrase in normalized for phrase in _REFINEMENT_PHRASES)
 
