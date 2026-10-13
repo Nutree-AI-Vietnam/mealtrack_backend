@@ -1044,6 +1044,7 @@ async def test_how_to_cook_ignores_a_new_meal_tool_call():
     completed = next(event for event in events if event.event == "message.completed")
 
     assert next_meals.calls == []
+    assert completion.stream_calls == 0
     assert completed.data.get("intent") != "next_meal"
     assert "Egg rice bowl" not in repo.completed["content"]
     assert repo.completed["content"] == (
@@ -1079,6 +1080,7 @@ async def test_invented_cook_steps_are_replaced_with_the_card():
 
     await _stream(orchestrator, content="How do I cook the tofu?")
 
+    assert completion.stream_calls == 0
     assert "400" not in repo.completed["content"]
     assert "Press the tofu dry" in repo.completed["content"]
     assert "Pan-fry until golden" in repo.completed["content"]
@@ -1112,6 +1114,7 @@ async def test_invented_ingredients_are_replaced_with_the_card():
 
     await _stream(orchestrator, content="What's in the tofu?")
 
+    assert completion.stream_calls == 0
     assert "chicken" not in repo.completed["content"]
     assert "999" not in repo.completed["content"]
     assert repo.completed["content"] == (

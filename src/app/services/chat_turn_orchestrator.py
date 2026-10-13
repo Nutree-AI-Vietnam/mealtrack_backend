@@ -649,6 +649,20 @@ class ChatTurnOrchestrator:
                             "replace": True,
                         },
                     )
+            shown_cards = (
+                _shown_meal_cards(history_messages) if answer_from_shown_meals else []
+            )
+            card_reply = None
+            if shown_cards:
+                card_reply = verified_ingredient_reply(
+                    trimmed,
+                    shown_cards,
+                    locale=resolved_locale,
+                ) or verified_cook_reply(
+                    trimmed,
+                    shown_cards,
+                    locale=resolved_locale,
+                )
             if meal_reply:
                 # The acknowledgement was only a placeholder while cards loaded.
                 sentences.clear()
@@ -676,6 +690,23 @@ class ChatTurnOrchestrator:
                             "replace": True,
                         },
                     )
+            elif card_reply:
+                # The card already has the steps or ingredients. Do not stream
+                # an invented sentence and then replace it.
+                streamed_text = "".join(sentences).strip()
+                sentences.clear()
+                sentences.append(card_reply)
+                generation["text"] = card_reply
+                generation["blocked"] = False
+                generation["tools"] = None
+                yield ChatSseEvent(
+                    event="message.delta",
+                    data={
+                        "assistant_message_id": claim.assistant_message.id,
+                        "delta": card_reply,
+                        "replace": bool(streamed_text),
+                    },
+                )
             else:
                 # Keep streaming until no tool calls are emitted (max 2 iterations)
                 max_tool_iterations = 1 if direct_invoke else 2
@@ -779,18 +810,8 @@ class ChatTurnOrchestrator:
                 # markdown (e.g. "còn khoảng **1.821"). Prefer a clean sentence.
                 final_text = sanitize_incomplete_assistant_text(final_text)
                 generation["text"] = final_text
-            if answer_from_shown_meals:
-                shown_cards = _shown_meal_cards(history_messages)
-                card_reply = verified_ingredient_reply(
-                    trimmed,
-                    shown_cards,
-                    locale=resolved_locale,
-                ) or verified_cook_reply(
-                    trimmed,
-                    shown_cards,
-                    locale=resolved_locale,
-                )
-                if card_reply and not cook_reply_already_said(final_text, card_reply):
+            if answer_from_shown_meals and card_reply:
+                if not cook_reply_already_said(final_text, card_reply):
                     if card_reply != final_text:
                         yield ChatSseEvent(
                             event="message.delta",
