@@ -59,7 +59,7 @@ from src.domain.services.chat.coach_functions import (
     preferred_alias,
     resolve_coach_function,
 )
-from src.domain.services.chat.follow_up_schema import ensure_follow_ups
+from src.domain.services.chat.follow_up_schema import ensure_follow_ups, meal_names
 from src.domain.services.chat.meal_request import is_meal_suggestion_request
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
@@ -742,6 +742,7 @@ class ChatTurnOrchestrator:
                 user_message=trimmed,
                 assistant_text=final_text,
                 has_suggestions=bool(suggestions),
+                suggestion_names=meal_names(suggestions),
             )
             if follow_ups:
                 try:
@@ -1462,8 +1463,10 @@ class ChatTurnOrchestrator:
         user_message: str,
         assistant_text: str,
         has_suggestions: bool,
+        suggestion_names: list[str] | None = None,
     ) -> list[dict[str, str]]:
         generated: list[dict[str, str]] = []
+        names = suggestion_names or []
         if self._follow_ups is not None:
             try:
                 generated = await asyncio.wait_for(
@@ -1475,6 +1478,7 @@ class ChatTurnOrchestrator:
                         user_message=user_message,
                         assistant_text=assistant_text,
                         has_suggestions=has_suggestions,
+                        suggestion_names=names,
                     ),
                     timeout=2.0,
                 )

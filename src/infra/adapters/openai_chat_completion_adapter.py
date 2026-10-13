@@ -207,6 +207,7 @@ class OpenAIChatCompletionAdapter(
         user_message: str,
         assistant_text: str,
         has_suggestions: bool,
+        suggestion_names: list[str] | None = None,
     ) -> list[dict[str, str]]:
         prompt = json.dumps(
             {
@@ -216,7 +217,9 @@ class OpenAIChatCompletionAdapter(
                 "user_message": user_message[:400],
                 "assistant_text": assistant_text[:800],
                 "has_suggestions": has_suggestions,
-                "allowed_actions": list(CHAT_INTENTS),
+                "suggestion_names": list(suggestion_names or [])[:3],
+                "ask_action": "ask",
+                "card_actions": list(CHAT_INTENTS),
             },
             ensure_ascii=False,
         )
@@ -300,11 +303,15 @@ class OpenAIChatCompletionAdapter(
 
 
 _FOLLOW_UP_INSTRUCTIONS = """Author 2-3 short Nutree Coach follow-up chips.
-Each chip is {label, action}. action must be one of the allowed_actions.
-Reply in the given locale. Labels are tap targets the user would actually want next, not vague "tell me more".
-Prefer a specific next step: another meal idea, what's left today, how the day is going, or what Coach can do.
-Do not invent nutrition numbers. Do not claim a meal was saved or logged.
-If has_suggestions is true, one chip must offer another meal idea via next_meal.
+Each chip is {label, action}. Reply in the given locale.
+
+Prefer action "ask". The label is the exact next message the user sends, so write the question or request they would actually type next about THIS answer.
+Good ask labels name a dish, a swap, a constraint, or a why from the answer or suggestion_names: "Make the tofu higher protein", "Skip the rice", "Why is lunch the better fit?".
+Bad labels: "Tell me more", "Okay", or a generic card label when a specific question is possible.
+Do not put calorie or gram numbers in a label. Do not claim a meal was saved or logged.
+
+At most one chip may use a card_actions value, and only when that card is the natural next step.
+If has_suggestions is true, one chip may be next_meal ("Another dinner idea") and the others must be ask chips about those meals.
 """
 
 _NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 3 different delicious next-meal recipes for one sitting. Vary the main ingredient. Each recipe is one sitting, not three courses.

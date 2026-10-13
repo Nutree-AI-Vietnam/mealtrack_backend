@@ -23,6 +23,39 @@ def test_sanitize_keeps_valid_unique_actions() -> None:
     ]
 
 
+def test_sanitize_keeps_specific_questions_and_drops_vague_ones() -> None:
+    cleaned = sanitize_follow_ups(
+        {
+            "follow_ups": [
+                {"label": "Make the tofu higher protein", "action": "ask"},
+                {"label": "Tell me more", "action": "ask"},
+                {"label": "I logged it", "action": "ask"},
+                {"label": "Only 400 kcal left", "action": "ask"},
+                {"label": "Skip the rice", "action": "ask"},
+                {"label": "Save this", "action": "save_meal"},
+            ]
+        }
+    )
+    assert cleaned == [
+        {"label": "Make the tofu higher protein", "action": "ask"},
+        {"label": "Skip the rice", "action": "ask"},
+    ]
+
+
+def test_meal_names_keeps_three_dish_names() -> None:
+    from src.domain.services.chat.follow_up_schema import meal_names
+
+    assert meal_names(
+        [
+            {"name": "Tofu bowl"},
+            {"name": "  "},
+            {"name": "Egg rice"},
+            {"name": "Soup"},
+            {"name": "Extra"},
+        ]
+    ) == ["Tofu bowl", "Egg rice", "Soup"]
+
+
 def test_sanitize_drops_unknown_and_blank() -> None:
     cleaned = sanitize_follow_ups(
         {

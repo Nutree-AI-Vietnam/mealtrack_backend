@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -10,6 +12,33 @@ from src.domain.model.chat import CHAT_INTENTS
 
 _MAX_FOLLOW_UPS = 3
 _MAX_LABEL_CHARS = 48
+_MIN_ASK_CHARS = 6
+# A chip whose label is the next user message. Mobile sends it as free text.
+ASK_ACTION = "ask"
+_VAGUE_LABELS = frozenset(
+    {
+        "tell me more",
+        "more",
+        "ok",
+        "okay",
+        "yes",
+        "no",
+        "sure",
+        "nói thêm",
+        "thêm",
+        "được",
+        "oke",
+        "okê",
+    }
+)
+_NUMBERED_CLAIM_RE = re.compile(
+    r"\d[\d.,]*\s*(?:kcal|calories?|cal|g(?:rams?)?)\b",
+    re.IGNORECASE,
+)
+_MUTATION_CLAIM_RE = re.compile(
+    r"\b(i\s+(?:logged|saved|updated)|logged\s+it|saved\s+it|đã\s+ghi|đã\s+lưu)\b",
+    re.IGNORECASE,
+)
 
 
 class ChatFollowUpItem(BaseModel):
@@ -21,11 +50,24 @@ class ChatFollowUpList(BaseModel):
     follow_ups: list[ChatFollowUpItem] = Field(default_factory=list, max_length=4)
 
 
-def sanitize_follow_ups(raw: Any) -> list[dict[str, str]]:
-    """Keep 2–3 chips whose action is a known alias (or registry function name).
+def meal_names(suggestions: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Dish names a follow-up chip can refer to, capped at three."""
+    names: list[str] = []
+    for item in suggestions:
+        name = " ".join(str(item.get("name") or "").split())
+        if not name:
+            continue
+        names.append(name[:80])
+        if len(names) >= 3:
+            break
+    return names
 
-    Function names are mapped to their preferred chip alias before emit so
-    mobile `CoachIntent` parsing stays stable.
+
+def sanitize_follow_ups(raw: Any) -> list[dict[str, str]]:
+    """Keep up to 3 chips.
+
+    A known intent alias opens that Nutree card. ``ask`` sends the label as
+    the next user message. Other actions are dropped.
     """
     from src.domain.services.chat.coach_functions import (
         preferred_alias,
@@ -34,28 +76,53 @@ def sanitize_follow_ups(raw: Any) -> list[dict[str, str]]:
 
     items = _coerce_items(raw)
     cleaned: list[dict[str, str]] = []
-    seen: set[str] = set()
+    seen_actions: set[str] = set()
+    seen_labels: set[str] = set()
     for item in items:
         label = " ".join(str(item.get("label") or "").split())
         action = str(item.get("action") or "").strip()
         if not label or not action:
             continue
-        if action in CHAT_INTENTS:
-            alias = action
+        if action == ASK_ACTION:
+            ask_label = _ask_label(label)
+            if ask_label is None or ask_label.casefold() in seen_labels:
+                continue
+            seen_labels.add(ask_label.casefold())
+            cleaned.append({"label": ask_label, "action": ASK_ACTION})
         else:
-            resolved = resolve_coach_function(action)
-            if resolved is None:
+            alias = _intent_alias(action, preferred_alias, resolve_coach_function)
+            if alias is None or alias in seen_actions:
                 continue
-            alias = preferred_alias(resolved.name, resolved.args)
-            if alias is None or alias not in CHAT_INTENTS:
-                continue
-        if alias in seen:
-            continue
-        seen.add(alias)
-        cleaned.append({"label": label[:_MAX_LABEL_CHARS], "action": alias})
+            seen_actions.add(alias)
+            cleaned.append({"label": label[:_MAX_LABEL_CHARS], "action": alias})
         if len(cleaned) >= _MAX_FOLLOW_UPS:
             break
     return cleaned
+
+
+def _intent_alias(
+    action: str, preferred_alias: Any, resolve_coach_function: Any
+) -> str | None:
+    if action in CHAT_INTENTS:
+        return action
+    resolved = resolve_coach_function(action)
+    if resolved is None:
+        return None
+    alias = preferred_alias(resolved.name, resolved.args)
+    if alias is None or alias not in CHAT_INTENTS:
+        return None
+    return alias
+
+
+def _ask_label(label: str) -> str | None:
+    trimmed = label[:_MAX_LABEL_CHARS].strip()
+    if len(trimmed) < _MIN_ASK_CHARS:
+        return None
+    if trimmed.casefold() in _VAGUE_LABELS:
+        return None
+    if _NUMBERED_CLAIM_RE.search(trimmed) or _MUTATION_CLAIM_RE.search(trimmed):
+        return None
+    return trimmed
 
 
 def ensure_follow_ups(
