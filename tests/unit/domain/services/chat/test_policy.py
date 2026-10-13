@@ -148,6 +148,9 @@ def test_stable_instructions_are_versioned_and_forbid_mutation():
     assert "Never recalculate" in text
     assert "cannot change" in text
     assert "programming" in text
+    assert "Answer first" in text
+    assert "recent_meals" in text
+    assert "Never take calorie or macro numbers from it" in text
 
 
 def test_grounding_includes_free_text_contract_when_intent_missing() -> None:
