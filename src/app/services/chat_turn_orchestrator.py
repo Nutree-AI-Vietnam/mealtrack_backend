@@ -1625,6 +1625,7 @@ class ChatTurnOrchestrator:
             intent=intent,
             slot=slot,
             has_suggestions=has_suggestions,
+            suggestion_names=names,
         )
 
     async def _attach_meal_images(

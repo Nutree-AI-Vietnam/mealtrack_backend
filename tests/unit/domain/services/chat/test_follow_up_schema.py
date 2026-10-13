@@ -101,6 +101,33 @@ def test_ensure_follow_ups_keeps_two_model_chips() -> None:
     )
 
 
+def test_failed_meal_follow_ups_name_the_featured_dish() -> None:
+    chips = ensure_follow_ups(
+        [],
+        locale="en",
+        intent="next_meal",
+        slot="lunch",
+        has_suggestions=True,
+        suggestion_names=["Egg rice bowl", "Yogurt cup"],
+    )
+    assert chips[0] == {
+        "label": "Make Egg rice bowl higher protein",
+        "action": "ask",
+    }
+    assert chips[1]["action"] == "next_meal"
+
+    vietnamese = ensure_follow_ups(
+        [],
+        locale="vi",
+        intent="next_meal",
+        slot="lunch",
+        has_suggestions=True,
+        suggestion_names=["Cơm cá hồi"],
+    )
+    assert vietnamese[0]["label"] == "Làm Cơm cá hồi nhiều đạm hơn"
+    assert vietnamese[0]["action"] == "ask"
+
+
 def test_ensure_follow_ups_fills_a_failed_generation() -> None:
     chips = ensure_follow_ups(
         [],

@@ -132,6 +132,7 @@ def ensure_follow_ups(
     intent: str | None,
     slot: str | None,
     has_suggestions: bool,
+    suggestion_names: Sequence[str] = (),
 ) -> list[dict[str, str]]:
     """Keep model chips, and fill at least two when that call is short or fails."""
     chips = sanitize_follow_ups(raw)
@@ -143,6 +144,7 @@ def ensure_follow_ups(
         intent=intent,
         slot=slot,
         has_suggestions=has_suggestions,
+        suggestion_names=suggestion_names,
     ):
         if chip["action"] in seen:
             continue
@@ -159,8 +161,14 @@ def _fallback_chips(
     intent: str | None,
     slot: str | None,
     has_suggestions: bool,
+    suggestion_names: Sequence[str] = (),
 ) -> list[dict[str, str]]:
     vi = locale == "vi"
+    chips: list[dict[str, str]] = []
+    if has_suggestions:
+        named = _higher_protein_chip(suggestion_names, vi=vi)
+        if named is not None:
+            chips.append(named)
     ordered: list[str] = []
     if has_suggestions or intent == "next_meal":
         ordered.append("next_meal")
@@ -172,10 +180,29 @@ def _fallback_chips(
         ordered.append("next_meal")
     if intent != "limits":
         ordered.append("limits")
-    return [
+    chips.extend(
         {"label": _fallback_label(action, slot=slot, vi=vi), "action": action}
         for action in ordered
-    ]
+    )
+    return chips
+
+
+def _higher_protein_chip(names: Sequence[str], *, vi: bool) -> dict[str, str] | None:
+    """A tap that changes the featured dish, not another generic meal search."""
+    featured = ""
+    for name in names:
+        cleaned = " ".join(str(name).split())
+        if cleaned:
+            featured = cleaned
+            break
+    if not featured:
+        return None
+    label = f"Làm {featured} nhiều đạm hơn" if vi else f"Make {featured} higher protein"
+    if not _MIN_ASK_CHARS <= len(label) <= _MAX_LABEL_CHARS:
+        return None
+    if _NUMBERED_CLAIM_RE.search(label) or _MUTATION_CLAIM_RE.search(label):
+        return None
+    return {"label": label, "action": ASK_ACTION}
 
 
 def _fallback_label(action: str, *, slot: str | None, vi: bool) -> str:
