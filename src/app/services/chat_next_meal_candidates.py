@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -199,14 +200,12 @@ class ChatNextMealCandidates:
         positive calorie total. Per-ingredient calories are attached only when
         the breakdown lines up with the ingredient list.
         """
-        if self._nutrition_lookup is None:
+        if self._nutrition_lookup is None or not meals:
             return meals
-        kept: list[dict[str, Any]] = []
-        for meal in meals:
-            reconciled = await self._reconcile_one_meal(meal)
-            if reconciled is not None:
-                kept.append(reconciled)
-        return kept
+        reconciled = await asyncio.gather(
+            *(self._reconcile_one_meal(meal) for meal in meals)
+        )
+        return [meal for meal in reconciled if meal is not None]
 
     async def _reconcile_one_meal(self, meal: dict[str, Any]) -> dict[str, Any] | None:
         lookup_input = _lookup_ingredient_rows(meal.get("ingredients"))

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from src.app.services.chat_next_meal_candidates import (
@@ -506,3 +508,60 @@ async def test_failed_lookup_drops_model_calories_and_uses_discover() -> None:
     assert result.suggestions[0]["name"] == "Rice bowl"
     assert result.suggestions[0]["calories"] == 420
     assert discover.calls
+
+
+@pytest.mark.asyncio
+async def test_meal_lookups_run_together_and_keep_surviving_order() -> None:
+    class _SlowLookup:
+        def __init__(self) -> None:
+            self.in_flight = 0
+            self.max_in_flight = 0
+
+        async def calculate_meal_macros(self, ingredients):
+            name = ingredients[0]["name"]
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            await asyncio.sleep(0.05)
+            self.in_flight -= 1
+            if name == "chicken":
+                raise RuntimeError("lookup down")
+            calories = {"salmon": 410.0, "tofu": 280.0}[name]
+            return _MealMacros(calories, [_IngredientCal(calories)])
+
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [
+                _recipe(
+                    name="Salmon rice",
+                    ingredients=[{"name": "salmon", "amount": 150, "unit": "g"}],
+                ),
+                _recipe(
+                    name="Chicken bowl",
+                    ingredients=[{"name": "chicken", "amount": 150, "unit": "g"}],
+                ),
+                _recipe(
+                    name="Tofu bowl",
+                    ingredients=[{"name": "tofu", "amount": 200, "unit": "g"}],
+                ),
+            ]
+
+    lookup = _SlowLookup()
+    service = ChatNextMealCandidates(
+        _FakeDiscover(),
+        recipe_generator=_Gen(),
+        nutrition_lookup=lookup,
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+    )
+    assert lookup.max_in_flight == 3
+    assert [card["name"] for card in result.suggestions] == [
+        "Salmon rice",
+        "Tofu bowl",
+    ]
+    assert [card["calories"] for card in result.suggestions] == [410, 280]
