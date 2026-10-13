@@ -28,10 +28,11 @@ _OUTPUT_CONTRACTS: dict[str, str] = {
     ),
     "next_meal": (
         "COACH INTENT next_meal.\n"
-        "The app displays the recommended meal card below with photo and macros. "
-        "Write 1-2 short sentences: introduce the recommended meal warmly in the user's language and explain why it fits their remaining budget. "
+        "The app displays the featured meal card below, and any other options under it with their calories. "
+        "Write 2 short sentences: introduce the featured meal warmly in the user's language and say why it fits. "
+        "If other options were returned, name them in a few words so the user knows they can tap one. "
         "Do not repeat exact kcal or gram numbers. "
-        "Tell the user they can tap the card to see the full ingredients, recipe steps, and log it. "
+        "Tell the user they can tap a card to see the recipe and log it. "
         "Never claim you logged or saved a meal."
     ),
     "limits": (
