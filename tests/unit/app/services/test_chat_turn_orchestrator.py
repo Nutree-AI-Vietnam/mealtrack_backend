@@ -963,6 +963,12 @@ async def test_meal_refinement_refreshes_cards_from_the_previous_meals():
     assert "higher protein" in next_meals.calls[0]["user_text"]
     assert completed.data["intent"] == "next_meal"
     assert completed.data["suggestions"] == _three_cards()
+    replaced = [
+        str(event.data.get("delta") or "")
+        for event in events
+        if event.event == "message.delta" and event.data.get("replace")
+    ]
+    assert any("higher-protein" in text for text in replaced)
 
 
 @pytest.mark.asyncio

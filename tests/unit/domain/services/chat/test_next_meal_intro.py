@@ -14,7 +14,7 @@ def test_intro_names_the_other_meals_and_skips_calories() -> None:
     assert text == (
         "Egg rice bowl fits breakfast. "
         "You can also choose Yogurt cup and Tofu scramble. "
-        "Tap a card to see the recipe and log it."
+        "Tap a card for the recipe, or log it from the card."
     )
     assert "420" not in text
 
@@ -25,7 +25,33 @@ def test_intro_uses_vietnamese_for_one_dinner() -> None:
         locale="vi",
         slot="dinner",
     )
-    assert text == ("Cơm cá hồi hợp cho bữa tối. Chạm thẻ để xem công thức và ghi bữa.")
+    assert text == (
+        "Cơm cá hồi hợp cho bữa tối. "
+        "Chạm thẻ để xem công thức, hoặc ghi bữa ngay trên thẻ."
+    )
+
+
+def test_intro_says_what_changed() -> None:
+    cards = [{"name": "Tofu bowl"}, {"name": "Egg rice"}]
+    text = next_meal_intro(
+        cards,
+        locale="en",
+        slot="lunch",
+        user_text="Make the tofu higher protein",
+    )
+    assert text is not None
+    assert text.startswith("These are the higher-protein options.")
+    assert "Tofu bowl" in text
+    assert "kcal" not in text
+
+    generic = next_meal_intro(
+        cards,
+        locale="en",
+        slot="lunch",
+        user_text="What's for lunch?",
+    )
+    assert generic is not None
+    assert not generic.startswith("These are")
 
 
 def test_ack_names_the_slot_without_a_number() -> None:

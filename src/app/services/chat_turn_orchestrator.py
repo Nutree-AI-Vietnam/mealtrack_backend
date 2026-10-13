@@ -565,6 +565,7 @@ class ChatTurnOrchestrator:
                     suggestions,
                     locale=resolved_locale,
                     slot=meal_slot,
+                    user_text=trimmed,
                 )
             if intro:
                 # The acknowledgement was only a placeholder while cards loaded.
