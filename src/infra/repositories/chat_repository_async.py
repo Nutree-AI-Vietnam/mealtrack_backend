@@ -29,6 +29,7 @@ from src.domain.model.chat import (
     empty_reply_payload,
 )
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
+from src.domain.services.chat.rewind import message_ids_after
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.chat import (
     ChatKnowledgeDocumentORM,
@@ -337,9 +338,15 @@ class AsyncChatRepository(ChatRepositoryPort):
         if await self._active_generation(thread.id) is not None:
             raise ChatBusyError()
 
-        latest = await self._latest_completed_assistant(thread.id)
-        if latest is None or latest.id != assistant_message_id:
+        latest = await self.session.get(ChatMessageORM, assistant_message_id)
+        if (
+            latest is None
+            or latest.thread_id != thread.id
+            or latest.role != ChatMessageRole.ASSISTANT.value
+            or latest.status != ChatMessageStatus.COMPLETED.value
+        ):
             return None
+        await self._drop_messages_after(thread.id, latest)
         if latest.in_reply_to_id is None:
             return None
         user_row = await self.session.get(ChatMessageORM, latest.in_reply_to_id)
@@ -377,6 +384,33 @@ class AsyncChatRepository(ChatRepositoryPort):
             assistant_message=_to_message(latest),
         )
         return claim, prior_intent, content_changed
+
+    async def _drop_messages_after(
+        self, thread_id: str, target: ChatMessageORM
+    ) -> None:
+        result = await self.session.execute(
+            select(
+                ChatMessageORM.id,
+                ChatMessageORM.created_at,
+                ChatMessageORM.role,
+            ).where(ChatMessageORM.thread_id == thread_id)
+        )
+        later_ids = message_ids_after(
+            target.id,
+            target.created_at,
+            target.role,
+            [(row.id, row.created_at, row.role) for row in result.all()],
+        )
+        if not later_ids:
+            return
+        await self.session.execute(
+            update(ChatThreadORM)
+            .where(ChatThreadORM.id == thread_id)
+            .values(summary=None, summary_through_message_id=None)
+        )
+        await self.session.execute(
+            delete(ChatMessageORM).where(ChatMessageORM.id.in_(later_ids))
+        )
 
     async def _latest_completed_assistant(
         self, thread_id: str
