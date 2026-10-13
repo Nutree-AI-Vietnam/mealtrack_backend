@@ -996,10 +996,22 @@ class ChatTurnOrchestrator:
                         else str(ing)
                         for ing in raw_ings[:5]
                     )
+                option_word = "option" if len(suggestions) == 1 else "options"
                 lines = [
-                    f"Found 1 meal options for {meal_slot}: {primary_name}.",
+                    f"Found {len(suggestions)} meal {option_word} for {meal_slot}: {primary_name}.",
                     f"Portion: {primary_cal} kcal ({primary_p}g protein, {primary_c}g carbs, {primary_f}g fat).",
                 ]
+                other_names = [
+                    str(card.get("name")).strip()
+                    for card in suggestions[1:]
+                    if isinstance(card, dict) and str(card.get("name") or "").strip()
+                ]
+                if other_names:
+                    lines.append(
+                        "Other options already on the card: "
+                        + ", ".join(other_names)
+                        + "."
+                    )
                 primary_fiber = primary.get("fiber_g")
                 if primary_fiber:
                     lines.append(f"Fiber: {primary_fiber}g.")

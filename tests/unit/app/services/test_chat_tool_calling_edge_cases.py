@@ -419,7 +419,7 @@ async def test_tool_call_handles_multiple_tools_in_single_turn():
     tool_turns = [t for t in turn_2_history if t.role == "tool"]
     assert len(tool_turns) == 2
     assert any("Daily progress" in t.content for t in tool_turns)
-    assert any("Found 1 meal options" in t.content for t in tool_turns)
+    assert any("Found 1 meal option" in t.content for t in tool_turns)
 
 
 @pytest.mark.asyncio

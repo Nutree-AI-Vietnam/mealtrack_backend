@@ -90,7 +90,7 @@ async def test_fetch_maps_discover_cards_and_keeps_session() -> None:
     )
     assert result.session_id == "sess-keep"
     assert result.meal_slot == "breakfast"
-    assert len(result.suggestions) == 1
+    assert len(result.suggestions) == 3
     assert result.suggestions[0]["protein_g"] == 28
     assert discover.calls[0]["session_id"] == "sess-keep"
     assert discover.calls[0]["meal_type"] == "breakfast"

@@ -33,7 +33,7 @@ _OPTIONAL_CARD_STRINGS = (
 
 logger = logging.getLogger(__name__)
 
-DISCOVER_COUNT = 1
+DISCOVER_COUNT = 3
 DISCOVER_MAX_PER_MINUTE = 5
 
 

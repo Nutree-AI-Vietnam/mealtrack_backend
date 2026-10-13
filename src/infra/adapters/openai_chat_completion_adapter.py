@@ -307,7 +307,7 @@ Do not invent nutrition numbers. Do not claim a meal was saved or logged.
 If has_suggestions is true, one chip must offer another meal idea via next_meal.
 """
 
-_NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 1 delicious next-meal recipe for one sitting.
+_NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 3 different delicious next-meal recipes for one sitting. Vary the main ingredient. Each recipe is one sitting, not three courses.
 Schema fields: name, english_name, emoji, ingredients (3-8 with amount+unit), recipe_steps (2-6 with instruction+duration_minutes), prep_time_minutes, calories, protein_g, carbs_g, fat_g, fiber_g, micros.
 
 LANGUAGE RULES:
