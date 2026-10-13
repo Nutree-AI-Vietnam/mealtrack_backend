@@ -1050,6 +1050,8 @@ async def test_how_to_cook_ignores_a_new_meal_tool_call():
     assert repo.completed["content"] == (
         "How to make Tofu bowl:\n1. Press the tofu dry.\n2. Pan-fry until golden."
     )
+    assert completed.data["suggestions"][0]["name"] == "Tofu bowl"
+    assert completed.data["suggestions"][0]["calories"] == 420
 
 
 @pytest.mark.asyncio

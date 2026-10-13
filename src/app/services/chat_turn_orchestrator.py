@@ -692,13 +692,15 @@ class ChatTurnOrchestrator:
                     )
             elif card_reply:
                 # The card already has the steps or ingredients. Do not stream
-                # an invented sentence and then replace it.
+                # an invented sentence and then replace it. Keep that card on
+                # this reply so Log and See recipe stay next to the answer.
                 streamed_text = "".join(sentences).strip()
                 sentences.clear()
                 sentences.append(card_reply)
                 generation["text"] = card_reply
                 generation["blocked"] = False
                 generation["tools"] = None
+                suggestions = _cards_named_in_reply(card_reply, shown_cards)
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
@@ -707,6 +709,14 @@ class ChatTurnOrchestrator:
                         "replace": bool(streamed_text),
                     },
                 )
+                if suggestions:
+                    yield ChatSseEvent(
+                        event="message.suggestions",
+                        data={
+                            "assistant_message_id": claim.assistant_message.id,
+                            "suggestions": suggestions,
+                        },
+                    )
             else:
                 # Keep streaming until no tool calls are emitted (max 2 iterations)
                 max_tool_iterations = 1 if direct_invoke else 2
@@ -1882,6 +1892,20 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
             "assistant_message_id": claim.assistant_message.id,
         },
     )
+
+
+def _cards_named_in_reply(
+    reply: str, cards: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The card the answer names, so Log stays on that dish."""
+    folded = reply.casefold()
+    matched = [
+        card
+        for card in cards
+        if str(card.get("name") or "").strip()
+        and str(card.get("name")).strip().casefold() in folded
+    ]
+    return matched or cards[:1]
 
 
 def _shown_meal_cards(messages: list[ChatMessage]) -> list[dict[str, Any]]:
