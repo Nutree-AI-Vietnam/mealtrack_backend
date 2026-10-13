@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.domain.services.chat.meal_request import is_meal_refinement
+from src.domain.services.chat.meal_request import is_cook_request, is_meal_refinement
 
 _SLOT_LABELS = {
     "breakfast": ("bữa sáng", "breakfast"),
@@ -24,6 +24,48 @@ def next_meal_ack(*, locale: str, slot: str) -> str:
     if slot == "snack":
         return "I'm picking a snack that fits what's left."
     return f"I'm picking {label} that fits what's left."
+
+
+def verified_cook_reply(
+    user_text: str,
+    cards: Sequence[Mapping[str, Any]],
+    *,
+    locale: str,
+) -> str | None:
+    """Recipe steps copied from the card the user asked how to cook.
+
+    Returns None when the question is not a cook request, or when no shown
+    card has steps. The text has no calorie or macro figures added by us.
+    """
+    if not is_cook_request(user_text):
+        return None
+    usable = [card for card in cards if _recipe_lines(card)]
+    if not usable:
+        return None
+    if _names_a_different_dish(user_text, usable):
+        return None
+    card = _card_named_in_text(user_text, usable) or usable[0]
+    lines = _recipe_lines(card)
+    name = " ".join(str(card.get("name") or "").split())
+    body = "\n".join(f"{index}. {line}" for index, line in enumerate(lines, start=1))
+    if locale == "vi":
+        lead = f"Cách làm {name}:" if name else "Cách làm:"
+    else:
+        lead = f"How to make {name}:" if name else "How to make it:"
+    return f"{lead}\n{body}"
+
+
+def cook_reply_already_said(text: str, reply: str) -> bool:
+    """True when the model answer already includes the card's first step."""
+    first = ""
+    for line in reply.splitlines():
+        stripped = line.strip()
+        if stripped[:1].isdigit() and ". " in stripped:
+            first = stripped.split(". ", 1)[1].strip().rstrip(".")
+            break
+    if not first:
+        return False
+    return _fold(first) in _fold(text)
 
 
 def next_meal_unavailable(*, locale: str, slot: str) -> str:
@@ -165,6 +207,107 @@ def _dish_label(value: Any) -> str | None:
 
 def _fold(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _recipe_lines(card: Mapping[str, Any]) -> list[str]:
+    raw = card.get("recipe_steps")
+    if not isinstance(raw, list):
+        return []
+    lines: list[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            text = item.get("instruction") or item.get("text") or ""
+        elif isinstance(item, str):
+            text = item
+        else:
+            continue
+        cleaned = " ".join(str(text).split())
+        if not cleaned:
+            continue
+        lines.append(cleaned[:160])
+        if len(lines) >= 4:
+            break
+    return lines
+
+
+def _card_named_in_text(
+    user_text: str, cards: Sequence[Mapping[str, Any]]
+) -> Mapping[str, Any] | None:
+    for card in cards:
+        name = " ".join(str(card.get("name") or "").split())
+        if _name_in_text(name, user_text):
+            return card
+    return None
+
+
+def _name_in_text(name: str, text: str) -> bool:
+    folded_name = _fold(name)
+    folded_text = _fold(text)
+    if not folded_name:
+        return False
+    if folded_name in folded_text:
+        return True
+    words = folded_name.split()
+    token = " ".join(words[:2]) if len(words) >= 2 and len(words[0]) < 4 else words[0]
+    return len(token) >= 4 and token in folded_text
+
+
+_COOK_NOISE = frozenset(
+    {
+        "this",
+        "that",
+        "with",
+        "from",
+        "meal",
+        "what",
+        "whats",
+        "how",
+        "does",
+        "make",
+        "cook",
+        "recipe",
+        "please",
+        "cach",
+        "làm",
+        "lam",
+        "nấu",
+        "nau",
+        "món",
+        "mon",
+        "này",
+        "nay",
+        "the",
+        "for",
+        "can",
+        "you",
+        "and",
+    }
+)
+
+
+def _names_a_different_dish(user_text: str, cards: Sequence[Mapping[str, Any]]) -> bool:
+    """True when the question names a dish that is not one of the cards."""
+    if _card_named_in_text(user_text, cards) is not None:
+        return False
+    folded = _fold(user_text)
+    for marker in (
+        "cook",
+        "recipe",
+        "cách nấu",
+        "cach nau",
+        "cách làm",
+        "cach lam",
+        "công thức",
+        "cong thuc",
+    ):
+        folded = folded.replace(marker, " ")
+    names = _fold(" ".join(str(card.get("name") or "") for card in cards))
+    for word in folded.split():
+        token = "".join(char for char in word if char.isalpha())
+        if len(token) < 3 or token in _COOK_NOISE or token in names:
+            continue
+        return True
+    return False
 
 
 # Specific change, then a short reply. First match wins. No nutrition numbers.

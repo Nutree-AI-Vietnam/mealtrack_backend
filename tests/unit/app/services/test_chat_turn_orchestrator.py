@@ -1046,6 +1046,42 @@ async def test_how_to_cook_ignores_a_new_meal_tool_call():
     assert next_meals.calls == []
     assert completed.data.get("intent") != "next_meal"
     assert "Egg rice bowl" not in repo.completed["content"]
+    assert repo.completed["content"] == (
+        "How to make Tofu bowl:\n1. Press the tofu dry.\n2. Pan-fry until golden."
+    )
+
+
+@pytest.mark.asyncio
+async def test_invented_cook_steps_are_replaced_with_the_card():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try the tofu bowl.",
+        reply_payload={
+            "suggestions": [
+                {
+                    "name": "Tofu bowl",
+                    "recipe_steps": [
+                        {"instruction": "Press the tofu dry."},
+                        {"instruction": "Pan-fry until golden."},
+                    ],
+                }
+            ]
+        },
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    completion = _FakeCompletion(["Bake it at 400 degrees for an hour. "])
+    orchestrator = _orchestrator(repo, completion=completion)
+
+    await _stream(orchestrator, content="How do I cook the tofu?")
+
+    assert "400" not in repo.completed["content"]
+    assert "Press the tofu dry" in repo.completed["content"]
+    assert "Pan-fry until golden" in repo.completed["content"]
 
 
 @pytest.mark.asyncio

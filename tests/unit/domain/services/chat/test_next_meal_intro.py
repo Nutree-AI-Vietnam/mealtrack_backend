@@ -1,8 +1,10 @@
 from src.domain.services.chat.next_meal_intro import (
+    cook_reply_already_said,
     eaten_today_name,
     next_meal_ack,
     next_meal_intro,
     next_meal_unavailable,
+    verified_cook_reply,
     with_eaten_today,
 )
 
@@ -66,6 +68,34 @@ def test_ack_names_the_slot_without_a_number() -> None:
     )
     assert "kcal" not in next_meal_ack(locale="vi", slot="breakfast")
     assert "bữa sáng" in next_meal_ack(locale="vi", slot="breakfast")
+
+
+def test_cook_reply_copies_the_named_card_steps() -> None:
+    cards = [
+        {
+            "name": "Tofu bowl",
+            "recipe_steps": [
+                {"instruction": "Press the tofu dry."},
+                {"instruction": "Pan-fry until golden."},
+            ],
+        },
+        {
+            "name": "Egg rice bowl",
+            "recipe_steps": [{"instruction": "Fry the rice."}],
+        },
+    ]
+    text = verified_cook_reply("How do I cook the tofu?", cards, locale="en")
+    assert text == (
+        "How to make Tofu bowl:\n1. Press the tofu dry.\n2. Pan-fry until golden."
+    )
+    assert (
+        verified_cook_reply("Why is lunch the better fit?", cards, locale="en") is None
+    )
+    assert verified_cook_reply("How do I cook pho?", cards, locale="en") is None
+    assert cook_reply_already_said("Press the tofu dry, then rest it.", text or "")
+    vi = verified_cook_reply("Cách nấu món này", cards[:1], locale="vi")
+    assert vi is not None
+    assert vi.startswith("Cách làm Tofu bowl:")
 
 
 def test_unavailable_names_the_slot_and_invents_no_dish() -> None:

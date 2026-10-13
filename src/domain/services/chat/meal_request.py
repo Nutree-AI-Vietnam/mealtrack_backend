@@ -195,6 +195,28 @@ def is_meal_comparison(text: str) -> bool:
     return any(marker in normalized for marker in _QUESTION_MARKERS)
 
 
+_COOK_MARKERS: tuple[str, ...] = (
+    "cook",
+    "recipe",
+    "cách nấu",
+    "cach nau",
+    "cách làm",
+    "cach lam",
+    "công thức",
+    "cong thuc",
+    "nấu món",
+    "nau mon",
+)
+
+
+def is_cook_request(text: str) -> bool:
+    """True when the user wants the shown meal's recipe, not a new dish."""
+    normalized = _normalize(text)
+    if not normalized or is_meal_refinement(text) or is_meal_suggestion_request(text):
+        return False
+    return any(marker in normalized for marker in _COOK_MARKERS)
+
+
 def is_meal_explanation(text: str) -> bool:
     """True when the user wants the shown meal explained, not replaced.
 

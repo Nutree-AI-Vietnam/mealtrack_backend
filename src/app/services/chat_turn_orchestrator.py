@@ -69,10 +69,12 @@ from src.domain.services.chat.meal_request import (
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
 from src.domain.services.chat.next_meal_intro import (
+    cook_reply_already_said,
     eaten_today_name,
     next_meal_ack,
     next_meal_intro,
     next_meal_unavailable,
+    verified_cook_reply,
     with_eaten_today,
 )
 from src.domain.services.chat.policy import (
@@ -776,6 +778,28 @@ class ChatTurnOrchestrator:
                 # markdown (e.g. "còn khoảng **1.821"). Prefer a clean sentence.
                 final_text = sanitize_incomplete_assistant_text(final_text)
                 generation["text"] = final_text
+            if answer_from_shown_meals:
+                cook_reply = verified_cook_reply(
+                    trimmed,
+                    _shown_recipe_cards(history_messages),
+                    locale=resolved_locale,
+                )
+                if cook_reply and not cook_reply_already_said(final_text, cook_reply):
+                    if cook_reply != final_text:
+                        yield ChatSseEvent(
+                            event="message.delta",
+                            data={
+                                "assistant_message_id": claim.assistant_message.id,
+                                "delta": cook_reply,
+                                "replace": True,
+                            },
+                        )
+                    final_text = cook_reply
+                    sentences.clear()
+                    sentences.append(cook_reply)
+                    generation["text"] = cook_reply
+                    generation["blocked"] = False
+                    blocked = False
             if not final_text:
                 blocked = True
                 final_text = safe_fallback_message(resolved_locale)
@@ -1831,6 +1855,21 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
             "assistant_message_id": claim.assistant_message.id,
         },
     )
+
+
+def _shown_recipe_cards(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    """Cards from the newest assistant turn that included recipe steps."""
+    for message in reversed(messages):
+        if message.role != ChatMessageRole.ASSISTANT:
+            continue
+        cards = [
+            card
+            for card in message.suggestions()
+            if isinstance(card, dict) and card.get("recipe_steps")
+        ]
+        if cards:
+            return cards
+    return []
 
 
 def _latest_shown_meal_names(messages: list[ChatMessage]) -> list[str]:
