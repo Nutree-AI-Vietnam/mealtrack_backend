@@ -310,14 +310,14 @@ _NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 1 delicious next-meal recipe for one 
 Schema fields: name, english_name, emoji, ingredients (3-8 with amount+unit), recipe_steps (2-6 with instruction+duration_minutes), prep_time_minutes, calories, protein_g, carbs_g, fat_g, fiber_g, micros.
 
 LANGUAGE RULES:
-- Meal name, ingredient names, and recipe step instructions MUST be 100% in the requested locale from user context.
-- If locale is 'vi', meal name, all ingredient names, and all recipe step instructions MUST be written in natural, fluent Vietnamese.
-- NEVER mix English sentences, English phrases, or English ingredient names into recipe_steps or ingredients when locale is 'vi'.
+- Meal name and recipe step instructions MUST be in the requested locale.
+- If locale is 'vi', the meal name and every recipe step MUST be natural Vietnamese.
+- Ingredient names MUST be English only. The server looks them up in the food database; Vietnamese ingredient names fail that lookup.
 - english_name: English meal name for food photo search (repeat name when locale is already English).
 
 PORTIONS & NUTRITION:
 - Use g or ml for units; realistic single-serving portion amounts.
-- Provide realistic portion calories (kcal), macros (protein_g, carbs_g, fat_g), and fiber_g for one sitting fitting the requested meal slot and remaining calories.
+- Fill calories and macros so the schema is valid. The server replaces those numbers with looked-up nutrition and drops the card if lookup fails. Do not treat your estimates as the numbers the user will see.
 - micros: Estimate portion micronutrients (vitamin_a in mcg; vitamin_c, vitamin_e, calcium, iron, magnesium, potassium, sodium in mg; saturated_fat, added_sugar in g) based on the ingredients. Set null for unknown fields; do not invent arbitrary numbers.
 - One sitting only — not a full day's food.
 - Honor allergies and dietary_preferences strictly.

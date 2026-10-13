@@ -370,7 +370,11 @@ async def test_fetch_prioritizes_recipe_generator_and_returns_full_recipe() -> N
                     "prep_time_minutes": 20,
                     "ingredients": [{"name": "cá hồi", "amount": 150, "unit": "g"}],
                     "recipe_steps": [
-                        {"step": 1, "instruction": "Áp chảo cá hồi", "duration_minutes": 8}
+                        {
+                            "step": 1,
+                            "instruction": "Áp chảo cá hồi",
+                            "duration_minutes": 8,
+                        }
                     ],
                 }
             ]
@@ -392,3 +396,113 @@ async def test_fetch_prioritizes_recipe_generator_and_returns_full_recipe() -> N
     assert card["ingredients"] == [{"name": "cá hồi", "amount": 150, "unit": "g"}]
     assert card["recipe_steps"][0]["instruction"] == "Áp chảo cá hồi"
 
+
+class _Lookup:
+    def __init__(self, macros=None, error=None):
+        self.macros = macros
+        self.error = error
+        self.calls: list[list] = []
+
+    async def calculate_meal_macros(self, ingredients):
+        self.calls.append(ingredients)
+        if self.error is not None:
+            raise self.error
+        return self.macros
+
+
+class _IngredientCal:
+    def __init__(self, calories: float):
+        self.calories = calories
+
+
+class _MealMacros:
+    def __init__(self, calories: float, ingredients: list[_IngredientCal]):
+        self.calories = calories
+        self.protein = 32.0
+        self.carbs = 40.0
+        self.fat = 11.0
+        self.fiber = 6.0
+        self.ingredients = ingredients
+
+
+def _recipe(**overrides) -> dict:
+    meal = {
+        "name": "Salmon rice",
+        "english_name": "Salmon rice",
+        "emoji": "🐟",
+        "calories": 999,
+        "protein_g": 1,
+        "carbs_g": 1,
+        "fat_g": 1,
+        "ingredients": [
+            {"name": "salmon", "amount": 150, "unit": "g"},
+            {"name": "brown rice", "amount": 120, "unit": "g"},
+            {"name": "broccoli", "amount": 80, "unit": "g"},
+        ],
+        "recipe_steps": [
+            {"step": 1, "instruction": "Sear the salmon.", "duration_minutes": 8},
+            {"step": 2, "instruction": "Serve with rice.", "duration_minutes": 2},
+        ],
+    }
+    meal.update(overrides)
+    return meal
+
+
+@pytest.mark.asyncio
+async def test_lookup_replaces_model_calories_and_adds_ingredient_kcal() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [_recipe()]
+
+    lookup = _Lookup(
+        _MealMacros(
+            410,
+            [_IngredientCal(180), _IngredientCal(140), _IngredientCal(90)],
+        )
+    )
+    service = ChatNextMealCandidates(
+        _FakeDiscover(),
+        recipe_generator=_Gen(),
+        nutrition_lookup=lookup,
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+    )
+    card = result.suggestions[0]
+    assert card["calories"] == 410
+    assert card["protein_g"] == 32.0
+    assert card["calories"] != 999
+    assert [item["calories"] for item in card["ingredients"]] == [180, 140, 90]
+    assert lookup.calls[0][0]["name"] == "salmon"
+
+
+@pytest.mark.asyncio
+async def test_failed_lookup_drops_model_calories_and_uses_discover() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [_recipe()]
+
+    discover = _FakeDiscover(
+        ChatDiscoverBatch(session_id="sess-lookup", meals=(_meal("Rice bowl"),))
+    )
+    service = ChatNextMealCandidates(
+        discover,
+        recipe_generator=_Gen(),
+        nutrition_lookup=_Lookup(error=RuntimeError("lookup down")),
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+    )
+    assert result.suggestions[0]["name"] == "Rice bowl"
+    assert result.suggestions[0]["calories"] == 420
+    assert discover.calls

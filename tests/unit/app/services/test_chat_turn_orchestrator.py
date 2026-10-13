@@ -789,10 +789,7 @@ async def test_next_meal_persists_suggestions_and_follow_ups():
         ]
     )
     repo = _FakeRepo(claim=_claim())
-    completion = _FakeCompletion(
-        ["Here are suggestions. "],
-        tool_calls=[{"id": "call_1", "name": "suggest_next_meal"}],
-    )
+    completion = _FakeCompletion(["Here are suggestions. "])
     orchestrator = _orchestrator(
         repo, next_meals=next_meals, follow_ups=follow_ups, completion=completion
     )
@@ -827,10 +824,7 @@ async def test_next_meal_reuses_discover_session_id():
         )
     )
     repo = _FakeRepo(claim=_claim(), history=[prior])
-    completion = _FakeCompletion(
-        ["Here you go. "],
-        tool_calls=[{"id": "call_1", "name": "suggest_next_meal"}],
-    )
+    completion = _FakeCompletion(["Here you go. "])
     orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
 
     await _stream(orchestrator, intent=None, content="More breakfast ideas")
@@ -843,10 +837,7 @@ async def test_typed_dinner_fetches_next_meal_without_chip():
         NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")
     )
     repo = _FakeRepo(claim=_claim())
-    completion = _FakeCompletion(
-        ["Here you go. "],
-        tool_calls=[{"id": "call_1", "name": "suggest_next_meal"}],
-    )
+    completion = _FakeCompletion(["Here you go. "])
     orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
 
     events = await _stream(orchestrator, content="What's for dinner?")
@@ -986,9 +977,7 @@ async def test_meal_recommendation_generates_upfront_with_intent_chip():
     )
     repo = _FakeRepo(claim=_claim())
     completion = _FakeCompletion(["Dưới đây là gợi ý bữa trưa hấp dẫn cho bạn! "])
-    orchestrator = _orchestrator(
-        repo, next_meals=next_meals, completion=completion
-    )
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
 
     events = await _stream(
         orchestrator,
@@ -1002,3 +991,61 @@ async def test_meal_recommendation_generates_upfront_with_intent_chip():
     assert completed.data["intent"] == "next_meal"
     assert completed.data["suggestions"] == cards
     assert repo.completed["reply_payload"]["suggestions"] == cards
+
+
+@pytest.mark.asyncio
+async def test_typed_meal_question_fetches_cards_without_a_tool_call():
+    cards = _three_cards()
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=cards, meal_slot="breakfast")
+    )
+    repo = _FakeRepo(claim=_claim())
+    completion = _FakeCompletion(["Oatmeal fits the rest of your day. "])
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    events = await _stream(orchestrator, intent=None, content="What should I eat next?")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert next_meals.calls
+    assert orchestrator.test_embedding.calls == []
+    assert orchestrator.test_retrieval.calls == []
+    assert completed.data["intent"] == "next_meal"
+    assert completed.data["suggestions"] == cards
+    assert "Oatmeal fits" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_persists_partial_reply_and_releases_the_turn():
+    class _CancelAfterSentence:
+        async def stream(self, **kwargs):
+            del kwargs
+            yield ChatCompletionDelta(text="Here is a start. ")
+            raise asyncio.CancelledError()
+
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=_CancelAfterSentence())
+
+    with pytest.raises(asyncio.CancelledError):
+        await _stream(orchestrator, content="Cite protein guidance")
+
+    assert repo.failed is None
+    assert repo.completed is not None
+    assert "Here is a start" in repo.completed["content"]
+
+
+def test_history_remembers_the_meal_card_name():
+    from src.app.services.chat_turn_orchestrator import _history_turns
+
+    now = utc_now()
+    message = ChatMessage(
+        id="a1",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="Try this.",
+        reply_payload={"suggestions": [{"name": "Salmon rice"}]},
+    )
+    turns = _history_turns([message])
+    assert turns[0].content == "Try this.\nMeal card shown: Salmon rice."

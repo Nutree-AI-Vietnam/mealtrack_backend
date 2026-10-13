@@ -241,7 +241,7 @@ async def test_tool_call_with_pre_tool_text_concatenates_properly():
         event
         async for event in orchestrator.stream_turn(
             user_id="u-edge",
-            content="What's for dinner?",
+            content="Help me compare two options",
             idempotency_key="key-edge",
             locale="en",
             header_timezone="UTC",
@@ -258,7 +258,7 @@ async def test_tool_call_with_pre_tool_text_concatenates_properly():
 
     turn_2_history = completion.received_histories[1]
     assert turn_2_history[0].role == ChatMessageRole.USER
-    assert turn_2_history[0].content == "What's for dinner?"
+    assert turn_2_history[0].content == "Help me compare two options"
     assert turn_2_history[1].role == ChatMessageRole.ASSISTANT
     assert turn_2_history[1].tool_calls == [{"id": "c1", "name": "suggest_next_meal"}]
     assert turn_2_history[2].role == "tool"
@@ -290,7 +290,7 @@ async def test_tool_call_handles_next_meals_exception_gracefully():
         event
         async for event in orchestrator.stream_turn(
             user_id="u-edge",
-            content="What's for dinner?",
+            content="Help me compare two options",
             idempotency_key="key-edge",
             locale="en",
             header_timezone="UTC",
@@ -329,7 +329,7 @@ async def test_tool_call_handles_empty_meal_candidates():
         event
         async for event in orchestrator.stream_turn(
             user_id="u-edge",
-            content="What's for dinner?",
+            content="Help me compare two options",
             idempotency_key="key-edge",
             locale="en",
             header_timezone="UTC",

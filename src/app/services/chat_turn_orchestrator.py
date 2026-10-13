@@ -58,7 +58,8 @@ from src.domain.services.chat.coach_functions import (
     preferred_alias,
     resolve_coach_function,
 )
-from src.domain.services.chat.meal_slot import resolve_meal_slot
+from src.domain.services.chat.meal_request import is_meal_suggestion_request
+from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
@@ -295,6 +296,16 @@ class ChatTurnOrchestrator:
         header_timezone = prepared.header_timezone
         started = prepared.started
         intent = prepared.intent
+        sentences: list[str] = []
+        suggestions: list[dict[str, Any]] = []
+        discover_session_id: str | None = None
+        generation: dict[str, Any] = {
+            "text": "",
+            "usage": ChatUsage(model=self._model),
+            "provider_response_id": None,
+            "blocked": False,
+            "tools": [],
+        }
 
         try:
             if claim.kind == ChatClaimKind.REPLAY:
@@ -316,6 +327,15 @@ class ChatTurnOrchestrator:
                 )
             else:
                 resolved = resolve_coach_function(intent)
+            # Typed "What should I eat next?" must not depend on the model
+            # remembering to call suggest_next_meal.
+            if resolved is None and is_meal_suggestion_request(trimmed):
+                typed_slot = slot_from_user_text(trimmed)
+                resolved = resolve_coach_function(
+                    FUNCTION_SUGGEST_NEXT_MEAL,
+                    args={"slot": typed_slot} if typed_slot else {},
+                )
+                intent = ChatIntent.NEXT_MEAL.value
             direct_invoke = resolved is not None and not needs_retrieval(resolved.name)
             if direct_invoke:
                 context = await self._context_builder.build(
@@ -336,7 +356,6 @@ class ChatTurnOrchestrator:
                 claim.thread.id, exclude_message_id=claim.user_message.id
             )
             history = _history_turns(history_messages)
-            suggestions: list[dict[str, Any]] = []
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
 
@@ -366,14 +385,13 @@ class ChatTurnOrchestrator:
 
             tools = [] if direct_invoke else list(openai_tools())
 
-            generation: dict[str, Any] = {
+            generation = {
                 "text": "",
                 "usage": ChatUsage(model=self._model),
                 "provider_response_id": None,
                 "blocked": False,
                 "tools": tools,
             }
-            sentences: list[str] = []
 
             # Direct invoke: run the known function once, then one tool-free synthesis.
             current_user_message = trimmed
@@ -631,6 +649,38 @@ class ChatTurnOrchestrator:
                     **reply_sidecar(completed),
                 },
             )
+        except asyncio.CancelledError:
+            partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
+            if partial:
+                try:
+                    await self._complete(
+                        claim.assistant_message,
+                        content=partial,
+                        usage=generation["usage"],
+                        citations=[],
+                        provider_response_id=generation.get("provider_response_id"),
+                        reply_payload=_reply_payload(
+                            suggestions=suggestions,
+                            follow_ups=[],
+                            discover_session_id=discover_session_id,
+                            intent=intent,
+                        ),
+                    )
+                except Exception:
+                    await self._fail(
+                        claim.assistant_message.id,
+                        "CHAT_CANCELLED",
+                        generation_id=claim.assistant_message.generation_id,
+                        content=partial,
+                    )
+            else:
+                await self._fail(
+                    claim.assistant_message.id,
+                    "CHAT_CANCELLED",
+                    generation_id=claim.assistant_message.generation_id,
+                )
+            increment_metric("chat.turn.cancelled")
+            raise
         except ChatProviderUnavailableError as exc:
             await self._fail(
                 claim.assistant_message.id,
@@ -1223,6 +1273,7 @@ class ChatTurnOrchestrator:
         error_code: str,
         *,
         generation_id: str | None = None,
+        content: str | None = None,
     ) -> None:
         try:
             async with self._uow_factory() as uow:
@@ -1231,6 +1282,7 @@ class ChatTurnOrchestrator:
                     message_id=message_id,
                     error_code=error_code,
                     generation_id=generation_id,
+                    content=content,
                 )
         except Exception:
             logger.warning(
@@ -1282,9 +1334,20 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
 def _history_turns(messages: list[ChatMessage]) -> list[ChatHistoryTurn]:
     turns: list[ChatHistoryTurn] = []
     for message in messages:
-        if not message.content:
+        content = (message.content or "").strip()
+        if message.role == ChatMessageRole.ASSISTANT:
+            names = [
+                str(card.get("name")).strip()
+                for card in message.suggestions()
+                if isinstance(card, dict) and str(card.get("name") or "").strip()
+            ]
+            if names:
+                note = f"Meal card shown: {names[0]}."
+                if note not in content:
+                    content = f"{content}\n{note}".strip()
+        if not content:
             continue
-        turns.append(ChatHistoryTurn(role=message.role, content=message.content))
+        turns.append(ChatHistoryTurn(role=message.role, content=content))
     return turns[-CHAT_HISTORY_LIMIT:]
 
 
