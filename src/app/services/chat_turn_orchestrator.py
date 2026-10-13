@@ -77,6 +77,7 @@ from src.domain.services.chat.policy import (
     sanitize_incomplete_assistant_text,
     stable_system_instructions,
 )
+from src.domain.services.chat.welcome import coach_welcome
 from src.domain.utils.timezone_utils import utc_now
 from src.observability import distribution_metric, increment_metric, log_event
 
@@ -814,6 +815,8 @@ class ChatTurnOrchestrator:
         user_id: str,
         limit: int,
         before: str | None,
+        locale: str = "en",
+        header_timezone: str | None = None,
     ) -> dict[str, Any]:
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
@@ -833,6 +836,13 @@ class ChatTurnOrchestrator:
         # Newest-first page → oldest-first; tie-break user before assistant when
         # both rows share the same claim-time created_at.
         chronological = chronological_chat_messages(page)
+        welcome = None
+        if before is None and not chronological and generating is None:
+            welcome = await self._welcome_snapshot(
+                user_id=user_id,
+                locale=locale,
+                header_timezone=header_timezone,
+            )
         return {
             "thread": {
                 "id": thread.id,
@@ -848,7 +858,30 @@ class ChatTurnOrchestrator:
             ],
             "has_more": has_more,
             "in_flight": _in_flight_payload(generating),
+            "welcome": welcome,
         }
+
+    async def _welcome_snapshot(
+        self,
+        *,
+        user_id: str,
+        locale: str,
+        header_timezone: str | None,
+    ) -> dict[str, Any] | None:
+        try:
+            context = await self._context_builder.build(
+                user_id=user_id,
+                locale=locale,
+                header_timezone=header_timezone,
+            )
+        except Exception:
+            logger.warning(
+                "chat welcome snapshot failed",
+                extra={"user_id": user_id},
+                exc_info=True,
+            )
+            return None
+        return coach_welcome(context)
 
     async def clear_thread(self, user_id: str) -> dict[str, Any]:
         async with self._uow_factory() as uow:

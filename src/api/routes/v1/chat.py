@@ -47,8 +47,13 @@ async def get_chat_thread(
     user_id: str = Depends(get_current_user_id),
     orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
 ) -> ChatThreadResponse:
-    del request
-    payload = await orchestrator.get_thread(user_id=user_id, limit=limit, before=before)
+    payload = await orchestrator.get_thread(
+        user_id=user_id,
+        limit=limit,
+        before=before,
+        locale=get_request_language(request),
+        header_timezone=request.headers.get("X-Timezone"),
+    )
     return ChatThreadResponse.model_validate(payload)
 
 

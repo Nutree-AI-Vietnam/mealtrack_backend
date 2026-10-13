@@ -66,11 +66,21 @@ class ChatInFlightResponse(BaseModel):
     lease_expires_at: str | None = None
 
 
+class ChatWelcomeResponse(BaseModel):
+    preferred_name: str | None = None
+    remaining_calories: int | None = None
+    remaining_protein_g: int | None = None
+    remaining_carbs_g: int | None = None
+    suggested_meal_slot: str | None = None
+    latest_meal_name: str | None = None
+
+
 class ChatThreadResponse(BaseModel):
     thread: ChatThreadSummaryResponse
     messages: list[ChatMessageResponse]
     has_more: bool = False
     in_flight: ChatInFlightResponse | None = None
+    welcome: ChatWelcomeResponse | None = None
 
 
 class ChatClearResponse(BaseModel):

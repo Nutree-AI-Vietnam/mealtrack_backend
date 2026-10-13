@@ -761,6 +761,44 @@ async def test_get_thread_orders_equal_timestamp_user_before_assistant():
     assert [m["role"] for m in payload["messages"]] == ["user", "assistant"]
     assert payload["messages"][0]["content"] == "View today's progress"
     assert payload["messages"][1]["content"] == "You're on track today."
+    assert payload["welcome"] is None
+
+
+@pytest.mark.asyncio
+async def test_empty_thread_includes_welcome_from_context():
+    repo = _FakeRepo(claim=_claim(), history=[])
+    orchestrator = _orchestrator(repo)
+
+    payload = await orchestrator.get_thread(
+        user_id="u1",
+        limit=50,
+        before=None,
+        locale="vi",
+        header_timezone="Asia/Ho_Chi_Minh",
+    )
+
+    assert payload["messages"] == []
+    assert payload["welcome"]["remaining_calories"] == 650
+    assert payload["welcome"]["remaining_protein_g"] == 50
+    assert payload["welcome"]["suggested_meal_slot"] == "breakfast"
+    assert orchestrator.test_context.calls[-1]["locale"] == "vi"
+    assert orchestrator.test_context.calls[-1]["header_timezone"] == "Asia/Ho_Chi_Minh"
+
+
+@pytest.mark.asyncio
+async def test_empty_thread_omits_welcome_when_context_fails_or_paging():
+    class _BrokenContext:
+        async def build(self, **kwargs):
+            del kwargs
+            raise RuntimeError("context down")
+
+    repo = _FakeRepo(claim=_claim(), history=[])
+    orchestrator = _orchestrator(repo, context_builder=_BrokenContext())
+    failed = await orchestrator.get_thread(user_id="u1", limit=50, before=None)
+    assert failed["welcome"] is None
+
+    paged = await _orchestrator(repo).get_thread(user_id="u1", limit=50, before="m1")
+    assert paged["welcome"] is None
 
 
 def _three_cards() -> list[dict]:
