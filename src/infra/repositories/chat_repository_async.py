@@ -260,6 +260,21 @@ class AsyncChatRepository(ChatRepositoryPort):
         await self._touch_thread(row.thread_id, now)
         return _to_message(row)
 
+    async def attach_follow_ups(
+        self,
+        *,
+        message_id: str,
+        follow_ups: list[dict[str, Any]],
+    ) -> None:
+        row = await self.session.get(ChatMessageORM, message_id)
+        if row is None or row.status != ChatMessageStatus.COMPLETED.value:
+            return
+        payload = dict(row.reply_payload or {})
+        payload["follow_ups"] = follow_ups
+        row.reply_payload = payload
+        row.updated_at = utc_now()
+        await self.session.flush()
+
     async def fail_assistant_message(
         self,
         *,

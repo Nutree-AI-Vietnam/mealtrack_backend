@@ -641,30 +641,6 @@ class ChatTurnOrchestrator:
                 ),
             )
             ready_payload.pop("follow_ups", None)
-            yield ChatSseEvent(
-                event="message.ready",
-                data={
-                    "assistant_message_id": claim.assistant_message.id,
-                    "citations": [
-                        {
-                            "label": item.label,
-                            "source_key": item.source_key,
-                            "title": item.title,
-                            "canonical_uri": item.canonical_uri,
-                        }
-                        for item in citations
-                    ],
-                    **ready_payload,
-                },
-            )
-            follow_ups = await self._generate_follow_ups(
-                locale=resolved_locale,
-                intent=intent,
-                slot=meal_slot,
-                user_message=trimmed,
-                assistant_text=final_text,
-                has_suggestions=bool(suggestions),
-            )
             completed = await self._complete(
                 claim.assistant_message,
                 content=final_text,
@@ -673,7 +649,7 @@ class ChatTurnOrchestrator:
                 provider_response_id=provider_response_id,
                 reply_payload=_reply_payload(
                     suggestions=suggestions,
-                    follow_ups=follow_ups,
+                    follow_ups=[],
                     discover_session_id=discover_session_id,
                     intent=intent,
                     citations=citations,
@@ -698,6 +674,38 @@ class ChatTurnOrchestrator:
                     },
                 )
                 return
+            yield ChatSseEvent(
+                event="message.ready",
+                data={
+                    "assistant_message_id": completed.id,
+                    "citations": [
+                        {
+                            "label": item.label,
+                            "source_key": item.source_key,
+                            "title": item.title,
+                            "canonical_uri": item.canonical_uri,
+                        }
+                        for item in citations
+                    ],
+                    **ready_payload,
+                },
+            )
+            follow_ups = await self._generate_follow_ups(
+                locale=resolved_locale,
+                intent=intent,
+                slot=meal_slot,
+                user_message=trimmed,
+                assistant_text=final_text,
+                has_suggestions=bool(suggestions),
+            )
+            if follow_ups:
+                try:
+                    await self._attach_follow_ups(completed.id, follow_ups)
+                except Exception:
+                    logger.info(
+                        "chat follow-up save failed",
+                        extra={"assistant_message_id": completed.id},
+                    )
             if blocked:
                 increment_metric(
                     "chat.turn.safety_block", attributes={"locale": resolved_locale}
@@ -739,7 +747,7 @@ class ChatTurnOrchestrator:
                         }
                         for item in citations
                     ],
-                    **reply_sidecar(completed),
+                    **_completed_sidecar(completed, follow_ups),
                 },
             )
         except asyncio.CancelledError:
@@ -1424,6 +1432,13 @@ class ChatTurnOrchestrator:
             logger.info("chat follow-up generation failed", extra={"intent": intent})
             return []
 
+    async def _attach_follow_ups(
+        self, message_id: str, follow_ups: list[dict[str, str]]
+    ) -> None:
+        async with self._uow_factory() as uow:
+            repo = _chat_repo(uow)
+            await repo.attach_follow_ups(message_id=message_id, follow_ups=follow_ups)
+
     async def _save_partial_or_fail(
         self,
         claim: ChatTurnClaim,
@@ -1637,6 +1652,15 @@ def _hydrate_message_citations(
     keys = [key for _, key in refs] if refs else list(message.citation_source_keys)
     labels = [label for label, _ in refs] if refs else None
     return hydrate_citations(keys, metadata or {}, labels=labels)
+
+
+def _completed_sidecar(
+    message: ChatMessage, follow_ups: list[dict[str, str]]
+) -> dict[str, Any]:
+    payload = reply_sidecar(message)
+    if follow_ups:
+        payload["follow_ups"] = follow_ups
+    return payload
 
 
 def _public_message(

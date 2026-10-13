@@ -100,6 +100,7 @@ def test_repository_ports_are_async_contracts():
             "get_generating_turn",
             "list_citation_metadata",
             "complete_assistant_message",
+            "attach_follow_ups",
             "fail_assistant_message",
             "reopen_assistant_message",
             "count_user_turns_since",

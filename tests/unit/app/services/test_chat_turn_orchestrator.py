@@ -78,6 +78,9 @@ class _FakeRepo:
             reply_payload=kwargs.get("reply_payload"),
         )
 
+    async def attach_follow_ups(self, **kwargs):
+        self.attached_follow_ups = kwargs
+
     async def fail_assistant_message(self, **kwargs):
         self.failed = kwargs
         return self.claim.assistant_message
@@ -1321,10 +1324,21 @@ async def test_older_turns_are_sent_as_memory_not_live_history():
 
 
 @pytest.mark.asyncio
-async def test_reply_is_ready_before_follow_up_chips():
-    follow_ups = _FakeFollowUps([{"label": "Another idea", "action": "next_meal"}])
+async def test_reply_is_saved_before_follow_up_chips():
+    repo = _FakeRepo(claim=_claim())
+
+    class _FollowUps:
+        def __init__(self) -> None:
+            self.saved_first = False
+
+        async def generate_follow_ups(self, **kwargs):
+            del kwargs
+            self.saved_first = repo.completed is not None
+            return [{"label": "Another idea", "action": "next_meal"}]
+
+    follow_ups = _FollowUps()
     orchestrator = _orchestrator(
-        _FakeRepo(claim=_claim()),
+        repo,
         completion=_FakeCompletion(["Fiber helps a meal last longer. "]),
         follow_ups=follow_ups,
     )
@@ -1345,7 +1359,8 @@ async def test_reply_is_ready_before_follow_up_chips():
     completed = next(event for event in events if event.event == "message.completed")
     assert "follow_ups" not in ready.data
     assert completed.data["follow_ups"][0]["label"] == "Another idea"
-    assert follow_ups.calls
+    assert follow_ups.saved_first
+    assert repo.attached_follow_ups["follow_ups"][0]["label"] == "Another idea"
 
 
 @pytest.mark.asyncio

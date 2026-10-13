@@ -87,6 +87,15 @@ class ChatRepositoryPort(ABC):
         """Complete the generating assistant only if the fencing token still owns it."""
 
     @abstractmethod
+    async def attach_follow_ups(
+        self,
+        *,
+        message_id: str,
+        follow_ups: list[dict[str, Any]],
+    ) -> None:
+        """Store chips on an already completed assistant without reopening it."""
+
+    @abstractmethod
     async def fail_assistant_message(
         self,
         *,
