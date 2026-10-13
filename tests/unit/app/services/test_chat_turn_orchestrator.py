@@ -1152,6 +1152,29 @@ async def test_regenerate_rejects_a_reply_that_cannot_be_reopened():
         )
 
 
+def test_history_keeps_the_latest_forty_turns():
+    from src.app.services.chat_turn_orchestrator import _history_turns
+    from src.domain.model.chat import CHAT_HISTORY_LIMIT
+
+    now = utc_now()
+    messages = [
+        ChatMessage(
+            id=f"m{index}",
+            thread_id="t1",
+            role=ChatMessageRole.USER,
+            status=ChatMessageStatus.COMPLETED,
+            created_at=now,
+            updated_at=now,
+            content=f"turn {index}",
+        )
+        for index in range(50)
+    ]
+    turns = _history_turns(messages)
+    assert len(turns) == CHAT_HISTORY_LIMIT
+    assert turns[0].content == "turn 10"
+    assert turns[-1].content == "turn 49"
+
+
 def test_history_remembers_the_meal_card_name():
     from src.app.services.chat_turn_orchestrator import _history_turns
 

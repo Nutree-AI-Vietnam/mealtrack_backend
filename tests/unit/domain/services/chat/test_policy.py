@@ -153,6 +153,7 @@ def test_stable_instructions_are_versioned_and_forbid_mutation():
 def test_grounding_includes_free_text_contract_when_intent_missing() -> None:
     text = build_grounding_message(_context(), [])
     assert "COACH INTENT free_text" in text
+    assert "completely enough to be useful" in text
     assert "Do not list recipe cards" in text
 
 
