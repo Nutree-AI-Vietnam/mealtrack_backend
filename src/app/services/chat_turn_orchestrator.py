@@ -447,6 +447,7 @@ class ChatTurnOrchestrator:
                         locale=resolved_locale,
                         session_id=discover_session_id,
                         slot=meal_slot,
+                        include_images=False,
                     )
                     suggestions = batch.suggestions
                     discover_session_id = batch.session_id or discover_session_id
@@ -626,6 +627,9 @@ class ChatTurnOrchestrator:
                         )
                     generation["tool_calls"] = None
                     generation["tools"] = None
+
+            if suggestions:
+                suggestions = await self._attach_meal_images(suggestions)
 
             final_text = "".join(sentences).strip()
             usage = generation["usage"]
@@ -1057,6 +1061,7 @@ class ChatTurnOrchestrator:
                         locale=resolved_locale,
                         session_id=discover_session_id,
                         slot=target_slot,
+                        include_images=False,
                     )
                     suggestions = batch.suggestions
                     discover_session_id = batch.session_id or discover_session_id
@@ -1459,6 +1464,21 @@ class ChatTurnOrchestrator:
             slot=slot,
             has_suggestions=has_suggestions,
         )
+
+    async def _attach_meal_images(
+        self, suggestions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        attach = getattr(self._next_meals, "attach_images", None)
+        if attach is None:
+            return suggestions
+        try:
+            updated = await attach(suggestions)
+        except Exception:
+            logger.warning("chat next-meal image attach failed", exc_info=True)
+            return suggestions
+        if not isinstance(updated, list):
+            return suggestions
+        return updated
 
     async def _save_thread_summary(
         self, thread_id: str, summary: str, through_message_id: str

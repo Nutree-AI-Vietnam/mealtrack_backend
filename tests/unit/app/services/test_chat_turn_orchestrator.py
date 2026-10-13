@@ -1122,6 +1122,51 @@ async def test_typed_meal_question_fetches_cards_without_a_tool_call():
 
 
 @pytest.mark.asyncio
+async def test_meal_intro_is_sent_before_food_photos():
+    class _Meals:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        async def fetch(self, **kwargs):
+            assert kwargs["include_images"] is False
+            self.events.append("fetch")
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="dinner"
+            )
+
+        async def attach_images(self, suggestions):
+            self.events.append("images")
+            return [
+                {**card, "thumbnail_url": "https://cdn.example/meal.jpg"}
+                for card in suggestions
+            ]
+
+    meals = _Meals()
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), next_meals=meals)
+    events = []
+    intro_seen = False
+    async for event in orchestrator.stream_turn(
+        user_id="u1",
+        content="What should I eat next?",
+        idempotency_key="key-1",
+        locale="en",
+        header_timezone="UTC",
+        user_language="en",
+    ):
+        if event.event == "message.delta" and not intro_seen:
+            assert meals.events == ["fetch"]
+            intro_seen = True
+        events.append(event)
+    completed = next(event for event in events if event.event == "message.completed")
+    assert intro_seen
+    assert meals.events == ["fetch", "images"]
+    assert (
+        completed.data["suggestions"][0]["thumbnail_url"]
+        == "https://cdn.example/meal.jpg"
+    )
+
+
+@pytest.mark.asyncio
 async def test_provider_drop_keeps_the_partial_reply():
     class _DropAfterSentence:
         async def stream(self, **kwargs):

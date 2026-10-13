@@ -75,6 +75,7 @@ class ChatNextMealCandidates:
         locale: str,
         session_id: str | None,
         slot: str | None = None,
+        include_images: bool = True,
     ) -> NextMealCandidateResult:
         slot = slot or resolve_meal_slot(context.suggested_meal_slot, user_text)
         if not self._allow(user_id):
@@ -115,10 +116,11 @@ class ChatNextMealCandidates:
                     )
                     verified = await self._reconcile_lookup_macros(safe)
                     if verified:
-                        enriched = await attach_food_images(
-                            verified, self._image_search
-                        )
-                        suggestions = map_discover_meals(enriched, slot)
+                        if include_images:
+                            verified = await attach_food_images(
+                                verified, self._image_search
+                            )
+                        suggestions = map_discover_meals(verified, slot)
                         return NextMealCandidateResult(
                             suggestions=suggestions,
                             session_id=None,
@@ -180,8 +182,11 @@ class ChatNextMealCandidates:
                 )
             )
             if safe_fallbacks:
-                enriched = await attach_food_images(safe_fallbacks, self._image_search)
-                suggestions = map_discover_meals(enriched, slot)
+                if include_images:
+                    safe_fallbacks = await attach_food_images(
+                        safe_fallbacks, self._image_search
+                    )
+                suggestions = map_discover_meals(safe_fallbacks, slot)
                 return NextMealCandidateResult(
                     suggestions=suggestions,
                     session_id=None,
@@ -189,6 +194,10 @@ class ChatNextMealCandidates:
                 )
 
         return NextMealCandidateResult(meal_slot=slot)
+
+    async def attach_images(self, meals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add food photos after the reply text has already been sent."""
+        return await attach_food_images(meals, self._image_search)
 
     async def _reconcile_lookup_macros(
         self, meals: list[dict[str, Any]]

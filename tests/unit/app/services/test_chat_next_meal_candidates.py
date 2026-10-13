@@ -565,3 +565,34 @@ async def test_meal_lookups_run_together_and_keep_surviving_order() -> None:
         "Tofu bowl",
     ]
     assert [card["calories"] for card in result.suggestions] == [410, 280]
+
+
+@pytest.mark.asyncio
+async def test_fetch_can_defer_food_photos() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [_recipe()]
+
+    calls: list[str] = []
+
+    async def search(name: str) -> None:
+        calls.append(name)
+        return None
+
+    service = ChatNextMealCandidates(
+        _FakeDiscover(),
+        recipe_generator=_Gen(),
+        image_search=search,
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+        include_images=False,
+    )
+    assert calls == []
+    await service.attach_images(result.suggestions)
+    assert calls == ["Salmon rice"]
