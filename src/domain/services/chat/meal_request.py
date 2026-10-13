@@ -170,6 +170,14 @@ def is_meal_suggestion_request(text: str) -> bool:
     return any(token in normalized for token in _SLOT_REQUEST_TOKENS)
 
 
+def is_meal_comparison(text: str) -> bool:
+    """True when the user is asking about meals already shown, not changing them."""
+    normalized = _normalize(text)
+    if not normalized or is_meal_refinement(text):
+        return False
+    return any(marker in normalized for marker in _QUESTION_MARKERS)
+
+
 def is_meal_refinement(text: str) -> bool:
     """True when the user wants the current meal changed, not explained."""
     normalized = _normalize(text)

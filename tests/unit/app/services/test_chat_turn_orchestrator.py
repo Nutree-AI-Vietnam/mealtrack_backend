@@ -163,9 +163,11 @@ class _FakeCompletion:
         self.chunks = chunks
         self.tool_calls = tool_calls
         self.stream_calls = 0
+        self.tools = None
 
     async def stream(self, **kwargs):
         self.stream_calls += 1
+        self.tools = kwargs.get("tools")
         if self.tool_calls and self.stream_calls == 1:
             yield ChatCompletionDelta(
                 text="",
@@ -1027,6 +1029,7 @@ async def test_comparison_question_does_not_refresh_meal_cards():
 
     assert next_meals.calls == []
     assert completed.data.get("intent") != "next_meal"
+    assert completion.tools == []
 
 
 @pytest.mark.asyncio

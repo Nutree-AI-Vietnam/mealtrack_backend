@@ -61,6 +61,7 @@ from src.domain.services.chat.coach_functions import (
 )
 from src.domain.services.chat.follow_up_schema import ensure_follow_ups, meal_names
 from src.domain.services.chat.meal_request import (
+    is_meal_comparison,
     is_meal_refinement,
     is_meal_suggestion_request,
 )
@@ -496,7 +497,14 @@ class ChatTurnOrchestrator:
                         exc_info=True,
                     )
 
-            tools = [] if direct_invoke else list(openai_tools())
+            answer_from_shown_meals = (
+                resolved is None
+                and bool(_latest_shown_meal_names(history_messages))
+                and is_meal_comparison(trimmed)
+            )
+            tools = (
+                [] if direct_invoke or answer_from_shown_meals else list(openai_tools())
+            )
 
             generation = {
                 "text": "",

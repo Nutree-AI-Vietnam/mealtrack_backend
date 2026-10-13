@@ -68,3 +68,12 @@ def test_meal_refinements(text: str) -> None:
 )
 def test_not_meal_refinements(text: str) -> None:
     assert not is_meal_refinement(text)
+
+
+def test_comparison_is_not_a_new_meal_request() -> None:
+    from src.domain.services.chat.meal_request import is_meal_comparison
+
+    assert is_meal_comparison("Which of these is higher protein?")
+    assert is_meal_comparison("Is the tofu higher protein?")
+    assert not is_meal_comparison("Make it higher protein")
+    assert not is_meal_comparison("What's for dinner?")
