@@ -1209,6 +1209,12 @@ async def test_meal_intro_is_sent_before_food_photos():
     completed = next(event for event in events if event.event == "message.completed")
     assert intro_seen
     assert meals.events == ["fetch", "images"]
+    reply = "".join(
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    )
+    assert "what's left.\n\nEgg rice bowl" in reply
     assert (
         completed.data["suggestions"][0]["thumbnail_url"]
         == "https://cdn.example/meal.jpg"
