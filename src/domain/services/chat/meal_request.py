@@ -217,6 +217,30 @@ def is_cook_request(text: str) -> bool:
     return any(marker in normalized for marker in _COOK_MARKERS)
 
 
+_INGREDIENT_MARKERS: tuple[str, ...] = (
+    "what's in",
+    "whats in",
+    "what is in",
+    "made of",
+    "made with",
+    "ingredients",
+    "nguyên liệu",
+    "nguyen lieu",
+    "có gì trong",
+    "co gi trong",
+    "gồm những gì",
+    "gom nhung gi",
+)
+
+
+def is_ingredient_request(text: str) -> bool:
+    """True when the user wants the shown meal's ingredients, not a new dish."""
+    normalized = _normalize(text)
+    if not normalized or is_meal_refinement(text) or is_meal_suggestion_request(text):
+        return False
+    return any(marker in normalized for marker in _INGREDIENT_MARKERS)
+
+
 def is_meal_explanation(text: str) -> bool:
     """True when the user wants the shown meal explained, not replaced.
 

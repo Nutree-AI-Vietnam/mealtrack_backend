@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.domain.services.chat.meal_request import is_cook_request, is_meal_refinement
+from src.domain.services.chat.meal_request import (
+    is_cook_request,
+    is_ingredient_request,
+    is_meal_refinement,
+)
 
 _SLOT_LABELS = {
     "breakfast": ("bữa sáng", "breakfast"),
@@ -55,17 +59,49 @@ def verified_cook_reply(
     return f"{lead}\n{body}"
 
 
+def verified_ingredient_reply(
+    user_text: str,
+    cards: Sequence[Mapping[str, Any]],
+    *,
+    locale: str,
+) -> str | None:
+    """Ingredient lines copied from the card. Amounts come from that card."""
+    if not is_ingredient_request(user_text):
+        return None
+    usable = [card for card in cards if _ingredient_lines(card)]
+    if not usable:
+        return None
+    if _names_a_different_dish(user_text, usable):
+        return None
+    card = _card_named_in_text(user_text, usable) or usable[0]
+    lines = _ingredient_lines(card)
+    name = " ".join(str(card.get("name") or "").split())
+    body = "\n".join(f"- {line}" for line in lines)
+    if locale == "vi":
+        lead = f"{name} gồm:" if name else "Món này gồm:"
+    else:
+        lead = f"{name} uses:" if name else "This meal uses:"
+    return f"{lead}\n{body}"
+
+
 def cook_reply_already_said(text: str, reply: str) -> bool:
-    """True when the model answer already includes the card's first step."""
-    first = ""
+    """True when the model answer already includes the card's first fact."""
+    folded = _fold(text)
     for line in reply.splitlines():
-        stripped = line.strip()
-        if stripped[:1].isdigit() and ". " in stripped:
-            first = stripped.split(". ", 1)[1].strip().rstrip(".")
-            break
-    if not first:
-        return False
-    return _fold(first) in _fold(text)
+        fact = _fact_from_reply_line(line)
+        if not fact:
+            continue
+        return _fold(fact) in folded
+    return False
+
+
+def _fact_from_reply_line(line: str) -> str:
+    stripped = line.strip()
+    if stripped.startswith("- "):
+        return stripped[2:].split(",")[0].strip()
+    if stripped[:1].isdigit() and ". " in stripped:
+        return stripped.split(". ", 1)[1].strip().rstrip(".")
+    return ""
 
 
 def next_meal_unavailable(*, locale: str, slot: str) -> str:
@@ -207,6 +243,39 @@ def _dish_label(value: Any) -> str | None:
 
 def _fold(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _ingredient_lines(card: Mapping[str, Any]) -> list[str]:
+    raw = card.get("ingredients")
+    if not isinstance(raw, list):
+        return []
+    lines: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            cleaned = " ".join(item.split())
+        elif isinstance(item, Mapping):
+            name = " ".join(str(item.get("name") or "").split())
+            if not name:
+                continue
+            amount = item.get("amount")
+            unit = " ".join(str(item.get("unit") or "").split())
+            if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                cleaned = name
+            else:
+                shown = (
+                    str(int(amount)) if float(amount) == int(amount) else str(amount)
+                )
+                cleaned = (
+                    f"{name}, {shown} {unit}".strip() if unit else f"{name}, {shown}"
+                )
+        else:
+            continue
+        if not cleaned:
+            continue
+        lines.append(cleaned[:80])
+        if len(lines) >= 6:
+            break
+    return lines
 
 
 def _recipe_lines(card: Mapping[str, Any]) -> list[str]:

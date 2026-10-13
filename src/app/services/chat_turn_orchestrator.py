@@ -75,6 +75,7 @@ from src.domain.services.chat.next_meal_intro import (
     next_meal_intro,
     next_meal_unavailable,
     verified_cook_reply,
+    verified_ingredient_reply,
     with_eaten_today,
 )
 from src.domain.services.chat.policy import (
@@ -779,25 +780,30 @@ class ChatTurnOrchestrator:
                 final_text = sanitize_incomplete_assistant_text(final_text)
                 generation["text"] = final_text
             if answer_from_shown_meals:
-                cook_reply = verified_cook_reply(
+                shown_cards = _shown_meal_cards(history_messages)
+                card_reply = verified_ingredient_reply(
                     trimmed,
-                    _shown_recipe_cards(history_messages),
+                    shown_cards,
+                    locale=resolved_locale,
+                ) or verified_cook_reply(
+                    trimmed,
+                    shown_cards,
                     locale=resolved_locale,
                 )
-                if cook_reply and not cook_reply_already_said(final_text, cook_reply):
-                    if cook_reply != final_text:
+                if card_reply and not cook_reply_already_said(final_text, card_reply):
+                    if card_reply != final_text:
                         yield ChatSseEvent(
                             event="message.delta",
                             data={
                                 "assistant_message_id": claim.assistant_message.id,
-                                "delta": cook_reply,
+                                "delta": card_reply,
                                 "replace": True,
                             },
                         )
-                    final_text = cook_reply
+                    final_text = card_reply
                     sentences.clear()
-                    sentences.append(cook_reply)
-                    generation["text"] = cook_reply
+                    sentences.append(card_reply)
+                    generation["text"] = card_reply
                     generation["blocked"] = False
                     blocked = False
             if not final_text:
@@ -1857,15 +1863,15 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
     )
 
 
-def _shown_recipe_cards(messages: list[ChatMessage]) -> list[dict[str, Any]]:
-    """Cards from the newest assistant turn that included recipe steps."""
+def _shown_meal_cards(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    """Named cards from the newest assistant turn that showed meals."""
     for message in reversed(messages):
         if message.role != ChatMessageRole.ASSISTANT:
             continue
         cards = [
             card
             for card in message.suggestions()
-            if isinstance(card, dict) and card.get("recipe_steps")
+            if isinstance(card, dict) and str(card.get("name") or "").strip()
         ]
         if cards:
             return cards

@@ -5,6 +5,7 @@ from src.domain.services.chat.next_meal_intro import (
     next_meal_intro,
     next_meal_unavailable,
     verified_cook_reply,
+    verified_ingredient_reply,
     with_eaten_today,
 )
 
@@ -96,6 +97,25 @@ def test_cook_reply_copies_the_named_card_steps() -> None:
     vi = verified_cook_reply("Cách nấu món này", cards[:1], locale="vi")
     assert vi is not None
     assert vi.startswith("Cách làm Tofu bowl:")
+
+
+def test_ingredient_reply_copies_the_card_amounts() -> None:
+    cards = [
+        {
+            "name": "Tofu bowl",
+            "ingredients": [
+                {"name": "firm tofu", "amount": 150, "unit": "g"},
+                {"name": "rice", "amount": 80, "unit": "g"},
+            ],
+        }
+    ]
+    text = verified_ingredient_reply("What's in the tofu?", cards, locale="en")
+    assert text == "Tofu bowl uses:\n- firm tofu, 150 g\n- rice, 80 g"
+    assert verified_ingredient_reply("What's in pho?", cards, locale="en") is None
+    assert (
+        verified_ingredient_reply("How do I cook the tofu?", cards, locale="en") is None
+    )
+    assert cook_reply_already_said("It uses firm tofu and rice.", text or "")
 
 
 def test_unavailable_names_the_slot_and_invents_no_dish() -> None:

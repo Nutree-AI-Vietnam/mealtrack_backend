@@ -1085,6 +1085,41 @@ async def test_invented_cook_steps_are_replaced_with_the_card():
 
 
 @pytest.mark.asyncio
+async def test_invented_ingredients_are_replaced_with_the_card():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try the tofu bowl.",
+        reply_payload={
+            "suggestions": [
+                {
+                    "name": "Tofu bowl",
+                    "ingredients": [
+                        {"name": "firm tofu", "amount": 150, "unit": "g"},
+                        {"name": "rice", "amount": 80, "unit": "g"},
+                    ],
+                }
+            ]
+        },
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    completion = _FakeCompletion(["It is mostly chicken and 999 grams of cheese. "])
+    orchestrator = _orchestrator(repo, completion=completion)
+
+    await _stream(orchestrator, content="What's in the tofu?")
+
+    assert "chicken" not in repo.completed["content"]
+    assert "999" not in repo.completed["content"]
+    assert repo.completed["content"] == (
+        "Tofu bowl uses:\n- firm tofu, 150 g\n- rice, 80 g"
+    )
+
+
+@pytest.mark.asyncio
 async def test_comparison_question_does_not_refresh_meal_cards():
     prior = ChatMessage(
         id="m-prior",
