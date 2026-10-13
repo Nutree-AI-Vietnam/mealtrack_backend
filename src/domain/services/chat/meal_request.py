@@ -108,6 +108,23 @@ _EXPLAIN_PREFIXES: tuple[str, ...] = (
     "lam sao",
 )
 
+# How/why questions that do not start the message ("Can you explain why...").
+_EXPLAIN_MARKERS: tuple[str, ...] = (
+    "explain why",
+    "explain how",
+    "how do i",
+    "how to ",
+    "how long",
+    "what's in",
+    "what is in",
+    "cách nấu",
+    "cach nau",
+    "cách làm",
+    "cach lam",
+    "giải thích",
+    "giai thich",
+)
+
 # Comparison questions mention the same words as a change request
 # ("higher protein") but should stay a written answer.
 _QUESTION_MARKERS: tuple[str, ...] = (
@@ -176,6 +193,20 @@ def is_meal_comparison(text: str) -> bool:
     if not normalized or is_meal_refinement(text):
         return False
     return any(marker in normalized for marker in _QUESTION_MARKERS)
+
+
+def is_meal_explanation(text: str) -> bool:
+    """True when the user wants the shown meal explained, not replaced.
+
+    How/why questions already skip the refinement path. They still need their
+    own check so the model is not offered a tool that fetches new cards.
+    """
+    normalized = _normalize(text)
+    if not normalized or is_meal_refinement(text):
+        return False
+    if any(normalized.startswith(prefix) for prefix in _EXPLAIN_PREFIXES):
+        return True
+    return any(marker in normalized for marker in _EXPLAIN_MARKERS)
 
 
 def is_meal_refinement(text: str) -> bool:

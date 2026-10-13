@@ -77,3 +77,35 @@ def test_comparison_is_not_a_new_meal_request() -> None:
     assert is_meal_comparison("Is the tofu higher protein?")
     assert not is_meal_comparison("Make it higher protein")
     assert not is_meal_comparison("What's for dinner?")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Why is lunch the better fit?",
+        "How do I cook the tofu?",
+        "Can you explain why the tofu fits?",
+        "Làm sao nấu đậu hũ?",
+        "Cách nấu món này",
+    ],
+)
+def test_meal_explanations(text: str) -> None:
+    from src.domain.services.chat.meal_request import is_meal_explanation
+
+    assert is_meal_explanation(text)
+    assert not is_meal_refinement(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Make the tofu higher protein",
+        "What's for dinner?",
+        "What's left?",
+        "",
+    ],
+)
+def test_not_meal_explanations(text: str) -> None:
+    from src.domain.services.chat.meal_request import is_meal_explanation
+
+    assert not is_meal_explanation(text)

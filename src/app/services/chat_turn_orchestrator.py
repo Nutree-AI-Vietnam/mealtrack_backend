@@ -62,6 +62,7 @@ from src.domain.services.chat.coach_functions import (
 from src.domain.services.chat.follow_up_schema import ensure_follow_ups, meal_names
 from src.domain.services.chat.meal_request import (
     is_meal_comparison,
+    is_meal_explanation,
     is_meal_refinement,
     is_meal_suggestion_request,
 )
@@ -517,7 +518,7 @@ class ChatTurnOrchestrator:
             answer_from_shown_meals = (
                 resolved is None
                 and bool(_latest_shown_meal_names(history_messages))
-                and is_meal_comparison(trimmed)
+                and (is_meal_comparison(trimmed) or is_meal_explanation(trimmed))
             )
             tools = (
                 [] if direct_invoke or answer_from_shown_meals else list(openai_tools())
@@ -701,6 +702,11 @@ class ChatTurnOrchestrator:
                         )
 
                     tool_calls = generation.get("tool_calls")
+                    # A how/why question about the cards stays a written answer.
+                    # Drop a tool call that would replace those cards.
+                    if answer_from_shown_meals and tool_calls:
+                        generation["tool_calls"] = None
+                        tool_calls = None
                     if not tool_calls:
                         break
                     if current_user_message:
@@ -1852,6 +1858,9 @@ def _meal_revision_text(user_text: str, prior_names: list[str]) -> str:
 def _meal_card_history_note(card: dict[str, Any]) -> str:
     name = str(card.get("name") or "").strip()
     note = f"Meal card shown: {name}."
+    steps = _recipe_step_note(card)
+    if steps:
+        note = f"{note} {steps}"
     calories = _finite_number(card.get("calories"))
     if calories is None:
         return note
@@ -1866,6 +1875,31 @@ def _meal_card_history_note(card: dict[str, Any]) -> str:
             continue
         parts.append(f"{_format_amount(value)}g {label}")
     return f"{note} Authoritative portion: {', '.join(parts)}."
+
+
+def _recipe_step_note(card: dict[str, Any]) -> str:
+    """Short cooking steps from the card, so a how-to answer is not invented."""
+    raw = card.get("recipe_steps")
+    if not isinstance(raw, list):
+        return ""
+    lines: list[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            text = item.get("instruction") or item.get("text") or ""
+        elif isinstance(item, str):
+            text = item
+        else:
+            continue
+        cleaned = " ".join(str(text).split())
+        if not cleaned:
+            continue
+        lines.append(cleaned[:120])
+        if len(lines) >= 3:
+            break
+    if not lines:
+        return ""
+    numbered = " ".join(f"{index}. {step}" for index, step in enumerate(lines, start=1))
+    return f"Recipe steps: {numbered}"
 
 
 def _finite_number(value: Any) -> float | None:

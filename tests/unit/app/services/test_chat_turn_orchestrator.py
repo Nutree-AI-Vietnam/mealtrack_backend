@@ -1003,6 +1003,49 @@ async def test_why_question_after_a_meal_does_not_refresh_cards():
 
     assert next_meals.calls == []
     assert completed.data.get("intent") != "next_meal"
+    assert completion.tools == []
+
+
+@pytest.mark.asyncio
+async def test_how_to_cook_ignores_a_new_meal_tool_call():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try the tofu bowl.",
+        reply_payload={
+            "intent": "next_meal",
+            "suggestions": [
+                {
+                    "name": "Tofu bowl",
+                    "calories": 420,
+                    "recipe_steps": [
+                        {"step": 1, "instruction": "Press the tofu dry."},
+                        {"step": 2, "instruction": "Pan-fry until golden."},
+                    ],
+                }
+            ],
+        },
+    )
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    completion = _FakeCompletion(
+        ["Press the tofu dry, then pan-fry until golden. "],
+        tool_calls=[{"id": "c1", "name": "suggest_next_meal", "args": {}}],
+    )
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    events = await _stream(orchestrator, content="How do I cook the tofu?")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert next_meals.calls == []
+    assert completed.data.get("intent") != "next_meal"
+    assert "Egg rice bowl" not in repo.completed["content"]
 
 
 @pytest.mark.asyncio
@@ -2041,6 +2084,40 @@ def test_history_remembers_the_meal_card_name():
     )
     turns = _history_turns([message])
     assert turns[0].content == "Try this.\nMeal card shown: Salmon rice."
+
+
+def test_history_remembers_recipe_steps_from_the_card():
+    from src.app.services.chat_turn_orchestrator import _history_turns
+
+    now = utc_now()
+    message = ChatMessage(
+        id="a1",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="Try this.",
+        reply_payload={
+            "suggestions": [
+                {
+                    "name": "Tofu bowl",
+                    "recipe_steps": [
+                        {"instruction": "Press the tofu dry."},
+                        "Pan-fry until golden.",
+                        {"text": "Slice and serve."},
+                        {"instruction": "This fourth step is dropped."},
+                    ],
+                }
+            ]
+        },
+    )
+    turns = _history_turns([message])
+    assert (
+        "Recipe steps: 1. Press the tofu dry. "
+        "2. Pan-fry until golden. 3. Slice and serve."
+    ) in turns[0].content
+    assert "fourth step" not in turns[0].content
 
 
 def test_history_omits_missing_meal_macros():
