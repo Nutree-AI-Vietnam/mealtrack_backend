@@ -13,6 +13,7 @@ from src.domain.exceptions.chat_exceptions import (
 from src.domain.model.chat import (
     ChatClaimKind,
     ChatCompletionDelta,
+    ChatMealSummary,
     ChatMessage,
     ChatMessageRole,
     ChatMessageStatus,
@@ -224,8 +225,9 @@ class _FakeRetrieval:
 
 
 class _FakeContext:
-    def __init__(self):
+    def __init__(self, recent_meals=()):
         self.calls: list[dict] = []
+        self.recent_meals = recent_meals
 
     async def build(self, **kwargs) -> ChatUserContext:
         self.calls.append(kwargs)
@@ -258,6 +260,7 @@ class _FakeContext:
             local_hour=8,
             local_minute=12,
             suggested_meal_slot="breakfast",
+            recent_meals=self.recent_meals,
         )
 
 
@@ -1221,6 +1224,50 @@ async def test_typed_meal_question_fetches_cards_without_a_tool_call():
     assert "Egg rice bowl" in repo.completed["content"]
     assert "Yogurt cup and Tofu scramble" in repo.completed["content"]
     assert "Oatmeal fits" not in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_meal_intro_names_a_dish_logged_today():
+    cards = _three_cards()
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=cards, meal_slot="lunch")
+    )
+    context = _FakeContext(
+        recent_meals=(
+            ChatMealSummary(
+                meal_id="earlier",
+                local_date="2026-09-01",
+                dish_name="Pho",
+                meal_type="breakfast",
+                calories=480,
+                protein_g=25,
+                carbs_g=60,
+                fat_g=12,
+                status="active",
+            ),
+            ChatMealSummary(
+                meal_id="offered",
+                local_date="2026-09-01",
+                dish_name="Egg rice bowl",
+                meal_type="snack",
+                calories=420,
+                protein_g=18,
+                carbs_g=40,
+                fat_g=14,
+                status="active",
+            ),
+        )
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals, context_builder=context)
+
+    await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+
+    content = repo.completed["content"]
+    assert content.startswith("You already logged Pho today.")
+    assert "Egg rice bowl" in content
+    assert "480" not in content
+    assert "420" not in content
 
 
 @pytest.mark.asyncio

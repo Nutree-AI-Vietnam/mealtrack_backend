@@ -26,12 +26,45 @@ def next_meal_ack(*, locale: str, slot: str) -> str:
     return f"I'm picking {label} that fits what's left."
 
 
+def eaten_today_name(
+    meals: Sequence[Any],
+    *,
+    local_date: str | None,
+    suggestion_names: Sequence[str],
+) -> str | None:
+    """Newest dish logged today that is not already one of the cards.
+
+    Meals are oldest-first. A card with the same name is skipped so the reply
+    does not say the dish was eaten and then offer it again. No nutrition numbers.
+    """
+    if not local_date:
+        return None
+    offered = {_fold(name) for name in suggestion_names}
+    offered.discard("")
+    chosen: str | None = None
+    for meal in meals:
+        if isinstance(meal, Mapping):
+            logged_on = meal.get("local_date")
+            raw_name = meal.get("dish_name")
+        else:
+            logged_on = getattr(meal, "local_date", None)
+            raw_name = getattr(meal, "dish_name", None)
+        if logged_on != local_date:
+            continue
+        label = _dish_label(raw_name)
+        if label is None or _fold(label) in offered:
+            continue
+        chosen = label
+    return chosen
+
+
 def next_meal_intro(
     suggestions: Sequence[Mapping[str, Any]],
     *,
     locale: str,
     slot: str,
     user_text: str | None = None,
+    eaten_today: str | None = None,
 ) -> str | None:
     """Name the featured meal and the other choices. Do not include calories."""
     names = [
@@ -68,10 +101,31 @@ def next_meal_intro(
             f"{featured} fits {slot_label}. "
             "Tap the card for the recipe, or log it from the card."
         )
+    parts: list[str] = []
     lead = _change_lead(user_text, vi=vi)
-    if lead is None:
-        return body
-    return f"{lead} {body}"
+    if lead is not None:
+        parts.append(lead)
+    eaten = _dish_label(eaten_today)
+    if eaten is not None and _fold(eaten) not in {_fold(name) for name in names}:
+        if vi:
+            parts.append(f"Hôm nay bạn đã ghi {eaten}.")
+        else:
+            parts.append(f"You already logged {eaten} today.")
+    parts.append(body)
+    return " ".join(parts)
+
+
+def _dish_label(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned or len(cleaned) > 40:
+        return None
+    return cleaned
+
+
+def _fold(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 # Specific change, then a short reply. First match wins. No nutrition numbers.

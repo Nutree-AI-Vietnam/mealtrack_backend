@@ -67,7 +67,11 @@ from src.domain.services.chat.meal_request import (
 )
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
-from src.domain.services.chat.next_meal_intro import next_meal_ack, next_meal_intro
+from src.domain.services.chat.next_meal_intro import (
+    eaten_today_name,
+    next_meal_ack,
+    next_meal_intro,
+)
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
@@ -574,6 +578,15 @@ class ChatTurnOrchestrator:
                     locale=resolved_locale,
                     slot=meal_slot,
                     user_text=trimmed,
+                    eaten_today=eaten_today_name(
+                        context.recent_meals,
+                        local_date=context.local_date,
+                        suggestion_names=[
+                            str(card.get("name") or "")
+                            for card in suggestions
+                            if isinstance(card, dict)
+                        ],
+                    ),
                 )
             if intro:
                 # The acknowledgement was only a placeholder while cards loaded.
