@@ -429,7 +429,10 @@ async def test_new_turn_streams_sentence_and_persists():
     assert repo.completed["reply_payload"]["follow_ups"] == []
     completed = next(event for event in events if event.event == "message.completed")
     assert completed.data["suggestions"] == []
-    assert completed.data["follow_ups"] == []
+    assert [chip["action"] for chip in completed.data["follow_ups"]] == [
+        "remaining_budget",
+        "day_progress",
+    ]
     assert completed.data["nutrition_snapshot"]["food_calories"] == 1150
     assert completed.data["nutrition_snapshot"]["movement_kcal_burned"] == 0
     assert (
@@ -972,15 +975,19 @@ async def test_remaining_budget_never_calls_discover():
 
 
 @pytest.mark.asyncio
-async def test_follow_up_failure_persists_empty_chips():
+async def test_follow_up_failure_uses_fallback_chips():
     follow_ups = _FakeFollowUps(error=TimeoutError())
     repo = _FakeRepo(claim=_claim())
     orchestrator = _orchestrator(repo, follow_ups=follow_ups)
 
     events = await _stream(orchestrator, intent="day_progress")
     completed = next(event for event in events if event.event == "message.completed")
-    assert completed.data["follow_ups"] == []
+    assert [chip["action"] for chip in completed.data["follow_ups"]] == [
+        "remaining_budget",
+        "next_meal",
+    ]
     assert repo.completed["reply_payload"]["follow_ups"] == []
+    assert repo.attached_follow_ups["follow_ups"] == completed.data["follow_ups"]
 
 
 def test_chat_orchestrator_tools_contains_suggest_next_meal():

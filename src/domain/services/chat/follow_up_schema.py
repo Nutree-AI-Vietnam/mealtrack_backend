@@ -58,6 +58,81 @@ def sanitize_follow_ups(raw: Any) -> list[dict[str, str]]:
     return cleaned
 
 
+def ensure_follow_ups(
+    raw: Any,
+    *,
+    locale: str,
+    intent: str | None,
+    slot: str | None,
+    has_suggestions: bool,
+) -> list[dict[str, str]]:
+    """Keep model chips, and fill at least two when that call is short or fails."""
+    chips = sanitize_follow_ups(raw)
+    if len(chips) >= 2:
+        return chips
+    seen = {chip["action"] for chip in chips}
+    for chip in _fallback_chips(
+        locale=locale,
+        intent=intent,
+        slot=slot,
+        has_suggestions=has_suggestions,
+    ):
+        if chip["action"] in seen:
+            continue
+        chips.append(chip)
+        seen.add(chip["action"])
+        if len(chips) >= 2:
+            break
+    return chips
+
+
+def _fallback_chips(
+    *,
+    locale: str,
+    intent: str | None,
+    slot: str | None,
+    has_suggestions: bool,
+) -> list[dict[str, str]]:
+    vi = locale == "vi"
+    ordered: list[str] = []
+    if has_suggestions or intent == "next_meal":
+        ordered.append("next_meal")
+    if intent != "remaining_budget":
+        ordered.append("remaining_budget")
+    if intent != "day_progress":
+        ordered.append("day_progress")
+    if "next_meal" not in ordered:
+        ordered.append("next_meal")
+    if intent != "limits":
+        ordered.append("limits")
+    return [
+        {"label": _fallback_label(action, slot=slot, vi=vi), "action": action}
+        for action in ordered
+    ]
+
+
+def _fallback_label(action: str, *, slot: str | None, vi: bool) -> str:
+    if action == "next_meal":
+        labels = {
+            "breakfast": ("Thêm ý tưởng bữa sáng", "More breakfast ideas"),
+            "lunch": ("Thêm ý tưởng bữa trưa", "More lunch ideas"),
+            "dinner": ("Thêm ý tưởng bữa tối", "More dinner ideas"),
+            "snack": ("Thêm ý tưởng món nhẹ", "More snack ideas"),
+        }
+        vi_label, en_label = labels.get(
+            slot or "",
+            ("Gợi ý bữa khác", "Another meal idea"),
+        )
+        return vi_label if vi else en_label
+    labels = {
+        "remaining_budget": ("Hôm nay còn bao nhiêu?", "What's left today?"),
+        "day_progress": ("Hôm nay tôi thế nào?", "How's my day going?"),
+        "limits": ("Coach làm được gì?", "What can Coach do?"),
+    }
+    vi_label, en_label = labels[action]
+    return vi_label if vi else en_label
+
+
 def _coerce_items(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, ChatFollowUpList):
         return [item.model_dump() for item in raw.follow_ups]

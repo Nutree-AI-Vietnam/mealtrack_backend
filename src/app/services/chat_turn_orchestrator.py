@@ -59,6 +59,7 @@ from src.domain.services.chat.coach_functions import (
     preferred_alias,
     resolve_coach_function,
 )
+from src.domain.services.chat.follow_up_schema import ensure_follow_ups
 from src.domain.services.chat.meal_request import is_meal_suggestion_request
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
@@ -1424,24 +1425,32 @@ class ChatTurnOrchestrator:
         assistant_text: str,
         has_suggestions: bool,
     ) -> list[dict[str, str]]:
-        if self._follow_ups is None:
-            return []
-        try:
-            return await asyncio.wait_for(
-                self._follow_ups.generate_follow_ups(
-                    model=self._model,
-                    locale=locale,
-                    intent=intent,
-                    slot=slot,
-                    user_message=user_message,
-                    assistant_text=assistant_text,
-                    has_suggestions=has_suggestions,
-                ),
-                timeout=2.0,
-            )
-        except Exception:
-            logger.info("chat follow-up generation failed", extra={"intent": intent})
-            return []
+        generated: list[dict[str, str]] = []
+        if self._follow_ups is not None:
+            try:
+                generated = await asyncio.wait_for(
+                    self._follow_ups.generate_follow_ups(
+                        model=self._model,
+                        locale=locale,
+                        intent=intent,
+                        slot=slot,
+                        user_message=user_message,
+                        assistant_text=assistant_text,
+                        has_suggestions=has_suggestions,
+                    ),
+                    timeout=2.0,
+                )
+            except Exception:
+                logger.info(
+                    "chat follow-up generation failed", extra={"intent": intent}
+                )
+        return ensure_follow_ups(
+            generated,
+            locale=locale,
+            intent=intent,
+            slot=slot,
+            has_suggestions=has_suggestions,
+        )
 
     async def _save_thread_summary(
         self, thread_id: str, summary: str, through_message_id: str
