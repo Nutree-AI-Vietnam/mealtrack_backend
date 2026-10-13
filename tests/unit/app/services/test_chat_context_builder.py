@@ -1,8 +1,15 @@
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.app.services.chat_context_builder import ChatContextBuilder
+from src.app.services.chat_context_builder import (
+    _RECENT_MEAL_FETCH_LIMIT,
+    ChatContextBuilder,
+)
+from src.domain.model.chat import CHAT_RECENT_MEAL_LIMIT
+from src.domain.model.meal import MealStatus
 
 
 class _Uow:
@@ -214,3 +221,54 @@ async def test_build_includes_preferred_name() -> None:
 
     assert context.preferred_name == "Alex"
     assert context.to_prompt_dict()["preferred_name"] == "Alex"
+
+
+class _Meals:
+    def __init__(self, meals: list[object]) -> None:
+        self.meals = meals
+        self.limit: int | None = None
+
+    async def find_by_date_range(self, *args, **kwargs):
+        del args
+        self.limit = kwargs["limit"]
+        return self.meals[: self.limit]
+
+
+class _UowWithMeals:
+    def __init__(self, meals: _Meals) -> None:
+        self.meals = meals
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_recent_meals_keeps_the_newest_dishes() -> None:
+    meals = [
+        SimpleNamespace(
+            status=MealStatus.READY,
+            created_at=datetime(2026, 10, 13, 8, index, tzinfo=UTC),
+            nutrition=None,
+            dish_name=f"Meal {index}",
+            meal_id=str(index),
+            meal_type="lunch",
+        )
+        for index in range(CHAT_RECENT_MEAL_LIMIT + 6)
+    ]
+    repo = _Meals(meals)
+    builder = ChatContextBuilder(uow_factory=lambda: _UowWithMeals(repo))
+
+    summaries = await builder._recent_meals(
+        _UowWithMeals(repo),
+        "u1",
+        date(2026, 10, 13),
+        "UTC",
+    )
+
+    assert repo.limit == _RECENT_MEAL_FETCH_LIMIT
+    assert len(summaries) == CHAT_RECENT_MEAL_LIMIT
+    assert summaries[-1].dish_name == f"Meal {CHAT_RECENT_MEAL_LIMIT + 5}"
+    assert summaries[0].dish_name == "Meal 6"

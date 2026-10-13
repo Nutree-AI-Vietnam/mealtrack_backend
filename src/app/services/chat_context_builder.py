@@ -44,6 +44,9 @@ from src.domain.utils.timezone_utils import (
     utc_now,
 )
 
+# Oldest-first query cap. The prompt still keeps only CHAT_RECENT_MEAL_LIMIT.
+_RECENT_MEAL_FETCH_LIMIT = 200
+
 
 def coach_preferred_name(
     display_name: str | None, first_name: str | None
@@ -192,11 +195,13 @@ class ChatContextBuilder:
         timezone: str,
     ) -> list[ChatMealSummary]:
         start = today - timedelta(days=CHAT_RECENT_MEAL_DAYS - 1)
+        # The repository returns the oldest rows first. Fetch the window, then
+        # keep the newest meals so today's latest dish is not dropped.
         meals = await uow.meals.find_by_date_range(
             user_id=user_id,
             start_date=start,
             end_date=today,
-            limit=CHAT_RECENT_MEAL_LIMIT,
+            limit=_RECENT_MEAL_FETCH_LIMIT,
             user_timezone=timezone,
             projection=MealProjection.MACROS_ONLY,
         )
@@ -220,8 +225,6 @@ class ChatContextBuilder:
                     status=str(meal.status) if meal.status else None,
                 )
             )
-            if len(summaries) >= CHAT_RECENT_MEAL_LIMIT:
-                break
         return summaries[-CHAT_RECENT_MEAL_LIMIT:]
 
     async def _safe_profile(
