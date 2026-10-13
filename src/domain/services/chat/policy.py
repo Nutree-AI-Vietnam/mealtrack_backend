@@ -473,6 +473,30 @@ def inspect_sentence(
     return SafetyDecision(True)
 
 
+def meal_reply_is_usable(text: str, suggestions: Sequence[Mapping[str, Any]]) -> bool:
+    """A next-meal sentence may replace the template only when it names the card.
+
+    Calorie and macro claims are rejected here. The card already shows those
+    numbers, and a model sentence must not invent a second set.
+    """
+    featured = ""
+    for item in suggestions:
+        if not isinstance(item, Mapping):
+            continue
+        name = " ".join(str(item.get("name") or "").split())
+        if name:
+            featured = name
+            break
+    cleaned = " ".join(text.split())
+    if not featured or featured.casefold() not in cleaned.casefold():
+        return False
+    if _INTERNAL_LEAK_RE.search(cleaned) or _MUTATION_CLAIM_RE.search(cleaned):
+        return False
+    if _CALORIE_CLAIM_RE.search(cleaned) or _MACRO_CLAIM_RE.search(cleaned):
+        return False
+    return True
+
+
 def nutrition_numbers_are_traceable(
     text: str,
     *,

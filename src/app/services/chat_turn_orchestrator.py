@@ -80,6 +80,7 @@ from src.domain.services.chat.policy import (
     filter_chunks_for_allergies,
     hydrate_citations,
     inspect_sentence,
+    meal_reply_is_usable,
     no_evidence_message,
     nutrition_numbers_are_traceable,
     request_fingerprint,
@@ -571,33 +572,51 @@ class ChatTurnOrchestrator:
                 current_user_message = ""
                 generation["tools"] = None
 
-            intro = None
-            if intent == ChatIntent.NEXT_MEAL.value:
-                intro = next_meal_intro(
-                    suggestions,
-                    locale=resolved_locale,
-                    slot=meal_slot,
-                    user_text=trimmed,
-                    eaten_today=eaten_today_name(
-                        context.recent_meals,
-                        local_date=context.local_date,
-                        suggestion_names=[
-                            str(card.get("name") or "")
-                            for card in suggestions
-                            if isinstance(card, dict)
-                        ],
-                    ),
+            meal_reply = ""
+            if intent == ChatIntent.NEXT_MEAL.value and suggestions:
+                # Cards are already chosen. Let the model write the sentence,
+                # and keep the template when that sentence is not usable.
+                meal_reply = await self._draft_grounded_meal_reply(
+                    context=context,
+                    chunks=chunks,
+                    history=history,
+                    user_message=current_user_message,
+                    generation=generation,
+                    intent=intent,
+                    suggestions=suggestions,
+                    history_messages=history_messages,
+                    earlier=earlier,
                 )
-            if intro:
+                if not meal_reply_is_usable(meal_reply, suggestions):
+                    meal_reply = (
+                        next_meal_intro(
+                            suggestions,
+                            locale=resolved_locale,
+                            slot=meal_slot,
+                            user_text=trimmed,
+                            eaten_today=eaten_today_name(
+                                context.recent_meals,
+                                local_date=context.local_date,
+                                suggestion_names=[
+                                    str(card.get("name") or "")
+                                    for card in suggestions
+                                    if isinstance(card, dict)
+                                ],
+                            ),
+                        )
+                        or ""
+                    )
+            if meal_reply:
                 # The acknowledgement was only a placeholder while cards loaded.
                 sentences.clear()
-                sentences.append(intro)
-                generation["text"] = intro
+                sentences.append(meal_reply)
+                generation["text"] = meal_reply
+                generation["blocked"] = False
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
                         "assistant_message_id": claim.assistant_message.id,
-                        "delta": intro,
+                        "delta": meal_reply,
                         "replace": True,
                     },
                 )
@@ -1353,6 +1372,41 @@ class ChatTurnOrchestrator:
                 limit=CHAT_MEMORY_FETCH + 1,
             )
         return [message for message in messages if message.id != exclude_message_id]
+
+    async def _draft_grounded_meal_reply(
+        self,
+        *,
+        context: ChatUserContext,
+        chunks: list[RetrievedKnowledgeChunk],
+        history: list[ChatHistoryTurn],
+        user_message: str,
+        generation: dict[str, Any],
+        intent: str | None,
+        suggestions: list[dict[str, Any]],
+        history_messages: list[ChatMessage],
+        earlier: str | None,
+    ) -> str:
+        """One model pass for a next-meal reply. Empty when it cannot be used."""
+        generation["tools"] = None
+        generation["tool_calls"] = None
+        try:
+            async for _delta in self._iter_validated_sentences(
+                context=context,
+                chunks=chunks,
+                history=history,
+                user_message=user_message,
+                generation=generation,
+                intent=intent,
+                meal_candidates=suggestions,
+                traceable_meals=_traceable_meals(suggestions, history_messages),
+                earlier=earlier,
+            ):
+                pass
+        except ChatProviderUnavailableError:
+            return ""
+        if generation.get("blocked"):
+            return ""
+        return str(generation.get("text") or "").strip()
 
     async def _iter_validated_sentences(
         self,

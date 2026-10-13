@@ -8,6 +8,7 @@ from src.domain.services.chat.policy import (
     inspect_sentence,
     is_near_duplicate,
     label_chunks,
+    meal_reply_is_usable,
     nutrition_numbers_are_traceable,
     out_of_scope_follow_ups,
     out_of_scope_message,
@@ -527,6 +528,17 @@ def test_allergy_tagged_chunks_are_filtered():
     )
     kept = filter_chunks_for_allergies(chunks, ["peanut"])
     assert [chunk.source_key for chunk in kept] == ["rice-bowl"]
+
+
+def test_meal_reply_must_name_the_card_and_skip_numbers() -> None:
+    cards = [{"name": "Egg rice bowl", "calories": 420}]
+    assert meal_reply_is_usable(
+        "Egg rice bowl is the one I'd make. Tap the card to log it.",
+        cards,
+    )
+    assert not meal_reply_is_usable("Here is a nice lunch.", cards)
+    assert not meal_reply_is_usable("Egg rice bowl is about 999 kcal.", cards)
+    assert not meal_reply_is_usable("I logged Egg rice bowl for you.", cards)
 
 
 def test_out_of_scope_copy_is_localized() -> None:
