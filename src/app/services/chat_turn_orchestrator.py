@@ -539,16 +539,16 @@ class ChatTurnOrchestrator:
                     slot=meal_slot,
                 )
             if intro:
-                # The acknowledgement was already streamed. Keep a paragraph break
-                # so the meal names do not run into that sentence.
-                delta = f"\n\n{intro}" if sentences else intro
-                sentences.append(delta)
-                generation["text"] = "".join(sentences)
+                # The acknowledgement was only a placeholder while cards loaded.
+                sentences.clear()
+                sentences.append(intro)
+                generation["text"] = intro
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
                         "assistant_message_id": claim.assistant_message.id,
-                        "delta": delta,
+                        "delta": intro,
+                        "replace": True,
                     },
                 )
             else:
