@@ -89,6 +89,42 @@ def test_sanitize_maps_function_name_to_chip_alias() -> None:
     ]
 
 
+def test_shown_meal_keeps_cook_and_ingredient_chips_beside_model_chips() -> None:
+    chips = ensure_follow_ups(
+        [
+            {"label": "What's left?", "action": "remaining_budget"},
+            {"label": "More lunch ideas", "action": "next_meal"},
+        ],
+        locale="en",
+        intent="next_meal",
+        slot="lunch",
+        has_suggestions=True,
+        suggestion_names=["Tofu bowl"],
+    )
+    assert [chip["label"] for chip in chips] == [
+        "How do I cook Tofu bowl?",
+        "What's in Tofu bowl?",
+        "What's left?",
+    ]
+
+    already = ensure_follow_ups(
+        [
+            {"label": "How do I cook Tofu bowl?", "action": "ask"},
+            {"label": "What's left?", "action": "remaining_budget"},
+        ],
+        locale="en",
+        intent="next_meal",
+        slot="lunch",
+        has_suggestions=True,
+        suggestion_names=["Tofu bowl"],
+    )
+    assert [chip["label"] for chip in already] == [
+        "What's in Tofu bowl?",
+        "How do I cook Tofu bowl?",
+        "What's left?",
+    ]
+
+
 def test_ensure_follow_ups_keeps_two_model_chips() -> None:
     chips = [
         {"label": "What's left?", "action": "remaining_budget"},

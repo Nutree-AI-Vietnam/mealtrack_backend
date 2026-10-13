@@ -9,6 +9,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from src.domain.model.chat import CHAT_INTENTS
+from src.domain.services.chat.meal_request import (
+    is_cook_request,
+    is_ingredient_request,
+)
 
 _MAX_FOLLOW_UPS = 3
 _MAX_LABEL_CHARS = 48
@@ -140,9 +144,12 @@ def ensure_follow_ups(
     sit under the card.
     """
     chips = sanitize_follow_ups(raw)
-    if len(chips) >= 2:
-        return chips
+    model_count = len(chips)
+    if has_suggestions:
+        chips = _with_card_questions(chips, suggestion_names, locale=locale)
     target = 3 if has_suggestions else 2
+    if model_count >= 2 or len(chips) >= target:
+        return chips[:_MAX_FOLLOW_UPS]
     seen_actions = {chip["action"] for chip in chips if chip["action"] != ASK_ACTION}
     seen_labels = {chip["label"].casefold() for chip in chips}
     for chip in _fallback_chips(
@@ -164,6 +171,38 @@ def ensure_follow_ups(
         if len(chips) >= target:
             break
     return chips
+
+
+def _with_card_questions(
+    chips: list[dict[str, str]],
+    names: Sequence[str],
+    *,
+    locale: str,
+) -> list[dict[str, str]]:
+    """Put cook and ingredient taps on a shown meal, even if the model wrote others."""
+    vi = locale == "vi"
+    front: list[dict[str, str]] = []
+    if not any(is_cook_request(chip["label"]) for chip in chips):
+        cook = _named_ask_chip(names, kind="cook", vi=vi)
+        if cook is not None:
+            front.append(cook)
+    if not any(is_ingredient_request(chip["label"]) for chip in chips):
+        ingredients = _named_ask_chip(names, kind="ingredients", vi=vi)
+        if ingredients is not None:
+            front.append(ingredients)
+    if not front:
+        return chips
+    seen: set[str] = set()
+    merged: list[dict[str, str]] = []
+    for chip in [*front, *chips]:
+        key = chip["label"].casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(chip)
+        if len(merged) >= _MAX_FOLLOW_UPS:
+            break
+    return merged
 
 
 def _fallback_chips(
