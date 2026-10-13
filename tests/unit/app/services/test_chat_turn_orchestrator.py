@@ -1361,6 +1361,57 @@ async def test_meal_ack_streams_before_cards_are_ready():
 
 
 @pytest.mark.asyncio
+async def test_follow_ups_do_not_wait_for_meal_photos():
+    class _SlowImages:
+        def __init__(self) -> None:
+            self.release = asyncio.Event()
+            self.started = asyncio.Event()
+
+        async def fetch(self, **kwargs):
+            del kwargs
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="lunch"
+            )
+
+        async def attach_images(self, suggestions):
+            self.started.set()
+            await self.release.wait()
+            return [
+                {**card, "thumbnail_url": "https://cdn.example/meal.jpg"}
+                for card in suggestions
+            ]
+
+    meals = _SlowImages()
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), next_meals=meals)
+    events: list = []
+
+    async def collect() -> None:
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Lunch ideas",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+            intent="next_meal",
+        ):
+            events.append(event)
+
+    task = asyncio.create_task(collect())
+
+    async def finished() -> None:
+        while not any(event.event == "message.completed" for event in events):
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(finished(), timeout=1)
+    completed = next(event for event in events if event.event == "message.completed")
+    assert completed.data["follow_ups"]
+    meals.release.set()
+    await asyncio.wait_for(task, timeout=1)
+    assert meals.started.is_set()
+
+
+@pytest.mark.asyncio
 async def test_meal_cards_arrive_before_the_sentence_is_replaced():
     cards = _three_cards()
     next_meals = _FakeNextMeals(
@@ -1440,9 +1491,19 @@ async def test_meal_intro_is_sent_before_food_photos():
     )
     assert "Egg rice bowl" in named.data["delta"]
     assert "I'm picking" not in named.data["delta"]
-    assert (
-        completed.data["suggestions"][0]["thumbnail_url"]
-        == "https://cdn.example/meal.jpg"
+    completed_at = next(
+        index
+        for index, event in enumerate(events)
+        if event.event == "message.completed"
+    )
+    photo = next(
+        event
+        for event in events[completed_at + 1 :]
+        if event.event == "message.suggestions"
+        and event.data["suggestions"][0].get("thumbnail_url")
+    )
+    assert photo.data["suggestions"][0]["thumbnail_url"] == (
+        "https://cdn.example/meal.jpg"
     )
 
 

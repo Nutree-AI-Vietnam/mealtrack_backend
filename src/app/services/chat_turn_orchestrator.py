@@ -766,6 +766,18 @@ class ChatTurnOrchestrator:
                 ),
             )
             ready_payload.pop("follow_ups", None)
+            # Chips only need the finished sentence. Do not wait for meal photos.
+            follow_task = asyncio.create_task(
+                self._generate_follow_ups(
+                    locale=resolved_locale,
+                    intent=intent,
+                    slot=meal_slot,
+                    user_message=trimmed,
+                    assistant_text=final_text,
+                    has_suggestions=bool(suggestions),
+                    suggestion_names=meal_names(suggestions),
+                )
+            )
             completed = await self._complete(
                 claim.assistant_message,
                 content=final_text,
@@ -786,6 +798,7 @@ class ChatTurnOrchestrator:
                 ),
             )
             if completed is None:
+                follow_task.cancel()
                 increment_metric(
                     "chat.turn.stale_generation",
                     attributes={"locale": resolved_locale},
@@ -815,27 +828,7 @@ class ChatTurnOrchestrator:
                     **ready_payload,
                 },
             )
-            if suggestions:
-                imaged = await self._attach_meal_images(suggestions)
-                if imaged is not suggestions:
-                    suggestions = imaged
-                    await self._store_meal_suggestions(completed.id, suggestions)
-                    yield ChatSseEvent(
-                        event="message.suggestions",
-                        data={
-                            "assistant_message_id": completed.id,
-                            "suggestions": suggestions,
-                        },
-                    )
-            follow_ups = await self._generate_follow_ups(
-                locale=resolved_locale,
-                intent=intent,
-                slot=meal_slot,
-                user_message=trimmed,
-                assistant_text=final_text,
-                has_suggestions=bool(suggestions),
-                suggestion_names=meal_names(suggestions),
-            )
+            follow_ups = await follow_task
             if follow_ups:
                 try:
                     await self._attach_follow_ups(completed.id, follow_ups)
@@ -892,6 +885,18 @@ class ChatTurnOrchestrator:
                     ),
                 },
             )
+            if suggestions:
+                imaged = await self._attach_meal_images(suggestions)
+                if imaged is not suggestions:
+                    suggestions = imaged
+                    await self._store_meal_suggestions(completed.id, suggestions)
+                    yield ChatSseEvent(
+                        event="message.suggestions",
+                        data={
+                            "assistant_message_id": completed.id,
+                            "suggestions": suggestions,
+                        },
+                    )
         except asyncio.CancelledError:
             partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
             if partial:
