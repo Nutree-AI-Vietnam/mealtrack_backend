@@ -1224,6 +1224,73 @@ def test_history_keeps_the_latest_forty_turns():
     assert turns[-1].content == "turn 49"
 
 
+@pytest.mark.asyncio
+async def test_follow_up_can_quote_the_previous_meal_card():
+    now = utc_now()
+    prior = ChatMessage(
+        id="a-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="Try this.",
+        reply_payload={
+            "suggestions": [
+                {
+                    "name": "Salmon rice",
+                    "calories": 420,
+                    "protein_g": 32,
+                    "carbs_g": 40,
+                    "fat_g": 11,
+                }
+            ]
+        },
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    orchestrator = _orchestrator(
+        repo, completion=_FakeCompletion(["That portion is 420 calories. "])
+    )
+    events = await _stream(orchestrator, content="How many calories was that meal?")
+    deltas = "".join(
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    )
+    assert "420" in deltas
+    assert events[-1].event == "message.completed"
+
+
+def test_history_remembers_the_meal_card_macros():
+    from src.app.services.chat_turn_orchestrator import _history_turns
+
+    now = utc_now()
+    message = ChatMessage(
+        id="a1",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="Try this.",
+        reply_payload={
+            "suggestions": [
+                {
+                    "name": "Salmon rice",
+                    "calories": 420,
+                    "protein_g": 32,
+                    "carbs_g": 40,
+                    "fat_g": 11,
+                }
+            ]
+        },
+    )
+    turns = _history_turns([message])
+    assert "Meal card shown: Salmon rice." in turns[0].content
+    assert "420 kcal" in turns[0].content
+    assert "32g protein" in turns[0].content
+
+
 def test_history_remembers_the_meal_card_name():
     from src.app.services.chat_turn_orchestrator import _history_turns
 

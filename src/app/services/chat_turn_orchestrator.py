@@ -518,6 +518,7 @@ class ChatTurnOrchestrator:
                     generation=generation,
                     intent=intent,
                     meal_candidates=suggestions,
+                    traceable_meals=_traceable_meals(suggestions, history_messages),
                 ):
                     if not delta_text:
                         continue
@@ -1177,6 +1178,7 @@ class ChatTurnOrchestrator:
         generation: dict[str, Any],
         intent: str | None = None,
         meal_candidates: list[dict[str, Any]] | None = None,
+        traceable_meals: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
@@ -1236,7 +1238,9 @@ class ChatTurnOrchestrator:
                             allergies=allergies,
                             chunks=chunks,
                             context=context,
-                            meal_candidates=meal_candidates,
+                            meal_candidates=traceable_meals
+                            if traceable_meals is not None
+                            else meal_candidates,
                         )
                         if next_pending is None:
                             generation["blocked"] = True
@@ -1447,6 +1451,37 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
     )
 
 
+def _meal_card_history_note(card: dict[str, Any]) -> str:
+    name = str(card.get("name") or "").strip()
+    note = f"Meal card shown: {name}."
+    calories = card.get("calories")
+    if calories is None:
+        return note
+    return (
+        f"{note} Authoritative portion: {calories} kcal, "
+        f"{card.get('protein_g')}g protein, {card.get('carbs_g')}g carbs, "
+        f"{card.get('fat_g')}g fat."
+    )
+
+
+def _traceable_meals(
+    current: list[dict[str, Any]],
+    history: list[ChatMessage],
+) -> list[dict[str, Any]]:
+    """Current cards plus earlier meal cards, so a follow-up can quote them."""
+    seen = {id(card) for card in current}
+    merged = list(current)
+    for message in history:
+        for card in message.suggestions():
+            if not isinstance(card, dict) or card.get("calories") is None:
+                continue
+            if id(card) in seen:
+                continue
+            seen.add(id(card))
+            merged.append(card)
+    return merged
+
+
 def _history_turns(messages: list[ChatMessage]) -> list[ChatHistoryTurn]:
     turns: list[ChatHistoryTurn] = []
     for message in messages:
@@ -1458,7 +1493,14 @@ def _history_turns(messages: list[ChatMessage]) -> list[ChatHistoryTurn]:
                 if isinstance(card, dict) and str(card.get("name") or "").strip()
             ]
             if names:
-                note = f"Meal card shown: {names[0]}."
+                note = _meal_card_history_note(
+                    next(
+                        card
+                        for card in message.suggestions()
+                        if isinstance(card, dict)
+                        and str(card.get("name") or "").strip() == names[0]
+                    )
+                )
                 if note not in content:
                     content = f"{content}\n{note}".strip()
         if not content:

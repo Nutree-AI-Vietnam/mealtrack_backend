@@ -301,9 +301,10 @@ class OpenAIChatCompletionAdapter(
 
 _FOLLOW_UP_INSTRUCTIONS = """Author 2-3 short Nutree Coach follow-up chips.
 Each chip is {label, action}. action must be one of the allowed_actions.
-Reply in the given locale. Labels are tap targets, not answers.
+Reply in the given locale. Labels are tap targets the user would actually want next, not vague "tell me more".
+Prefer a specific next step: another meal idea, what's left today, how the day is going, or what Coach can do.
 Do not invent nutrition numbers. Do not claim a meal was saved or logged.
-If has_suggestions is true, one chip may request more ideas via next_meal.
+If has_suggestions is true, one chip must offer another meal idea via next_meal.
 """
 
 _NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 1 delicious next-meal recipe for one sitting.
