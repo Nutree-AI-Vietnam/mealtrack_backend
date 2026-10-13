@@ -473,11 +473,17 @@ def inspect_sentence(
     return SafetyDecision(True)
 
 
-def meal_reply_is_usable(text: str, suggestions: Sequence[Mapping[str, Any]]) -> bool:
-    """A next-meal sentence may replace the template only when it names the card.
+def meal_reply_is_usable(
+    text: str,
+    suggestions: Sequence[Mapping[str, Any]],
+    *,
+    context: ChatUserContext,
+) -> bool:
+    """Keep a next-meal sentence when it names the card and its numbers match.
 
-    Calorie and macro claims are rejected here. The card already shows those
-    numbers, and a model sentence must not invent a second set.
+    A calorie or macro figure is allowed only when it is already on the card or
+    in the day's Nutree context. Any other figure, or a claim that the meal was
+    saved, falls back to the template.
     """
     featured = ""
     for item in suggestions:
@@ -492,9 +498,12 @@ def meal_reply_is_usable(text: str, suggestions: Sequence[Mapping[str, Any]]) ->
         return False
     if _INTERNAL_LEAK_RE.search(cleaned) or _MUTATION_CLAIM_RE.search(cleaned):
         return False
-    if _CALORIE_CLAIM_RE.search(cleaned) or _MACRO_CLAIM_RE.search(cleaned):
-        return False
-    return True
+    return nutrition_numbers_are_traceable(
+        cleaned,
+        context=context,
+        chunks=(),
+        meal_candidates=suggestions,
+    )
 
 
 def nutrition_numbers_are_traceable(

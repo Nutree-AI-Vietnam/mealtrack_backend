@@ -532,13 +532,32 @@ def test_allergy_tagged_chunks_are_filtered():
 
 def test_meal_reply_must_name_the_card_and_skip_numbers() -> None:
     cards = [{"name": "Egg rice bowl", "calories": 420}]
+    context = _context()
     assert meal_reply_is_usable(
         "Egg rice bowl is the one I'd make. Tap the card to log it.",
         cards,
+        context=context,
     )
-    assert not meal_reply_is_usable("Here is a nice lunch.", cards)
-    assert not meal_reply_is_usable("Egg rice bowl is about 999 kcal.", cards)
-    assert not meal_reply_is_usable("I logged Egg rice bowl for you.", cards)
+    assert meal_reply_is_usable(
+        "Egg rice bowl is 420 kcal.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "Here is a nice lunch.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "Egg rice bowl is about 999 kcal.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "I logged Egg rice bowl for you.",
+        cards,
+        context=context,
+    )
 
 
 def test_out_of_scope_copy_is_localized() -> None:

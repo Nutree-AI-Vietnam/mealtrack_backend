@@ -1256,6 +1256,23 @@ async def test_meal_reply_keeps_a_model_sentence_that_names_the_card():
 
 
 @pytest.mark.asyncio
+async def test_meal_reply_keeps_the_card_calorie_number():
+    cards = _three_cards()
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=cards, meal_slot="lunch")
+    )
+    written = "Egg rice bowl is 420 kcal. Tap the card to log it."
+    completion = _FakeCompletion([written])
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+
+    assert repo.completed["content"] == written
+    assert "fits lunch" not in repo.completed["content"]
+
+
+@pytest.mark.asyncio
 async def test_meal_reply_drops_a_sentence_that_invents_calories():
     cards = _three_cards()
     next_meals = _FakeNextMeals(

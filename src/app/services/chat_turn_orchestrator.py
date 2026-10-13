@@ -609,7 +609,7 @@ class ChatTurnOrchestrator:
                 meal_reply = (
                     "" if generation.get("blocked") else "".join(streamed).strip()
                 )
-                if not meal_reply_is_usable(meal_reply, suggestions):
+                if not meal_reply_is_usable(meal_reply, suggestions, context=context):
                     meal_reply = (
                         next_meal_intro(
                             suggestions,
