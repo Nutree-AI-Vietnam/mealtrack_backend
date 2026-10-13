@@ -1,7 +1,8 @@
 """Cloud wearable sign-in through Open Wearables.
 
 Phone sources stay on the device. Fitbit is excluded because its Web API
-ends on 2026-10-30. Workouts, meals, and water are not imported.
+ends on 2026-10-30. Meals and water are not imported. A workout is listed
+so the person can add it; it is never applied on its own.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -39,6 +40,12 @@ CLOUD_WEARABLE_PROVIDERS = frozenset(
 BALANCE_PROVIDERS = frozenset(
     {"garmin", "oura", "whoop", "polar", "suunto", "withings", "google_health"}
 )
+
+# Steps exist. Active calories do not, so burn stays empty for these.
+STEPS_PROVIDERS = frozenset({"ultrahuman"})
+
+# Per-activity calories. Listed for the person to add, never summed into the day.
+WORKOUT_PROVIDERS = frozenset({"strava"})
 
 
 def wearable_sign_in_ready() -> bool:
@@ -128,6 +135,21 @@ async def list_wearable_connections(
     return {"connections": connections}
 
 
+def _activity(
+    provider: str,
+    *,
+    steps: int = 0,
+    active: float = 0.0,
+    connected: bool = False,
+) -> dict[str, object]:
+    return {
+        "provider": provider,
+        "steps": steps,
+        "active_calories_kcal": active,
+        "connected": connected,
+    }
+
+
 @router.get("/activity")
 async def wearable_activity(
     day: str = Query(alias="date", min_length=10, max_length=10),
@@ -137,40 +159,38 @@ async def wearable_activity(
     client: OpenWearablesClient = Depends(open_wearables_client),
 ) -> dict[str, object]:
     """Steps and active calories for one provider. Resting burn is excluded."""
-    if provider not in BALANCE_PROVIDERS:
-        return {
-            "provider": provider,
-            "steps": 0,
-            "active_calories_kcal": 0.0,
-            "connected": False,
-        }
+    if provider not in BALANCE_PROVIDERS and provider not in STEPS_PROVIDERS:
+        return _activity(provider)
     if not wearable_sign_in_ready():
-        return {
-            "provider": provider,
-            "steps": 0,
-            "active_calories_kcal": 0.0,
-            "connected": False,
-        }
+        return _activity(provider)
     ow_user_id = await _linked_user_id(session, user_id)
     if ow_user_id is None:
-        return {
-            "provider": provider,
-            "steps": 0,
-            "active_calories_kcal": 0.0,
-            "connected": False,
-        }
+        return _activity(provider)
     try:
         steps, active = await client.activity_day(ow_user_id, day, provider)
     except OpenWearablesError:
-        return {
-            "provider": provider,
-            "steps": 0,
-            "active_calories_kcal": 0.0,
-            "connected": False,
-        }
-    return {
-        "provider": provider,
-        "steps": steps,
-        "active_calories_kcal": active,
-        "connected": True,
-    }
+        return _activity(provider)
+    if provider in STEPS_PROVIDERS:
+        active = 0.0
+    return _activity(provider, steps=steps, active=active, connected=True)
+
+
+@router.get("/workouts")
+async def wearable_workouts(
+    day: str = Query(alias="date", min_length=10, max_length=10),
+    provider: str = Query(min_length=1),
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_async_db),
+    client: OpenWearablesClient = Depends(open_wearables_client),
+) -> dict[str, object]:
+    """Activities the person can add. They are not written into the day here."""
+    if provider not in WORKOUT_PROVIDERS or not wearable_sign_in_ready():
+        return {"provider": provider, "workouts": []}
+    ow_user_id = await _linked_user_id(session, user_id)
+    if ow_user_id is None:
+        return {"provider": provider, "workouts": []}
+    try:
+        workouts = await client.workouts_on_day(ow_user_id, day, provider)
+    except OpenWearablesError:
+        return {"provider": provider, "workouts": []}
+    return {"provider": provider, "workouts": workouts}

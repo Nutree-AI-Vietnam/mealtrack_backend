@@ -1,7 +1,7 @@
 """HTTP client for the Open Wearables API.
 
 The API key travels in X-Open-Wearables-API-Key. Bearer auth with that key
-returns 401. Nutree reads steps and active calories only.
+returns 401.
 """
 
 from __future__ import annotations
@@ -23,12 +23,27 @@ def api_root(base_url: str) -> str:
     return root
 
 
-def choose_activity_row(rows: list[dict[str, Any]], provider: str) -> dict[str, Any] | None:
-    """Pick one daily row for the primary provider.
+def _workout_row(row: object) -> dict[str, object] | None:
+    if not isinstance(row, dict):
+        return None
+    workout_id = row.get("id")
+    if not isinstance(workout_id, str) or not workout_id:
+        return None
+    name = row.get("name") or row.get("type") or "Activity"
+    duration = row.get("duration_seconds")
+    calories = row.get("calories_kcal")
+    minutes = duration // 60 if isinstance(duration, int) else 0
+    kcal = float(calories) if isinstance(calories, (int, float)) else 0.0
+    return {
+        "id": workout_id,
+        "name": name if isinstance(name, str) else "Activity",
+        "duration_min": minutes if minutes > 0 else 1,
+        "calories_kcal": kcal,
+    }
 
-    Summary rows are per source. Adding phone and watch totals double-counts
-    the same steps, so this returns a single row.
-    """
+
+def choose_activity_row(rows: list[dict[str, Any]], provider: str) -> dict[str, Any] | None:
+    """One daily row for the chosen provider. Summing sources double-counts steps."""
     matching = [
         row
         for row in rows
@@ -74,10 +89,7 @@ class OpenWearablesClient:
         return url
 
     async def connections(self, user_id: str) -> list[dict[str, str]]:
-        payload = await self._request(
-            "GET",
-            f"/api/v1/users/{user_id}/connections",
-        )
+        payload = await self._request("GET", f"/api/v1/users/{user_id}/connections")
         if not isinstance(payload, list):
             return []
         rows: list[dict[str, str]] = []
@@ -90,26 +102,71 @@ class OpenWearablesClient:
                 rows.append({"provider": provider, "status": status})
         return rows
 
-    async def activity_day(
-        self,
-        user_id: str,
-        day: str,
-        provider: str,
-    ) -> tuple[int, float]:
+    async def activity_day(self, user_id: str, day: str, provider: str) -> tuple[int, float]:
+        # A chosen watch can lose the daily summary contest, so read its samples.
+        steps_samples: list[float] = []
+        energy_samples: list[float] = []
+        daily_steps: list[float] = []
+        daily_energy: list[float] = []
+        cursor: str | None = None
+        for _ in range(20):
+            params: dict[str, Any] = {
+                "start_time": f"{day}T00:00:00Z",
+                "end_time": f"{day}T23:59:59Z",
+                "types": ["steps", "active_energy"],
+                "provider": provider,
+                "limit": 1000,
+                "filter_by_priority": "false",
+            }
+            if cursor:
+                params["cursor"] = cursor
+            payload = await self._request(
+                "GET",
+                f"/api/v1/users/{user_id}/timeseries",
+                params=params,
+            )
+            rows = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                break
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                value = float(row.get("value") or 0)
+                daily = bool(row.get("is_daily_total"))
+                if row.get("type") == "steps":
+                    (daily_steps if daily else steps_samples).append(value)
+                elif row.get("type") == "active_energy":
+                    (daily_energy if daily else energy_samples).append(value)
+            pagination = payload.get("pagination") if isinstance(payload, dict) else None
+            cursor = pagination.get("next_cursor") if isinstance(pagination, dict) else None
+            if not isinstance(pagination, dict) or not pagination.get("has_more") or not cursor:
+                break
+        steps = daily_steps or steps_samples
+        energy = daily_energy or energy_samples
+        return int(round(sum(steps))), float(sum(energy))
+
+    async def workouts_on_day(
+        self, user_id: str, day: str, provider: str
+    ) -> list[dict[str, object]]:
         payload = await self._request(
             "GET",
-            f"/api/v1/users/{user_id}/summaries/activity",
-            params={"start_date": day, "end_date": day, "limit": 50},
+            f"/api/v1/users/{user_id}/events/workouts",
+            params={
+                "start_date": f"{day}T00:00:00Z",
+                "end_date": f"{day}T23:59:59Z",
+                "provider": provider,
+                "limit": 20,
+            },
         )
         rows = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
-            return 0, 0.0
-        chosen = choose_activity_row(rows, provider)
-        if chosen is None:
-            return 0, 0.0
-        steps = int(chosen.get("steps") or 0)
-        active = float(chosen.get("active_calories_kcal") or 0)
-        return steps, active
+            return []
+        workouts: list[dict[str, object]] = []
+        for row in rows:
+            parsed = _workout_row(row)
+            if parsed is not None:
+                workouts.append(parsed)
+        return workouts
 
     async def _request(
         self,

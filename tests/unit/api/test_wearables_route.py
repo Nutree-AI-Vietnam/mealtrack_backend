@@ -1,7 +1,8 @@
 """Open Wearables client and route guards.
 
-Activity reads use active calories from one provider row. They do not add
-sources together and do not request workouts, meals, or water.
+Activity reads use one provider. They do not add sources together.
+Ultrahuman supplies steps and drops calorie burn. Strava workouts are listed
+for the person to add, and never fill the daily balance.
 """
 
 import httpx
@@ -27,6 +28,8 @@ def test_cloud_catalog_excludes_phone_sources_and_fitbit():
     assert "fitbit" not in wearables_mod.CLOUD_WEARABLE_PROVIDERS
     assert "samsung" not in wearables_mod.CLOUD_WEARABLE_PROVIDERS
     assert "strava" not in wearables_mod.BALANCE_PROVIDERS
+    assert "ultrahuman" in wearables_mod.STEPS_PROVIDERS
+    assert "strava" in wearables_mod.WORKOUT_PROVIDERS
 
 
 def test_choose_activity_row_uses_one_provider_and_does_not_sum():
@@ -57,7 +60,7 @@ def test_choose_activity_row_uses_one_provider_and_does_not_sum():
 
 
 @pytest.mark.asyncio
-async def test_activity_day_requests_summary_not_workouts():
+async def test_activity_day_reads_the_chosen_provider_samples():
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -65,16 +68,15 @@ async def test_activity_day_requests_summary_not_workouts():
         assert request.headers["X-Open-Wearables-API-Key"] == "test-key"
         assert "workouts" not in request.url.path
         assert "meals" not in request.url.path
+        assert request.url.params.get("provider") == "garmin"
+        assert "workouts" not in request.url.params.get("types", "")
         return httpx.Response(
             200,
             json={
                 "data": [
-                    {
-                        "source": {"provider": "garmin"},
-                        "steps": 5000,
-                        "active_calories_kcal": 180.5,
-                        "total_calories_kcal": 2500,
-                    }
+                    {"type": "steps", "value": 5000, "is_daily_total": True},
+                    {"type": "active_energy", "value": 180.5, "is_daily_total": True},
+                    {"type": "steps", "value": 999, "is_daily_total": False},
                 ],
                 "pagination": {"has_more": False},
             },
@@ -88,7 +90,44 @@ async def test_activity_day_requests_summary_not_workouts():
     steps, active = await client.activity_day("user-1", "2026-10-12", "garmin")
     assert steps == 5000
     assert active == 180.5
-    assert seen == ["/api/v1/users/user-1/summaries/activity"]
+    assert seen == ["/api/v1/users/user-1/timeseries"]
+
+
+@pytest.mark.asyncio
+async def test_workouts_on_day_keeps_name_and_calories():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params.get("provider") == "strava"
+        assert "meals" not in request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "ride-1",
+                        "name": "Morning Ride",
+                        "duration_seconds": 2700,
+                        "calories_kcal": 420,
+                    },
+                    {"name": "missing id"},
+                ],
+                "pagination": {"has_more": False},
+            },
+        )
+
+    client = OpenWearablesClient(
+        "http://ow.test",
+        "test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    rows = await client.workouts_on_day("user-1", "2026-10-13", "strava")
+    assert rows == [
+        {
+            "id": "ride-1",
+            "name": "Morning Ride",
+            "duration_min": 45,
+            "calories_kcal": 420.0,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -114,7 +153,7 @@ async def test_authorization_url_uses_api_key_header():
     assert url == "https://connect.garmin.com/start"
 
 
-def _client() -> TestClient:
+def _client(ow_client: OpenWearablesClient | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(wearables_mod.router)
     app.dependency_overrides[get_current_user_id] = lambda: "user-1"
@@ -123,6 +162,8 @@ def _client() -> TestClient:
         yield None
 
     app.dependency_overrides[get_async_db] = _db
+    if ow_client is not None:
+        app.dependency_overrides[wearables_mod.open_wearables_client] = lambda: ow_client
     return TestClient(app)
 
 
@@ -139,6 +180,60 @@ def test_unconfigured_sign_in_conflicts(monkeypatch):
     monkeypatch.setattr(settings, "OPEN_WEARABLES_APP_SECRET", "")
     response = _client().get("/v1/wearables/oauth/garmin/authorize")
     assert response.status_code == 409
+
+
+def test_ultrahuman_steps_ignore_energy(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+
+    async def linked(_session, _user_id):
+        return "ow-user"
+
+    monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
+
+    class _Client(OpenWearablesClient):
+        async def activity_day(self, user_id, day, provider):
+            assert provider == "ultrahuman"
+            return 2000, 200.3
+
+    response = _client(_Client("http://ow.test", "test-key")).get(
+        "/v1/wearables/activity",
+        params={"date": "2026-10-13", "provider": "ultrahuman"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["steps"] == 2000
+    assert body["active_calories_kcal"] == 0
+    assert body["connected"] is True
+
+
+def test_strava_workouts_are_listed_not_applied(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+
+    async def linked(_session, _user_id):
+        return "ow-user"
+
+    monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
+
+    class _Client(OpenWearablesClient):
+        async def workouts_on_day(self, user_id, day, provider):
+            assert provider == "strava"
+            return [
+                {
+                    "id": "ride-1",
+                    "name": "Morning Ride",
+                    "duration_min": 45,
+                    "calories_kcal": 420.0,
+                }
+            ]
+
+    response = _client(_Client("http://ow.test", "test-key")).get(
+        "/v1/wearables/workouts",
+        params={"date": "2026-10-13", "provider": "strava"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["workouts"][0]["name"] == "Morning Ride"
+    assert body["workouts"][0]["calories_kcal"] == 420.0
 
 
 def test_partial_providers_do_not_fill_the_balance(monkeypatch):
