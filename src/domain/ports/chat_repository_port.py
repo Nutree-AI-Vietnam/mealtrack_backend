@@ -104,6 +104,7 @@ class ChatRepositoryPort(ABC):
         user_id: str,
         assistant_message_id: str,
         lease_expires_at: datetime,
+        content: str | None = None,
     ) -> tuple[ChatTurnClaim, str | None] | None:
         """Reopen the latest completed assistant so it can be generated again.
 

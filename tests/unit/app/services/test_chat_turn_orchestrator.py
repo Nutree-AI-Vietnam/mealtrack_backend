@@ -84,7 +84,28 @@ class _FakeRepo:
 
     async def reopen_assistant_message(self, **kwargs):
         self.reopened = kwargs
-        return self.reopen_result
+        if self.reopen_result is None:
+            return None
+        claim, intent = self.reopen_result
+        requested = (kwargs.get("content") or "").strip()
+        if requested and requested != (claim.user_message.content or "").strip():
+            claim = ChatTurnClaim(
+                kind=claim.kind,
+                thread=claim.thread,
+                user_message=ChatMessage(
+                    id=claim.user_message.id,
+                    thread_id=claim.user_message.thread_id,
+                    role=claim.user_message.role,
+                    status=claim.user_message.status,
+                    created_at=claim.user_message.created_at,
+                    updated_at=claim.user_message.updated_at,
+                    content=requested,
+                    idempotency_key=claim.user_message.idempotency_key,
+                    request_fingerprint=claim.user_message.request_fingerprint,
+                ),
+                assistant_message=claim.assistant_message,
+            )
+        return claim, intent
 
     async def count_user_turns_since(self, **kwargs):
         used = self.turns_used
@@ -1073,6 +1094,7 @@ async def test_regenerate_reuses_the_stored_user_message():
     prepared = await orchestrator.prepare_regeneration(
         user_id="u1",
         assistant_message_id="m-asst",
+        content="How much is left?",
         locale="en",
         header_timezone="UTC",
         user_language="en",
@@ -1083,9 +1105,36 @@ async def test_regenerate_reuses_the_stored_user_message():
     ]
     completed = next(event for event in events if event.event == "message.completed")
     assert repo.reopened["assistant_message_id"] == "m-asst"
+    assert repo.reopened["content"] == "How much is left?"
     assert prepared.content == "How much is left?"
     assert completed.data["intent"] == "next_meal"
     assert "Another idea" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_regenerate_with_new_text_edits_the_stored_question():
+    claim = _claim()
+    repo = _FakeRepo(claim=claim)
+    repo.reopen_result = (claim, None)
+    completion = _FakeCompletion(["Soup fits better. "])
+    orchestrator = _orchestrator(repo, completion=completion)
+
+    prepared = await orchestrator.prepare_regeneration(
+        user_id="u1",
+        assistant_message_id="m-asst",
+        content="What about soup?",
+        locale="en",
+        header_timezone="UTC",
+        user_language="en",
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_prepared(user_id="u1", prepared=prepared)
+    ]
+    completed = next(event for event in events if event.event == "message.completed")
+    assert prepared.content == "What about soup?"
+    assert "Soup fits" in completed.data.get("text", repo.completed["content"])
+    assert "Soup fits" in repo.completed["content"]
 
 
 @pytest.mark.asyncio
@@ -1096,6 +1145,7 @@ async def test_regenerate_rejects_a_reply_that_cannot_be_reopened():
         await orchestrator.prepare_regeneration(
             user_id="u1",
             assistant_message_id="missing",
+            content="How much is left?",
             locale="en",
             header_timezone=None,
             user_language="en",

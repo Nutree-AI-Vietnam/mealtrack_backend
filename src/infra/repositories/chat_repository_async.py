@@ -17,6 +17,7 @@ from src.domain.exceptions.chat_exceptions import (
     ChatIdempotencyConflictError,
 )
 from src.domain.model.chat import (
+    CHAT_MAX_USER_MESSAGE_CHARS,
     ChatClaimKind,
     ChatMessage,
     ChatMessageRole,
@@ -296,6 +297,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         user_id: str,
         assistant_message_id: str,
         lease_expires_at: datetime,
+        content: str | None = None,
     ) -> tuple[ChatTurnClaim, str | None] | None:
         thread = await self._get_thread_row(user_id)
         if thread is None:
@@ -313,6 +315,11 @@ class AsyncChatRepository(ChatRepositoryPort):
         user_row = await self.session.get(ChatMessageORM, latest.in_reply_to_id)
         if user_row is None or user_row.role != ChatMessageRole.USER.value:
             return None
+
+        edited = (content or "").strip()
+        if edited:
+            user_row.content = edited[:CHAT_MAX_USER_MESSAGE_CHARS]
+            user_row.updated_at = now
 
         prior_intent = None
         payload = latest.reply_payload

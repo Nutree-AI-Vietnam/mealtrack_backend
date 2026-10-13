@@ -267,11 +267,15 @@ class ChatTurnOrchestrator:
         *,
         user_id: str,
         assistant_message_id: str,
+        content: str,
         locale: str | None,
         header_timezone: str | None,
         user_language: str | None,
     ) -> PreparedChatTurn:
-        """Replace the latest completed reply without adding another user turn."""
+        """Replace the latest completed reply without adding another user turn.
+
+        A different ``content`` edits the stored question before the new answer.
+        """
         started = time.perf_counter()
         resolved_locale = resolve_chat_locale(locale, user_language)
         await self._enforce_daily_budget(user_id)
@@ -281,6 +285,7 @@ class ChatTurnOrchestrator:
                 user_id=user_id,
                 assistant_message_id=assistant_message_id,
                 lease_expires_at=lease,
+                content=content.strip(),
             )
         if reopened is None:
             raise ChatRegenerateNotAllowedError()

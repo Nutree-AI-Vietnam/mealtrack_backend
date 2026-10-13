@@ -118,6 +118,7 @@ async def post_chat_message(
             prepared = await orchestrator.prepare_regeneration(
                 user_id=user_id,
                 assistant_message_id=payload.regenerate_assistant_id,
+                content=payload.content,
                 locale=locale,
                 header_timezone=header_timezone,
                 user_language=locale,
