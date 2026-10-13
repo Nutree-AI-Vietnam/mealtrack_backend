@@ -1242,8 +1242,14 @@ async def test_meal_reply_keeps_a_model_sentence_that_names_the_card():
     repo = _FakeRepo(claim=_claim())
     orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
 
-    await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+    events = await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+    deltas = [event for event in events if event.event == "message.delta"]
 
+    assert deltas[0].data["delta"].startswith("I'm picking")
+    assert deltas[0].data.get("replace") is not True
+    replaced = next(event for event in deltas if event.data.get("replace") is True)
+    assert replaced.data["delta"].startswith("Egg rice bowl")
+    assert "I'm picking" not in repo.completed["content"]
     assert repo.completed["content"] == written
     assert "fits lunch" not in repo.completed["content"]
     assert "420" not in repo.completed["content"]
@@ -1403,7 +1409,9 @@ async def test_meal_intro_is_sent_before_food_photos():
     named = next(
         event
         for event in events
-        if event.event == "message.delta" and event.data.get("replace") is True
+        if event.event == "message.delta"
+        and event.data.get("replace") is True
+        and "Egg rice bowl" in event.data.get("delta", "")
     )
     assert "Egg rice bowl" in named.data["delta"]
     assert "I'm picking" not in named.data["delta"]

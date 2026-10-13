@@ -574,9 +574,10 @@ class ChatTurnOrchestrator:
 
             meal_reply = ""
             if intent == ChatIntent.NEXT_MEAL.value and suggestions:
-                # Cards are already chosen. Let the model write the sentence,
-                # and keep the template when that sentence is not usable.
-                meal_reply = await self._draft_grounded_meal_reply(
+                # Cards are already chosen. Stream the model's sentence, and
+                # replace it with the template when that sentence is not usable.
+                streamed: list[str] = []
+                async for delta_text, replace in self._iter_meal_reply_deltas(
                     context=context,
                     chunks=chunks,
                     history=history,
@@ -586,6 +587,18 @@ class ChatTurnOrchestrator:
                     suggestions=suggestions,
                     history_messages=history_messages,
                     earlier=earlier,
+                ):
+                    streamed.append(delta_text)
+                    yield ChatSseEvent(
+                        event="message.delta",
+                        data={
+                            "assistant_message_id": claim.assistant_message.id,
+                            "delta": delta_text,
+                            "replace": replace,
+                        },
+                    )
+                meal_reply = (
+                    "" if generation.get("blocked") else "".join(streamed).strip()
                 )
                 if not meal_reply_is_usable(meal_reply, suggestions):
                     meal_reply = (
@@ -606,20 +619,21 @@ class ChatTurnOrchestrator:
                         )
                         or ""
                     )
+                    if meal_reply:
+                        yield ChatSseEvent(
+                            event="message.delta",
+                            data={
+                                "assistant_message_id": claim.assistant_message.id,
+                                "delta": meal_reply,
+                                "replace": True,
+                            },
+                        )
             if meal_reply:
                 # The acknowledgement was only a placeholder while cards loaded.
                 sentences.clear()
                 sentences.append(meal_reply)
                 generation["text"] = meal_reply
                 generation["blocked"] = False
-                yield ChatSseEvent(
-                    event="message.delta",
-                    data={
-                        "assistant_message_id": claim.assistant_message.id,
-                        "delta": meal_reply,
-                        "replace": True,
-                    },
-                )
             else:
                 # Keep streaming until no tool calls are emitted (max 2 iterations)
                 max_tool_iterations = 1 if direct_invoke else 2
@@ -1373,7 +1387,7 @@ class ChatTurnOrchestrator:
             )
         return [message for message in messages if message.id != exclude_message_id]
 
-    async def _draft_grounded_meal_reply(
+    async def _iter_meal_reply_deltas(
         self,
         *,
         context: ChatUserContext,
@@ -1385,12 +1399,13 @@ class ChatTurnOrchestrator:
         suggestions: list[dict[str, Any]],
         history_messages: list[ChatMessage],
         earlier: str | None,
-    ) -> str:
-        """One model pass for a next-meal reply. Empty when it cannot be used."""
+    ) -> AsyncIterator[tuple[str, bool]]:
+        """Stream a next-meal sentence. The first chunk replaces the acknowledgement."""
         generation["tools"] = None
         generation["tool_calls"] = None
+        first = True
         try:
-            async for _delta in self._iter_validated_sentences(
+            async for delta in self._iter_validated_sentences(
                 context=context,
                 chunks=chunks,
                 history=history,
@@ -1401,12 +1416,12 @@ class ChatTurnOrchestrator:
                 traceable_meals=_traceable_meals(suggestions, history_messages),
                 earlier=earlier,
             ):
-                pass
+                if not delta:
+                    continue
+                yield delta, first
+                first = False
         except ChatProviderUnavailableError:
-            return ""
-        if generation.get("blocked"):
-            return ""
-        return str(generation.get("text") or "").strip()
+            return
 
     async def _iter_validated_sentences(
         self,
