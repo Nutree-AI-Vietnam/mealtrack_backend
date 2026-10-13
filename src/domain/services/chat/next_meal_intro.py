@@ -58,6 +58,21 @@ def eaten_today_name(
     return chosen
 
 
+def with_eaten_today(text: str, eaten: str | None, *, locale: str) -> str:
+    """Name today's logged dish when a usable model sentence left it out."""
+    label = _dish_label(eaten)
+    cleaned = " ".join(text.split())
+    if label is None or not cleaned:
+        return cleaned
+    if _fold(label) in _fold(cleaned):
+        return cleaned
+    if locale == "vi":
+        lead = f"Hôm nay bạn đã ghi {label}."
+    else:
+        lead = f"You already logged {label} today."
+    return f"{lead} {cleaned}"
+
+
 def next_meal_intro(
     suggestions: Sequence[Mapping[str, Any]],
     *,

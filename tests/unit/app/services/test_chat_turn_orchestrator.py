@@ -1273,6 +1273,45 @@ async def test_meal_reply_keeps_the_card_calorie_number():
 
 
 @pytest.mark.asyncio
+async def test_usable_meal_reply_names_a_dish_logged_today():
+    cards = _three_cards()
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=cards, meal_slot="lunch")
+    )
+    context = _FakeContext(
+        recent_meals=(
+            ChatMealSummary(
+                meal_id="pho",
+                local_date="2026-09-01",
+                dish_name="Pho",
+                meal_type="breakfast",
+                calories=480,
+                protein_g=25,
+                carbs_g=60,
+                fat_g=12,
+                status="active",
+            ),
+        )
+    )
+    written = "Egg rice bowl is 420 kcal."
+    completion = _FakeCompletion([written])
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo,
+        next_meals=next_meals,
+        completion=completion,
+        context_builder=context,
+    )
+
+    await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+
+    assert repo.completed["content"] == (
+        "You already logged Pho today. Egg rice bowl is 420 kcal."
+    )
+    assert "480" not in repo.completed["content"]
+
+
+@pytest.mark.asyncio
 async def test_meal_reply_drops_a_sentence_that_invents_calories():
     cards = _three_cards()
     next_meals = _FakeNextMeals(

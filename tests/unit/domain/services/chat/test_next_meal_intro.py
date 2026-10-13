@@ -2,6 +2,7 @@ from src.domain.services.chat.next_meal_intro import (
     eaten_today_name,
     next_meal_ack,
     next_meal_intro,
+    with_eaten_today,
 )
 
 
@@ -119,6 +120,23 @@ def test_vietnamese_intro_names_the_logged_meal() -> None:
     assert "Đây là các món nhiều đạm hơn." in text
     assert "Hôm nay bạn đã ghi Phở." in text
     assert text.index("nhiều đạm") < text.index("Phở")
+
+
+def test_usable_sentence_gains_today_logged_dish_when_it_omits_it() -> None:
+    noted = with_eaten_today(
+        "Egg rice bowl is 420 kcal.",
+        "Pho",
+        locale="en",
+    )
+    assert noted == "You already logged Pho today. Egg rice bowl is 420 kcal."
+    assert (
+        with_eaten_today(
+            "You already logged Pho today. Egg rice bowl fits lunch.",
+            "Pho",
+            locale="en",
+        )
+        == "You already logged Pho today. Egg rice bowl fits lunch."
+    )
 
 
 def test_intro_is_absent_without_a_name() -> None:

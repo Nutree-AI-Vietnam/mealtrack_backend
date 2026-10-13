@@ -71,6 +71,7 @@ from src.domain.services.chat.next_meal_intro import (
     eaten_today_name,
     next_meal_ack,
     next_meal_intro,
+    with_eaten_today,
 )
 from src.domain.services.chat.policy import (
     SentenceBuffer,
@@ -610,6 +611,15 @@ class ChatTurnOrchestrator:
                 meal_reply = (
                     "" if generation.get("blocked") else "".join(streamed).strip()
                 )
+                eaten = eaten_today_name(
+                    context.recent_meals,
+                    local_date=context.local_date,
+                    suggestion_names=[
+                        str(card.get("name") or "")
+                        for card in suggestions
+                        if isinstance(card, dict)
+                    ],
+                )
                 if not meal_reply_is_usable(meal_reply, suggestions, context=context):
                     meal_reply = (
                         next_meal_intro(
@@ -617,27 +627,23 @@ class ChatTurnOrchestrator:
                             locale=resolved_locale,
                             slot=meal_slot,
                             user_text=trimmed,
-                            eaten_today=eaten_today_name(
-                                context.recent_meals,
-                                local_date=context.local_date,
-                                suggestion_names=[
-                                    str(card.get("name") or "")
-                                    for card in suggestions
-                                    if isinstance(card, dict)
-                                ],
-                            ),
+                            eaten_today=eaten,
                         )
                         or ""
                     )
-                    if meal_reply:
-                        yield ChatSseEvent(
-                            event="message.delta",
-                            data={
-                                "assistant_message_id": claim.assistant_message.id,
-                                "delta": meal_reply,
-                                "replace": True,
-                            },
-                        )
+                else:
+                    meal_reply = with_eaten_today(
+                        meal_reply, eaten, locale=resolved_locale
+                    )
+                if meal_reply and meal_reply != "".join(streamed).strip():
+                    yield ChatSseEvent(
+                        event="message.delta",
+                        data={
+                            "assistant_message_id": claim.assistant_message.id,
+                            "delta": meal_reply,
+                            "replace": True,
+                        },
+                    )
             if meal_reply:
                 # The acknowledgement was only a placeholder while cards loaded.
                 sentences.clear()
