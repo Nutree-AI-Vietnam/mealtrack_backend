@@ -495,6 +495,15 @@ class ChatTurnOrchestrator:
                     suggestions = batch.suggestions
                     discover_session_id = batch.session_id or discover_session_id
                     meal_slot = batch.meal_slot
+                    if suggestions:
+                        # Show the cards while the sentence is still being written.
+                        yield ChatSseEvent(
+                            event="message.suggestions",
+                            data={
+                                "assistant_message_id": claim.assistant_message.id,
+                                "suggestions": suggestions,
+                            },
+                        )
                 except Exception:
                     logger.warning(
                         "Upfront next meal candidate generation failed",

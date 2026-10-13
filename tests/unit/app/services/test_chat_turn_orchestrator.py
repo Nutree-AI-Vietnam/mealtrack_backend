@@ -1361,6 +1361,31 @@ async def test_meal_ack_streams_before_cards_are_ready():
 
 
 @pytest.mark.asyncio
+async def test_meal_cards_arrive_before_the_sentence_is_replaced():
+    cards = _three_cards()
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=cards, meal_slot="lunch")
+    )
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), next_meals=next_meals)
+
+    events = await _stream(orchestrator, intent="next_meal", content="Lunch ideas")
+    suggestion_at = next(
+        index
+        for index, event in enumerate(events)
+        if event.event == "message.suggestions"
+    )
+    replace_at = next(
+        index
+        for index, event in enumerate(events)
+        if event.event == "message.delta" and event.data.get("replace") is True
+    )
+
+    assert suggestion_at < replace_at
+    assert events[suggestion_at].data["suggestions"][0]["name"] == "Egg rice bowl"
+    assert "thumbnail_url" not in events[suggestion_at].data["suggestions"][0]
+
+
+@pytest.mark.asyncio
 async def test_meal_intro_is_sent_before_food_photos():
     class _Meals:
         def __init__(self) -> None:
