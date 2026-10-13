@@ -371,6 +371,7 @@ class ChatTurnOrchestrator:
         sentences: list[str] = []
         suggestions: list[dict[str, Any]] = []
         discover_session_id: str | None = None
+        follow_task: asyncio.Task[list[dict[str, str]]] | None = None
         generation: dict[str, Any] = {
             "text": "",
             "usage": ChatUsage(model=self._model),
@@ -982,6 +983,12 @@ class ChatTurnOrchestrator:
                 "chat.turn.failed", attributes={"code": "CHAT_TURN_FAILED"}
             )
         finally:
+            if follow_task is not None and not follow_task.done():
+                follow_task.cancel()
+                try:
+                    await follow_task
+                except asyncio.CancelledError:
+                    pass
             self.release_slot(prepared)
             distribution_metric(
                 "chat.turn.latency_ms",

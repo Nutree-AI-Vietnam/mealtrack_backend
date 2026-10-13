@@ -1542,6 +1542,48 @@ async def test_provider_drop_keeps_the_partial_reply():
 
 
 @pytest.mark.asyncio
+async def test_stopping_a_turn_cancels_follow_up_generation():
+    class _SlowFollowUps:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def generate_follow_ups(self, **kwargs):
+            del kwargs
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    follow_ups = _SlowFollowUps()
+    orchestrator = _orchestrator(
+        _FakeRepo(claim=_claim()),
+        completion=_FakeCompletion(["Here is a start. "]),
+        follow_ups=follow_ups,
+    )
+
+    async def collect() -> None:
+        async for _event in orchestrator.stream_turn(
+            user_id="u1",
+            content="What should I eat next?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        ):
+            pass
+
+    task = asyncio.create_task(collect())
+    await asyncio.wait_for(follow_ups.started.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(follow_ups.cancelled.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_cancel_persists_partial_reply_and_releases_the_turn():
     class _CancelAfterSentence:
         async def stream(self, **kwargs):
