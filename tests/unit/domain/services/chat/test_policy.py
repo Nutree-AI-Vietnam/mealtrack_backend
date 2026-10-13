@@ -558,6 +558,19 @@ def test_meal_reply_must_name_the_card_and_skip_numbers() -> None:
         cards,
         context=context,
     )
+    assert meal_reply_is_usable(
+        "The egg rice is the one I'd make for lunch.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "Egg rice soup is the lighter one.",
+        [
+            {"name": "Egg rice bowl", "calories": 420},
+            {"name": "Egg rice soup", "calories": 310},
+        ],
+        context=context,
+    )
 
 
 def test_out_of_scope_copy_is_localized() -> None:

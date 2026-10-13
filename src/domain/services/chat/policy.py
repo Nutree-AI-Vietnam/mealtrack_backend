@@ -494,7 +494,7 @@ def meal_reply_is_usable(
             featured = name
             break
     cleaned = " ".join(text.split())
-    if not featured or featured.casefold() not in cleaned.casefold():
+    if not _names_featured_meal(cleaned, featured, suggestions):
         return False
     if _INTERNAL_LEAK_RE.search(cleaned) or _MUTATION_CLAIM_RE.search(cleaned):
         return False
@@ -504,6 +504,37 @@ def meal_reply_is_usable(
         chunks=(),
         meal_candidates=suggestions,
     )
+
+
+def _names_featured_meal(
+    text: str,
+    featured: str,
+    suggestions: Sequence[Mapping[str, Any]],
+) -> bool:
+    """True when the sentence names the featured dish, including a short form.
+
+    "Egg rice" counts for "Egg rice bowl". A sentence that instead names
+    another card in full does not.
+    """
+    folded = " ".join(text.casefold().split())
+    name = " ".join(featured.casefold().split())
+    if not name or not folded:
+        return False
+    if name in folded:
+        return True
+    words = name.split()
+    if len(words) < 2:
+        return False
+    prefix = " ".join(words[:2])
+    if len(prefix) < 6 or prefix not in folded:
+        return False
+    for item in suggestions:
+        if not isinstance(item, Mapping):
+            continue
+        other = " ".join(str(item.get("name") or "").casefold().split())
+        if other and other != name and other in folded:
+            return False
+    return True
 
 
 def nutrition_numbers_are_traceable(
