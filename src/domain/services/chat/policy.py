@@ -114,6 +114,11 @@ _MACRO_CLAIM_RE = re.compile(
 _CITATION_RE = re.compile(r"\[K(\d+)\]")
 
 _SENTENCE_END_RE = re.compile(r"(?s)(.+?(?:[.!?…][\"')\]]*|\n{2,})\s+)")
+# Hold a trailing number (and an optional unit) so an untraceable calorie claim
+# is never shown one token early. Closed sentences still flush through push().
+_STREAM_NUMBER_TAIL = re.compile(
+    r"(?i)\d[\d.,]*\s*(?:kcal|calories?|cal|g(?:rams?)?|protein|carbs?|fat)?\s*$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,6 +389,30 @@ class SentenceBuffer:
             sentences.append(sentence)
             self._buf = self._buf[consumed:]
         return sentences
+
+    def take_streamable_prefix(self) -> str:
+        """Return text that is safe to show before the sentence ends.
+
+        A trailing number or an unclosed ``**`` stays in the buffer. The
+        orchestrator only calls this after the chunk has passed nutrition
+        checks, and a later untraceable number is rejected before this runs.
+        """
+        text = self._buf
+        if not text:
+            return ""
+        hold_at = len(text)
+        number = _STREAM_NUMBER_TAIL.search(text)
+        if number is not None:
+            hold_at = number.start()
+        if text.count("**") % 2 == 1:
+            bold_at = text.rfind("**")
+            if bold_at >= 0:
+                hold_at = min(hold_at, bold_at)
+        if hold_at <= 0:
+            return ""
+        prefix = text[:hold_at]
+        self._buf = text[hold_at:]
+        return prefix
 
     def flush(self) -> str:
         leftover = self._buf

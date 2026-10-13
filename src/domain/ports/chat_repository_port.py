@@ -98,6 +98,20 @@ class ChatRepositoryPort(ABC):
         """Fail the generating assistant only if it is still the active generation."""
 
     @abstractmethod
+    async def reopen_assistant_message(
+        self,
+        *,
+        user_id: str,
+        assistant_message_id: str,
+        lease_expires_at: datetime,
+    ) -> tuple[ChatTurnClaim, str | None] | None:
+        """Reopen the latest completed assistant so it can be generated again.
+
+        Returns the claim plus the previous reply intent, or None when the
+        message cannot be regenerated.
+        """
+
+    @abstractmethod
     async def count_user_turns_since(
         self,
         *,

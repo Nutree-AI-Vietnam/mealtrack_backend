@@ -164,6 +164,23 @@ def test_sentence_buffer_emits_on_boundary_and_flush():
     assert buffer.flush() == "More text"
 
 
+def test_sentence_buffer_streams_words_and_holds_a_trailing_number():
+    buffer = SentenceBuffer()
+    assert buffer.push("You have ") == []
+    assert buffer.take_streamable_prefix() == "You have "
+    assert buffer.push("650") == []
+    assert buffer.take_streamable_prefix() == ""
+    assert buffer.push(" kcal left. ") == ["650 kcal left. "]
+    assert buffer.take_streamable_prefix() == ""
+
+
+def test_sentence_buffer_holds_unclosed_bold():
+    buffer = SentenceBuffer()
+    assert buffer.push("This is **bold") == []
+    assert buffer.take_streamable_prefix() == "This is "
+    assert buffer.flush() == "**bold"
+
+
 def test_allergy_suggestion_is_blocked():
     decision = inspect_sentence("Try a peanut sauce tonight.", allergies=["peanut"])
     assert decision.allowed is False
@@ -270,9 +287,7 @@ def test_sanitize_incomplete_assistant_text_strips_cut_off_vn_budget_line():
         == "Hôm nay bạn còn"
     )
     assert (
-        sanitize_incomplete_assistant_text(
-            "You still have room for a balanced dinner."
-        )
+        sanitize_incomplete_assistant_text("You still have room for a balanced dinner.")
         == "You still have room for a balanced dinner."
     )
 

@@ -8,6 +8,7 @@ from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
+    ChatRegenerateNotAllowedError,
 )
 from src.domain.model.chat import (
     ChatClaimKind,
@@ -34,6 +35,8 @@ class _FakeRepo:
         self.completed = None
         self.failed = None
         self.cleared = False
+        self.reopened = None
+        self.reopen_result = None
 
     async def get_or_create_thread(self, user_id: str) -> ChatThread:
         return self.claim.thread
@@ -78,6 +81,10 @@ class _FakeRepo:
     async def fail_assistant_message(self, **kwargs):
         self.failed = kwargs
         return self.claim.assistant_message
+
+    async def reopen_assistant_message(self, **kwargs):
+        self.reopened = kwargs
+        return self.reopen_result
 
     async def count_user_turns_since(self, **kwargs):
         used = self.turns_used
@@ -387,7 +394,7 @@ async def test_new_turn_streams_sentence_and_persists():
 
 
 @pytest.mark.asyncio
-async def test_partial_chunks_are_buffered_until_sentence_boundary():
+async def test_words_stream_before_a_calorie_number_is_confirmed():
     completion = _GatedCompletion(
         first="Nutree has ",
         second="650 calories remaining. ",
@@ -409,7 +416,13 @@ async def test_partial_chunks_are_buffered_until_sentence_boundary():
 
     task = asyncio.create_task(consume())
     await asyncio.sleep(0.05)
-    assert not any(event.event == "message.delta" for event in events)
+    early = [
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    ]
+    assert early == ["Nutree has "]
+    assert "650" not in "".join(early)
     completion.release.set()
     await asyncio.wait_for(task, timeout=2)
     deltas = [
@@ -417,7 +430,7 @@ async def test_partial_chunks_are_buffered_until_sentence_boundary():
         for event in events
         if event.event == "message.delta"
     ]
-    assert deltas == ["Nutree has 650 calories remaining. "]
+    assert "".join(deltas) == "Nutree has 650 calories remaining. "
     assert events[-1].event == "message.completed"
 
 
@@ -1031,6 +1044,62 @@ async def test_cancel_persists_partial_reply_and_releases_the_turn():
     assert repo.failed is None
     assert repo.completed is not None
     assert "Here is a start" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_words_stream_before_the_sentence_ends():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo, completion=_FakeCompletion(["Hello ", "there. "])
+    )
+    events = await _stream(orchestrator, content="Cite protein guidance")
+    deltas = [
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    ]
+    assert "Hello " in deltas
+    assert any("there." in delta for delta in deltas)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_reuses_the_stored_user_message():
+    claim = _claim()
+    repo = _FakeRepo(claim=claim)
+    repo.reopen_result = (claim, "next_meal")
+    completion = _FakeCompletion(["Another idea. "])
+    orchestrator = _orchestrator(repo, completion=completion)
+
+    prepared = await orchestrator.prepare_regeneration(
+        user_id="u1",
+        assistant_message_id="m-asst",
+        locale="en",
+        header_timezone="UTC",
+        user_language="en",
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_prepared(user_id="u1", prepared=prepared)
+    ]
+    completed = next(event for event in events if event.event == "message.completed")
+    assert repo.reopened["assistant_message_id"] == "m-asst"
+    assert prepared.content == "How much is left?"
+    assert completed.data["intent"] == "next_meal"
+    assert "Another idea" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_regenerate_rejects_a_reply_that_cannot_be_reopened():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+    with pytest.raises(ChatRegenerateNotAllowedError):
+        await orchestrator.prepare_regeneration(
+            user_id="u1",
+            assistant_message_id="missing",
+            locale="en",
+            header_timezone=None,
+            user_language="en",
+        )
 
 
 def test_history_remembers_the_meal_card_name():

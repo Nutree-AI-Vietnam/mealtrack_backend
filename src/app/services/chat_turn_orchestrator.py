@@ -19,6 +19,7 @@ from src.app.services.chat_next_meal_candidates import (
 from src.domain.exceptions.chat_exceptions import (
     ChatProviderUnavailableError,
     ChatRateLimitedError,
+    ChatRegenerateNotAllowedError,
 )
 from src.domain.model.chat import (
     CHAT_CONTEXT_VERSION,
@@ -258,6 +259,58 @@ class ChatTurnOrchestrator:
             intent=intent,
             function_name=function_name,
             function_args=function_args,
+            slot_acquired=slot_acquired,
+        )
+
+    async def prepare_regeneration(
+        self,
+        *,
+        user_id: str,
+        assistant_message_id: str,
+        locale: str | None,
+        header_timezone: str | None,
+        user_language: str | None,
+    ) -> PreparedChatTurn:
+        """Replace the latest completed reply without adding another user turn."""
+        started = time.perf_counter()
+        resolved_locale = resolve_chat_locale(locale, user_language)
+        await self._enforce_daily_budget(user_id)
+        lease = utc_now() + timedelta(seconds=self._generation_lease_seconds)
+        async with self._uow_factory() as uow:
+            reopened = await _chat_repo(uow).reopen_assistant_message(
+                user_id=user_id,
+                assistant_message_id=assistant_message_id,
+                lease_expires_at=lease,
+            )
+        if reopened is None:
+            raise ChatRegenerateNotAllowedError()
+        claim, prior_intent = reopened
+        if self._circuit_is_open():
+            await self._fail(
+                claim.assistant_message.id,
+                "CHAT_PROVIDER_UNAVAILABLE",
+                generation_id=claim.assistant_message.generation_id,
+            )
+            raise ChatProviderUnavailableError(retry_after_seconds=30, retryable=True)
+        slot_acquired = await self._try_acquire_slot()
+        if not slot_acquired:
+            await self._fail(
+                claim.assistant_message.id,
+                "CHAT_PROVIDER_UNAVAILABLE",
+                generation_id=claim.assistant_message.generation_id,
+            )
+            raise ChatProviderUnavailableError(retry_after_seconds=5, retryable=True)
+        increment_metric(
+            "chat.turn.regenerated",
+            attributes={"locale": resolved_locale},
+        )
+        return PreparedChatTurn(
+            claim=claim,
+            content=(claim.user_message.content or "").strip(),
+            locale=resolved_locale,
+            header_timezone=header_timezone,
+            started=started,
+            intent=prior_intent,
             slot_acquired=slot_acquired,
         )
 
@@ -1179,6 +1232,10 @@ class ChatTurnOrchestrator:
                         for sentence in buffer.push(delta.text):
                             yielded_any = True
                             yield sentence
+                        prefix = buffer.take_streamable_prefix()
+                        if prefix:
+                            yielded_any = True
+                            yield prefix
                 leftover = buffer.flush()
                 if leftover:
                     yielded_any = True

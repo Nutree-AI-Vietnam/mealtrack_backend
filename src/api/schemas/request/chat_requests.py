@@ -17,6 +17,7 @@ class ChatMessageCreateRequest(BaseModel):
     locale: str | None = Field(default=None, max_length=8)
     intent: ChatIntent | None = None
     tool: ChatToolCallRequest | None = None
+    regenerate_assistant_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("content")
     @classmethod

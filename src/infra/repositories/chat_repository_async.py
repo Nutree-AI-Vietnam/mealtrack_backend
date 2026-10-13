@@ -290,6 +290,70 @@ class AsyncChatRepository(ChatRepositoryPort):
         row = await self.session.get(ChatMessageORM, message_id)
         return _to_message(row) if row else None
 
+    async def reopen_assistant_message(
+        self,
+        *,
+        user_id: str,
+        assistant_message_id: str,
+        lease_expires_at: datetime,
+    ) -> tuple[ChatTurnClaim, str | None] | None:
+        thread = await self._get_thread_row(user_id)
+        if thread is None:
+            return None
+        now = utc_now()
+        await self._reclaim_expired_generation(thread.id, now)
+        if await self._active_generation(thread.id) is not None:
+            raise ChatBusyError()
+
+        latest = await self._latest_completed_assistant(thread.id)
+        if latest is None or latest.id != assistant_message_id:
+            return None
+        if latest.in_reply_to_id is None:
+            return None
+        user_row = await self.session.get(ChatMessageORM, latest.in_reply_to_id)
+        if user_row is None or user_row.role != ChatMessageRole.USER.value:
+            return None
+
+        prior_intent = None
+        payload = latest.reply_payload
+        if isinstance(payload, dict):
+            value = payload.get("intent")
+            if isinstance(value, str) and value.strip():
+                prior_intent = value.strip()
+
+        latest.status = ChatMessageStatus.GENERATING.value
+        latest.content = None
+        latest.reply_payload = None
+        latest.error_code = None
+        latest.completed_at = None
+        latest.generation_lease_expires_at = lease_expires_at
+        latest.generation_id = str(uuid.uuid4())
+        latest.updated_at = now
+        await self.session.flush()
+        await self._touch_thread(thread.id, now)
+        claim = ChatTurnClaim(
+            kind=ChatClaimKind.NEW,
+            thread=_to_thread(thread),
+            user_message=_to_message(user_row),
+            assistant_message=_to_message(latest),
+        )
+        return claim, prior_intent
+
+    async def _latest_completed_assistant(
+        self, thread_id: str
+    ) -> ChatMessageORM | None:
+        result = await self.session.execute(
+            select(ChatMessageORM)
+            .where(
+                ChatMessageORM.thread_id == thread_id,
+                ChatMessageORM.role == ChatMessageRole.ASSISTANT.value,
+                ChatMessageORM.status == ChatMessageStatus.COMPLETED.value,
+            )
+            .order_by(ChatMessageORM.created_at.desc(), ChatMessageORM.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def count_user_turns_since(
         self,
         *,

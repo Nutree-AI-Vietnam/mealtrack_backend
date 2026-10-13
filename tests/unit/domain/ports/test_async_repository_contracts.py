@@ -101,6 +101,7 @@ def test_repository_ports_are_async_contracts():
             "list_citation_metadata",
             "complete_assistant_message",
             "fail_assistant_message",
+            "reopen_assistant_message",
             "count_user_turns_since",
             "clear_thread",
             "delete_user_chat",

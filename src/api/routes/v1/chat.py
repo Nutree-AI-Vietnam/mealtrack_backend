@@ -25,6 +25,7 @@ from src.domain.exceptions.chat_exceptions import (
     ChatIdempotencyConflictError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
+    ChatRegenerateNotAllowedError,
 )
 from src.domain.model.chat import ChatSseEvent
 from src.domain.services.chat.coach_functions import (
@@ -113,16 +114,31 @@ async def post_chat_message(
         intent_value = preferred_alias(resolved.name, resolved.args)
 
     try:
-        prepared = await orchestrator.prepare_turn(
-            user_id=user_id,
-            content=payload.content,
-            idempotency_key=idempotency_key,
-            locale=locale,
-            header_timezone=header_timezone,
-            user_language=locale,
-            intent=intent_value,
-            function_name=function_name,
-            function_args=function_args,
+        if payload.regenerate_assistant_id:
+            prepared = await orchestrator.prepare_regeneration(
+                user_id=user_id,
+                assistant_message_id=payload.regenerate_assistant_id,
+                locale=locale,
+                header_timezone=header_timezone,
+                user_language=locale,
+            )
+        else:
+            prepared = await orchestrator.prepare_turn(
+                user_id=user_id,
+                content=payload.content,
+                idempotency_key=idempotency_key,
+                locale=locale,
+                header_timezone=header_timezone,
+                user_language=locale,
+                intent=intent_value,
+                function_name=function_name,
+                function_args=function_args,
+            )
+    except ChatRegenerateNotAllowedError:
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            "CHAT_REGENERATE_NOT_ALLOWED",
+            "Only the latest coach reply can be regenerated",
         )
     except ChatBusyError as exc:
         return _error_response(
