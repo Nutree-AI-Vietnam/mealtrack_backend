@@ -934,6 +934,67 @@ async def test_next_meal_reuses_discover_session_id():
 
 
 @pytest.mark.asyncio
+async def test_meal_refinement_refreshes_cards_from_the_previous_meals():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try the tofu bowl.",
+        reply_payload={
+            "intent": "next_meal",
+            "suggestions": [{"name": "Tofu bowl", "calories": 420}],
+        },
+    )
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    completion = _FakeCompletion(["Updated. "])
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    events = await _stream(orchestrator, content="Make the tofu higher protein")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert next_meals.calls
+    assert "Tofu bowl" in next_meals.calls[0]["user_text"]
+    assert "higher protein" in next_meals.calls[0]["user_text"]
+    assert completed.data["intent"] == "next_meal"
+    assert completed.data["suggestions"] == _three_cards()
+
+
+@pytest.mark.asyncio
+async def test_why_question_after_a_meal_does_not_refresh_cards():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try the tofu bowl.",
+        reply_payload={
+            "intent": "next_meal",
+            "suggestions": [{"name": "Tofu bowl", "calories": 420}],
+        },
+    )
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    completion = _FakeCompletion(["Lunch fits because protein is still open. "])
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    events = await _stream(orchestrator, content="Why is lunch the better fit?")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert next_meals.calls == []
+    assert completed.data.get("intent") != "next_meal"
+
+
+@pytest.mark.asyncio
 async def test_typed_dinner_fetches_next_meal_without_chip():
     next_meals = _FakeNextMeals(
         NextMealCandidateResult(suggestions=_three_cards(), meal_slot="dinner")

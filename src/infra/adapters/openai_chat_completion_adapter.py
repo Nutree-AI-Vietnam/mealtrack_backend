@@ -329,6 +329,7 @@ PORTIONS & NUTRITION:
 - micros: Estimate portion micronutrients (vitamin_a in mcg; vitamin_c, vitamin_e, calcium, iron, magnesium, potassium, sodium in mg; saturated_fat, added_sugar in g) based on the ingredients. Set null for unknown fields; do not invent arbitrary numbers.
 - One sitting only — not a full day's food.
 - Honor allergies and dietary_preferences strictly.
+- If the user message asks to change a previous meal, every new recipe must follow that change.
 - Do not claim a meal was saved or logged.
 """
 

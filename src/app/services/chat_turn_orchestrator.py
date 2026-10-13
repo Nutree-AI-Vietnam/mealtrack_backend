@@ -60,7 +60,10 @@ from src.domain.services.chat.coach_functions import (
     resolve_coach_function,
 )
 from src.domain.services.chat.follow_up_schema import ensure_follow_ups, meal_names
-from src.domain.services.chat.meal_request import is_meal_suggestion_request
+from src.domain.services.chat.meal_request import (
+    is_meal_refinement,
+    is_meal_suggestion_request,
+)
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
 from src.domain.services.chat.next_meal_intro import next_meal_ack, next_meal_intro
@@ -433,11 +436,36 @@ class ChatTurnOrchestrator:
             history = _history_turns(history_messages)
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
+            # "Make the tofu higher protein" should refresh the cards, not only
+            # the prose. How/why questions stay on the free-text path.
+            if resolved is None and is_meal_refinement(trimmed):
+                typed_slot = slot_from_user_text(trimmed)
+                revise = _meal_revision_text(
+                    trimmed, _latest_shown_meal_names(history_messages)
+                )
+                args: dict[str, Any] = {}
+                if typed_slot:
+                    args["slot"] = typed_slot
+                if revise != trimmed:
+                    args["query"] = revise
+                resolved = resolve_coach_function(
+                    FUNCTION_SUGGEST_NEXT_MEAL,
+                    args=args,
+                )
+                intent = ChatIntent.NEXT_MEAL.value
+                direct_invoke = resolved is not None and not needs_retrieval(
+                    resolved.name
+                )
 
             # Chip or direct suggest_next_meal: prefetch recipe cards; skip knowledge retrieve.
             should_prefetch_next_meal = intent == ChatIntent.NEXT_MEAL.value or (
                 resolved is not None and resolved.name == FUNCTION_SUGGEST_NEXT_MEAL
             )
+            meal_user_text = trimmed
+            if resolved is not None:
+                query = resolved.args.get("query")
+                if isinstance(query, str) and query.strip():
+                    meal_user_text = query.strip()
             if should_prefetch_next_meal and self._next_meals is not None:
                 ack = next_meal_ack(locale=resolved_locale, slot=meal_slot)
                 sentences.append(ack)
@@ -452,7 +480,7 @@ class ChatTurnOrchestrator:
                     batch = await self._next_meals.fetch(
                         user_id=user_id,
                         context=context,
-                        user_text=trimmed,
+                        user_text=meal_user_text,
                         locale=resolved_locale,
                         session_id=discover_session_id,
                         slot=meal_slot,
@@ -1656,6 +1684,28 @@ def _started_event(claim: ChatTurnClaim) -> ChatSseEvent:
             "assistant_message_id": claim.assistant_message.id,
         },
     )
+
+
+def _latest_shown_meal_names(messages: list[ChatMessage]) -> list[str]:
+    """Dish names from the newest assistant turn that showed meal cards."""
+    for message in reversed(messages):
+        if message.role != ChatMessageRole.ASSISTANT:
+            continue
+        names = [
+            str(card.get("name")).strip()
+            for card in message.suggestions()
+            if isinstance(card, dict) and str(card.get("name") or "").strip()
+        ]
+        if names:
+            return names[:3]
+    return []
+
+
+def _meal_revision_text(user_text: str, prior_names: list[str]) -> str:
+    if not prior_names:
+        return user_text
+    shown = ", ".join(prior_names)
+    return f"{user_text}. Revise these meals: {shown}."
 
 
 def _meal_card_history_note(card: dict[str, Any]) -> str:

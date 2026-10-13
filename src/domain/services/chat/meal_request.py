@@ -42,6 +42,72 @@ _PHRASES: tuple[str, ...] = (
     "doi bung",
 )
 
+# Imperative changes to a meal already on screen. How/why questions stay prose.
+_REFINEMENT_PHRASES: tuple[str, ...] = (
+    "make it",
+    "make the",
+    "make them",
+    "make this",
+    "skip the",
+    "skip rice",
+    "without the",
+    "without rice",
+    "without dairy",
+    "without eggs",
+    "without meat",
+    "without gluten",
+    "higher protein",
+    "more protein",
+    "less carb",
+    "lower calorie",
+    "fewer calorie",
+    "spicier",
+    "vegetarian",
+    "vegan",
+    "swap the",
+    "instead of",
+    "another version",
+    "leave out",
+    "don't include",
+    "do not include",
+    "i don't want",
+    "less rice",
+    "more vegetables",
+    "đổi món",
+    "doi mon",
+    "đổi sang",
+    "doi sang",
+    "bỏ cơm",
+    "bo com",
+    "không cơm",
+    "khong com",
+    "không có",
+    "khong co",
+    "nhiều đạm",
+    "nhieu dam",
+    "ít tinh bột",
+    "it tinh bot",
+    "món chay",
+    "mon chay",
+    "cay hơn",
+    "cay hon",
+    "thay cơm",
+    "thay com",
+    "thay món",
+    "thay mon",
+)
+
+_EXPLAIN_PREFIXES: tuple[str, ...] = (
+    "why ",
+    "how ",
+    "tại sao",
+    "tai sao",
+    "vì sao",
+    "vi sao",
+    "làm sao",
+    "lam sao",
+)
+
 # A named slot plus one of these is a suggestion request ("more breakfast ideas")
 # without also matching nutrition questions that merely mention dinner.
 _SLOT_REQUEST_TOKENS: tuple[str, ...] = (
@@ -68,6 +134,16 @@ def is_meal_suggestion_request(text: str) -> bool:
     if slot_from_user_text(normalized) is None:
         return False
     return any(token in normalized for token in _SLOT_REQUEST_TOKENS)
+
+
+def is_meal_refinement(text: str) -> bool:
+    """True when the user wants the current meal changed, not explained."""
+    normalized = _normalize(text)
+    if not normalized:
+        return False
+    if any(normalized.startswith(prefix) for prefix in _EXPLAIN_PREFIXES):
+        return False
+    return any(phrase in normalized for phrase in _REFINEMENT_PHRASES)
 
 
 def _normalize(text: str) -> str:
