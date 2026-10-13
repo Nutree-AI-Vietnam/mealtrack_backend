@@ -63,6 +63,7 @@ from src.domain.services.chat.follow_up_schema import ensure_follow_ups
 from src.domain.services.chat.meal_request import is_meal_suggestion_request
 from src.domain.services.chat.meal_slot import resolve_meal_slot, slot_from_user_text
 from src.domain.services.chat.memory import CHAT_MEMORY_FETCH, rolling_memory
+from src.domain.services.chat.next_meal_intro import next_meal_intro
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
@@ -520,36 +521,54 @@ class ChatTurnOrchestrator:
                 current_user_message = ""
                 generation["tools"] = None
 
-            # Keep streaming until no tool calls are emitted (max 2 iterations)
-            max_tool_iterations = 1 if direct_invoke else 2
-            iteration = 0
-            while iteration < max_tool_iterations:
-                iteration += 1
-                async for delta_text in self._iter_validated_sentences(
-                    context=context,
-                    chunks=chunks,
-                    history=history,
-                    user_message=current_user_message,
-                    generation=generation,
-                    intent=intent,
-                    meal_candidates=suggestions,
-                    traceable_meals=_traceable_meals(suggestions, history_messages),
-                    earlier=earlier,
-                ):
-                    if not delta_text:
-                        continue
-                    sentences.append(delta_text)
-                    yield ChatSseEvent(
-                        event="message.delta",
-                        data={
-                            "assistant_message_id": claim.assistant_message.id,
-                            "delta": delta_text,
-                        },
-                    )
+            intro = None
+            if intent == ChatIntent.NEXT_MEAL.value:
+                intro = next_meal_intro(
+                    suggestions,
+                    locale=resolved_locale,
+                    slot=meal_slot,
+                )
+            if intro:
+                sentences.append(intro)
+                generation["text"] = intro
+                yield ChatSseEvent(
+                    event="message.delta",
+                    data={
+                        "assistant_message_id": claim.assistant_message.id,
+                        "delta": intro,
+                    },
+                )
+            else:
+                # Keep streaming until no tool calls are emitted (max 2 iterations)
+                max_tool_iterations = 1 if direct_invoke else 2
+                iteration = 0
+                while iteration < max_tool_iterations:
+                    iteration += 1
+                    async for delta_text in self._iter_validated_sentences(
+                        context=context,
+                        chunks=chunks,
+                        history=history,
+                        user_message=current_user_message,
+                        generation=generation,
+                        intent=intent,
+                        meal_candidates=suggestions,
+                        traceable_meals=_traceable_meals(suggestions, history_messages),
+                        earlier=earlier,
+                    ):
+                        if not delta_text:
+                            continue
+                        sentences.append(delta_text)
+                        yield ChatSseEvent(
+                            event="message.delta",
+                            data={
+                                "assistant_message_id": claim.assistant_message.id,
+                                "delta": delta_text,
+                            },
+                        )
 
-                tool_calls = generation.get("tool_calls")
-                if tool_calls:
-                    # Move user message into history before assistant's tool call turn
+                    tool_calls = generation.get("tool_calls")
+                    if not tool_calls:
+                        break
                     if current_user_message:
                         history.append(
                             ChatHistoryTurn(
@@ -558,8 +577,6 @@ class ChatTurnOrchestrator:
                             )
                         )
                         current_user_message = ""
-
-                    # Add assistant's tool call turn to history
                     history.append(
                         ChatHistoryTurn(
                             role=ChatMessageRole.ASSISTANT,
@@ -567,7 +584,6 @@ class ChatTurnOrchestrator:
                             tool_calls=tool_calls,
                         )
                     )
-
                     for call in tool_calls:
                         name = call.get("name")
                         call_id = call.get("id") or f"call_{uuid.uuid4().hex[:8]}"
@@ -581,7 +597,6 @@ class ChatTurnOrchestrator:
                             args = raw_args
                         else:
                             args = {}
-
                         (
                             result,
                             intent,
@@ -601,7 +616,6 @@ class ChatTurnOrchestrator:
                             discover_session_id=discover_session_id,
                             meal_slot=meal_slot,
                         )
-
                         history.append(
                             ChatHistoryTurn(
                                 role="tool",
@@ -610,14 +624,8 @@ class ChatTurnOrchestrator:
                                 content=result,
                             )
                         )
-
-                    # Clear generation tool calls so we don't loop forever
                     generation["tool_calls"] = None
-                    # Disable further tools for subsequent iterations
                     generation["tools"] = None
-                    continue
-                else:
-                    break
 
             final_text = "".join(sentences).strip()
             usage = generation["usage"]

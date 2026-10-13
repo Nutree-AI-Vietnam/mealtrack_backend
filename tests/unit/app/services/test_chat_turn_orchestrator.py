@@ -1072,8 +1072,7 @@ async def test_free_text_still_embeds_and_retrieves():
 
 @pytest.mark.asyncio
 async def test_meal_recommendation_generates_upfront_with_intent_chip():
-    """When the client sends intent='next_meal' (chip tap), candidates are pre-fetched
-    so the LLM can immediately write a warm intro without a tool iteration."""
+    """A next-meal chip uses the cards for the intro and does not call the chat model."""
     cards = _three_cards()
     next_meals = _FakeNextMeals(
         NextMealCandidateResult(suggestions=cards, meal_slot="lunch")
@@ -1089,8 +1088,10 @@ async def test_meal_recommendation_generates_upfront_with_intent_chip():
     )
     completed = next(event for event in events if event.event == "message.completed")
 
-    assert completion.stream_calls == 1
+    assert completion.stream_calls == 0
     assert next_meals.calls
+    assert "Egg rice bowl" in repo.completed["content"]
+    assert "420" not in repo.completed["content"]
     assert completed.data["intent"] == "next_meal"
     assert completed.data["suggestions"] == cards
     assert repo.completed["reply_payload"]["suggestions"] == cards
@@ -1114,7 +1115,10 @@ async def test_typed_meal_question_fetches_cards_without_a_tool_call():
     assert orchestrator.test_retrieval.calls == []
     assert completed.data["intent"] == "next_meal"
     assert completed.data["suggestions"] == cards
-    assert "Oatmeal fits" in repo.completed["content"]
+    assert completion.stream_calls == 0
+    assert "Egg rice bowl" in repo.completed["content"]
+    assert "Yogurt cup and Tofu scramble" in repo.completed["content"]
+    assert "Oatmeal fits" not in repo.completed["content"]
 
 
 @pytest.mark.asyncio
