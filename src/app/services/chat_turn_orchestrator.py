@@ -1720,14 +1720,35 @@ def _meal_revision_text(user_text: str, prior_names: list[str]) -> str:
 def _meal_card_history_note(card: dict[str, Any]) -> str:
     name = str(card.get("name") or "").strip()
     note = f"Meal card shown: {name}."
-    calories = card.get("calories")
+    calories = _finite_number(card.get("calories"))
     if calories is None:
         return note
-    return (
-        f"{note} Authoritative portion: {calories} kcal, "
-        f"{card.get('protein_g')}g protein, {card.get('carbs_g')}g carbs, "
-        f"{card.get('fat_g')}g fat."
-    )
+    parts = [f"{_format_amount(calories)} kcal"]
+    for key, label in (
+        ("protein_g", "protein"),
+        ("carbs_g", "carbs"),
+        ("fat_g", "fat"),
+    ):
+        value = _finite_number(card.get(key))
+        if value is None:
+            continue
+        parts.append(f"{_format_amount(value)}g {label}")
+    return f"{note} Authoritative portion: {', '.join(parts)}."
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def _format_amount(value: float) -> str:
+    if value == int(value):
+        return str(int(value))
+    return str(value)
 
 
 def _traceable_meals(

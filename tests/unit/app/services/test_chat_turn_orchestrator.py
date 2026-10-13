@@ -1733,3 +1733,28 @@ def test_history_remembers_the_meal_card_name():
     )
     turns = _history_turns([message])
     assert turns[0].content == "Try this.\nMeal card shown: Salmon rice."
+
+
+def test_history_omits_missing_meal_macros():
+    from src.app.services.chat_turn_orchestrator import _history_turns
+
+    now = utc_now()
+    message = ChatMessage(
+        id="a1",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        content="Try this.",
+        reply_payload={
+            "suggestions": [
+                {"name": "Salad", "calories": 180, "protein_g": 6},
+            ]
+        },
+    )
+    turns = _history_turns([message])
+    assert "180 kcal" in turns[0].content
+    assert "6g protein" in turns[0].content
+    assert "None" not in turns[0].content
+    assert "carbs" not in turns[0].content
