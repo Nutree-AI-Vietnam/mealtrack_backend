@@ -6,6 +6,7 @@ returns 401.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import httpx
@@ -42,6 +43,22 @@ def _workout_row(row: object) -> dict[str, object] | None:
     }
 
 
+def _number(raw: object) -> float:
+    """A numeric sample value, or 0 when the API sends something unparseable."""
+    if isinstance(raw, bool):
+        return 0.0
+    if isinstance(raw, (int, float)):
+        value = float(raw)
+    elif isinstance(raw, str):
+        try:
+            value = float(raw)
+        except ValueError:
+            return 0.0
+    else:
+        return 0.0
+    return value if math.isfinite(value) else 0.0
+
+
 def choose_activity_row(rows: list[dict[str, Any]], provider: str) -> dict[str, Any] | None:
     """One daily row for the chosen provider. Summing sources double-counts steps."""
     matching = [
@@ -51,7 +68,7 @@ def choose_activity_row(rows: list[dict[str, Any]], provider: str) -> dict[str, 
     ]
     if not matching:
         return None
-    return max(matching, key=lambda row: int(row.get("steps") or 0))
+    return max(matching, key=lambda row: _number(row.get("steps")))
 
 
 class OpenWearablesClient:
@@ -131,7 +148,7 @@ class OpenWearablesClient:
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                value = float(row.get("value") or 0)
+                value = _number(row.get("value"))
                 daily = bool(row.get("is_daily_total"))
                 if row.get("type") == "steps":
                     (daily_steps if daily else steps_samples).append(value)
