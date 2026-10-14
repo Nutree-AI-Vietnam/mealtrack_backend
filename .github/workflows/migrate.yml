@@ -1,7 +1,9 @@
 name: Migrate Database
 
-# Separate schema pipeline — not coupled to Render deploys or release-pipeline.
-# Code rollback stays safe because Alembic only runs when this workflow is dispatched.
+# Schema pipeline. Manual dispatch for staging|production; also callable from
+# ghcr-build-push.yml for staging only (push to delivery). Not used by
+# release-pipeline / production deploys. Uses GitHub Environment secret
+# DATABASE_URL_DIRECT.
 
 on:
   workflow_dispatch:
@@ -15,6 +17,15 @@ on:
           - production
       dry_run:
         description: If true, only print migration status (no upgrade)
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      dry_run:
         required: false
         type: boolean
         default: false

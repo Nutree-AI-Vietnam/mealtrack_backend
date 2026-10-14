@@ -41,7 +41,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ github.event.inputs.tag || 'delivery' }}
-            type=sha,prefix=sit-
+            type=sha,prefix=sit-,format=long
 
       - name: 🐳 Build and push Docker image
         uses: docker/build-push-action@v5
@@ -59,3 +59,40 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  # Staging only: migrate the staging DB at this exact commit, then deploy the
+  # immutable sit-<full sha> image. Push to delivery only — not workflow_dispatch.
+  migrate-staging:
+    name: 🗄️ Migrate staging DB
+    needs: build-and-push
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/migrate.yml
+    with:
+      environment: staging
+    secrets: inherit
+
+  deploy-staging:
+    name: 🚀 Deploy staging-instance (sit-${{ github.sha }})
+    needs: migrate-staging
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Trigger Render deploy hook (pinned image)
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}
+          IMAGE: ghcr.io/nutree-ai-vietnam/mealtrack_backend:sit-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOOK}" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_STAGING secret is not set"; exit 1
+          fi
+          ENC=$(python3 -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["IMAGE"],safe=""))')
+          # Do not print HOOK or curl stderr — the hook URL is a secret.
+          CODE=$(curl -sS -o /tmp/resp -w '%{http_code}' -X POST "${HOOK}&imgURL=${ENC}" 2>/tmp/curl.err) || {
+            echo "::error::curl failed to reach Render deploy hook"
+            exit 1
+          }
+          if [ "${CODE}" -lt 200 ] || [ "${CODE}" -ge 300 ]; then
+            echo "::error::Render deploy hook returned HTTP ${CODE}"; exit 1
+          fi
+          echo "Deploy triggered for ${IMAGE} (HTTP ${CODE})"
