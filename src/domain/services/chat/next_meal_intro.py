@@ -134,10 +134,11 @@ def eaten_today_name(
     local_date: str | None,
     suggestion_names: Sequence[str],
 ) -> str | None:
-    """Newest dish logged today that is not already one of the cards.
+    """Newest food dish logged today that is not already one of the cards.
 
     Meals are oldest-first. A card with the same name is skipped so the reply
-    does not say the dish was eaten and then offer it again. No nutrition numbers.
+    does not say the dish was eaten and then offer it again. A hydration
+    drink is not a meal. No nutrition numbers.
     """
     if not local_date:
         return None
@@ -148,10 +149,14 @@ def eaten_today_name(
         if isinstance(meal, Mapping):
             logged_on = meal.get("local_date")
             raw_name = meal.get("dish_name")
+            meal_type = meal.get("meal_type")
         else:
             logged_on = getattr(meal, "local_date", None)
             raw_name = getattr(meal, "dish_name", None)
+            meal_type = getattr(meal, "meal_type", None)
         if logged_on != local_date:
+            continue
+        if str(meal_type or "").strip().casefold() == "hydration":
             continue
         label = _dish_label(raw_name)
         if label is None or _fold(label) in offered:
