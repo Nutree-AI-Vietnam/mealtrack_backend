@@ -905,7 +905,14 @@ async def test_next_meal_persists_suggestions_and_follow_ups():
     completed = next(event for event in events if event.event == "message.completed")
 
     assert completed.data["suggestions"] == cards
-    assert completed.data["follow_ups"] == follow_ups.chips
+    # Cook and ingredient questions for the featured card stay in front.
+    # The third slot keeps the model's remaining-budget chip.
+    assert completed.data["follow_ups"] == [
+        {"label": "How do I cook Egg rice bowl?", "action": "ask"},
+        {"label": "What's in Egg rice bowl?", "action": "ask"},
+        {"label": "What's left?", "action": "remaining_budget"},
+    ]
+    assert repo.attached_follow_ups["follow_ups"] == completed.data["follow_ups"]
     assert completed.data["intent"] == "next_meal"
     assert repo.completed["reply_payload"]["suggestions"] == cards
     assert repo.completed["reply_payload"]["discover_session_id"] == "sess-9"
@@ -1831,7 +1838,12 @@ async def test_regenerate_reuses_the_stored_user_message():
     assert repo.reopened["content"] == "How much is left?"
     assert prepared.content == "How much is left?"
     assert completed.data["intent"] == "next_meal"
-    assert "Another idea" in repo.completed["content"]
+    # No meal card came back, so the model's sentence is not stored.
+    assert repo.completed["content"] == (
+        "I couldn't find a breakfast that fits what's left. "
+        "Try another meal, or tell me what to change."
+    )
+    assert "Another idea" not in repo.completed["content"]
 
 
 @pytest.mark.asyncio
