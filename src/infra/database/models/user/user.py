@@ -19,6 +19,8 @@ class User(Base, BaseMixin):
     # Firebase Integration
     firebase_uid = Column(String(128), unique=True, nullable=False, index=True)
     revenuecat_customer_id = Column(String(255), unique=True, nullable=True)
+    # Open Wearables user UUID. Data calls require this id, not the Nutree user id.
+    open_wearables_user_id = Column(String(36), unique=True, nullable=True)
 
     # Basic Information
     email = Column(String(255), unique=True, nullable=False)

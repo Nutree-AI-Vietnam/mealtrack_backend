@@ -53,6 +53,7 @@ from src.api.routes.v1.chat import router as chat_router
 from src.api.routes.v1.cheat_days import router as cheat_days_router
 from src.api.routes.v1.codes import router as codes_router
 from src.api.routes.v1.feature_flags import router as feature_flags_router
+from src.api.routes.v1.wearables import router as wearables_router
 from src.api.routes.v1.foods import router as foods_router
 from src.api.routes.v1.health import root_router as root_health_router
 from src.api.routes.v1.health import router as health_router
@@ -322,6 +323,7 @@ app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)
 app.include_router(feature_flags_router)
+app.include_router(wearables_router)
 app.include_router(capabilities_router)
 app.include_router(chat_router)
 app.include_router(meal_suggestions_router)
