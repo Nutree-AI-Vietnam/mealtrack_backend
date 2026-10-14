@@ -30,9 +30,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "uq_users_open_wearables_user_id",
-        "users",
-        type_="unique",
+    # A schema built from the models (create_all + stamp) names this constraint
+    # users_open_wearables_user_id_key, so drop by name only if it exists.
+    # Dropping the column removes whichever unique constraint is left.
+    op.execute(
+        "ALTER TABLE users DROP CONSTRAINT IF EXISTS uq_users_open_wearables_user_id"
     )
     op.drop_column("users", "open_wearables_user_id")
