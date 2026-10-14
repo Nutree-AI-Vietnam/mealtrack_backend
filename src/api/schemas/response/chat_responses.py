@@ -64,6 +64,9 @@ class ChatInFlightResponse(BaseModel):
     assistant_message_id: str
     idempotency_key: str | None = None
     lease_expires_at: str | None = None
+    ai_job_id: str | None = Field(
+        default=None, description="The background job generating this reply"
+    )
 
 
 class ChatWelcomeResponse(BaseModel):

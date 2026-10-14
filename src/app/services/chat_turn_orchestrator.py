@@ -1114,6 +1114,23 @@ class ChatTurnOrchestrator:
         prepared.slot_acquired = False
         self._semaphore.release()
 
+    async def abandon_turn(
+        self, prepared: PreparedChatTurn, *, error_code: str
+    ) -> None:
+        """Give up a prepared turn that will not be streamed to completion.
+
+        Frees the provider slot and fails the generating reply, so the user
+        can resend the turn instead of waiting for its lease to expire.
+        """
+        self.release_slot(prepared)
+        if prepared.claim.kind == ChatClaimKind.REPLAY:
+            return
+        await self._fail(
+            prepared.claim.assistant_message.id,
+            error_code,
+            generation_id=prepared.claim.assistant_message.generation_id,
+        )
+
     async def get_thread(
         self,
         *,

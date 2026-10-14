@@ -12,13 +12,13 @@ from src.domain.constants.languages import ENABLED_APP_LOCALES
 class FcmTokenRegisterRequest(BaseModel):
     """Client push-token registration (local and remote)."""
 
-    fcm_token: str = Field(..., min_length=1, max_length=4096)
+    fcm_token: str = Field(..., min_length=1, max_length=1024)
     device_type: Literal["ios", "android"]
     timezone: str | None = Field(default=None, max_length=64)
 
 
 class FcmTokenDeleteRequest(BaseModel):
-    fcm_token: str = Field(..., min_length=1, max_length=4096)
+    fcm_token: str = Field(..., min_length=1, max_length=1024)
 
 
 class NotificationPreferencesUpdateRequest(BaseModel):

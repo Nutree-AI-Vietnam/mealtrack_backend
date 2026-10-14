@@ -5,7 +5,10 @@ from typing import Any
 from uuid import UUID
 
 from src.api.exceptions import ValidationException
-from src.api.schemas.response.meal_responses import ParsedFoodItem
+from src.api.schemas.response.meal_responses import (
+    ParsedFoodItem,
+    ParseMealTextResponse,
+)
 from src.domain.model.nutrition.macros import Macros as MacrosModel
 
 
@@ -101,6 +104,20 @@ def parsed_food_item_to_response(item) -> ParsedFoodItem:
         sugar_per_100g=getattr(item, "sugar_per_100g", None),
         canonical_name=getattr(item, "canonical_name", None),
         source_snapshot=getattr(item, "source_snapshot", None),
+    )
+
+
+def parse_meal_text_response(app_response) -> ParseMealTextResponse:
+    """Shared by the parse-text routes and the background parse-text job."""
+    items = [parsed_food_item_to_response(item) for item in app_response.items]
+    return ParseMealTextResponse(
+        items=items,
+        total_calories=sum(item.calories for item in items),
+        total_protein=app_response.total_protein,
+        total_carbs=app_response.total_carbs,
+        total_fat=app_response.total_fat,
+        emoji=app_response.emoji,
+        unmatched_terms=app_response.unmatched_terms,
     )
 
 

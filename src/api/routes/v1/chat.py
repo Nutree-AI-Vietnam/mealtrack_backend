@@ -1,14 +1,20 @@
-"""Authenticated single-thread Nutree coach API."""
+"""Authenticated single-thread Nutree coach API.
+
+A message sent with ``ai_job_id`` also becomes a background AI job: the reply
+keeps generating if the client goes away, and the job records the outcome.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from src.api.dependencies.ai_jobs import get_ai_job_service, get_chat_job_runner
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.chat import get_chat_turn_orchestrator
 from src.api.exceptions import ValidationException
@@ -19,7 +25,15 @@ from src.api.schemas.response.chat_responses import (
     ChatClearResponse,
     ChatThreadResponse,
 )
-from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
+from src.app.services.ai_jobs import AiJobService, ChatJobRunner, new_chat_job
+from src.app.services.chat_turn_orchestrator import (
+    ChatTurnOrchestrator,
+    PreparedChatTurn,
+)
+from src.domain.exceptions.ai_job_exceptions import (
+    AiJobConflictError,
+    AiJobsUnavailableError,
+)
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatIdempotencyConflictError,
@@ -27,7 +41,8 @@ from src.domain.exceptions.chat_exceptions import (
     ChatRateLimitedError,
     ChatRegenerateNotAllowedError,
 )
-from src.domain.model.chat import ChatSseEvent
+from src.domain.model.ai_jobs import AiJobClaim
+from src.domain.model.chat import ChatClaimKind, ChatSseEvent
 from src.domain.services.chat.coach_functions import (
     preferred_alias,
     resolve_coach_function,
@@ -46,6 +61,7 @@ async def get_chat_thread(
     limit: int = Query(default=50, ge=1, le=100),
     user_id: str = Depends(get_current_user_id),
     orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
+    ai_jobs: AiJobService = Depends(get_ai_job_service),
 ) -> ChatThreadResponse:
     payload = await orchestrator.get_thread(
         user_id=user_id,
@@ -54,6 +70,11 @@ async def get_chat_thread(
         locale=get_request_language(request),
         header_timezone=request.headers.get("X-Timezone"),
     )
+    in_flight = payload.get("in_flight")
+    if in_flight and in_flight.get("idempotency_key"):
+        in_flight["ai_job_id"] = await ai_jobs.find_active_chat_job_id(
+            user_id=user_id, dedupe_key=in_flight["idempotency_key"]
+        )
     return ChatThreadResponse.model_validate(payload)
 
 
@@ -75,6 +96,8 @@ async def post_chat_message(
     payload: ChatMessageCreateRequest,
     user_id: str = Depends(get_current_user_id),
     orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
+    ai_jobs: AiJobService = Depends(get_ai_job_service),
+    runner: ChatJobRunner = Depends(get_chat_job_runner),
     idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> StreamingResponse | JSONResponse:
     try:
@@ -174,6 +197,43 @@ async def post_chat_message(
             retry_after=exc.retry_after_seconds,
         )
 
+    # A regenerated reply streams without a job: a job retry rebuilds its turn
+    # with prepare_turn, which would ask the question again as a new turn.
+    job_id = None if payload.regenerate_assistant_id else payload.ai_job_id
+    if job_id is not None and prepared.claim.kind != ChatClaimKind.REPLAY:
+        try:
+            claim = await _start_chat_job(
+                ai_jobs,
+                prepared,
+                job_id=str(job_id),
+                user_id=user_id,
+                content=payload.content,
+                idempotency_key=idempotency_key,
+                locale=locale,
+                header_timezone=header_timezone,
+                intent=intent_value,
+                function_name=function_name,
+                function_args=function_args,
+            )
+        except AiJobConflictError:
+            await orchestrator.abandon_turn(prepared, error_code="CHAT_TURN_FAILED")
+            return _error_response(
+                status.HTTP_409_CONFLICT,
+                "AI_JOB_CONFLICT",
+                "This job id is already used by a different request",
+            )
+        if claim is not None:
+            session = runner.start(
+                orchestrator=orchestrator, claim=claim, prepared=prepared
+            )
+
+            async def job_stream() -> AsyncIterator[bytes]:
+                async with aclosing(runner.stream(session)) as events:
+                    async for event in events:
+                        yield _encode_sse(event)
+
+            return _sse_response(job_stream())
+
     async def event_stream() -> AsyncIterator[bytes]:
         try:
             async for event in orchestrator.stream_prepared(
@@ -184,8 +244,56 @@ async def post_chat_message(
         finally:
             orchestrator.release_slot(prepared)
 
+    return _sse_response(event_stream())
+
+
+async def _start_chat_job(
+    ai_jobs: AiJobService,
+    prepared: PreparedChatTurn,
+    *,
+    job_id: str,
+    user_id: str,
+    content: str,
+    idempotency_key: str,
+    locale: str,
+    header_timezone: str | None,
+    intent: str | None,
+    function_name: str | None,
+    function_args: dict | None,
+) -> AiJobClaim | None:
+    """Claim the turn's job; None streams the turn without one.
+
+    Raises AiJobConflictError when the job id belongs to another request.
+    """
+    job = new_chat_job(
+        job_id=job_id,
+        user_id=user_id,
+        language=prepared.locale,
+        content=content,
+        idempotency_key=idempotency_key,
+        # Stored exactly as passed to prepare_turn, so a retry rebuilds the
+        # same turn.
+        locale=locale,
+        header_timezone=header_timezone,
+        user_language=locale,
+        intent=intent,
+        function_name=function_name,
+        function_args=function_args,
+    )
+    try:
+        return await ai_jobs.start_chat_job(job)
+    except AiJobConflictError:
+        raise
+    except AiJobsUnavailableError:
+        return None
+    except Exception:
+        logger.warning("Chat turn streams without an AI job", exc_info=True)
+        return None
+
+
+def _sse_response(body: AsyncIterator[bytes]) -> StreamingResponse:
     return StreamingResponse(
-        event_stream(),
+        body,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
