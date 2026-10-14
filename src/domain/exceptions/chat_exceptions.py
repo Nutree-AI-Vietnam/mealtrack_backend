@@ -11,6 +11,13 @@ class ChatBusyError(Exception):
         super().__init__("A chat turn is already in progress")
 
 
+class ChatRegenerateNotAllowedError(Exception):
+    """Regenerate was asked for a reply that is not the latest completed one."""
+
+    def __init__(self) -> None:
+        super().__init__("Only the latest coach reply can be regenerated")
+
+
 class ChatIdempotencyConflictError(Exception):
     """The same Idempotency-Key was reused with a different request body."""
 

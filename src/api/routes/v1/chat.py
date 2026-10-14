@@ -25,6 +25,7 @@ from src.domain.exceptions.chat_exceptions import (
     ChatIdempotencyConflictError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
+    ChatRegenerateNotAllowedError,
 )
 from src.domain.model.chat import ChatSseEvent
 from src.domain.services.chat.coach_functions import (
@@ -46,8 +47,13 @@ async def get_chat_thread(
     user_id: str = Depends(get_current_user_id),
     orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
 ) -> ChatThreadResponse:
-    del request
-    payload = await orchestrator.get_thread(user_id=user_id, limit=limit, before=before)
+    payload = await orchestrator.get_thread(
+        user_id=user_id,
+        limit=limit,
+        before=before,
+        locale=get_request_language(request),
+        header_timezone=request.headers.get("X-Timezone"),
+    )
     return ChatThreadResponse.model_validate(payload)
 
 
@@ -113,16 +119,32 @@ async def post_chat_message(
         intent_value = preferred_alias(resolved.name, resolved.args)
 
     try:
-        prepared = await orchestrator.prepare_turn(
-            user_id=user_id,
-            content=payload.content,
-            idempotency_key=idempotency_key,
-            locale=locale,
-            header_timezone=header_timezone,
-            user_language=locale,
-            intent=intent_value,
-            function_name=function_name,
-            function_args=function_args,
+        if payload.regenerate_assistant_id:
+            prepared = await orchestrator.prepare_regeneration(
+                user_id=user_id,
+                assistant_message_id=payload.regenerate_assistant_id,
+                content=payload.content,
+                locale=locale,
+                header_timezone=header_timezone,
+                user_language=locale,
+            )
+        else:
+            prepared = await orchestrator.prepare_turn(
+                user_id=user_id,
+                content=payload.content,
+                idempotency_key=idempotency_key,
+                locale=locale,
+                header_timezone=header_timezone,
+                user_language=locale,
+                intent=intent_value,
+                function_name=function_name,
+                function_args=function_args,
+            )
+    except ChatRegenerateNotAllowedError:
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            "CHAT_REGENERATE_NOT_ALLOWED",
+            "Only the latest coach reply can be regenerated",
         )
     except ChatBusyError as exc:
         return _error_response(

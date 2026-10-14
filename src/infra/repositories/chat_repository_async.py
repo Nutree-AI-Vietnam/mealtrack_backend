@@ -17,6 +17,7 @@ from src.domain.exceptions.chat_exceptions import (
     ChatIdempotencyConflictError,
 )
 from src.domain.model.chat import (
+    CHAT_MAX_USER_MESSAGE_CHARS,
     ChatClaimKind,
     ChatMessage,
     ChatMessageRole,
@@ -28,6 +29,7 @@ from src.domain.model.chat import (
     empty_reply_payload,
 )
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
+from src.domain.services.chat.rewind import message_ids_after
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.chat import (
     ChatKnowledgeDocumentORM,
@@ -259,6 +261,36 @@ class AsyncChatRepository(ChatRepositoryPort):
         await self._touch_thread(row.thread_id, now)
         return _to_message(row)
 
+    async def attach_follow_ups(
+        self,
+        *,
+        message_id: str,
+        follow_ups: list[dict[str, Any]],
+    ) -> None:
+        row = await self.session.get(ChatMessageORM, message_id)
+        if row is None or row.status != ChatMessageStatus.COMPLETED.value:
+            return
+        payload = dict(row.reply_payload or {})
+        payload["follow_ups"] = follow_ups
+        row.reply_payload = payload
+        row.updated_at = utc_now()
+        await self.session.flush()
+
+    async def save_reply_suggestions(
+        self,
+        *,
+        message_id: str,
+        suggestions: list[dict[str, Any]],
+    ) -> None:
+        row = await self.session.get(ChatMessageORM, message_id)
+        if row is None or row.status != ChatMessageStatus.COMPLETED.value:
+            return
+        payload = dict(row.reply_payload or {})
+        payload["suggestions"] = suggestions
+        row.reply_payload = payload
+        row.updated_at = utc_now()
+        await self.session.flush()
+
     async def fail_assistant_message(
         self,
         *,
@@ -290,6 +322,111 @@ class AsyncChatRepository(ChatRepositoryPort):
         row = await self.session.get(ChatMessageORM, message_id)
         return _to_message(row) if row else None
 
+    async def reopen_assistant_message(
+        self,
+        *,
+        user_id: str,
+        assistant_message_id: str,
+        lease_expires_at: datetime,
+        content: str | None = None,
+    ) -> tuple[ChatTurnClaim, str | None, bool] | None:
+        thread = await self._get_thread_row(user_id)
+        if thread is None:
+            return None
+        now = utc_now()
+        await self._reclaim_expired_generation(thread.id, now)
+        if await self._active_generation(thread.id) is not None:
+            raise ChatBusyError()
+
+        latest = await self.session.get(ChatMessageORM, assistant_message_id)
+        if (
+            latest is None
+            or latest.thread_id != thread.id
+            or latest.role != ChatMessageRole.ASSISTANT.value
+            or latest.status != ChatMessageStatus.COMPLETED.value
+        ):
+            return None
+        await self._drop_messages_after(thread.id, latest)
+        if latest.in_reply_to_id is None:
+            return None
+        user_row = await self.session.get(ChatMessageORM, latest.in_reply_to_id)
+        if user_row is None or user_row.role != ChatMessageRole.USER.value:
+            return None
+
+        stored = (user_row.content or "").strip()
+        edited = (content or "").strip()
+        content_changed = bool(edited) and edited != stored
+        if edited:
+            user_row.content = edited[:CHAT_MAX_USER_MESSAGE_CHARS]
+            user_row.updated_at = now
+
+        prior_intent = None
+        payload = latest.reply_payload
+        if isinstance(payload, dict):
+            value = payload.get("intent")
+            if isinstance(value, str) and value.strip():
+                prior_intent = value.strip()
+
+        latest.status = ChatMessageStatus.GENERATING.value
+        latest.content = None
+        latest.reply_payload = None
+        latest.error_code = None
+        latest.completed_at = None
+        latest.generation_lease_expires_at = lease_expires_at
+        latest.generation_id = str(uuid.uuid4())
+        latest.updated_at = now
+        await self.session.flush()
+        await self._touch_thread(thread.id, now)
+        claim = ChatTurnClaim(
+            kind=ChatClaimKind.NEW,
+            thread=_to_thread(thread),
+            user_message=_to_message(user_row),
+            assistant_message=_to_message(latest),
+        )
+        return claim, prior_intent, content_changed
+
+    async def _drop_messages_after(
+        self, thread_id: str, target: ChatMessageORM
+    ) -> None:
+        result = await self.session.execute(
+            select(
+                ChatMessageORM.id,
+                ChatMessageORM.created_at,
+                ChatMessageORM.role,
+            ).where(ChatMessageORM.thread_id == thread_id)
+        )
+        later_ids = message_ids_after(
+            target.id,
+            target.created_at,
+            target.role,
+            [(row.id, row.created_at, row.role) for row in result.all()],
+        )
+        if not later_ids:
+            return
+        await self.session.execute(
+            update(ChatThreadORM)
+            .where(ChatThreadORM.id == thread_id)
+            .values(summary=None, summary_through_message_id=None)
+        )
+        await self.session.execute(
+            delete(ChatMessageORM).where(ChatMessageORM.id.in_(later_ids))
+        )
+
+    async def _latest_completed_assistant(
+        self, thread_id: str
+    ) -> ChatMessageORM | None:
+        result = await self.session.execute(
+            select(ChatMessageORM)
+            .where(
+                ChatMessageORM.thread_id == thread_id,
+                ChatMessageORM.role == ChatMessageRole.ASSISTANT.value,
+                ChatMessageORM.status == ChatMessageStatus.COMPLETED.value,
+            )
+            .order_by(ChatMessageORM.created_at.desc(), ChatMessageORM.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def count_user_turns_since(
         self,
         *,
@@ -313,6 +450,24 @@ class AsyncChatRepository(ChatRepositoryPort):
             select(func.count()).select_from(ChatMessageORM).where(*filters)
         )
         return int(result.scalar_one())
+
+    async def save_thread_summary(
+        self,
+        *,
+        thread_id: str,
+        summary: str,
+        through_message_id: str,
+    ) -> None:
+        now = utc_now()
+        await self.session.execute(
+            update(ChatThreadORM)
+            .where(ChatThreadORM.id == thread_id)
+            .values(
+                summary=summary,
+                summary_through_message_id=through_message_id,
+                updated_at=now,
+            )
+        )
 
     async def clear_thread(self, user_id: str) -> ChatThread:
         thread = await self.get_or_create_thread(user_id)

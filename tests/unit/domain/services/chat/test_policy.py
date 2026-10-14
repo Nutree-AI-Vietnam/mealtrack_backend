@@ -8,6 +8,7 @@ from src.domain.services.chat.policy import (
     inspect_sentence,
     is_near_duplicate,
     label_chunks,
+    meal_reply_is_usable,
     nutrition_numbers_are_traceable,
     out_of_scope_follow_ups,
     out_of_scope_message,
@@ -148,11 +149,20 @@ def test_stable_instructions_are_versioned_and_forbid_mutation():
     assert "Never recalculate" in text
     assert "cannot change" in text
     assert "programming" in text
+    assert "Answer first" in text
+    assert "recent_meals" in text
+    assert "treat it as eaten" in text
+    assert "tap Log on a card" in text
+    assert "Never take calorie or macro numbers from it" in text
 
 
 def test_grounding_includes_free_text_contract_when_intent_missing() -> None:
     text = build_grounding_message(_context(), [])
     assert "COACH INTENT free_text" in text
+    assert "completely enough to be useful" in text
+    assert "would fit anyone" in text
+    assert "tap Log on it" in text
+    assert "authoritative portions" in text
     assert "Do not list recipe cards" in text
 
 
@@ -162,6 +172,23 @@ def test_sentence_buffer_emits_on_boundary_and_flush():
     assert buffer.push(". ") == ["Hello. "]
     assert buffer.push("More text") == []
     assert buffer.flush() == "More text"
+
+
+def test_sentence_buffer_streams_words_and_holds_a_trailing_number():
+    buffer = SentenceBuffer()
+    assert buffer.push("You have ") == []
+    assert buffer.take_streamable_prefix() == "You have "
+    assert buffer.push("650") == []
+    assert buffer.take_streamable_prefix() == ""
+    assert buffer.push(" kcal left. ") == ["650 kcal left. "]
+    assert buffer.take_streamable_prefix() == ""
+
+
+def test_sentence_buffer_holds_unclosed_bold():
+    buffer = SentenceBuffer()
+    assert buffer.push("This is **bold") == []
+    assert buffer.take_streamable_prefix() == "This is "
+    assert buffer.flush() == "**bold"
 
 
 def test_allergy_suggestion_is_blocked():
@@ -270,9 +297,7 @@ def test_sanitize_incomplete_assistant_text_strips_cut_off_vn_budget_line():
         == "Hôm nay bạn còn"
     )
     assert (
-        sanitize_incomplete_assistant_text(
-            "You still have room for a balanced dinner."
-        )
+        sanitize_incomplete_assistant_text("You still have room for a balanced dinner.")
         == "You still have room for a balanced dinner."
     )
 
@@ -449,8 +474,8 @@ def test_grounding_includes_meal_candidates():
     assert "Egg rice bowl" in text
     assert "420" in text
     assert "COACH INTENT next_meal" in text
-    assert "recommended meal card" in text
-    assert "tap the card" in text
+    assert "name them" in text
+    assert "tap a card" in text
     assert "https://cdn.example/pho.jpg" not in text
     assert "thumbnail_url" not in text
 
@@ -503,6 +528,49 @@ def test_allergy_tagged_chunks_are_filtered():
     )
     kept = filter_chunks_for_allergies(chunks, ["peanut"])
     assert [chunk.source_key for chunk in kept] == ["rice-bowl"]
+
+
+def test_meal_reply_must_name_the_card_and_skip_numbers() -> None:
+    cards = [{"name": "Egg rice bowl", "calories": 420}]
+    context = _context()
+    assert meal_reply_is_usable(
+        "Egg rice bowl is the one I'd make. Tap the card to log it.",
+        cards,
+        context=context,
+    )
+    assert meal_reply_is_usable(
+        "Egg rice bowl is 420 kcal.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "Here is a nice lunch.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "Egg rice bowl is about 999 kcal.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "I logged Egg rice bowl for you.",
+        cards,
+        context=context,
+    )
+    assert meal_reply_is_usable(
+        "The egg rice is the one I'd make for lunch.",
+        cards,
+        context=context,
+    )
+    assert not meal_reply_is_usable(
+        "Egg rice soup is the lighter one.",
+        [
+            {"name": "Egg rice bowl", "calories": 420},
+            {"name": "Egg rice soup", "calories": 310},
+        ],
+        context=context,
+    )
 
 
 def test_out_of_scope_copy_is_localized() -> None:

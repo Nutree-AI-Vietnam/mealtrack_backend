@@ -207,6 +207,7 @@ class OpenAIChatCompletionAdapter(
         user_message: str,
         assistant_text: str,
         has_suggestions: bool,
+        suggestion_names: list[str] | None = None,
     ) -> list[dict[str, str]]:
         prompt = json.dumps(
             {
@@ -216,7 +217,9 @@ class OpenAIChatCompletionAdapter(
                 "user_message": user_message[:400],
                 "assistant_text": assistant_text[:800],
                 "has_suggestions": has_suggestions,
-                "allowed_actions": list(CHAT_INTENTS),
+                "suggestion_names": list(suggestion_names or [])[:3],
+                "ask_action": "ask",
+                "card_actions": list(CHAT_INTENTS),
             },
             ensure_ascii=False,
         )
@@ -300,27 +303,33 @@ class OpenAIChatCompletionAdapter(
 
 
 _FOLLOW_UP_INSTRUCTIONS = """Author 2-3 short Nutree Coach follow-up chips.
-Each chip is {label, action}. action must be one of the allowed_actions.
-Reply in the given locale. Labels are tap targets, not answers.
-Do not invent nutrition numbers. Do not claim a meal was saved or logged.
-If has_suggestions is true, one chip may request more ideas via next_meal.
+Each chip is {label, action}. Reply in the given locale.
+
+Prefer action "ask". The label is the exact next message the user sends, so write the question or request they would actually type next about THIS answer.
+Good ask labels name a dish, a swap, a constraint, or a why from the answer or suggestion_names: "Make the tofu higher protein", "Skip the rice", "Why is lunch the better fit?".
+Bad labels: "Tell me more", "Okay", or a generic card label when a specific question is possible.
+Do not put calorie or gram numbers in a label. Do not claim a meal was saved or logged.
+
+At most one chip may use a card_actions value, and only when that card is the natural next step.
+If has_suggestions is true, one chip may be next_meal ("Another dinner idea") and the others must be ask chips about those meals.
 """
 
-_NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 1 delicious next-meal recipe for one sitting.
+_NEXT_MEAL_RECIPE_INSTRUCTIONS = """Return 3 different delicious next-meal recipes for one sitting. Vary the main ingredient. Each recipe is one sitting, not three courses.
 Schema fields: name, english_name, emoji, ingredients (3-8 with amount+unit), recipe_steps (2-6 with instruction+duration_minutes), prep_time_minutes, calories, protein_g, carbs_g, fat_g, fiber_g, micros.
 
 LANGUAGE RULES:
-- Meal name, ingredient names, and recipe step instructions MUST be 100% in the requested locale from user context.
-- If locale is 'vi', meal name, all ingredient names, and all recipe step instructions MUST be written in natural, fluent Vietnamese.
-- NEVER mix English sentences, English phrases, or English ingredient names into recipe_steps or ingredients when locale is 'vi'.
+- Meal name and recipe step instructions MUST be in the requested locale.
+- If locale is 'vi', the meal name and every recipe step MUST be natural Vietnamese.
+- Ingredient names MUST be English only. The server looks them up in the food database; Vietnamese ingredient names fail that lookup.
 - english_name: English meal name for food photo search (repeat name when locale is already English).
 
 PORTIONS & NUTRITION:
 - Use g or ml for units; realistic single-serving portion amounts.
-- Provide realistic portion calories (kcal), macros (protein_g, carbs_g, fat_g), and fiber_g for one sitting fitting the requested meal slot and remaining calories.
+- Fill calories and macros so the schema is valid. The server replaces those numbers with looked-up nutrition and drops the card if lookup fails. Do not treat your estimates as the numbers the user will see.
 - micros: Estimate portion micronutrients (vitamin_a in mcg; vitamin_c, vitamin_e, calcium, iron, magnesium, potassium, sodium in mg; saturated_fat, added_sugar in g) based on the ingredients. Set null for unknown fields; do not invent arbitrary numbers.
 - One sitting only — not a full day's food.
 - Honor allergies and dietary_preferences strictly.
+- If the user message asks to change a previous meal, every new recipe must follow that change.
 - Do not claim a meal was saved or logged.
 """
 

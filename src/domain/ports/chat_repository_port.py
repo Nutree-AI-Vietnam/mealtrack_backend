@@ -87,6 +87,24 @@ class ChatRepositoryPort(ABC):
         """Complete the generating assistant only if the fencing token still owns it."""
 
     @abstractmethod
+    async def attach_follow_ups(
+        self,
+        *,
+        message_id: str,
+        follow_ups: list[dict[str, Any]],
+    ) -> None:
+        """Store chips on an already completed assistant without reopening it."""
+
+    @abstractmethod
+    async def save_reply_suggestions(
+        self,
+        *,
+        message_id: str,
+        suggestions: list[dict[str, Any]],
+    ) -> None:
+        """Replace meal cards on a completed reply, including photos added later."""
+
+    @abstractmethod
     async def fail_assistant_message(
         self,
         *,
@@ -98,6 +116,21 @@ class ChatRepositoryPort(ABC):
         """Fail the generating assistant only if it is still the active generation."""
 
     @abstractmethod
+    async def reopen_assistant_message(
+        self,
+        *,
+        user_id: str,
+        assistant_message_id: str,
+        lease_expires_at: datetime,
+        content: str | None = None,
+    ) -> tuple[ChatTurnClaim, str | None, bool] | None:
+        """Reopen the latest completed assistant so it can be generated again.
+
+        Returns the claim, the previous reply intent, and whether the stored
+        question text changed. None when the message cannot be regenerated.
+        """
+
+    @abstractmethod
     async def count_user_turns_since(
         self,
         *,
@@ -106,6 +139,16 @@ class ChatRepositoryPort(ABC):
         exclude_idempotency_key: str | None = None,
     ) -> int:
         """Count user messages created at or after *since*."""
+
+    @abstractmethod
+    async def save_thread_summary(
+        self,
+        *,
+        thread_id: str,
+        summary: str,
+        through_message_id: str,
+    ) -> None:
+        """Remember turns that have fallen out of the live history window."""
 
     @abstractmethod
     async def clear_thread(self, user_id: str) -> ChatThread:

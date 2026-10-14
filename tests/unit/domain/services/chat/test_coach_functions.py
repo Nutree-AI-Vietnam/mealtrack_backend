@@ -33,6 +33,14 @@ class TestResolveCoachFunction:
         assert resolved.name == FUNCTION_SUGGEST_NEXT_MEAL
         assert resolved.args == {}
 
+    def test_next_meal_contract_allows_the_card_calorie_once(self):
+        resolved = resolve_coach_function("next_meal")
+        assert resolved is not None
+        contract = resolved.output_contract
+        assert "calorie number once" in contract
+        assert "any other calorie or gram number" in contract
+        assert "Never claim you logged" in contract
+
     def test_limits_alias(self):
         resolved = resolve_coach_function("limits")
         assert resolved is not None

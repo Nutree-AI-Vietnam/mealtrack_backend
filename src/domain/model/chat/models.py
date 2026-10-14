@@ -31,14 +31,14 @@ class ChatIntent(StrEnum):
     LIMITS = "limits"
 
 
-CHAT_PROMPT_VERSION = "chat_prompt_v3"
+CHAT_PROMPT_VERSION = "chat_prompt_v6"
 CHAT_CONTEXT_VERSION = "chat_context_v1"
 CHAT_NUTRITION_SNAPSHOT_VERSION = "chat_nutrition_v1"
 CHAT_RETRIEVAL_VERSION = "chat_retrieval_v1"
 CHAT_EVAL_VERSION = "chat_eval_v1"
 CHAT_DEFAULT_MODEL = "gpt-5.6-luna"
 
-CHAT_HISTORY_LIMIT = 20
+CHAT_HISTORY_LIMIT = 40
 CHAT_RECENT_MEAL_DAYS = 3
 CHAT_RECENT_MEAL_LIMIT = 24
 CHAT_MAX_USER_MESSAGE_CHARS = 4000
@@ -247,6 +247,7 @@ class ChatUserContext:
     food_calories: float | None = None
     movement_kcal_burned: float | None = None
     local_date: str | None = None
+    preferred_name: str | None = None
 
     @property
     def has_complete_nutrition(self) -> bool:
@@ -276,6 +277,7 @@ class ChatUserContext:
             "as_of": self.as_of,
             "locale": self.locale,
             "timezone": self.timezone,
+            "preferred_name": self.preferred_name,
             "safety": {
                 "allergies": self.allergies,
                 "health_conditions": self.health_conditions,

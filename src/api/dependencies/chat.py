@@ -96,12 +96,14 @@ def _next_meal_service(
     recipe_generator: Any = None,
     model: str = "gpt-5.6-luna",
 ) -> ChatNextMealCandidates:
+    from src.api.base_dependencies import get_nutrition_lookup_service
     from src.api.dependencies.food_image import get_food_image_service
 
     return ChatNextMealCandidates(
         discover=None,
         recipe_generator=recipe_generator,
         image_search=get_food_image_service().search_food_image,
+        nutrition_lookup=get_nutrition_lookup_service(),
         model=model,
     )
 
