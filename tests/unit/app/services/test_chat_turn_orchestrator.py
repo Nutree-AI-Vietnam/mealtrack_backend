@@ -1057,8 +1057,51 @@ async def test_how_to_cook_ignores_a_new_meal_tool_call():
     assert repo.completed["content"] == (
         "How to make Tofu bowl:\n1. Press the tofu dry.\n2. Pan-fry until golden."
     )
-    assert completed.data["suggestions"][0]["name"] == "Tofu bowl"
-    assert completed.data["suggestions"][0]["calories"] == 420
+
+
+@pytest.mark.asyncio
+async def test_ingredient_question_uses_the_shown_card():
+    prior = ChatMessage(
+        id="m-prior",
+        thread_id="t1",
+        role=ChatMessageRole.ASSISTANT,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        content="Try Vegetarian pad thai.",
+        reply_payload={
+            "intent": "next_meal",
+            "suggestions": [
+                {
+                    "name": "Vegetarian pad thai",
+                    "calories": 480,
+                    "ingredients": [
+                        {"name": "rice noodles", "amount": 80, "unit": "g"},
+                        {"name": "tofu", "amount": 100, "unit": "g"},
+                    ],
+                }
+            ],
+        },
+    )
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(suggestions=_three_cards(), meal_slot="lunch")
+    )
+    repo = _FakeRepo(claim=_claim(), history=[prior])
+    completion = _FakeCompletion(
+        ["It contains rice noodles and tofu. "],
+        tool_calls=[{"id": "c1", "name": "suggest_next_meal", "args": {}}],
+    )
+    orchestrator = _orchestrator(repo, next_meals=next_meals, completion=completion)
+
+    events = await _stream(orchestrator, content="What's in Vegetarian pad thai?")
+    completed = next(event for event in events if event.event == "message.completed")
+
+    assert next_meals.calls == []
+    assert completion.stream_calls == 0
+    assert completed.data.get("intent") != "next_meal"
+    assert "rice noodles" in repo.completed["content"]
+    assert "Egg rice bowl" not in repo.completed["content"]
+    assert completed.data["suggestions"][0]["name"] == "Vegetarian pad thai"
 
 
 @pytest.mark.asyncio

@@ -70,6 +70,17 @@ def test_not_meal_refinements(text: str) -> None:
     assert not is_meal_refinement(text)
 
 
+def test_ingredient_question_names_a_vegetarian_dish() -> None:
+    from src.domain.services.chat.meal_request import is_ingredient_request
+
+    text = "What's in Vegetarian pad thai?"
+    assert is_ingredient_request(text)
+    assert not is_meal_refinement(text)
+    assert is_ingredient_request("Có gì trong đậu phụ?")
+    assert is_ingredient_request("What are the ingredients in the tofu?")
+    assert is_meal_refinement("Make a vegetarian recipe")
+
+
 def test_comparison_is_not_a_new_meal_request() -> None:
     from src.domain.services.chat.meal_request import is_meal_comparison
 

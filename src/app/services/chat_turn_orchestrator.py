@@ -61,6 +61,8 @@ from src.domain.services.chat.coach_functions import (
 )
 from src.domain.services.chat.follow_up_schema import ensure_follow_ups, meal_names
 from src.domain.services.chat.meal_request import (
+    is_cook_request,
+    is_ingredient_request,
     is_meal_comparison,
     is_meal_explanation,
     is_meal_refinement,
@@ -449,9 +451,25 @@ class ChatTurnOrchestrator:
             history = _history_turns(history_messages)
             discover_session_id = last_discover_session_id(history_messages)
             meal_slot = resolve_meal_slot(context.suggested_meal_slot, trimmed)
+            # Ingredient and recipe questions stay on the card already shown,
+            # even when the dish name contains a word like "vegetarian".
+            answer_from_shown_meals = (
+                resolved is None
+                and bool(_latest_shown_meal_names(history_messages))
+                and (
+                    is_meal_comparison(trimmed)
+                    or is_meal_explanation(trimmed)
+                    or is_cook_request(trimmed)
+                    or is_ingredient_request(trimmed)
+                )
+            )
             # "Make the tofu higher protein" should refresh the cards, not only
             # the prose. How/why questions stay on the free-text path.
-            if resolved is None and is_meal_refinement(trimmed):
+            if (
+                resolved is None
+                and is_meal_refinement(trimmed)
+                and not answer_from_shown_meals
+            ):
                 typed_slot = slot_from_user_text(trimmed)
                 revise = _meal_revision_text(
                     trimmed, _latest_shown_meal_names(history_messages)
@@ -518,11 +536,6 @@ class ChatTurnOrchestrator:
                         exc_info=True,
                     )
 
-            answer_from_shown_meals = (
-                resolved is None
-                and bool(_latest_shown_meal_names(history_messages))
-                and (is_meal_comparison(trimmed) or is_meal_explanation(trimmed))
-            )
             tools = (
                 [] if direct_invoke or answer_from_shown_meals else list(openai_tools())
             )

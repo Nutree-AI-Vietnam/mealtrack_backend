@@ -262,6 +262,15 @@ def is_meal_refinement(text: str) -> bool:
         return False
     if any(normalized.startswith(prefix) for prefix in _EXPLAIN_PREFIXES):
         return False
+    # A dish name can contain a refinement word ("Vegetarian pad thai").
+    # Asking what is in it, or how to cook it, is not a request for a new meal.
+    # "Make a vegetarian recipe" still is: it has an imperative, not only a label.
+    if any(marker in normalized for marker in _INGREDIENT_MARKERS):
+        return False
+    if any(marker in normalized for marker in _COOK_MARKERS) and not any(
+        hint in normalized for hint in _IMPERATIVE_HINTS
+    ):
+        return False
     if any(marker in normalized for marker in _QUESTION_MARKERS) and not any(
         hint in normalized for hint in _IMPERATIVE_HINTS
     ):

@@ -25,6 +25,7 @@ from src.domain.ports.cache_port import CachePort
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
     normalize_food_name,
 )
+from src.domain.services.nutrition_calculation_service import UNIT_TO_GRAMS
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,23 @@ T3_TIMEOUT = 3.0  # AI estimate timeout
 
 # Volume conversions: unit → millilitres
 _VOLUME_TO_ML: dict[str, float] = {"cup": 240.0, "tbsp": 15.0, "tsp": 5.0}
+
+# Count and weight units. "piece" must not fall through to the gram assumption
+# (2 eggs would become 2 g). Volume units stay on the density path above.
+_COUNT_TO_GRAMS: dict[str, float] = {
+    "piece": UNIT_TO_GRAMS["piece"],
+    "pieces": UNIT_TO_GRAMS["piece"],
+    "slice": UNIT_TO_GRAMS["slice"],
+    "slices": UNIT_TO_GRAMS["slice"],
+    "serving": UNIT_TO_GRAMS["serving"],
+    "servings": UNIT_TO_GRAMS["serving"],
+    "large": UNIT_TO_GRAMS["large"],
+    "medium": UNIT_TO_GRAMS["medium"],
+    "small": UNIT_TO_GRAMS["small"],
+    "kg": UNIT_TO_GRAMS["kg"],
+    "lb": UNIT_TO_GRAMS["lb"],
+    "oz": UNIT_TO_GRAMS["oz"],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +496,10 @@ class NutritionLookupService:
             ml = amount * _VOLUME_TO_ML[unit_lower]
             return ml * get_density(name)
 
+        grams_each = _COUNT_TO_GRAMS.get(unit_lower)
+        if grams_each is not None:
+            return amount * grams_each
+
         # Unknown unit — assume grams
         logger.warning(
             "Unknown unit '%s' for ingredient '%s'; assuming grams", unit, name
@@ -593,8 +615,7 @@ class NutritionLookupService:
         """Log current cache metrics at INFO level."""
         metrics = NutritionLookupService.get_cache_metrics()
         logger.info(
-            "[NUTRITION-CACHE] hits=%d misses=%d hit_rate=%.1f%% | "
-            "T1=%d T2=%d T3=%d",
+            "[NUTRITION-CACHE] hits=%d misses=%d hit_rate=%.1f%% | T1=%d T2=%d T3=%d",
             metrics["redis_hits"],
             metrics["redis_misses"],
             metrics["redis_hit_rate_pct"],
