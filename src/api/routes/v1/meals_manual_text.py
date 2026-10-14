@@ -21,7 +21,7 @@ from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.manual_meal_durable import manual_meal_fingerprint
 from src.api.routes.v1.meals_route_helpers import (
     load_food_reference_display_projections,
-    parsed_food_item_to_response,
+    parse_meal_text_response,
 )
 from src.api.schemas.request.meal_requests import (
     CreateManualMealFromFoodsRequest,
@@ -319,19 +319,7 @@ async def parse_meal_text(
             current_items=payload.current_items,
         )
         app_response = await event_bus.send(command)
-
-        api_items = [parsed_food_item_to_response(item) for item in app_response.items]
-        total_calories = sum(i.calories for i in api_items)
-
-        return ParseMealTextResponse(
-            items=api_items,
-            total_calories=total_calories,
-            total_protein=app_response.total_protein,
-            total_carbs=app_response.total_carbs,
-            total_fat=app_response.total_fat,
-            emoji=app_response.emoji,
-            unmatched_terms=app_response.unmatched_terms,
-        )
+        return parse_meal_text_response(app_response)
     except Exception as e:
         raise handle_exception(e) from e
 
@@ -398,16 +386,4 @@ async def parse_meal_text_guest_trial(
         raise handle_exception(exc) from exc
 
     await quota.mark_completed(id_hash)
-
-    api_items = [parsed_food_item_to_response(item) for item in app_response.items]
-    total_calories = sum(i.calories for i in api_items)
-
-    return ParseMealTextResponse(
-        items=api_items,
-        total_calories=total_calories,
-        total_protein=app_response.total_protein,
-        total_carbs=app_response.total_carbs,
-        total_fat=app_response.total_fat,
-        emoji=app_response.emoji,
-        unmatched_terms=app_response.unmatched_terms,
-    )
+    return parse_meal_text_response(app_response)
