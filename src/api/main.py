@@ -48,6 +48,7 @@ from src.api.routes.v1.admin_meal_catalog import router as admin_meal_catalog_ro
 from src.api.routes.v1.admin_meal_catalog_import import (
     router as admin_meal_catalog_import_router,
 )
+from src.api.routes.v1.ai_jobs import router as ai_jobs_router
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.api.routes.v1.chat import router as chat_router
 from src.api.routes.v1.cheat_days import router as cheat_days_router
@@ -248,11 +249,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Event bus eager init failed (non-fatal): %s", e)
 
+    # Runs the AI job worker only when AI_JOBS_WORKER_ENABLED is set.
+    try:
+        from src.api.dependencies.ai_jobs import start_ai_jobs_worker
+
+        await start_ai_jobs_worker()
+    except Exception:
+        logger.exception("AI job worker failed to start")
+
     logger.info("MealTrack API started successfully!")
     yield
 
     # Shutdown
     logger.info("Shutting down MealTrack API...")
+
+    # First, while the database and cache are still up: running jobs record
+    # their outcome on the way out.
+    from src.api.dependencies.ai_jobs import shutdown_ai_jobs
+
+    try:
+        await shutdown_ai_jobs()
+    except Exception:
+        logger.exception("AI job shutdown failed")
 
     from src.bootstrap.integration_services import (
         drain_integration_event_publisher,
@@ -325,6 +343,7 @@ app.include_router(activities_router)
 app.include_router(feature_flags_router)
 app.include_router(wearables_router)
 app.include_router(capabilities_router)
+app.include_router(ai_jobs_router)
 app.include_router(chat_router)
 app.include_router(meal_suggestions_router)
 app.include_router(meal_recommendations_router)

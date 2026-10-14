@@ -225,6 +225,36 @@ class Settings(BaseSettings):
         default=_CHAT_GENERATION_LEASE_SECONDS, ge=15
     )
     CHAT_GLOBAL_CONCURRENCY: int = Field(default=8, ge=1)
+    # Background AI jobs (meal scan, parse-text, chat) + completion pushes
+    AI_JOBS_ENABLED: bool = Field(
+        default=False,
+        description="Advertise and accept background AI jobs (capability + enqueue).",
+    )
+    AI_JOBS_WORKER_ENABLED: bool = Field(
+        default=False,
+        description="Run AI job worker lanes and the push notifier in this process.",
+    )
+    AI_JOBS_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=16)
+    AI_JOBS_GLOBAL_CAPACITY: int = Field(default=4, ge=1, le=64)
+    AI_JOBS_LEASE_SECONDS: int = Field(default=120, ge=30, le=3600)
+    AI_JOBS_EXECUTION_DEADLINE_SECONDS: int = Field(default=90, ge=10, le=600)
+    AI_JOBS_POLL_SECONDS: float = Field(default=1.0, ge=0.1, le=60)
+    AI_JOBS_HEARTBEAT_SECONDS: float = Field(
+        default=2.0,
+        ge=0.5,
+        le=60,
+        description="How often a running job renews its lease and checks for cancel.",
+    )
+    AI_JOBS_NOTIFY_GRACE_SECONDS: int = Field(
+        default=8,
+        ge=0,
+        le=600,
+        description="Push only when a finished job is still unseen after this delay.",
+    )
+    AI_JOBS_CHAT_BACKGROUND_ENABLED: bool = Field(
+        default=True,
+        description="Let chat turns with ai_job_id keep generating after disconnect.",
+    )
     # Image search (meal discovery photos)
     PEXELS_API_KEY: str | None = Field(
         default=None, description="Pexels API key for food photos"

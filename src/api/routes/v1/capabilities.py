@@ -1,7 +1,9 @@
 """Runtime capability declarations for mobile contract rollouts."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.api.dependencies.ai_jobs import get_ai_job_service
+from src.app.services.ai_jobs import AiJobService
 from src.domain.model.chat import (
     CHAT_CONTEXT_VERSION,
     CHAT_DAILY_TURN_BUDGET,
@@ -27,6 +29,27 @@ from src.infra.services.durable_write_service import (
 )
 
 router = APIRouter(prefix="/v1/capabilities", tags=["capabilities"])
+
+
+@router.get("/ai-jobs")
+async def ai_job_capabilities(
+    service: AiJobService = Depends(get_ai_job_service),
+) -> dict[str, object]:
+    """Advertise background AI jobs once their storage is migrated.
+
+    ``ai_jobs`` is false while the feature is switched off; the app then
+    keeps using the synchronous endpoints.
+    """
+    try:
+        return await service.capabilities()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "AI_JOBS_UNAVAILABLE",
+                "message": "Background AI jobs are not available",
+            },
+        ) from exc
 
 
 @router.get("/durable-writes")
