@@ -94,6 +94,8 @@ def test_repository_ports_are_async_contracts():
         [
             "get_or_create_thread",
             "get_thread",
+            "create_thread",
+            "list_threads",
             "claim_turn",
             "list_completed_messages",
             "list_recent_completed_history",

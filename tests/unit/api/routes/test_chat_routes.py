@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -14,7 +15,9 @@ from src.app.services.chat_turn_orchestrator import PreparedChatTurn
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatIdempotencyConflictError,
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
+    ChatThreadNotFoundError,
 )
 from src.domain.model.chat import (
     ChatClaimKind,
@@ -26,6 +29,14 @@ from src.domain.model.chat import (
     ChatTurnClaim,
 )
 from src.domain.utils.timezone_utils import utc_now
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    # Both message routes share one per-user bucket across this module.
+    limiter._storage.reset()
+    yield
+    limiter._storage.reset()
 
 
 class _StubOrchestrator:
@@ -42,18 +53,59 @@ class _StubOrchestrator:
             "has_more": False,
         }
         self.cleared = False
+        self.cleared_thread_id = None
         self.prepared = None
         self.prepare_kwargs = None
+        self.get_kwargs = None
+        self.list_kwargs = None
+        self.regenerate_kwargs = None
 
     def release_slot(self, prepared) -> None:
         return None
 
     async def get_thread(self, **kwargs):
+        self.get_kwargs = kwargs
+        if kwargs.get("thread_id") == "missing":
+            raise ChatThreadNotFoundError()
         return self.thread_payload
 
-    async def clear_thread(self, user_id: str):
+    async def clear_thread(self, user_id: str, thread_id: str | None = None):
+        if thread_id == "missing":
+            raise ChatThreadNotFoundError()
         self.cleared = True
-        return {"thread_id": "t1", "cleared": True}
+        self.cleared_thread_id = thread_id
+        return {"thread_id": thread_id or "t1", "cleared": True}
+
+    async def list_threads(self, **kwargs):
+        self.list_kwargs = kwargs
+        if kwargs.get("cursor") == "bad":
+            raise ChatInvalidCursorError()
+        return {
+            "threads": [
+                {
+                    "id": "t2",
+                    "created_at": "2026-09-02T00:00:00+00:00",
+                    "updated_at": "2026-09-03T00:00:00+00:00",
+                    "title": "What should I eat tonight?",
+                    "preview": "Try grilled fish with rice.",
+                    "preview_role": "assistant",
+                    "last_message_at": "2026-09-03T00:00:00+00:00",
+                }
+            ],
+            "has_more": True,
+            "next_cursor": "next-page",
+        }
+
+    async def create_thread(self, user_id: str):
+        return {
+            "id": "t-new",
+            "created_at": "2026-09-04T00:00:00+00:00",
+            "updated_at": "2026-09-04T00:00:00+00:00",
+        }
+
+    async def prepare_regeneration(self, **kwargs):
+        self.regenerate_kwargs = kwargs
+        return await self.prepare_turn(**{"content": kwargs["content"]})
 
     async def prepare_turn(self, **kwargs):
         self.prepare_kwargs = kwargs
@@ -286,10 +338,33 @@ def test_post_streams_sse_events():
     assert "Hello. " in body
 
 
+def test_chat_capabilities_advertise_multi_thread_after_migration():
+    with (
+        patch(
+            "src.api.routes.v1.capabilities.chat_schema_is_ready",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "src.api.routes.v1.capabilities.chat_thread_model",
+            new=AsyncMock(return_value="multi"),
+        ),
+    ):
+        client = TestClient(_app(_StubOrchestrator()))
+        response = client.get("/v1/capabilities/chat")
+    assert response.status_code == 200
+    assert response.json()["thread_model"] == "multi"
+
+
 def test_chat_capabilities_advertise_single_thread_contract():
-    with patch(
-        "src.api.routes.v1.capabilities.chat_schema_is_ready",
-        new=AsyncMock(return_value=True),
+    with (
+        patch(
+            "src.api.routes.v1.capabilities.chat_schema_is_ready",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "src.api.routes.v1.capabilities.chat_thread_model",
+            new=AsyncMock(return_value="single"),
+        ),
     ):
         client = TestClient(_app(_StubOrchestrator()))
         response = client.get("/v1/capabilities/chat")
@@ -395,9 +470,7 @@ def test_post_forwards_tool_and_preferred_alias():
     assert response.status_code == 200
     assert orchestrator.prepare_kwargs["intent"] == "remaining_budget"
     assert orchestrator.prepare_kwargs["function_name"] == "check_daily_progress"
-    assert orchestrator.prepare_kwargs["function_args"] == {
-        "focus": "remaining_budget"
-    }
+    assert orchestrator.prepare_kwargs["function_args"] == {"focus": "remaining_budget"}
 
 
 def test_post_tool_wins_over_conflicting_intent():
@@ -474,3 +547,137 @@ def test_get_chat_passes_through_in_flight():
     body = response.json()
     assert body["in_flight"]["assistant_message_id"] == "m-asst"
     assert body["in_flight"]["idempotency_key"] == "k1"
+
+
+def test_list_threads_returns_titles_and_previews():
+    orchestrator = _StubOrchestrator()
+    client = TestClient(_app(orchestrator))
+    response = client.get("/v1/chat/threads?limit=5&cursor=c9")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["has_more"] is True
+    assert body["threads"][0]["id"] == "t2"
+    assert body["threads"][0]["title"] == "What should I eat tonight?"
+    assert body["threads"][0]["preview_role"] == "assistant"
+    assert body["next_cursor"] == "next-page"
+    assert orchestrator.list_kwargs == {"user_id": "u1", "limit": 5, "cursor": "c9"}
+
+
+def test_list_threads_rejects_oversized_page():
+    client = TestClient(_app(_StubOrchestrator()))
+    assert client.get("/v1/chat/threads?limit=51").status_code == 422
+
+
+def test_create_thread_returns_created_thread():
+    client = TestClient(_app(_StubOrchestrator()))
+    response = client.post("/v1/chat/threads")
+    assert response.status_code == 201
+    assert response.json()["id"] == "t-new"
+
+
+def test_get_thread_by_id_passes_thread_id():
+    orchestrator = _StubOrchestrator()
+    client = TestClient(_app(orchestrator))
+    response = client.get("/v1/chat/threads/t1?limit=10")
+    assert response.status_code == 200
+    assert response.json()["thread"]["id"] == "t1"
+    assert orchestrator.get_kwargs["thread_id"] == "t1"
+    assert orchestrator.get_kwargs["limit"] == 10
+
+
+def test_legacy_get_reads_latest_thread():
+    orchestrator = _StubOrchestrator()
+    client = TestClient(_app(orchestrator))
+    assert client.get("/v1/chat").status_code == 200
+    assert orchestrator.get_kwargs.get("thread_id") is None
+
+
+def test_unknown_thread_is_not_found():
+    client = TestClient(_app(_StubOrchestrator()))
+    response = client.get("/v1/chat/threads/missing")
+    assert response.status_code == 404
+    assert response.json()["detail"]["error_code"] == "CHAT_THREAD_NOT_FOUND"
+    response = client.delete("/v1/chat/threads/missing")
+    assert response.status_code == 404
+
+
+def test_clear_thread_by_id():
+    orchestrator = _StubOrchestrator()
+    client = TestClient(_app(orchestrator))
+    response = client.delete("/v1/chat/threads/t1")
+    assert response.status_code == 200
+    assert response.json() == {"thread_id": "t1", "cleared": True}
+    assert orchestrator.cleared_thread_id == "t1"
+
+
+def test_post_to_thread_passes_thread_id():
+    orchestrator = _StubOrchestrator(
+        events=[ChatSseEvent(event="message.completed", data={"thread_id": "t1"})]
+    )
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/threads/t1/messages",
+        json={"content": "Hi"},
+        headers={"Idempotency-Key": "thread-key-1"},
+    )
+    assert response.status_code == 200
+    assert orchestrator.prepare_kwargs["thread_id"] == "t1"
+
+
+def test_regenerate_in_thread_passes_thread_id():
+    orchestrator = _StubOrchestrator(events=[])
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/threads/t1/messages",
+        json={"content": "Hi", "regenerate_assistant_id": "m-asst"},
+        headers={"Idempotency-Key": "thread-key-2"},
+    )
+    assert response.status_code == 200
+    assert orchestrator.regenerate_kwargs["thread_id"] == "t1"
+
+
+def test_post_to_unknown_thread_is_not_found():
+    orchestrator = _StubOrchestrator(prepare_error=ChatThreadNotFoundError())
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/threads/missing/messages",
+        json={"content": "Hi"},
+        headers={"Idempotency-Key": "thread-key-3"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error_code"] == "CHAT_THREAD_NOT_FOUND"
+
+
+def test_message_routes_share_one_rate_limit():
+    orchestrator = _StubOrchestrator(events=[])
+    client = TestClient(_app(orchestrator))
+    statuses = []
+    for index in range(11):
+        path = "/v1/chat/messages" if index % 2 else "/v1/chat/threads/t1/messages"
+        response = client.post(
+            path,
+            json={"content": "Hi"},
+            headers={"Idempotency-Key": f"shared-limit-{index}"},
+        )
+        statuses.append(response.status_code)
+    assert statuses[:10] == [200] * 10
+    assert statuses[10] == 429
+
+
+def test_list_threads_rejects_unknown_cursor():
+    client = TestClient(_app(_StubOrchestrator()))
+    response = client.get("/v1/chat/threads?cursor=bad")
+    assert response.status_code in (400, 422)
+    assert "CHAT_INVALID_CURSOR" in response.text
+
+
+def test_regenerate_in_unknown_thread_is_not_found():
+    orchestrator = _StubOrchestrator(prepare_error=ChatThreadNotFoundError())
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/threads/missing/messages",
+        json={"content": "Hi", "regenerate_assistant_id": "m-asst"},
+        headers={"Idempotency-Key": "thread-key-4"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error_code"] == "CHAT_THREAD_NOT_FOUND"

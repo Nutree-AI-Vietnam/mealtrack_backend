@@ -17,9 +17,11 @@ from src.app.services.chat_next_meal_candidates import (
     last_discover_session_id,
 )
 from src.domain.exceptions.chat_exceptions import (
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
     ChatRegenerateNotAllowedError,
+    ChatThreadNotFoundError,
 )
 from src.domain.model.chat import (
     CHAT_CONTEXT_VERSION,
@@ -35,6 +37,8 @@ from src.domain.model.chat import (
     ChatMessage,
     ChatMessageRole,
     ChatSseEvent,
+    ChatThread,
+    ChatThreadListing,
     ChatTurnClaim,
     ChatUsage,
     ChatUserContext,
@@ -96,6 +100,10 @@ from src.domain.services.chat.policy import (
     safe_fallback_message,
     sanitize_incomplete_assistant_text,
     stable_system_instructions,
+)
+from src.domain.services.chat.thread_listing import (
+    decode_thread_cursor,
+    encode_thread_cursor,
 )
 from src.domain.services.chat.welcome import coach_welcome
 from src.domain.utils.timezone_utils import utc_now
@@ -224,6 +232,7 @@ class ChatTurnOrchestrator:
         intent: str | None = None,
         function_name: str | None = None,
         function_args: dict[str, Any] | None = None,
+        thread_id: str | None = None,
     ) -> PreparedChatTurn:
         started = time.perf_counter()
         resolved_locale = resolve_chat_locale(locale, user_language)
@@ -245,6 +254,7 @@ class ChatTurnOrchestrator:
             content=trimmed,
             idempotency_key=idempotency_key,
             request_fingerprint=fingerprint,
+            thread_id=thread_id,
         )
         slot_acquired = False
         if claim.kind != ChatClaimKind.REPLAY:
@@ -292,6 +302,7 @@ class ChatTurnOrchestrator:
         locale: str | None,
         header_timezone: str | None,
         user_language: str | None,
+        thread_id: str | None = None,
     ) -> PreparedChatTurn:
         """Replace the latest completed reply without adding another user turn.
 
@@ -302,11 +313,18 @@ class ChatTurnOrchestrator:
         await self._enforce_daily_budget(user_id)
         lease = utc_now() + timedelta(seconds=self._generation_lease_seconds)
         async with self._uow_factory() as uow:
-            reopened = await _chat_repo(uow).reopen_assistant_message(
+            repo = _chat_repo(uow)
+            # A thread the user cannot see is "not found", not "not allowed".
+            if thread_id is not None and (
+                await repo.get_thread(user_id, thread_id) is None
+            ):
+                raise ChatThreadNotFoundError()
+            reopened = await repo.reopen_assistant_message(
                 user_id=user_id,
                 assistant_message_id=assistant_message_id,
                 lease_expires_at=lease,
                 content=content.strip(),
+                thread_id=thread_id,
             )
         if reopened is None:
             raise ChatRegenerateNotAllowedError()
@@ -1122,10 +1140,23 @@ class ChatTurnOrchestrator:
         before: str | None,
         locale: str = "en",
         header_timezone: str | None = None,
+        thread_id: str | None = None,
     ) -> dict[str, Any]:
+        """Return one page of a thread.
+
+        Without *thread_id* this is the most recently active thread, which is
+        what single-thread clients have always read.
+        """
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
-            thread = await repo.get_or_create_thread(user_id)
+            found: ChatThread | None
+            if thread_id is None:
+                found = await repo.get_or_create_thread(user_id)
+            else:
+                found = await repo.get_thread(user_id, thread_id)
+            if found is None:
+                raise ChatThreadNotFoundError()
+            thread = found
             messages = await repo.list_completed_messages(
                 thread_id=thread.id,
                 limit=limit + 1,
@@ -1149,11 +1180,7 @@ class ChatTurnOrchestrator:
                 header_timezone=header_timezone,
             )
         return {
-            "thread": {
-                "id": thread.id,
-                "created_at": thread.created_at.isoformat(),
-                "updated_at": thread.updated_at.isoformat(),
-            },
+            "thread": _thread_payload(thread),
             "messages": [
                 _public_message(
                     message,
@@ -1188,10 +1215,49 @@ class ChatTurnOrchestrator:
             return None
         return coach_welcome(context)
 
-    async def clear_thread(self, user_id: str) -> dict[str, Any]:
+    async def list_threads(
+        self,
+        *,
+        user_id: str,
+        limit: int,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Raises ChatInvalidCursorError for a cursor this server did not issue."""
+        before = None
+        if cursor is not None:
+            before = decode_thread_cursor(cursor)
+            if before is None:
+                raise ChatInvalidCursorError()
+        async with self._uow_factory() as uow:
+            listings = await _chat_repo(uow).list_threads(
+                user_id=user_id,
+                limit=limit + 1,
+                before=before,
+            )
+        page = listings[:limit]
+        has_more = len(listings) > limit
+        next_cursor = None
+        if has_more and page:
+            last = page[-1].thread
+            next_cursor = encode_thread_cursor(last.updated_at, last.id)
+        return {
+            "threads": [_thread_listing_payload(item) for item in page],
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+        }
+
+    async def create_thread(self, user_id: str) -> dict[str, Any]:
+        async with self._uow_factory() as uow:
+            thread = await _chat_repo(uow).create_thread(user_id)
+        increment_metric("chat.thread.created")
+        return _thread_payload(thread)
+
+    async def clear_thread(
+        self, user_id: str, thread_id: str | None = None
+    ) -> dict[str, Any]:
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
-            thread = await repo.clear_thread(user_id)
+            thread = await repo.clear_thread(user_id, thread_id)
         increment_metric("chat.thread.cleared")
         return {"thread_id": thread.id, "cleared": True}
 
@@ -1219,6 +1285,7 @@ class ChatTurnOrchestrator:
         content: str,
         idempotency_key: str,
         request_fingerprint: str,
+        thread_id: str | None = None,
     ) -> ChatTurnClaim:
         lease = utc_now() + timedelta(seconds=self._generation_lease_seconds)
         async with self._uow_factory() as uow:
@@ -1229,6 +1296,7 @@ class ChatTurnOrchestrator:
                 idempotency_key=idempotency_key,
                 request_fingerprint=request_fingerprint,
                 lease_expires_at=lease,
+                thread_id=thread_id,
             )
 
     async def _replay(self, claim: ChatTurnClaim) -> AsyncIterator[ChatSseEvent]:
@@ -2121,6 +2189,25 @@ def _completed_sidecar(
     if suggestions:
         payload["suggestions"] = suggestions
     return payload
+
+
+def _thread_payload(thread: ChatThread) -> dict[str, Any]:
+    return {
+        "id": thread.id,
+        "created_at": thread.created_at.isoformat(),
+        "updated_at": thread.updated_at.isoformat(),
+    }
+
+
+def _thread_listing_payload(listing: ChatThreadListing) -> dict[str, Any]:
+    last = listing.last_message_at
+    return {
+        **_thread_payload(listing.thread),
+        "title": listing.title,
+        "preview": listing.preview,
+        "preview_role": listing.preview_role.value if listing.preview_role else None,
+        "last_message_at": last.isoformat() if last else None,
+    }
 
 
 def _public_message(

@@ -1,4 +1,8 @@
-"""Authenticated single-thread Nutree coach API."""
+"""Authenticated Nutree coach API.
+
+Thread-scoped routes live under ``/v1/chat/threads``. The original routes
+without a thread id keep working on the user's most recently active thread.
+"""
 
 from __future__ import annotations
 
@@ -17,17 +21,25 @@ from src.api.middleware.rate_limit import limiter
 from src.api.schemas.request.chat_requests import ChatMessageCreateRequest
 from src.api.schemas.response.chat_responses import (
     ChatClearResponse,
+    ChatThreadListResponse,
     ChatThreadResponse,
+    ChatThreadSummaryResponse,
 )
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatIdempotencyConflictError,
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
     ChatRegenerateNotAllowedError,
+    ChatThreadNotFoundError,
 )
-from src.domain.model.chat import ChatSseEvent
+from src.domain.model.chat import (
+    CHAT_THREAD_LIST_DEFAULT_LIMIT,
+    CHAT_THREAD_LIST_MAX_LIMIT,
+    ChatSseEvent,
+)
 from src.domain.services.chat.coach_functions import (
     preferred_alias,
     resolve_coach_function,
@@ -37,6 +49,9 @@ from src.infra.services.durable_write_service import normalize_idempotency_key
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/chat", tags=["Chat"])
+
+# One per-user bucket for both message routes, whichever thread they target.
+_MESSAGE_RATE_LIMIT = "10/minute"
 
 
 @router.get("", response_model=ChatThreadResponse)
@@ -69,13 +84,140 @@ async def clear_chat_thread(
 
 
 @router.post("/messages", response_model=None)
-@limiter.limit("10/minute")
+@limiter.shared_limit(_MESSAGE_RATE_LIMIT, scope="chat_messages")
 async def post_chat_message(
     request: Request,
     payload: ChatMessageCreateRequest,
     user_id: str = Depends(get_current_user_id),
     orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
     idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> StreamingResponse | JSONResponse:
+    return await _post_message(
+        request,
+        payload,
+        user_id=user_id,
+        orchestrator=orchestrator,
+        idempotency_key_header=idempotency_key_header,
+        thread_id=None,
+    )
+
+
+@router.get("/threads", response_model=ChatThreadListResponse)
+async def list_chat_threads(
+    cursor: str | None = Query(
+        default=None, description="next_cursor from the previous page."
+    ),
+    limit: int = Query(
+        default=CHAT_THREAD_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=CHAT_THREAD_LIST_MAX_LIMIT,
+    ),
+    user_id: str = Depends(get_current_user_id),
+    orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
+) -> ChatThreadListResponse:
+    """Threads that have messages, most recently active first."""
+    try:
+        payload = await orchestrator.list_threads(
+            user_id=user_id, limit=limit, cursor=cursor
+        )
+    except ChatInvalidCursorError as exc:
+        raise ValidationException(
+            "Invalid thread cursor", error_code="CHAT_INVALID_CURSOR"
+        ) from exc
+    return ChatThreadListResponse.model_validate(payload)
+
+
+@router.post(
+    "/threads",
+    response_model=ChatThreadSummaryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_chat_thread(
+    user_id: str = Depends(get_current_user_id),
+    orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
+) -> ChatThreadSummaryResponse:
+    """Start a new thread; an existing empty thread is returned instead."""
+    payload = await orchestrator.create_thread(user_id)
+    return ChatThreadSummaryResponse.model_validate(payload)
+
+
+@router.get(
+    "/threads/{thread_id}",
+    response_model=ChatThreadResponse,
+    responses={404: {"description": "CHAT_THREAD_NOT_FOUND"}},
+)
+async def get_chat_thread_by_id(
+    request: Request,
+    thread_id: str,
+    before: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    user_id: str = Depends(get_current_user_id),
+    orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
+) -> ChatThreadResponse | JSONResponse:
+    try:
+        payload = await orchestrator.get_thread(
+            user_id=user_id,
+            limit=limit,
+            before=before,
+            locale=get_request_language(request),
+            header_timezone=request.headers.get("X-Timezone"),
+            thread_id=thread_id,
+        )
+    except ChatThreadNotFoundError:
+        return _thread_not_found()
+    return ChatThreadResponse.model_validate(payload)
+
+
+@router.delete(
+    "/threads/{thread_id}",
+    response_model=ChatClearResponse,
+    responses={404: {"description": "CHAT_THREAD_NOT_FOUND"}},
+)
+async def clear_chat_thread_by_id(
+    thread_id: str,
+    user_id: str = Depends(get_current_user_id),
+    orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
+) -> ChatClearResponse | JSONResponse:
+    """Delete the thread's messages; the thread stays so it can be reused."""
+    try:
+        payload = await orchestrator.clear_thread(user_id, thread_id)
+    except ChatThreadNotFoundError:
+        return _thread_not_found()
+    return ChatClearResponse.model_validate(payload)
+
+
+@router.post(
+    "/threads/{thread_id}/messages",
+    response_model=None,
+    responses={404: {"description": "CHAT_THREAD_NOT_FOUND"}},
+)
+@limiter.shared_limit(_MESSAGE_RATE_LIMIT, scope="chat_messages")
+async def post_chat_thread_message(
+    request: Request,
+    thread_id: str,
+    payload: ChatMessageCreateRequest,
+    user_id: str = Depends(get_current_user_id),
+    orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
+    idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> StreamingResponse | JSONResponse:
+    return await _post_message(
+        request,
+        payload,
+        user_id=user_id,
+        orchestrator=orchestrator,
+        idempotency_key_header=idempotency_key_header,
+        thread_id=thread_id,
+    )
+
+
+async def _post_message(
+    request: Request,
+    payload: ChatMessageCreateRequest,
+    *,
+    user_id: str,
+    orchestrator: ChatTurnOrchestrator,
+    idempotency_key_header: str | None,
+    thread_id: str | None,
 ) -> StreamingResponse | JSONResponse:
     try:
         idempotency_key = normalize_idempotency_key(idempotency_key_header)
@@ -127,6 +269,7 @@ async def post_chat_message(
                 locale=locale,
                 header_timezone=header_timezone,
                 user_language=locale,
+                thread_id=thread_id,
             )
         else:
             prepared = await orchestrator.prepare_turn(
@@ -139,7 +282,10 @@ async def post_chat_message(
                 intent=intent_value,
                 function_name=function_name,
                 function_args=function_args,
+                thread_id=thread_id,
             )
+    except ChatThreadNotFoundError:
+        return _thread_not_found()
     except ChatRegenerateNotAllowedError:
         return _error_response(
             status.HTTP_409_CONFLICT,
@@ -192,6 +338,14 @@ async def post_chat_message(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+def _thread_not_found() -> JSONResponse:
+    return _error_response(
+        status.HTTP_404_NOT_FOUND,
+        "CHAT_THREAD_NOT_FOUND",
+        "Chat thread not found",
     )
 
 
