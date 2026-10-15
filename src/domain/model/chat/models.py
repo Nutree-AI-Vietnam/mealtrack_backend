@@ -1,4 +1,4 @@
-"""Domain models for the single-thread Nutree chat coach."""
+"""Domain models for the Nutree chat coach."""
 
 from __future__ import annotations
 
@@ -44,6 +44,10 @@ CHAT_RECENT_MEAL_LIMIT = 24
 CHAT_MAX_USER_MESSAGE_CHARS = 4000
 CHAT_MAX_OUTPUT_TOKENS = 900
 CHAT_DAILY_TURN_BUDGET = 40
+CHAT_THREAD_LIST_DEFAULT_LIMIT = 20
+CHAT_THREAD_LIST_MAX_LIMIT = 50
+CHAT_THREAD_TITLE_MAX_CHARS = 80
+CHAT_THREAD_PREVIEW_MAX_CHARS = 140
 CHAT_GENERATION_LEASE_SECONDS = 90
 CHAT_RETRIEVAL_MIN_CHUNKS = 3
 CHAT_RETRIEVAL_MAX_CHUNKS = 5
@@ -57,6 +61,7 @@ CHAT_ERROR_CODES = (
     "CHAT_PROVIDER_UNAVAILABLE",
     "CHAT_TURN_FAILED",
     "CHAT_UNAVAILABLE",
+    "CHAT_THREAD_NOT_FOUND",
     "IDEMPOTENCY_KEY_REQUIRED",
     "INVALID_IDEMPOTENCY_KEY",
 )
@@ -358,6 +363,17 @@ class ChatUserContext:
                 },
             },
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ChatThreadListing:
+    """One row of the user's thread list, newest activity first."""
+
+    thread: ChatThread
+    title: str | None
+    preview: str | None
+    preview_role: ChatMessageRole | None
+    last_message_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)

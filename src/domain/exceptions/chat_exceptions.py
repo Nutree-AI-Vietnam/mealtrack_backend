@@ -43,3 +43,10 @@ class ChatProviderUnavailableError(Exception):
         self.retry_after_seconds = retry_after_seconds
         self.retryable = retryable
         super().__init__("Chat provider is temporarily unavailable")
+
+
+class ChatThreadNotFoundError(Exception):
+    """The thread does not exist or belongs to another user."""
+
+    def __init__(self) -> None:
+        super().__init__("Chat thread not found")
