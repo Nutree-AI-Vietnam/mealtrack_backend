@@ -15,6 +15,7 @@ from src.app.services.chat_turn_orchestrator import PreparedChatTurn
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatIdempotencyConflictError,
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
     ChatThreadNotFoundError,
 )
@@ -77,6 +78,8 @@ class _StubOrchestrator:
 
     async def list_threads(self, **kwargs):
         self.list_kwargs = kwargs
+        if kwargs.get("cursor") == "bad":
+            raise ChatInvalidCursorError()
         return {
             "threads": [
                 {
@@ -90,6 +93,7 @@ class _StubOrchestrator:
                 }
             ],
             "has_more": True,
+            "next_cursor": "next-page",
         }
 
     async def create_thread(self, user_id: str):
@@ -548,14 +552,15 @@ def test_get_chat_passes_through_in_flight():
 def test_list_threads_returns_titles_and_previews():
     orchestrator = _StubOrchestrator()
     client = TestClient(_app(orchestrator))
-    response = client.get("/v1/chat/threads?limit=5&before=t9")
+    response = client.get("/v1/chat/threads?limit=5&cursor=c9")
     assert response.status_code == 200
     body = response.json()
     assert body["has_more"] is True
     assert body["threads"][0]["id"] == "t2"
     assert body["threads"][0]["title"] == "What should I eat tonight?"
     assert body["threads"][0]["preview_role"] == "assistant"
-    assert orchestrator.list_kwargs == {"user_id": "u1", "limit": 5, "before": "t9"}
+    assert body["next_cursor"] == "next-page"
+    assert orchestrator.list_kwargs == {"user_id": "u1", "limit": 5, "cursor": "c9"}
 
 
 def test_list_threads_rejects_oversized_page():
@@ -657,3 +662,22 @@ def test_message_routes_share_one_rate_limit():
         statuses.append(response.status_code)
     assert statuses[:10] == [200] * 10
     assert statuses[10] == 429
+
+
+def test_list_threads_rejects_unknown_cursor():
+    client = TestClient(_app(_StubOrchestrator()))
+    response = client.get("/v1/chat/threads?cursor=bad")
+    assert response.status_code in (400, 422)
+    assert "CHAT_INVALID_CURSOR" in response.text
+
+
+def test_regenerate_in_unknown_thread_is_not_found():
+    orchestrator = _StubOrchestrator(prepare_error=ChatThreadNotFoundError())
+    client = TestClient(_app(orchestrator))
+    response = client.post(
+        "/v1/chat/threads/missing/messages",
+        json={"content": "Hi", "regenerate_assistant_id": "m-asst"},
+        headers={"Idempotency-Key": "thread-key-4"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error_code"] == "CHAT_THREAD_NOT_FOUND"

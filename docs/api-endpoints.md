@@ -185,7 +185,9 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - A user can keep several coach threads. `GET /v1/chat/threads` lists threads
   that have messages, most recently active first. `title` is the first
   question and `preview` the latest message, both shortened; nothing is
-  generated. Page with `before=<last thread id>`.
+  generated. Page by passing the response's `next_cursor` as `cursor`; it
+  keeps its place even if a listed thread gets new messages. A cursor the
+  server did not issue is rejected with `CHAT_INVALID_CURSOR`.
 - `POST /v1/chat/threads` starts a thread. If the user already has an empty
   thread, that one is returned instead of creating another.
 - `GET`/`DELETE /v1/chat/threads/{thread_id}` and

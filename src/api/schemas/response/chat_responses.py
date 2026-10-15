@@ -29,6 +29,9 @@ class ChatThreadListItemResponse(ChatThreadSummaryResponse):
 class ChatThreadListResponse(BaseModel):
     threads: list[ChatThreadListItemResponse]
     has_more: bool = False
+    next_cursor: str | None = Field(
+        default=None, description="Pass as `cursor` to read the next page."
+    )
 
 
 class ChatCitationResponse(BaseModel):

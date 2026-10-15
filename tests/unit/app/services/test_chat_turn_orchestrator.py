@@ -6,6 +6,7 @@ from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
     ChatRegenerateNotAllowedError,
@@ -25,6 +26,10 @@ from src.domain.model.chat import (
     ChatUserContext,
 )
 from src.domain.services.chat.policy import out_of_scope_message
+from src.domain.services.chat.thread_listing import (
+    decode_thread_cursor,
+    encode_thread_cursor,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
 
@@ -2315,10 +2320,15 @@ async def test_list_threads_pages_with_one_extra_row():
     ]
     orchestrator = _orchestrator(repo)
 
-    payload = await orchestrator.list_threads(user_id="u1", limit=2, before="t9")
+    stamp = utc_now()
+    cursor = encode_thread_cursor(stamp, "t9")
 
-    assert repo.list_kwargs == {"user_id": "u1", "limit": 3, "before_thread_id": "t9"}
+    payload = await orchestrator.list_threads(user_id="u1", limit=2, cursor=cursor)
+
+    assert repo.list_kwargs == {"user_id": "u1", "limit": 3, "before": (stamp, "t9")}
     assert payload["has_more"] is True
+    second = repo.listings[1].thread
+    assert decode_thread_cursor(payload["next_cursor"]) == (second.updated_at, "t2")
     assert [item["id"] for item in payload["threads"]] == ["t3", "t2"]
     assert payload["threads"][0]["title"] == "Dinner?"
     assert payload["threads"][0]["preview_role"] == "assistant"
@@ -2405,3 +2415,43 @@ async def test_prepare_regeneration_scopes_reopen_to_thread():
         )
 
     assert repo.reopened["thread_id"] == "t1"
+
+
+@pytest.mark.asyncio
+async def test_last_page_has_no_next_cursor():
+    repo = _FakeRepo(claim=_claim())
+    repo.listings = [_listing("t1", "x")]
+    orchestrator = _orchestrator(repo)
+
+    payload = await orchestrator.list_threads(user_id="u1", limit=5)
+
+    assert payload["has_more"] is False
+    assert payload["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_threads_rejects_a_cursor_it_did_not_issue():
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()))
+
+    for bad in ("t1", "!!!", encode_thread_cursor(utc_now(), "")):
+        with pytest.raises(ChatInvalidCursorError):
+            await orchestrator.list_threads(user_id="u1", limit=5, cursor=bad)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_in_a_foreign_thread_is_not_found():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    with pytest.raises(ChatThreadNotFoundError):
+        await orchestrator.prepare_regeneration(
+            user_id="u1",
+            assistant_message_id="m-asst",
+            content="",
+            locale="en",
+            header_timezone=None,
+            user_language="en",
+            thread_id="someone-else",
+        )
+
+    assert repo.reopened is None

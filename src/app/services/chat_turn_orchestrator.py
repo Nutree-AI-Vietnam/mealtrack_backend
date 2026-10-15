@@ -17,6 +17,7 @@ from src.app.services.chat_next_meal_candidates import (
     last_discover_session_id,
 )
 from src.domain.exceptions.chat_exceptions import (
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
     ChatRegenerateNotAllowedError,
@@ -99,6 +100,10 @@ from src.domain.services.chat.policy import (
     safe_fallback_message,
     sanitize_incomplete_assistant_text,
     stable_system_instructions,
+)
+from src.domain.services.chat.thread_listing import (
+    decode_thread_cursor,
+    encode_thread_cursor,
 )
 from src.domain.services.chat.welcome import coach_welcome
 from src.domain.utils.timezone_utils import utc_now
@@ -308,7 +313,13 @@ class ChatTurnOrchestrator:
         await self._enforce_daily_budget(user_id)
         lease = utc_now() + timedelta(seconds=self._generation_lease_seconds)
         async with self._uow_factory() as uow:
-            reopened = await _chat_repo(uow).reopen_assistant_message(
+            repo = _chat_repo(uow)
+            # A thread the user cannot see is "not found", not "not allowed".
+            if thread_id is not None and (
+                await repo.get_thread(user_id, thread_id) is None
+            ):
+                raise ChatThreadNotFoundError()
+            reopened = await repo.reopen_assistant_message(
                 user_id=user_id,
                 assistant_message_id=assistant_message_id,
                 lease_expires_at=lease,
@@ -1209,17 +1220,30 @@ class ChatTurnOrchestrator:
         *,
         user_id: str,
         limit: int,
-        before: str | None = None,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
+        """Raises ChatInvalidCursorError for a cursor this server did not issue."""
+        before = None
+        if cursor is not None:
+            before = decode_thread_cursor(cursor)
+            if before is None:
+                raise ChatInvalidCursorError()
         async with self._uow_factory() as uow:
             listings = await _chat_repo(uow).list_threads(
                 user_id=user_id,
                 limit=limit + 1,
-                before_thread_id=before,
+                before=before,
             )
+        page = listings[:limit]
+        has_more = len(listings) > limit
+        next_cursor = None
+        if has_more and page:
+            last = page[-1].thread
+            next_cursor = encode_thread_cursor(last.updated_at, last.id)
         return {
-            "threads": [_thread_listing_payload(item) for item in listings[:limit]],
-            "has_more": len(listings) > limit,
+            "threads": [_thread_listing_payload(item) for item in page],
+            "has_more": has_more,
+            "next_cursor": next_cursor,
         }
 
     async def create_thread(self, user_id: str) -> dict[str, Any]:

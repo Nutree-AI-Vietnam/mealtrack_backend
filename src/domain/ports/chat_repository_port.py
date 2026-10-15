@@ -43,9 +43,13 @@ class ChatRepositoryPort(ABC):
         *,
         user_id: str,
         limit: int,
-        before_thread_id: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> list[ChatThreadListing]:
-        """Return threads with messages, most recently active first."""
+        """Return threads with messages, most recently active first.
+
+        *before* is the ``(updated_at, thread_id)`` of the last thread already
+        shown; only threads strictly after it in list order are returned.
+        """
 
     @abstractmethod
     async def claim_turn(

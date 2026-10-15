@@ -263,9 +263,17 @@ async def test_new_thread_keeps_prior_threads_listed(async_db_session):
 
     page = await repo.list_threads(user_id=user.id, limit=1)
     assert [item.thread.id for item in page] == [first.thread.id]
-    page = await repo.list_threads(
-        user_id=user.id, limit=1, before_thread_id=first.thread.id
+    cursor = (page[0].thread.updated_at, page[0].thread.id)
+    # New activity in the thread already shown must not repeat the next page.
+    await _complete_turn(
+        repo,
+        user.id,
+        content="And a snack?",
+        reply="Fruit.",
+        key="multi-4",
+        thread_id=first.thread.id,
     )
+    page = await repo.list_threads(user_id=user.id, limit=5, before=cursor)
     assert [item.thread.id for item in page] == [second.id]
 
 

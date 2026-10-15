@@ -29,6 +29,7 @@ from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatIdempotencyConflictError,
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
     ChatRegenerateNotAllowedError,
@@ -103,8 +104,8 @@ async def post_chat_message(
 
 @router.get("/threads", response_model=ChatThreadListResponse)
 async def list_chat_threads(
-    before: str | None = Query(
-        default=None, description="Thread id from the previous page."
+    cursor: str | None = Query(
+        default=None, description="next_cursor from the previous page."
     ),
     limit: int = Query(
         default=CHAT_THREAD_LIST_DEFAULT_LIMIT,
@@ -115,9 +116,14 @@ async def list_chat_threads(
     orchestrator: ChatTurnOrchestrator = Depends(get_chat_turn_orchestrator),
 ) -> ChatThreadListResponse:
     """Threads that have messages, most recently active first."""
-    payload = await orchestrator.list_threads(
-        user_id=user_id, limit=limit, before=before
-    )
+    try:
+        payload = await orchestrator.list_threads(
+            user_id=user_id, limit=limit, cursor=cursor
+        )
+    except ChatInvalidCursorError as exc:
+        raise ValidationException(
+            "Invalid thread cursor", error_code="CHAT_INVALID_CURSOR"
+        ) from exc
     return ChatThreadListResponse.model_validate(payload)
 
 

@@ -79,7 +79,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         *,
         user_id: str,
         limit: int,
-        before_thread_id: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> list[ChatThreadListing]:
         has_messages = exists().where(
             ChatMessageORM.thread_id == ChatThreadORM.id,
@@ -91,16 +91,15 @@ class AsyncChatRepository(ChatRepositoryPort):
             .order_by(ChatThreadORM.updated_at.desc(), ChatThreadORM.id.desc())
             .limit(limit)
         )
-        if before_thread_id:
-            cursor = await self._owned_thread_row(user_id, before_thread_id)
-            if cursor is not None:
-                stmt = stmt.where(
-                    (ChatThreadORM.updated_at < cursor.updated_at)
-                    | (
-                        (ChatThreadORM.updated_at == cursor.updated_at)
-                        & (ChatThreadORM.id < cursor.id)
-                    )
+        if before is not None:
+            before_updated_at, before_id = before
+            stmt = stmt.where(
+                (ChatThreadORM.updated_at < before_updated_at)
+                | (
+                    (ChatThreadORM.updated_at == before_updated_at)
+                    & (ChatThreadORM.id < before_id)
                 )
+            )
         threads = list((await self.session.execute(stmt)).scalars().all())
         if not threads:
             return []

@@ -50,3 +50,10 @@ class ChatThreadNotFoundError(Exception):
 
     def __init__(self) -> None:
         super().__init__("Chat thread not found")
+
+
+class ChatInvalidCursorError(Exception):
+    """A thread-list cursor was malformed or not issued by this server."""
+
+    def __init__(self) -> None:
+        super().__init__("Invalid chat thread cursor")
