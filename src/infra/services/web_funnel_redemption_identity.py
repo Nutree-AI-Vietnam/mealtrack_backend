@@ -6,6 +6,8 @@ import asyncio
 
 from firebase_admin import auth  # type: ignore[import-untyped]
 
+from src.infra.config.settings import settings
+
 SILENT_LOGIN_CLAIM = "wf_silent_login"
 
 
@@ -15,6 +17,10 @@ class RedemptionIdentityUnavailable(Exception):
 
 class WebFunnelRedemptionIdentityService:
     async def mint_for_email(self, email: str, *, mealtrack_uid: str | None) -> str:
+        # Never sign anyone into an admin mailbox; checked before any Firebase
+        # write so an admin account is not even marked verified here.
+        if email.strip().lower() in settings.admin_emails:
+            raise RedemptionIdentityUnavailable()
         record = await self._user_for(email.strip().lower(), mealtrack_uid)
         if (
             record.disabled

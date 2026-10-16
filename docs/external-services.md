@@ -18,7 +18,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Firebase Auth | **Required** | Fail fast (401) |
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
-| RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Premium route gates are not enforced yet |
+| RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Entitlement ledger: a failed fetch keeps the last projection (`stale`), never reduces access. Premium route gates are not enforced yet |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
@@ -37,6 +37,22 @@ Provider-origin v2 manual saves use Redis and `NUTRITION_PROVIDER_GLOBAL_RPM`
 process-local budget if Redis is down so local catalog-food saves work.
 `CACHE_ENABLED=false` may disable optional cache reads, but it must not
 disable this shared write-path budget.
+
+**Entitlement ledger rule (NM-680):** RevenueCat stays the purchase rail; the
+`user_entitlements` projection in Postgres becomes the access answer once the
+server kill switches allow it. Every RC read for the ledger goes through
+`BillingProviderPort` (REST v1, `RevenueCatBillingProvider`) and the
+process-wide `RcBudget` (`ENTITLEMENT_RC_RPS`, `ENTITLEMENT_RC_CONCURRENCY`,
+priority lanes, circuit breaker); typed provider errors never read as "not
+subscribed". The legacy `RevenueCatAdapter` and `subscriptions` writes are
+unchanged (dual-write until P6). Behaviour is behind DB `feature_flags` rows
+read through `FeatureFlagReader` (30 s cache, missing row or read error =
+off): `ent_ledger_write`, `ent_reconcile`, `ent_read_api`,
+`ent_read_api_defer`. `GET /v1/feature-flags` never lists `ent_*` names and
+`GET /v1/feature-flags/{name}` answers 404 for them.
+Webhook payloads are stored with `subscriber_attributes` stripped. Sandbox
+access follows `ENTITLEMENT_SANDBOX_POLICY`. Rollout, worker, backfill and
+rollback: `docs/runbooks/entitlement-ledger.md`.
 
 **Privacy rule:** never log prompts, food payloads, raw AI output, base64
 images, emails, auth tokens, full barcodes, or secrets. Prefer operation name,

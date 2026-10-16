@@ -8,6 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
+from src.api.base_dependencies import get_entitlement_account_service
 from src.api.dependencies.auth import (
     get_current_user_id,
     verify_firebase_token,
@@ -79,6 +80,7 @@ async def sync_user_from_firebase(
     http_request: Request,
     token: dict = Depends(verify_firebase_token),
     event_bus: EventBus = Depends(get_configured_event_bus),
+    entitlements=Depends(get_entitlement_account_service),
 ):
     """
     Sync user data from Firebase authentication.
@@ -139,6 +141,16 @@ async def sync_user_from_firebase(
     # Map result to response
     user_data = result["user"]
 
+    # Entitlement ledger (NM-680): seed the primary billing identity, replay
+    # parked webhooks, and answer has_subscription from the projection. Each
+    # step is flag-gated and never fails the sync.
+    await entitlements.after_user_sync(
+        str(user_data["id"]), user_data.get("firebase_uid")
+    )
+    user_data["has_subscription"] = await entitlements.has_subscription(
+        str(user_data["id"]), legacy=bool(user_data.get("has_subscription"))
+    )
+
     logger.info(
         f"User sync completed for firebase_uid: {request.firebase_uid}",
         extra={
@@ -160,6 +172,7 @@ async def sync_user_from_firebase(
 async def get_user_by_firebase_uid(
     firebase_uid: str = Depends(verify_firebase_uid_ownership),
     event_bus: EventBus = Depends(get_configured_event_bus),
+    entitlements=Depends(get_entitlement_account_service),
 ):
     """
     Get user profile by Firebase UID.
@@ -174,6 +187,12 @@ async def get_user_by_firebase_uid(
 
     # Send query
     result = await event_bus.send(query)
+
+    # While the backend is the entitlement authority, has_subscription comes
+    # from the projection (no development override); legacy otherwise.
+    result["has_subscription"] = await entitlements.has_subscription(
+        str(result["id"]), legacy=bool(result.get("has_subscription"))
+    )
 
     # Return user profile response
     return UserProfileResponse(**result)
@@ -306,9 +325,7 @@ async def update_weekly_auto_adjust(
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """Enable or disable leftover-split daily targets. Enabled by default."""
-    command = UpdateWeeklyAutoAdjustCommand(
-        user_id=user_id, enabled=request.enabled
-    )
+    command = UpdateWeeklyAutoAdjustCommand(user_id=user_id, enabled=request.enabled)
     result = await event_bus.send(command)
     return result
 

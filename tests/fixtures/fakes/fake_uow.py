@@ -1,3 +1,10 @@
+from tests.fixtures.fakes.fake_entitlement_ledger_repositories import (
+    FakeBillingCustomerIdentityRepository,
+    FakeBillingProviderEventRepository,
+    FakeEntitlementGrantRepository,
+    FakeStoreSubscriptionRepository,
+    FakeUserEntitlementRepository,
+)
 from tests.fixtures.fakes.fake_meal_repository import FakeMealRepository
 from tests.fixtures.fakes.fake_meal_suggestion_repository import (
     FakeMealSuggestionRepository,
@@ -19,6 +26,11 @@ class FakeUnitOfWork(AsyncUnitOfWorkPort):
         self.subscriptions = FakeSubscriptionRepository()
         self.meals = FakeMealRepository()
         self.meal_suggestions = FakeMealSuggestionRepository()
+        self.billing_identities = FakeBillingCustomerIdentityRepository()
+        self.billing_events = FakeBillingProviderEventRepository()
+        self.store_subscriptions = FakeStoreSubscriptionRepository()
+        self.entitlement_grants = FakeEntitlementGrantRepository()
+        self.user_entitlements = FakeUserEntitlementRepository(users=self.users)
         self.committed = False
         self.rolled_back = False
 

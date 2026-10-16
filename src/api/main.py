@@ -52,8 +52,9 @@ from src.api.routes.v1.capabilities import router as capabilities_router
 from src.api.routes.v1.chat import router as chat_router
 from src.api.routes.v1.cheat_days import router as cheat_days_router
 from src.api.routes.v1.codes import router as codes_router
+from src.api.routes.v1.entitlements import admin_router as admin_entitlements_router
+from src.api.routes.v1.entitlements import router as entitlements_router
 from src.api.routes.v1.feature_flags import router as feature_flags_router
-from src.api.routes.v1.wearables import router as wearables_router
 from src.api.routes.v1.foods import router as foods_router
 from src.api.routes.v1.health import root_router as root_health_router
 from src.api.routes.v1.health import router as health_router
@@ -78,6 +79,7 @@ from src.api.routes.v1.saved_suggestions import router as saved_suggestions_rout
 from src.api.routes.v1.tdee import router as tdee_router
 from src.api.routes.v1.user_profiles import router as user_profiles_router
 from src.api.routes.v1.users import router as users_router
+from src.api.routes.v1.wearables import router as wearables_router
 from src.api.routes.v1.web_funnel import router as web_funnel_router
 from src.api.routes.v1.web_funnel_redemption_session import (
     router as web_funnel_session_router,
@@ -323,6 +325,8 @@ app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)
 app.include_router(feature_flags_router)
+app.include_router(entitlements_router)
+app.include_router(admin_entitlements_router)
 app.include_router(wearables_router)
 app.include_router(capabilities_router)
 app.include_router(chat_router)

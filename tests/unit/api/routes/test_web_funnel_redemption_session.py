@@ -210,3 +210,39 @@ def test_silent_login_token_allowed_requires_claim():
     assert session_route.silent_login_token_allowed("custom", token) is True
     assert session_route.silent_login_token_allowed("custom", {"firebase": {}}) is False
     assert session_route.silent_login_token_allowed("google.com", None) is True
+
+
+@pytest.mark.asyncio
+async def test_session_refuses_admin_lead_email_with_generic_404(monkeypatch):
+    from src.infra.services import web_funnel_redemption_identity as identity_mod
+
+    def firebase_must_not_be_called(*_args, **_kwargs):
+        raise AssertionError("Firebase must not be touched for an admin email")
+
+    monkeypatch.setattr(identity_mod.settings, "ADMIN_EMAILS", "buyer@example.com")
+    for name in ("get_user", "get_user_by_email", "update_user", "create_user"):
+        monkeypatch.setattr(identity_mod.auth, name, firebase_must_not_be_called)
+    monkeypatch.setattr(
+        identity_mod.auth, "create_custom_token", firebase_must_not_be_called
+    )
+    owner = User(
+        firebase_uid="google-uid",
+        email="buyer@example.com",
+        username="b",
+        password_hash="",
+    )
+    binding = _binding()
+    db = SessionDb(binding, _lead(), owner)
+
+    with pytest.raises(HTTPException) as error:
+        await _create_session(
+            _request("1.1.1.6"),
+            WebFunnelRedemptionPreflightRequest(redemption_link_hash="a" * 64),
+            db,
+            identity_mod.WebFunnelRedemptionIdentityService(),
+        )
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "Not found"
+    assert binding.silent_login_minted_at is None
+    assert db.committed is False

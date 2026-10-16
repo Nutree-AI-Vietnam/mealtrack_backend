@@ -344,31 +344,67 @@ async def get_current_user_email(
 
 
 async def require_admin(
-    email: str | None = Depends(get_current_user_email),
+    token: dict = Depends(verify_firebase_token),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str:
     """Authorize privileged endpoints against the ADMIN_EMAILS allowlist.
 
-    Raises 401 when unauthenticated (via get_current_user_email →
-    verify_firebase_token) and 403 when the caller's email is not on the
-    configured allowlist.
+    Raises 401 when unauthenticated (via verify_firebase_token) and 403 unless
+    the caller's email is on the configured allowlist, is verified, and was not
+    signed in with a custom token. Web-funnel silent login mints custom tokens
+    and marks the lead email verified itself, so a custom token never proves
+    control of an admin mailbox. An admin bearer is also revocation-checked
+    (401), so disabling an admin or revoking their tokens takes effect at once.
     """
-    allowlist = {
-        e.strip().lower() for e in settings.ADMIN_EMAILS.split(",") if e.strip()
-    }
+    email = token.get("email")
     if not email:
         # Authenticated (token verified) but no email claim — e.g. a phone-only
         # account. Denied, but logged so an admin who loses email is visible.
         logger.warning("Admin check denied: verified token has no email claim")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    if email.strip().lower() not in allowlist:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
+        raise _admin_access_required()
+    if email.strip().lower() not in settings.admin_emails:
+        raise _admin_access_required()
+    if token.get("email_verified") is not True:
+        logger.warning("Admin check denied: allowlisted email is not verified")
+        raise _admin_access_required()
+    if (token.get("firebase") or {}).get("sign_in_provider") == "custom":
+        logger.warning("Admin check denied: custom-token sign-in")
+        raise _admin_access_required()
+    # No bearer only in the dev bypass (or a direct call); nothing to re-check.
+    if isinstance(credentials, HTTPAuthorizationCredentials):
+        await _ensure_admin_token_not_revoked(credentials.credentials)
     return email
+
+
+async def _ensure_admin_token_not_revoked(raw_token: str) -> None:
+    try:
+        await _verify_id_token(raw_token, check_revoked=True)
+    except (firebase_auth.RevokedIdTokenError, firebase_auth.UserDisabledError) as e:
+        logger.warning("Admin check denied: token revoked or user disabled")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from e
+    except firebase_auth.CertificateFetchError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        ) from e
+    except Exception as e:
+        logger.warning("Admin check denied: revocation check failed")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Failed to verify authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from e
+
+
+def _admin_access_required() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Admin access required",
+    )
 
 
 async def require_admin_or_local(
@@ -380,7 +416,7 @@ async def require_admin_or_local(
     if _is_local_development_request(request):
         return "local-development"
     token = await verify_firebase_token(request, credentials)
-    return await require_admin(token.get("email"))
+    return await require_admin(token, credentials)
 
 
 def _is_local_development_request(request: Request) -> bool:

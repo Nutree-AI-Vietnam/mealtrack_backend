@@ -33,6 +33,19 @@ from src.infra.database.models.referral.referral_conversion import ReferralConve
 from src.infra.database.models.referral.referral_wallet import ReferralWallet
 
 
+def _webhook_auth(value: str | None = "test_secret", *, secret: str | None = None):
+    """Configure webhook credentials on settings.
+
+    With only ``value`` both credentials hold it, like the blanket
+    ``os.getenv`` patch these tests used before the route read settings.
+    """
+    return patch.multiple(
+        "src.api.routes.v1.webhooks.settings",
+        REVENUECAT_WEBHOOK_AUTH_HEADER=value,
+        REVENUECAT_WEBHOOK_SECRET=value if secret is None else secret,
+    )
+
+
 class _FakeReferralRepo:
     """In-memory referral repo performing REAL wallet arithmetic (not mocked away).
 
@@ -186,7 +199,7 @@ class TestWebhookHandler:
         mock_request.json.return_value = webhook_event
 
         # Set a valid webhook secret for the test
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with (
                 patch(
                     "src.api.routes.v1.webhooks._get_event_publisher",
@@ -236,7 +249,7 @@ class TestWebhookHandler:
                 "app_user_id": lead_id.upper(),
             }
         }
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as uow_class:
                 uow = MagicMock()
                 uow.__aenter__ = AsyncMock(return_value=uow)
@@ -280,7 +293,7 @@ class TestWebhookHandler:
         mock_request.json.return_value = webhook_event
 
         # Set a valid webhook secret for the test
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
@@ -327,7 +340,7 @@ class TestWebhookHandler:
             }
         }
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
@@ -357,7 +370,7 @@ class TestWebhookHandler:
             }
         }
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
@@ -408,7 +421,7 @@ class TestWebhookHandler:
             }
         }
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
@@ -451,7 +464,7 @@ class TestWebhookHandler:
             }
         )
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
@@ -508,7 +521,7 @@ class TestWebhookHandler:
             }
         )
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
@@ -549,7 +562,7 @@ class TestWebhookHandler:
         mock_request.json.side_effect = Exception("Invalid JSON")
 
         # Set a valid webhook secret for the test
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with pytest.raises(HTTPException) as exc_info:
                 await revenuecat_webhook(mock_request, authorization="test_secret")
 
@@ -560,9 +573,7 @@ class TestWebhookHandler:
         """Test webhook authorization check."""
         mock_request.json.return_value = webhook_event
 
-        with patch("src.api.routes.v1.webhooks.os.getenv") as mock_getenv:
-            mock_getenv.return_value = "secret_token"
-
+        with _webhook_auth("secret_token"):
             # Test with wrong authorization
             with pytest.raises(HTTPException) as exc_info:
                 await revenuecat_webhook(mock_request, authorization="wrong_token")
@@ -899,7 +910,7 @@ class TestWebhookHandler:
         mock_user = MagicMock(id="user_123")
         subscription = MagicMock()
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with (
                 patch(
                     "src.api.routes.v1.webhooks._get_event_publisher",
@@ -944,7 +955,7 @@ class TestWebhookHandler:
         mock_user = MagicMock(id="user_123")
         subscription = MagicMock()
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with (
                 patch(
                     "src.api.routes.v1.webhooks._get_event_publisher",
@@ -991,7 +1002,7 @@ class TestWebhookHandler:
             }
         }
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
@@ -1023,7 +1034,7 @@ class TestWebhookHandler:
             }
         }
 
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+        with _webhook_auth("test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
                 mock_uow = MagicMock()
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)

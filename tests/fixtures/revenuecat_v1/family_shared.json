@@ -1,0 +1,55 @@
+{
+  "request_date": "2026-10-15T08:00:00Z",
+  "request_date_ms": 1792051200000,
+  "subscriber": {
+    "entitlements": {
+      "standard": {
+        "expires_date": "2027-04-01T00:00:00Z",
+        "grace_period_expires_date": null,
+        "product_identifier": "nutree_2999_1y_0",
+        "purchase_date": "2026-04-01T00:00:00Z"
+      }
+    },
+    "first_seen": "2026-03-02T10:15:00Z",
+    "last_seen": "2026-10-15T07:58:41Z",
+    "management_url": "https://apps.apple.com/account/subscriptions",
+    "non_subscriptions": {},
+    "original_app_user_id": "Xq7fK2mLp9RzT4vB8nWc3dHs6Ya1",
+    "original_application_version": "36",
+    "original_purchase_date": "2026-03-02T10:14:02Z",
+    "other_purchases": {},
+    "subscriber_attributes": {
+      "$email": {
+        "updated_at_ms": 1772446500000,
+        "value": "member@example.com"
+      },
+      "$airbridgeDeviceId": {
+        "updated_at_ms": 1772446500000,
+        "value": "0f1c6a52-6b0e-4f0e-9b1a-2f9a6d1c7e11"
+      }
+    },
+    "subscriptions": {
+      "nutree_2999_1y_0": {
+        "auto_resume_date": null,
+        "billing_issues_detected_at": null,
+        "display_name": null,
+        "expires_date": "2027-04-01T00:00:00Z",
+        "grace_period_expires_date": null,
+        "is_sandbox": false,
+        "management_url": "https://apps.apple.com/account/subscriptions",
+        "original_purchase_date": "2026-04-01T00:00:00Z",
+        "ownership_type": "FAMILY_SHARED",
+        "period_type": "normal",
+        "price": {
+          "amount": 29.99,
+          "currency": "USD"
+        },
+        "purchase_date": "2026-04-01T00:00:00Z",
+        "refunded_at": null,
+        "store": "app_store",
+        "store_transaction_id": "2000000712345678",
+        "unsubscribe_detected_at": null
+      }
+    }
+  }
+}

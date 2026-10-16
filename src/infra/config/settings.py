@@ -4,7 +4,7 @@ Application configuration settings loaded from environment variables.
 
 import json
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -234,6 +234,20 @@ class Settings(BaseSettings):
     )
     REVENUECAT_SECRET_API_KEY: str | None = Field(default=None)
     REVENUECAT_WEBHOOK_SECRET: str | None = Field(default=None)
+    # Exact Authorization value RevenueCat sends; takes precedence over
+    # REVENUECAT_WEBHOOK_SECRET when both are set.
+    REVENUECAT_WEBHOOK_AUTH_HEADER: str | None = Field(default=None)
+    # Entitlement ledger (NM-680). Sandbox purchases grant access per D3:
+    # all (today's RevenueCat behaviour), allowlist or none. Any other value
+    # fails at startup instead of silently granting sandbox access.
+    ENTITLEMENT_SANDBOX_POLICY: Literal["all", "allowlist", "none"] = Field(
+        default="all"
+    )
+    # Comma-separated users.id allowed sandbox access when the policy is allowlist.
+    ENTITLEMENT_SANDBOX_ALLOWED_USER_IDS: str = Field(default="")
+    # Per-process RevenueCat REST budget shared by every entitlement sync lane.
+    ENTITLEMENT_RC_RPS: float = Field(default=2.0, gt=0)
+    ENTITLEMENT_RC_CONCURRENCY: int = Field(default=4, ge=1)
     WEB_FUNNEL_REVENUECAT_ENVIRONMENT: str = Field(default="")
     WEB_FUNNEL_LEGACY_CLAIM_ENABLED: bool = Field(default=False)
     WEB_FUNNEL_CLAIM_LINK_BASE_URL: str = Field(default="")
@@ -473,6 +487,15 @@ class Settings(BaseSettings):
             cleaned = cleaned.split("://", 1)[1]
         return cleaned.split("/")[0]
 
+    @field_validator("ENTITLEMENT_SANDBOX_POLICY", mode="before")
+    @classmethod
+    def normalize_sandbox_policy(cls, value: Any) -> Any:
+        if value is None:
+            return "all"
+        if isinstance(value, str):
+            return value.strip().lower() or "all"
+        return value
+
     @field_validator("NUTRITION_PROVIDER_GLOBAL_RPM", mode="before")
     @classmethod
     def default_provider_rpm(cls, value: Any) -> Any:
@@ -527,6 +550,13 @@ class Settings(BaseSettings):
         else:
             auth = ""
         return f"{protocol}://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    @property
+    def admin_emails(self) -> frozenset[str]:
+        """Return the ADMIN_EMAILS allowlist, trimmed and lower-cased."""
+        return frozenset(
+            e.strip().lower() for e in self.ADMIN_EMAILS.split(",") if e.strip()
+        )
 
 
 @lru_cache

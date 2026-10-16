@@ -26,6 +26,7 @@ from src.infra.database.models.notification.notification_preferences import (
     NotificationPreferencesORM as NotificationPreferences,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
+from src.observability import increment_metric
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
 
                 # Step 1: Soft-delete all related user data
                 await self._soft_delete_related_data(uow, str(user_id))
+                await self._retire_billing_identities_best_effort(
+                    uow, str(user_id), command.firebase_uid
+                )
 
                 # Step 2: Anonymize user data (GDPR compliance)
                 user.email = f"deleted_{user.id}@deleted.local"
@@ -125,6 +129,50 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             "firebase_cleanup_queued": True,
             "message": "Account successfully deleted; Firebase cleanup queued",
         }
+
+    async def _retire_billing_identities_best_effort(
+        self, uow: AsyncUnitOfWorkPort, user_id: str, firebase_uid: str
+    ) -> None:
+        """Run the ledger step in a SAVEPOINT so it can never block a deletion
+        (e.g. ledger tables not migrated yet, or dropped by a rollback). The
+        webhook and worker resolve only active users, so a skipped step leaves
+        nothing that grants access."""
+        try:
+            async with uow.session.begin_nested():
+                await self._retire_billing_identities(uow, user_id, firebase_uid)
+        except Exception:
+            increment_metric("entitlement.delete_hook.failed")
+            logger.exception(
+                "Billing identity retirement failed; account deletion continues"
+            )
+
+    async def _retire_billing_identities(
+        self, uow: AsyncUnitOfWorkPort, user_id: str, firebase_uid: str
+    ) -> None:
+        """Entitlement ledger (D9, D11): drop stored webhook bodies and retire
+        the billing identities, so the account's ids stop resolving to it and
+        its syncs stop. Store rows and projections stay for audit."""
+        # The sync's user lock: an in-flight sync either finishes first (and
+        # its identities are retired here) or sees the inactive user and
+        # writes nothing.
+        await uow.user_entitlements.lock_users([user_id])
+        identities = await uow.billing_identities.list_for_user(
+            user_id, include_retired=True
+        )
+        purged = await uow.billing_events.purge_raw_for_user(
+            user_id,
+            app_user_ids=sorted(
+                {firebase_uid, *(i.provider_customer_id for i in identities)}
+            ),
+        )
+        retired = await uow.billing_identities.retire_for_user(
+            user_id, retired_at=utc_now()
+        )
+        logger.info(
+            "Retired billing identities: identities=%d, inbox_bodies_purged=%d",
+            retired,
+            purged,
+        )
 
     async def _soft_delete_related_data(self, uow, user_id: str) -> None:
         """

@@ -278,6 +278,7 @@ ignore_imports =
     src.api.routes.v1.webhook_lookup_parsing -> src.infra.database.models.user.user
     src.api.routes.v1.webhook_referral_funnel -> src.infra.database.models.subscription
     src.api.routes.v1.webhooks -> src.infra.database.uow_async
+    src.api.routes.v1.webhooks -> src.infra.config.settings
     src.api.routes.v1.webhook_referral_funnel -> src.infra.repositories.referral_repository
     src.api.routes.v1.webhook_subscription_lifecycle -> src.infra.services.email_template_renderer
     src.api.routes.v1.weight_entries -> src.infra.event_bus

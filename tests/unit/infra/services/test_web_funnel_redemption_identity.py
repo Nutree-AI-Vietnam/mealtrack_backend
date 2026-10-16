@@ -33,8 +33,10 @@ def _install(monkeypatch, *, get_user=None, create_user=None, by_email=None):
         "create_user",
         create_user
         or (
-            lambda **kwargs: created.append(kwargs)
-            or _record(uid=kwargs.get("uid") or "new-uid", email=kwargs["email"])
+            lambda **kwargs: (
+                created.append(kwargs)
+                or _record(uid=kwargs.get("uid") or "new-uid", email=kwargs["email"])
+            )
         ),
     )
     monkeypatch.setattr(
@@ -154,3 +156,33 @@ async def test_mint_verifies_unverified_matching_email(monkeypatch):
     assert token == "tok"
     assert created == []
     assert updates[0][1]["email_verified"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mealtrack_uid", ["google-uid", None])
+@pytest.mark.parametrize("lead_email", ["admin@nutree.ai", "  Admin@Nutree.AI "])
+async def test_mint_refuses_admin_email_before_any_firebase_call(
+    monkeypatch, mealtrack_uid, lead_email
+):
+    monkeypatch.setattr(
+        identity.settings, "ADMIN_EMAILS", "ops@nutree.ai, admin@nutree.ai"
+    )
+    tokens, updates, created = _install(
+        monkeypatch, get_user=lambda uid: _record(uid=uid, email="admin@nutree.ai")
+    )
+    with pytest.raises(RedemptionIdentityUnavailable):
+        await WebFunnelRedemptionIdentityService().mint_for_email(
+            lead_email, mealtrack_uid=mealtrack_uid
+        )
+    assert (tokens, updates, created) == ([], [], [])
+
+
+@pytest.mark.asyncio
+async def test_mint_allows_non_admin_when_admins_configured(monkeypatch):
+    monkeypatch.setattr(identity.settings, "ADMIN_EMAILS", "admin@nutree.ai")
+    tokens, _updates, _created = _install(monkeypatch)
+    token = await WebFunnelRedemptionIdentityService().mint_for_email(
+        "buyer@example.com", mealtrack_uid="google-uid"
+    )
+    assert token == "tok"
+    assert tokens == [("google-uid", {SILENT_LOGIN_CLAIM: 1})]

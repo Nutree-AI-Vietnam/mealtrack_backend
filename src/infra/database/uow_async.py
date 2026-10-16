@@ -11,6 +11,13 @@ from src.domain.ports.meal_suggestion_repository_port import (
     MealSuggestionRepositoryPort,
 )
 from src.infra.database.config_async import AsyncSessionLocal
+from src.infra.repositories.billing import (
+    AsyncBillingCustomerIdentityRepository,
+    AsyncBillingProviderEventRepository,
+    AsyncEntitlementGrantRepository,
+    AsyncStoreSubscriptionRepository,
+    AsyncUserEntitlementRepository,
+)
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
 )
@@ -171,6 +178,12 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.weekly_meal_plans = AsyncWeeklyMealPlanRepository(session)
         self.weekly_recaps = AsyncWeeklyRecapRepository(session)
         self.chat = AsyncChatRepository(session)
+        # Entitlement ledger (NM-680)
+        self.billing_identities = AsyncBillingCustomerIdentityRepository(session)
+        self.billing_events = AsyncBillingProviderEventRepository(session)
+        self.store_subscriptions = AsyncStoreSubscriptionRepository(session)
+        self.entitlement_grants = AsyncEntitlementGrantRepository(session)
+        self.user_entitlements = AsyncUserEntitlementRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         session = self.session

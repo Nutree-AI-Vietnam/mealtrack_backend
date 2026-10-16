@@ -379,6 +379,58 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Legacy magic-claim routes remain gated by `WEB_FUNNEL_LEGACY_CLAIM_ENABLED`
   and are not the active flow.
 
+### Entitlements (NM-680, dark-launched)
+
+- `GET /v1/me/entitlements` and `POST /v1/me/entitlements/sync` answer the
+  schema-v1 body shared with the Flutter DTO (exact JSON pinned in
+  `tests/unit/api/test_entitlements_routes.py`). Timestamps are ISO-8601 UTC
+  with `Z`; `access_until` is null for lifetime.
+- While `ent_read_api` is off, or the `ent_read_api_defer` kill switch is on,
+  both answer 200 with `authority: "rc"`, `state: "unknown"`,
+  `has_access: false`, `entitlements: {}` and call nothing. `state: "unknown"`
+  with `authority: "backend"` means the user was never synced; clients use
+  RevenueCat for both.
+- Caching: weak `ETag: W/"{user_id}:{version}:{next_change_epoch}"`,
+  `Cache-Control: private, no-cache`. `If-None-Match` gets 304 only while
+  `now < next_change_at`. A `stale` answer, and a "no" within 15 min of a
+  purchase hint, are `Cache-Control: no-store` with no ETag.
+- `POST /sync` body is optional:
+  `{"client_hint": {"kind": "purchase|restore|redeem", "product_id", "transaction_id"}}`.
+  A hint re-fetches RevenueCat on the top-priority lane and starts re-syncs at
+  +5 s and +30 s (below the webhook lane; one chain per user per 2 min); it is
+  logged, never trusted as state, and unknown kinds count as no hint. Past 2
+  hinted calls/min per user a hint loses that priority and its follow-ups and
+  uses the unhinted budget, but is still recorded so a "no" stays `no-store`.
+  Without a hint, RevenueCat is re-fetched only when the last sync is older
+  than 15 min, at most 6 fetches/min per user (answers from a fresh projection
+  do not count); over that the answer comes from the projection (soft limit).
+  30/min is a hard 429.
+- RevenueCat failure: 200 with the last known state, `stale: true` and
+  `sync_error` (`provider_unavailable`, `provider_rate_limited`,
+  `provider_not_found` or `provider_invalid_payload`). It never reduces access.
+- `POST /v1/web-funnel/redemptions/finalize` is unchanged: it returns no
+  `entitlements` and calls no RevenueCat sync (it holds row locks). The app
+  sends a hinted `POST /v1/me/entitlements/sync` (`kind: redeem`) after it.
+- `/v1/users/sync` and `GET /v1/users/firebase/{uid}` derive
+  `has_subscription` from the projection while the backend is the authority
+  (no development override); never-synced users keep the legacy value.
+- Admin (hardened `require_admin`, D7: allowlisted verified email, no
+  custom-token sign-in, revocation-checked bearer):
+  `POST /v1/admin/entitlements/grants`
+  (201; 200 for an idempotent retry with the same `source_ref`),
+  `POST /v1/admin/entitlements/grants/{id}/revoke`, and
+  `GET /v1/admin/entitlements/{user_id}` (projection, store subscriptions,
+  grants and the last 20 inbox rows, without raw payloads). Grants: sources
+  `admin|support|qa|migration`, reason required, timezone-aware times, at most
+  366 days long and ending at most 366 days after it is issued, so grants
+  cannot be chained past that (400 otherwise).
+- `POST /v1/webhooks/revenuecat` with `ent_ledger_write` on: a delivery whose
+  inbox row is already `processed`/`ignored` returns
+  `{"status": "success", "duplicate": true}`; a deleted account returns
+  `{"status": "ignored", "reason": "deleted_user"}`; an unknown user returns
+  `{"status": "parked", ...}` (200) only while `ent_reconcile` is on, else the
+  legacy 404. Operations: `docs/runbooks/entitlement-ledger.md`.
+
 ### Food-label scan
 
 - `/v1/meals/food-label/scan-by-url` validates AI output against

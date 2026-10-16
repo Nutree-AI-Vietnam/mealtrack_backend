@@ -59,6 +59,25 @@ jobs:
           TESTING: true
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
 
+      - name: ⏩ Entitlement Tests Under A Shifted Clock
+        # Pinned test dates must stay valid once the calendar passes them.
+        run: |
+          pytest -p tests.fixtures.clock_travel \
+            tests/unit/domain/billing \
+            tests/unit/app/services/test_entitlement_*.py \
+            tests/unit/app/handlers/command_handlers/entitlements \
+            tests/unit/api/test_entitlements_routes.py \
+            tests/unit/api/test_webhook_ledger_*.py \
+            tests/unit/api/test_users_entitlement_hooks.py \
+            tests/unit/infra/workers/test_entitlement_worker.py \
+            tests/unit/scripts/test_entitlement_scripts.py \
+            -o addopts="" -m "not integration" -q
+        env:
+          PYTHONPATH: .
+          CI: true
+          TESTING: true
+          PYTEST_CLOCK_TRAVEL_DAYS: "400"
+
       - name: 📊 Upload Coverage
         uses: codecov/codecov-action@v4
         # fail_ci_if_error does not cover failures inside the action itself
@@ -130,3 +149,11 @@ jobs:
 
       - name: 🧪 Run PostgreSQL Integration Tests
         run: pytest tests/integration/postgres -o addopts="" -m integration -q
+
+      - name: ⏩ Entitlement Integration Tests Under A Shifted Clock
+        run: |
+          pytest -p tests.fixtures.clock_travel \
+            tests/integration/postgres/test_entitlement_*.py \
+            -o addopts="" -m integration -q
+        env:
+          PYTEST_CLOCK_TRAVEL_DAYS: "400"

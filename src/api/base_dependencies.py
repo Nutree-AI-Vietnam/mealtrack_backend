@@ -735,8 +735,9 @@ def get_subscription_service() -> "SubscriptionServicePort":
     if _subscription_service is None:
         from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 
-        api_key = os.getenv("REVENUECAT_SECRET_API_KEY", "")
-        _subscription_service = RevenueCatAdapter(api_key=api_key)
+        _subscription_service = RevenueCatAdapter(
+            api_key=settings.REVENUECAT_SECRET_API_KEY or ""
+        )
 
     return _subscription_service
 
@@ -745,6 +746,57 @@ def get_web_funnel_redemption_service():
     """Build the infrastructure redemption service at the composition boundary."""
     from src.bootstrap.web_funnel_redemption import (
         get_web_funnel_redemption_service as factory,
+    )
+
+    return factory()
+
+
+def get_entitlement_sync_service():
+    """Entitlement ledger writer (NM-680), composed in ``src.bootstrap``."""
+    from src.bootstrap.entitlements import get_entitlement_sync_service as factory
+
+    return factory()
+
+
+def get_entitlement_query_service():
+    """Entitlement ledger reader (NM-680), composed in ``src.bootstrap``."""
+    from src.bootstrap.entitlements import get_entitlement_query_service as factory
+
+    return factory()
+
+
+def get_feature_flag_reader():
+    """Process-wide cached reader for server-side ``feature_flags`` kill switches."""
+    from src.bootstrap.entitlements import get_feature_flag_reader as factory
+
+    return factory()
+
+
+def get_entitlement_inbox_service():
+    """Webhook inbox recorder/processor for the entitlement ledger (NM-680)."""
+    from src.bootstrap.entitlements import get_entitlement_inbox_service as factory
+
+    return factory()
+
+
+def get_entitlement_account_service():
+    """Entitlement answers for /v1/me/entitlements and the user endpoints."""
+    from src.bootstrap.entitlements import get_entitlement_account_service as factory
+
+    return factory()
+
+
+def get_create_entitlement_grant_handler():
+    from src.bootstrap.entitlements import (
+        get_create_entitlement_grant_handler as factory,
+    )
+
+    return factory()
+
+
+def get_revoke_entitlement_grant_handler():
+    from src.bootstrap.entitlements import (
+        get_revoke_entitlement_grant_handler as factory,
     )
 
     return factory()

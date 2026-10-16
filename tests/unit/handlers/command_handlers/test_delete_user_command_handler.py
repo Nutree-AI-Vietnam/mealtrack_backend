@@ -2,12 +2,18 @@
 Unit tests for DeleteUserCommandHandler.
 """
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tests.conftest import TestUserRepository
+from tests.fixtures.fakes.fake_entitlement_ledger_repositories import (
+    FakeBillingCustomerIdentityRepository,
+    FakeBillingProviderEventRepository,
+    FakeUserEntitlementRepository,
+)
 
 from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.user import DeleteUserCommand
@@ -29,6 +35,11 @@ class AsyncSqliteBulkSession:
 
     async def flush(self, *args, **kwargs):
         return self._session.flush(*args, **kwargs)
+
+    @asynccontextmanager
+    async def begin_nested(self):
+        with self._session.begin_nested():
+            yield
 
 
 class AsyncSqliteUserRepository:
@@ -62,6 +73,9 @@ class DummyUnitOfWork:
         self.session = AsyncSqliteBulkSession(session)
         self._raw_session = session
         self.users = AsyncSqliteUserRepository(session)
+        self.billing_identities = FakeBillingCustomerIdentityRepository()
+        self.billing_events = FakeBillingProviderEventRepository()
+        self.user_entitlements = FakeUserEntitlementRepository()
 
     def __enter__(self):
         return self
@@ -455,3 +469,94 @@ class TestDeleteUserCommandHandlerIntegration:
             db_user = db_session.query(User).filter(User.id == user.id).first()
             assert db_user.deleted_at is not None
             assert db_user.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_delete_retires_billing_identities_and_purges_webhook_bodies(
+        self, delete_handler, active_user, db_session
+    ):
+        """D11: the ledger stops resolving the account; stored bodies go (D9)."""
+        from datetime import UTC, datetime
+
+        from src.domain.model.billing.ledger import BillingProviderEvent
+
+        now = datetime(2026, 10, 15, tzinfo=UTC)
+        uow = DummyUnitOfWork(db_session)
+        user_id = str(active_user.id)
+        await uow.billing_identities.upsert_primary(
+            user_id, "revenuecat", active_user.firebase_uid, seen_at=now
+        )
+        await uow.billing_identities.add_alias(
+            user_id, "revenuecat", "$RCAnonymousID:dev", "anonymous", seen_at=now
+        )
+
+        def event(row_id, **fields):
+            return BillingProviderEvent(
+                id=row_id,
+                provider="revenuecat",
+                provider_event_id=f"evt-{row_id}",
+                event_type="RENEWAL",
+                status=fields.pop("status", "processed"),
+                received_at=now,
+                raw={"event": {"type": "RENEWAL", "price": 9.99}},
+                **fields,
+            )
+
+        for row in (
+            event("own", user_id=user_id),
+            event("parked", status="unmatched", app_user_id="$RCAnonymousID:dev"),
+            event("other", user_id="someone-else", app_user_id="uid-other"),
+        ):
+            await uow.billing_events.insert_if_absent(row)
+
+        with patch(
+            "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
+            MagicMock(return_value=uow),
+        ):
+            await delete_handler.handle(
+                DeleteUserCommand(firebase_uid=active_user.firebase_uid)
+            )
+
+        # The entitlement sync's user lock serialises deletion with a sync.
+        assert uow.user_entitlements.lock_calls == [[user_id]]
+        rows = uow.billing_events.rows
+        assert rows["own"].raw is None and rows["parked"].raw is None
+        assert rows["other"].raw is not None
+        assert await uow.billing_identities.list_for_user(user_id) == []
+        retired = await uow.billing_identities.list_for_user(
+            user_id, include_retired=True
+        )
+        assert len(retired) == 2 and all(i.retired_at for i in retired)
+        assert (
+            await uow.billing_identities.find_by_customer_id(
+                "revenuecat", active_user.firebase_uid
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_ledger_failure_never_blocks_the_deletion(
+        self, delete_handler, mock_publisher, active_user, db_session
+    ):
+        """Ledger tables missing (not migrated / rolled back) or erroring: the
+        step is best-effort, the account is still deleted and the event sent."""
+        uow = DummyUnitOfWork(db_session)
+        uow.billing_identities.list_for_user = AsyncMock(
+            side_effect=RuntimeError('relation "billing_customer_identities" missing')
+        )
+        handler_module = "src.app.handlers.command_handlers.delete_user_command_handler"
+
+        with (
+            patch(f"{handler_module}.AsyncUnitOfWork", MagicMock(return_value=uow)),
+            patch(f"{handler_module}.increment_metric") as metric,
+        ):
+            result = await delete_handler.handle(
+                DeleteUserCommand(firebase_uid=active_user.firebase_uid)
+            )
+
+        assert result["deleted"] is True
+        metric.assert_called_once_with("entitlement.delete_hook.failed")
+        mock_publisher.publish.assert_awaited_once()
+        db_session.expire_all()
+        deleted = db_session.query(User).filter(User.id == active_user.id).first()
+        assert deleted.is_active is False
+        assert deleted.email == f"deleted_{active_user.id}@deleted.local"

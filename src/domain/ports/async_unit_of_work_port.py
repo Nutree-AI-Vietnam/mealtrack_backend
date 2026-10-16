@@ -10,6 +10,13 @@ if TYPE_CHECKING:
         BodyFatVisualProfileRepositoryPort,
     )
     from src.domain.ports.chat_repository_port import ChatRepositoryPort
+    from src.domain.ports.entitlement_ledger_repository_port import (
+        BillingCustomerIdentityRepositoryPort,
+        BillingProviderEventRepositoryPort,
+        EntitlementGrantRepositoryPort,
+        StoreSubscriptionRepositoryPort,
+        UserEntitlementRepositoryPort,
+    )
     from src.domain.ports.favorite_meal_repository_port import (
         FavoriteMealRepositoryPort,
     )
@@ -60,6 +67,13 @@ class AsyncUnitOfWorkPort(ABC):
     chat: ChatRepositoryPort
     weekly_meal_plans: Any
     weekly_recaps: WeeklyRecapRepositoryPort
+
+    # Entitlement ledger (NM-680)
+    billing_identities: BillingCustomerIdentityRepositoryPort
+    billing_events: BillingProviderEventRepositoryPort
+    store_subscriptions: StoreSubscriptionRepositoryPort
+    entitlement_grants: EntitlementGrantRepositoryPort
+    user_entitlements: UserEntitlementRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:

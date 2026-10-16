@@ -8,6 +8,15 @@ to provide a centralized access point.
 # Base models
 from .base import BaseMixin, PrimaryEntityMixin, SecondaryEntityMixin, TimestampMixin
 
+# Entitlement ledger (NM-680)
+from .billing import (
+    BillingCustomerIdentityORM,
+    BillingProviderEventORM,
+    EntitlementGrantORM,
+    StoreSubscriptionORM,
+    UserEntitlementORM,
+)
+
 # Cheat days
 from .cheat_day.cheat_day import CheatDayORM
 from .daily_target_snapshot import DailyTargetSnapshotORM
@@ -165,6 +174,12 @@ __all__ = [
     "BodyFatVisualProfile",
     "UserProfilePreference",
     "Subscription",
+    # Entitlement ledger
+    "BillingCustomerIdentityORM",
+    "BillingProviderEventORM",
+    "EntitlementGrantORM",
+    "StoreSubscriptionORM",
+    "UserEntitlementORM",
     # Nutrition models
     "NutritionORM",
     "FoodItemORM",

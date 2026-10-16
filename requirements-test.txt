@@ -25,6 +25,7 @@ factory-boy==3.3.3  # For test data factories
 faker==40.23.0  # For generating fake data
 # httpx comes from requirements.txt
 respx==0.23.1  # For mocking httpx
+time-machine==3.5.1  # Shifted-clock runs (tests/fixtures/clock_travel.py)
 
 # Coverage
 coverage[toml]==7.14.1

@@ -80,6 +80,12 @@ async def find_user_for_revenuecat_event(uow, event: dict) -> User | None:
     return None
 
 
+async def load_user_by_id(uow, user_id: str) -> User | None:
+    """Load the ORM user the legacy webhook handlers write against."""
+    result = await uow.session.execute(select(User).where(User.id == user_id))
+    return result.scalars().first()
+
+
 async def get_subscription_by_revenuecat_id(uow, revenuecat_id: str):
     """Get subscription by RevenueCat subscriber ID."""
     return await uow.subscriptions.find_by_revenuecat_id(revenuecat_id)

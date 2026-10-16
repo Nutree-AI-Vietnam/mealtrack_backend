@@ -6,12 +6,12 @@ and handles HTTP communication with RevenueCat API.
 """
 
 import logging
-import os
 from datetime import datetime
 
 import httpx
 
 from src.domain.ports.subscription_service_port import SubscriptionServicePort
+from src.infra.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class RevenueCatAdapter(SubscriptionServicePort):
     BASE_URL = "https://api.revenuecat.com/v1"
 
     def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or os.getenv("REVENUECAT_SECRET_API_KEY", "")
+        self.api_key = api_key or settings.REVENUECAT_SECRET_API_KEY or ""
 
     async def get_subscriber_info(self, app_user_id: str) -> dict | None:
         """

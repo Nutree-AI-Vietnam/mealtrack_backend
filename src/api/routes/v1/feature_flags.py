@@ -2,7 +2,6 @@
 Feature flags API endpoints for application-level feature control.
 """
 
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +27,18 @@ from src.infra.services.feature_flag_service import FeatureFlagService
 
 router = APIRouter(prefix="/v1/feature-flags", tags=["Feature Flags"])
 
+# Server-only flags (entitlement rollout kill switches) are never listed to clients.
+_SERVER_ONLY_FLAG_PREFIX = "ent_"
+
+
+def _client_visible(response: FeatureFlagsResponse) -> FeatureFlagsResponse:
+    flags = {
+        name: enabled
+        for name, enabled in response.flags.items()
+        if not name.startswith(_SERVER_ONLY_FLAG_PREFIX)
+    }
+    return response.model_copy(update={"flags": flags})
+
 
 @router.get("/", response_model=FeatureFlagsResponse)
 async def get_feature_flags(
@@ -38,13 +49,13 @@ async def get_feature_flags(
     """
     Get all feature flags from the database.
 
-    Returns all feature flags currently stored in the system.
+    Returns every client-visible flag; server-only `ent_*` flags are omitted.
     """
     cache_key, ttl = CacheKeys.feature_flags()
     if cache_service:
         cached = await cache_service.get_json(cache_key)
         if cached:
-            return FeatureFlagsResponse(**cached)
+            return _client_visible(FeatureFlagsResponse(**cached))
 
     result = await db.execute(select(FeatureFlag))
     feature_flags = result.scalars().all()
@@ -55,7 +66,7 @@ async def get_feature_flags(
     if cache_service:
         await cache_service.set_json(cache_key, response.model_dump(), ttl)
 
-    return response
+    return _client_visible(response)
 
 
 @router.get("/{feature_name}", response_model=IndividualFeatureFlagResponse)
@@ -70,15 +81,23 @@ async def get_individual_feature_flag(
 
     - **feature_name**: Name of the feature flag to retrieve
 
-    Returns the status of a single feature flag.
+    Returns the status of a single feature flag. Server-only `ent_*` flags
+    answer 404, the same as a flag that does not exist.
     """
+    if feature_name.startswith(_SERVER_ONLY_FLAG_PREFIX):
+        raise HTTPException(
+            status_code=404, detail=f"Feature flag '{feature_name}' not found"
+        )
+
     cache_key, ttl = CacheKeys.feature_flag(feature_name)
     if cache_service:
         cached = await cache_service.get_json(cache_key)
         if cached:
             return IndividualFeatureFlagResponse(**cached)
 
-    result = await db.execute(select(FeatureFlag).where(FeatureFlag.name == feature_name))
+    result = await db.execute(
+        select(FeatureFlag).where(FeatureFlag.name == feature_name)
+    )
     feature_flag = result.scalar_one_or_none()
 
     if not feature_flag:
