@@ -103,3 +103,22 @@ def test_weekly_recaps_and_open_wearables_merge_to_one_head() -> None:
     assert weekly in pending_ids
     assert wearables in pending_ids
     assert pending_ids[-1] == head
+
+
+def test_food_search_integrity_and_chat_threads_merge_to_one_head() -> None:
+    """Independent delivery branches must leave one stampable head."""
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    food_search = "20261007163030686049"
+    chat_threads = "20261015014451225604"
+    head = script_dir.get_current_head()
+    assert head is not None
+    assert script_dir.get_heads() == [head]
+    assert head not in {food_search, chat_threads}
+
+    for revision in (food_search, chat_threads):
+        pending_ids = [
+            rev.revision
+            for rev in reversed(pending_upgrade_revisions(script_dir, revision, head))
+        ]
+        assert revision not in pending_ids
+        assert pending_ids[-1] == head
