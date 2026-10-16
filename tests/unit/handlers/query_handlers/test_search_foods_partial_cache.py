@@ -186,6 +186,7 @@ async def test_already_localized_result_is_cached():
 
     query = SearchFoodsQuery(query="pho", language="vi", limit=10)
     await handler.handle(query)
+    await handler.drain()
 
     cache.cache_search.assert_awaited_once()
 
@@ -217,6 +218,7 @@ async def test_non_english_search_translates_query_and_only_full_results_are_cac
     )
 
     result = await handler.handle(SearchFoodsQuery(query="cơm", language="vi"))
+    await handler.drain()
 
     assert result["results"][0]["description"] == "Cơm tô"
     assert translator.calls == [
@@ -225,11 +227,13 @@ async def test_non_english_search_translates_query_and_only_full_results_are_cac
     ]
     fat_secret.search_foods.assert_awaited_once_with("rice", max_results=20)
     cache.cache_search.assert_awaited_once()
-    assert cache.cache_search.call_args.args[0].startswith("food-search:v3:vi:")
+    assert cache.cache_search.call_args.args[0] == SearchFoodsQueryHandler._cache_key(
+        "cơm", "vi", mode="search", limit=20
+    )
 
 
 @pytest.mark.asyncio
-async def test_non_english_partial_forward_result_is_presented_without_cache_write():
+async def test_non_english_partial_translation_completed_by_glossary_is_cached():
     cache = MagicMock()
     cache.get_cached_search = AsyncMock(return_value=None)
     cache.cache_search = AsyncMock()
@@ -263,6 +267,7 @@ async def test_non_english_partial_forward_result_is_presented_without_cache_wri
         "Cơm tô",
         "Gà",
     ]
+    await handler.drain()
     cache.cache_search.assert_awaited_once()
 
 
@@ -292,7 +297,7 @@ async def test_english_search_calls_fatsecret_when_local_is_empty():
     result = await handler.handle(query)
 
     cache.get_cached_search.assert_awaited_once_with(
-        SearchFoodsQueryHandler._cache_key("chicken", "en")
+        SearchFoodsQueryHandler._cache_key("chicken", "en", mode="search", limit=7)
     )
     local_search.assert_awaited_once_with("chicken", "US", 7)
     fat_secret.search_foods.assert_awaited_once_with("chicken", max_results=7)
@@ -371,7 +376,7 @@ async def test_cache_outage_degrades_to_local_and_provider_results():
     )
 
     cache.get_cached_search.assert_awaited_once_with(
-        SearchFoodsQueryHandler._cache_key("rice", "en")
+        SearchFoodsQueryHandler._cache_key("rice", "en", mode="search", limit=5)
     )
     local_search.assert_awaited_once_with("rice", "US", 5)
     fat_secret.search_foods.assert_awaited_once_with("rice", max_results=4)
@@ -474,6 +479,7 @@ async def test_detailed_fatsecret_hit_is_adopted_and_mapped_with_food_reference_
     result = await handler.handle(
         SearchFoodsQuery(query="chicken", language="en", limit=5)
     )
+    await handler.drain()
 
     assert len(repo.calls) == 1
     namespace, food_id, english_name, per_100g, servings, locale, locale_name = (
@@ -485,7 +491,9 @@ async def test_detailed_fatsecret_hit_is_adopted_and_mapped_with_food_reference_
     assert per_100g["protein_100g"] == 31.0
     assert locale == "en"
     assert locale_name == "Grilled Chicken Breast"
-    assert result["results"][0]["food_reference_id"] == 777
+    # Adoption runs after the response; the cached page carries the catalog id.
+    assert "food_reference_id" not in result["results"][0]
+    assert cache.cache_search.call_args.args[1][0]["food_reference_id"] == 777
     assert uow_factory.created == 1
 
 
@@ -535,6 +543,7 @@ async def test_two_adoptable_hits_share_one_uow():
     )
 
     await handler.handle(SearchFoodsQuery(query="dinner", language="en", limit=5))
+    await handler.drain()
 
     assert len(repo.calls) == 2
     assert uow_factory.created == 1
@@ -653,17 +662,14 @@ async def test_failed_adopt_does_not_block_later_hits_in_same_uow():
         uow_factory=uow_factory,
     )
 
-    result = await handler.handle(
-        SearchFoodsQuery(query="dinner", language="en", limit=5)
-    )
+    await handler.handle(SearchFoodsQuery(query="dinner", language="en", limit=5))
+    await handler.drain()
 
     assert repo.calls == ["1", "2"]
     assert uow_factory.created == 1
     assert session.nested == 2
-    assert [item.get("food_reference_id") for item in result["results"]] == [
-        None,
-        900,
-    ]
+    cached_page = cache.cache_search.call_args.args[1]
+    assert [item.get("food_reference_id") for item in cached_page] == [None, 900]
 
 
 @pytest.mark.asyncio
@@ -703,6 +709,7 @@ async def test_autocomplete_search_never_adopts():
     result = await handler.handle(
         SearchFoodsQuery(query="chicken", language="en", limit=5, autocomplete=True)
     )
+    await handler.drain()
 
     assert repo.calls == []
     assert uow_factory.created == 0
@@ -746,6 +753,7 @@ async def test_search_description_macros_without_metric_are_not_adopted():
     result = await handler.handle(
         SearchFoodsQuery(query="chicken", language="en", limit=5)
     )
+    await handler.drain()
 
     assert repo.calls == []
     assert "food_reference_id" not in result["results"][0]
@@ -822,6 +830,7 @@ async def test_thin_provider_hit_without_macros_is_not_adopted():
     )
 
     await handler.handle(SearchFoodsQuery(query="mystery", language="en", limit=5))
+    await handler.drain()
 
     assert repo.calls == []
 
@@ -870,11 +879,13 @@ async def test_localized_search_adopts_before_translation_overwrites_name():
     )
 
     result = await handler.handle(SearchFoodsQuery(query="bo", language="vi", limit=5))
+    await handler.drain()
 
     assert len(repo.calls) == 1
     english_name = repo.calls[0][2]
     assert english_name == "Beef Noodle Soup"
-    assert result["results"][0]["food_reference_id"] == 888
+    # Adoption runs after the response; the cached page carries the catalog id.
+    assert cache.cache_search.call_args.args[1][0]["food_reference_id"] == 888
     assert result["results"][0]["description"] == "Phở bò"
 
 
@@ -911,6 +922,7 @@ async def test_cached_english_leftovers_are_ignored_for_vietnamese():
     )
 
     result = await handler.handle(SearchFoodsQuery(query="Gà", language="vi"))
+    await handler.drain()
 
     fat_secret.search_foods.assert_awaited_once()
     assert result["results"][0]["description"] == "Gà"
