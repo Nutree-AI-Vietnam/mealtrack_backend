@@ -707,6 +707,56 @@ def test_vegan_filter_drops_plural_eggs_and_keeps_plant_fats() -> None:
     assert len(kept) == 2
 
 
+def test_diet_filter_catches_plurals_and_common_dairy_or_seafood() -> None:
+    def _card(name: str, ingredient: str) -> dict:
+        return {
+            "name": name,
+            "english_name": name,
+            "ingredients": [{"name": ingredient}],
+        }
+
+    vegan_dropped = _filter_meals_for_diet(
+        [
+            _card("Buttermilk pancake", "buttermilk"),
+            _card("Assorted cheeses", "cheeses"),
+            _card("Mixed yogurts", "yogurts"),
+            _card("Parmesan zucchini", "parmesan"),
+            _card("Ghee rice", "ghee"),
+        ],
+        ["vegan"],
+    )
+    assert vegan_dropped == []
+
+    vegan_kept = _filter_meals_for_diet(
+        [
+            _card("Eggplant stew", "eggplant"),
+            _card("Butternut soup", "butternut squash"),
+            _card("Honeydew bowl", "honeydew"),
+            _card("Almond milk oats", "almond milk"),
+        ],
+        ["vegan"],
+    )
+    assert len(vegan_kept) == 4
+
+    vegetarian = _filter_meals_for_diet(
+        [
+            _card("Garlic prawns", "prawns"),
+            _card("Parmesan zucchini", "parmesan"),
+        ],
+        ["vegetarian"],
+    )
+    assert [meal["name"] for meal in vegetarian] == ["Parmesan zucchini"]
+
+    dairy_free = _filter_meals_for_diet(
+        [
+            _card("Ghee rice", "ghee"),
+            _card("Boiled eggs", "eggs"),
+        ],
+        ["dairy_free"],
+    )
+    assert [meal["name"] for meal in dairy_free] == ["Boiled eggs"]
+
+
 def test_dairy_free_fallback_drops_yogurt_and_keeps_eggs() -> None:
     snacks = _filter_meals_for_diet(
         _fallback_meals_for_slot("snack", "en", 200),

@@ -463,11 +463,17 @@ _MEAT_WORDS = (
     "pork",
     "lamb",
     "turkey",
+    "duck",
     "fish",
     "salmon",
     "tuna",
     "shrimp",
+    "prawn",
+    "crab",
+    "anchovy",
     "bacon",
+    "ham",
+    "sausage",
     "thịt",
     "gà",
     "cá",
@@ -478,10 +484,21 @@ _DAIRY_WORDS = (
     "yoghurt",
     "cheese",
     "butter",
+    "buttermilk",
+    "buttercream",
     "cream",
+    "ghee",
     "whey",
     "casein",
+    "parmesan",
+    "mozzarella",
+    "cheddar",
+    "ricotta",
+    "feta",
+    "paneer",
+    "mascarpone",
     "sữa chua",
+    "phô mai",
 )
 _EGG_HONEY_WORDS = (
     "honey",
@@ -556,8 +573,13 @@ def _meal_food_blob(meal: dict[str, Any]) -> str:
 
 
 def _blob_has_word(blob: str, words: tuple[str, ...]) -> bool:
+    """Match a food word, including a trailing English plural.
+
+    ``cheese`` matches ``cheeses``. ``egg`` does not match ``eggplant``,
+    and ``butter`` does not match ``butternut``.
+    """
     return any(
-        re.search(rf"(?<!\w){re.escape(word)}(?!\w)", blob) is not None
+        re.search(rf"(?<!\w){re.escape(word)}(?:es|s)?(?!\w)", blob) is not None
         for word in words
     )
 
