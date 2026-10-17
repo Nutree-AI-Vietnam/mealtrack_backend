@@ -334,6 +334,23 @@ def test_bare_calorie_amount_may_end_with_punctuation():
     )
 
 
+def test_vietnamese_non_energy_units_do_not_authorize_calories():
+    context = _context()
+    assert calorie_amounts_stated_by_user("nặng 70 ký") == set()
+    assert calorie_amounts_stated_by_user("200 nghìn đồng") == set()
+    assert calorie_amounts_stated_by_user("tập 60 phút") == set()
+    assert calorie_amounts_stated_by_user("Ăn ngày dư 200 trong 4 tháng") == {200}
+    assert (
+        nutrition_numbers_are_traceable(
+            "That is 70 kcal.",
+            context=context,
+            chunks=[],
+            user_text="nặng 70 ký",
+        )
+        is False
+    )
+
+
 def test_height_and_weight_do_not_authorize_a_calorie_claim():
     context = _context()
     assert calorie_amounts_stated_by_user("tôi cao 165cm nặng 70kg") == set()

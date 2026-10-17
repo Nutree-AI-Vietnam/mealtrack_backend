@@ -838,6 +838,56 @@ async def test_failed_retry_keeps_text_already_sent_to_the_client():
 
 
 @pytest.mark.asyncio
+async def test_empty_retry_keeps_finished_sentences_from_the_first_pass():
+    class _FinishedThenEmpty:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            if self.calls == 1:
+                yield ChatCompletionDelta(text="Xin lỗi, câu trước bị thiếu ý. Nếu")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            yield ChatCompletionDelta(
+                text="",
+                done=True,
+                truncated=True,
+                usage=ChatUsage(
+                    input_tokens=4, output_tokens=200, model="gpt-5.6-luna"
+                ),
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=_FinishedThenEmpty())
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Hả",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert repo.completed is not None
+    assert "câu trước bị thiếu ý" in repo.completed["content"]
+    assert "Tôi chỉ dùng số liệu" not in repo.completed["content"]
+    assert repo.completed["content"].strip().endswith(".")
+    assert "Nếu" not in repo.completed["content"]
+    assert events[-1].event == "message.completed"
+
+
+@pytest.mark.asyncio
 async def test_output_limit_retry_does_not_offer_tools():
     class _TruncatingThenTools:
         def __init__(self):

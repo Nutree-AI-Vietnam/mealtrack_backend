@@ -105,9 +105,14 @@ _LOCAL_NUMBER = (
 )
 
 _CALORIE_UNIT = r"kcal|calories?|calo|cal"
-# A height or a weight is not a calorie the user stated. ``dư 200`` still counts.
+# A height, weight, duration, or count is not a calorie the user stated.
+# ``dư 200`` still counts. ``ký`` is informal kilograms.
 _NON_ENERGY_UNIT_RE = re.compile(
-    r"\s*(?:cm|mm|kg|kilograms?|g|grams?|mg|ml|lb|lbs|oz|tháng|thang|tuần|tuan|ngày|ngay|weeks?|months?|days?)\b",
+    r"\s*(?:cm|mm|kg|kilograms?|ký|ky|g|grams?|mg|ml|lb|lbs|oz"
+    r"|tháng|thang|tuần|tuan|ngày|ngay|weeks?|months?|days?"
+    r"|phút|phut|minutes?|giờ|gio|hours?"
+    r"|nghìn|nghin|ngàn|ngan|triệu|trieu"
+    r"|tuổi|tuoi|mét|met|lít|lit)\b",
     re.IGNORECASE,
 )
 _CALORIE_CLAIM_RE = re.compile(

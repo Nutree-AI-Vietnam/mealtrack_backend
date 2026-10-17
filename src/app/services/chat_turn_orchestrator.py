@@ -949,6 +949,11 @@ class ChatTurnOrchestrator:
                         first_usage,
                         retry_usage if retry_usage is not first_usage else None,
                     )
+                    if not sentences and first_pass:
+                        # The retry finished with no visible text. Keep the
+                        # first pass so a finished sentence is not replaced by
+                        # the generic fallback. A pure stump is still trimmed.
+                        sentences.extend(first_pass)
 
             streamed_text = "".join(sentences).strip()
             final_text = streamed_text
