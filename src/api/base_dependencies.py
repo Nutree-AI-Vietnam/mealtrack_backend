@@ -393,6 +393,37 @@ def get_catalog_image_generator_factory() -> Callable[
     return get_catalog_image_generator
 
 
+def get_chat_meal_image_generator():
+    """Cloudflare photo for a chat meal card. None when Workers AI is not configured."""
+    from src.app.services.chat_meal_image import (
+        CHAT_MEAL_IMAGE_TIMEOUT_SECONDS,
+        ChatMealImageGenerator,
+    )
+
+    account_id = (settings.CLOUDFLARE_ACCOUNT_ID or "").strip()
+    api_token = (settings.CLOUDFLARE_API_TOKEN or "").strip()
+    if not account_id or not api_token:
+        logger.info("chat meal photos use stock search; Cloudflare is not configured")
+        return None
+
+    store = get_image_store()
+
+    async def existing_image(image_id: str) -> str | None:
+        lookup = getattr(store, "existing_delivery_url", None)
+        if lookup is None:
+            return None
+        return await lookup(image_id)
+
+    generator = CloudflareWorkersImageGenerator(
+        account_id=account_id,
+        api_token=api_token,
+        model=settings.CLOUDFLARE_WORKERS_AI_IMAGE_MODEL,
+        timeout=CHAT_MEAL_IMAGE_TIMEOUT_SECONDS,
+        image_store=store,
+    )
+    return ChatMealImageGenerator(generator, existing_image=existing_image)
+
+
 # Food Mapping Service
 def get_food_mapping_service() -> FoodMappingServicePort:
     """

@@ -13,10 +13,11 @@ from src.domain.model.meal_discovery.food_image import FoodImageResult
 
 
 def test_chat_photos_skip_cloudflare_when_unconfigured(monkeypatch) -> None:
+    from src.api import base_dependencies
     from src.api.dependencies import chat as chat_deps
 
-    monkeypatch.setattr(chat_deps.settings, "CLOUDFLARE_ACCOUNT_ID", "")
-    monkeypatch.setattr(chat_deps.settings, "CLOUDFLARE_API_TOKEN", "")
+    monkeypatch.setattr(base_dependencies.settings, "CLOUDFLARE_ACCOUNT_ID", "")
+    monkeypatch.setattr(base_dependencies.settings, "CLOUDFLARE_API_TOKEN", "")
     assert chat_deps._chat_meal_image_generator() is None
 
 
