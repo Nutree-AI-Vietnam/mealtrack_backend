@@ -676,7 +676,114 @@ async def test_truncated_reasoning_budget_retries_with_a_higher_cap():
     ]
     assert repo.completed is not None
     assert "vài cân" in repo.completed["content"]
+    assert repo.completed["usage"].input_tokens == 20
+    assert repo.completed["usage"].output_tokens == 940
     assert any(event.data.get("replace") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_truncated_empty_output_retries_instead_of_fallback():
+    class _ReasoningOnlyThenFull:
+        def __init__(self):
+            self.budgets: list[int] = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=12, output_tokens=4096, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+            yield ChatCompletionDelta(
+                text="",
+                done=True,
+                usage=ChatUsage(input_tokens=8, output_tokens=30, model="gpt-5.6-luna"),
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _ReasoningOnlyThenFull()
+    orchestrator = _orchestrator(repo, completion=completion)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert completion.budgets == [
+        CHAT_MAX_OUTPUT_TOKENS,
+        min(CHAT_MAX_OUTPUT_TOKENS * 2, CHAT_OUTPUT_TOKEN_CEILING),
+    ]
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert "Tôi chỉ dùng số liệu" not in repo.completed["content"]
+    assert repo.completed["usage"].input_tokens == 20
+    assert repo.completed["usage"].output_tokens == 4126
+    assert repo.completed["usage"].cached_tokens == 0
+    assert events[-1].event == "message.completed"
+
+
+@pytest.mark.asyncio
+async def test_failed_output_limit_retry_keeps_the_first_pass():
+    class _TruncatingThenDown:
+        def __init__(self):
+            self.budgets: list[int] = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(text="Không sao, chênh lệch")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10,
+                        output_tokens=900,
+                        cached_tokens=4,
+                        model="gpt-5.6-luna",
+                    ),
+                )
+                return
+            raise RuntimeError("stream aborted")
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _TruncatingThenDown()
+    orchestrator = _orchestrator(repo, completion=completion)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert completion.budgets == [
+        CHAT_MAX_OUTPUT_TOKENS,
+        min(CHAT_MAX_OUTPUT_TOKENS * 2, CHAT_OUTPUT_TOKEN_CEILING),
+    ]
+    assert repo.completed is not None
+    assert "Không sao, chênh lệch" in repo.completed["content"]
+    assert repo.completed["usage"].input_tokens == 10
+    assert repo.completed["usage"].output_tokens == 900
+    assert repo.completed["usage"].cached_tokens == 4
+    assert events[-1].event == "message.error"
+    assert events[-1].data["code"] == "CHAT_PROVIDER_UNAVAILABLE"
 
 
 @pytest.mark.asyncio

@@ -859,39 +859,57 @@ class ChatTurnOrchestrator:
                 if _should_retry_output_limit(generation, sentences):
                     generation["output_limit_retried"] = True
                     already_streamed = bool("".join(sentences).strip())
+                    first_pass = list(sentences)
+                    first_usage = generation.get("usage") or ChatUsage(
+                        model=self._model
+                    )
                     sentences.clear()
                     increment_metric(
                         "chat.turn.output_truncated",
                         attributes={"locale": resolved_locale},
                     )
                     first_retry_delta = True
-                    async for delta_text in self._iter_validated_sentences(
-                        context=context,
-                        chunks=chunks,
-                        history=history,
-                        user_message=current_user_message,
-                        generation=generation,
-                        intent=intent,
-                        meal_candidates=suggestions,
-                        traceable_meals=_traceable_meals(suggestions, history_messages),
-                        earlier=earlier,
-                        output_token_budget=min(
-                            self._max_output_tokens * 2,
-                            CHAT_OUTPUT_TOKEN_CEILING,
-                        ),
-                    ):
-                        if not delta_text:
-                            continue
-                        sentences.append(delta_text)
-                        yield ChatSseEvent(
-                            event="message.delta",
-                            data={
-                                "assistant_message_id": claim.assistant_message.id,
-                                "delta": delta_text,
-                                "replace": already_streamed and first_retry_delta,
-                            },
-                        )
-                        first_retry_delta = False
+                    try:
+                        async for delta_text in self._iter_validated_sentences(
+                            context=context,
+                            chunks=chunks,
+                            history=history,
+                            user_message=current_user_message,
+                            generation=generation,
+                            intent=intent,
+                            meal_candidates=suggestions,
+                            traceable_meals=_traceable_meals(
+                                suggestions, history_messages
+                            ),
+                            earlier=earlier,
+                            output_token_budget=min(
+                                self._max_output_tokens * 2,
+                                CHAT_OUTPUT_TOKEN_CEILING,
+                            ),
+                        ):
+                            if not delta_text:
+                                continue
+                            sentences.append(delta_text)
+                            yield ChatSseEvent(
+                                event="message.delta",
+                                data={
+                                    "assistant_message_id": claim.assistant_message.id,
+                                    "delta": delta_text,
+                                    "replace": already_streamed and first_retry_delta,
+                                },
+                            )
+                            first_retry_delta = False
+                    except BaseException:
+                        # The client already has the first pass. A failed
+                        # higher-cap retry must not erase it or its token usage.
+                        sentences[:] = first_pass
+                        generation["usage"] = first_usage
+                        raise
+                    retry_usage = generation.get("usage")
+                    generation["usage"] = _combine_chat_usage(
+                        first_usage,
+                        retry_usage if retry_usage is not first_usage else None,
+                    )
 
             streamed_text = "".join(sentences).strip()
             final_text = streamed_text
@@ -1796,6 +1814,10 @@ class ChatTurnOrchestrator:
             raise ChatProviderUnavailableError(retryable=True) from last_error
 
         if not generation["text"].strip() and not generation.get("tool_calls"):
+            # Reasoning can spend the whole budget before any visible token.
+            # A fallback here would set blocked and skip the higher-cap retry.
+            if generation.get("truncated"):
+                return
             fallback = (
                 no_evidence_message(context.locale)
                 if not chunks and not generation["blocked"]
@@ -2331,6 +2353,19 @@ def _stated_user_text(user_message: str, history: list[ChatHistoryTurn]) -> str:
     return "\n".join(parts)
 
 
+def _combine_chat_usage(first: ChatUsage | None, second: ChatUsage | None) -> ChatUsage:
+    """Add a higher-cap retry's tokens onto the truncated first pass."""
+    left = first or ChatUsage()
+    if second is None:
+        return left
+    return ChatUsage(
+        input_tokens=left.input_tokens + second.input_tokens,
+        output_tokens=left.output_tokens + second.output_tokens,
+        cached_tokens=left.cached_tokens + second.cached_tokens,
+        model=second.model or left.model,
+    )
+
+
 def _should_retry_output_limit(
     generation: dict[str, Any], sentences: list[str]
 ) -> bool:
@@ -2342,6 +2377,9 @@ def _should_retry_output_limit(
     if not generation.get("truncated"):
         return False
     text = "".join(sentences).strip()
+    # No visible text still hit the cap (reasoning-only). Retry that too.
+    if not text:
+        return True
     return finished_assistant_text(text) != text
 
 
