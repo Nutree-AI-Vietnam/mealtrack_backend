@@ -883,7 +883,13 @@ class ChatTurnOrchestrator:
 
                 if _should_retry_output_limit(generation, sentences):
                     generation["output_limit_retried"] = True
-                    await self._renew_generation_lease(claim.assistant_message)
+                    try:
+                        await self._renew_generation_lease(claim.assistant_message)
+                    except Exception:
+                        logger.info(
+                            "chat generation lease renew failed",
+                            extra={"assistant_message_id": claim.assistant_message.id},
+                        )
                     # The retry finishes the cut-off sentence. Leaving tools
                     # on lets the model call one and yield no text, which the
                     # caller then replaces with the safety fallback.

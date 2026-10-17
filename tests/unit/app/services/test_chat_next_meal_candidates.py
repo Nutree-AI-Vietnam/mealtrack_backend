@@ -757,6 +757,31 @@ def test_diet_filter_catches_plurals_and_common_dairy_or_seafood() -> None:
     assert [meal["name"] for meal in dairy_free] == ["Boiled eggs"]
 
 
+def test_plant_milk_strip_does_not_hide_goat_milk() -> None:
+    dropped = _filter_meals_for_diet(
+        [
+            {
+                "name": "Goat milk porridge",
+                "english_name": "Goat milk porridge",
+                "ingredients": [{"name": "goat milk"}],
+            }
+        ],
+        ["vegan"],
+    )
+    assert dropped == []
+    kept = _filter_meals_for_diet(
+        [
+            {
+                "name": "Oat milk porridge",
+                "english_name": "Oat milk porridge",
+                "ingredients": [{"name": "oat milk"}],
+            }
+        ],
+        ["vegan"],
+    )
+    assert len(kept) == 1
+
+
 def test_dairy_free_fallback_drops_yogurt_and_keeps_eggs() -> None:
     snacks = _filter_meals_for_diet(
         _fallback_meals_for_slot("snack", "en", 200),

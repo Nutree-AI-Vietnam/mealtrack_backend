@@ -587,7 +587,8 @@ def _blob_has_word(blob: str, words: tuple[str, ...]) -> bool:
 def _has_dairy(blob: str) -> bool:
     stripped = blob
     for phrase in _NON_DAIRY_PHRASES:
-        stripped = stripped.replace(phrase, " ")
+        # A plain replace would turn "goat milk" into "g " via "oat milk".
+        stripped = re.sub(rf"(?<!\w){re.escape(phrase)}(?!\w)", " ", stripped)
     if _blob_has_word(stripped, _DAIRY_WORDS):
         return True
     return _blob_has_word(stripped, ("milk", "sữa"))

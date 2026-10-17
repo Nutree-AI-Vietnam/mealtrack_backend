@@ -946,6 +946,47 @@ async def test_output_limit_retry_does_not_offer_tools():
 
 
 @pytest.mark.asyncio
+async def test_lease_renew_failure_does_not_drop_the_retry():
+    class _RenewFails:
+        async def extend_generation_lease(self, **kwargs):
+            del kwargs
+            raise RuntimeError("db blip")
+
+    class _TruncatingThenFull:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            if self.calls == 1:
+                yield ChatCompletionDelta(text="Nếu")
+                yield ChatCompletionDelta(text="", done=True, truncated=True)
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    repo.extend_generation_lease = _RenewFails().extend_generation_lease
+    orchestrator = _orchestrator(repo, completion=_TruncatingThenFull())
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert events[-1].event == "message.completed"
+
+
+@pytest.mark.asyncio
 async def test_long_turn_renews_the_generation_lease():
     repo = _FakeRepo(claim=_claim())
     renewed = asyncio.Event()
