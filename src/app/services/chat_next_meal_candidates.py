@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -33,7 +34,7 @@ _OPTIONAL_CARD_STRINGS = (
 
 logger = logging.getLogger(__name__)
 
-DISCOVER_COUNT = 1
+DISCOVER_COUNT = 3
 DISCOVER_MAX_PER_MINUTE = 5
 
 
@@ -53,12 +54,14 @@ class ChatNextMealCandidates:
         *,
         recipe_generator: ChatNextMealRecipePort | None = None,
         image_search: Callable[[str], Awaitable[Any]] | None = None,
+        nutrition_lookup: Any | None = None,
         model: str = "gpt-5.6-luna",
         max_per_minute: int = DISCOVER_MAX_PER_MINUTE,
     ) -> None:
         self._discover = discover
         self._recipe_generator = recipe_generator
         self._image_search = image_search
+        self._nutrition_lookup = nutrition_lookup
         self._model = model
         self._max_per_minute = max_per_minute
         self._hits: dict[str, list[float]] = {}
@@ -72,6 +75,7 @@ class ChatNextMealCandidates:
         locale: str,
         session_id: str | None,
         slot: str | None = None,
+        include_images: bool = True,
     ) -> NextMealCandidateResult:
         slot = slot or resolve_meal_slot(context.suggested_meal_slot, user_text)
         if not self._allow(user_id):
@@ -110,13 +114,18 @@ class ChatNextMealCandidates:
                         recipes[:DISCOVER_COUNT],
                         context.allergies or [],
                     )
-                    enriched = await attach_food_images(safe, self._image_search)
-                    suggestions = map_discover_meals(enriched, slot)
-                    return NextMealCandidateResult(
-                        suggestions=suggestions,
-                        session_id=None,
-                        meal_slot=slot,
-                    )
+                    verified = await self._reconcile_lookup_macros(safe)
+                    if verified:
+                        if include_images:
+                            verified = await attach_food_images(
+                                verified, self._image_search
+                            )
+                        suggestions = map_discover_meals(verified, slot)
+                        return NextMealCandidateResult(
+                            suggestions=suggestions,
+                            session_id=None,
+                            meal_slot=slot,
+                        )
             except Exception:
                 logger.warning(
                     "chat next-meal direct recipe generator failed",
@@ -167,12 +176,17 @@ class ChatNextMealCandidates:
             fallback_meals = _fallback_meals_for_slot(
                 slot, locale, targets.calorie_target
             )
-            safe_fallbacks = filter_meals_for_allergies(
-                fallback_meals[:DISCOVER_COUNT], context.allergies or []
+            safe_fallbacks = await self._reconcile_lookup_macros(
+                filter_meals_for_allergies(
+                    fallback_meals[:DISCOVER_COUNT], context.allergies or []
+                )
             )
             if safe_fallbacks:
-                enriched = await attach_food_images(safe_fallbacks, self._image_search)
-                suggestions = map_discover_meals(enriched, slot)
+                if include_images:
+                    safe_fallbacks = await attach_food_images(
+                        safe_fallbacks, self._image_search
+                    )
+                suggestions = map_discover_meals(safe_fallbacks, slot)
                 return NextMealCandidateResult(
                     suggestions=suggestions,
                     session_id=None,
@@ -180,6 +194,66 @@ class ChatNextMealCandidates:
                 )
 
         return NextMealCandidateResult(meal_slot=slot)
+
+    async def attach_images(self, meals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add food photos after the reply text has already been sent."""
+        return await attach_food_images(meals, self._image_search)
+
+    async def _reconcile_lookup_macros(
+        self, meals: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Replace model calorie estimates with NutritionLookupService totals.
+
+        When no lookup service is configured, meals pass through unchanged.
+        When lookup is configured, a meal is kept only if lookup returns a
+        positive calorie total. Per-ingredient calories are attached only when
+        the breakdown lines up with the ingredient list.
+        """
+        if self._nutrition_lookup is None or not meals:
+            return meals
+        reconciled = await asyncio.gather(
+            *(self._reconcile_one_meal(meal) for meal in meals)
+        )
+        return [meal for meal in reconciled if meal is not None]
+
+    async def _reconcile_one_meal(self, meal: dict[str, Any]) -> dict[str, Any] | None:
+        lookup_input = _lookup_ingredient_rows(meal.get("ingredients"))
+        if not lookup_input:
+            return None
+        try:
+            macros = await self._nutrition_lookup.calculate_meal_macros(lookup_input)
+        except Exception:
+            logger.warning(
+                "chat next-meal nutrition lookup failed",
+                extra={"meal": meal.get("name")},
+                exc_info=True,
+            )
+            return None
+        calories = getattr(macros, "calories", None)
+        if calories is None or float(calories) <= 0:
+            return None
+        updated = dict(meal)
+        updated["calories"] = int(round(float(calories)))
+        updated["protein_g"] = float(getattr(macros, "protein", 0) or 0)
+        updated["carbs_g"] = float(getattr(macros, "carbs", 0) or 0)
+        updated["fat_g"] = float(getattr(macros, "fat", 0) or 0)
+        updated["fiber_g"] = float(getattr(macros, "fiber", 0) or 0)
+        breakdown = getattr(macros, "ingredients", None) or []
+        raw_ingredients = meal.get("ingredients")
+        if (
+            isinstance(raw_ingredients, list)
+            and len(breakdown) == len(raw_ingredients)
+            and len(breakdown) == len(lookup_input)
+        ):
+            merged: list[dict[str, Any]] = []
+            for raw, item in zip(raw_ingredients, breakdown, strict=True):
+                row = dict(raw) if isinstance(raw, dict) else {}
+                item_calories = getattr(item, "calories", None)
+                if item_calories is not None and float(item_calories) > 0:
+                    row["calories"] = int(round(float(item_calories)))
+                merged.append(row)
+            updated["ingredients"] = merged
+        return updated
 
     def _allow(self, user_id: str) -> bool:
         now = time.monotonic()
@@ -189,6 +263,26 @@ class ChatNextMealCandidates:
             return False
         window.append(now)
         return True
+
+
+def _lookup_ingredient_rows(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list) or not raw:
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return []
+        name = str(item.get("name") or "").strip()
+        amount = item.get("amount")
+        unit = str(item.get("unit") or "g").strip() or "g"
+        if not name or amount is None:
+            return []
+        try:
+            float(amount)
+        except (TypeError, ValueError):
+            return []
+        rows.append({"name": name, "amount": amount, "unit": unit})
+    return rows
 
 
 def last_discover_session_id(messages: list[ChatMessage]) -> str | None:

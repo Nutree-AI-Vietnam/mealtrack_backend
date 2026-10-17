@@ -60,12 +60,14 @@ def test_orphaned_staging_revision_is_ancestor_of_head() -> None:
     assert orphan_rev is not None
     assert orphan_rev.down_revision == "20260904044230151265"
 
+    next_revision = "20260915035556051174"
     pending_ids = [
         rev.revision
         for rev in reversed(pending_upgrade_revisions(script_dir, orphan, head))
     ]
-    assert pending_ids == ["20260915035556051174"]
-    assert head == "20260915035556051174"
+    assert pending_ids[0] == next_revision
+    assert pending_ids[-1] == head
+    assert orphan not in pending_ids
 
     from_chat = [
         rev.revision
@@ -73,4 +75,50 @@ def test_orphaned_staging_revision_is_ancestor_of_head() -> None:
             pending_upgrade_revisions(script_dir, "20260904044230151265", head)
         )
     ]
-    assert from_chat == [orphan, "20260915035556051174"]
+    assert from_chat[0] == orphan
+    assert from_chat[1] == next_revision
+    assert from_chat[-1] == head
+
+
+def test_weekly_recaps_and_open_wearables_merge_to_one_head() -> None:
+    """Sibling branches from the same parent must not leave two heads."""
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    parent = "20261006115245714931"
+    weekly = "20261010181556723744"
+    wearables = "20261012065247823604"
+    head = script_dir.get_current_head()
+    assert head is not None
+    assert head not in {weekly, wearables}
+
+    weekly_rev = script_dir.get_revision(weekly)
+    wearables_rev = script_dir.get_revision(wearables)
+    assert weekly_rev is not None and wearables_rev is not None
+    assert weekly_rev.down_revision == parent
+    assert wearables_rev.down_revision == parent
+
+    pending_ids = [
+        rev.revision
+        for rev in reversed(pending_upgrade_revisions(script_dir, parent, head))
+    ]
+    assert weekly in pending_ids
+    assert wearables in pending_ids
+    assert pending_ids[-1] == head
+
+
+def test_food_search_integrity_and_chat_threads_merge_to_one_head() -> None:
+    """Independent delivery branches must leave one stampable head."""
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    food_search = "20261007163030686049"
+    chat_threads = "20261015014451225604"
+    head = script_dir.get_current_head()
+    assert head is not None
+    assert script_dir.get_heads() == [head]
+    assert head not in {food_search, chat_threads}
+
+    for revision in (food_search, chat_threads):
+        pending_ids = [
+            rev.revision
+            for rev in reversed(pending_upgrade_revisions(script_dir, revision, head))
+        ]
+        assert revision not in pending_ids
+        assert pending_ids[-1] == head

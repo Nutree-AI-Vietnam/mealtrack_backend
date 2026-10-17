@@ -1,4 +1,4 @@
-"""Domain models for the single-thread Nutree chat coach."""
+"""Domain models for the Nutree chat coach."""
 
 from __future__ import annotations
 
@@ -31,19 +31,23 @@ class ChatIntent(StrEnum):
     LIMITS = "limits"
 
 
-CHAT_PROMPT_VERSION = "chat_prompt_v3"
+CHAT_PROMPT_VERSION = "chat_prompt_v6"
 CHAT_CONTEXT_VERSION = "chat_context_v1"
 CHAT_NUTRITION_SNAPSHOT_VERSION = "chat_nutrition_v1"
 CHAT_RETRIEVAL_VERSION = "chat_retrieval_v1"
 CHAT_EVAL_VERSION = "chat_eval_v1"
 CHAT_DEFAULT_MODEL = "gpt-5.6-luna"
 
-CHAT_HISTORY_LIMIT = 20
+CHAT_HISTORY_LIMIT = 40
 CHAT_RECENT_MEAL_DAYS = 3
 CHAT_RECENT_MEAL_LIMIT = 24
 CHAT_MAX_USER_MESSAGE_CHARS = 4000
 CHAT_MAX_OUTPUT_TOKENS = 900
 CHAT_DAILY_TURN_BUDGET = 40
+CHAT_THREAD_LIST_DEFAULT_LIMIT = 20
+CHAT_THREAD_LIST_MAX_LIMIT = 50
+CHAT_THREAD_TITLE_MAX_CHARS = 80
+CHAT_THREAD_PREVIEW_MAX_CHARS = 140
 CHAT_GENERATION_LEASE_SECONDS = 90
 CHAT_RETRIEVAL_MIN_CHUNKS = 3
 CHAT_RETRIEVAL_MAX_CHUNKS = 5
@@ -57,6 +61,8 @@ CHAT_ERROR_CODES = (
     "CHAT_PROVIDER_UNAVAILABLE",
     "CHAT_TURN_FAILED",
     "CHAT_UNAVAILABLE",
+    "CHAT_THREAD_NOT_FOUND",
+    "CHAT_INVALID_CURSOR",
     "IDEMPOTENCY_KEY_REQUIRED",
     "INVALID_IDEMPOTENCY_KEY",
 )
@@ -247,6 +253,7 @@ class ChatUserContext:
     food_calories: float | None = None
     movement_kcal_burned: float | None = None
     local_date: str | None = None
+    preferred_name: str | None = None
 
     @property
     def has_complete_nutrition(self) -> bool:
@@ -276,6 +283,7 @@ class ChatUserContext:
             "as_of": self.as_of,
             "locale": self.locale,
             "timezone": self.timezone,
+            "preferred_name": self.preferred_name,
             "safety": {
                 "allergies": self.allergies,
                 "health_conditions": self.health_conditions,
@@ -356,6 +364,17 @@ class ChatUserContext:
                 },
             },
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ChatThreadListing:
+    """One row of the user's thread list, newest activity first."""
+
+    thread: ChatThread
+    title: str | None
+    preview: str | None
+    preview_role: ChatMessageRole | None
+    last_message_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)

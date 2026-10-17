@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from src.app.services.chat_next_meal_candidates import (
@@ -90,7 +92,7 @@ async def test_fetch_maps_discover_cards_and_keeps_session() -> None:
     )
     assert result.session_id == "sess-keep"
     assert result.meal_slot == "breakfast"
-    assert len(result.suggestions) == 1
+    assert len(result.suggestions) == 3
     assert result.suggestions[0]["protein_g"] == 28
     assert discover.calls[0]["session_id"] == "sess-keep"
     assert discover.calls[0]["meal_type"] == "breakfast"
@@ -370,7 +372,11 @@ async def test_fetch_prioritizes_recipe_generator_and_returns_full_recipe() -> N
                     "prep_time_minutes": 20,
                     "ingredients": [{"name": "cá hồi", "amount": 150, "unit": "g"}],
                     "recipe_steps": [
-                        {"step": 1, "instruction": "Áp chảo cá hồi", "duration_minutes": 8}
+                        {
+                            "step": 1,
+                            "instruction": "Áp chảo cá hồi",
+                            "duration_minutes": 8,
+                        }
                     ],
                 }
             ]
@@ -392,3 +398,201 @@ async def test_fetch_prioritizes_recipe_generator_and_returns_full_recipe() -> N
     assert card["ingredients"] == [{"name": "cá hồi", "amount": 150, "unit": "g"}]
     assert card["recipe_steps"][0]["instruction"] == "Áp chảo cá hồi"
 
+
+class _Lookup:
+    def __init__(self, macros=None, error=None):
+        self.macros = macros
+        self.error = error
+        self.calls: list[list] = []
+
+    async def calculate_meal_macros(self, ingredients):
+        self.calls.append(ingredients)
+        if self.error is not None:
+            raise self.error
+        return self.macros
+
+
+class _IngredientCal:
+    def __init__(self, calories: float):
+        self.calories = calories
+
+
+class _MealMacros:
+    def __init__(self, calories: float, ingredients: list[_IngredientCal]):
+        self.calories = calories
+        self.protein = 32.0
+        self.carbs = 40.0
+        self.fat = 11.0
+        self.fiber = 6.0
+        self.ingredients = ingredients
+
+
+def _recipe(**overrides) -> dict:
+    meal = {
+        "name": "Salmon rice",
+        "english_name": "Salmon rice",
+        "emoji": "🐟",
+        "calories": 999,
+        "protein_g": 1,
+        "carbs_g": 1,
+        "fat_g": 1,
+        "ingredients": [
+            {"name": "salmon", "amount": 150, "unit": "g"},
+            {"name": "brown rice", "amount": 120, "unit": "g"},
+            {"name": "broccoli", "amount": 80, "unit": "g"},
+        ],
+        "recipe_steps": [
+            {"step": 1, "instruction": "Sear the salmon.", "duration_minutes": 8},
+            {"step": 2, "instruction": "Serve with rice.", "duration_minutes": 2},
+        ],
+    }
+    meal.update(overrides)
+    return meal
+
+
+@pytest.mark.asyncio
+async def test_lookup_replaces_model_calories_and_adds_ingredient_kcal() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [_recipe()]
+
+    lookup = _Lookup(
+        _MealMacros(
+            410,
+            [_IngredientCal(180), _IngredientCal(140), _IngredientCal(90)],
+        )
+    )
+    service = ChatNextMealCandidates(
+        _FakeDiscover(),
+        recipe_generator=_Gen(),
+        nutrition_lookup=lookup,
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+    )
+    card = result.suggestions[0]
+    assert card["calories"] == 410
+    assert card["protein_g"] == 32.0
+    assert card["calories"] != 999
+    assert [item["calories"] for item in card["ingredients"]] == [180, 140, 90]
+    assert lookup.calls[0][0]["name"] == "salmon"
+
+
+@pytest.mark.asyncio
+async def test_failed_lookup_drops_model_calories_and_uses_discover() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [_recipe()]
+
+    discover = _FakeDiscover(
+        ChatDiscoverBatch(session_id="sess-lookup", meals=(_meal("Rice bowl"),))
+    )
+    service = ChatNextMealCandidates(
+        discover,
+        recipe_generator=_Gen(),
+        nutrition_lookup=_Lookup(error=RuntimeError("lookup down")),
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+    )
+    assert result.suggestions[0]["name"] == "Rice bowl"
+    assert result.suggestions[0]["calories"] == 420
+    assert discover.calls
+
+
+@pytest.mark.asyncio
+async def test_meal_lookups_run_together_and_keep_surviving_order() -> None:
+    class _SlowLookup:
+        def __init__(self) -> None:
+            self.in_flight = 0
+            self.max_in_flight = 0
+
+        async def calculate_meal_macros(self, ingredients):
+            name = ingredients[0]["name"]
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            await asyncio.sleep(0.05)
+            self.in_flight -= 1
+            if name == "chicken":
+                raise RuntimeError("lookup down")
+            calories = {"salmon": 410.0, "tofu": 280.0}[name]
+            return _MealMacros(calories, [_IngredientCal(calories)])
+
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [
+                _recipe(
+                    name="Salmon rice",
+                    ingredients=[{"name": "salmon", "amount": 150, "unit": "g"}],
+                ),
+                _recipe(
+                    name="Chicken bowl",
+                    ingredients=[{"name": "chicken", "amount": 150, "unit": "g"}],
+                ),
+                _recipe(
+                    name="Tofu bowl",
+                    ingredients=[{"name": "tofu", "amount": 200, "unit": "g"}],
+                ),
+            ]
+
+    lookup = _SlowLookup()
+    service = ChatNextMealCandidates(
+        _FakeDiscover(),
+        recipe_generator=_Gen(),
+        nutrition_lookup=lookup,
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+    )
+    assert lookup.max_in_flight == 3
+    assert [card["name"] for card in result.suggestions] == [
+        "Salmon rice",
+        "Tofu bowl",
+    ]
+    assert [card["calories"] for card in result.suggestions] == [410, 280]
+
+
+@pytest.mark.asyncio
+async def test_fetch_can_defer_food_photos() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [_recipe()]
+
+    calls: list[str] = []
+
+    async def search(name: str) -> None:
+        calls.append(name)
+        return None
+
+    service = ChatNextMealCandidates(
+        _FakeDiscover(),
+        recipe_generator=_Gen(),
+        image_search=search,
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="What should I eat next?",
+        locale="en",
+        session_id=None,
+        include_images=False,
+    )
+    assert calls == []
+    await service.attach_images(result.suggestions)
+    assert calls == ["Salmon rice"]

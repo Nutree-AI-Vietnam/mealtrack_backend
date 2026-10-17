@@ -71,7 +71,9 @@ def _make_service(
     if gen_result is not None:
         gen.generate_meal_plan_async = AsyncMock(return_value=gen_result)
     else:
-        gen.generate_meal_plan_async = AsyncMock(side_effect=RuntimeError("AI unavailable"))
+        gen.generate_meal_plan_async = AsyncMock(
+            side_effect=RuntimeError("AI unavailable")
+        )
 
     return NutritionLookupService(
         food_ref_repo=repo,
@@ -427,6 +429,13 @@ def test_to_grams_ml():
     assert result == pytest.approx(120.0)
 
 
+def test_to_grams_piece_uses_shared_count_weight():
+    """2 pieces is 2 × 100g, not 2g."""
+    svc = _make_service()
+    assert svc._to_grams("egg", 2.0, "piece") == pytest.approx(200.0)
+    assert svc._to_grams("egg", 2.0, "pieces") == pytest.approx(200.0)
+
+
 def test_to_grams_unknown_unit_assumes_grams(caplog):
     svc = _make_service()
     with caplog.at_level(logging.WARNING):
@@ -490,13 +499,15 @@ async def test_t3_ai_estimate_respects_10s_timeout():
     resolver = MagicMock()
     resolver.resolve = AsyncMock(return_value=None)
     gen = MagicMock()
-    gen.generate_meal_plan_async = AsyncMock(return_value={
-        "protein": 5.0,
-        "carbs": 5.0,
-        "fat": 1.0,
-        "fiber": 0.0,
-        "sugar": 0.0,
-    })
+    gen.generate_meal_plan_async = AsyncMock(
+        return_value={
+            "protein": 5.0,
+            "carbs": 5.0,
+            "fat": 1.0,
+            "fiber": 0.0,
+            "sugar": 0.0,
+        }
+    )
 
     svc = NutritionLookupService(
         food_ref_repo=repo,
@@ -533,13 +544,15 @@ async def test_t3_ai_estimate_passes_correct_positional_args():
     resolver = MagicMock()
     resolver.resolve = AsyncMock(return_value=None)
     gen = MagicMock()
-    gen.generate_meal_plan_async = AsyncMock(return_value={
-        "protein": 8.0,
-        "carbs": 3.0,
-        "fat": 1.0,
-        "fiber": 0.0,
-        "sugar": 0.0,
-    })
+    gen.generate_meal_plan_async = AsyncMock(
+        return_value={
+            "protein": 8.0,
+            "carbs": 3.0,
+            "fat": 1.0,
+            "fiber": 0.0,
+            "sugar": 0.0,
+        }
+    )
 
     svc = NutritionLookupService(
         food_ref_repo=repo,

@@ -11,6 +11,13 @@ class ChatBusyError(Exception):
         super().__init__("A chat turn is already in progress")
 
 
+class ChatRegenerateNotAllowedError(Exception):
+    """Regenerate was asked for a reply that is not the latest completed one."""
+
+    def __init__(self) -> None:
+        super().__init__("Only the latest coach reply can be regenerated")
+
+
 class ChatIdempotencyConflictError(Exception):
     """The same Idempotency-Key was reused with a different request body."""
 
@@ -36,3 +43,17 @@ class ChatProviderUnavailableError(Exception):
         self.retry_after_seconds = retry_after_seconds
         self.retryable = retryable
         super().__init__("Chat provider is temporarily unavailable")
+
+
+class ChatThreadNotFoundError(Exception):
+    """The thread does not exist or belongs to another user."""
+
+    def __init__(self) -> None:
+        super().__init__("Chat thread not found")
+
+
+class ChatInvalidCursorError(Exception):
+    """A thread-list cursor was malformed or not issued by this server."""
+
+    def __init__(self) -> None:
+        super().__init__("Invalid chat thread cursor")

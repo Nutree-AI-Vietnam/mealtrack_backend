@@ -188,7 +188,7 @@ class ChatMealRecipeBatch(BaseModel):
     """Next-meal recipe in one structured chat call."""
 
     meals: list[ChatMealRecipeItem] = Field(
-        description="Exactly 1 complete next-meal recipe",
+        description="1 to 3 different next-meal recipes for this sitting",
         min_length=1,
-        max_length=1,
+        max_length=3,
     )

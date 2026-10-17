@@ -168,7 +168,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
 
 ### Coach nutrition snapshots
 
-- Coach live completions, idempotent replays, and `GET /v1/chat` expose the
+- Coach live completions, idempotent replays, `GET /v1/chat`, and
+  `GET /v1/chat/threads/{thread_id}` expose the
   additive `nutrition_snapshot` sidecar for completed replies. It is versioned
   as `chat_nutrition_v1` and scoped by `local_date`, `timezone`, and `as_of`.
 - The snapshot is the backend-owned rendering input: `food_calories` is gross
@@ -178,6 +179,28 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - If authoritative context is incomplete, the sidecar is omitted. Consumers
   must render the reply text without nutrition cards rather than inventing
   defaults.
+
+### Coach threads
+
+- A user can keep several coach threads. `GET /v1/chat/threads` lists threads
+  that have messages, most recently active first. `title` is the first
+  question and `preview` the latest message, both shortened; nothing is
+  generated. Page by passing the response's `next_cursor` as `cursor`; it
+  keeps its place even if a listed thread gets new messages. A cursor the
+  server did not issue is rejected with `CHAT_INVALID_CURSOR`.
+- `POST /v1/chat/threads` starts a thread. If the user already has an empty
+  thread, that one is returned instead of creating another.
+- `GET`/`DELETE /v1/chat/threads/{thread_id}` and
+  `POST /v1/chat/threads/{thread_id}/messages` mirror the single-thread
+  routes. A thread the user does not own is 404 `CHAT_THREAD_NOT_FOUND`.
+- `GET`/`DELETE /v1/chat` and `POST /v1/chat/messages` still work and act on
+  the most recently active thread, so older app builds keep resuming chat.
+- Both message routes share one per-user `10/minute` limit, and the daily turn
+  budget counts every thread.
+- `GET /v1/capabilities/chat` reports `thread_model: "multi"` only after the
+  migration that drops the one-thread-per-user index. Clients must not offer
+  new threads while it reports `single`. Deploy the server before running that
+  migration: the single-thread server's insert needs the unique index.
 
 ### Meal recommendations (catalog)
 

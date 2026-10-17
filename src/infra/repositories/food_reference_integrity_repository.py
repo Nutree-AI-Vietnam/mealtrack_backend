@@ -232,10 +232,58 @@ class FoodReferenceIntegrityRepository:
                     deployed_revision=deployed_revision,
                 )
             )
-            control_row = await self._control_row_for_update()
-            control_row.catalog_integrity_generation += 1
+            if await self._invalidates_cached_reads(
+                model.id, before_status, before_digest, next_state
+            ):
+                control_row = await self._control_row_for_update()
+                control_row.catalog_integrity_generation += 1
         await self._session.flush()
         return next_state
+
+    async def _invalidates_cached_reads(
+        self,
+        reference_id: int,
+        before_status: str,
+        before_digest: str | None,
+        next_state: IntegrityState,
+    ) -> bool:
+        """Whether cached food search pages may now show this row wrongly.
+
+        The catalog generation is part of every cached search key, so a bump
+        throws the whole search cache away, and searches themselves adopt
+        provider foods. Bump only when a cached page could hold this row with
+        stale content or a status it no longer has:
+
+        - quarantined rows are never shown, so no cached page holds them;
+        - a policy-version-only change keeps content and never hides a row;
+        - a row inserted by this transaction is in no page yet, and new rows
+          reach searches as cached pages expire.
+        """
+        if before_status == "quarantined":
+            return False
+        if (
+            before_status == next_state.status
+            and before_digest == next_state.input_digest
+        ):
+            return False
+        return not await self._inserted_in_current_transaction(reference_id)
+
+    async def _inserted_in_current_transaction(self, reference_id: int) -> bool:
+        """True when this transaction inserted the row (Postgres only).
+
+        ``created_at`` defaults to ``now()``, which Postgres pins to the
+        transaction start, and no upsert rewrites it. Other dialects answer
+        ``False`` so callers keep the conservative bump.
+        """
+        bind = getattr(self._session, "bind", None)
+        if getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
+            return False
+        inserted = await self._session.scalar(
+            select(FoodReferenceModel.created_at == func.now()).where(
+                FoodReferenceModel.id == reference_id
+            )
+        )
+        return bool(inserted)
 
     async def quarantine_reference(
         self,

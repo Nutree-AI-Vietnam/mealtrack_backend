@@ -34,7 +34,7 @@ def _chat_schema_is_ready(rows) -> bool:
 
 
 async def chat_schema_is_ready() -> bool:
-    """Return whether storage for the single-thread chat contract is available."""
+    """Return whether storage for the chat contract is available."""
     async with AsyncUnitOfWork() as uow:
         session = uow.session
         if session is None:
@@ -60,3 +60,28 @@ async def chat_schema_is_ready() -> bool:
             )
         )
         return _chat_schema_is_ready(result.all())
+
+
+async def chat_thread_model() -> str:
+    """Return ``multi`` once the one-thread-per-user index has been dropped.
+
+    The server writes correctly either way, but a second thread can only be
+    stored after the migration, so clients should not offer one before then.
+    """
+    async with AsyncUnitOfWork() as uow:
+        session = uow.session
+        if session is None:
+            raise RuntimeError("database session is unavailable")
+        result = await session.execute(
+            text(
+                """
+                SELECT 1
+                FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND tablename = 'chat_thread'
+                  AND indexdef ILIKE 'CREATE UNIQUE INDEX%(user_id)'
+                LIMIT 1
+                """
+            )
+        )
+        return "single" if result.first() is not None else "multi"

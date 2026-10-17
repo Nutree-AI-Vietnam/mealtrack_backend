@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 
 class ChatFollowUpPort(ABC):
@@ -19,5 +20,6 @@ class ChatFollowUpPort(ABC):
         user_message: str,
         assistant_text: str,
         has_suggestions: bool,
+        suggestion_names: Sequence[str] = (),
     ) -> list[dict[str, str]]:
         """Return 0–3 {label, action} chips. Empty list on failure."""
