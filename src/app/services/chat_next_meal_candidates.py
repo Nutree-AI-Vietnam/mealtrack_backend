@@ -485,17 +485,32 @@ _DAIRY_WORDS = (
 )
 _EGG_HONEY_WORDS = (
     "honey",
+    "eggs",
     "egg",
     "trứng",
 )
-_PLANT_MILKS = (
+# Strip these before the dairy word check. "butter" and "cream" would otherwise
+# flag peanut butter, coconut cream, and plant milks.
+_NON_DAIRY_PHRASES = (
+    "peanut butter",
+    "almond butter",
+    "cashew butter",
+    "coconut butter",
+    "coconut cream",
+    "coconut milk",
     "almond milk",
     "soy milk",
     "oat milk",
-    "coconut milk",
+    "rice milk",
+    "cashew milk",
+    "hemp milk",
+    "macadamia milk",
     "sữa hạnh nhân",
     "sữa đậu",
     "sữa yến mạch",
+    "sữa dừa",
+    "sữa gạo",
+    "sữa hạt",
 )
 
 
@@ -548,11 +563,11 @@ def _blob_has_word(blob: str, words: tuple[str, ...]) -> bool:
 
 
 def _has_dairy(blob: str) -> bool:
-    if _blob_has_word(blob, _DAIRY_WORDS):
-        return True
     stripped = blob
-    for plant in _PLANT_MILKS:
-        stripped = stripped.replace(plant, " ")
+    for phrase in _NON_DAIRY_PHRASES:
+        stripped = stripped.replace(phrase, " ")
+    if _blob_has_word(stripped, _DAIRY_WORDS):
+        return True
     return _blob_has_word(stripped, ("milk", "sữa"))
 
 

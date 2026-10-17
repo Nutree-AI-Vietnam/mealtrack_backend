@@ -676,6 +676,37 @@ async def test_vegan_snack_fallback_is_not_greek_yogurt() -> None:
     assert "sữa chua" not in blob
 
 
+def test_vegan_filter_drops_plural_eggs_and_keeps_plant_fats() -> None:
+    dropped = _filter_meals_for_diet(
+        [
+            {
+                "name": "Sunny-side up Eggs",
+                "english_name": "Sunny-side up Eggs",
+                "ingredients": [{"name": "eggs"}],
+            }
+        ],
+        ["vegan"],
+    )
+    assert dropped == []
+
+    kept = _filter_meals_for_diet(
+        [
+            {
+                "name": "Peanut butter banana",
+                "english_name": "Peanut butter banana",
+                "ingredients": [{"name": "peanut butter"}, {"name": "banana"}],
+            },
+            {
+                "name": "Cơm sữa dừa",
+                "english_name": "Rice with coconut cream",
+                "ingredients": [{"name": "coconut cream"}, {"name": "rice milk"}],
+            },
+        ],
+        ["vegan"],
+    )
+    assert len(kept) == 2
+
+
 def test_dairy_free_fallback_drops_yogurt_and_keeps_eggs() -> None:
     snacks = _filter_meals_for_diet(
         _fallback_meals_for_slot("snack", "en", 200),
