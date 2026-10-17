@@ -2093,7 +2093,7 @@ async def test_meal_ack_streams_before_cards_are_ready():
 
 
 @pytest.mark.asyncio
-async def test_follow_ups_do_not_wait_for_meal_photos():
+async def test_completed_reply_includes_the_meal_photo():
     class _SlowImages:
         def __init__(self) -> None:
             self.release = asyncio.Event()
@@ -2113,8 +2113,20 @@ async def test_follow_ups_do_not_wait_for_meal_photos():
                 for card in suggestions
             ]
 
+    class _FollowUps:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+
+        async def generate_follow_ups(self, **kwargs):
+            del kwargs
+            self.started.set()
+            return [{"label": "Another idea", "prompt": "More snacks"}]
+
     meals = _SlowImages()
-    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), next_meals=meals)
+    follow_ups = _FollowUps()
+    orchestrator = _orchestrator(
+        _FakeRepo(claim=_claim()), next_meals=meals, follow_ups=follow_ups
+    )
     events: list = []
 
     async def collect() -> None:
@@ -2130,17 +2142,30 @@ async def test_follow_ups_do_not_wait_for_meal_photos():
             events.append(event)
 
     task = asyncio.create_task(collect())
-
-    async def finished() -> None:
-        while not any(event.event == "message.completed" for event in events):
-            await asyncio.sleep(0.01)
-
-    await asyncio.wait_for(finished(), timeout=1)
-    completed = next(event for event in events if event.event == "message.completed")
-    assert completed.data["follow_ups"]
+    await asyncio.wait_for(meals.started.wait(), timeout=1)
+    await asyncio.wait_for(follow_ups.started.wait(), timeout=1)
+    await asyncio.sleep(0.05)
+    assert not any(event.event == "message.completed" for event in events)
     meals.release.set()
     await asyncio.wait_for(task, timeout=1)
-    assert meals.started.is_set()
+    completed = next(event for event in events if event.event == "message.completed")
+    ready = next(event for event in events if event.event == "message.ready")
+    assert completed.data["follow_ups"]
+    assert (
+        completed.data["suggestions"][0]["thumbnail_url"]
+        == "https://cdn.example/meal.jpg"
+    )
+    assert (
+        ready.data["suggestions"][0]["thumbnail_url"] == "https://cdn.example/meal.jpg"
+    )
+    completed_at = next(
+        index
+        for index, event in enumerate(events)
+        if event.event == "message.completed"
+    )
+    assert not any(
+        event.event == "message.suggestions" for event in events[completed_at + 1 :]
+    )
 
 
 @pytest.mark.asyncio
@@ -2204,12 +2229,12 @@ async def test_meal_intro_is_sent_before_food_photos():
             assert meals.events == []
             assert "I'm picking" in event.data.get("delta", "")
             intro_seen = True
-        elif event.event == "message.delta" and "Egg rice bowl" in event.data.get(
-            "delta", ""
-        ):
-            assert meals.events == ["fetch"]
         elif event.event == "message.ready":
-            assert "images" not in meals.events
+            assert meals.events == ["fetch", "images"]
+            assert (
+                event.data["suggestions"][0]["thumbnail_url"]
+                == "https://cdn.example/meal.jpg"
+            )
         events.append(event)
     completed = next(event for event in events if event.event == "message.completed")
     assert intro_seen
@@ -2223,19 +2248,101 @@ async def test_meal_intro_is_sent_before_food_photos():
     )
     assert "Egg rice bowl" in named.data["delta"]
     assert "I'm picking" not in named.data["delta"]
+    assert completed.data["suggestions"][0]["thumbnail_url"] == (
+        "https://cdn.example/meal.jpg"
+    )
     completed_at = next(
         index
         for index, event in enumerate(events)
         if event.event == "message.completed"
     )
-    photo = next(
-        event
-        for event in events[completed_at + 1 :]
-        if event.event == "message.suggestions"
-        and event.data["suggestions"][0].get("thumbnail_url")
+    assert not any(
+        event.event == "message.suggestions" for event in events[completed_at + 1 :]
     )
-    assert photo.data["suggestions"][0]["thumbnail_url"] == (
-        "https://cdn.example/meal.jpg"
+
+
+@pytest.mark.asyncio
+async def test_meal_photos_overlap_the_sentence():
+    """Photos start while the meal sentence is still streaming.
+
+    message.completed still waits for the URLs, so the card the app keeps
+    has thumbnail_url.
+    """
+
+    class _Hold:
+        def __init__(self) -> None:
+            self.photos_started = asyncio.Event()
+            self.sentence_started = asyncio.Event()
+            self.release_sentence = asyncio.Event()
+            self.photos_done = asyncio.Event()
+            self.photos_finished_during_sentence = False
+
+    hold = _Hold()
+
+    class _Meals:
+        async def fetch(self, **kwargs):
+            del kwargs
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="snack"
+            )
+
+        async def attach_images(self, suggestions):
+            hold.photos_started.set()
+            await hold.sentence_started.wait()
+            hold.photos_finished_during_sentence = not hold.release_sentence.is_set()
+            hold.photos_done.set()
+            return [
+                {**card, "thumbnail_url": "https://cdn.example/meal.jpg"}
+                for card in suggestions
+            ]
+
+    class _SlowSentence:
+        async def stream(self, **kwargs):
+            del kwargs
+            hold.sentence_started.set()
+            yield ChatCompletionDelta(text="Egg rice bowl fits this snack. ")
+            await hold.release_sentence.wait()
+            yield ChatCompletionDelta(
+                text="",
+                usage=ChatUsage(input_tokens=10, output_tokens=4, model="gpt-5.6-luna"),
+                done=True,
+            )
+
+    orchestrator = _orchestrator(
+        _FakeRepo(claim=_claim()),
+        completion=_SlowSentence(),
+        next_meals=_Meals(),
+    )
+    events: list = []
+
+    async def collect() -> None:
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Snack ideas",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+            intent="next_meal",
+        ):
+            events.append(event)
+
+    task = asyncio.create_task(collect())
+    await asyncio.wait_for(hold.photos_started.wait(), timeout=2)
+    await asyncio.wait_for(hold.sentence_started.wait(), timeout=2)
+    await asyncio.wait_for(hold.photos_done.wait(), timeout=2)
+    assert hold.photos_finished_during_sentence
+    assert not any(event.event == "message.completed" for event in events)
+    hold.release_sentence.set()
+    await asyncio.wait_for(task, timeout=2)
+    completed = next(event for event in events if event.event == "message.completed")
+    ready = next(event for event in events if event.event == "message.ready")
+    assert (
+        completed.data["suggestions"][0]["thumbnail_url"]
+        == "https://cdn.example/meal.jpg"
+    )
+    assert (
+        ready.data["suggestions"][0]["thumbnail_url"] == "https://cdn.example/meal.jpg"
     )
 
 

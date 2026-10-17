@@ -113,7 +113,7 @@ from src.observability import distribution_metric, increment_metric, log_event
 
 logger = logging.getLogger(__name__)
 
-# Photo work started after the reply is saved. A client disconnect must not
+# Meal photo work can outlive the SSE generator. A client disconnect must not
 # cancel it, and the task has to stay referenced until it finishes.
 _detached_chat_tasks: set[asyncio.Task[Any]] = set()
 
@@ -427,6 +427,12 @@ class ChatTurnOrchestrator:
         lease_task: asyncio.Task[None] | None = None
         lease_stop = asyncio.Event()
         reply_saved = False
+        meal_photo_task: asyncio.Task[list[dict[str, Any]]] | None = None
+        meal_photo_cards: list[dict[str, Any]] | None = None
+        photos_saved = asyncio.Event()
+        # Bumped when a newer card list replaces an in-flight photo task, so
+        # the old task cannot store URLs onto the reply.
+        photo_generation = [0]
         generation: dict[str, Any] = {
             "text": "",
             "usage": ChatUsage(model=self._model),
@@ -573,6 +579,18 @@ class ChatTurnOrchestrator:
                     meal_slot = batch.meal_slot
                     if suggestions:
                         # Show the cards while the sentence is still being written.
+                        # Photos start now so they overlap that sentence. URLs are
+                        # still applied before message.completed: the app stops
+                        # reading once that event arrives.
+                        meal_photo_task, meal_photo_cards = self._ensure_meal_photos(
+                            prepared,
+                            claim.assistant_message.id,
+                            suggestions,
+                            photos_saved,
+                            photo_generation,
+                            meal_photo_task,
+                            meal_photo_cards,
+                        )
                         yield ChatSseEvent(
                             event="message.suggestions",
                             data={
@@ -651,6 +669,15 @@ class ChatTurnOrchestrator:
                 )
                 current_user_message = ""
                 generation["tools"] = None
+                meal_photo_task, meal_photo_cards = self._ensure_meal_photos(
+                    prepared,
+                    claim.assistant_message.id,
+                    suggestions,
+                    photos_saved,
+                    photo_generation,
+                    meal_photo_task,
+                    meal_photo_cards,
+                )
 
             meal_reply = ""
             if intent == ChatIntent.NEXT_MEAL.value and suggestions:
@@ -771,6 +798,15 @@ class ChatTurnOrchestrator:
                 generation["truncated"] = False
                 generation["tools"] = None
                 suggestions = _cards_named_in_reply(card_reply, shown_cards)
+                meal_photo_task, meal_photo_cards = self._ensure_meal_photos(
+                    prepared,
+                    claim.assistant_message.id,
+                    suggestions,
+                    photos_saved,
+                    photo_generation,
+                    meal_photo_task,
+                    meal_photo_cards,
+                )
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
@@ -877,6 +913,15 @@ class ChatTurnOrchestrator:
                                 name=name,
                                 content=result,
                             )
+                        )
+                        meal_photo_task, meal_photo_cards = self._ensure_meal_photos(
+                            prepared,
+                            claim.assistant_message.id,
+                            suggestions,
+                            photos_saved,
+                            photo_generation,
+                            meal_photo_task,
+                            meal_photo_cards,
                         )
                     generation["tool_calls"] = None
                     generation["tools"] = None
@@ -998,6 +1043,38 @@ class ChatTurnOrchestrator:
                 )
 
             citations = _citations_for(final_text, chunks)
+            # Chips only need the finished sentence, so they run while any
+            # photos that are still generating finish.
+            follow_task = asyncio.create_task(
+                self._generate_follow_ups(
+                    locale=resolved_locale,
+                    intent=intent,
+                    slot=meal_slot,
+                    user_message=trimmed,
+                    assistant_text=final_text,
+                    has_suggestions=bool(suggestions),
+                    suggestion_names=meal_names(suggestions),
+                )
+            )
+            meal_photo_task, meal_photo_cards = self._ensure_meal_photos(
+                prepared,
+                claim.assistant_message.id,
+                suggestions,
+                photos_saved,
+                photo_generation,
+                meal_photo_task,
+                meal_photo_cards,
+            )
+            if meal_photo_task is not None:
+                try:
+                    imaged = await asyncio.shield(meal_photo_task)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("chat next-meal image attach failed", exc_info=True)
+                    imaged = None
+                if isinstance(imaged, list) and imaged:
+                    suggestions = imaged
             ready_payload = _reply_payload(
                 suggestions=suggestions,
                 follow_ups=[],
@@ -1011,18 +1088,6 @@ class ChatTurnOrchestrator:
                 ),
             )
             ready_payload.pop("follow_ups", None)
-            # Chips only need the finished sentence. Do not wait for meal photos.
-            follow_task = asyncio.create_task(
-                self._generate_follow_ups(
-                    locale=resolved_locale,
-                    intent=intent,
-                    slot=meal_slot,
-                    user_message=trimmed,
-                    assistant_text=final_text,
-                    has_suggestions=bool(suggestions),
-                    suggestion_names=meal_names(suggestions),
-                )
-            )
             completed = await self._complete(
                 claim.assistant_message,
                 content=final_text,
@@ -1058,6 +1123,9 @@ class ChatTurnOrchestrator:
                 )
                 return
             reply_saved = True
+            # The saved message is COMPLETED, so a photo task that outlived a
+            # disconnect can store URLs. The live events below already carry them.
+            photos_saved.set()
             yield ChatSseEvent(
                 event="message.ready",
                 data={
@@ -1131,27 +1199,6 @@ class ChatTurnOrchestrator:
                     ),
                 },
             )
-            # Photo generation can take tens of seconds. The reply is already
-            # done, so free the chat slot before that wait. The photo task is
-            # detached so a client disconnect does not drop the stored URLs.
-            # The stream stays open until the photo event is sent: closing
-            # early would leave the live card on the fork placeholder, because
-            # nothing else pushes the URL to the open chat.
-            self.release_slot(prepared)
-            if suggestions:
-                photo_task = asyncio.create_task(
-                    self._persist_meal_photos(completed.id, suggestions)
-                )
-                _detach_chat_task(photo_task)
-                imaged = await asyncio.shield(photo_task)
-                if imaged:
-                    yield ChatSseEvent(
-                        event="message.suggestions",
-                        data={
-                            "assistant_message_id": completed.id,
-                            "suggestions": imaged,
-                        },
-                    )
         except asyncio.CancelledError:
             if reply_saved:
                 raise
@@ -1252,6 +1299,7 @@ class ChatTurnOrchestrator:
                     await follow_task
                 except asyncio.CancelledError:
                     pass
+            photos_saved.set()
             self.release_slot(prepared)
             distribution_metric(
                 "chat.turn.latency_ms",
@@ -1996,6 +2044,83 @@ class ChatTurnOrchestrator:
             suggestion_names=names,
         )
 
+    def _ensure_meal_photos(
+        self,
+        prepared: PreparedChatTurn,
+        message_id: str,
+        suggestions: list[dict[str, Any]],
+        saved: asyncio.Event,
+        generation: list[int],
+        task: asyncio.Task[list[dict[str, Any]]] | None,
+        cards: list[dict[str, Any]] | None,
+    ) -> tuple[
+        asyncio.Task[list[dict[str, Any]]] | None,
+        list[dict[str, Any]] | None,
+    ]:
+        """Start photos once per card list, overlapping the meal sentence.
+
+        The same list keeps the task already running. A different list
+        reschedules and bumps the photo generation token so the old task
+        cannot store its URLs.
+        """
+        if not suggestions:
+            return task, cards
+        if task is not None and cards is suggestions:
+            return task, cards
+        scheduled = self._schedule_meal_photos(
+            prepared,
+            message_id,
+            suggestions,
+            saved,
+            generation,
+            previous=task,
+        )
+        if scheduled is None or scheduled is task:
+            return task, cards
+        return scheduled, suggestions
+
+    def _schedule_meal_photos(
+        self,
+        prepared: PreparedChatTurn,
+        message_id: str,
+        suggestions: list[dict[str, Any]],
+        saved: asyncio.Event,
+        generation: list[int],
+        *,
+        previous: asyncio.Task[list[dict[str, Any]]] | None,
+    ) -> asyncio.Task[list[dict[str, Any]]] | None:
+        """Start card photos without holding the chat slot.
+
+        Called as soon as the card list exists so generation overlaps the
+        meal sentence. The caller still awaits the task before
+        ``message.ready`` and ``message.completed``. The store task writes
+        the URLs if the client leaves before that, once the message is saved.
+        """
+        if getattr(self._next_meals, "attach_images", None) is None or not suggestions:
+            return previous
+        generation[0] += 1
+        token = generation[0]
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self.release_slot(prepared)
+        task = asyncio.create_task(self._attach_meal_images(suggestions))
+        _detach_chat_task(task)
+
+        async def _store_when_saved() -> None:
+            try:
+                imaged = await task
+            except Exception:
+                return
+            await saved.wait()
+            if token != generation[0]:
+                return
+            if imaged is suggestions or not isinstance(imaged, list):
+                return
+            await self._store_meal_suggestions(message_id, imaged)
+
+        _detach_chat_task(asyncio.create_task(_store_when_saved()))
+        return task
+
     async def _attach_meal_images(
         self, suggestions: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -2010,16 +2135,6 @@ class ChatTurnOrchestrator:
         if not isinstance(updated, list):
             return suggestions
         return updated
-
-    async def _persist_meal_photos(
-        self, message_id: str, suggestions: list[dict[str, Any]]
-    ) -> list[dict[str, Any]] | None:
-        """Generate card photos and store them even if the SSE client is gone."""
-        imaged = await self._attach_meal_images(suggestions)
-        if imaged is suggestions:
-            return None
-        await self._store_meal_suggestions(message_id, imaged)
-        return imaged
 
     async def _store_meal_suggestions(
         self, message_id: str, suggestions: list[dict[str, Any]]
