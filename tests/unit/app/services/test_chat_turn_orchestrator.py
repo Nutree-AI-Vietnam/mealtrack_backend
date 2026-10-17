@@ -1893,6 +1893,31 @@ async def test_meal_intro_is_sent_before_food_photos():
 
 
 @pytest.mark.asyncio
+async def test_meal_photo_generation_releases_the_chat_slot():
+    class _Meals:
+        def __init__(self) -> None:
+            self.slot_free = False
+
+        async def fetch(self, **kwargs):
+            del kwargs
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="lunch"
+            )
+
+        async def attach_images(self, suggestions):
+            await asyncio.wait_for(orchestrator._semaphore.acquire(), timeout=0.05)
+            orchestrator._semaphore.release()
+            self.slot_free = True
+            return suggestions
+
+    meals = _Meals()
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), next_meals=meals)
+    orchestrator._semaphore = asyncio.Semaphore(1)
+    await _stream(orchestrator, content="What should I eat next?")
+    assert meals.slot_free
+
+
+@pytest.mark.asyncio
 async def test_provider_drop_keeps_the_partial_reply():
     class _DropAfterSentence:
         async def stream(self, **kwargs):

@@ -1062,6 +1062,9 @@ class ChatTurnOrchestrator:
                     ),
                 },
             )
+            # Photo generation can take tens of seconds. The reply is already
+            # done, so free the chat slot before that wait.
+            self.release_slot(prepared)
             if suggestions:
                 imaged = await self._attach_meal_images(suggestions)
                 if imaged is not suggestions:
