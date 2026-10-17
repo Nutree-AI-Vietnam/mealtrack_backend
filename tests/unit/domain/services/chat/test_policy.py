@@ -2,8 +2,10 @@ from src.domain.model.chat import ChatUserContext, RetrievedKnowledgeChunk
 from src.domain.services.chat.policy import (
     SentenceBuffer,
     build_grounding_message,
+    calorie_amounts_stated_by_user,
     citations_are_valid,
     filter_chunks_for_allergies,
+    finished_assistant_text,
     hydrate_citations,
     inspect_sentence,
     is_near_duplicate,
@@ -164,6 +166,7 @@ def test_grounding_includes_free_text_contract_when_intent_missing() -> None:
     assert "tap Log on it" in text
     assert "authoritative portions" in text
     assert "Do not list recipe cards" in text
+    assert "kilograms only" in text
 
 
 def test_sentence_buffer_emits_on_boundary_and_flush():
@@ -286,6 +289,75 @@ def test_malformed_same_separator_number_blocks_without_raising():
             chunks=[],
         )
         is False
+    )
+
+
+def test_user_stated_calorie_amount_is_traceable_including_vietnamese_calo():
+    context = _context()
+    user = "Ngày tôi ăn dư 200calo có sao không"
+    assert calorie_amounts_stated_by_user(user) == {200}
+    assert calorie_amounts_stated_by_user("Ăn ngày dư 200 trong 4 tháng") == {200}
+    assert (
+        nutrition_numbers_are_traceable(
+            "Không sao, chênh lệch 200 kcal so với mục tiêu 1800 calories.",
+            context=context,
+            chunks=[],
+            user_text=user,
+        )
+        is True
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "200 calo là một phần nhỏ.",
+            context=context,
+            chunks=[],
+            user_text="dư 200",
+        )
+        is True
+    )
+
+
+def test_user_month_count_does_not_authorize_a_macro_or_invented_calories():
+    context = _context()
+    assert (
+        nutrition_numbers_are_traceable(
+            "Eat 4 g protein.",
+            context=context,
+            chunks=[],
+            user_text="trong 4 tháng",
+        )
+        is False
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "That is 24000 kcal.",
+            context=context,
+            chunks=[],
+            user_text="dư 200 calo",
+        )
+        is False
+    )
+    assert (
+        nutrition_numbers_are_traceable(
+            "Eat 200 g protein.",
+            context=context,
+            chunks=[],
+            user_text="dư 200 calo",
+        )
+        is False
+    )
+
+
+def test_finished_assistant_text_drops_token_cutoff_stumps():
+    assert finished_assistant_text("Nếu") == ""
+    assert finished_assistant_text("Không sao, chênh lệch") == ""
+    assert (
+        finished_assistant_text("Xin lỗi, câu trước bị thiếu ý.\n\nNếu")
+        == "Xin lỗi, câu trước bị thiếu ý."
+    )
+    assert (
+        finished_assistant_text("You still have room for a balanced dinner.")
+        == "You still have room for a balanced dinner."
     )
 
 

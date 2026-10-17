@@ -21,6 +21,9 @@ from src.domain.model.chat import (
 from src.domain.model.chat import (
     CHAT_MAX_OUTPUT_TOKENS as _CHAT_MAX_OUTPUT_TOKENS,
 )
+from src.domain.model.chat import (
+    CHAT_OUTPUT_TOKEN_CEILING as _CHAT_OUTPUT_TOKEN_CEILING,
+)
 from src.domain.services.meal_analysis.fast_path_policy import (
     MEAL_ANALYZE_DEFAULT_MAX_OUTPUT_TOKENS,
 )
@@ -217,7 +220,13 @@ class Settings(BaseSettings):
     CHAT_EMBEDDING_MODEL: str = Field(default="text-embedding-3-small")
     CHAT_REASONING_EFFORT: str = Field(default="low")
     CHAT_MAX_OUTPUT_TOKENS: int = Field(
-        default=_CHAT_MAX_OUTPUT_TOKENS, ge=100, le=2000
+        default=_CHAT_MAX_OUTPUT_TOKENS,
+        ge=100,
+        le=_CHAT_OUTPUT_TOKEN_CEILING,
+        description=(
+            "Visible answer plus reasoning tokens. gpt-5.6-luna spends part of "
+            "this budget before any reply text; values under 4096 truncate answers."
+        ),
     )
     CHAT_REQUEST_TIMEOUT_SECONDS: int = Field(default=45, ge=5)
     CHAT_DAILY_TURN_BUDGET: int = Field(default=_CHAT_DAILY_TURN_BUDGET, ge=1)

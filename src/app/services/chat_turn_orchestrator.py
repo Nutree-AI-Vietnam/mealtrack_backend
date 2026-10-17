@@ -28,6 +28,7 @@ from src.domain.model.chat import (
     CHAT_HISTORY_LIMIT,
     CHAT_MAX_OUTPUT_TOKENS,
     CHAT_MAX_USER_MESSAGE_CHARS,
+    CHAT_OUTPUT_TOKEN_CEILING,
     CHAT_PROMPT_VERSION,
     CHAT_RETRIEVAL_MAX_CHUNKS,
     ChatCitation,
@@ -90,6 +91,7 @@ from src.domain.services.chat.policy import (
     citations_are_valid,
     cited_labels,
     filter_chunks_for_allergies,
+    finished_assistant_text,
     hydrate_citations,
     inspect_sentence,
     meal_reply_is_usable,
@@ -214,7 +216,12 @@ class ChatTurnOrchestrator:
         self._daily_turn_budget = daily_turn_budget
         self._generation_lease_seconds = generation_lease_seconds
         self._cache_policy = cache_policy
-        self._max_output_tokens = max_output_tokens
+        # A configured cap below the model default still starves reasoning
+        # tokens and returns a few cut-off words. Never go under the floor.
+        self._max_output_tokens = min(
+            CHAT_OUTPUT_TOKEN_CEILING,
+            max(int(max_output_tokens), CHAT_MAX_OUTPUT_TOKENS),
+        )
         self._semaphore = semaphore or asyncio.Semaphore(max(1, global_concurrency))
         self._circuit = circuit_breaker
         self._next_meals = next_meals
@@ -403,6 +410,7 @@ class ChatTurnOrchestrator:
             "usage": ChatUsage(model=self._model),
             "provider_response_id": None,
             "blocked": False,
+            "truncated": False,
             "tools": [],
         }
 
@@ -703,6 +711,7 @@ class ChatTurnOrchestrator:
                 sentences.append(meal_reply)
                 generation["text"] = meal_reply
                 generation["blocked"] = False
+                generation["truncated"] = False
             elif should_prefetch_next_meal and not suggestions:
                 # The picking line is already on screen. A model sentence here
                 # would invent a dish, because there is no card to name.
@@ -714,6 +723,7 @@ class ChatTurnOrchestrator:
                 sentences.append(unavailable)
                 generation["text"] = unavailable
                 generation["blocked"] = False
+                generation["truncated"] = False
                 generation["tools"] = None
                 if unavailable != streamed_text:
                     yield ChatSseEvent(
@@ -733,6 +743,7 @@ class ChatTurnOrchestrator:
                 sentences.append(card_reply)
                 generation["text"] = card_reply
                 generation["blocked"] = False
+                generation["truncated"] = False
                 generation["tools"] = None
                 suggestions = _cards_named_in_reply(card_reply, shown_cards)
                 yield ChatSseEvent(
@@ -845,40 +856,76 @@ class ChatTurnOrchestrator:
                     generation["tool_calls"] = None
                     generation["tools"] = None
 
-            final_text = "".join(sentences).strip()
-            usage = generation["usage"]
-            provider_response_id = generation["provider_response_id"]
-            blocked = bool(generation["blocked"])
-            if blocked:
-                # Mid-token safety cuts leave truncated locale numbers / unclosed
-                # markdown (e.g. "còn khoảng **1.821"). Prefer a clean sentence.
-                final_text = sanitize_incomplete_assistant_text(final_text)
-                generation["text"] = final_text
-            if answer_from_shown_meals and card_reply:
-                if not cook_reply_already_said(final_text, card_reply):
-                    if card_reply != final_text:
+                if _should_retry_output_limit(generation, sentences):
+                    generation["output_limit_retried"] = True
+                    already_streamed = bool("".join(sentences).strip())
+                    sentences.clear()
+                    increment_metric(
+                        "chat.turn.output_truncated",
+                        attributes={"locale": resolved_locale},
+                    )
+                    first_retry_delta = True
+                    async for delta_text in self._iter_validated_sentences(
+                        context=context,
+                        chunks=chunks,
+                        history=history,
+                        user_message=current_user_message,
+                        generation=generation,
+                        intent=intent,
+                        meal_candidates=suggestions,
+                        traceable_meals=_traceable_meals(suggestions, history_messages),
+                        earlier=earlier,
+                        output_token_budget=min(
+                            self._max_output_tokens * 2,
+                            CHAT_OUTPUT_TOKEN_CEILING,
+                        ),
+                    ):
+                        if not delta_text:
+                            continue
+                        sentences.append(delta_text)
                         yield ChatSseEvent(
                             event="message.delta",
                             data={
                                 "assistant_message_id": claim.assistant_message.id,
-                                "delta": card_reply,
-                                "replace": True,
+                                "delta": delta_text,
+                                "replace": already_streamed and first_retry_delta,
                             },
                         )
+                        first_retry_delta = False
+
+            streamed_text = "".join(sentences).strip()
+            final_text = streamed_text
+            usage = generation["usage"]
+            provider_response_id = generation["provider_response_id"]
+            blocked = bool(generation["blocked"])
+            if blocked or generation.get("truncated"):
+                # A safety stop or a token cap leaves a stump ("Nếu",
+                # "Không sao, chênh lệch"). Keep finished sentences only.
+                final_text = finished_assistant_text(final_text)
+                generation["text"] = final_text
+            if answer_from_shown_meals and card_reply:
+                if not cook_reply_already_said(final_text, card_reply):
                     final_text = card_reply
                     sentences.clear()
                     sentences.append(card_reply)
                     generation["text"] = card_reply
                     generation["blocked"] = False
+                    generation["truncated"] = False
                     blocked = False
             if not final_text:
                 blocked = True
                 final_text = safe_fallback_message(resolved_locale)
+                generation["text"] = final_text
+            if final_text != streamed_text:
+                # A truncated retry that produced nothing must still replace the
+                # stump the client already showed.
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
                         "assistant_message_id": claim.assistant_message.id,
                         "delta": final_text,
+                        "replace": bool(streamed_text)
+                        or bool(generation.get("output_limit_retried")),
                     },
                 )
 
@@ -1635,6 +1682,7 @@ class ChatTurnOrchestrator:
         meal_candidates: list[dict[str, Any]] | None = None,
         traceable_meals: list[dict[str, Any]] | None = None,
         earlier: str | None = None,
+        output_token_budget: int | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
@@ -1660,12 +1708,15 @@ class ChatTurnOrchestrator:
         allergies = context.allergies or []
         last_error: Exception | None = None
         yielded_any = False
+        stated_user_text = _stated_user_text(user_message, history)
+        budget = output_token_budget or self._max_output_tokens
 
         for attempt in range(2):
             kept: list[str] = []
             pending = ""
             buffer = SentenceBuffer()
             generation["blocked"] = False
+            generation["truncated"] = False
             try:
                 async for delta in self._completion.stream(
                     model=self._model,
@@ -1673,7 +1724,7 @@ class ChatTurnOrchestrator:
                     grounding_message=grounding,
                     history=history,
                     user_message=user_message,
-                    max_output_tokens=self._max_output_tokens,
+                    max_output_tokens=budget,
                     cache_kwargs=cache_kwargs,
                     tools=generation.get("tools"),
                 ):
@@ -1681,6 +1732,8 @@ class ChatTurnOrchestrator:
                         generation["provider_response_id"] = delta.provider_response_id
                     if delta.usage is not None:
                         generation["usage"] = delta.usage
+                    if delta.truncated:
+                        generation["truncated"] = True
                     if delta.tool_calls is not None:
                         generation["tool_calls"] = delta.tool_calls
                     if delta.text:
@@ -1701,6 +1754,7 @@ class ChatTurnOrchestrator:
                             meal_candidates=traceable_meals
                             if traceable_meals is not None
                             else meal_candidates,
+                            user_text=stated_user_text,
                         )
                         if next_pending is None:
                             generation["blocked"] = True
@@ -2262,6 +2316,32 @@ def _citations_for(
     return citations
 
 
+def _stated_user_text(user_message: str, history: list[ChatHistoryTurn]) -> str:
+    """User turns only, so a follow-up like "Hả" still carries the stated 200 kcal."""
+    parts = [
+        turn.content
+        for turn in history
+        if turn.role == ChatMessageRole.USER and turn.content
+    ]
+    if user_message:
+        parts.append(user_message)
+    return "\n".join(parts)
+
+
+def _should_retry_output_limit(
+    generation: dict[str, Any], sentences: list[str]
+) -> bool:
+    """One more pass when reasoning tokens ate the visible answer."""
+    if generation.get("output_limit_retried"):
+        return False
+    if generation.get("blocked") or generation.get("tool_calls"):
+        return False
+    if not generation.get("truncated"):
+        return False
+    text = "".join(sentences).strip()
+    return finished_assistant_text(text) != text
+
+
 def _accept_stream_chunk(
     *,
     emitted: str,
@@ -2271,6 +2351,7 @@ def _accept_stream_chunk(
     chunks: list[RetrievedKnowledgeChunk],
     context: ChatUserContext,
     meal_candidates: list[dict[str, Any]] | None,
+    user_text: str = "",
 ) -> str | None:
     """Return the new unfinished sentence if `chunk` is safe to stream."""
     tentative = emitted + chunk
@@ -2281,6 +2362,7 @@ def _accept_stream_chunk(
         context=context,
         chunks=chunks,
         meal_candidates=meal_candidates,
+        user_text=user_text,
     ):
         return None
     splitter = SentenceBuffer()

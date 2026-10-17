@@ -13,6 +13,8 @@ from src.domain.exceptions.chat_exceptions import (
     ChatThreadNotFoundError,
 )
 from src.domain.model.chat import (
+    CHAT_MAX_OUTPUT_TOKENS,
+    CHAT_OUTPUT_TOKEN_CEILING,
     ChatClaimKind,
     ChatCompletionDelta,
     ChatMealSummary,
@@ -25,7 +27,6 @@ from src.domain.model.chat import (
     ChatUsage,
     ChatUserContext,
 )
-from src.domain.services.chat.policy import out_of_scope_message
 from src.domain.services.chat.thread_listing import (
     decode_thread_cursor,
     encode_thread_cursor,
@@ -569,6 +570,113 @@ async def test_untraceable_nutrition_is_not_streamed_to_client():
     assert "9999" not in deltas
     assert repo.completed is not None
     assert "9999" not in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_safety_cutoff_does_not_persist_a_dangling_fragment():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo,
+        completion=_FakeCompletion(["Nếu ", "dư 24000 kcal mỗi ngày. "]),
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn dư 200 calo trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert repo.completed is not None
+    assert repo.completed["content"] != "Nếu"
+    assert "24000" not in repo.completed["content"]
+    assert "Nutree đã ghi" in repo.completed["content"]
+    assert any(
+        event.event == "message.delta" and event.data.get("replace") is True
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_stated_surplus_is_streamed():
+    repo = _FakeRepo(claim=_claim())
+    answer = "Dư 200 kcal vẫn ổn so với mục tiêu 1800 calories. "
+    orchestrator = _orchestrator(repo, completion=_FakeCompletion([answer]))
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ngày tôi ăn dư 200calo có sao không",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    deltas = "".join(
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    )
+    assert "200 kcal" in deltas
+    assert repo.completed is not None
+    assert "200 kcal" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_truncated_reasoning_budget_retries_with_a_higher_cap():
+    class _TruncatingThenFull:
+        def __init__(self):
+            self.budgets: list[int] = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(text="Nếu")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+            yield ChatCompletionDelta(
+                text="",
+                done=True,
+                usage=ChatUsage(
+                    input_tokens=10, output_tokens=40, model="gpt-5.6-luna"
+                ),
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _TruncatingThenFull()
+    orchestrator = _orchestrator(repo, completion=completion)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert completion.budgets == [
+        CHAT_MAX_OUTPUT_TOKENS,
+        min(CHAT_MAX_OUTPUT_TOKENS * 2, CHAT_OUTPUT_TOKEN_CEILING),
+    ]
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert any(event.data.get("replace") is True for event in events)
 
 
 @pytest.mark.asyncio

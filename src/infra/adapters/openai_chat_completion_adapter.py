@@ -133,6 +133,7 @@ class OpenAIChatCompletionAdapter(
         provider_response_id: str | None = None
         usage = ChatUsage(model=model)
         full_chunk = None
+        truncated = False
 
         async for chunk in llm.astream(messages, **invocation):
             if full_chunk is None:
@@ -145,6 +146,7 @@ class OpenAIChatCompletionAdapter(
             chunk_usage = _chunk_usage(chunk, model)
             if chunk_usage is not None:
                 usage = chunk_usage
+            truncated = truncated or _response_truncated(chunk)
             if text:
                 yield ChatCompletionDelta(
                     text=text,
@@ -163,6 +165,7 @@ class OpenAIChatCompletionAdapter(
             usage=usage,
             done=True,
             tool_calls=tool_calls if tool_calls else None,
+            truncated=truncated,
         )
 
     def _structured_llm(self, model: str) -> ChatOpenAI:
@@ -369,6 +372,35 @@ def _response_id(chunk: Any) -> str | None:
             return value
     ident = getattr(chunk, "id", None)
     return ident if isinstance(ident, str) else None
+
+
+def _response_truncated(chunk: Any) -> bool:
+    """True when the provider stopped because the output cap was exhausted.
+
+    On gpt-5.6-luna that cap includes hidden reasoning tokens, so the visible
+    reply can end mid-word while ``finish_reason`` / ``incomplete_details``
+    report ``length`` or ``max_output_tokens``.
+    """
+    metadata = getattr(chunk, "response_metadata", None) or {}
+    finish = _metadata_value(metadata, "finish_reason")
+    if isinstance(finish, str) and finish.lower() in {
+        "length",
+        "max_tokens",
+        "max_output_tokens",
+    }:
+        return True
+    status = _metadata_value(metadata, "status")
+    if not isinstance(status, str) or status.lower() != "incomplete":
+        return False
+    details = _metadata_value(metadata, "incomplete_details") or {}
+    reason = _metadata_value(details, "reason")
+    return reason in {"max_output_tokens", "length"}
+
+
+def _metadata_value(metadata: Any, key: str) -> Any:
+    if isinstance(metadata, dict):
+        return metadata.get(key)
+    return getattr(metadata, key, None)
 
 
 def _chunk_usage(chunk: Any, model: str) -> ChatUsage | None:
