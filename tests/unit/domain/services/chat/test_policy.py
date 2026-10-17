@@ -317,6 +317,21 @@ def test_user_stated_calorie_amount_is_traceable_including_vietnamese_calo():
     )
 
 
+def test_height_and_weight_do_not_authorize_a_calorie_claim():
+    context = _context()
+    assert calorie_amounts_stated_by_user("tôi cao 165cm nặng 70kg") == set()
+    assert calorie_amounts_stated_by_user("Ăn ngày dư 200 trong 4 tháng") == {200}
+    assert (
+        nutrition_numbers_are_traceable(
+            "That is 165 kcal.",
+            context=context,
+            chunks=[],
+            user_text="tôi cao 165cm",
+        )
+        is False
+    )
+
+
 def test_user_month_count_does_not_authorize_a_macro_or_invented_calories():
     context = _context()
     assert (
@@ -358,6 +373,12 @@ def test_finished_assistant_text_drops_token_cutoff_stumps():
     assert (
         finished_assistant_text("You still have room for a balanced dinner.")
         == "You still have room for a balanced dinner."
+    )
+    assert (
+        finished_assistant_text(
+            "Hôm nay bạn còn khoảng 1.200 kcal so với mục tiêu. Nếu bạn"
+        )
+        == "Hôm nay bạn còn khoảng 1.200 kcal so với mục tiêu."
     )
 
 

@@ -105,6 +105,11 @@ _LOCAL_NUMBER = (
 )
 
 _CALORIE_UNIT = r"kcal|calories?|calo|cal"
+# A height or a weight is not a calorie the user stated. ``dư 200`` still counts.
+_NON_ENERGY_UNIT_RE = re.compile(
+    r"\s*(?:cm|mm|kg|kilograms?|g|grams?|mg|ml|lb|lbs|oz|tháng|thang|tuần|tuan|ngày|ngay|weeks?|months?|days?)\b",
+    re.IGNORECASE,
+)
 _CALORIE_CLAIM_RE = re.compile(
     rf"(?P<num>{_LOCAL_NUMBER})\s*(?:{_CALORIE_UNIT})\b",
     re.IGNORECASE,
@@ -563,6 +568,8 @@ def calorie_amounts_stated_by_user(text: str) -> set[float]:
         found.add(number)
     bare = re.compile(rf"(?<![\d.,])(?P<num>{_LOCAL_NUMBER})(?![\d.,])")
     for match in bare.finditer(text):
+        if _NON_ENERGY_UNIT_RE.match(text[match.end() :]):
+            continue
         try:
             number, _ = _parse_localized_number(match.group("num"))
         except ValueError:
@@ -682,6 +689,9 @@ def _parse_localized_number(raw: str) -> tuple[float, int]:
     return float(value), 0
 
 
+_SENTENCE_ENDING_RE = re.compile(r"[.!?…][\"')\]]*(?=\s|$)")
+
+
 def finished_assistant_text(text: str) -> str:
     """Keep only sentences that actually ended.
 
@@ -692,9 +702,8 @@ def finished_assistant_text(text: str) -> str:
     cleaned = sanitize_incomplete_assistant_text(text)
     if not cleaned:
         return ""
-    if re.search(r"[.!?…][\"')\]]*$", cleaned):
-        return cleaned
-    endings = list(re.finditer(r"[.!?…][\"')\]]*", cleaned))
+    # A period inside 1.200 is a thousands separator, not the end of a sentence.
+    endings = list(_SENTENCE_ENDING_RE.finditer(cleaned))
     if not endings:
         return ""
     return cleaned[: endings[-1].end()].strip()

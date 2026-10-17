@@ -5,6 +5,8 @@ import pytest
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
     SuggestionChatDiscoverAdapter,
+    _fallback_meals_for_slot,
+    _filter_meals_for_diet,
     map_discover_meals,
 )
 from src.domain.model.chat import ChatUserContext
@@ -672,6 +674,24 @@ async def test_vegan_snack_fallback_is_not_greek_yogurt() -> None:
     assert result.suggestions
     assert "yogurt" not in blob
     assert "sữa chua" not in blob
+
+
+def test_dairy_free_fallback_drops_yogurt_and_keeps_eggs() -> None:
+    snacks = _filter_meals_for_diet(
+        _fallback_meals_for_slot("snack", "en", 200),
+        ["dairy_free"],
+    )
+    snack_names = " ".join(meal["english_name"] for meal in snacks).casefold()
+    assert snacks
+    assert "yogurt" not in snack_names
+    assert "oat" in snack_names
+
+    breakfasts = _filter_meals_for_diet(
+        _fallback_meals_for_slot("breakfast", "en", 350),
+        ["dairy_free"],
+    )
+    breakfast_names = " ".join(meal["english_name"] for meal in breakfasts).casefold()
+    assert "egg" in breakfast_names
 
 
 @pytest.mark.asyncio

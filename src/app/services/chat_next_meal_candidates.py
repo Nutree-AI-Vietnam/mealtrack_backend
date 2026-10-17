@@ -473,18 +473,20 @@ _MEAT_WORDS = (
     "cá",
     "tôm",
 )
-_DAIRY_EGG_WORDS = (
+_DAIRY_WORDS = (
     "yogurt",
     "yoghurt",
     "cheese",
     "butter",
     "cream",
-    "honey",
     "whey",
     "casein",
+    "sữa chua",
+)
+_EGG_HONEY_WORDS = (
+    "honey",
     "egg",
     "trứng",
-    "sữa chua",
 )
 _PLANT_MILKS = (
     "almond milk",
@@ -501,18 +503,28 @@ def _filter_meals_for_diet(
     meals: list[dict[str, Any]],
     dietary_preferences: list[str],
 ) -> list[dict[str, Any]]:
-    """Drop meat for vegetarian users and dairy or eggs for vegan users."""
+    """Drop meat, dairy, or eggs when the profile forbids them."""
     prefs = {str(item).casefold() for item in dietary_preferences if item}
     vegan = any("vegan" in item or "thuần chay" in item for item in prefs)
     vegetarian = vegan or any("vegetarian" in item or "chay" in item for item in prefs)
-    if not vegetarian:
+    dairy_free = vegan or any(
+        "dairy_free" in item
+        or "dairy-free" in item
+        or "no dairy" in item
+        or "không sữa" in item
+        or "khong sua" in item
+        for item in prefs
+    )
+    if not vegetarian and not dairy_free:
         return list(meals)
     kept: list[dict[str, Any]] = []
     for meal in meals:
         blob = _meal_food_blob(meal)
-        if _blob_has_word(blob, _MEAT_WORDS):
+        if vegetarian and _blob_has_word(blob, _MEAT_WORDS):
             continue
         if vegan and _has_dairy_or_egg(blob):
+            continue
+        if dairy_free and _has_dairy(blob):
             continue
         kept.append(meal)
     return kept
@@ -535,13 +547,17 @@ def _blob_has_word(blob: str, words: tuple[str, ...]) -> bool:
     )
 
 
-def _has_dairy_or_egg(blob: str) -> bool:
-    if _blob_has_word(blob, _DAIRY_EGG_WORDS):
+def _has_dairy(blob: str) -> bool:
+    if _blob_has_word(blob, _DAIRY_WORDS):
         return True
     stripped = blob
     for plant in _PLANT_MILKS:
         stripped = stripped.replace(plant, " ")
     return _blob_has_word(stripped, ("milk", "sữa"))
+
+
+def _has_dairy_or_egg(blob: str) -> bool:
+    return _has_dairy(blob) or _blob_has_word(blob, _EGG_HONEY_WORDS)
 
 
 def _fallback_meals_for_slot(
