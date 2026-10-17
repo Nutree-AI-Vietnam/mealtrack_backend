@@ -113,6 +113,25 @@ from src.observability import distribution_metric, increment_metric, log_event
 
 logger = logging.getLogger(__name__)
 
+# Photo work started after the reply is saved. A client disconnect must not
+# cancel it, and the task has to stay referenced until it finishes.
+_detached_chat_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _detach_chat_task(task: asyncio.Task[Any]) -> None:
+    _detached_chat_tasks.add(task)
+
+    def _finished(done: asyncio.Task[Any]) -> None:
+        _detached_chat_tasks.discard(done)
+        if done.cancelled():
+            return
+        error = done.exception()
+        if error is not None:
+            logger.info("detached chat task failed", exc_info=error)
+
+    task.add_done_callback(_finished)
+
+
 _RETRYABLE_PROVIDER_MARKERS = (
     "timeout",
     "temporarily",
@@ -405,6 +424,7 @@ class ChatTurnOrchestrator:
         suggestions: list[dict[str, Any]] = []
         discover_session_id: str | None = None
         follow_task: asyncio.Task[list[dict[str, str]]] | None = None
+        reply_saved = False
         generation: dict[str, Any] = {
             "text": "",
             "usage": ChatUsage(model=self._model),
@@ -1020,6 +1040,7 @@ class ChatTurnOrchestrator:
                     },
                 )
                 return
+            reply_saved = True
             yield ChatSseEvent(
                 event="message.ready",
                 data={
@@ -1094,21 +1115,26 @@ class ChatTurnOrchestrator:
                 },
             )
             # Photo generation can take tens of seconds. The reply is already
-            # done, so free the chat slot before that wait.
+            # done, so free the chat slot before that wait. The photo task is
+            # detached so a client disconnect does not drop the stored URLs.
             self.release_slot(prepared)
             if suggestions:
-                imaged = await self._attach_meal_images(suggestions)
-                if imaged is not suggestions:
-                    suggestions = imaged
-                    await self._store_meal_suggestions(completed.id, suggestions)
+                photo_task = asyncio.create_task(
+                    self._persist_meal_photos(completed.id, suggestions)
+                )
+                _detach_chat_task(photo_task)
+                imaged = await asyncio.shield(photo_task)
+                if imaged:
                     yield ChatSseEvent(
                         event="message.suggestions",
                         data={
                             "assistant_message_id": completed.id,
-                            "suggestions": suggestions,
+                            "suggestions": imaged,
                         },
                     )
         except asyncio.CancelledError:
+            if reply_saved:
+                raise
             partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
             if partial:
                 try:
@@ -1920,6 +1946,16 @@ class ChatTurnOrchestrator:
         if not isinstance(updated, list):
             return suggestions
         return updated
+
+    async def _persist_meal_photos(
+        self, message_id: str, suggestions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]] | None:
+        """Generate card photos and store them even if the SSE client is gone."""
+        imaged = await self._attach_meal_images(suggestions)
+        if imaged is suggestions:
+            return None
+        await self._store_meal_suggestions(message_id, imaged)
+        return imaged
 
     async def _store_meal_suggestions(
         self, message_id: str, suggestions: list[dict[str, Any]]

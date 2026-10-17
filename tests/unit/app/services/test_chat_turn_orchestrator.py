@@ -2134,6 +2134,73 @@ async def test_meal_photo_generation_releases_the_chat_slot():
 
 
 @pytest.mark.asyncio
+async def test_disconnect_during_meal_photos_still_stores_them():
+    class _Meals:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def fetch(self, **kwargs):
+            del kwargs
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="dinner"
+            )
+
+        async def attach_images(self, suggestions):
+            self.started.set()
+            await self.release.wait()
+            return [
+                {**card, "thumbnail_url": "https://cdn.example/meal.jpg"}
+                for card in suggestions
+            ]
+
+    meals = _Meals()
+    repo = _FakeRepo(claim=_claim())
+    saved = asyncio.Event()
+    completes = 0
+
+    async def save_reply_suggestions(**kwargs):
+        repo.saved_suggestions = kwargs
+        saved.set()
+
+    original_complete = repo.complete_assistant_message
+
+    async def complete_assistant_message(**kwargs):
+        nonlocal completes
+        completes += 1
+        return await original_complete(**kwargs)
+
+    repo.save_reply_suggestions = save_reply_suggestions
+    repo.complete_assistant_message = complete_assistant_message
+    orchestrator = _orchestrator(repo, next_meals=meals)
+
+    async def collect() -> None:
+        async for _event in orchestrator.stream_turn(
+            user_id="u1",
+            content="What should I eat next?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        ):
+            pass
+
+    task = asyncio.create_task(collect())
+    await asyncio.wait_for(meals.started.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not saved.is_set()
+    meals.release.set()
+    await asyncio.wait_for(saved.wait(), timeout=1)
+    assert completes == 1
+    assert repo.failed is None
+    assert repo.saved_suggestions["suggestions"][0]["thumbnail_url"] == (
+        "https://cdn.example/meal.jpg"
+    )
+
+
+@pytest.mark.asyncio
 async def test_provider_drop_keeps_the_partial_reply():
     class _DropAfterSentence:
         async def stream(self, **kwargs):
