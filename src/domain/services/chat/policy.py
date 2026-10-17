@@ -566,9 +566,15 @@ def calorie_amounts_stated_by_user(text: str) -> set[float]:
         except ValueError:
             continue
         found.add(number)
-    bare = re.compile(rf"(?<![\d.,])(?P<num>{_LOCAL_NUMBER})(?![\d.,])")
+    # ``200.`` and ``200,`` are sentence punctuation, not a decimal. A
+    # separator that is followed by a digit (``200.5``, ``1.200``) stays
+    # part of the number and is handled by ``_LOCAL_NUMBER``.
+    bare = re.compile(rf"(?<![\d.,])(?P<num>{_LOCAL_NUMBER})(?!(?:\d|[.,]\d))")
     for match in bare.finditer(text):
-        if _NON_ENERGY_UNIT_RE.match(text[match.end() :]):
+        tail = text[match.end() :]
+        if tail.startswith((".", ",")) and (len(tail) == 1 or not tail[1].isdigit()):
+            tail = tail[1:]
+        if _NON_ENERGY_UNIT_RE.match(tail):
             continue
         try:
             number, _ = _parse_localized_number(match.group("num"))

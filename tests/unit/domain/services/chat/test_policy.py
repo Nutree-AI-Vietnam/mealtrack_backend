@@ -317,6 +317,23 @@ def test_user_stated_calorie_amount_is_traceable_including_vietnamese_calo():
     )
 
 
+def test_bare_calorie_amount_may_end_with_punctuation():
+    context = _context()
+    assert calorie_amounts_stated_by_user("Hôm nay tôi dư 200.") == {200}
+    assert calorie_amounts_stated_by_user("dư 200, 4 tháng thì sao?") == {200}
+    assert calorie_amounts_stated_by_user("khoảng 1.200.") == {1200}
+    assert calorie_amounts_stated_by_user("tôi cao 165.cm") == set()
+    assert (
+        nutrition_numbers_are_traceable(
+            "Không sao, chênh lệch 200 kcal so với mục tiêu.",
+            context=context,
+            chunks=[],
+            user_text="Hôm nay tôi dư 200.",
+        )
+        is True
+    )
+
+
 def test_height_and_weight_do_not_authorize_a_calorie_claim():
     context = _context()
     assert calorie_amounts_stated_by_user("tôi cao 165cm nặng 70kg") == set()
