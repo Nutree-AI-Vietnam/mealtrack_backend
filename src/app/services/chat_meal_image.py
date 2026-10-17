@@ -13,6 +13,9 @@ from src.domain.services.meal_image_cache.name_canonicalizer import slug
 logger = logging.getLogger(__name__)
 
 CHAT_MEAL_IMAGE_TIMEOUT_SECONDS = 35
+# A stored photo is a HEAD and returns in well under this. A new Workers AI
+# image takes much longer, so the chat stream does not wait for it.
+CHAT_MEAL_PHOTO_LIVE_WAIT_SECONDS = 2.0
 _IMAGE_SIZE = "1024x1024"
 
 

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
+from src.app.services.chat_meal_image import CHAT_MEAL_PHOTO_LIVE_WAIT_SECONDS
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
     last_discover_session_id,
@@ -1132,15 +1133,22 @@ class ChatTurnOrchestrator:
                 },
             )
             # Photo generation can take tens of seconds. The reply is already
-            # done, so free the chat slot before that wait. The photo task is
-            # detached so a client disconnect does not drop the stored URLs.
+            # done, so free the chat slot and do not hold this stream open for
+            # a new image. A cached photo still updates the card before close.
             self.release_slot(prepared)
             if suggestions:
                 photo_task = asyncio.create_task(
                     self._persist_meal_photos(completed.id, suggestions)
                 )
                 _detach_chat_task(photo_task)
-                imaged = await asyncio.shield(photo_task)
+                imaged = None
+                try:
+                    imaged = await asyncio.wait_for(
+                        asyncio.shield(photo_task),
+                        timeout=CHAT_MEAL_PHOTO_LIVE_WAIT_SECONDS,
+                    )
+                except TimeoutError:
+                    imaged = None
                 if imaged:
                     yield ChatSseEvent(
                         event="message.suggestions",

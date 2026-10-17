@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+import src.app.services.chat_turn_orchestrator as orchestrator_module
 from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import (
@@ -2262,6 +2263,67 @@ async def test_meal_photo_generation_releases_the_chat_slot():
     orchestrator._semaphore = asyncio.Semaphore(1)
     await _stream(orchestrator, content="What should I eat next?")
     assert meals.slot_free
+
+
+@pytest.mark.asyncio
+async def test_new_meal_photo_does_not_hold_the_stream():
+    class _Meals:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+
+        async def fetch(self, **kwargs):
+            del kwargs
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="dinner"
+            )
+
+        async def attach_images(self, suggestions):
+            self.started.set()
+            await asyncio.sleep(0.3)
+            return [
+                {**card, "thumbnail_url": "https://cdn.example/meal.jpg"}
+                for card in suggestions
+            ]
+
+    meals = _Meals()
+    repo = _FakeRepo(claim=_claim())
+    saved = asyncio.Event()
+
+    async def save_reply_suggestions(**kwargs):
+        repo.saved_suggestions = kwargs
+        saved.set()
+
+    repo.save_reply_suggestions = save_reply_suggestions
+    orchestrator = _orchestrator(repo, next_meals=meals)
+    previous_wait = orchestrator_module.CHAT_MEAL_PHOTO_LIVE_WAIT_SECONDS
+    orchestrator_module.CHAT_MEAL_PHOTO_LIVE_WAIT_SECONDS = 0.05
+    started = asyncio.get_running_loop().time()
+    try:
+        events = [
+            event
+            async for event in orchestrator.stream_turn(
+                user_id="u1",
+                content="What should I eat next?",
+                idempotency_key="key-1",
+                locale="en",
+                header_timezone="UTC",
+                user_language="en",
+            )
+        ]
+        elapsed = asyncio.get_event_loop().time() - started
+    finally:
+        orchestrator_module.CHAT_MEAL_PHOTO_LIVE_WAIT_SECONDS = previous_wait
+    assert elapsed < 1
+    assert any(event.event == "message.completed" for event in events)
+    assert not any(
+        event.event == "message.suggestions"
+        and event.data["suggestions"][0].get("thumbnail_url")
+        for event in events
+    )
+    await asyncio.wait_for(saved.wait(), timeout=2)
+    assert repo.saved_suggestions["suggestions"][0]["thumbnail_url"] == (
+        "https://cdn.example/meal.jpg"
+    )
 
 
 @pytest.mark.asyncio
