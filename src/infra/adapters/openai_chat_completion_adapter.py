@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 FOLLOW_UP_TIMEOUT_SECONDS = 2.0
 FOLLOW_UP_MAX_TOKENS = 180
 NEXT_MEAL_RECIPE_TIMEOUT_SECONDS = 20.0
-NEXT_MEAL_RECIPE_MAX_TOKENS = 1000
+# Reasoning tokens share this cap. 1000 dropped a full 3-recipe JSON and the
+# chat then showed the Greek-yogurt snack fallback.
+NEXT_MEAL_RECIPE_MAX_TOKENS = 4096
 
 
 class OpenAIChatCompletionAdapter(
@@ -328,10 +330,11 @@ LANGUAGE RULES:
 
 PORTIONS & NUTRITION:
 - Use g or ml for units; realistic single-serving portion amounts.
-- Fill calories and macros so the schema is valid. The server replaces those numbers with looked-up nutrition and drops the card if lookup fails. Do not treat your estimates as the numbers the user will see.
+- Fill calories and macros so the schema is valid. The server replaces those numbers when the food database has a match. If it does not, your estimates are what the user sees, so keep them realistic for the portion.
 - micros: Estimate portion micronutrients (vitamin_a in mcg; vitamin_c, vitamin_e, calcium, iron, magnesium, potassium, sodium in mg; saturated_fat, added_sugar in g) based on the ingredients. Set null for unknown fields; do not invent arbitrary numbers.
 - One sitting only — not a full day's food.
-- Honor allergies and dietary_preferences strictly.
+- Honor allergies and dietary_preferences strictly. A vegan or dairy-free request must not include milk, yogurt, cheese, butter, eggs, or honey. A vegetarian request must not include meat or fish.
+- meal_slot is only the clock's hint. If the user asks for a specific kind of dish (a hot soup, a vegan plate), every recipe must be that kind.
 - If the user message asks to change a previous meal, every new recipe must follow that change.
 - Do not claim a meal was saved or logged.
 """

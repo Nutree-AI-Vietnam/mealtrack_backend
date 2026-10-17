@@ -484,7 +484,7 @@ async def test_lookup_replaces_model_calories_and_adds_ingredient_kcal() -> None
 
 
 @pytest.mark.asyncio
-async def test_failed_lookup_drops_model_calories_and_uses_discover() -> None:
+async def test_failed_lookup_keeps_generated_meal() -> None:
     class _Gen:
         async def generate_next_meal_recipes(self, **kwargs):
             del kwargs
@@ -505,9 +505,9 @@ async def test_failed_lookup_drops_model_calories_and_uses_discover() -> None:
         locale="en",
         session_id=None,
     )
-    assert result.suggestions[0]["name"] == "Rice bowl"
-    assert result.suggestions[0]["calories"] == 420
-    assert discover.calls
+    assert result.suggestions[0]["name"] == "Salmon rice"
+    assert result.suggestions[0]["calories"] == 999
+    assert discover.calls == []
 
 
 @pytest.mark.asyncio
@@ -562,9 +562,10 @@ async def test_meal_lookups_run_together_and_keep_surviving_order() -> None:
     assert lookup.max_in_flight == 3
     assert [card["name"] for card in result.suggestions] == [
         "Salmon rice",
+        "Chicken bowl",
         "Tofu bowl",
     ]
-    assert [card["calories"] for card in result.suggestions] == [410, 280]
+    assert [card["calories"] for card in result.suggestions] == [410, 999, 280]
 
 
 @pytest.mark.asyncio
@@ -596,3 +597,103 @@ async def test_fetch_can_defer_food_photos() -> None:
     assert calls == []
     await service.attach_images(result.suggestions)
     assert calls == ["Salmon rice"]
+
+
+@pytest.mark.asyncio
+async def test_zero_calorie_lookup_keeps_generated_meal() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [
+                _recipe(
+                    name="Green bean porridge",
+                    english_name="Green bean porridge",
+                    calories=320,
+                    ingredients=[{"name": "mung beans", "amount": 80, "unit": "g"}],
+                )
+            ]
+
+    discover = _FakeDiscover(
+        ChatDiscoverBatch(
+            session_id="sess-zero",
+            meals=(_meal("Greek Yogurt with Almonds and Blueberries"),),
+        )
+    )
+    service = ChatNextMealCandidates(
+        discover,
+        recipe_generator=_Gen(),
+        nutrition_lookup=_Lookup(_MealMacros(0, [])),
+    )
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(),
+        user_text="A hot soup please",
+        locale="en",
+        session_id=None,
+        include_images=False,
+    )
+    assert result.suggestions[0]["name"] == "Green bean porridge"
+    assert result.suggestions[0]["calories"] == 320
+    assert discover.calls == []
+
+
+@pytest.mark.asyncio
+async def test_vegan_snack_fallback_is_not_greek_yogurt() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return [
+                _recipe(
+                    name="Sữa chua Hy Lạp mix hạnh nhân và việt quất",
+                    english_name="Greek Yogurt with Almonds and Blueberries",
+                    ingredients=[
+                        {"name": "plain greek yogurt", "amount": 150, "unit": "g"}
+                    ],
+                )
+            ]
+
+    service = ChatNextMealCandidates(None, recipe_generator=_Gen())
+    result = await service.fetch(
+        user_id="tiendat",
+        context=_context(
+            dietary_preferences=["vegan"],
+            suggested_meal_slot="snack",
+            locale="vi",
+        ),
+        user_text="Món nước nào mà nóng đi, dễ ăn cho ngon",
+        locale="vi",
+        session_id=None,
+        include_images=False,
+    )
+    blob = " ".join(
+        f"{card['name']} {card.get('english_name', '')}" for card in result.suggestions
+    ).casefold()
+    assert result.meal_slot == "snack"
+    assert result.suggestions
+    assert "yogurt" not in blob
+    assert "sữa chua" not in blob
+
+
+@pytest.mark.asyncio
+async def test_vegetarian_lunch_fallback_drops_meat() -> None:
+    class _Gen:
+        async def generate_next_meal_recipes(self, **kwargs):
+            del kwargs
+            return []
+
+    service = ChatNextMealCandidates(None, recipe_generator=_Gen())
+    result = await service.fetch(
+        user_id="u1",
+        context=_context(
+            dietary_preferences=["vegetarian"],
+            suggested_meal_slot="lunch",
+        ),
+        user_text="What should I eat?",
+        locale="en",
+        session_id=None,
+        include_images=False,
+    )
+    names = [card["name"].casefold() for card in result.suggestions]
+    assert names
+    assert all("chicken" not in name and "salmon" not in name for name in names)
+    assert any("tofu" in name for name in names)
