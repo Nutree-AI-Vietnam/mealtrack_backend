@@ -905,10 +905,18 @@ class ChatTurnOrchestrator:
                             )
                             first_retry_delta = False
                     except BaseException:
-                        # The client already has the first pass. A failed
-                        # higher-cap retry must not erase it or its token usage.
-                        sentences[:] = first_pass
-                        generation["usage"] = first_usage
+                        if sentences:
+                            # The client already replaced the stump with this
+                            # retry text. Save that partial, not the first pass.
+                            retry_usage = generation.get("usage")
+                            generation["usage"] = _combine_chat_usage(
+                                first_usage,
+                                retry_usage if retry_usage is not first_usage else None,
+                            )
+                        else:
+                            # Nothing from the retry reached the client.
+                            sentences[:] = first_pass
+                            generation["usage"] = first_usage
                         raise
                     retry_usage = generation.get("usage")
                     generation["usage"] = _combine_chat_usage(
