@@ -13,6 +13,8 @@ from src.domain.exceptions.chat_exceptions import (
     ChatThreadNotFoundError,
 )
 from src.domain.model.chat import (
+    CHAT_MAX_OUTPUT_TOKENS,
+    CHAT_OUTPUT_TOKEN_CEILING,
     ChatClaimKind,
     ChatCompletionDelta,
     ChatMealSummary,
@@ -25,7 +27,6 @@ from src.domain.model.chat import (
     ChatUsage,
     ChatUserContext,
 )
-from src.domain.services.chat.policy import out_of_scope_message
 from src.domain.services.chat.thread_listing import (
     decode_thread_cursor,
     encode_thread_cursor,
@@ -569,6 +570,460 @@ async def test_untraceable_nutrition_is_not_streamed_to_client():
     assert "9999" not in deltas
     assert repo.completed is not None
     assert "9999" not in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_safety_cutoff_does_not_persist_a_dangling_fragment():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo,
+        completion=_FakeCompletion(["Nếu ", "dư 24000 kcal mỗi ngày. "]),
+    )
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn dư 200 calo trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert repo.completed is not None
+    assert repo.completed["content"] != "Nếu"
+    assert "24000" not in repo.completed["content"]
+    assert "Nutree đã ghi" in repo.completed["content"]
+    assert any(
+        event.event == "message.delta" and event.data.get("replace") is True
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_stated_surplus_is_streamed():
+    repo = _FakeRepo(claim=_claim())
+    answer = "Dư 200 kcal vẫn ổn so với mục tiêu 1800 calories. "
+    orchestrator = _orchestrator(repo, completion=_FakeCompletion([answer]))
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ngày tôi ăn dư 200calo có sao không",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    deltas = "".join(
+        event.data.get("delta", "")
+        for event in events
+        if event.event == "message.delta"
+    )
+    assert "200 kcal" in deltas
+    assert repo.completed is not None
+    assert "200 kcal" in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_truncated_reasoning_budget_retries_with_a_higher_cap():
+    class _TruncatingThenFull:
+        def __init__(self):
+            self.budgets: list[int] = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(text="Nếu")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+            yield ChatCompletionDelta(
+                text="",
+                done=True,
+                usage=ChatUsage(
+                    input_tokens=10, output_tokens=40, model="gpt-5.6-luna"
+                ),
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _TruncatingThenFull()
+    orchestrator = _orchestrator(repo, completion=completion)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert completion.budgets == [
+        CHAT_MAX_OUTPUT_TOKENS,
+        min(CHAT_MAX_OUTPUT_TOKENS * 2, CHAT_OUTPUT_TOKEN_CEILING),
+    ]
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert repo.completed["usage"].input_tokens == 20
+    assert repo.completed["usage"].output_tokens == 940
+    assert any(event.data.get("replace") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_truncated_empty_output_retries_instead_of_fallback():
+    class _ReasoningOnlyThenFull:
+        def __init__(self):
+            self.budgets: list[int] = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=12, output_tokens=4096, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+            yield ChatCompletionDelta(
+                text="",
+                done=True,
+                usage=ChatUsage(input_tokens=8, output_tokens=30, model="gpt-5.6-luna"),
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _ReasoningOnlyThenFull()
+    orchestrator = _orchestrator(repo, completion=completion)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert completion.budgets == [
+        CHAT_MAX_OUTPUT_TOKENS,
+        min(CHAT_MAX_OUTPUT_TOKENS * 2, CHAT_OUTPUT_TOKEN_CEILING),
+    ]
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert "Tôi chỉ dùng số liệu" not in repo.completed["content"]
+    assert repo.completed["usage"].input_tokens == 20
+    assert repo.completed["usage"].output_tokens == 4126
+    assert repo.completed["usage"].cached_tokens == 0
+    assert events[-1].event == "message.completed"
+
+
+@pytest.mark.asyncio
+async def test_failed_output_limit_retry_keeps_the_first_pass():
+    class _TruncatingThenDown:
+        def __init__(self):
+            self.budgets: list[int] = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(text="Không sao, chênh lệch")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10,
+                        output_tokens=900,
+                        cached_tokens=4,
+                        model="gpt-5.6-luna",
+                    ),
+                )
+                return
+            raise RuntimeError("stream aborted")
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _TruncatingThenDown()
+    orchestrator = _orchestrator(repo, completion=completion)
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert completion.budgets == [
+        CHAT_MAX_OUTPUT_TOKENS,
+        min(CHAT_MAX_OUTPUT_TOKENS * 2, CHAT_OUTPUT_TOKEN_CEILING),
+    ]
+    assert repo.completed is not None
+    assert "Không sao, chênh lệch" in repo.completed["content"]
+    assert repo.completed["usage"].input_tokens == 10
+    assert repo.completed["usage"].output_tokens == 900
+    assert repo.completed["usage"].cached_tokens == 4
+    assert events[-1].event == "message.error"
+    assert events[-1].data["code"] == "CHAT_PROVIDER_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_failed_retry_keeps_text_already_sent_to_the_client():
+    class _PartialRetryThenDown:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield ChatCompletionDelta(text="Nếu")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            yield ChatCompletionDelta(text="Dư 200 kcal trong bốn tháng là ")
+            yield ChatCompletionDelta(
+                text="",
+                usage=ChatUsage(input_tokens=6, output_tokens=20, model="gpt-5.6-luna"),
+            )
+            raise RuntimeError("stream aborted")
+
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=_PartialRetryThenDown())
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert repo.completed is not None
+    assert "Dư 200 kcal" in repo.completed["content"]
+    assert repo.completed["content"] != "Nếu"
+    assert repo.completed["usage"].input_tokens == 16
+    assert repo.completed["usage"].output_tokens == 920
+    assert any(
+        event.event == "message.delta" and event.data.get("replace") is True
+        for event in events
+    )
+    assert events[-1].event == "message.error"
+
+
+@pytest.mark.asyncio
+async def test_empty_retry_keeps_finished_sentences_from_the_first_pass():
+    class _FinishedThenEmpty:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            if self.calls == 1:
+                yield ChatCompletionDelta(text="Xin lỗi, câu trước bị thiếu ý. Nếu")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            yield ChatCompletionDelta(
+                text="",
+                done=True,
+                truncated=True,
+                usage=ChatUsage(
+                    input_tokens=4, output_tokens=200, model="gpt-5.6-luna"
+                ),
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=_FinishedThenEmpty())
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Hả",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert repo.completed is not None
+    assert "câu trước bị thiếu ý" in repo.completed["content"]
+    assert "Tôi chỉ dùng số liệu" not in repo.completed["content"]
+    assert repo.completed["content"].strip().endswith(".")
+    assert "Nếu" not in repo.completed["content"]
+    assert events[-1].event == "message.completed"
+
+
+@pytest.mark.asyncio
+async def test_output_limit_retry_does_not_offer_tools():
+    class _TruncatingThenTools:
+        def __init__(self):
+            self.budgets: list[int] = []
+            self.tools: list = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            self.tools.append(kwargs.get("tools"))
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(text="Nếu")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            if kwargs.get("tools"):
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "name": "suggest_next_meal",
+                            "args": {},
+                        }
+                    ],
+                )
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+            yield ChatCompletionDelta(text="", done=True)
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _TruncatingThenTools()
+    orchestrator = _orchestrator(repo, completion=completion)
+    async for _event in orchestrator.stream_turn(
+        user_id="u1",
+        content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+        idempotency_key="key-1",
+        locale="vi",
+        header_timezone="UTC",
+        user_language="vi",
+    ):
+        pass
+    assert completion.tools[0]
+    assert completion.tools[1] in (None, [])
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert "Tôi chỉ dùng số liệu" not in repo.completed["content"]
+
+
+@pytest.mark.asyncio
+async def test_lease_renew_failure_does_not_drop_the_retry():
+    class _RenewFails:
+        async def extend_generation_lease(self, **kwargs):
+            del kwargs
+            raise RuntimeError("db blip")
+
+    class _TruncatingThenFull:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            if self.calls == 1:
+                yield ChatCompletionDelta(text="Nếu")
+                yield ChatCompletionDelta(text="", done=True, truncated=True)
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+
+    repo = _FakeRepo(claim=_claim())
+    repo.extend_generation_lease = _RenewFails().extend_generation_lease
+    orchestrator = _orchestrator(repo, completion=_TruncatingThenFull())
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert events[-1].event == "message.completed"
+
+
+@pytest.mark.asyncio
+async def test_long_turn_renews_the_generation_lease():
+    repo = _FakeRepo(claim=_claim())
+    renewed = asyncio.Event()
+    calls: list[dict] = []
+
+    async def extend_generation_lease(**kwargs):
+        calls.append(kwargs)
+        renewed.set()
+        return True
+
+    repo.extend_generation_lease = extend_generation_lease
+
+    class _WaitForRenewal:
+        async def stream(self, **kwargs):
+            del kwargs
+            await asyncio.wait_for(renewed.wait(), timeout=1)
+            yield ChatCompletionDelta(text="The answer is ready. ")
+
+    orchestrator = _orchestrator(repo, completion=_WaitForRenewal())
+    orchestrator._lease_renew_interval = lambda: 0.01  # type: ignore[method-assign]
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="How much is left?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    assert calls
+    assert calls[0]["message_id"] == "m-asst"
+    assert calls[0]["generation_id"] == "gen-1"
+    assert calls[0]["lease_expires_at"] > utc_now()
+    assert events[-1].event == "message.completed"
+    assert repo.failed is None
 
 
 @pytest.mark.asyncio
@@ -1780,6 +2235,98 @@ async def test_meal_intro_is_sent_before_food_photos():
         and event.data["suggestions"][0].get("thumbnail_url")
     )
     assert photo.data["suggestions"][0]["thumbnail_url"] == (
+        "https://cdn.example/meal.jpg"
+    )
+
+
+@pytest.mark.asyncio
+async def test_meal_photo_generation_releases_the_chat_slot():
+    class _Meals:
+        def __init__(self) -> None:
+            self.slot_free = False
+
+        async def fetch(self, **kwargs):
+            del kwargs
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="lunch"
+            )
+
+        async def attach_images(self, suggestions):
+            await asyncio.wait_for(orchestrator._semaphore.acquire(), timeout=0.05)
+            orchestrator._semaphore.release()
+            self.slot_free = True
+            return suggestions
+
+    meals = _Meals()
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), next_meals=meals)
+    orchestrator._semaphore = asyncio.Semaphore(1)
+    await _stream(orchestrator, content="What should I eat next?")
+    assert meals.slot_free
+
+
+@pytest.mark.asyncio
+async def test_disconnect_during_meal_photos_still_stores_them():
+    class _Meals:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def fetch(self, **kwargs):
+            del kwargs
+            return NextMealCandidateResult(
+                suggestions=_three_cards(), meal_slot="dinner"
+            )
+
+        async def attach_images(self, suggestions):
+            self.started.set()
+            await self.release.wait()
+            return [
+                {**card, "thumbnail_url": "https://cdn.example/meal.jpg"}
+                for card in suggestions
+            ]
+
+    meals = _Meals()
+    repo = _FakeRepo(claim=_claim())
+    saved = asyncio.Event()
+    completes = 0
+
+    async def save_reply_suggestions(**kwargs):
+        repo.saved_suggestions = kwargs
+        saved.set()
+
+    original_complete = repo.complete_assistant_message
+
+    async def complete_assistant_message(**kwargs):
+        nonlocal completes
+        completes += 1
+        return await original_complete(**kwargs)
+
+    repo.save_reply_suggestions = save_reply_suggestions
+    repo.complete_assistant_message = complete_assistant_message
+    orchestrator = _orchestrator(repo, next_meals=meals)
+
+    async def collect() -> None:
+        async for _event in orchestrator.stream_turn(
+            user_id="u1",
+            content="What should I eat next?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        ):
+            pass
+
+    task = asyncio.create_task(collect())
+    await asyncio.wait_for(meals.started.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not saved.is_set()
+    meals.release.set()
+    await asyncio.wait_for(saved.wait(), timeout=1)
+    assert completes == 1
+    assert repo.failed is None
+    assert repo.saved_suggestions["suggestions"][0]["thumbnail_url"] == (
         "https://cdn.example/meal.jpg"
     )
 

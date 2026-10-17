@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -54,6 +55,7 @@ class ChatNextMealCandidates:
         *,
         recipe_generator: ChatNextMealRecipePort | None = None,
         image_search: Callable[[str], Awaitable[Any]] | None = None,
+        image_generator: Callable[[dict[str, Any]], Awaitable[Any]] | None = None,
         nutrition_lookup: Any | None = None,
         model: str = "gpt-5.6-luna",
         max_per_minute: int = DISCOVER_MAX_PER_MINUTE,
@@ -61,6 +63,7 @@ class ChatNextMealCandidates:
         self._discover = discover
         self._recipe_generator = recipe_generator
         self._image_search = image_search
+        self._image_generator = image_generator
         self._nutrition_lookup = nutrition_lookup
         self._model = model
         self._max_per_minute = max_per_minute
@@ -110,16 +113,17 @@ class ChatNextMealCandidates:
                     dietary_preferences=context.dietary_preferences or [],
                 )
                 if recipes:
-                    safe = filter_meals_for_allergies(
-                        recipes[:DISCOVER_COUNT],
-                        context.allergies or [],
+                    safe = _filter_meals_for_diet(
+                        filter_meals_for_allergies(
+                            recipes[:DISCOVER_COUNT],
+                            context.allergies or [],
+                        ),
+                        context.dietary_preferences or [],
                     )
                     verified = await self._reconcile_lookup_macros(safe)
                     if verified:
                         if include_images:
-                            verified = await attach_food_images(
-                                verified, self._image_search
-                            )
+                            verified = await self._attach_food_images(verified)
                         suggestions = map_discover_meals(verified, slot)
                         return NextMealCandidateResult(
                             suggestions=suggestions,
@@ -149,9 +153,12 @@ class ChatNextMealCandidates:
                     count=DISCOVER_COUNT,
                 )
                 if batch.meals:
-                    safe = filter_meals_for_allergies(
-                        list(batch.meals),
-                        context.allergies or [],
+                    safe = _filter_meals_for_diet(
+                        filter_meals_for_allergies(
+                            list(batch.meals),
+                            context.allergies or [],
+                        ),
+                        context.dietary_preferences or [],
                     )
                     suggestions = map_discover_meals(safe[:DISCOVER_COUNT], slot)
                     return NextMealCandidateResult(
@@ -173,8 +180,9 @@ class ChatNextMealCandidates:
 
         # 3. If generator was configured but generator and discover failed, use safe fallback with full recipe
         if self._recipe_generator is not None:
-            fallback_meals = _fallback_meals_for_slot(
-                slot, locale, targets.calorie_target
+            fallback_meals = _filter_meals_for_diet(
+                _fallback_meals_for_slot(slot, locale, targets.calorie_target),
+                context.dietary_preferences or [],
             )
             safe_fallbacks = await self._reconcile_lookup_macros(
                 filter_meals_for_allergies(
@@ -183,9 +191,7 @@ class ChatNextMealCandidates:
             )
             if safe_fallbacks:
                 if include_images:
-                    safe_fallbacks = await attach_food_images(
-                        safe_fallbacks, self._image_search
-                    )
+                    safe_fallbacks = await self._attach_food_images(safe_fallbacks)
                 suggestions = map_discover_meals(safe_fallbacks, slot)
                 return NextMealCandidateResult(
                     suggestions=suggestions,
@@ -197,7 +203,16 @@ class ChatNextMealCandidates:
 
     async def attach_images(self, meals: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Add food photos after the reply text has already been sent."""
-        return await attach_food_images(meals, self._image_search)
+        return await self._attach_food_images(meals)
+
+    async def _attach_food_images(
+        self, meals: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return await attach_food_images(
+            meals,
+            self._image_search,
+            generate_fn=self._image_generator,
+        )
 
     async def _reconcile_lookup_macros(
         self, meals: list[dict[str, Any]]
@@ -205,9 +220,11 @@ class ChatNextMealCandidates:
         """Replace model calorie estimates with NutritionLookupService totals.
 
         When no lookup service is configured, meals pass through unchanged.
-        When lookup is configured, a meal is kept only if lookup returns a
-        positive calorie total. Per-ingredient calories are attached only when
-        the breakdown lines up with the ingredient list.
+        A successful positive calorie total replaces the model estimate.
+        A lookup error or a zero-calorie miss keeps the generated meal, so a
+        strict food database cannot swap in an unrelated card. Per-ingredient
+        calories are attached only when the breakdown lines up with the
+        ingredient list.
         """
         if self._nutrition_lookup is None or not meals:
             return meals
@@ -224,14 +241,20 @@ class ChatNextMealCandidates:
             macros = await self._nutrition_lookup.calculate_meal_macros(lookup_input)
         except Exception:
             logger.warning(
-                "chat next-meal nutrition lookup failed",
+                "chat next-meal nutrition lookup failed; keeping the generated meal",
                 extra={"meal": meal.get("name")},
                 exc_info=True,
             )
-            return None
+            return dict(meal)
         calories = getattr(macros, "calories", None)
         if calories is None or float(calories) <= 0:
-            return None
+            # A miss in the food database must not replace the dish the user
+            # asked for with an unrelated fallback card.
+            logger.info(
+                "chat next-meal lookup had no calories; keeping model estimate",
+                extra={"meal": meal.get("name")},
+            )
+            return dict(meal)
         updated = dict(meal)
         updated["calories"] = int(round(float(calories)))
         updated["protein_g"] = float(getattr(macros, "protein", 0) or 0)
@@ -432,6 +455,147 @@ class SuggestionChatDiscoverAdapter(ChatDiscoverPort):
             session_id=getattr(session, "id", None),
             meals=tuple(enriched),
         )
+
+
+_MEAT_WORDS = (
+    "chicken",
+    "beef",
+    "pork",
+    "lamb",
+    "turkey",
+    "duck",
+    "fish",
+    "salmon",
+    "tuna",
+    "shrimp",
+    "prawn",
+    "crab",
+    "anchovy",
+    "bacon",
+    "ham",
+    "sausage",
+    "thịt",
+    "gà",
+    "cá",
+    "tôm",
+)
+_DAIRY_WORDS = (
+    "yogurt",
+    "yoghurt",
+    "cheese",
+    "butter",
+    "buttermilk",
+    "buttercream",
+    "cream",
+    "ghee",
+    "whey",
+    "casein",
+    "parmesan",
+    "mozzarella",
+    "cheddar",
+    "ricotta",
+    "feta",
+    "paneer",
+    "mascarpone",
+    "sữa chua",
+    "phô mai",
+)
+_EGG_HONEY_WORDS = (
+    "honey",
+    "eggs",
+    "egg",
+    "trứng",
+)
+# Strip these before the dairy word check. "butter" and "cream" would otherwise
+# flag peanut butter, coconut cream, and plant milks.
+_NON_DAIRY_PHRASES = (
+    "peanut butter",
+    "almond butter",
+    "cashew butter",
+    "coconut butter",
+    "coconut cream",
+    "coconut milk",
+    "almond milk",
+    "soy milk",
+    "oat milk",
+    "rice milk",
+    "cashew milk",
+    "hemp milk",
+    "macadamia milk",
+    "sữa hạnh nhân",
+    "sữa đậu",
+    "sữa yến mạch",
+    "sữa dừa",
+    "sữa gạo",
+    "sữa hạt",
+)
+
+
+def _filter_meals_for_diet(
+    meals: list[dict[str, Any]],
+    dietary_preferences: list[str],
+) -> list[dict[str, Any]]:
+    """Drop meat, dairy, or eggs when the profile forbids them."""
+    prefs = {str(item).casefold() for item in dietary_preferences if item}
+    vegan = any("vegan" in item or "thuần chay" in item for item in prefs)
+    vegetarian = vegan or any("vegetarian" in item or "chay" in item for item in prefs)
+    dairy_free = vegan or any(
+        "dairy_free" in item
+        or "dairy-free" in item
+        or "no dairy" in item
+        or "không sữa" in item
+        or "khong sua" in item
+        for item in prefs
+    )
+    if not vegetarian and not dairy_free:
+        return list(meals)
+    kept: list[dict[str, Any]] = []
+    for meal in meals:
+        blob = _meal_food_blob(meal)
+        if vegetarian and _blob_has_word(blob, _MEAT_WORDS):
+            continue
+        if vegan and _has_dairy_or_egg(blob):
+            continue
+        if dairy_free and _has_dairy(blob):
+            continue
+        kept.append(meal)
+    return kept
+
+
+def _meal_food_blob(meal: dict[str, Any]) -> str:
+    parts = [str(meal.get("name") or ""), str(meal.get("english_name") or "")]
+    for item in meal.get("ingredients") or []:
+        if isinstance(item, dict):
+            parts.append(str(item.get("name") or ""))
+        elif isinstance(item, str):
+            parts.append(item)
+    return " ".join(parts).casefold()
+
+
+def _blob_has_word(blob: str, words: tuple[str, ...]) -> bool:
+    """Match a food word, including a trailing English plural.
+
+    ``cheese`` matches ``cheeses``. ``egg`` does not match ``eggplant``,
+    and ``butter`` does not match ``butternut``.
+    """
+    return any(
+        re.search(rf"(?<!\w){re.escape(word)}(?:es|s)?(?!\w)", blob) is not None
+        for word in words
+    )
+
+
+def _has_dairy(blob: str) -> bool:
+    stripped = blob
+    for phrase in _NON_DAIRY_PHRASES:
+        # A plain replace would turn "goat milk" into "g " via "oat milk".
+        stripped = re.sub(rf"(?<!\w){re.escape(phrase)}(?!\w)", " ", stripped)
+    if _blob_has_word(stripped, _DAIRY_WORDS):
+        return True
+    return _blob_has_word(stripped, ("milk", "sữa"))
+
+
+def _has_dairy_or_egg(blob: str) -> bool:
+    return _has_dairy(blob) or _blob_has_word(blob, _EGG_HONEY_WORDS)
 
 
 def _fallback_meals_for_slot(
@@ -635,6 +799,52 @@ def _fallback_meals_for_slot(
                     },
                 ],
             },
+            {
+                "name": "Đậu hũ áp chảo rau củ và gạo lứt"
+                if is_vi
+                else "Pan-seared Tofu with Vegetables and Brown Rice",
+                "english_name": "Pan-seared Tofu with Vegetables and Brown Rice",
+                "emoji": "🥘",
+                "calories": min(target_cals, 480),
+                "protein_g": 24.0,
+                "carbs_g": 58.0,
+                "fat_g": 14.0,
+                "fiber_g": 8.0,
+                "micros": {
+                    "vitamin_a": 80.0,
+                    "vitamin_c": 55.0,
+                    "calcium": 180.0,
+                    "iron": 3.4,
+                    "potassium": 620.0,
+                    "magnesium": 90.0,
+                    "sodium": 310.0,
+                    "saturated_fat": 1.5,
+                },
+                "prep_time_minutes": 20,
+                "ingredients": [
+                    {"name": "firm tofu", "amount": 180, "unit": "g"},
+                    {"name": "cooked brown rice", "amount": 150, "unit": "g"},
+                    {"name": "broccoli", "amount": 120, "unit": "g"},
+                    {"name": "olive oil", "amount": 8, "unit": "ml"},
+                    {"name": "soy sauce", "amount": 10, "unit": "ml"},
+                ],
+                "recipe_steps": [
+                    {
+                        "step": 1,
+                        "instruction": "Áp chảo đậu hũ với dầu ô liu cho vàng mỗi mặt."
+                        if is_vi
+                        else "Pan-sear the tofu in olive oil until golden on each side.",
+                        "duration_minutes": 8,
+                    },
+                    {
+                        "step": 2,
+                        "instruction": "Xào bông cải với nước tương, rồi dọn cùng cơm gạo lứt ấm."
+                        if is_vi
+                        else "Stir-fry the broccoli with soy sauce and serve with warm brown rice.",
+                        "duration_minutes": 8,
+                    },
+                ],
+            },
         ]
 
     # Snack fallback
@@ -671,6 +881,41 @@ def _fallback_meals_for_slot(
                     "instruction": "Cho sữa chua Hy Lạp ra bát, xếp việt quất và hạnh nhân giã dập lên trên."
                     if is_vi
                     else "Scoop Greek yogurt into a bowl, top with blueberries and crushed almonds.",
+                    "duration_minutes": 5,
+                },
+            ],
+        },
+        {
+            "name": "Chuối yến mạch và việt quất"
+            if is_vi
+            else "Banana Oat Cup with Blueberries",
+            "english_name": "Banana Oat Cup with Blueberries",
+            "emoji": "🍌",
+            "calories": min(target_cals, 210),
+            "protein_g": 6.0,
+            "carbs_g": 38.0,
+            "fat_g": 4.0,
+            "fiber_g": 6.0,
+            "micros": {
+                "vitamin_c": 12.0,
+                "calcium": 30.0,
+                "iron": 1.6,
+                "potassium": 420.0,
+                "magnesium": 55.0,
+                "sodium": 8.0,
+            },
+            "prep_time_minutes": 5,
+            "ingredients": [
+                {"name": "banana", "amount": 100, "unit": "g"},
+                {"name": "rolled oats", "amount": 40, "unit": "g"},
+                {"name": "blueberries", "amount": 60, "unit": "g"},
+            ],
+            "recipe_steps": [
+                {
+                    "step": 1,
+                    "instruction": "Nghiền chuối với yến mạch, xếp việt quất lên trên rồi ăn ngay."
+                    if is_vi
+                    else "Mash the banana with the oats, top with blueberries, and eat right away.",
                     "duration_minutes": 5,
                 },
             ],

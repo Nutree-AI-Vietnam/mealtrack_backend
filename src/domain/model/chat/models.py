@@ -42,7 +42,10 @@ CHAT_HISTORY_LIMIT = 40
 CHAT_RECENT_MEAL_DAYS = 3
 CHAT_RECENT_MEAL_LIMIT = 24
 CHAT_MAX_USER_MESSAGE_CHARS = 4000
-CHAT_MAX_OUTPUT_TOKENS = 900
+# gpt-5.6-luna counts hidden reasoning tokens against this cap. At 900, a
+# percentage or weight question came back as a few cut-off words ("Nếu").
+CHAT_MAX_OUTPUT_TOKENS = 4096
+CHAT_OUTPUT_TOKEN_CEILING = 16384
 CHAT_DAILY_TURN_BUDGET = 40
 CHAT_THREAD_LIST_DEFAULT_LIMIT = 20
 CHAT_THREAD_LIST_MAX_LIMIT = 50
@@ -392,6 +395,8 @@ class ChatCompletionDelta:
     usage: ChatUsage | None = None
     done: bool = False
     tool_calls: list[dict[str, Any]] | None = None
+    # Provider stopped because the output cap was hit (reasoning + visible text).
+    truncated: bool = False
 
 
 @dataclass

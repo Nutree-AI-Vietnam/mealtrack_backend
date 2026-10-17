@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 FOLLOW_UP_TIMEOUT_SECONDS = 2.0
 FOLLOW_UP_MAX_TOKENS = 180
 NEXT_MEAL_RECIPE_TIMEOUT_SECONDS = 20.0
-NEXT_MEAL_RECIPE_MAX_TOKENS = 1000
+# Reasoning tokens share this cap. 1000 dropped a full 3-recipe JSON and the
+# chat then showed the Greek-yogurt snack fallback.
+NEXT_MEAL_RECIPE_MAX_TOKENS = 4096
 
 
 class OpenAIChatCompletionAdapter(
@@ -133,6 +135,7 @@ class OpenAIChatCompletionAdapter(
         provider_response_id: str | None = None
         usage = ChatUsage(model=model)
         full_chunk = None
+        truncated = False
 
         async for chunk in llm.astream(messages, **invocation):
             if full_chunk is None:
@@ -145,6 +148,7 @@ class OpenAIChatCompletionAdapter(
             chunk_usage = _chunk_usage(chunk, model)
             if chunk_usage is not None:
                 usage = chunk_usage
+            truncated = truncated or _response_truncated(chunk)
             if text:
                 yield ChatCompletionDelta(
                     text=text,
@@ -163,6 +167,7 @@ class OpenAIChatCompletionAdapter(
             usage=usage,
             done=True,
             tool_calls=tool_calls if tool_calls else None,
+            truncated=truncated,
         )
 
     def _structured_llm(self, model: str) -> ChatOpenAI:
@@ -321,14 +326,15 @@ LANGUAGE RULES:
 - Meal name and recipe step instructions MUST be in the requested locale.
 - If locale is 'vi', the meal name and every recipe step MUST be natural Vietnamese.
 - Ingredient names MUST be English only. The server looks them up in the food database; Vietnamese ingredient names fail that lookup.
-- english_name: English meal name for food photo search (repeat name when locale is already English).
+- english_name: English meal name for the generated food photo (repeat name when locale is already English).
 
 PORTIONS & NUTRITION:
 - Use g or ml for units; realistic single-serving portion amounts.
-- Fill calories and macros so the schema is valid. The server replaces those numbers with looked-up nutrition and drops the card if lookup fails. Do not treat your estimates as the numbers the user will see.
+- Fill calories and macros so the schema is valid. The server replaces those numbers when the food database has a match. If it does not, your estimates are what the user sees, so keep them realistic for the portion.
 - micros: Estimate portion micronutrients (vitamin_a in mcg; vitamin_c, vitamin_e, calcium, iron, magnesium, potassium, sodium in mg; saturated_fat, added_sugar in g) based on the ingredients. Set null for unknown fields; do not invent arbitrary numbers.
 - One sitting only — not a full day's food.
-- Honor allergies and dietary_preferences strictly.
+- Honor allergies and dietary_preferences strictly. A vegan or dairy-free request must not include milk, yogurt, cheese, butter, eggs, or honey. A vegetarian request must not include meat or fish.
+- meal_slot is only the clock's hint. If the user asks for a specific kind of dish (a hot soup, a vegan plate), every recipe must be that kind.
 - If the user message asks to change a previous meal, every new recipe must follow that change.
 - Do not claim a meal was saved or logged.
 """
@@ -369,6 +375,35 @@ def _response_id(chunk: Any) -> str | None:
             return value
     ident = getattr(chunk, "id", None)
     return ident if isinstance(ident, str) else None
+
+
+def _response_truncated(chunk: Any) -> bool:
+    """True when the provider stopped because the output cap was exhausted.
+
+    On gpt-5.6-luna that cap includes hidden reasoning tokens, so the visible
+    reply can end mid-word while ``finish_reason`` / ``incomplete_details``
+    report ``length`` or ``max_output_tokens``.
+    """
+    metadata = getattr(chunk, "response_metadata", None) or {}
+    finish = _metadata_value(metadata, "finish_reason")
+    if isinstance(finish, str) and finish.lower() in {
+        "length",
+        "max_tokens",
+        "max_output_tokens",
+    }:
+        return True
+    status = _metadata_value(metadata, "status")
+    if not isinstance(status, str) or status.lower() != "incomplete":
+        return False
+    details = _metadata_value(metadata, "incomplete_details") or {}
+    reason = _metadata_value(details, "reason")
+    return reason in {"max_output_tokens", "length"}
+
+
+def _metadata_value(metadata: Any, key: str) -> Any:
+    if isinstance(metadata, dict):
+        return metadata.get(key)
+    return getattr(metadata, key, None)
 
 
 def _chunk_usage(chunk: Any, model: str) -> ChatUsage | None:

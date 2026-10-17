@@ -28,6 +28,7 @@ from src.domain.model.chat import (
     CHAT_HISTORY_LIMIT,
     CHAT_MAX_OUTPUT_TOKENS,
     CHAT_MAX_USER_MESSAGE_CHARS,
+    CHAT_OUTPUT_TOKEN_CEILING,
     CHAT_PROMPT_VERSION,
     CHAT_RETRIEVAL_MAX_CHUNKS,
     ChatCitation,
@@ -90,6 +91,7 @@ from src.domain.services.chat.policy import (
     citations_are_valid,
     cited_labels,
     filter_chunks_for_allergies,
+    finished_assistant_text,
     hydrate_citations,
     inspect_sentence,
     meal_reply_is_usable,
@@ -110,6 +112,25 @@ from src.domain.utils.timezone_utils import utc_now
 from src.observability import distribution_metric, increment_metric, log_event
 
 logger = logging.getLogger(__name__)
+
+# Photo work started after the reply is saved. A client disconnect must not
+# cancel it, and the task has to stay referenced until it finishes.
+_detached_chat_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _detach_chat_task(task: asyncio.Task[Any]) -> None:
+    _detached_chat_tasks.add(task)
+
+    def _finished(done: asyncio.Task[Any]) -> None:
+        _detached_chat_tasks.discard(done)
+        if done.cancelled():
+            return
+        error = done.exception()
+        if error is not None:
+            logger.info("detached chat task failed", exc_info=error)
+
+    task.add_done_callback(_finished)
+
 
 _RETRYABLE_PROVIDER_MARKERS = (
     "timeout",
@@ -214,7 +235,12 @@ class ChatTurnOrchestrator:
         self._daily_turn_budget = daily_turn_budget
         self._generation_lease_seconds = generation_lease_seconds
         self._cache_policy = cache_policy
-        self._max_output_tokens = max_output_tokens
+        # A configured cap below the model default still starves reasoning
+        # tokens and returns a few cut-off words. Never go under the floor.
+        self._max_output_tokens = min(
+            CHAT_OUTPUT_TOKEN_CEILING,
+            max(int(max_output_tokens), CHAT_MAX_OUTPUT_TOKENS),
+        )
         self._semaphore = semaphore or asyncio.Semaphore(max(1, global_concurrency))
         self._circuit = circuit_breaker
         self._next_meals = next_meals
@@ -398,11 +424,15 @@ class ChatTurnOrchestrator:
         suggestions: list[dict[str, Any]] = []
         discover_session_id: str | None = None
         follow_task: asyncio.Task[list[dict[str, str]]] | None = None
+        lease_task: asyncio.Task[None] | None = None
+        lease_stop = asyncio.Event()
+        reply_saved = False
         generation: dict[str, Any] = {
             "text": "",
             "usage": ChatUsage(model=self._model),
             "provider_response_id": None,
             "blocked": False,
+            "truncated": False,
             "tools": [],
         }
 
@@ -418,6 +448,9 @@ class ChatTurnOrchestrator:
                 )
                 return
 
+            lease_task = asyncio.create_task(
+                self._heartbeat_generation_lease(claim.assistant_message, lease_stop)
+            )
             yield _started_event(claim)
 
             if prepared.function_name:
@@ -703,6 +736,7 @@ class ChatTurnOrchestrator:
                 sentences.append(meal_reply)
                 generation["text"] = meal_reply
                 generation["blocked"] = False
+                generation["truncated"] = False
             elif should_prefetch_next_meal and not suggestions:
                 # The picking line is already on screen. A model sentence here
                 # would invent a dish, because there is no card to name.
@@ -714,6 +748,7 @@ class ChatTurnOrchestrator:
                 sentences.append(unavailable)
                 generation["text"] = unavailable
                 generation["blocked"] = False
+                generation["truncated"] = False
                 generation["tools"] = None
                 if unavailable != streamed_text:
                     yield ChatSseEvent(
@@ -733,6 +768,7 @@ class ChatTurnOrchestrator:
                 sentences.append(card_reply)
                 generation["text"] = card_reply
                 generation["blocked"] = False
+                generation["truncated"] = False
                 generation["tools"] = None
                 suggestions = _cards_named_in_reply(card_reply, shown_cards)
                 yield ChatSseEvent(
@@ -845,40 +881,119 @@ class ChatTurnOrchestrator:
                     generation["tool_calls"] = None
                     generation["tools"] = None
 
-            final_text = "".join(sentences).strip()
+                if _should_retry_output_limit(generation, sentences):
+                    generation["output_limit_retried"] = True
+                    try:
+                        await self._renew_generation_lease(claim.assistant_message)
+                    except Exception:
+                        logger.info(
+                            "chat generation lease renew failed",
+                            extra={"assistant_message_id": claim.assistant_message.id},
+                        )
+                    # The retry finishes the cut-off sentence. Leaving tools
+                    # on lets the model call one and yield no text, which the
+                    # caller then replaces with the safety fallback.
+                    generation["tools"] = None
+                    generation["tool_calls"] = None
+                    already_streamed = bool("".join(sentences).strip())
+                    first_pass = list(sentences)
+                    first_usage = generation.get("usage") or ChatUsage(
+                        model=self._model
+                    )
+                    sentences.clear()
+                    increment_metric(
+                        "chat.turn.output_truncated",
+                        attributes={"locale": resolved_locale},
+                    )
+                    first_retry_delta = True
+                    try:
+                        async for delta_text in self._iter_validated_sentences(
+                            context=context,
+                            chunks=chunks,
+                            history=history,
+                            user_message=current_user_message,
+                            generation=generation,
+                            intent=intent,
+                            meal_candidates=suggestions,
+                            traceable_meals=_traceable_meals(
+                                suggestions, history_messages
+                            ),
+                            earlier=earlier,
+                            output_token_budget=min(
+                                self._max_output_tokens * 2,
+                                CHAT_OUTPUT_TOKEN_CEILING,
+                            ),
+                        ):
+                            if not delta_text:
+                                continue
+                            sentences.append(delta_text)
+                            yield ChatSseEvent(
+                                event="message.delta",
+                                data={
+                                    "assistant_message_id": claim.assistant_message.id,
+                                    "delta": delta_text,
+                                    "replace": already_streamed and first_retry_delta,
+                                },
+                            )
+                            first_retry_delta = False
+                    except BaseException:
+                        if sentences:
+                            # The client already replaced the stump with this
+                            # retry text. Save that partial, not the first pass.
+                            retry_usage = generation.get("usage")
+                            generation["usage"] = _combine_chat_usage(
+                                first_usage,
+                                retry_usage if retry_usage is not first_usage else None,
+                            )
+                        else:
+                            # Nothing from the retry reached the client.
+                            sentences[:] = first_pass
+                            generation["usage"] = first_usage
+                        raise
+                    retry_usage = generation.get("usage")
+                    generation["usage"] = _combine_chat_usage(
+                        first_usage,
+                        retry_usage if retry_usage is not first_usage else None,
+                    )
+                    if not sentences and first_pass:
+                        # The retry finished with no visible text. Keep the
+                        # first pass so a finished sentence is not replaced by
+                        # the generic fallback. A pure stump is still trimmed.
+                        sentences.extend(first_pass)
+
+            streamed_text = "".join(sentences).strip()
+            final_text = streamed_text
             usage = generation["usage"]
             provider_response_id = generation["provider_response_id"]
             blocked = bool(generation["blocked"])
-            if blocked:
-                # Mid-token safety cuts leave truncated locale numbers / unclosed
-                # markdown (e.g. "còn khoảng **1.821"). Prefer a clean sentence.
-                final_text = sanitize_incomplete_assistant_text(final_text)
+            if blocked or generation.get("truncated"):
+                # A safety stop or a token cap leaves a stump ("Nếu",
+                # "Không sao, chênh lệch"). Keep finished sentences only.
+                final_text = finished_assistant_text(final_text)
                 generation["text"] = final_text
             if answer_from_shown_meals and card_reply:
                 if not cook_reply_already_said(final_text, card_reply):
-                    if card_reply != final_text:
-                        yield ChatSseEvent(
-                            event="message.delta",
-                            data={
-                                "assistant_message_id": claim.assistant_message.id,
-                                "delta": card_reply,
-                                "replace": True,
-                            },
-                        )
                     final_text = card_reply
                     sentences.clear()
                     sentences.append(card_reply)
                     generation["text"] = card_reply
                     generation["blocked"] = False
+                    generation["truncated"] = False
                     blocked = False
             if not final_text:
                 blocked = True
                 final_text = safe_fallback_message(resolved_locale)
+                generation["text"] = final_text
+            if final_text != streamed_text:
+                # A truncated retry that produced nothing must still replace the
+                # stump the client already showed.
                 yield ChatSseEvent(
                     event="message.delta",
                     data={
                         "assistant_message_id": claim.assistant_message.id,
                         "delta": final_text,
+                        "replace": bool(streamed_text)
+                        or bool(generation.get("output_limit_retried")),
                     },
                 )
 
@@ -942,6 +1057,7 @@ class ChatTurnOrchestrator:
                     },
                 )
                 return
+            reply_saved = True
             yield ChatSseEvent(
                 event="message.ready",
                 data={
@@ -1015,19 +1131,30 @@ class ChatTurnOrchestrator:
                     ),
                 },
             )
+            # Photo generation can take tens of seconds. The reply is already
+            # done, so free the chat slot before that wait. The photo task is
+            # detached so a client disconnect does not drop the stored URLs.
+            # The stream stays open until the photo event is sent: closing
+            # early would leave the live card on the fork placeholder, because
+            # nothing else pushes the URL to the open chat.
+            self.release_slot(prepared)
             if suggestions:
-                imaged = await self._attach_meal_images(suggestions)
-                if imaged is not suggestions:
-                    suggestions = imaged
-                    await self._store_meal_suggestions(completed.id, suggestions)
+                photo_task = asyncio.create_task(
+                    self._persist_meal_photos(completed.id, suggestions)
+                )
+                _detach_chat_task(photo_task)
+                imaged = await asyncio.shield(photo_task)
+                if imaged:
                     yield ChatSseEvent(
                         event="message.suggestions",
                         data={
                             "assistant_message_id": completed.id,
-                            "suggestions": suggestions,
+                            "suggestions": imaged,
                         },
                     )
         except asyncio.CancelledError:
+            if reply_saved:
+                raise
             partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
             if partial:
                 try:
@@ -1112,6 +1239,13 @@ class ChatTurnOrchestrator:
                 "chat.turn.failed", attributes={"code": "CHAT_TURN_FAILED"}
             )
         finally:
+            lease_stop.set()
+            if lease_task is not None and not lease_task.done():
+                lease_task.cancel()
+                try:
+                    await lease_task
+                except asyncio.CancelledError:
+                    pass
             if follow_task is not None and not follow_task.done():
                 follow_task.cancel()
                 try:
@@ -1125,6 +1259,43 @@ class ChatTurnOrchestrator:
                 unit="millisecond",
                 attributes={"kind": "generate"},
             )
+
+    def _lease_renew_interval(self) -> float:
+        return max(15.0, self._generation_lease_seconds / 3)
+
+    async def _renew_generation_lease(self, message: ChatMessage) -> None:
+        if not message.generation_id:
+            return
+        async with self._uow_factory() as uow:
+            extend = getattr(_chat_repo(uow), "extend_generation_lease", None)
+            if extend is None:
+                return
+            await extend(
+                message_id=message.id,
+                generation_id=message.generation_id,
+                lease_expires_at=utc_now()
+                + timedelta(seconds=self._generation_lease_seconds),
+            )
+
+    async def _heartbeat_generation_lease(
+        self, message: ChatMessage, stop: asyncio.Event
+    ) -> None:
+        """Keep the claim alive while a long answer or retry is still running."""
+        while True:
+            try:
+                await asyncio.wait_for(
+                    stop.wait(), timeout=self._lease_renew_interval()
+                )
+                return
+            except TimeoutError:
+                pass
+            try:
+                await self._renew_generation_lease(message)
+            except Exception:
+                logger.info(
+                    "chat generation lease renew failed",
+                    extra={"assistant_message_id": message.id},
+                )
 
     def release_slot(self, prepared: PreparedChatTurn) -> None:
         if not prepared.slot_acquired:
@@ -1635,6 +1806,7 @@ class ChatTurnOrchestrator:
         meal_candidates: list[dict[str, Any]] | None = None,
         traceable_meals: list[dict[str, Any]] | None = None,
         earlier: str | None = None,
+        output_token_budget: int | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
@@ -1660,12 +1832,15 @@ class ChatTurnOrchestrator:
         allergies = context.allergies or []
         last_error: Exception | None = None
         yielded_any = False
+        stated_user_text = _stated_user_text(user_message, history)
+        budget = output_token_budget or self._max_output_tokens
 
         for attempt in range(2):
             kept: list[str] = []
             pending = ""
             buffer = SentenceBuffer()
             generation["blocked"] = False
+            generation["truncated"] = False
             try:
                 async for delta in self._completion.stream(
                     model=self._model,
@@ -1673,7 +1848,7 @@ class ChatTurnOrchestrator:
                     grounding_message=grounding,
                     history=history,
                     user_message=user_message,
-                    max_output_tokens=self._max_output_tokens,
+                    max_output_tokens=budget,
                     cache_kwargs=cache_kwargs,
                     tools=generation.get("tools"),
                 ):
@@ -1681,6 +1856,8 @@ class ChatTurnOrchestrator:
                         generation["provider_response_id"] = delta.provider_response_id
                     if delta.usage is not None:
                         generation["usage"] = delta.usage
+                    if delta.truncated:
+                        generation["truncated"] = True
                     if delta.tool_calls is not None:
                         generation["tool_calls"] = delta.tool_calls
                     if delta.text:
@@ -1701,6 +1878,7 @@ class ChatTurnOrchestrator:
                             meal_candidates=traceable_meals
                             if traceable_meals is not None
                             else meal_candidates,
+                            user_text=stated_user_text,
                         )
                         if next_pending is None:
                             generation["blocked"] = True
@@ -1739,6 +1917,10 @@ class ChatTurnOrchestrator:
             raise ChatProviderUnavailableError(retryable=True) from last_error
 
         if not generation["text"].strip() and not generation.get("tool_calls"):
+            # Reasoning can spend the whole budget before any visible token.
+            # A fallback here would set blocked and skip the higher-cap retry.
+            if generation.get("truncated"):
+                return
             fallback = (
                 no_evidence_message(context.locale)
                 if not chunks and not generation["blocked"]
@@ -1828,6 +2010,16 @@ class ChatTurnOrchestrator:
         if not isinstance(updated, list):
             return suggestions
         return updated
+
+    async def _persist_meal_photos(
+        self, message_id: str, suggestions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]] | None:
+        """Generate card photos and store them even if the SSE client is gone."""
+        imaged = await self._attach_meal_images(suggestions)
+        if imaged is suggestions:
+            return None
+        await self._store_meal_suggestions(message_id, imaged)
+        return imaged
 
     async def _store_meal_suggestions(
         self, message_id: str, suggestions: list[dict[str, Any]]
@@ -2262,6 +2454,48 @@ def _citations_for(
     return citations
 
 
+def _stated_user_text(user_message: str, history: list[ChatHistoryTurn]) -> str:
+    """User turns only, so a follow-up like "Hả" still carries the stated 200 kcal."""
+    parts = [
+        turn.content
+        for turn in history
+        if turn.role == ChatMessageRole.USER and turn.content
+    ]
+    if user_message:
+        parts.append(user_message)
+    return "\n".join(parts)
+
+
+def _combine_chat_usage(first: ChatUsage | None, second: ChatUsage | None) -> ChatUsage:
+    """Add a higher-cap retry's tokens onto the truncated first pass."""
+    left = first or ChatUsage()
+    if second is None:
+        return left
+    return ChatUsage(
+        input_tokens=left.input_tokens + second.input_tokens,
+        output_tokens=left.output_tokens + second.output_tokens,
+        cached_tokens=left.cached_tokens + second.cached_tokens,
+        model=second.model or left.model,
+    )
+
+
+def _should_retry_output_limit(
+    generation: dict[str, Any], sentences: list[str]
+) -> bool:
+    """One more pass when reasoning tokens ate the visible answer."""
+    if generation.get("output_limit_retried"):
+        return False
+    if generation.get("blocked") or generation.get("tool_calls"):
+        return False
+    if not generation.get("truncated"):
+        return False
+    text = "".join(sentences).strip()
+    # No visible text still hit the cap (reasoning-only). Retry that too.
+    if not text:
+        return True
+    return finished_assistant_text(text) != text
+
+
 def _accept_stream_chunk(
     *,
     emitted: str,
@@ -2271,6 +2505,7 @@ def _accept_stream_chunk(
     chunks: list[RetrievedKnowledgeChunk],
     context: ChatUserContext,
     meal_candidates: list[dict[str, Any]] | None,
+    user_text: str = "",
 ) -> str | None:
     """Return the new unfinished sentence if `chunk` is safe to stream."""
     tentative = emitted + chunk
@@ -2281,6 +2516,7 @@ def _accept_stream_chunk(
         context=context,
         chunks=chunks,
         meal_candidates=meal_candidates,
+        user_text=user_text,
     ):
         return None
     splitter = SentenceBuffer()
