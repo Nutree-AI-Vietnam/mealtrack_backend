@@ -33,11 +33,11 @@ NOTIFICATION_MESSAGES_JA = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "トライアルはあと2日で終了\nストリークをキープしよう ⏳",
+                "body": "月額プランは2日後に更新されます\n年額に切り替えてこのオファーを受け取って",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "無料トライアルがもうすぐ終了\nこの調子で続けよう 🔥",
+                "body": "月額プランがもうすぐ更新されます\n年額に切り替えてこのオファーを受け取って",
             },
         },
         "hydration_reminder": {
@@ -82,11 +82,11 @@ NOTIFICATION_MESSAGES_JA = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "トライアルはあと2日で終了\nストリークをキープしよう ⏳",
+                "body": "月額プランは2日後に更新されます\n年額に切り替えてこのオファーを受け取って",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "無料トライアルがもうすぐ終了\nこの調子で続けよう 🔥",
+                "body": "月額プランがもうすぐ更新されます\n年額に切り替えてこのオファーを受け取って",
             },
         },
         "hydration_reminder": {

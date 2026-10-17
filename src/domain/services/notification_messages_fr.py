@@ -33,11 +33,11 @@ NOTIFICATION_MESSAGES_FR = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "Ton essai se termine dans 2 jours\nGarde ta série ⏳",
+                "body": "Ton abonnement mensuel se renouvelle dans 2 jours\nPasse à l'annuel et réclame cette offre",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "Ton essai gratuit se termine bientôt\nContinue ta progression 🔥",
+                "body": "Ton abonnement mensuel se renouvelle bientôt\nPasse à l'annuel et réclame cette offre",
             },
         },
         "hydration_reminder": {
@@ -82,11 +82,11 @@ NOTIFICATION_MESSAGES_FR = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "Ton essai se termine dans 2 jours\nGarde ta série ⏳",
+                "body": "Ton abonnement mensuel se renouvelle dans 2 jours\nPasse à l'annuel et réclame cette offre",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "Ton essai gratuit se termine bientôt\nContinue ta progression 🔥",
+                "body": "Ton abonnement mensuel se renouvelle bientôt\nPasse à l'annuel et réclame cette offre",
             },
         },
         "hydration_reminder": {

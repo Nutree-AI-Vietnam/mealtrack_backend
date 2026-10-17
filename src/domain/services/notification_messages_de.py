@@ -33,11 +33,11 @@ NOTIFICATION_MESSAGES_DE = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "Deine Testphase endet in 2 Tagen\nHalte deine Serie ⏳",
+                "body": "Dein Monatsabo verlängert sich in 2 Tagen\nWechsle zum Jahresabo und sichere dir dieses Angebot",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "Deine kostenlose Testphase endet bald\nBleib am Ball 🔥",
+                "body": "Dein Monatsabo verlängert sich bald\nWechsle zum Jahresabo und sichere dir dieses Angebot",
             },
         },
         "hydration_reminder": {
@@ -82,11 +82,11 @@ NOTIFICATION_MESSAGES_DE = {
         "trial_expiry": {
             "2d": {
                 "title": "Nutree",
-                "body": "Deine Testphase endet in 2 Tagen\nHalte deine Serie ⏳",
+                "body": "Dein Monatsabo verlängert sich in 2 Tagen\nWechsle zum Jahresabo und sichere dir dieses Angebot",
             },
             "1d": {
                 "title": "Nutree",
-                "body": "Deine kostenlose Testphase endet bald\nBleib am Ball 🔥",
+                "body": "Dein Monatsabo verlängert sich bald\nWechsle zum Jahresabo und sichere dir dieses Angebot",
             },
         },
         "hydration_reminder": {
