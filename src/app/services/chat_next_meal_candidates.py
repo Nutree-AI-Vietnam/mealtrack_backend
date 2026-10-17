@@ -55,6 +55,7 @@ class ChatNextMealCandidates:
         *,
         recipe_generator: ChatNextMealRecipePort | None = None,
         image_search: Callable[[str], Awaitable[Any]] | None = None,
+        image_generator: Callable[[dict[str, Any]], Awaitable[Any]] | None = None,
         nutrition_lookup: Any | None = None,
         model: str = "gpt-5.6-luna",
         max_per_minute: int = DISCOVER_MAX_PER_MINUTE,
@@ -62,6 +63,7 @@ class ChatNextMealCandidates:
         self._discover = discover
         self._recipe_generator = recipe_generator
         self._image_search = image_search
+        self._image_generator = image_generator
         self._nutrition_lookup = nutrition_lookup
         self._model = model
         self._max_per_minute = max_per_minute
@@ -121,9 +123,7 @@ class ChatNextMealCandidates:
                     verified = await self._reconcile_lookup_macros(safe)
                     if verified:
                         if include_images:
-                            verified = await attach_food_images(
-                                verified, self._image_search
-                            )
+                            verified = await self._attach_food_images(verified)
                         suggestions = map_discover_meals(verified, slot)
                         return NextMealCandidateResult(
                             suggestions=suggestions,
@@ -191,9 +191,7 @@ class ChatNextMealCandidates:
             )
             if safe_fallbacks:
                 if include_images:
-                    safe_fallbacks = await attach_food_images(
-                        safe_fallbacks, self._image_search
-                    )
+                    safe_fallbacks = await self._attach_food_images(safe_fallbacks)
                 suggestions = map_discover_meals(safe_fallbacks, slot)
                 return NextMealCandidateResult(
                     suggestions=suggestions,
@@ -205,7 +203,16 @@ class ChatNextMealCandidates:
 
     async def attach_images(self, meals: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Add food photos after the reply text has already been sent."""
-        return await attach_food_images(meals, self._image_search)
+        return await self._attach_food_images(meals)
+
+    async def _attach_food_images(
+        self, meals: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return await attach_food_images(
+            meals,
+            self._image_search,
+            generate_fn=self._image_generator,
+        )
 
     async def _reconcile_lookup_macros(
         self, meals: list[dict[str, Any]]

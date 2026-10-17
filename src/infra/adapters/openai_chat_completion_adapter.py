@@ -326,7 +326,7 @@ LANGUAGE RULES:
 - Meal name and recipe step instructions MUST be in the requested locale.
 - If locale is 'vi', the meal name and every recipe step MUST be natural Vietnamese.
 - Ingredient names MUST be English only. The server looks them up in the food database; Vietnamese ingredient names fail that lookup.
-- english_name: English meal name for food photo search (repeat name when locale is already English).
+- english_name: English meal name for the generated food photo (repeat name when locale is already English).
 
 PORTIONS & NUTRITION:
 - Use g or ml for units; realistic single-serving portion amounts.

@@ -103,9 +103,46 @@ def _next_meal_service(
         discover=None,
         recipe_generator=recipe_generator,
         image_search=get_food_image_service().search_food_image,
+        image_generator=_chat_meal_image_generator(),
         nutrition_lookup=get_nutrition_lookup_service(),
         model=model,
     )
+
+
+def _chat_meal_image_generator():
+    """Cloudflare Workers AI photo for a chat card. Stock search remains the fallback."""
+    from src.api.base_dependencies import get_image_store
+    from src.app.services.chat_meal_image import (
+        CHAT_MEAL_IMAGE_TIMEOUT_SECONDS,
+        ChatMealImageGenerator,
+    )
+    from src.infra.adapters.cloudflare_workers_image_generator import (
+        CloudflareWorkersImageGenerator,
+    )
+    from src.infra.adapters.image_url_probe import image_url_exists
+
+    account_id = (settings.CLOUDFLARE_ACCOUNT_ID or "").strip()
+    api_token = (settings.CLOUDFLARE_API_TOKEN or "").strip()
+    if not account_id or not api_token:
+        logger.info("chat meal photos use stock search; Cloudflare is not configured")
+        return None
+
+    async def existing_image(image_id: str) -> str | None:
+        url = get_image_store().get_url(image_id)
+        if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+            return None
+        if await image_url_exists(url):
+            return url
+        return None
+
+    generator = CloudflareWorkersImageGenerator(
+        account_id=account_id,
+        api_token=api_token,
+        model=settings.CLOUDFLARE_WORKERS_AI_IMAGE_MODEL,
+        timeout=CHAT_MEAL_IMAGE_TIMEOUT_SECONDS,
+        image_store=get_image_store(),
+    )
+    return ChatMealImageGenerator(generator, existing_image=existing_image)
 
 
 class _UnavailableCompletion(ChatCompletionPort):

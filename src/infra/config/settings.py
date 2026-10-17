@@ -380,7 +380,7 @@ class Settings(BaseSettings):
     )
     CLOUDFLARE_WORKERS_AI_IMAGE_MODEL: str = Field(
         default="@cf/black-forest-labs/flux-2-klein-9b",
-        description="Workers AI model for catalog meal image generation.",
+        description="Workers AI model for catalog and chat meal image generation.",
     )
     CLOUDFLARE_WORKERS_AI_VISION_ENABLED: bool = Field(
         default=True,
