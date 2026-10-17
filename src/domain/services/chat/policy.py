@@ -689,7 +689,12 @@ def _parse_localized_number(raw: str) -> tuple[float, int]:
     return float(value), 0
 
 
-_SENTENCE_ENDING_RE = re.compile(r"[.!?…][\"')\]]*(?=\s|$)")
+# Closing markdown (``**bold.**``, ``_em._``) may sit between the punctuation
+# and the following space. A period inside 1.200 is not an ending: the next
+# character is a digit, not whitespace.
+_SENTENCE_ENDING_RE = re.compile(r"[.!?…][*_\"')\]]*(?=\s|$)")
+# ``2. `` at the start of a line is a list marker, not the end of a sentence.
+_LIST_MARKER_ENDING_RE = re.compile(r"(?:^|\n)\s*\d+\.$")
 
 
 def finished_assistant_text(text: str) -> str:
@@ -702,11 +707,21 @@ def finished_assistant_text(text: str) -> str:
     cleaned = sanitize_incomplete_assistant_text(text)
     if not cleaned:
         return ""
-    # A period inside 1.200 is a thousands separator, not the end of a sentence.
-    endings = list(_SENTENCE_ENDING_RE.finditer(cleaned))
+    endings = [
+        match
+        for match in _SENTENCE_ENDING_RE.finditer(cleaned)
+        if not _is_numbered_list_marker(cleaned, match.start())
+    ]
     if not endings:
         return ""
     return cleaned[: endings[-1].end()].strip()
+
+
+def _is_numbered_list_marker(text: str, punct_index: int) -> bool:
+    """True when this period is the dot in a line-leading ``2.`` marker."""
+    if punct_index < 0 or punct_index >= len(text) or text[punct_index] != ".":
+        return False
+    return _LIST_MARKER_ENDING_RE.search(text[: punct_index + 1]) is not None
 
 
 def sanitize_incomplete_assistant_text(text: str) -> str:

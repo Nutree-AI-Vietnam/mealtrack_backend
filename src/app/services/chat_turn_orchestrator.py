@@ -858,6 +858,11 @@ class ChatTurnOrchestrator:
 
                 if _should_retry_output_limit(generation, sentences):
                     generation["output_limit_retried"] = True
+                    # The retry finishes the cut-off sentence. Leaving tools
+                    # on lets the model call one and yield no text, which the
+                    # caller then replaces with the safety fallback.
+                    generation["tools"] = None
+                    generation["tool_calls"] = None
                     already_streamed = bool("".join(sentences).strip())
                     first_pass = list(sentences)
                     first_usage = generation.get("usage") or ChatUsage(

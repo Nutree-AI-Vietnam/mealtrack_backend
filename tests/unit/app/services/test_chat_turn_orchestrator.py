@@ -787,6 +787,64 @@ async def test_failed_output_limit_retry_keeps_the_first_pass():
 
 
 @pytest.mark.asyncio
+async def test_output_limit_retry_does_not_offer_tools():
+    class _TruncatingThenTools:
+        def __init__(self):
+            self.budgets: list[int] = []
+            self.tools: list = []
+
+        async def stream(self, **kwargs):
+            self.budgets.append(kwargs["max_output_tokens"])
+            self.tools.append(kwargs.get("tools"))
+            if len(self.budgets) == 1:
+                yield ChatCompletionDelta(text="Nếu")
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                )
+                return
+            if kwargs.get("tools"):
+                yield ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "name": "suggest_next_meal",
+                            "args": {},
+                        }
+                    ],
+                )
+                return
+            yield ChatCompletionDelta(
+                text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+            )
+            yield ChatCompletionDelta(text="", done=True)
+
+    repo = _FakeRepo(claim=_claim())
+    completion = _TruncatingThenTools()
+    orchestrator = _orchestrator(repo, completion=completion)
+    async for _event in orchestrator.stream_turn(
+        user_id="u1",
+        content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+        idempotency_key="key-1",
+        locale="vi",
+        header_timezone="UTC",
+        user_language="vi",
+    ):
+        pass
+    assert completion.tools[0]
+    assert completion.tools[1] in (None, [])
+    assert repo.completed is not None
+    assert "vài cân" in repo.completed["content"]
+    assert "Tôi chỉ dùng số liệu" not in repo.completed["content"]
+
+
+@pytest.mark.asyncio
 async def test_daily_budget_raises_before_generation():
     repo = _FakeRepo(claim=_claim(), turns_used=40)
     orchestrator = _orchestrator(repo, turns_used=40)

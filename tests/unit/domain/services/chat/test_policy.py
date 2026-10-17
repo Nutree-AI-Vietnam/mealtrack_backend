@@ -380,6 +380,14 @@ def test_finished_assistant_text_drops_token_cutoff_stumps():
         )
         == "Hôm nay bạn còn khoảng 1.200 kcal so với mục tiêu."
     )
+    assert finished_assistant_text("Ăn **yến mạch.** Nếu") == "Ăn **yến mạch.**"
+    assert finished_assistant_text("Try _oats._") == "Try _oats._"
+    assert finished_assistant_text("Oatmeal is fine.\n2. ") == "Oatmeal is fine."
+    assert finished_assistant_text("2. ") == ""
+    assert (
+        finished_assistant_text("2. Eggs stay out of a vegan plate.")
+        == "2. Eggs stay out of a vegan plate."
+    )
 
 
 def test_sanitize_incomplete_assistant_text_strips_cut_off_vn_budget_line():
