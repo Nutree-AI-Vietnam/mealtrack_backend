@@ -196,9 +196,7 @@ class OpenAIChatCompletionAdapter(
             timeout=max(self._timeout_seconds, NEXT_MEAL_RECIPE_TIMEOUT_SECONDS),
             max_retries=0,
             use_responses_api=True,
-            # Structured JSON does not need a reasoning pass. "none" keeps the
-            # card wait to the recipe itself; the token cap still fits the JSON.
-            reasoning={"effort": "none"},
+            reasoning={"effort": "low"},
             streaming=False,
         )
         self._recipe_llms[model] = llm
