@@ -424,6 +424,8 @@ class ChatTurnOrchestrator:
         suggestions: list[dict[str, Any]] = []
         discover_session_id: str | None = None
         follow_task: asyncio.Task[list[dict[str, str]]] | None = None
+        lease_task: asyncio.Task[None] | None = None
+        lease_stop = asyncio.Event()
         reply_saved = False
         generation: dict[str, Any] = {
             "text": "",
@@ -446,6 +448,9 @@ class ChatTurnOrchestrator:
                 )
                 return
 
+            lease_task = asyncio.create_task(
+                self._heartbeat_generation_lease(claim.assistant_message, lease_stop)
+            )
             yield _started_event(claim)
 
             if prepared.function_name:
@@ -878,6 +883,7 @@ class ChatTurnOrchestrator:
 
                 if _should_retry_output_limit(generation, sentences):
                     generation["output_limit_retried"] = True
+                    await self._renew_generation_lease(claim.assistant_message)
                     # The retry finishes the cut-off sentence. Leaving tools
                     # on lets the model call one and yield no text, which the
                     # caller then replaces with the safety fallback.
@@ -1219,6 +1225,13 @@ class ChatTurnOrchestrator:
                 "chat.turn.failed", attributes={"code": "CHAT_TURN_FAILED"}
             )
         finally:
+            lease_stop.set()
+            if lease_task is not None and not lease_task.done():
+                lease_task.cancel()
+                try:
+                    await lease_task
+                except asyncio.CancelledError:
+                    pass
             if follow_task is not None and not follow_task.done():
                 follow_task.cancel()
                 try:
@@ -1232,6 +1245,43 @@ class ChatTurnOrchestrator:
                 unit="millisecond",
                 attributes={"kind": "generate"},
             )
+
+    def _lease_renew_interval(self) -> float:
+        return max(15.0, self._generation_lease_seconds / 3)
+
+    async def _renew_generation_lease(self, message: ChatMessage) -> None:
+        if not message.generation_id:
+            return
+        async with self._uow_factory() as uow:
+            extend = getattr(_chat_repo(uow), "extend_generation_lease", None)
+            if extend is None:
+                return
+            await extend(
+                message_id=message.id,
+                generation_id=message.generation_id,
+                lease_expires_at=utc_now()
+                + timedelta(seconds=self._generation_lease_seconds),
+            )
+
+    async def _heartbeat_generation_lease(
+        self, message: ChatMessage, stop: asyncio.Event
+    ) -> None:
+        """Keep the claim alive while a long answer or retry is still running."""
+        while True:
+            try:
+                await asyncio.wait_for(
+                    stop.wait(), timeout=self._lease_renew_interval()
+                )
+                return
+            except TimeoutError:
+                pass
+            try:
+                await self._renew_generation_lease(message)
+            except Exception:
+                logger.info(
+                    "chat generation lease renew failed",
+                    extra={"assistant_message_id": message.id},
+                )
 
     def release_slot(self, prepared: PreparedChatTurn) -> None:
         if not prepared.slot_acquired:

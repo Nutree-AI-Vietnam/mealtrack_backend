@@ -896,6 +896,46 @@ async def test_output_limit_retry_does_not_offer_tools():
 
 
 @pytest.mark.asyncio
+async def test_long_turn_renews_the_generation_lease():
+    repo = _FakeRepo(claim=_claim())
+    renewed = asyncio.Event()
+    calls: list[dict] = []
+
+    async def extend_generation_lease(**kwargs):
+        calls.append(kwargs)
+        renewed.set()
+        return True
+
+    repo.extend_generation_lease = extend_generation_lease
+
+    class _WaitForRenewal:
+        async def stream(self, **kwargs):
+            del kwargs
+            await asyncio.wait_for(renewed.wait(), timeout=1)
+            yield ChatCompletionDelta(text="The answer is ready. ")
+
+    orchestrator = _orchestrator(repo, completion=_WaitForRenewal())
+    orchestrator._lease_renew_interval = lambda: 0.01  # type: ignore[method-assign]
+    events = [
+        event
+        async for event in orchestrator.stream_turn(
+            user_id="u1",
+            content="How much is left?",
+            idempotency_key="key-1",
+            locale="en",
+            header_timezone="UTC",
+            user_language="en",
+        )
+    ]
+    assert calls
+    assert calls[0]["message_id"] == "m-asst"
+    assert calls[0]["generation_id"] == "gen-1"
+    assert calls[0]["lease_expires_at"] > utc_now()
+    assert events[-1].event == "message.completed"
+    assert repo.failed is None
+
+
+@pytest.mark.asyncio
 async def test_daily_budget_raises_before_generation():
     repo = _FakeRepo(claim=_claim(), turns_used=40)
     orchestrator = _orchestrator(repo, turns_used=40)
