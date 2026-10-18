@@ -59,8 +59,8 @@ def new_chat_job(
         "function_name": function_name,
         "function_args": function_args,
     }
-    # Absent on the original single-thread route, which still means "the
-    # user's most recently active thread".
+    # The chat route always passes the thread the turn was prepared on.
+    # Callers that have not resolved one yet omit it.
     if thread_id is not None:
         request["thread_id"] = thread_id
     return NewAiJob(

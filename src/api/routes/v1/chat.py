@@ -367,7 +367,9 @@ async def _post_message(
                 intent=intent_value,
                 function_name=function_name,
                 function_args=function_args,
-                thread_id=thread_id,
+                # The legacy route passes no thread. prepare_turn has already
+                # resolved the active one; store that id so a retry stays there.
+                thread_id=thread_id or prepared.claim.thread.id,
             )
         except AiJobConflictError:
             await orchestrator.abandon_turn(prepared, error_code="CHAT_TURN_FAILED")
@@ -437,8 +439,8 @@ async def _start_chat_job(
         language=prepared.locale,
         content=content,
         idempotency_key=idempotency_key,
-        # Stored exactly as passed to prepare_turn, so a retry rebuilds the
-        # same turn on the same thread.
+        # Stored as the thread the turn was prepared on, so a retry rebuilds
+        # the same turn there.
         locale=locale,
         header_timezone=header_timezone,
         user_language=locale,

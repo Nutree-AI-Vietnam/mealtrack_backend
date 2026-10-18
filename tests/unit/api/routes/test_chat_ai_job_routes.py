@@ -257,7 +257,7 @@ class TestPostWithJob:
         assert orchestrator.released == []
         assert orchestrator.streamed is False
         (job,) = ai_jobs.start_chat_job.await_args.args
-        request = _chat_request()
+        request = _chat_request(thread_id="t1")
         assert job == NewAiJob(
             id=JOB_ID,
             user_id="u1",
@@ -297,6 +297,7 @@ class TestPostWithJob:
             intent="remaining_budget",
             function_name="check_daily_progress",
             function_args={"focus": "remaining_budget"},
+            thread_id="t1",
         )
         assert job.request_payload == {
             **request,
@@ -430,6 +431,25 @@ class TestPostWithJob:
         ai_jobs.start_chat_job.assert_not_awaited()
         assert runner.start_kwargs is None
         assert orchestrator.released == [orchestrator.prepared]
+
+    def test_legacy_message_stores_the_thread_the_turn_resolved_to(self):
+        """The legacy route does not name a thread. The job must still store
+        the thread prepare_turn resolved, or a retry lands on whichever
+        thread is active later."""
+        orchestrator = _StubOrchestrator()
+        ai_jobs = _StubAiJobs(claim=make_claim(job_type=AiJobType.CHAT))
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert response.status_code == 200
+        assert orchestrator.prepare_kwargs["thread_id"] is None
+        resolved = orchestrator.prepared.claim.thread.id
+        (job,) = ai_jobs.start_chat_job.await_args.args
+        assert job.request_payload["thread_id"] == resolved
+        request = _chat_request(thread_id=resolved)
+        assert job.request_fingerprint == ai_job_request_fingerprint(
+            AiJobType.CHAT, request
+        )
 
     def test_thread_message_stores_the_thread_so_a_retry_stays_there(self):
         orchestrator = _StubOrchestrator()
