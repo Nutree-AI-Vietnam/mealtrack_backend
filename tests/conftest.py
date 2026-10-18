@@ -490,15 +490,6 @@ class TestUserRepository:
         )
         return UserMapper.to_domain(entity) if entity else None
 
-    def find_deleted_by_firebase_uid(self, firebase_uid: str):
-        entity = (
-            self.db.query(User)
-            .options(*self._USER_LOADS)
-            .filter(User.firebase_uid == firebase_uid, User.is_active.is_(False))
-            .first()
-        )
-        return UserMapper.to_domain(entity) if entity else None
-
     def delete(self, user_id) -> bool:
         entity = self.db.query(User).filter(User.id == str(user_id)).first()
         if not entity:
@@ -629,9 +620,6 @@ class AsyncTestUserRepository:
 
     async def find_by_firebase_uid(self, *args, **kwargs):
         return self._repo.find_by_firebase_uid(*args, **kwargs)
-
-    async def find_deleted_by_firebase_uid(self, *args, **kwargs):
-        return self._repo.find_deleted_by_firebase_uid(*args, **kwargs)
 
     async def get_profile(self, *args, **kwargs):
         return self._repo.get_profile(*args, **kwargs)

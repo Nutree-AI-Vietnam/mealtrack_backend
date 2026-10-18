@@ -27,15 +27,6 @@ class FakeUserRepository(UserRepositoryPort):
                 return user
         return None
 
-    async def find_deleted_by_firebase_uid(
-        self, firebase_uid: str
-    ) -> Optional[UserDomainModel]:
-        """Find deleted (inactive) user by Firebase UID."""
-        for user in self.users.values():
-            if user.firebase_uid == firebase_uid and not user.is_active:
-                return user
-        return None
-
     async def find_by_firebase_uid_including_deleted(
         self, firebase_uid: str
     ) -> Optional[UserDomainModel]:

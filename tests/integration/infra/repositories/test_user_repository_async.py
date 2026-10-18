@@ -52,18 +52,6 @@ async def test_find_by_firebase_uid_returns_none_for_inactive(async_db_session):
 
 
 @pytest.mark.asyncio
-async def test_find_deleted_by_firebase_uid_returns_inactive_user(async_db_session):
-    user = await _insert_user(async_db_session, "firebase-uid-t03")
-    user.is_active = False
-    await async_db_session.flush()
-
-    repo = AsyncUserRepository(async_db_session)
-    result = await repo.find_deleted_by_firebase_uid("firebase-uid-t03")
-    assert result is not None
-    assert result.firebase_uid == "firebase-uid-t03"
-
-
-@pytest.mark.asyncio
 async def test_find_by_email_returns_active_user(async_db_session):
     await _insert_user(async_db_session, "firebase-uid-t04")
     repo = AsyncUserRepository(async_db_session)

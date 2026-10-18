@@ -172,17 +172,6 @@ class AsyncUserRepository(UserRepositoryPort):
         entity = result.scalars().first()
         return UserMapper.to_domain(entity) if entity else None
 
-    async def find_deleted_by_firebase_uid(
-        self, firebase_uid: str
-    ) -> UserDomainModel | None:
-        result = await self.session.execute(
-            select(User)
-            .options(*_USER_LOADS)
-            .where(User.firebase_uid == firebase_uid, User.is_active.is_(False))
-        )
-        entity = result.scalars().first()
-        return UserMapper.to_domain(entity) if entity else None
-
     async def find_by_firebase_uid_including_deleted(
         self, firebase_uid: str
     ) -> UserDomainModel | None:

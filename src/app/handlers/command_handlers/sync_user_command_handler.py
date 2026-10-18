@@ -286,10 +286,7 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
 
             uuid.UUID(user_id_str)
         except ValueError:
-            logger.warning(
-                "Skipping notification prefs: invalid UUID value (len=%d)",
-                len(user_id_str),
-            )
+            logger.warning("Skipping notification prefs: invalid UUID value (len=%d)", len(user_id_str))
             return
 
         try:

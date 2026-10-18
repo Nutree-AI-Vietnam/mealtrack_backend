@@ -66,16 +66,16 @@ class TestSyncUserCommandHandler:
         languages_at_save: list[str | None] = []
 
         original_active = users.find_by_firebase_uid
-        original_deleted = users.find_deleted_by_firebase_uid
+        original_any = users.find_by_firebase_uid_including_deleted
         original_save = users.save
 
         async def find_active(firebase_uid: str):
             calls.append("active")
             return await original_active(firebase_uid)
 
-        async def find_deleted(firebase_uid: str):
-            calls.append("deleted")
-            return await original_deleted(firebase_uid)
+        async def find_any(firebase_uid: str):
+            calls.append("including_deleted")
+            return await original_any(firebase_uid)
 
         async def save(user):
             calls.append("save")
@@ -83,16 +83,8 @@ class TestSyncUserCommandHandler:
             return await original_save(user)
 
         users.find_by_firebase_uid = find_active
-        users.find_deleted_by_firebase_uid = find_deleted
+        users.find_by_firebase_uid_including_deleted = find_any
         users.save = save
-        if hasattr(users, "find_by_firebase_uid_including_deleted"):
-            original_any = users.find_by_firebase_uid_including_deleted
-
-            async def find_any(firebase_uid: str):
-                calls.append("including_deleted")
-                return await original_any(firebase_uid)
-
-            users.find_by_firebase_uid_including_deleted = find_any
 
         handler.uow = fake_uow
         result = await handler.handle(
@@ -106,7 +98,7 @@ class TestSyncUserCommandHandler:
         )
 
         identity_lookups = [
-            call for call in calls if call in {"active", "deleted", "including_deleted"}
+            call for call in calls if call in {"active", "including_deleted"}
         ]
         assert identity_lookups == ["including_deleted"]
         assert calls.count("save") == 1
@@ -158,9 +150,7 @@ class TestSyncUserCommandHandler:
         assert fake_uow.committed is True
 
     @pytest.mark.asyncio
-    async def test_handle_rejects_email_collision_with_different_firebase_uid(
-        self, handler
-    ):
+    async def test_handle_rejects_email_collision_with_different_firebase_uid(self, handler):
         """An email lookup must never move an existing account to a new UID."""
         fake_uow = FakeUnitOfWork()
         from src.domain.model.auth.auth_provider import AuthProvider
@@ -289,9 +279,9 @@ class TestSyncUserCommandHandler:
         # Debug: Check all subscriptions
         all_subs = list(fake_uow.subscriptions._subscriptions.values())
         matching = [s for s in all_subs if s.user_id == str(user_id)]
-        assert len(matching) > 0, (
-            f"Should have subscription for user {user_id}. All: {[(s.user_id, s.status) for s in all_subs]}"
-        )
+        assert (
+            len(matching) > 0
+        ), f"Should have subscription for user {user_id}. All: {[(s.user_id, s.status) for s in all_subs]}"
 
         # Verify subscription can be found before handler runs
         found_before = await fake_uow.subscriptions.find_active_by_user_id(str(user_id))
@@ -305,9 +295,9 @@ class TestSyncUserCommandHandler:
                     print(
                         f"Subscription expires_at={sub.expires_at}, now={dt.now()}, valid={is_valid}"
                     )
-        assert found_before is not None, (
-            f"Subscription should be findable for user {user_id} before handler runs"
-        )
+        assert (
+            found_before is not None
+        ), f"Subscription should be findable for user {user_id} before handler runs"
 
         handler.uow = fake_uow
 
@@ -321,25 +311,25 @@ class TestSyncUserCommandHandler:
 
         # Verify user ID matches - handler should find existing user
         result_user_id = result["user"]["id"]
-        assert str(result_user_id) == str(user_id), (
-            f"User ID mismatch: {result_user_id} != {user_id}"
-        )
+        assert str(result_user_id) == str(
+            user_id
+        ), f"User ID mismatch: {result_user_id} != {user_id}"
 
         # Verify subscription can still be found after handler runs
         found_after = await fake_uow.subscriptions.find_active_by_user_id(
             str(result_user_id)
         )
-        assert found_after is not None, (
-            f"Subscription should still be findable for user {result_user_id} after handler runs"
-        )
+        assert (
+            found_after is not None
+        ), f"Subscription should still be findable for user {result_user_id} after handler runs"
 
         # The handler should have found the subscription and set has_subscription
-        assert result["user"]["has_subscription"] is True, (
-            f"User should have subscription. Found subscription: {found_after is not None}"
-        )
-        assert result["user"]["subscription"] is not None, (
-            "Subscription info should be present"
-        )
+        assert (
+            result["user"]["has_subscription"] is True
+        ), f"User should have subscription. Found subscription: {found_after is not None}"
+        assert (
+            result["user"]["subscription"] is not None
+        ), "Subscription info should be present"
         assert result["user"]["subscription"]["product_id"] == "standard_monthly"
         assert result["user"]["subscription"]["is_monthly"] is True
 
@@ -494,9 +484,9 @@ class TestSyncUserReRegistration:
 
         # New user should have a different ID
         new_user_id = result["user"]["id"]
-        assert str(new_user_id) != str(old_user_id), (
-            "New user should have different ID from deleted user"
-        )
+        assert str(new_user_id) != str(
+            old_user_id
+        ), "New user should have different ID from deleted user"
 
         # New user should have onboarding_completed=False (fresh start)
         assert result["user"]["onboarding_completed"] is False
@@ -549,12 +539,12 @@ class TestSyncUserReRegistration:
         old_user = fake_uow.users.users.get(old_user_id)
         assert old_user is not None, "Deleted user record should still exist"
         assert old_user.is_active is False, "Deleted user should remain inactive"
-        assert old_user.email == "old_anonymized@deleted.local", (
-            "Deleted user email should be preserved"
-        )
-        assert old_user.onboarding_completed is True, (
-            "Deleted user onboarding should be preserved"
-        )
+        assert (
+            old_user.email == "old_anonymized@deleted.local"
+        ), "Deleted user email should be preserved"
+        assert (
+            old_user.onboarding_completed is True
+        ), "Deleted user onboarding should be preserved"
 
     @pytest.mark.asyncio
     async def test_new_user_triggers_onboarding(self, handler):
@@ -633,6 +623,6 @@ class TestSyncUserReRegistration:
         prefs = await fake_uow.notifications.find_notification_preferences_by_user(
             new_user_id
         )
-        assert prefs is not None, (
-            "Notification preferences should be created for new user"
-        )
+        assert (
+            prefs is not None
+        ), "Notification preferences should be created for new user"
