@@ -291,6 +291,46 @@ async def test_one_failed_push_does_not_stop_the_batch(uow, sender, metrics, cap
     assert (record.job_id, record.job_type) == ("job-1", "meal_scan")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "break_delivery",
+    ["send", "device_lookup"],
+    ids=["send-raises", "device-lookup-raises"],
+)
+async def test_run_once_releases_a_notification_when_delivery_fails(
+    uow, sender, metrics, break_delivery
+):
+    """A claim is committed before the push. An error before it is sent must
+    clear that claim, or the notification is never retried."""
+    uow.ai_jobs.claim_notifications.return_value = [make_notification_claim()]
+    if break_delivery == "send":
+        sender.send.side_effect = RuntimeError("fcm down")
+    else:
+        uow.push_tokens.list_active_targets.side_effect = RuntimeError("db down")
+
+    claimed = await _notifier(uow, sender).run_once()
+
+    assert claimed == 1
+    uow.ai_jobs.release_notification.assert_awaited_once_with(
+        job_id=JOB_ID, retry_delay_seconds=30.0
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_once_keeps_the_claim_when_the_push_already_went_out(
+    uow, sender, metrics
+):
+    uow.ai_jobs.claim_notifications.return_value = [make_notification_claim()]
+    sender.send.return_value = PushSendReport(sent=1, invalid_tokens=("android-token",))
+    uow.push_tokens.deactivate_tokens.side_effect = RuntimeError("db down")
+
+    claimed = await _notifier(uow, sender).run_once()
+
+    assert claimed == 1
+    sender.send.assert_awaited_once()
+    uow.ai_jobs.release_notification.assert_not_awaited()
+
+
 # --- deliver ---
 
 

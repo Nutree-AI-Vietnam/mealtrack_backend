@@ -119,28 +119,54 @@ class AiJobNotifier:
         message = build_ai_job_push_message(claim)
         if message is None:
             return
-        async with self._uow_factory() as uow:
-            targets = await uow.push_tokens.list_active_targets(user_id=claim.user_id)
-        if not targets:
-            _count(claim, "no_device")
-            return
-        report = await self._sender.send(targets, message)
-        if report.invalid_tokens:
+        # The claim is already committed. An error before the push goes out
+        # has to put it back, or notified_at stays set and it is never retried.
+        dispatched = False
+        try:
             async with self._uow_factory() as uow:
-                await uow.push_tokens.deactivate_tokens(report.invalid_tokens)
+                targets = await uow.push_tokens.list_active_targets(
+                    user_id=claim.user_id
+                )
+            if not targets:
+                _count(claim, "no_device")
+                return
+            report = await self._sender.send(targets, message)
+            dispatched = report.sent > 0
+            if report.invalid_tokens:
+                async with self._uow_factory() as uow:
+                    await uow.push_tokens.deactivate_tokens(report.invalid_tokens)
+        except Exception:
+            if not dispatched:
+                await self._release_after_delivery_error(claim)
+            raise
         if report.sent:
             _count(claim, "sent")
             return
         if report.retry_later and claim.notify_attempts < AI_JOB_MAX_NOTIFY_ATTEMPTS:
-            async with self._uow_factory() as uow:
-                await uow.ai_jobs.release_notification(
-                    job_id=claim.job_id,
-                    retry_delay_seconds=_RELEASE_BASE_DELAY_SECONDS
-                    * claim.notify_attempts,
-                )
+            await self._release_for_retry(claim)
             _count(claim, "retry_later")
             return
         _count(claim, "failed")
+
+    async def _release_for_retry(self, claim: AiJobNotificationClaim) -> None:
+        if claim.notify_attempts >= AI_JOB_MAX_NOTIFY_ATTEMPTS:
+            return
+        async with self._uow_factory() as uow:
+            await uow.ai_jobs.release_notification(
+                job_id=claim.job_id,
+                retry_delay_seconds=_RELEASE_BASE_DELAY_SECONDS * claim.notify_attempts,
+            )
+
+    async def _release_after_delivery_error(
+        self, claim: AiJobNotificationClaim
+    ) -> None:
+        try:
+            await self._release_for_retry(claim)
+        except Exception:
+            logger.exception(
+                "Failed to release AI job notification for retry",
+                extra={"job_id": claim.job_id, "job_type": claim.job_type.value},
+            )
 
 
 def _count(claim: AiJobNotificationClaim, outcome: str) -> None:
