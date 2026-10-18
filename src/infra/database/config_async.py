@@ -18,10 +18,15 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Bound so a hung pool terminate cannot hold the request open. The close task
+# itself keeps running after this wait returns.
+SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
+
 # Strong refs for session-close tasks. The loop only keeps tasks weakly, so a
 # CancelledError unwinding the request can destroy a close that is still
 # terminating the pooled connection.
 _CLOSING_SESSIONS: set[asyncio.Task[None]] = set()
+_CLOSE_WAITS: dict[asyncio.Task[None], "_CloseWait"] = {}
 
 
 def _sanitize_asyncpg_url_and_connect_args(url: str) -> tuple[str, dict]:
@@ -153,14 +158,7 @@ except Exception as _engine_init_error:  # noqa: BLE001
 
 
 async def get_async_db():
-    """FastAPI dependency: yields an AsyncSession, closes after request.
-
-    The close runs on a shielded task. A client disconnect cancels the
-    request while NullPool is terminating the connection; doing that await
-    on the cancelled task logs "Exception terminating connection" and drops
-    the cleanup (PYTHON-HP). CancelledError is re-raised after the close is
-    handed off.
-    """
+    """FastAPI dependency: yields an AsyncSession, closes after request."""
     if AsyncSessionLocal is None:
         raise RuntimeError(
             "AsyncSessionLocal is not initialized. Async engine setup failed; "
@@ -174,26 +172,67 @@ async def get_async_db():
         await session.rollback()
         raise
     finally:
-        await _close_session_even_if_cancelled(session)
+        await close_async_session(session)
 
 
-def _release_closing_session(task: asyncio.Task[None]) -> None:
+class _CloseWait:
+    """Whether the caller is still waiting to observe a close failure."""
+
+    __slots__ = ("attached",)
+
+    def __init__(self) -> None:
+        self.attached = True
+
+
+def _on_close_done(task: asyncio.Task[None]) -> None:
     _CLOSING_SESSIONS.discard(task)
+    wait = _CLOSE_WAITS.pop(task, None)
     if task.cancelled():
         return
     error = task.exception()
-    if error is not None:
-        logger.error("Async DB session close failed", exc_info=error)
+    if error is None or (wait is not None and wait.attached):
+        # The waiter raises this failure itself. Logging here too reports it
+        # twice on a normal request.
+        return
+    logger.error("Async DB session close failed", exc_info=error)
 
 
-async def _close_session_even_if_cancelled(session: AsyncSession) -> None:
-    """Finish session.close() even when this request task is cancelled."""
+def _caller_was_cancelled() -> bool:
+    current = asyncio.current_task()
+    return current is not None and current.cancelling() > 0
+
+
+async def close_async_session(session: AsyncSession) -> None:
+    """Close a session even when the request task is already cancelled.
+
+    Chat does not use ``get_async_db``. Its sessions are closed from
+    ``AsyncUnitOfWork.__aexit__`` and from the auth lookup's short-lived
+    session. A client disconnect cancels that task while ``NullPool`` is
+    terminating the connection, which logs "Exception terminating connection"
+    and drops the cleanup (PYTHON-HP).
+
+    The close runs on a shielded task with a strong reference. The wait is
+    bounded so a hung close cannot hold the request. ``CancelledError`` is
+    re-raised when the caller was cancelled.
+    """
     close_task = asyncio.create_task(session.close())
+    wait = _CloseWait()
     _CLOSING_SESSIONS.add(close_task)
-    close_task.add_done_callback(_release_closing_session)
+    _CLOSE_WAITS[close_task] = wait
+    close_task.add_done_callback(_on_close_done)
     try:
-        await asyncio.shield(close_task)
+        await asyncio.wait_for(
+            asyncio.shield(close_task),
+            SESSION_CLOSE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Async DB session close exceeded %ss; releasing the request",
+            SESSION_CLOSE_TIMEOUT_SECONDS,
+        )
+        wait.attached = False
+        if _caller_was_cancelled():
+            raise asyncio.CancelledError() from None
     except asyncio.CancelledError:
-        # shield does not cancel close_task. Keep the strong ref above and
-        # let the caller see the disconnect.
+        wait.attached = False
         raise
