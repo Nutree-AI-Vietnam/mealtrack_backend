@@ -11,6 +11,7 @@ from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.user import DeleteUserCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.user.user_deleted_event import UserDeletedEvent
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.cache_port import CachePort
 from src.domain.ports.integration_event_publisher_port import (
@@ -72,9 +73,13 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 # Step 1: Soft-delete all related user data
                 await self._soft_delete_related_data(uow, str(user_id))
 
-                # Step 2: Anonymize user data (GDPR compliance)
+                # Step 2: Anonymize user data (GDPR compliance).
+                # firebase_uid stays on the integration event (command.firebase_uid)
+                # so Firebase cleanup still runs, but the column must be released.
+                # ix_users_firebase_uid is unique for inactive rows too.
                 user.email = f"deleted_{user.id}@deleted.local"
                 user.username = f"deleted_user_{user.id}"
+                user.firebase_uid = tombstone_firebase_uid(user.id)
                 user.first_name = None
                 user.last_name = None
                 user.phone_number = None

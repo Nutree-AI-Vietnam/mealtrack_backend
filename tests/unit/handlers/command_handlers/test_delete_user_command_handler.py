@@ -163,7 +163,8 @@ class TestDeleteUserCommandHandler:
         self, delete_handler, mock_publisher, active_user, db_session
     ):
         """Test successfully deleting an active user and publishing UserDeletedEvent."""
-        command = DeleteUserCommand(firebase_uid=active_user.firebase_uid)
+        original_uid = active_user.firebase_uid
+        command = DeleteUserCommand(firebase_uid=original_uid)
 
         with patch(
             "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
@@ -171,7 +172,7 @@ class TestDeleteUserCommandHandler:
         ):
             result = await delete_handler.handle(command)
 
-            assert result["firebase_uid"] == active_user.firebase_uid
+            assert result["firebase_uid"] == original_uid
             assert result["deleted"] is True
             assert result["firebase_cleanup_queued"] is True
             assert (
@@ -184,13 +185,14 @@ class TestDeleteUserCommandHandler:
                 db_session.query(User).filter(User.id == active_user.id).first()
             )
             assert deleted_user.is_active is False
+            assert deleted_user.firebase_uid == f"deleted:{active_user.id}"
 
             # Verify event was published
             mock_publisher.publish.assert_awaited_once()
             payload = mock_publisher.publish.call_args[0][0]
             assert payload["event_type"] == "user.deleted.v1"
             assert payload["aggregate_id"] == str(active_user.id)
-            assert payload["data"]["firebase_uid"] == active_user.firebase_uid
+            assert payload["data"]["firebase_uid"] == original_uid
             assert payload["data"]["user_id"] == str(active_user.id)
 
     @pytest.mark.asyncio
@@ -216,6 +218,7 @@ class TestDeleteUserCommandHandler:
             assert deleted_user.display_name is None
             assert deleted_user.photo_url is None
             assert deleted_user.password_hash == "DELETED"
+            assert deleted_user.firebase_uid == f"deleted:{user_id}"
 
     @pytest.mark.asyncio
     async def test_delete_inactive_user_raises_not_found(
