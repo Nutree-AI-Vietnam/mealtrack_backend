@@ -140,11 +140,16 @@ jobs:
           fi
           echo "Render deploy id: ${DEPLOY_ID}"
 
-          echo "Polling Render deploy ${DEPLOY_ID} on ${STAGING_SERVICE_ID}..."
+          # timeout-minutes: 25. Worst-case poll is curl --max-time 20 + sleep.
+          # Reserve ~2 minutes for the hook POST and job overhead (~40 polls).
+          POLL_INTERVAL_SECS=15
+          CURL_MAX_SECS=20
+          MAX_POLLS=$(( (25 * 60 - 120) / (CURL_MAX_SECS + POLL_INTERVAL_SECS) ))
+          echo "Polling Render deploy ${DEPLOY_ID} on ${STAGING_SERVICE_ID} (max ${MAX_POLLS} attempts)..."
           i=0
-          while [ "${i}" -lt 60 ]; do
+          while [ "${i}" -lt "${MAX_POLLS}" ]; do
             i=$((i + 1))
-            POLL_CODE=$(curl -sS --max-time 20 -o /tmp/deploy.json -w '%{http_code}' \
+            POLL_CODE=$(curl -sS --max-time "${CURL_MAX_SECS}" -o /tmp/deploy.json -w '%{http_code}' \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               "https://api.render.com/v1/services/${STAGING_SERVICE_ID}/deploys/${DEPLOY_ID}" \
               2>/tmp/poll.err) || POLL_CODE="000"
@@ -153,7 +158,7 @@ jobs:
               exit 1
             fi
             STATUS=$(python3 -c 'import json; print(json.load(open("/tmp/deploy.json")).get("status") or "unknown")') || STATUS="unknown"
-            echo "Poll ${i}/60 HTTP ${POLL_CODE} status=${STATUS}"
+            echo "Poll ${i}/${MAX_POLLS} HTTP ${POLL_CODE} status=${STATUS}"
             case "${STATUS}" in
               live)
                 echo "Render deploy ${DEPLOY_ID} is live"
@@ -165,7 +170,7 @@ jobs:
                 exit 1
                 ;;
             esac
-            sleep 15
+            sleep "${POLL_INTERVAL_SECS}"
           done
           echo "::error::Timed out polling Render deploy ${DEPLOY_ID}"
           exit 1
