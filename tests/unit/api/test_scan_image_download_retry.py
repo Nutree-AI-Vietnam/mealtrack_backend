@@ -150,6 +150,35 @@ async def test_scan_image_download_retries_upstream_5xx_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [502, 503, 504])
+async def test_scan_image_download_persistent_gateway_is_unavailable(
+    monkeypatch, caplog, status_code
+):
+    """Persistent 502/503/504 is 503 IMAGE_DOWNLOAD_UNAVAILABLE.
+
+    On the old one-shot GET this raises ``httpx.HTTPStatusError`` instead.
+    """
+    download = _downloader()
+    client = _ScriptedClient([_response(status_code), _response(status_code)])
+    delays = _record_backoff(monkeypatch)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ExternalServiceException) as raised:
+            await download(_PHOTO_URL, client=client)
+
+    assert len(client.calls) == 2
+    assert delays == [0.2]
+    assert raised.value.error_code == "IMAGE_DOWNLOAD_UNAVAILABLE"
+    assert raised.value.details == {}
+    http_exc = handle_exception(raised.value)
+    assert http_exc.status_code == 503
+    assert http_exc.detail["error_code"] == "IMAGE_DOWNLOAD_UNAVAILABLE"
+    assert http_exc.status_code not in (401, 403)
+    assert _PHOTO_URL not in str(http_exc.detail)
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status_code", "exc_type", "http_status", "error_code"),
     [
