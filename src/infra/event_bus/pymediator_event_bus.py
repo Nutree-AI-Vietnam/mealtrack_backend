@@ -21,6 +21,9 @@ from src.domain.exceptions.ai_exceptions import (
 from src.domain.exceptions.meal_recommendation_exceptions import (
     MealRecommendationCreationError,
 )
+from src.domain.exceptions.weekly_meal_planner_exceptions import (
+    WeeklyMealPlanConflictError,
+)
 
 from .event_bus import EventBus
 
@@ -194,6 +197,16 @@ class PyMediatorEventBus(EventBus):
             # at debug so routine control flow does not produce duplicate ERRORs.
             logger.debug(
                 f"Application exception handling {event_type.__name__}: {str(e)}"
+            )
+            raise
+        except WeeklyMealPlanConflictError as exc:
+            # Expected state conflict (logged slot, stale revision, reused
+            # idempotency key). The API maps this to HTTP 409. Logging it at
+            # ERROR made Sentry's LoggingIntegration open PYTHON-JR.
+            logger.warning(
+                "Weekly meal plan conflict handling %s: %s",
+                event_type.__name__,
+                exc,
             )
             raise
         except Exception as e:

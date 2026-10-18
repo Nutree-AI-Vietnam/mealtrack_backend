@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
 
@@ -19,6 +20,9 @@ from src.domain.exceptions.ai_exceptions import (
     CONTENT_REJECTION_ERROR_CODES,
     AIContentRejectedError,
 )
+from src.domain.exceptions.weekly_meal_planner_exceptions import (
+    WeeklyMealPlanConflictError,
+)
 from src.infra.config.settings import settings
 from src.infra.monitoring.connectors import (
     filter_safe_attributes,
@@ -27,6 +31,11 @@ from src.infra.monitoring.connectors import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Local processes must not publish, even when a DSN is present in the environment.
+# Missing migrations on dev Macs were opening PYTHON-JS, PYTHON-H0, PYTHON-JX,
+# and PYTHON-JV from server_name=MacBook-Pro.local.
+_SENTRY_NON_REPORTING_ENVIRONMENTS = frozenset({"development", "local"})
 
 SentryMessageLevel = Literal["fatal", "critical", "error", "warning", "info", "debug"]
 SentryLogLevel = Literal["fatal", "error", "warning", "info", "debug", "trace"]
@@ -45,28 +54,42 @@ class SentryObservabilityConnector:
         self._enabled = False
 
     def initialize(self) -> None:
-        """Initialize Sentry SDK if SENTRY_DSN is configured.
+        """Initialize Sentry when this process should publish events.
+
+        development and local never send. Other environments send only when
+        SENTRY_DSN is set. The environment label is the ENVIRONMENT env var.
 
         Must be called BEFORE the FastAPI app is instantiated so integrations
         can patch Starlette/FastAPI middleware.
         """
+        environment = _sentry_environment()
         if sentry_sdk is None:
-            logger.info("Sentry disabled (sentry_sdk not installed)")
+            logger.info(
+                "Sentry disabled (sentry_sdk not installed, env=%s)", environment
+            )
+            return
+
+        if environment in _SENTRY_NON_REPORTING_ENVIRONMENTS:
+            logger.info(
+                "Sentry disabled (environment=%s does not send events)",
+                environment,
+            )
             return
 
         if not settings.SENTRY_DSN:
-            logger.info("Sentry disabled (SENTRY_DSN not set)")
+            logger.info("Sentry disabled (SENTRY_DSN not set, env=%s)", environment)
             return
 
         init_kwargs: dict[str, Any] = {
             "dsn": settings.SENTRY_DSN,
-            "environment": settings.ENVIRONMENT,
+            "environment": environment,
             "release": settings.SENTRY_RELEASE,
             "traces_sample_rate": settings.SENTRY_TRACES_SAMPLE_RATE,
             "profiles_sample_rate": settings.SENTRY_PROFILES_SAMPLE_RATE,
             "send_default_pii": settings.SENTRY_SEND_PII,
             "enable_logs": settings.SENTRY_ENABLE_LOGS,
             "enable_metrics": settings.SENTRY_ENABLE_METRICS,
+            "ignore_errors": [WeeklyMealPlanConflictError],
             "before_send": _drop_expected_events,
             "integrations": [
                 StarletteIntegration(
@@ -88,7 +111,7 @@ class SentryObservabilityConnector:
 
         sentry_sdk.init(**init_kwargs)
         self._enabled = True
-        logger.info("Sentry initialized (env=%s)", settings.ENVIRONMENT)
+        logger.info("Sentry initialized (env=%s)", environment)
 
     def capture_exception(
         self,
@@ -248,18 +271,33 @@ def initialize_sentry() -> None:
 def _drop_expected_events(
     event: dict[str, Any], hint: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Drop provider safety-filter rejections of user input.
+    """Drop expected domain outcomes that must not become Sentry issues.
 
-    The LangChain integration captures the raw provider error before our
-    handlers map it to a 422, so it must be filtered here.
+    Content rejections are captured by the LangChain integration before the
+    API maps them to 422. WeeklyMealPlanConflictError is a business rule the
+    API maps to 409; ignore it here as well as via ignore_errors.
     """
     exc_info = hint.get("exc_info")
     exc = exc_info[1] if exc_info else None
-    if isinstance(exc, AIContentRejectedError):
+    if isinstance(exc, (AIContentRejectedError, WeeklyMealPlanConflictError)):
         return None
     if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
         return None
     return event
+
+
+def _sentry_environment() -> str:
+    """Return the Sentry environment from the ENVIRONMENT env var.
+
+    The process variable wins over ``settings.ENVIRONMENT``. pydantic-settings
+    loads that same variable into settings (default ``development`` when unset),
+    which is the fallback for tests and processes that only configure settings.
+    """
+    raw = os.environ.get("ENVIRONMENT")
+    if raw is None or not str(raw).strip():
+        raw = settings.ENVIRONMENT
+    normalized = str(raw or "development").strip().lower()
+    return normalized or "development"
 
 
 def _normalize_message_level(level: str) -> SentryMessageLevel:

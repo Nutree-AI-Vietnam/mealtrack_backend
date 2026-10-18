@@ -4,6 +4,10 @@ from contextlib import nullcontext
 from unittest.mock import MagicMock
 
 from src.domain.exceptions.ai_exceptions import AIContentRejectedError
+from src.domain.exceptions.weekly_meal_planner_exceptions import (
+    WeeklyMealPlanConflictError,
+    WeeklyMealPlanIdempotencyConflictError,
+)
 from src.infra.monitoring.connectors import (
     filter_safe_attributes,
     filter_safe_context,
@@ -30,6 +34,17 @@ def test_before_send_drops_content_rejections():
 
     assert _drop_expected_events(event, _hint(AIContentRejectedError("x"))) is None
     assert _drop_expected_events(event, _hint(_ProviderError("invalid_prompt"))) is None
+
+
+def test_before_send_drops_weekly_meal_plan_conflicts():
+    event = {"level": "error"}
+    conflict = WeeklyMealPlanConflictError(
+        "Logged weekly meal slots cannot be replaced"
+    )
+    idempotency = WeeklyMealPlanIdempotencyConflictError()
+
+    assert _drop_expected_events(event, _hint(conflict)) is None
+    assert _drop_expected_events(event, _hint(idempotency)) is None
 
 
 def test_before_send_keeps_other_events():
@@ -104,9 +119,54 @@ def test_filter_safe_attributes_drops_sensitive_none_and_complex_values():
     }
 
 
+def test_initialize_does_not_send_for_development_or_local(monkeypatch):
+    """Local Macs with a DSN and ENVIRONMENT=development were publishing events."""
+    for environment in ("development", "local", "Development", "LOCAL"):
+        mock_sdk = MagicMock()
+        monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+        monkeypatch.setenv("ENVIRONMENT", environment)
+        monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+        monkeypatch.setattr(
+            "src.infra.monitoring.sentry.settings.ENVIRONMENT", "production"
+        )
+
+        connector = SentryObservabilityConnector()
+        connector.initialize()
+
+        mock_sdk.init.assert_not_called()
+        assert connector._enabled is False
+
+
+def test_initialize_environment_comes_from_environment_env_var(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.SENTRY_TRACES_SAMPLE_RATE", 0.1
+    )
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.SENTRY_PROFILES_SAMPLE_RATE", 0.05
+    )
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["environment"] == "production"
+    assert init_kwargs["traces_sample_rate"] == 0.1
+    assert init_kwargs["profiles_sample_rate"] == 0.05
+    assert init_kwargs["ignore_errors"] == [WeeklyMealPlanConflictError]
+    assert connector._enabled is True
+
+
 def test_initialize_skips_when_dsn_unset(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", None)
 
     connector = SentryObservabilityConnector()
@@ -118,6 +178,7 @@ def test_initialize_skips_when_dsn_unset(monkeypatch):
 def test_initialize_configures_integrations_and_release(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.ENVIRONMENT", "test")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", "rel-1")
@@ -157,6 +218,7 @@ def test_initialize_configures_integrations_and_release(monkeypatch):
 def test_initialize_omits_optional_profile_session_settings_when_unset(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr(
         "src.infra.monitoring.sentry.settings.SENTRY_PROFILE_SESSION_SAMPLE_RATE",
