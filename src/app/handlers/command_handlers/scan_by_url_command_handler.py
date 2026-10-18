@@ -136,12 +136,9 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
     async def _download_image_bytes(self, image_url: str) -> bytes:
         if self._download_image_bytes_fn is not None:
             return await self._download_image_bytes_fn(image_url)
-        import httpx
+        from src.infra.http.image_download import download_scan_image_bytes
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(image_url)
-            resp.raise_for_status()
-            return resp.content
+        return await download_scan_image_bytes(image_url)
 
     async def _analyze_food_label_image_with_ai(
         self,
