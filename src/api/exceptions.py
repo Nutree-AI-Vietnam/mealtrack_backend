@@ -44,10 +44,13 @@ class MealTrackException(Exception):
         message: str,
         error_code: str | None = None,
         details: dict[str, Any] | None = None,
+        *,
+        status_code: int | None = None,
     ):
         self.message = message
         self.error_code = error_code or self.__class__.__name__
         self.details = details or {}
+        self.status_code = status_code
         super().__init__(self.message)
 
 
@@ -106,7 +109,9 @@ def create_http_exception(exc: MealTrackException) -> HTTPException:
         ConflictException: status.HTTP_409_CONFLICT,
     }
 
-    status_code = status_map.get(type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR)
+    status_code = status_map.get(type(exc))
+    if status_code is None:
+        status_code = exc.status_code or status.HTTP_500_INTERNAL_SERVER_ERROR
 
     return HTTPException(
         status_code=status_code,
