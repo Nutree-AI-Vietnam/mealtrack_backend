@@ -1,5 +1,6 @@
 """Async database engine, session factory, and FastAPI dependency."""
 
+import asyncio
 import logging
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -16,6 +17,11 @@ from src.infra.database.planner_pool import PlannerNullPool, PlannerQueuePool
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# Strong refs for session-close tasks. The loop only keeps tasks weakly, so a
+# CancelledError unwinding the request can destroy a close that is still
+# terminating the pooled connection.
+_CLOSING_SESSIONS: set[asyncio.Task[None]] = set()
 
 
 def _sanitize_asyncpg_url_and_connect_args(url: str) -> tuple[str, dict]:
@@ -147,16 +153,47 @@ except Exception as _engine_init_error:  # noqa: BLE001
 
 
 async def get_async_db():
-    """FastAPI dependency: yields an AsyncSession, closes after request."""
+    """FastAPI dependency: yields an AsyncSession, closes after request.
+
+    The close runs on a shielded task. A client disconnect cancels the
+    request while NullPool is terminating the connection; doing that await
+    on the cancelled task logs "Exception terminating connection" and drops
+    the cleanup (PYTHON-HP). CancelledError is re-raised after the close is
+    handed off.
+    """
     if AsyncSessionLocal is None:
         raise RuntimeError(
             "AsyncSessionLocal is not initialized. Async engine setup failed; "
             "check async DB configuration."
         )
 
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
+    session = AsyncSessionLocal()
+    try:
+        yield session
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await _close_session_even_if_cancelled(session)
+
+
+def _release_closing_session(task: asyncio.Task[None]) -> None:
+    _CLOSING_SESSIONS.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("Async DB session close failed", exc_info=error)
+
+
+async def _close_session_even_if_cancelled(session: AsyncSession) -> None:
+    """Finish session.close() even when this request task is cancelled."""
+    close_task = asyncio.create_task(session.close())
+    _CLOSING_SESSIONS.add(close_task)
+    close_task.add_done_callback(_release_closing_session)
+    try:
+        await asyncio.shield(close_task)
+    except asyncio.CancelledError:
+        # shield does not cancel close_task. Keep the strong ref above and
+        # let the caller see the disconnect.
+        raise
