@@ -150,6 +150,7 @@ unmatched_ignore_imports_alerting = none
 ignore_imports =
     src.infra.database.models.user.user -> src.api.schemas.common.auth_enums
     src.infra.event_bus.pymediator_event_bus -> src.api.exceptions
+    src.infra.http.image_download -> src.api.exceptions
     src.infra.services.feature_flag_service -> src.api.exceptions
     src.infra.services.web_funnel_outbox_dispatch_service -> src.app.services.web_funnel_claim_common
     src.infra.services.web_funnel_outbox_dispatch_service -> src.app.services.web_funnel_claim_payment

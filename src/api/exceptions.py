@@ -44,10 +44,13 @@ class MealTrackException(Exception):
         message: str,
         error_code: str | None = None,
         details: dict[str, Any] | None = None,
+        *,
+        status_code: int | None = None,
     ):
         self.message = message
         self.error_code = error_code or self.__class__.__name__
         self.details = details or {}
+        self.status_code = status_code
         super().__init__(self.message)
 
 
@@ -93,6 +96,17 @@ class AuthorizationException(MealTrackException):
     pass
 
 
+class ImageDownloadRejected(MealTrackException):
+    """Photo host refused the object.
+
+    Not an authentication failure. A 401 or 403 here would look like a bad
+    session to the app.
+    """
+
+    def __init__(self, message: str = "The meal photo could not be downloaded."):
+        super().__init__(message=message, error_code="IMAGE_DOWNLOAD_REJECTED")
+
+
 def create_http_exception(exc: MealTrackException) -> HTTPException:
     """Convert domain exception to HTTP exception with appropriate status code."""
 
@@ -104,9 +118,12 @@ def create_http_exception(exc: MealTrackException) -> HTTPException:
         AuthenticationException: status.HTTP_401_UNAUTHORIZED,
         AuthorizationException: status.HTTP_403_FORBIDDEN,
         ConflictException: status.HTTP_409_CONFLICT,
+        ImageDownloadRejected: status.HTTP_422_UNPROCESSABLE_ENTITY,
     }
 
-    status_code = status_map.get(type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR)
+    status_code = status_map.get(type(exc))
+    if status_code is None:
+        status_code = exc.status_code or status.HTTP_500_INTERNAL_SERVER_ERROR
 
     return HTTPException(
         status_code=status_code,
