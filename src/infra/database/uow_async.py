@@ -10,7 +10,7 @@ from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.meal_suggestion_repository_port import (
     MealSuggestionRepositoryPort,
 )
-from src.infra.database.config_async import AsyncSessionLocal
+from src.infra.database.config_async import AsyncSessionLocal, close_async_session
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
 )
@@ -205,9 +205,11 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
                         )
                     raise
         finally:
-            await session.close()
-            self.session = None
-            self._session_lock.release()
+            try:
+                await close_async_session(session)
+            finally:
+                self.session = None
+                self._session_lock.release()
 
     @planner_timed("commit")
     async def commit(self) -> None:
