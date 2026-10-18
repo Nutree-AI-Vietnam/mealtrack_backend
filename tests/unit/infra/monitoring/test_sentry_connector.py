@@ -36,15 +36,16 @@ def test_before_send_drops_content_rejections():
     assert _drop_expected_events(event, _hint(_ProviderError("invalid_prompt"))) is None
 
 
-def test_before_send_drops_weekly_meal_plan_conflicts():
+def test_before_send_keeps_weekly_meal_plan_conflicts():
+    """A type filter would hide unexpected bugs that use this exception."""
     event = {"level": "error"}
     conflict = WeeklyMealPlanConflictError(
         "Logged weekly meal slots cannot be replaced"
     )
     idempotency = WeeklyMealPlanIdempotencyConflictError()
 
-    assert _drop_expected_events(event, _hint(conflict)) is None
-    assert _drop_expected_events(event, _hint(idempotency)) is None
+    assert _drop_expected_events(event, _hint(conflict)) is event
+    assert _drop_expected_events(event, _hint(idempotency)) is event
 
 
 def test_before_send_keeps_other_events():
@@ -121,7 +122,7 @@ def test_filter_safe_attributes_drops_sensitive_none_and_complex_values():
 
 def test_initialize_does_not_send_for_development_or_local(monkeypatch):
     """Local Macs with a DSN and ENVIRONMENT=development were publishing events."""
-    for environment in ("development", "local", "Development", "LOCAL"):
+    for environment in ("development", "local", "Development", "LOCAL", " local "):
         mock_sdk = MagicMock()
         monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
         monkeypatch.setenv("ENVIRONMENT", environment)
@@ -135,6 +136,30 @@ def test_initialize_does_not_send_for_development_or_local(monkeypatch):
 
         mock_sdk.init.assert_not_called()
         assert connector._enabled is False
+
+
+def test_initialize_sends_when_environment_is_unset_or_blank(monkeypatch):
+    """A missing ENVIRONMENT must not silence a process that has a DSN."""
+    for raw in (None, "", "   "):
+        mock_sdk = MagicMock()
+        monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+        if raw is None:
+            monkeypatch.delenv("ENVIRONMENT", raising=False)
+        else:
+            monkeypatch.setenv("ENVIRONMENT", raw)
+        monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+        monkeypatch.setattr(
+            "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+        )
+
+        connector = SentryObservabilityConnector()
+        connector.initialize()
+
+        mock_sdk.init.assert_called_once()
+        init_kwargs = mock_sdk.init.call_args.kwargs
+        assert init_kwargs["environment"] == "development"
+        assert "ignore_errors" not in init_kwargs
+        assert connector._enabled is True
 
 
 def test_initialize_environment_comes_from_environment_env_var(monkeypatch):
@@ -159,7 +184,7 @@ def test_initialize_environment_comes_from_environment_env_var(monkeypatch):
     assert init_kwargs["environment"] == "production"
     assert init_kwargs["traces_sample_rate"] == 0.1
     assert init_kwargs["profiles_sample_rate"] == 0.05
-    assert init_kwargs["ignore_errors"] == [WeeklyMealPlanConflictError]
+    assert "ignore_errors" not in init_kwargs
     assert connector._enabled is True
 
 
