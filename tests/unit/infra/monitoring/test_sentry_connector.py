@@ -1,5 +1,6 @@
 """Tests for the Sentry observability connector."""
 
+import asyncio
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
@@ -31,9 +32,71 @@ def _hint(exc):
 
 def test_before_send_drops_content_rejections():
     event = {"level": "error"}
+    chat = {"level": "error", "transaction": "/v1/chat/messages"}
 
     assert _drop_expected_events(event, _hint(AIContentRejectedError("x"))) is None
+    assert _drop_expected_events(chat, _hint(AIContentRejectedError("blocked"))) is None
     assert _drop_expected_events(event, _hint(_ProviderError("invalid_prompt"))) is None
+    assert _drop_expected_events(event, _hint(_ProviderError("content_filter"))) is None
+    assert (
+        _drop_expected_events(event, _hint(_ProviderError("content_policy_violation")))
+        is None
+    )
+
+
+def test_before_send_drops_expected_chat_cancellations():
+    """Fails while chat cancellations still pass through before_send.
+
+    Production signature from PYTHON-HY / PYTHON-HW / PYTHON-HR / PYTHON-HP:
+    CancelledError raised by the ASGI request task on POST /v1/chat/messages.
+    """
+    event = {
+        "level": "error",
+        "transaction": "/v1/chat/messages",
+        "exception": {
+            "values": [
+                {
+                    "type": "CancelledError",
+                    "value": (
+                        "Cancelled via cancel scope 76eea13091d0 by "
+                        "<Task pending name='Task-725790' "
+                        "coro=<RequestResponseCycle.run_asgi() "
+                        "running at uvicorn/protocols/http/httptools_impl.py:421>"
+                    ),
+                }
+            ]
+        },
+    }
+    scoped = asyncio.CancelledError(
+        "Cancelled via cancel scope 76eea13091d0 by "
+        "<Task pending name='Task-725790' "
+        "coro=<RequestResponseCycle.run_asgi() "
+        "running at uvicorn/protocols/http/httptools_impl.py:421>"
+    )
+    empty = asyncio.CancelledError()
+    nested = asyncio.CancelledError("cancelled")
+    nested.__context__ = asyncio.CancelledError()
+
+    assert _drop_expected_events(event, _hint(scoped)) is None
+    assert _drop_expected_events(event, _hint(empty)) is None
+    assert _drop_expected_events(event, _hint(nested)) is None
+
+
+def test_before_send_keeps_chat_cancellations_that_are_not_client_disconnects():
+    event = {"level": "error", "transaction": "/v1/chat/messages"}
+    provider_error = RuntimeError("provider failed")
+    caused = asyncio.CancelledError("cancelled")
+    caused.__cause__ = provider_error
+    contextual = asyncio.CancelledError("cancelled")
+    contextual.__context__ = provider_error
+    other_route = {**event, "transaction": "/v1/meals/scan-by-url"}
+    plain = asyncio.CancelledError("Cancelled via cancel scope")
+
+    assert _drop_expected_events(event, _hint(provider_error)) is event
+    assert _drop_expected_events(event, _hint(caused)) is event
+    assert _drop_expected_events(event, _hint(contextual)) is event
+    assert _drop_expected_events(event, {}) is event
+    assert _drop_expected_events(other_route, _hint(plain)) is other_route
 
 
 def test_before_send_keeps_weekly_meal_plan_conflicts():
