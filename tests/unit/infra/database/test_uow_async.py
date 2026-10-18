@@ -1,5 +1,7 @@
 """Unit tests for AsyncUnitOfWork."""
 
+import asyncio
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -87,6 +89,59 @@ async def test_async_uow_read_only_factory_creates_read_only_instance():
 
 
 @pytest.mark.asyncio
+async def test_async_uow_finishes_close_when_chat_request_is_cancelled(caplog):
+    """PYTHON-HP: chat sessions are AsyncUnitOfWork, not get_async_db.
+
+    Cancelling during close must still finish the close. On main, __aexit__
+    awaits session.close() on the cancelled request, so the close is abandoned
+    and NullPool logs "Exception terminating connection".
+    """
+    started = asyncio.Event()
+    finished = asyncio.Event()
+
+    class _Session:
+        async def commit(self) -> None:
+            return None
+
+        async def rollback(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            started.set()
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                logging.getLogger("sqlalchemy.pool.impl.NullPool").error(
+                    "Exception terminating connection %r",
+                    self,
+                    exc_info=True,
+                )
+                raise
+            finished.set()
+
+    async def _chat_request() -> None:
+        async with AsyncUnitOfWork():
+            return None
+
+    with patch(
+        "src.infra.database.uow_async.AsyncSessionLocal", return_value=_Session()
+    ):
+        request = asyncio.create_task(_chat_request())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        request.cancel()
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            await asyncio.wait_for(finished.wait(), timeout=1)
+
+    assert finished.is_set()
+    assert not any(
+        "Exception terminating connection" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_async_uow_read_only_commit_raises():
     mock_session = AsyncMock()
 
@@ -95,4 +150,3 @@ async def test_async_uow_read_only_commit_raises():
         async with AsyncUnitOfWork(read_only=True) as uow:
             with pytest.raises(RuntimeError, match="Cannot commit a read-only"):
                 await uow.commit()
-
