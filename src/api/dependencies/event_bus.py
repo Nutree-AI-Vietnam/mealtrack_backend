@@ -602,12 +602,22 @@ def get_configured_event_bus() -> EventBus:
     )
 
     async def _download_image_bytes_pooled(image_url: str) -> bytes:
-        from src.infra.http import get_shared_http_client
+        from src.api.exceptions import ExternalServiceException
+        from src.infra.http import (
+            ImageDownloadUnavailable,
+            download_scan_image_bytes,
+        )
 
-        client = get_shared_http_client()
-        resp = await client.get(image_url, timeout=30.0)
-        resp.raise_for_status()
-        return resp.content
+        try:
+            return await download_scan_image_bytes(image_url)
+        except ImageDownloadUnavailable as exc:
+            # MealTrackException: the event bus must not log this as unexpected.
+            raise ExternalServiceException(
+                message=(
+                    "The meal photo is temporarily unavailable. Please try again."
+                ),
+                error_code="IMAGE_DOWNLOAD_UNAVAILABLE",
+            ) from exc
 
     event_bus.register_handler(
         ScanByUrlCommand,
