@@ -38,6 +38,13 @@ class UserRepositoryPort(ABC):
         pass
 
     @abstractmethod
+    async def find_by_firebase_uid_including_deleted(
+        self, firebase_uid: str
+    ) -> UserDomainModel | None:
+        """Find one user by Firebase UID, active or deleted."""
+        pass
+
+    @abstractmethod
     async def find_by_email(self, email: str) -> UserDomainModel | None:
         """Find a user by email."""
         pass

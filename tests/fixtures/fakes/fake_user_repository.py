@@ -36,6 +36,15 @@ class FakeUserRepository(UserRepositoryPort):
                 return user
         return None
 
+    async def find_by_firebase_uid_including_deleted(
+        self, firebase_uid: str
+    ) -> Optional[UserDomainModel]:
+        """Find a user by Firebase UID whether active or deleted."""
+        for user in self.users.values():
+            if user.firebase_uid == firebase_uid:
+                return user
+        return None
+
     async def find_by_email(self, email: str) -> Optional[UserDomainModel]:
         for user in self.users.values():
             if user.email == email and user.is_active:

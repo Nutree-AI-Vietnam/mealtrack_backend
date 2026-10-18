@@ -42,6 +42,7 @@ def test_repository_ports_are_async_contracts():
             "find_by_id",
             "find_by_firebase_uid",
             "find_deleted_by_firebase_uid",
+            "find_by_firebase_uid_including_deleted",
             "find_by_email",
             "find_all",
             "delete",

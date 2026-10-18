@@ -3,6 +3,7 @@
 import logging
 from uuid import UUID
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +55,18 @@ def _copy_user_save_columns(entity: User, updated: User) -> None:
         new_val = getattr(updated, col_name)
         if getattr(entity, col_name) != new_val:
             setattr(entity, col_name, new_val)
+
+
+def _profiles_ready_for_mapping(entity: User) -> bool:
+    """True when profiles can be read without another SELECT.
+
+    profiles uses lazy="raise". Callers that already selectinload the user,
+    or assign profiles before insert, do not need the post-flush reload.
+    """
+    state = sa_inspect(entity)
+    return (
+        "profiles" not in state.unloaded and "profiles" not in state.expired_attributes
+    )
 
 
 def _sync_profile_preference_entries(
@@ -108,12 +121,12 @@ class AsyncUserRepository(UserRepositoryPort):
             self.session.add(user_entity)
         try:
             await self.session.flush()
-            # Re-fetch with eager loading to satisfy lazy="raise" on profiles/subscriptions
-            user_id_str = str(user_entity.id)
-            result = await self.session.execute(
-                select(User).options(*_USER_LOADS).where(User.id == user_id_str)
-            )
-            user_entity = result.scalars().first()
+            if not _profiles_ready_for_mapping(user_entity):
+                user_id_str = str(user_entity.id)
+                result = await self.session.execute(
+                    select(User).options(*_USER_LOADS).where(User.id == user_id_str)
+                )
+                user_entity = result.scalars().first()
             return UserMapper.to_domain(user_entity)
         except IntegrityError as e:
             # Do NOT call session.rollback() — UoW.__aexit__ handles rollback
@@ -166,6 +179,15 @@ class AsyncUserRepository(UserRepositoryPort):
             select(User)
             .options(*_USER_LOADS)
             .where(User.firebase_uid == firebase_uid, User.is_active.is_(False))
+        )
+        entity = result.scalars().first()
+        return UserMapper.to_domain(entity) if entity else None
+
+    async def find_by_firebase_uid_including_deleted(
+        self, firebase_uid: str
+    ) -> UserDomainModel | None:
+        result = await self.session.execute(
+            select(User).options(*_USER_LOADS).where(User.firebase_uid == firebase_uid)
         )
         entity = result.scalars().first()
         return UserMapper.to_domain(entity) if entity else None

@@ -37,9 +37,15 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
         # Using 'async with uow' manages the transaction scope
         async with uow:
             try:
-                # Check if user exists by firebase_uid
-                existing_user = await uow.users.find_by_firebase_uid(
+                # One lookup covers both active accounts and soft-deleted rows.
+                # firebase_uid is unique, so at most one row matches.
+                matched_user = await uow.users.find_by_firebase_uid_including_deleted(
                     command.firebase_uid
+                )
+                existing_user = (
+                    matched_user
+                    if matched_user is not None and matched_user.is_active
+                    else None
                 )
 
                 # An email is not proof that a new Firebase UID owns an existing
@@ -61,13 +67,9 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
                     user = await uow.users.save(existing_user)
                     logger.info("Updated existing user")
                 else:
-                    # Check if this is a previously deleted user re-registering
-                    deleted_user = await uow.users.find_deleted_by_firebase_uid(
-                        command.firebase_uid
-                    )
-                    if deleted_user:
+                    if matched_user is not None and not matched_user.is_active:
                         logger.info(
-                            f"Detected re-registration of deleted user (old_id={deleted_user.id}). "
+                            f"Detected re-registration of deleted user (old_id={matched_user.id}). "
                             f"Creating fresh account with new ID."
                         )
                         # Note: We do NOT restore the old user; we create a brand new one
@@ -75,21 +77,12 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
 
                     # Create new user (works for both new users and re-registrations)
                     user = self._create_new_user(command, uow)
-                    # Save user to get ID
+                    language_code = self._supported_language_code(command.language_code)
+                    if language_code:
+                        user.language_code = language_code
                     user = await uow.users.save(user)
                     created = True
                     logger.info("Created new user")
-
-                    # Set language from Accept-Language header if provided
-                    if command.language_code:
-                        from src.app.commands.user.update_language_command import (
-                            SUPPORTED_LANGUAGES,
-                        )
-
-                        lang = command.language_code.lower().strip()
-                        if lang in SUPPORTED_LANGUAGES:
-                            user.language_code = lang
-                            await uow.users.save(user)
 
                     # Create default notification preferences
                     await self._create_default_notification_preferences(user.id, uow)
@@ -163,6 +156,20 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
             except Exception:
                 await uow.rollback()
                 raise
+
+    @staticmethod
+    def _supported_language_code(language_code: str | None) -> str | None:
+        """Return a supported ISO code, or None when sync should keep the default."""
+        if not language_code:
+            return None
+        from src.app.commands.user.update_language_command import (
+            SUPPORTED_LANGUAGES,
+        )
+
+        lang = language_code.lower().strip()
+        if lang in SUPPORTED_LANGUAGES:
+            return lang
+        return None
 
     def _create_new_user(
         self, command: SyncUserCommand, uow: AsyncUnitOfWorkPort
@@ -279,7 +286,10 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
 
             uuid.UUID(user_id_str)
         except ValueError:
-            logger.warning("Skipping notification prefs: invalid UUID value (len=%d)", len(user_id_str))
+            logger.warning(
+                "Skipping notification prefs: invalid UUID value (len=%d)",
+                len(user_id_str),
+            )
             return
 
         try:
