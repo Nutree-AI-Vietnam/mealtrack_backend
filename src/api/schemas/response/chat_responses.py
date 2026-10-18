@@ -11,6 +11,29 @@ class ChatThreadSummaryResponse(BaseModel):
     updated_at: str
 
 
+class ChatThreadListItemResponse(ChatThreadSummaryResponse):
+    """A thread in the list; labels come from stored messages, never generated."""
+
+    title: str | None = Field(
+        default=None, description="The thread's first question, shortened."
+    )
+    preview: str | None = Field(
+        default=None, description="The thread's latest message, shortened."
+    )
+    preview_role: str | None = Field(
+        default=None, description="Who wrote the preview: user or assistant."
+    )
+    last_message_at: str | None = None
+
+
+class ChatThreadListResponse(BaseModel):
+    threads: list[ChatThreadListItemResponse]
+    has_more: bool = False
+    next_cursor: str | None = Field(
+        default=None, description="Pass as `cursor` to read the next page."
+    )
+
+
 class ChatCitationResponse(BaseModel):
     label: str | None = None
     source_key: str

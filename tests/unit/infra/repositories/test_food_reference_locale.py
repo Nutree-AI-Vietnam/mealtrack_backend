@@ -242,7 +242,8 @@ async def test_search_local_finds_identity_keyed_row_by_display_name():
     assert [item.id for item in result] == [7]
     statement = str(session.statement)
     assert "food_reference_translation" not in statement
-    assert "name_vi" in statement
+    # Typed text matches the folded display names (name_vi + name).
+    assert "food_reference.name_search LIKE" in statement.split("WHERE", 1)[1]
 
 
 @pytest.mark.asyncio
@@ -253,8 +254,8 @@ async def test_search_local_does_not_substring_match_identity_key_by_typed_text(
     result = await repo.search_local("33890", "US", 10)
 
     assert result == []
-    statement = str(session.statement)
-    assert "not like" in statement.lower()
+    where_clause = str(session.statement).split("WHERE", 1)[1]
+    assert "name_normalized" not in where_clause
 
 
 @pytest.mark.asyncio

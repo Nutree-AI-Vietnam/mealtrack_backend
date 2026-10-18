@@ -6,9 +6,11 @@ from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
+    ChatInvalidCursorError,
     ChatProviderUnavailableError,
     ChatRateLimitedError,
     ChatRegenerateNotAllowedError,
+    ChatThreadNotFoundError,
 )
 from src.domain.model.chat import (
     ChatClaimKind,
@@ -18,11 +20,16 @@ from src.domain.model.chat import (
     ChatMessageRole,
     ChatMessageStatus,
     ChatThread,
+    ChatThreadListing,
     ChatTurnClaim,
     ChatUsage,
     ChatUserContext,
 )
 from src.domain.services.chat.policy import out_of_scope_message
+from src.domain.services.chat.thread_listing import (
+    decode_thread_cursor,
+    encode_thread_cursor,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
 
@@ -42,7 +49,21 @@ class _FakeRepo:
     async def get_or_create_thread(self, user_id: str) -> ChatThread:
         return self.claim.thread
 
+    async def get_thread(self, user_id: str, thread_id: str | None = None):
+        self.got_thread_id = thread_id
+        if thread_id is not None and thread_id != self.claim.thread.id:
+            return None
+        return self.claim.thread
+
+    async def create_thread(self, user_id: str) -> ChatThread:
+        return self.claim.thread
+
+    async def list_threads(self, **kwargs):
+        self.list_kwargs = kwargs
+        return list(getattr(self, "listings", []))
+
     async def claim_turn(self, **kwargs):
+        self.claim_kwargs = kwargs
         if isinstance(self.claim, Exception):
             raise self.claim
         return self.claim
@@ -126,8 +147,9 @@ class _FakeRepo:
             return max(0, used - 1)
         return used
 
-    async def clear_thread(self, user_id: str):
+    async def clear_thread(self, user_id: str, thread_id: str | None = None):
         self.cleared = True
+        self.cleared_thread_id = thread_id
         return self.claim.thread
 
 
@@ -2275,3 +2297,161 @@ def test_history_omits_missing_meal_macros():
     assert "6g protein" in turns[0].content
     assert "None" not in turns[0].content
     assert "carbs" not in turns[0].content
+
+
+def _listing(thread_id: str, title: str | None) -> ChatThreadListing:
+    now = utc_now()
+    return ChatThreadListing(
+        thread=ChatThread(id=thread_id, user_id="u1", created_at=now, updated_at=now),
+        title=title,
+        preview="Try grilled fish.",
+        preview_role=ChatMessageRole.ASSISTANT,
+        last_message_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_threads_pages_with_one_extra_row():
+    repo = _FakeRepo(claim=_claim())
+    repo.listings = [
+        _listing("t3", "Dinner?"),
+        _listing("t2", None),
+        _listing("t1", "x"),
+    ]
+    orchestrator = _orchestrator(repo)
+
+    stamp = utc_now()
+    cursor = encode_thread_cursor(stamp, "t9")
+
+    payload = await orchestrator.list_threads(user_id="u1", limit=2, cursor=cursor)
+
+    assert repo.list_kwargs == {"user_id": "u1", "limit": 3, "before": (stamp, "t9")}
+    assert payload["has_more"] is True
+    second = repo.listings[1].thread
+    assert decode_thread_cursor(payload["next_cursor"]) == (second.updated_at, "t2")
+    assert [item["id"] for item in payload["threads"]] == ["t3", "t2"]
+    assert payload["threads"][0]["title"] == "Dinner?"
+    assert payload["threads"][0]["preview_role"] == "assistant"
+    assert payload["threads"][1]["title"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_thread_by_id_reads_that_thread():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    payload = await orchestrator.get_thread(
+        user_id="u1", limit=50, before=None, thread_id="t1"
+    )
+
+    assert payload["thread"]["id"] == "t1"
+    assert repo.got_thread_id == "t1"
+
+
+@pytest.mark.asyncio
+async def test_get_thread_by_unknown_id_raises_not_found():
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()))
+
+    with pytest.raises(ChatThreadNotFoundError):
+        await orchestrator.get_thread(
+            user_id="u1", limit=50, before=None, thread_id="someone-else"
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_thread_returns_thread_summary():
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()))
+
+    payload = await orchestrator.create_thread("u1")
+
+    assert payload["id"] == "t1"
+    assert set(payload) == {"id", "created_at", "updated_at"}
+
+
+@pytest.mark.asyncio
+async def test_clear_thread_targets_the_given_thread():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    payload = await orchestrator.clear_thread("u1", "t1")
+
+    assert payload == {"thread_id": "t1", "cleared": True}
+    assert repo.cleared_thread_id == "t1"
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_claims_in_the_given_thread():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    prepared = await orchestrator.prepare_turn(
+        user_id="u1",
+        content="Hi",
+        idempotency_key="key-1",
+        locale="en",
+        header_timezone=None,
+        user_language="en",
+        thread_id="t1",
+    )
+    orchestrator.release_slot(prepared)
+
+    assert repo.claim_kwargs["thread_id"] == "t1"
+
+
+@pytest.mark.asyncio
+async def test_prepare_regeneration_scopes_reopen_to_thread():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    with pytest.raises(ChatRegenerateNotAllowedError):
+        await orchestrator.prepare_regeneration(
+            user_id="u1",
+            assistant_message_id="m-asst",
+            content="",
+            locale="en",
+            header_timezone=None,
+            user_language="en",
+            thread_id="t1",
+        )
+
+    assert repo.reopened["thread_id"] == "t1"
+
+
+@pytest.mark.asyncio
+async def test_last_page_has_no_next_cursor():
+    repo = _FakeRepo(claim=_claim())
+    repo.listings = [_listing("t1", "x")]
+    orchestrator = _orchestrator(repo)
+
+    payload = await orchestrator.list_threads(user_id="u1", limit=5)
+
+    assert payload["has_more"] is False
+    assert payload["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_threads_rejects_a_cursor_it_did_not_issue():
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()))
+
+    for bad in ("t1", "!!!", encode_thread_cursor(utc_now(), "")):
+        with pytest.raises(ChatInvalidCursorError):
+            await orchestrator.list_threads(user_id="u1", limit=5, cursor=bad)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_in_a_foreign_thread_is_not_found():
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo)
+
+    with pytest.raises(ChatThreadNotFoundError):
+        await orchestrator.prepare_regeneration(
+            user_id="u1",
+            assistant_message_id="m-asst",
+            content="",
+            locale="en",
+            header_timezone=None,
+            user_language="en",
+            thread_id="someone-else",
+        )
+
+    assert repo.reopened is None

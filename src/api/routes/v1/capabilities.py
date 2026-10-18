@@ -20,7 +20,7 @@ from src.domain.services.chat.coach_functions import (
     FUNCTION_SUGGEST_NEXT_MEAL,
     needs_retrieval,
 )
-from src.infra.services.chat_schema import chat_schema_is_ready
+from src.infra.services.chat_schema import chat_schema_is_ready, chat_thread_model
 from src.infra.services.durable_write_service import (
     RETENTION_DAYS,
     durable_write_schema_is_ready,
@@ -78,10 +78,11 @@ async def durable_write_capabilities() -> dict[str, object]:
 
 @router.get("/chat")
 async def chat_capabilities() -> dict[str, object]:
-    """Advertise the read-only single-thread Nutree coach contract."""
+    """Advertise the read-only Nutree coach contract."""
     try:
         if not await chat_schema_is_ready():
             raise RuntimeError("chat schema is incomplete")
+        thread_model = await chat_thread_model()
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -93,7 +94,7 @@ async def chat_capabilities() -> dict[str, object]:
 
     return {
         "chat": True,
-        "thread_model": "single",
+        "thread_model": thread_model,
         "read_only": True,
         "default_model": CHAT_DEFAULT_MODEL,
         "escalation_enabled": False,

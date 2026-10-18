@@ -36,7 +36,6 @@ class ChatThreadORM(Base, BaseMixin):
         String(36),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
     )
     summary = Column(Text, nullable=True)
     summary_through_message_id = Column(
@@ -58,7 +57,8 @@ class ChatThreadORM(Base, BaseMixin):
         lazy="raise",
     )
 
-    __table_args__ = (Index("ix_chat_thread_user_id", "user_id", unique=True),)
+    # A user may keep several threads; the list reads newest activity first.
+    __table_args__ = (Index("ix_chat_thread_user_updated", "user_id", "updated_at"),)
 
 
 class ChatMessageORM(Base, BaseMixin):

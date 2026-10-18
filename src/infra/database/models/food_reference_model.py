@@ -8,6 +8,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    Computed,
     DateTime,
     Float,
     Integer,
@@ -18,6 +19,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from src.infra.database.base import Base
+from src.infra.database.food_reference_search_name_sql import (
+    FoodReferenceSearchName,
+)
 
 
 class FoodReferenceModel(Base):
@@ -30,6 +34,8 @@ class FoodReferenceModel(Base):
     name = Column(String(255), nullable=False)
     name_normalized = Column(String(255), nullable=True, unique=True, index=True)
     name_vi = Column(String(255), nullable=True)
+    # Accent-folded "name_vi name" words for search; maintained by the database.
+    name_search = Column(Text, Computed(FoodReferenceSearchName(), persisted=True))
     brand = Column(String(255), nullable=True)
     category = Column(String(100), nullable=True, index=True)
     region = Column(String(10), nullable=False, default="global")

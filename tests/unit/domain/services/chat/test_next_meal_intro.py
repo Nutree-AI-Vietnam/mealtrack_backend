@@ -192,6 +192,25 @@ def test_intro_skips_a_logged_dish_that_is_already_a_card() -> None:
     )
 
 
+def test_eaten_today_skips_a_newer_hydration_drink() -> None:
+    meals = (
+        {"local_date": "2026-10-13", "dish_name": "Pho", "meal_type": "lunch"},
+        {
+            "local_date": "2026-10-13",
+            "dish_name": "Water",
+            "meal_type": "hydration",
+        },
+    )
+    assert (
+        eaten_today_name(
+            meals,
+            local_date="2026-10-13",
+            suggestion_names=["Tofu bowl"],
+        )
+        == "Pho"
+    )
+
+
 def test_vietnamese_intro_names_the_logged_meal() -> None:
     text = next_meal_intro(
         [{"name": "Đậu hũ"}],
