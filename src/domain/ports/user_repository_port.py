@@ -31,10 +31,10 @@ class UserRepositoryPort(ABC):
         pass
 
     @abstractmethod
-    async def find_deleted_by_firebase_uid(
+    async def find_by_firebase_uid_including_deleted(
         self, firebase_uid: str
     ) -> UserDomainModel | None:
-        """Find a deleted user by Firebase UID (inactive users only)."""
+        """Find one user by Firebase UID, active or deleted."""
         pass
 
     @abstractmethod

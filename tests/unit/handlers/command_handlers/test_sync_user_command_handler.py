@@ -54,6 +54,64 @@ class TestSyncUserCommandHandler:
         assert fake_uow.committed is True
 
     @pytest.mark.asyncio
+    async def test_new_user_sync_uses_one_lookup_and_one_save(self, handler):
+        """New-user sync must not repeat the Firebase lookup or the language write.
+
+        PYTHON-JY: POST /v1/users/sync issued a separate active lookup and a
+        deleted lookup, saved the user, then saved again to set language_code.
+        """
+        fake_uow = FakeUnitOfWork()
+        users = fake_uow.users
+        calls: list[str] = []
+        languages_at_save: list[str | None] = []
+
+        original_active = users.find_by_firebase_uid
+        original_any = users.find_by_firebase_uid_including_deleted
+        original_save = users.save
+
+        async def find_active(firebase_uid: str):
+            calls.append("active")
+            return await original_active(firebase_uid)
+
+        async def find_any(firebase_uid: str):
+            calls.append("including_deleted")
+            return await original_any(firebase_uid)
+
+        async def save(user):
+            calls.append("save")
+            languages_at_save.append(getattr(user, "language_code", None))
+            return await original_save(user)
+
+        users.find_by_firebase_uid = find_active
+        users.find_by_firebase_uid_including_deleted = find_any
+        users.save = save
+
+        handler.uow = fake_uow
+        result = await handler.handle(
+            SyncUserCommand(
+                firebase_uid="firebase_new_lang",
+                email="new-lang@example.com",
+                display_name="New Lang",
+                provider="google",
+                language_code="vi",
+            )
+        )
+
+        identity_lookups = [
+            call for call in calls if call in {"active", "including_deleted"}
+        ]
+        assert identity_lookups == ["including_deleted"]
+        assert calls.count("save") == 1
+        assert languages_at_save == ["vi"]
+        assert result["created"] is True
+        assert result["updated"] is False
+        assert result["message"] == "User created successfully"
+        assert result["user"]["firebase_uid"] == "firebase_new_lang"
+        assert result["user"]["email"] == "new-lang@example.com"
+        assert result["user"]["has_subscription"] is False
+        assert fake_uow.committed is True
+
+    @pytest.mark.asyncio
     async def test_handle_update_existing_user(self, handler):
         """Test updating an existing user."""
         fake_uow = FakeUnitOfWork()
@@ -280,7 +338,7 @@ class TestSyncUserCommandHandler:
         """Test handling database error during sync."""
         fake_uow = FakeUnitOfWork()
         # Make the UoW raise an error
-        fake_uow.users.find_by_firebase_uid = AsyncMock(
+        fake_uow.users.find_by_firebase_uid_including_deleted = AsyncMock(
             side_effect=Exception("Database error")
         )
         handler.uow = fake_uow
