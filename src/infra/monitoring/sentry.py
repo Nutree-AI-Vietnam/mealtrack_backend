@@ -224,7 +224,7 @@ class SentryObservabilityConnector:
             "method": method,
             "path": path,
             "route": path,
-            "environment": settings.ENVIRONMENT,
+            "environment": _sentry_environment_label(_explicit_environment()),
             "release": settings.SENTRY_RELEASE,
             "user_id": user_id,
         }
@@ -307,20 +307,20 @@ def _explicit_environment() -> str | None:
 
 
 def _sentry_environment_label(explicit: str | None) -> str:
-    """Label passed to sentry_sdk.init.
+    """Label passed to sentry_sdk.init and request context.
 
-    SENTRY_ENVIRONMENT wins, then ENVIRONMENT. Passing the label ourselves
-    matters because an explicit ``environment=`` argument overrides the SDK's
-    own SENTRY_ENVIRONMENT read. When both variables are missing, the settings
-    value is only a label and does not decide whether events are sent.
+    SENTRY_ENVIRONMENT wins, then ENVIRONMENT. Both are the process env vars.
+    Passing the label ourselves matters because an explicit ``environment=``
+    argument overrides the SDK's own SENTRY_ENVIRONMENT read. settings
+    defaults ENVIRONMENT to ``development``, so a missing variable must not
+    use that value. The neutral label is ``unknown``.
     """
     sentry_environment = _env_value("SENTRY_ENVIRONMENT")
     if sentry_environment is not None:
         return sentry_environment
     if explicit is not None:
         return explicit
-    fallback = str(settings.ENVIRONMENT or "").strip().lower()
-    return fallback or "production"
+    return "unknown"
 
 
 def _normalize_message_level(level: str) -> SentryMessageLevel:
