@@ -439,14 +439,14 @@ async def _start_chat_job(
         language=prepared.locale,
         content=content,
         idempotency_key=idempotency_key,
-        # Stored as the thread the turn was prepared on, so a retry rebuilds
-        # the same turn there.
         locale=locale,
         header_timezone=header_timezone,
         user_language=locale,
         intent=intent,
         function_name=function_name,
         function_args=function_args,
+        # Stored as the thread the turn was prepared on, so a retry rebuilds
+        # the same turn there.
         thread_id=thread_id,
     )
     try:

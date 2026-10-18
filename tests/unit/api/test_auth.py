@@ -215,13 +215,11 @@ def _make_async_db(user):
     return mock_async_db
 
 
-def _make_async_session_context(user):
-    """Return an async session context manager mock that yields *user*."""
+def _make_async_session(user):
+    """Return a session mock. AsyncSession.__aenter__ returns the session itself."""
     mock_async_db = _make_async_db(user)
-    mock_context = Mock()
-    mock_context.__aenter__ = AsyncMock(return_value=mock_async_db)
-    mock_context.__aexit__ = AsyncMock(return_value=None)
-    return mock_context, mock_async_db
+    mock_async_db.close = AsyncMock(return_value=None)
+    return mock_async_db
 
 
 class TestGetCurrentUserId:
@@ -380,13 +378,13 @@ class TestGetCurrentUserId:
         mock_user = Mock()
         mock_user.id = "short_lived_user_id"
         firebase_uid = "firebase_uid_short_lived"
-        mock_context, mock_async_db = _make_async_session_context(mock_user)
+        mock_async_db = _make_async_session(mock_user)
 
         cache_module._uid_cache.pop(firebase_uid, None)
         try:
             with patch(
                 "src.api.dependencies.auth.AsyncSessionLocal",
-                return_value=mock_context,
+                return_value=mock_async_db,
             ):
                 result = await get_current_user_id(
                     _auth_request(),
@@ -396,8 +394,7 @@ class TestGetCurrentUserId:
 
             assert result == "short_lived_user_id"
             mock_async_db.execute.assert_awaited_once()
-            mock_context.__aenter__.assert_awaited_once()
-            mock_context.__aexit__.assert_awaited_once()
+            mock_async_db.close.assert_awaited_once()
         finally:
             cache_module._uid_cache.pop(firebase_uid, None)
 

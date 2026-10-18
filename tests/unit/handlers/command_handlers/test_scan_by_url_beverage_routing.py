@@ -52,6 +52,8 @@ def _install_fake_image_download(
             return None
 
     class FakeClient:
+        is_closed = False
+
         async def __aenter__(self):
             return self
 
@@ -68,7 +70,10 @@ def _install_fake_image_download(
 
     import httpx
 
+    from src.infra.http import image_download
+
     fake_client = FakeClient()
+    monkeypatch.setattr(image_download, "_scan_image_client", None)
     monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: fake_client)
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 

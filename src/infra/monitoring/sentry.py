@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import AbstractContextManager, nullcontext
@@ -273,10 +274,16 @@ def initialize_sentry() -> None:
 def _drop_expected_events(
     event: dict[str, Any], hint: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Drop provider safety-filter rejections of user input.
+    """Drop expected signals that are not backend failures.
 
-    The LangChain integration captures the raw provider error before our
-    handlers map it to a 422, so it must be filtered here.
+    Provider safety-filter rejections of user input are mapped to HTTP 422,
+    but the LangChain integration captures the raw provider error before that
+    mapping, so those events are dropped here.
+
+    A direct ``asyncio.CancelledError`` on ``POST /v1/chat/messages`` is the
+    ASGI request task cancelling in-flight streaming after the client
+    disconnects. Chained non-cancellation causes and contexts stay visible,
+    as do other routes and events with no original exception.
     """
     exc_info = hint.get("exc_info")
     exc = exc_info[1] if exc_info else None
@@ -284,7 +291,28 @@ def _drop_expected_events(
         return None
     if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
         return None
+    if _is_expected_chat_cancellation(event, exc_info):
+        return None
     return event
+
+
+def _is_expected_chat_cancellation(event: dict[str, Any], exc_info: Any) -> bool:
+    """True for a direct client disconnect on the chat messages route only."""
+    if event.get("transaction") != "/v1/chat/messages":
+        return False
+    if not isinstance(exc_info, tuple) or len(exc_info) < 2:
+        return False
+
+    error = exc_info[1]
+    if not isinstance(error, asyncio.CancelledError):
+        return False
+
+    for related_error in (error.__cause__, error.__context__):
+        if related_error is not None and not isinstance(
+            related_error, asyncio.CancelledError
+        ):
+            return False
+    return True
 
 
 def _env_value(name: str) -> str | None:

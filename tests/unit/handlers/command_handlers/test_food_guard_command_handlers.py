@@ -37,17 +37,22 @@ async def test_scan_by_url_rejects_non_food_before_meal_creation(monkeypatch):
             return None
 
     class FakeClient:
+        is_closed = False
+
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, url):
+        async def get(self, url, *args, **kwargs):
             return FakeResponse()
 
     import httpx
 
+    from src.infra.http import image_download
+
+    monkeypatch.setattr(image_download, "_scan_image_client", None)
     monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 
@@ -66,7 +71,9 @@ async def test_scan_by_url_rejects_non_food_before_meal_creation(monkeypatch):
         public_id="mealtrack/abc",
     )
 
-    with pytest.raises(ValidationException, match="Image does not appear to contain food"):
+    with pytest.raises(
+        ValidationException, match="Image does not appear to contain food"
+    ):
         await handler.handle(command)
 
     handler.gpt_parser.parse_to_nutrition.assert_not_called()
@@ -74,7 +81,9 @@ async def test_scan_by_url_rejects_non_food_before_meal_creation(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scan_by_url_malformed_localization_container_is_non_retryable(monkeypatch):
+async def test_scan_by_url_malformed_localization_container_is_non_retryable(
+    monkeypatch,
+):
     from src.app.handlers.command_handlers import scan_by_url_command_handler as module
 
     class FakeResponse:
@@ -84,17 +93,22 @@ async def test_scan_by_url_malformed_localization_container_is_non_retryable(mon
             return None
 
     class FakeClient:
+        is_closed = False
+
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, url):
+        async def get(self, url, *args, **kwargs):
             return FakeResponse()
 
     import httpx
 
+    from src.infra.http import image_download
+
+    monkeypatch.setattr(image_download, "_scan_image_client", None)
     monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 
@@ -132,18 +146,23 @@ async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
             return None
 
     class FakeClient:
+        is_closed = False
+
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, url):
+        async def get(self, url, *args, **kwargs):
             return FakeResponse()
 
     capture_message = MagicMock()
     import httpx
 
+    from src.infra.http import image_download
+
+    monkeypatch.setattr(image_download, "_scan_image_client", None)
     monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
     monkeypatch.setattr(module, "capture_message", capture_message)
@@ -164,7 +183,9 @@ async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
         public_id="mealtrack/abc",
     )
 
-    with pytest.raises(ValidationException, match="Image does not appear to contain food"):
+    with pytest.raises(
+        ValidationException, match="Image does not appear to contain food"
+    ):
         await handler.handle(command)
 
     capture_message.assert_called_once_with(

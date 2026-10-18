@@ -23,7 +23,7 @@ from src.api.dependencies.auth_cache import get_cached_user_id, set_cached_user_
 from src.bootstrap.integration_services import get_firebase_executor
 from src.domain.ports.cache_port import CachePort
 from src.infra.config.settings import settings
-from src.infra.database.config_async import AsyncSessionLocal
+from src.infra.database.config_async import AsyncSessionLocal, close_async_session
 from src.planner_observability import planner_timed
 
 logger = logging.getLogger(__name__)
@@ -287,8 +287,11 @@ async def resolve_current_user_id(
                 "AsyncSessionLocal is not initialized. Async engine setup failed; "
                 "check async DB configuration."
             )
-        async with AsyncSessionLocal() as scoped_db:
+        scoped_db = AsyncSessionLocal()
+        try:
             user_id = await _fetch_active_user_id(scoped_db, firebase_uid)
+        finally:
+            await close_async_session(scoped_db)
     else:
         user_id = await _fetch_active_user_id(async_db, firebase_uid)
 
