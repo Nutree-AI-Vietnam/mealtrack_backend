@@ -104,8 +104,19 @@ _LOCAL_NUMBER = (
     r"|\d+"
 )
 
+_CALORIE_UNIT = r"kcal|calories?|calo|cal"
+# A height, weight, duration, or count is not a calorie the user stated.
+# ``dư 200`` still counts. ``ký`` is informal kilograms.
+_NON_ENERGY_UNIT_RE = re.compile(
+    r"\s*(?:cm|mm|kg|kilograms?|ký|ky|g|grams?|mg|ml|lb|lbs|oz"
+    r"|tháng|thang|tuần|tuan|ngày|ngay|weeks?|months?|days?"
+    r"|phút|phut|minutes?|giờ|gio|hours?"
+    r"|nghìn|nghin|ngàn|ngan|triệu|trieu"
+    r"|tuổi|tuoi|mét|met|lít|lit)\b",
+    re.IGNORECASE,
+)
 _CALORIE_CLAIM_RE = re.compile(
-    rf"(?P<num>{_LOCAL_NUMBER})\s*(?:kcal|calories?|cal)\b",
+    rf"(?P<num>{_LOCAL_NUMBER})\s*(?:{_CALORIE_UNIT})\b",
     re.IGNORECASE,
 )
 _MACRO_CLAIM_RE = re.compile(
@@ -125,7 +136,7 @@ _SENTENCE_END_RE = re.compile(r"(?s)(.+?(?:[.!?…][\"')\]]*|\n{2,})\s+)")
 # Hold a trailing number (and an optional unit) so an untraceable calorie claim
 # is never shown one token early. Closed sentences still flush through push().
 _STREAM_NUMBER_TAIL = re.compile(
-    r"(?i)\d[\d.,]*\s*(?:kcal|calories?|cal|g(?:rams?)?|protein|carbs?|fat)?\s*$"
+    rf"(?i)\d[\d.,]*\s*(?:{_CALORIE_UNIT}|g(?:rams?)?|protein|carbs?|fat)?\s*$"
 )
 
 
@@ -259,6 +270,10 @@ def intent_template(intent: str | None) -> str:
             "Match the depth of the question: a greeting stays to one or two "
             "sentences; a how-or-why question may use a few short paragraphs, "
             "a heading, or a list. Do not invent nutrition numbers. "
+            "You may repeat a calorie amount the user just stated and compare it "
+            "with the Nutree target in context. Do not introduce any other calorie "
+            "or gram number. Answer a weight question in kilograms only, without a "
+            "new calorie total. "
             "Do not list recipe cards. If earlier meal cards list authoritative "
             "portions, you may compare those stored numbers and no others. "
             "If a meal card is already on screen, "
@@ -537,28 +552,83 @@ def _names_featured_meal(
     return True
 
 
+def calorie_amounts_stated_by_user(text: str) -> set[float]:
+    """Calorie figures the user typed, including a bare surplus like ``dư 200``.
+
+    Small counts such as ``4 tháng`` are not calorie amounts. ``calo`` counts
+    even when it is glued to the number (``200calo``).
+    """
+    if not text:
+        return set()
+    found: set[float] = set()
+    explicit = re.compile(
+        rf"(?P<num>{_LOCAL_NUMBER})\s*(?:{_CALORIE_UNIT})\b",
+        re.IGNORECASE,
+    )
+    for match in explicit.finditer(text):
+        try:
+            number, _ = _parse_localized_number(match.group("num"))
+        except ValueError:
+            continue
+        found.add(number)
+    # ``200.`` and ``200,`` are sentence punctuation, not a decimal. A
+    # separator that is followed by a digit (``200.5``, ``1.200``) stays
+    # part of the number and is handled by ``_LOCAL_NUMBER``.
+    bare = re.compile(rf"(?<![\d.,])(?P<num>{_LOCAL_NUMBER})(?!(?:\d|[.,]\d))")
+    for match in bare.finditer(text):
+        tail = text[match.end() :]
+        if tail.startswith((".", ",")) and (len(tail) == 1 or not tail[1].isdigit()):
+            tail = tail[1:]
+        if _NON_ENERGY_UNIT_RE.match(tail):
+            continue
+        try:
+            number, _ = _parse_localized_number(match.group("num"))
+        except ValueError:
+            continue
+        if number >= 50:
+            found.add(number)
+    return found
+
+
 def nutrition_numbers_are_traceable(
     text: str,
     *,
     context: ChatUserContext,
     chunks: Sequence[RetrievedKnowledgeChunk],
     meal_candidates: Sequence[Mapping[str, Any]] | None = None,
+    user_text: str | None = None,
 ) -> bool:
     """Require each calorie/macro number to match its own source field.
+
+    A calorie amount the user just stated is allowed, so a hypothetical
+    ("dư 200 calo") can be discussed. Every other figure must still match
+    Nutree context, a meal card, or a reviewed chunk.
 
     Malformed locale numbers return False (block the stream) instead of raising,
     so stream safety never surfaces as a provider/circuit failure.
     """
+    stated = calorie_amounts_stated_by_user(user_text or "")
     try:
         claims = list(_nutrition_claims(text))
     except ValueError:
         return False
     for claim in claims:
-        if not _claim_matches_context(claim, context):
-            if not _claim_matches_candidates(
-                claim, meal_candidates
-            ) and not _claim_matches_chunks(claim, chunks):
-                return False
+        if _claim_matches_context(claim, context):
+            continue
+        if _claim_matches_candidates(claim, meal_candidates):
+            continue
+        if _claim_matches_chunks(claim, chunks):
+            continue
+        if claim.metric == "calories" and any(
+            _numbers_equal(
+                claim.number,
+                amount,
+                decimal_places=claim.decimal_places,
+            )
+            for amount in stated
+        ):
+            continue
+        return False
     return True
 
 
@@ -628,6 +698,41 @@ def _parse_localized_number(raw: str) -> tuple[float, int]:
         raise ValueError(f"unsupported nutrition number: {raw}")
 
     return float(value), 0
+
+
+# Closing markdown (``**bold.**``, ``_em._``) may sit between the punctuation
+# and the following space. A period inside 1.200 is not an ending: the next
+# character is a digit, not whitespace.
+_SENTENCE_ENDING_RE = re.compile(r"[.!?…][*_\"')\]]*(?=\s|$)")
+# ``2. `` at the start of a line is a list marker, not the end of a sentence.
+_LIST_MARKER_ENDING_RE = re.compile(r"(?:^|\n)\s*\d+\.$")
+
+
+def finished_assistant_text(text: str) -> str:
+    """Keep only sentences that actually ended.
+
+    A token cap or a safety stop leaves a stump such as ``Nếu`` or
+    ``Không sao, chênh lệch``. Drop that stump. A reply that never reached
+    a sentence ending becomes empty so the caller can substitute a full answer.
+    """
+    cleaned = sanitize_incomplete_assistant_text(text)
+    if not cleaned:
+        return ""
+    endings = [
+        match
+        for match in _SENTENCE_ENDING_RE.finditer(cleaned)
+        if not _is_numbered_list_marker(cleaned, match.start())
+    ]
+    if not endings:
+        return ""
+    return cleaned[: endings[-1].end()].strip()
+
+
+def _is_numbered_list_marker(text: str, punct_index: int) -> bool:
+    """True when this period is the dot in a line-leading ``2.`` marker."""
+    if punct_index < 0 or punct_index >= len(text) or text[punct_index] != ".":
+        return False
+    return _LIST_MARKER_ENDING_RE.search(text[: punct_index + 1]) is not None
 
 
 def sanitize_incomplete_assistant_text(text: str) -> str:
