@@ -7,17 +7,30 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Custom image tag (default: delivery)'
+        description: 'Custom image tag (default: delivery — :delivery is not pushed until staging deploy succeeds)'
         required: false
         default: 'delivery'
+
+# Serialize migrate + deploy so overlapping delivery pushes cannot race the
+# staging schema or instance. Do not cancel an in-flight migrate/deploy.
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Immutable GHCR repo (metadata-action lowercases). Render staging-instance
+  # is srv-d7eva9v41pts73f4g390, image-backed.
+  SIT_IMAGE: ghcr.io/nutree-ai-vietnam/mealtrack_backend
+  STAGING_SERVICE_ID: srv-d7eva9v41pts73f4g390
 
 jobs:
   build-and-push:
-    name: 🐳 Build and Push SIT Image
+    name: 🐳 Build and Push sit-<sha>
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,8 +53,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.event.inputs.tag || 'delivery' }}
             type=sha,prefix=sit-,format=long
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.tag != 'delivery' }}
 
       - name: 🐳 Build and push Docker image
         uses: docker/build-push-action@v5
@@ -59,9 +72,13 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Floating \`:delivery\` is **not** pushed here. It is retagged to this digest only after staging deploy succeeds." >> $GITHUB_STEP_SUMMARY
 
-  # Staging only: migrate the staging DB at this exact commit, then deploy the
-  # immutable sit-<full sha> image. Push to delivery only — not workflow_dispatch.
+  # Staging only (push to delivery). Caller jobs that `uses:` a reusable workflow
+  # cannot set `environment:`; the GitHub Environment `staging` gate lives on
+  # the migrate job in migrate.yml so required reviewers can be configured.
+  # DATABASE_URL_DIRECT is environment-scoped there — not secrets: inherit.
   migrate-staging:
     name: 🗄️ Migrate staging DB
     needs: build-and-push
@@ -69,24 +86,27 @@ jobs:
     uses: ./.github/workflows/migrate.yml
     with:
       environment: staging
-    secrets: inherit
 
   deploy-staging:
     name: 🚀 Deploy staging-instance (sit-${{ github.sha }})
     needs: migrate-staging
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions: {}
     steps:
       - name: Trigger Render deploy hook (pinned image)
         env:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}
-          IMAGE: ghcr.io/nutree-ai-vietnam/mealtrack_backend:sit-${{ github.sha }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          IMAGE: ${{ env.SIT_IMAGE }}:sit-${{ github.sha }}
+          STAGING_SERVICE_ID: ${{ env.STAGING_SERVICE_ID }}
         run: |
           set -euo pipefail
           if [ -z "${HOOK}" ]; then
             echo "::error::RENDER_DEPLOY_HOOK_STAGING secret is not set"; exit 1
           fi
           ENC=$(python3 -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["IMAGE"],safe=""))')
+          # Render deploy hook URLs already contain ?key=, so imgURL is appended with &.
           # Do not print HOOK or curl stderr — the hook URL is a secret.
           CODE=$(curl -sS -o /tmp/resp -w '%{http_code}' -X POST "${HOOK}&imgURL=${ENC}" 2>/tmp/curl.err) || {
             echo "::error::curl failed to reach Render deploy hook"
@@ -96,3 +116,71 @@ jobs:
             echo "::error::Render deploy hook returned HTTP ${CODE}"; exit 1
           fi
           echo "Deploy triggered for ${IMAGE} (HTTP ${CODE})"
+
+          DEPLOY_ID=$(python3 -c 'import json; d=json.load(open("/tmp/resp")); print((d.get("deploy") or {}).get("id") or "")') || DEPLOY_ID=""
+          if [ -z "${DEPLOY_ID}" ]; then
+            echo "Render did not return a deploy id (HTTP ${CODE}; 202 means another deploy is in progress)."
+            echo "Skipping status poll."
+            exit 0
+          fi
+          echo "Render deploy id: ${DEPLOY_ID}"
+
+          if [ -z "${RENDER_API_KEY}" ]; then
+            echo "::notice::Not polling deploy status: repo secret RENDER_API_KEY is not set. Add it (Render account API key) to wait until this deploy is live/failed before retagging :delivery."
+            exit 0
+          fi
+
+          echo "Polling Render deploy ${DEPLOY_ID} on ${STAGING_SERVICE_ID}..."
+          i=0
+          while [ "${i}" -lt 60 ]; do
+            i=$((i + 1))
+            POLL_CODE=$(curl -sS -o /tmp/deploy.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              "https://api.render.com/v1/services/${STAGING_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              2>/tmp/poll.err) || true
+            STATUS=$(python3 -c 'import json; print(json.load(open("/tmp/deploy.json")).get("status") or "unknown")') || STATUS="unknown"
+            echo "Poll ${i}/60 HTTP ${POLL_CODE} status=${STATUS}"
+            case "${STATUS}" in
+              live)
+                echo "Render deploy ${DEPLOY_ID} is live"
+                exit 0
+                ;;
+              build_failed|update_failed|canceled|deactivated|pre_deploy_failed)
+                echo "::error::Render deploy ${DEPLOY_ID} failed with status ${STATUS}"
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          echo "::error::Timed out polling Render deploy ${DEPLOY_ID}"
+          exit 1
+
+  # Only after a successful pinned deploy: move the floating :delivery tag to
+  # this digest so a restart cannot pick up new code on an old schema.
+  promote-delivery-tag:
+    name: 🏷️ Point :delivery at sit-${{ github.sha }}
+    needs: deploy-staging
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 🔑 Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧰 Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Retag :delivery to the sit-<full sha> digest
+        env:
+          SRC: ${{ env.SIT_IMAGE }}:sit-${{ github.sha }}
+          DST: ${{ env.SIT_IMAGE }}:delivery
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create -t "${DST}" "${SRC}"
+          echo "Retagged ${DST} to the digest of ${SRC}"
