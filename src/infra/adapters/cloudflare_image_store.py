@@ -169,6 +169,17 @@ class CloudflareImageStore(ImageStorePort):
         """Async version of get_url."""
         return self.get_url(image_id, variant)
 
+    async def existing_delivery_url(self, image_id: str) -> str | None:
+        """Return the delivery URL when Cloudflare already has this image."""
+        from src.infra.adapters.image_url_probe import image_url_exists
+
+        url = self.get_url(image_id)
+        if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+            return None
+        if await image_url_exists(url):
+            return url
+        return None
+
     @staticmethod
     def _normalize_content_type(content_type: str) -> str:
         """Normalize MIME type by stripping parameters and mapping common aliases."""

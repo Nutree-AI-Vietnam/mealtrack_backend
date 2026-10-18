@@ -359,6 +359,31 @@ class AsyncChatRepository(ChatRepositoryPort):
         await self._touch_thread(row.thread_id, now)
         return _to_message(row)
 
+    async def extend_generation_lease(
+        self,
+        *,
+        message_id: str,
+        generation_id: str | None,
+        lease_expires_at: datetime,
+    ) -> bool:
+        if not generation_id:
+            return False
+        now = utc_now()
+        result = await self.session.execute(
+            update(ChatMessageORM)
+            .where(
+                ChatMessageORM.id == message_id,
+                ChatMessageORM.role == ChatMessageRole.ASSISTANT.value,
+                ChatMessageORM.status == ChatMessageStatus.GENERATING.value,
+                ChatMessageORM.generation_id == generation_id,
+            )
+            .values(
+                generation_lease_expires_at=lease_expires_at,
+                updated_at=now,
+            )
+        )
+        return result.rowcount > 0
+
     async def attach_follow_ups(
         self,
         *,
