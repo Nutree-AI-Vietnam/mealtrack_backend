@@ -10,6 +10,7 @@ from src.app.handlers.command_handlers.scan_by_url_command_handler import (
     ScanByUrlCommandHandler,
 )
 from src.domain.parsers.vision_response_parser import VisionResponseParser
+from src.infra.http.image_download import ScanImageDownloadAdapter
 
 _IMAGE_URL = "https://res.cloudinary.com/test/image/upload/v1/mealtrack/drink.jpg"
 _PUBLIC_ID = "mealtrack/1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
@@ -91,6 +92,7 @@ async def test_scan_by_url_packaged_beverage_creates_standard_meal(monkeypatch):
         vision_service=MagicMock(),
         gpt_parser=MagicMock(),
         event_publisher=publisher,
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
     handler.vision_service.analyze = AsyncMock(
         return_value={
@@ -180,6 +182,7 @@ async def test_scan_by_url_food_label_uses_crop_image_ai_without_ocr(
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         event_publisher=MagicMock(publish=AsyncMock()),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     result = await handler.handle(
@@ -257,6 +260,7 @@ async def test_scan_by_url_food_label_localizes_english_product_name(monkeypatch
         gpt_parser=VisionResponseParser(),
         text_translation_service=translator,
         event_publisher=MagicMock(publish=AsyncMock()),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     result = await handler.handle(
@@ -311,6 +315,7 @@ async def test_scan_by_url_food_label_uses_full_image_when_crop_missing(monkeypa
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         event_publisher=MagicMock(publish=AsyncMock()),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     result = await handler.handle(
@@ -341,6 +346,7 @@ async def test_scan_by_url_food_label_image_ai_failure_does_not_save(monkeypatch
         event_bus=MagicMock(),
         vision_service=vision_service,
         gpt_parser=MagicMock(),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     with pytest.raises(ValidationException, match="could not be read"):

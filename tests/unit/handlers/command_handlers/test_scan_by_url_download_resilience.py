@@ -1,4 +1,4 @@
-"""Unit tests for ScanByUrlCommandHandler image download resilience and fallback."""
+"""Unit tests for ScanByUrlCommandHandler image download through its port."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -197,8 +197,12 @@ def _gateway_response(status_code: int, content: bytes = b"") -> httpx.Response:
     )
 
 
-def _handler_without_downloader() -> ScanByUrlCommandHandler:
-    return ScanByUrlCommandHandler(uow=MagicMock(), event_bus=MagicMock())
+def _handler_with_scan_downloader() -> ScanByUrlCommandHandler:
+    return ScanByUrlCommandHandler(
+        uow=MagicMock(),
+        event_bus=MagicMock(),
+        download_image_bytes=image_download.ScanImageDownloadAdapter(),
+    )
 
 
 def _install_scripted_client(monkeypatch, client: _ScriptedClient) -> list[float]:
@@ -218,7 +222,7 @@ def _install_scripted_client(monkeypatch, client: _ScriptedClient) -> list[float
 async def test_handler_fallback_classifies_persistent_gateway_failure(
     monkeypatch, status_code
 ):
-    """The no-injection fallback uses the shared photo downloader.
+    """The injected scan-image adapter uses the shared photo downloader.
 
     A persistent gateway status is one retry, then 503
     ``IMAGE_DOWNLOAD_UNAVAILABLE``. A raw ``raise_for_status()`` client would
@@ -230,7 +234,7 @@ async def test_handler_fallback_classifies_persistent_gateway_failure(
     delays = _install_scripted_client(monkeypatch, client)
 
     with pytest.raises(ExternalServiceException) as raised:
-        await _handler_without_downloader()._download_image_bytes(_GATEWAY_URL)
+        await _handler_with_scan_downloader()._download_image_bytes(_GATEWAY_URL)
 
     assert image_download._scan_image_client is client
     assert client.calls == 2
@@ -251,7 +255,7 @@ async def test_handler_fallback_retries_one_gateway_504(monkeypatch):
     )
     _install_scripted_client(monkeypatch, client)
 
-    body = await _handler_without_downloader()._download_image_bytes(_GATEWAY_URL)
+    body = await _handler_with_scan_downloader()._download_image_bytes(_GATEWAY_URL)
 
     assert image_download._scan_image_client is client
     assert body == b"image-bytes"
@@ -264,7 +268,7 @@ async def test_handler_fallback_maps_404_without_retry(monkeypatch):
     delays = _install_scripted_client(monkeypatch, client)
 
     with pytest.raises(ResourceNotFoundException) as raised:
-        await _handler_without_downloader()._download_image_bytes(_GATEWAY_URL)
+        await _handler_with_scan_downloader()._download_image_bytes(_GATEWAY_URL)
 
     assert image_download._scan_image_client is client
     assert client.calls == 1
@@ -295,3 +299,38 @@ async def test_handler_delegates_injected_downloader_once():
         await handler._download_image_bytes(_GATEWAY_URL)
 
     assert download.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handler_uses_injected_image_download_port():
+    """The handler calls the injected port and does not reach HTTP itself."""
+    from src.app.ports.image_download_port import ImageDownloadPort
+
+    class _FakeImageDownload:
+        def __init__(self) -> None:
+            self.urls: list[str] = []
+
+        async def __call__(self, image_url: str) -> bytes:
+            self.urls.append(image_url)
+            return b"from-port"
+
+    fake = _FakeImageDownload()
+    assert isinstance(fake, ImageDownloadPort)
+    handler = ScanByUrlCommandHandler(
+        uow=MagicMock(),
+        event_bus=MagicMock(),
+        download_image_bytes=fake,
+    )
+
+    body = await handler._download_image_bytes(_GATEWAY_URL)
+
+    assert body == b"from-port"
+    assert fake.urls == [_GATEWAY_URL]
+
+
+@pytest.mark.asyncio
+async def test_handler_requires_injected_image_download_port():
+    handler = ScanByUrlCommandHandler(uow=MagicMock(), event_bus=MagicMock())
+
+    with pytest.raises(RuntimeError, match="Image downloader is not configured"):
+        await handler._download_image_bytes(_GATEWAY_URL)
