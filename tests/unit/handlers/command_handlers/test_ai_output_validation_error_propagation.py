@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
+from src.infra.http.image_download import ScanImageDownloadAdapter
 
 VALIDATION_ERROR = AIOutputValidationError(
     "Invalid AI output after validation retry",
@@ -67,6 +68,7 @@ async def test_scan_by_url_handler_propagates_ai_validation_error(monkeypatch):
         event_bus=MagicMock(),
         vision_service=MagicMock(),
         gpt_parser=MagicMock(),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
     handler.vision_service.analyze = AsyncMock(side_effect=VALIDATION_ERROR)
 

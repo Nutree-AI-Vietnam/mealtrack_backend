@@ -349,6 +349,11 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     upload_handler = bus.handlers[mod.UploadMealImageImmediatelyCommand]
     scan_handler = bus.handlers[mod.ScanByUrlCommand]
 
+    from src.app.ports.image_download_port import ImageDownloadPort
+    from src.infra.http.image_download import ScanImageDownloadAdapter
+
+    assert isinstance(scan_handler._download_image_bytes_fn, ScanImageDownloadAdapter)
+    assert isinstance(scan_handler._download_image_bytes_fn, ImageDownloadPort)
     assert upload_handler.meal_analyze_graph_enabled is True
     assert scan_handler.meal_analyze_graph_enabled is True
     workflow = upload_handler.meal_analyze_workflow
