@@ -10,6 +10,7 @@ from src.app.handlers.command_handlers.scan_by_url_command_handler import (
     ScanByUrlCommandHandler,
 )
 from src.domain.exceptions.ai_exceptions import MealResponseLocalizationError
+from src.infra.http.image_download import ScanImageDownloadAdapter
 
 
 def _uow_with_timezone() -> MagicMock:
@@ -57,7 +58,11 @@ async def test_scan_by_url_rejects_non_food_before_meal_creation(monkeypatch):
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 
     uow = _uow_with_timezone()
-    handler = ScanByUrlCommandHandler(uow=uow, event_bus=MagicMock())
+    handler = ScanByUrlCommandHandler(
+        uow=uow,
+        event_bus=MagicMock(),
+        download_image_bytes=ScanImageDownloadAdapter(),
+    )
     handler.vision_service = MagicMock()
     handler.vision_service.analyze = AsyncMock(
         return_value={"structured_data": {"is_food": False, "foods": []}}
@@ -113,7 +118,11 @@ async def test_scan_by_url_malformed_localization_container_is_non_retryable(
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 
     uow = _uow_with_timezone()
-    handler = ScanByUrlCommandHandler(uow=uow, event_bus=MagicMock())
+    handler = ScanByUrlCommandHandler(
+        uow=uow,
+        event_bus=MagicMock(),
+        download_image_bytes=ScanImageDownloadAdapter(),
+    )
     handler.vision_service = MagicMock()
     handler.vision_service.analyze = AsyncMock(
         return_value={"structured_data": {"is_food": True, "foods": 1}}
@@ -168,7 +177,11 @@ async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
     monkeypatch.setattr(module, "capture_message", capture_message)
 
     uow = _uow_with_timezone()
-    handler = ScanByUrlCommandHandler(uow=uow, event_bus=MagicMock())
+    handler = ScanByUrlCommandHandler(
+        uow=uow,
+        event_bus=MagicMock(),
+        download_image_bytes=ScanImageDownloadAdapter(),
+    )
     handler.vision_service = MagicMock()
     handler.vision_service.analyze = AsyncMock(
         return_value={"structured_data": {"is_food": False, "foods": []}}
