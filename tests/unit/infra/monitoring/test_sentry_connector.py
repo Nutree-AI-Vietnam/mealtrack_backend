@@ -159,7 +159,7 @@ def test_initialize_sends_when_environment_is_unset_or_blank(monkeypatch):
 
         mock_sdk.init.assert_called_once()
         init_kwargs = mock_sdk.init.call_args.kwargs
-        assert init_kwargs["environment"] == "development"
+        assert init_kwargs["environment"] == "unknown"
         assert "ignore_errors" not in init_kwargs
         assert connector._enabled is True
 
@@ -338,7 +338,11 @@ def test_capture_message_applies_only_safe_context(monkeypatch):
 def test_request_context_sets_safe_context_and_user(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
-    monkeypatch.setattr("src.infra.monitoring.sentry.settings.ENVIRONMENT", "test")
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", "rel-1")
 
     connector = SentryObservabilityConnector()
@@ -354,9 +358,30 @@ def test_request_context_sets_safe_context_and_user(monkeypatch):
     assert safe_context["request_id"] == "abc12345"
     assert safe_context["method"] == "GET"
     assert safe_context["path"] == "/v1/meals"
-    assert safe_context["environment"] == "test"
+    assert safe_context["environment"] == "staging"
     assert safe_context["release"] == "rel-1"
     mock_sdk.set_user.assert_called_once_with({"id": "user-1"})
+
+
+def test_request_context_uses_unknown_when_env_vars_are_unset(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+
+    connector = SentryObservabilityConnector()
+    connector._enabled = True
+    connector.set_request_context(
+        request_id="abc12345",
+        method="GET",
+        path="/v1/meals",
+    )
+
+    safe_context = mock_sdk.set_context.call_args.args[1]
+    assert safe_context["environment"] == "unknown"
 
 
 def test_start_span_returns_noop_when_disabled(monkeypatch):
