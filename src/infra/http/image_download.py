@@ -82,6 +82,18 @@ def _client_error(status_code: int) -> MealTrackException:
     return ImageDownloadRejected()
 
 
+class ScanImageDownloadAdapter:
+    """HTTP adapter for :class:`src.app.ports.image_download_port.ImageDownloadPort`.
+
+    Timeouts and status mapping stay in ``download_scan_image_bytes``:
+    keepalive 5s, read 15s, 35s overall cap, upstream 404 as
+    ``IMAGE_NOT_FOUND``, and any other 4xx as 422 ``IMAGE_DOWNLOAD_REJECTED``.
+    """
+
+    async def __call__(self, image_url: str) -> bytes:
+        return await download_scan_image_bytes(image_url)
+
+
 async def download_scan_image_bytes(
     image_url: str,
     *,
