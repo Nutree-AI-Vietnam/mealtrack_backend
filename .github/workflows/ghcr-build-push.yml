@@ -92,9 +92,13 @@ jobs:
     needs: migrate-staging
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions: {}
+    outputs:
+      verified: ${{ steps.deploy.outputs.verified }}
     steps:
       - name: Trigger Render deploy hook (pinned image)
+        id: deploy
         env:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -105,13 +109,25 @@ jobs:
           if [ -z "${HOOK}" ]; then
             echo "::error::RENDER_DEPLOY_HOOK_STAGING secret is not set"; exit 1
           fi
+          if [ -z "${RENDER_API_KEY}" ]; then
+            echo "::error::RENDER_API_KEY secret is not set; cannot verify the deploy before retagging :delivery"
+            exit 1
+          fi
           ENC=$(python3 -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["IMAGE"],safe=""))')
           # Render deploy hook URLs already contain ?key=, so imgURL is appended with &.
           # Do not print HOOK or curl stderr — the hook URL is a secret.
-          CODE=$(curl -sS -o /tmp/resp -w '%{http_code}' -X POST "${HOOK}&imgURL=${ENC}" 2>/tmp/curl.err) || {
+          CODE=$(curl -sS --max-time 20 -o /tmp/resp -w '%{http_code}' -X POST "${HOOK}&imgURL=${ENC}" 2>/tmp/curl.err) || {
             echo "::error::curl failed to reach Render deploy hook"
             exit 1
           }
+          if [ "${CODE}" = "401" ] || [ "${CODE}" = "403" ]; then
+            echo "::error::Render deploy hook returned HTTP ${CODE} (auth)"
+            exit 1
+          fi
+          if [ "${CODE}" = "202" ]; then
+            echo "::error::Render deploy hook returned HTTP 202 (another deploy already running); no deploy id"
+            exit 1
+          fi
           if [ "${CODE}" -lt 200 ] || [ "${CODE}" -ge 300 ]; then
             echo "::error::Render deploy hook returned HTTP ${CODE}"; exit 1
           fi
@@ -119,30 +135,29 @@ jobs:
 
           DEPLOY_ID=$(python3 -c 'import json; d=json.load(open("/tmp/resp")); print((d.get("deploy") or {}).get("id") or "")') || DEPLOY_ID=""
           if [ -z "${DEPLOY_ID}" ]; then
-            echo "Render did not return a deploy id (HTTP ${CODE}; 202 means another deploy is in progress)."
-            echo "Skipping status poll."
-            exit 0
+            echo "::error::Render did not return a deploy id (HTTP ${CODE}); failing closed so :delivery is not retagged"
+            exit 1
           fi
           echo "Render deploy id: ${DEPLOY_ID}"
-
-          if [ -z "${RENDER_API_KEY}" ]; then
-            echo "::notice::Not polling deploy status: repo secret RENDER_API_KEY is not set. Add it (Render account API key) to wait until this deploy is live/failed before retagging :delivery."
-            exit 0
-          fi
 
           echo "Polling Render deploy ${DEPLOY_ID} on ${STAGING_SERVICE_ID}..."
           i=0
           while [ "${i}" -lt 60 ]; do
             i=$((i + 1))
-            POLL_CODE=$(curl -sS -o /tmp/deploy.json -w '%{http_code}' \
+            POLL_CODE=$(curl -sS --max-time 20 -o /tmp/deploy.json -w '%{http_code}' \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               "https://api.render.com/v1/services/${STAGING_SERVICE_ID}/deploys/${DEPLOY_ID}" \
-              2>/tmp/poll.err) || true
+              2>/tmp/poll.err) || POLL_CODE="000"
+            if [ "${POLL_CODE}" = "401" ] || [ "${POLL_CODE}" = "403" ]; then
+              echo "::error::Render API returned HTTP ${POLL_CODE} (auth)"
+              exit 1
+            fi
             STATUS=$(python3 -c 'import json; print(json.load(open("/tmp/deploy.json")).get("status") or "unknown")') || STATUS="unknown"
             echo "Poll ${i}/60 HTTP ${POLL_CODE} status=${STATUS}"
             case "${STATUS}" in
               live)
                 echo "Render deploy ${DEPLOY_ID} is live"
+                echo "verified=true" >> "$GITHUB_OUTPUT"
                 exit 0
                 ;;
               build_failed|update_failed|canceled|deactivated|pre_deploy_failed)
@@ -155,12 +170,12 @@ jobs:
           echo "::error::Timed out polling Render deploy ${DEPLOY_ID}"
           exit 1
 
-  # Only after a successful pinned deploy: move the floating :delivery tag to
+  # Only after a verified live deploy: move the floating :delivery tag to
   # this digest so a restart cannot pick up new code on an old schema.
   promote-delivery-tag:
     name: 🏷️ Point :delivery at sit-${{ github.sha }}
     needs: deploy-staging
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && needs.deploy-staging.outputs.verified == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

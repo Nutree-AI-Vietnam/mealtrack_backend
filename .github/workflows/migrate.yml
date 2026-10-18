@@ -40,6 +40,9 @@ jobs:
   migrate:
     name: Migrate (${{ inputs.environment }})
     runs-on: ubuntu-latest
+    concurrency:
+      group: migrate-${{ inputs.environment }}
+      cancel-in-progress: false
     # Required reviewers on this Environment pause auto-migrate until approved.
     environment: ${{ inputs.environment }}
     env:
