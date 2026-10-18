@@ -126,6 +126,7 @@ def test_initialize_does_not_send_for_development_or_local(monkeypatch):
         mock_sdk = MagicMock()
         monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
         monkeypatch.setenv("ENVIRONMENT", environment)
+        monkeypatch.setenv("SENTRY_ENVIRONMENT", "production")
         monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
         monkeypatch.setattr(
             "src.infra.monitoring.sentry.settings.ENVIRONMENT", "production"
@@ -147,6 +148,7 @@ def test_initialize_sends_when_environment_is_unset_or_blank(monkeypatch):
             monkeypatch.delenv("ENVIRONMENT", raising=False)
         else:
             monkeypatch.setenv("ENVIRONMENT", raw)
+        monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
         monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
         monkeypatch.setattr(
             "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
@@ -165,6 +167,7 @@ def test_initialize_sends_when_environment_is_unset_or_blank(monkeypatch):
 def test_initialize_environment_comes_from_environment_env_var(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "   ")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr(
@@ -188,6 +191,42 @@ def test_initialize_environment_comes_from_environment_env_var(monkeypatch):
     assert connector._enabled is True
 
 
+def test_initialize_prefers_sentry_environment_over_environment(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "Staging")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["environment"] == "staging"
+    assert connector._enabled is True
+
+
+def test_initialize_sentry_environment_does_not_opt_out(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "development")
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["environment"] == "development"
+    assert connector._enabled is True
+
+
 def test_initialize_skips_when_dsn_unset(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
@@ -203,6 +242,7 @@ def test_initialize_skips_when_dsn_unset(monkeypatch):
 def test_initialize_configures_integrations_and_release(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.ENVIRONMENT", "test")
@@ -243,6 +283,7 @@ def test_initialize_configures_integrations_and_release(monkeypatch):
 def test_initialize_omits_optional_profile_session_settings_when_unset(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr(

@@ -55,7 +55,7 @@ class SentryObservabilityConnector:
 
         Sending is skipped only when ENVIRONMENT is explicitly development or
         local. An unset or blank ENVIRONMENT still sends when SENTRY_DSN is
-        set. The environment label is that env var when it is set.
+        set. The environment label is SENTRY_ENVIRONMENT, then ENVIRONMENT.
 
         Must be called BEFORE the FastAPI app is instantiated so integrations
         can patch Starlette/FastAPI middleware.
@@ -287,25 +287,36 @@ def _drop_expected_events(
     return event
 
 
-def _explicit_environment() -> str | None:
-    """Return ENVIRONMENT when it is set to a non-blank value.
-
-    ``None`` means unset or blank. That is not an opt-out: settings defaults
-    the same name to ``development``, and treating the default as local would
-    disable Sentry in any process that forgot the variable.
-    """
-    raw = os.environ.get("ENVIRONMENT")
+def _env_value(name: str) -> str | None:
+    """Return a stripped, lowercased process env var, or None when blank."""
+    raw = os.environ.get(name)
     if raw is None or not str(raw).strip():
         return None
     return str(raw).strip().lower()
 
 
-def _sentry_environment_label(explicit: str | None) -> str:
-    """Label for sentry_sdk.init.
+def _explicit_environment() -> str | None:
+    """Return ENVIRONMENT when it is set to a non-blank value.
 
-    An explicit ENVIRONMENT wins. When it is missing, the settings value is
-    only a label and does not decide whether events are sent.
+    ``None`` means unset or blank. That is not an opt-out: settings defaults
+    the same name to ``development``, and treating the default as local would
+    disable Sentry in any process that forgot the variable. SENTRY_ENVIRONMENT
+    is not an opt-out either; it only names the environment on events we send.
     """
+    return _env_value("ENVIRONMENT")
+
+
+def _sentry_environment_label(explicit: str | None) -> str:
+    """Label passed to sentry_sdk.init.
+
+    SENTRY_ENVIRONMENT wins, then ENVIRONMENT. Passing the label ourselves
+    matters because an explicit ``environment=`` argument overrides the SDK's
+    own SENTRY_ENVIRONMENT read. When both variables are missing, the settings
+    value is only a label and does not decide whether events are sent.
+    """
+    sentry_environment = _env_value("SENTRY_ENVIRONMENT")
+    if sentry_environment is not None:
+        return sentry_environment
     if explicit is not None:
         return explicit
     fallback = str(settings.ENVIRONMENT or "").strip().lower()
