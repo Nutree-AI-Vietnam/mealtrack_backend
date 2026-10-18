@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
 
@@ -28,6 +29,11 @@ from src.infra.monitoring.connectors import (
 
 logger = logging.getLogger(__name__)
 
+# Opt out only when ENVIRONMENT is explicitly one of these. An unset or blank
+# variable must still send when a DSN is set, so a missing env var cannot
+# silence production (settings defaults ENVIRONMENT to "development").
+_SENTRY_NON_REPORTING_ENVIRONMENTS = frozenset({"development", "local"})
+
 SentryMessageLevel = Literal["fatal", "critical", "error", "warning", "info", "debug"]
 SentryLogLevel = Literal["fatal", "error", "warning", "info", "debug", "trace"]
 _SENTRY_MESSAGE_LEVELS = {"fatal", "critical", "error", "warning", "info", "debug"}
@@ -45,22 +51,41 @@ class SentryObservabilityConnector:
         self._enabled = False
 
     def initialize(self) -> None:
-        """Initialize Sentry SDK if SENTRY_DSN is configured.
+        """Initialize Sentry when this process should publish events.
+
+        Sending is skipped only when ENVIRONMENT is explicitly development or
+        local. An unset or blank ENVIRONMENT still sends when SENTRY_DSN is
+        set. The environment label is SENTRY_ENVIRONMENT, then ENVIRONMENT.
 
         Must be called BEFORE the FastAPI app is instantiated so integrations
         can patch Starlette/FastAPI middleware.
         """
+        explicit_environment = _explicit_environment()
         if sentry_sdk is None:
-            logger.info("Sentry disabled (sentry_sdk not installed)")
+            logger.info(
+                "Sentry disabled (sentry_sdk not installed, env=%s)",
+                explicit_environment,
+            )
+            return
+
+        if explicit_environment in _SENTRY_NON_REPORTING_ENVIRONMENTS:
+            logger.info(
+                "Sentry disabled (environment=%s does not send events)",
+                explicit_environment,
+            )
             return
 
         if not settings.SENTRY_DSN:
-            logger.info("Sentry disabled (SENTRY_DSN not set)")
+            logger.info(
+                "Sentry disabled (SENTRY_DSN not set, env=%s)",
+                explicit_environment,
+            )
             return
 
+        environment = _sentry_environment_label(explicit_environment)
         init_kwargs: dict[str, Any] = {
             "dsn": settings.SENTRY_DSN,
-            "environment": settings.ENVIRONMENT,
+            "environment": environment,
             "release": settings.SENTRY_RELEASE,
             "traces_sample_rate": settings.SENTRY_TRACES_SAMPLE_RATE,
             "profiles_sample_rate": settings.SENTRY_PROFILES_SAMPLE_RATE,
@@ -88,7 +113,7 @@ class SentryObservabilityConnector:
 
         sentry_sdk.init(**init_kwargs)
         self._enabled = True
-        logger.info("Sentry initialized (env=%s)", settings.ENVIRONMENT)
+        logger.info("Sentry initialized (env=%s)", environment)
 
     def capture_exception(
         self,
@@ -260,6 +285,42 @@ def _drop_expected_events(
     if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
         return None
     return event
+
+
+def _env_value(name: str) -> str | None:
+    """Return a stripped, lowercased process env var, or None when blank."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return None
+    return str(raw).strip().lower()
+
+
+def _explicit_environment() -> str | None:
+    """Return ENVIRONMENT when it is set to a non-blank value.
+
+    ``None`` means unset or blank. That is not an opt-out: settings defaults
+    the same name to ``development``, and treating the default as local would
+    disable Sentry in any process that forgot the variable. SENTRY_ENVIRONMENT
+    is not an opt-out either; it only names the environment on events we send.
+    """
+    return _env_value("ENVIRONMENT")
+
+
+def _sentry_environment_label(explicit: str | None) -> str:
+    """Label passed to sentry_sdk.init.
+
+    SENTRY_ENVIRONMENT wins, then ENVIRONMENT. Passing the label ourselves
+    matters because an explicit ``environment=`` argument overrides the SDK's
+    own SENTRY_ENVIRONMENT read. When both variables are missing, the settings
+    value is only a label and does not decide whether events are sent.
+    """
+    sentry_environment = _env_value("SENTRY_ENVIRONMENT")
+    if sentry_environment is not None:
+        return sentry_environment
+    if explicit is not None:
+        return explicit
+    fallback = str(settings.ENVIRONMENT or "").strip().lower()
+    return fallback or "production"
 
 
 def _normalize_message_level(level: str) -> SentryMessageLevel:
