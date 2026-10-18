@@ -2,6 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from src.domain.model.user import UserDomainModel, UserProfileDomainModel
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.user_repository_port import UserRepositoryPort
 
 
@@ -51,6 +52,7 @@ class FakeUserRepository(UserRepositoryPort):
         """Soft delete user by marking as inactive (matches real repository behavior)."""
         if user_id in self.users:
             self.users[user_id].is_active = False
+            self.users[user_id].firebase_uid = tombstone_firebase_uid(user_id)
             return True
         return False
 
