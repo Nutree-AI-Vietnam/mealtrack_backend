@@ -21,6 +21,14 @@ class _NoRowResult:
         return None
 
 
+class _Savepoint:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("constraint", ["users_email_key", "users_firebase_uid_key"])
 async def test_save_translates_identity_unique_constraint_to_conflict(
@@ -28,6 +36,7 @@ async def test_save_translates_identity_unique_constraint_to_conflict(
 ) -> None:
     session = Mock()
     session.execute = AsyncMock(return_value=_NoRowResult())
+    session.begin_nested = Mock(return_value=_Savepoint())
     session.flush = AsyncMock(
         side_effect=IntegrityError(
             "INSERT", {}, Exception(f'duplicate key value violates unique constraint "{constraint}"')
@@ -45,6 +54,9 @@ async def test_save_translates_identity_unique_constraint_to_conflict(
 
     with pytest.raises(FirebaseIdentityConflictError):
         await repository.save(user)
+
+    session.begin_nested.assert_called_once()
+    session.rollback.assert_not_called()
 
 
 class _RowResult:
@@ -81,6 +93,7 @@ async def test_save_does_not_reload_user_after_flush() -> None:
 
     session = Mock()
     session.execute = AsyncMock(side_effect=execute)
+    session.begin_nested = Mock(return_value=_Savepoint())
     session.flush = AsyncMock()
     session.add = Mock(side_effect=add)
 

@@ -15,6 +15,7 @@ from src.domain.exceptions.firebase_identity_exceptions import (
 from src.domain.model.auth.auth_provider import AuthProvider
 from src.domain.model.notification import NotificationPreferences
 from src.domain.model.user import UserDomainModel
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -37,8 +38,8 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
         # Using 'async with uow' manages the transaction scope
         async with uow:
             try:
-                # One lookup covers both active accounts and soft-deleted rows.
-                # firebase_uid is unique, so at most one row matches.
+                # One lookup (PYTHON-JY). firebase_uid is unique, so the row is
+                # the active account or the inactive row that still holds the key.
                 matched_user = await uow.users.find_by_firebase_uid_including_deleted(
                     command.firebase_uid
                 )
@@ -67,25 +68,44 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
                     user = await uow.users.save(existing_user)
                     logger.info("Updated existing user")
                 else:
+                    # The inactive match still occupies ix_users_firebase_uid.
+                    # Release that key, then insert a new account. Do not
+                    # reactivate the anonymized row. This write is not a
+                    # second identity SELECT.
                     if matched_user is not None and not matched_user.is_active:
                         logger.info(
-                            f"Detected re-registration of deleted user (old_id={matched_user.id}). "
-                            f"Creating fresh account with new ID."
+                            "Releasing firebase_uid on inactive user %s",
+                            matched_user.id,
                         )
-                        # Note: We do NOT restore the old user; we create a brand new one
-                        # The old record stays anonymized for audit trail
+                        matched_user.firebase_uid = tombstone_firebase_uid(
+                            matched_user.id
+                        )
+                        await uow.users.save(matched_user)
 
-                    # Create new user (works for both new users and re-registrations)
                     user = self._create_new_user(command, uow)
                     language_code = self._supported_language_code(command.language_code)
                     if language_code:
                         user.language_code = language_code
-                    user = await uow.users.save(user)
-                    created = True
-                    logger.info("Created new user")
+                    try:
+                        user = await uow.users.save(user)
+                    except FirebaseIdentityConflictError:
+                        # Concurrent sync inserted the active row after our lookup.
+                        winner = await uow.users.find_by_firebase_uid(
+                            command.firebase_uid
+                        )
+                        if winner is None:
+                            raise
+                        updated = self._update_existing_user(winner, command)
+                        user = await uow.users.save(winner)
+                        logger.info("Adopted user created by a concurrent sync")
+                    else:
+                        created = True
+                        logger.info("Created new user")
 
-                    # Create default notification preferences
-                    await self._create_default_notification_preferences(user.id, uow)
+                    if created:
+                        await self._create_default_notification_preferences(
+                            user.id, uow
+                        )
 
                 # Commit transaction
                 await uow.commit()
