@@ -21,6 +21,9 @@ from src.app.handlers.query_handlers.meal_planner.weekly_meal_planner_query_hand
     ListRecipesQueryHandler,
 )
 from src.app.queries.meal_planner import ListRecipesQuery
+from src.domain.exceptions.weekly_meal_planner_exceptions import (
+    WeeklyMealPlanConflictError,
+)
 from src.domain.model.meal_recommendation.catalog_recipe import (
     CatalogMeal,
     CatalogMealIngredient,
@@ -448,6 +451,39 @@ def test_vietnamese_ai_proposal_uses_catalog_grocery_name_vi():
         "unit": "g",
     }
     assert repository.display_projection_request == ([42], "en")
+
+
+def test_patch_logged_slot_conflict_returns_409():
+    class _ConflictBus(_Bus):
+        async def send(self, query):
+            if query.__class__.__name__ == "UpdateWeeklyMealPlanCommand":
+                raise WeeklyMealPlanConflictError(
+                    "Logged weekly meal slots cannot be replaced"
+                )
+            return await super().send(query)
+
+    response = TestClient(_app(bus=_ConflictBus())).patch(
+        "/v1/meal-plans/plan-1",
+        headers={"Idempotency-Key": "patch-logged-slot"},
+        json={
+            "expected_revision": 5,
+            "slots": [
+                {
+                    "day_index": 4,
+                    "slot_index": 0,
+                    "recipe_id": "3a43de9a-7e56-450d-b6ae-5a4b6dd02bfc",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": {
+            "error_code": "WEEKLY_PLAN_CONFLICT",
+            "message": "Logged weekly meal slots cannot be replaced",
+        }
+    }
 
 
 def test_patch_rejects_duplicate_slot_coordinates_before_dispatch():
