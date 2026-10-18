@@ -15,6 +15,7 @@ from src.domain.exceptions.firebase_identity_exceptions import (
 from src.domain.model.auth.auth_provider import AuthProvider
 from src.domain.model.notification import NotificationPreferences
 from src.domain.model.user import UserDomainModel
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -37,9 +38,15 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
         # Using 'async with uow' manages the transaction scope
         async with uow:
             try:
-                # Check if user exists by firebase_uid
-                existing_user = await uow.users.find_by_firebase_uid(
+                # One lookup (PYTHON-JY). firebase_uid is unique, so the row is
+                # the active account or the inactive row that still holds the key.
+                matched_user = await uow.users.find_by_firebase_uid_including_deleted(
                     command.firebase_uid
+                )
+                existing_user = (
+                    matched_user
+                    if matched_user is not None and matched_user.is_active
+                    else None
                 )
 
                 # An email is not proof that a new Firebase UID owns an existing
@@ -61,38 +68,44 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
                     user = await uow.users.save(existing_user)
                     logger.info("Updated existing user")
                 else:
-                    # Check if this is a previously deleted user re-registering
-                    deleted_user = await uow.users.find_deleted_by_firebase_uid(
-                        command.firebase_uid
-                    )
-                    if deleted_user:
+                    # The inactive match still occupies ix_users_firebase_uid.
+                    # Release that key, then insert a new account. Do not
+                    # reactivate the anonymized row. This write is not a
+                    # second identity SELECT.
+                    if matched_user is not None and not matched_user.is_active:
                         logger.info(
-                            f"Detected re-registration of deleted user (old_id={deleted_user.id}). "
-                            f"Creating fresh account with new ID."
+                            "Releasing firebase_uid on inactive user %s",
+                            matched_user.id,
                         )
-                        # Note: We do NOT restore the old user; we create a brand new one
-                        # The old record stays anonymized for audit trail
+                        matched_user.firebase_uid = tombstone_firebase_uid(
+                            matched_user.id
+                        )
+                        await uow.users.save(matched_user)
 
-                    # Create new user (works for both new users and re-registrations)
                     user = self._create_new_user(command, uow)
-                    # Save user to get ID
-                    user = await uow.users.save(user)
-                    created = True
-                    logger.info("Created new user")
-
-                    # Set language from Accept-Language header if provided
-                    if command.language_code:
-                        from src.app.commands.user.update_language_command import (
-                            SUPPORTED_LANGUAGES,
+                    language_code = self._supported_language_code(command.language_code)
+                    if language_code:
+                        user.language_code = language_code
+                    try:
+                        user = await uow.users.save(user)
+                    except FirebaseIdentityConflictError:
+                        # Concurrent sync inserted the active row after our lookup.
+                        winner = await uow.users.find_by_firebase_uid(
+                            command.firebase_uid
                         )
+                        if winner is None:
+                            raise
+                        updated = self._update_existing_user(winner, command)
+                        user = await uow.users.save(winner)
+                        logger.info("Adopted user created by a concurrent sync")
+                    else:
+                        created = True
+                        logger.info("Created new user")
 
-                        lang = command.language_code.lower().strip()
-                        if lang in SUPPORTED_LANGUAGES:
-                            user.language_code = lang
-                            await uow.users.save(user)
-
-                    # Create default notification preferences
-                    await self._create_default_notification_preferences(user.id, uow)
+                    if created:
+                        await self._create_default_notification_preferences(
+                            user.id, uow
+                        )
 
                 # Commit transaction
                 await uow.commit()
@@ -163,6 +176,20 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
             except Exception:
                 await uow.rollback()
                 raise
+
+    @staticmethod
+    def _supported_language_code(language_code: str | None) -> str | None:
+        """Return a supported ISO code, or None when sync should keep the default."""
+        if not language_code:
+            return None
+        from src.app.commands.user.update_language_command import (
+            SUPPORTED_LANGUAGES,
+        )
+
+        lang = language_code.lower().strip()
+        if lang in SUPPORTED_LANGUAGES:
+            return lang
+        return None
 
     def _create_new_user(
         self, command: SyncUserCommand, uow: AsyncUnitOfWorkPort

@@ -70,6 +70,7 @@ class UserDomainModel(BaseDomainModel):
     display_name: str | None = None
     photo_url: str | None = None
     deleted_at: datetime | None = None
+    language_code: str | None = None
     profiles: list[UserProfileDomainModel] = field(default_factory=list)
 
     @property
