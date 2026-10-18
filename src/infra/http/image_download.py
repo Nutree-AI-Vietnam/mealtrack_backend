@@ -6,8 +6,10 @@ in httpcore's header read after that budget. That wait fits either a
 half-open pooled socket or an origin that sent no bytes; the event does not
 show which. This client expires idle sockets after 5s and stops a silent
 read after 15s. One retry is only a backstop for a timeout, transport error,
-or 5xx. It is not treated as a fresh connection. Client 4xx responses are
-not retried.
+or 5xx. It is not treated as a fresh connection. A photo-host 404
+becomes our 404. Every other photo-host 4xx becomes 422
+``IMAGE_DOWNLOAD_REJECTED`` and is not retried. Those responses are never
+401 or 403, which the app treats as a bad session.
 """
 
 from __future__ import annotations
@@ -18,14 +20,10 @@ import logging
 import httpx
 
 from src.api.exceptions import (
-    AuthenticationException,
-    AuthorizationException,
-    BusinessLogicException,
-    ConflictException,
     ExternalServiceException,
+    ImageDownloadRejected,
     MealTrackException,
     ResourceNotFoundException,
-    ValidationException,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,17 +39,10 @@ SCAN_IMAGE_DOWNLOAD_TIMEOUT = httpx.Timeout(
     pool=5.0,
 )
 SCAN_IMAGE_DOWNLOAD_RETRY_BACKOFF_SECONDS = 0.2
+# Two 15s reads plus the backoff, with a little room past the per-attempt caps.
+SCAN_IMAGE_DOWNLOAD_DEADLINE_SECONDS = 35.0
 
 _scan_image_client: httpx.AsyncClient | None = None
-
-_CLIENT_STATUS_ERRORS: dict[int, type[MealTrackException]] = {
-    400: ValidationException,
-    401: AuthenticationException,
-    403: AuthorizationException,
-    404: ResourceNotFoundException,
-    409: ConflictException,
-    422: BusinessLogicException,
-}
 
 
 def get_scan_image_http_client() -> httpx.AsyncClient:
@@ -78,28 +69,17 @@ async def close_scan_image_http_client() -> None:
 
 
 def _client_error(status_code: int) -> MealTrackException:
-    """Map a photo-host 4xx onto the status ``handle_exception`` already uses."""
-    message = "The meal photo could not be downloaded."
-    if status_code == 404:
-        message = "The meal photo could not be found."
-    elif status_code == 403:
-        message = "The meal photo could not be accessed."
-    error_type = _CLIENT_STATUS_ERRORS.get(status_code)
-    if error_type is not None:
-        return error_type(message=message, error_code=_client_error_code(status_code))
-    return MealTrackException(
-        message=message,
-        error_code="IMAGE_DOWNLOAD_REJECTED",
-        status_code=status_code,
-    )
+    """Map a photo-host 4xx without echoing auth or rate-limit statuses.
 
-
-def _client_error_code(status_code: int) -> str:
+    404 is a missing photo. Any other 4xx, including 401, 403, and 429, is
+    one client error. Passing 401/403 through makes the app drop the session.
+    """
     if status_code == 404:
-        return "IMAGE_NOT_FOUND"
-    if status_code == 403:
-        return "IMAGE_DOWNLOAD_FORBIDDEN"
-    return "IMAGE_DOWNLOAD_REJECTED"
+        return ResourceNotFoundException(
+            message="The meal photo could not be found.",
+            error_code="IMAGE_NOT_FOUND",
+        )
+    return ImageDownloadRejected()
 
 
 async def download_scan_image_bytes(
@@ -109,6 +89,17 @@ async def download_scan_image_bytes(
 ) -> bytes:
     """GET image bytes. Retry once on timeout, transport failure, or 5xx."""
     http = client if client is not None else get_scan_image_http_client()
+    try:
+        async with asyncio.timeout(SCAN_IMAGE_DOWNLOAD_DEADLINE_SECONDS):
+            return await _download_with_one_retry(http, image_url)
+    except TimeoutError as exc:
+        raise ExternalServiceException(
+            message="The meal photo is temporarily unavailable. Please try again.",
+            error_code="IMAGE_DOWNLOAD_UNAVAILABLE",
+        ) from exc
+
+
+async def _download_with_one_retry(http: httpx.AsyncClient, image_url: str) -> bytes:
     last_error: Exception | None = None
     for attempt in range(2):
         try:

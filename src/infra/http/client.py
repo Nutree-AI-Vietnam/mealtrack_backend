@@ -37,6 +37,3 @@ async def close_shared_http_client() -> None:
     if _shared_client is not None and not _shared_client.is_closed:
         await _shared_client.aclose()
         _shared_client = None
-    from src.infra.http.image_download import close_scan_image_http_client
-
-    await close_scan_image_http_client()

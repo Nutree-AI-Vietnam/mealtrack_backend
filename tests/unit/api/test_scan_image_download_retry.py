@@ -19,8 +19,8 @@ import httpx
 import pytest
 
 from src.api.exceptions import (
-    AuthorizationException,
     ExternalServiceException,
+    ImageDownloadRejected,
     MealTrackException,
     ResourceNotFoundException,
     handle_exception,
@@ -154,10 +154,12 @@ async def test_scan_image_download_retries_upstream_5xx_once(monkeypatch):
     ("status_code", "exc_type", "http_status", "error_code"),
     [
         (404, ResourceNotFoundException, 404, "IMAGE_NOT_FOUND"),
-        (403, AuthorizationException, 403, "IMAGE_DOWNLOAD_FORBIDDEN"),
+        (403, ImageDownloadRejected, 422, "IMAGE_DOWNLOAD_REJECTED"),
+        (401, ImageDownloadRejected, 422, "IMAGE_DOWNLOAD_REJECTED"),
+        (429, ImageDownloadRejected, 422, "IMAGE_DOWNLOAD_REJECTED"),
     ],
 )
-async def test_scan_image_download_client_error_keeps_status(
+async def test_scan_image_download_client_error_is_not_an_auth_failure(
     monkeypatch,
     caplog,
     status_code,
@@ -165,7 +167,7 @@ async def test_scan_image_download_client_error_keeps_status(
     http_status,
     error_code,
 ):
-    """A photo-host 4xx must not be an unexpected 500."""
+    """A photo-host 4xx must not be an unexpected 500, 401, or 403."""
     download = _downloader()
     client = _ScriptedClient([_response(status_code)])
     delays = _record_backoff(monkeypatch)
@@ -180,6 +182,7 @@ async def test_scan_image_download_client_error_keeps_status(
     assert raised.value.error_code == error_code
     http_exc = handle_exception(raised.value)
     assert http_exc.status_code == http_status
+    assert http_exc.status_code not in (401, 403)
     assert http_exc.detail["details"] == {}
     assert _PHOTO_URL not in str(http_exc.detail)
     assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
@@ -208,3 +211,26 @@ async def test_photo_client_expires_idle_connections_and_bounds_read():
         if close_photo is not None:
             await close_photo()
         await close_shared_http_client()
+
+
+@pytest.mark.asyncio
+async def test_scan_image_download_stops_at_overall_deadline(monkeypatch):
+    import asyncio
+
+    try:
+        image_download = importlib.import_module("src.infra.http.image_download")
+    except ModuleNotFoundError:
+        pytest.fail("delivery download has no overall deadline")
+
+    monkeypatch.setattr(image_download, "SCAN_IMAGE_DOWNLOAD_DEADLINE_SECONDS", 0.05)
+
+    class _Hang:
+        async def get(self, url: str, timeout: object = None) -> httpx.Response:
+            await asyncio.sleep(1)
+            return _response(200, content=b"jpeg-bytes")
+
+    with pytest.raises(ExternalServiceException) as raised:
+        await image_download.download_scan_image_bytes(_PHOTO_URL, client=_Hang())
+
+    assert raised.value.error_code == "IMAGE_DOWNLOAD_UNAVAILABLE"
+    assert handle_exception(raised.value).status_code == 503

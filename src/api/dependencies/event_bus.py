@@ -602,9 +602,12 @@ def get_configured_event_bus() -> EventBus:
     )
 
     async def _download_image_bytes_pooled(image_url: str) -> bytes:
-        from src.infra.http import download_scan_image_bytes
+        from src.infra.http import get_shared_http_client
 
-        return await download_scan_image_bytes(image_url)
+        client = get_shared_http_client()
+        resp = await client.get(image_url, timeout=30.0)
+        resp.raise_for_status()
+        return resp.content
 
     event_bus.register_handler(
         ScanByUrlCommand,
