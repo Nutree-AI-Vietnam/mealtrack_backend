@@ -1,5 +1,6 @@
 """Tests for non-food guard behavior across image command handlers."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -144,8 +145,8 @@ async def test_scan_by_url_malformed_localization_container_is_non_retryable(
 
 
 @pytest.mark.asyncio
-async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
-    """Expected non-food 400s still create a reviewable Sentry message with image URL."""
+async def test_scan_by_url_records_expected_image_rejection(monkeypatch, caplog):
+    """Non-food scans stay a validation error and a counter, not a Sentry message."""
     from src.app.handlers.command_handlers import scan_by_url_command_handler as module
 
     class FakeResponse:
@@ -166,7 +167,7 @@ async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
         async def get(self, url, *args, **kwargs):
             return FakeResponse()
 
-    capture_message = MagicMock()
+    increment_metric = MagicMock()
     import httpx
 
     from src.infra.http import image_download
@@ -174,7 +175,7 @@ async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
     monkeypatch.setattr(image_download, "_scan_image_client", None)
     monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
-    monkeypatch.setattr(module, "capture_message", capture_message)
+    monkeypatch.setattr(module, "increment_metric", increment_metric)
 
     uow = _uow_with_timezone()
     handler = ScanByUrlCommandHandler(
@@ -196,20 +197,26 @@ async def test_scan_by_url_captures_rejected_image_for_review(monkeypatch):
         public_id="mealtrack/abc",
     )
 
-    with pytest.raises(
-        ValidationException, match="Image does not appear to contain food"
-    ):
-        await handler.handle(command)
+    with caplog.at_level(logging.DEBUG, logger=module.logger.name):
+        with pytest.raises(
+            ValidationException, match="Image does not appear to contain food"
+        ):
+            await handler.handle(command)
 
-    capture_message.assert_called_once_with(
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+    assert any(
+        record.levelno == logging.INFO
+        and record.message
+        == "meal_scan.image_rejected operation=scan_by_url reason=parser_not_food image_id=abc"
+        for record in caplog.records
+    )
+    assert not any("image_url" in record.message for record in caplog.records)
+    increment_metric.assert_called_once_with(
         "meal_scan.image_rejected",
-        level="warning",
-        context={
+        attributes={
             "component": "meal_scan",
             "operation": "scan_by_url",
             "ai_purpose": "meal_scan",
-            "image_id": "abc",
-            "image_url": image_url,
             "rejection_reason": "parser_not_food",
         },
     )

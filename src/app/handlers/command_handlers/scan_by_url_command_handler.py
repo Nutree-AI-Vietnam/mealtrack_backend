@@ -50,7 +50,7 @@ from src.domain.utils.timezone_utils import (
     user_today,
     utc_now,
 )
-from src.observability import capture_message, distribution_metric, increment_metric
+from src.observability import distribution_metric, increment_metric
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         environment: str = "development",
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
-        download_image_bytes: ImageDownloadPort | None = None,
+        *,
+        download_image_bytes: ImageDownloadPort,
         uow_factory=None,
         cloudflare_custom_domain: str | None = None,
         cloudflare_flexible_variants_enabled: bool = False,
@@ -120,25 +121,30 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         self,
         *,
         image_id: str,
-        image_url: str,
         reason: str,
     ) -> None:
-        capture_message(
+        """Record an expected non-food rejection without opening a Sentry issue.
+
+        ``capture_message`` at warning created PYTHON-DJ. LoggingIntegration
+        only sends ERROR records as events, so this info log stays a breadcrumb.
+        """
+        logger.info(
+            "meal_scan.image_rejected operation=%s reason=%s image_id=%s",
+            "scan_by_url",
+            reason,
+            image_id,
+        )
+        increment_metric(
             "meal_scan.image_rejected",
-            level="warning",
-            context={
+            attributes={
                 "component": "meal_scan",
                 "operation": "scan_by_url",
                 "ai_purpose": "meal_scan",
-                "image_id": image_id,
-                "image_url": image_url,
                 "rejection_reason": reason,
             },
         )
 
     async def _download_image_bytes(self, image_url: str) -> bytes:
-        if self._download_image_bytes_fn is None:
-            raise RuntimeError("Image downloader is not configured")
         return await self._download_image_bytes_fn(image_url)
 
     async def _analyze_food_label_image_with_ai(
@@ -355,7 +361,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             if not self.gpt_parser.parse_is_food(vision_result):
                 self._capture_rejected_scan(
                     image_id=image_id,
-                    image_url=command.image_url,
                     reason="parser_not_food",
                 )
                 raise ValidationException(
@@ -378,7 +383,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             if not has_food:
                 self._capture_rejected_scan(
                     image_id=image_id,
-                    image_url=command.image_url,
                     reason="nutrition_empty_or_zero_calorie",
                 )
                 raise ValidationException(

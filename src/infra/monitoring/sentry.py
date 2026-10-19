@@ -57,6 +57,7 @@ class SentryObservabilityConnector:
         Sending is skipped only when ENVIRONMENT is explicitly development or
         local. An unset or blank ENVIRONMENT still sends when SENTRY_DSN is
         set. The environment label is SENTRY_ENVIRONMENT, then ENVIRONMENT.
+        The release is SENTRY_RELEASE, then GIT_SHA, then settings.SENTRY_RELEASE.
 
         Must be called BEFORE the FastAPI app is instantiated so integrations
         can patch Starlette/FastAPI middleware.
@@ -87,7 +88,7 @@ class SentryObservabilityConnector:
         init_kwargs: dict[str, Any] = {
             "dsn": settings.SENTRY_DSN,
             "environment": environment,
-            "release": settings.SENTRY_RELEASE,
+            "release": _sentry_release(),
             "traces_sample_rate": settings.SENTRY_TRACES_SAMPLE_RATE,
             "profiles_sample_rate": settings.SENTRY_PROFILES_SAMPLE_RATE,
             "send_default_pii": settings.SENTRY_SEND_PII,
@@ -226,7 +227,7 @@ class SentryObservabilityConnector:
             "path": path,
             "route": path,
             "environment": _sentry_environment_label(_explicit_environment()),
-            "release": settings.SENTRY_RELEASE,
+            "release": _sentry_release(),
             "user_id": user_id,
         }
         self._apply_safe_context(context)
@@ -332,6 +333,22 @@ def _explicit_environment() -> str | None:
     is not an opt-out either; it only names the environment on events we send.
     """
     return _env_value("ENVIRONMENT")
+
+
+def _sentry_release() -> str | None:
+    """Release passed to sentry_sdk.init and request context.
+
+    An explicit ``SENTRY_RELEASE`` wins, then the image build SHA in
+    ``GIT_SHA``. Otherwise ``settings.SENTRY_RELEASE``, which is ``None``
+    when unset so the SDK keeps its own fallback (``git rev-parse HEAD``
+    when a checkout is present, then ``SOURCE_VERSION`` and similar).
+    Values are stripped and not lowercased. A blank variable is unset.
+    """
+    for name in ("SENTRY_RELEASE", "GIT_SHA"):
+        raw = os.environ.get(name)
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+    return settings.SENTRY_RELEASE
 
 
 def _sentry_environment_label(explicit: str | None) -> str:

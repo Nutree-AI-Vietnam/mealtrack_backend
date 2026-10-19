@@ -302,10 +302,61 @@ def test_initialize_skips_when_dsn_unset(monkeypatch):
     mock_sdk.init.assert_not_called()
 
 
+def test_initialize_release_uses_git_sha_when_sentry_release_unset(monkeypatch):
+    """Image builds export GIT_SHA. Init must use it when SENTRY_RELEASE is unset.
+
+    Fails while init still passes settings.SENTRY_RELEASE only: production
+    images have no git binary and no .git, so the SDK fallback is empty and
+    the release stays None.
+    """
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_RELEASE", raising=False)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("GIT_SHA", "abc123def456")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", None)
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["release"] == "abc123def456"
+    assert init_kwargs["environment"] == "production"
+    assert init_kwargs["before_send"] is _drop_expected_events
+
+    connector.set_request_context(
+        request_id="abc12345",
+        method="POST",
+        path="/v1/chat/messages",
+    )
+    assert mock_sdk.set_context.call_args.args[1]["release"] == "abc123def456"
+
+
+def test_initialize_release_prefers_explicit_sentry_release_over_git_sha(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("SENTRY_RELEASE", " explicit-rel ")
+    monkeypatch.setenv("GIT_SHA", "abc123def456")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", None)
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    assert mock_sdk.init.call_args.kwargs["release"] == "explicit-rel"
+    assert mock_sdk.init.call_args.kwargs["environment"] == "production"
+
+
 def test_initialize_configures_integrations_and_release(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
     monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("SENTRY_RELEASE", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.ENVIRONMENT", "test")
@@ -401,6 +452,8 @@ def test_capture_message_applies_only_safe_context(monkeypatch):
 def test_request_context_sets_safe_context_and_user(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_RELEASE", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
     monkeypatch.setenv("SENTRY_ENVIRONMENT", "staging")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr(
