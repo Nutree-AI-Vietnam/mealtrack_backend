@@ -17,6 +17,18 @@ _PUBLIC_ID = "mealtrack/1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
 _USER_ID = "00000000-0000-0000-0000-000000000001"
 
 
+class _FakeImageDownload:
+    """In-memory image download port for handler unit tests."""
+
+    def __init__(self, body: bytes = b"fake-image-bytes") -> None:
+        self.body = body
+        self.urls: list[str] = []
+
+    async def __call__(self, image_url: str) -> bytes:
+        self.urls.append(image_url)
+        return self.body
+
+
 def _make_uow() -> MagicMock:
     uow = MagicMock()
     uow.__aenter__ = AsyncMock(return_value=uow)
@@ -367,6 +379,7 @@ async def test_scan_by_url_uses_workflow_only_when_graph_enabled():
     expected_meal = object()
     workflow = MagicMock()
     workflow.run_scan_by_url = AsyncMock(return_value=expected_meal)
+    download = _FakeImageDownload()
     handler = ScanByUrlCommandHandler(
         uow=MagicMock(),
         event_bus=MagicMock(),
@@ -374,6 +387,7 @@ async def test_scan_by_url_uses_workflow_only_when_graph_enabled():
         gpt_parser=MagicMock(),
         meal_analyze_workflow=workflow,
         meal_analyze_graph_enabled=True,
+        download_image_bytes=download,
     )
     command = ScanByUrlCommand(
         user_id=_USER_ID,
@@ -386,6 +400,9 @@ async def test_scan_by_url_uses_workflow_only_when_graph_enabled():
     assert result is expected_meal
     workflow.run_scan_by_url.assert_awaited_once()
     assert workflow.run_scan_by_url.await_args.args[0] == command
+    runtime = workflow.run_scan_by_url.await_args.kwargs["runtime"]
+    assert await runtime.download_image_bytes(_IMAGE_URL) == b"fake-image-bytes"
+    assert download.urls == [_IMAGE_URL]
 
 
 @pytest.mark.asyncio
@@ -399,6 +416,7 @@ async def test_scan_by_url_graph_disabled_keeps_legacy_path():
         gpt_parser=MagicMock(),
         meal_analyze_workflow=workflow,
         meal_analyze_graph_enabled=False,
+        download_image_bytes=_FakeImageDownload(),
     )
     handler._handle_legacy_scan_by_url = AsyncMock(return_value="legacy-result")
     command = ScanByUrlCommand(
@@ -459,6 +477,7 @@ async def test_scan_by_url_graph_path_passes_cloudflare_custom_domain_to_runtime
         meal_analyze_workflow=workflow,
         meal_analyze_graph_enabled=True,
         cloudflare_custom_domain="media.nutree.ai",
+        download_image_bytes=_FakeImageDownload(),
     )
     command = ScanByUrlCommand(
         user_id=_USER_ID,

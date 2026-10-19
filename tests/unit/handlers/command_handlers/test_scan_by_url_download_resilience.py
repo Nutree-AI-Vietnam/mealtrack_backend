@@ -328,9 +328,7 @@ async def test_handler_uses_injected_image_download_port():
     assert fake.urls == [_GATEWAY_URL]
 
 
-@pytest.mark.asyncio
-async def test_handler_requires_injected_image_download_port():
-    handler = ScanByUrlCommandHandler(uow=MagicMock(), event_bus=MagicMock())
-
-    with pytest.raises(RuntimeError, match="Image downloader is not configured"):
-        await handler._download_image_bytes(_GATEWAY_URL)
+def test_handler_requires_injected_image_download_port():
+    """Construction fails unless an image download port is provided."""
+    with pytest.raises(TypeError, match="download_image_bytes"):
+        ScanByUrlCommandHandler(uow=MagicMock(), event_bus=MagicMock())
