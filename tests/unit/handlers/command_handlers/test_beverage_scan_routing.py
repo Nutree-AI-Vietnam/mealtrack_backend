@@ -3,6 +3,7 @@
 Verifies that packaged beverage images now follow the standard meal path.
 """
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -102,7 +103,9 @@ async def test_packaged_beverage_scan_creates_standard_meal_not_hydration_entry(
     assert len(mock_uow._saved_meals) == 1
     assert mock_uow._saved_meals[0].source == "scanner"
     assert mock_uow._saved_meals[0].dish_name == "Coca-Cola"
-    assert [call.args[0]["event_type"] for call in publisher.publish.await_args_list] == [
+    assert [
+        call.args[0]["event_type"] for call in publisher.publish.await_args_list
+    ] == [
         "meal.created.v1",
     ]
     assert result.meal_id == mock_uow._saved_meals[0].meal_id
@@ -271,14 +274,14 @@ async def test_zero_calorie_drink_does_not_create_hydration_entry_from_meal_scan
 
 
 @pytest.mark.asyncio
-async def test_upload_scan_captures_rejected_image_for_review(monkeypatch):
-    """Expected non-food 400s still create a reviewable Sentry message with image URL."""
+async def test_upload_scan_records_expected_image_rejection(monkeypatch, caplog):
+    """Expected non-food uploads count the rejection instead of capturing a message."""
     from src.app.handlers.command_handlers import (
         upload_meal_image_immediately_command_handler as module,
     )
 
-    capture_message = MagicMock()
-    monkeypatch.setattr(module, "capture_message", capture_message)
+    increment_metric = MagicMock()
+    monkeypatch.setattr(module, "increment_metric", increment_metric)
 
     mock_uow = _make_uow()
     handler = UploadMealImageImmediatelyHandler(
@@ -294,16 +297,27 @@ async def test_upload_scan_captures_rejected_image_for_review(monkeypatch):
     handler.gpt_parser = MagicMock()
     handler.gpt_parser.parse_is_food.return_value = False
 
-    with pytest.raises(
-        ValidationException, match="Image does not appear to contain food"
-    ):
-        await handler.handle(_make_command())
+    with caplog.at_level(logging.DEBUG, logger=module.logger.name):
+        with pytest.raises(
+            ValidationException, match="Image does not appear to contain food"
+        ):
+            await handler.handle(_make_command())
 
-    capture_message.assert_called_once()
-    _, kwargs = capture_message.call_args
-    assert kwargs["level"] == "warning"
-    assert kwargs["context"]["component"] == "meal_scan"
-    assert kwargs["context"]["operation"] == "upload_meal_image_immediate"
-    assert kwargs["context"]["image_url"] == _CLOUDINARY_URL
-    assert kwargs["context"]["rejection_reason"] == "parser_not_food"
-    assert kwargs["context"]["image_id"]
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+    assert any(
+        record.levelno == logging.INFO
+        and "meal_scan.image_rejected" in record.message
+        and "operation=upload_meal_image_immediate" in record.message
+        and "reason=parser_not_food" in record.message
+        for record in caplog.records
+    )
+    assert not any(_CLOUDINARY_URL in record.message for record in caplog.records)
+    increment_metric.assert_any_call(
+        "meal_scan.image_rejected",
+        attributes={
+            "component": "meal_scan",
+            "operation": "upload_meal_image_immediate",
+            "ai_purpose": "meal_scan",
+            "rejection_reason": "parser_not_food",
+        },
+    )
