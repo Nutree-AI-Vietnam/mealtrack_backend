@@ -11,8 +11,9 @@ on:
         required: false
         default: 'delivery'
 
-# Serialize migrate + deploy so overlapping delivery pushes cannot race the
-# staging schema or instance. Do not cancel an in-flight migrate/deploy.
+# Serialize staging deploys so overlapping delivery pushes cannot race the
+# instance. Do not cancel an in-flight deploy. Migrations are not part of
+# this workflow — run .github/workflows/migrate.yml by hand.
 concurrency:
   group: staging-deploy
   cancel-in-progress: false
@@ -73,23 +74,13 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Floating \`:delivery\` is **not** pushed here. It is retagged to this digest only after staging deploy succeeds." >> $GITHUB_STEP_SUMMARY
+          echo "Floating \`:delivery\` is **not** pushed here. It is retagged to this digest only after the staging deploy is live. Migrations are not run." >> $GITHUB_STEP_SUMMARY
 
-  # Staging only (push to delivery). Caller jobs that `uses:` a reusable workflow
-  # cannot set `environment:`; the GitHub Environment `staging` gate lives on
-  # the migrate job in migrate.yml so required reviewers can be configured.
-  # DATABASE_URL_DIRECT is environment-scoped there — not secrets: inherit.
-  migrate-staging:
-    name: 🗄️ Migrate staging DB
-    needs: build-and-push
-    if: github.event_name == 'push'
-    uses: ./.github/workflows/migrate.yml
-    with:
-      environment: staging
-
+  # Staging only (push to delivery). Trigger the Render deploy hook for the
+  # pinned sit-<sha> image and poll until live. Does not migrate.
   deploy-staging:
     name: 🚀 Deploy staging-instance (sit-${{ github.sha }})
-    needs: migrate-staging
+    needs: build-and-push
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -140,8 +131,9 @@ jobs:
           fi
           echo "Render deploy id: ${DEPLOY_ID}"
 
-          # timeout-minutes: 25. Worst-case poll is curl --max-time 20 + sleep.
-          # Reserve ~2 minutes for the hook POST and job overhead (~40 polls).
+          # timeout-minutes: 25. Worst-case poll is curl --max-time 20 + sleep 15.
+          # Reserve ~2 minutes for the hook POST and job overhead.
+          # (25 * 60 - 120) / (20 + 15) = 39, the approved poll cap.
           POLL_INTERVAL_SECS=15
           CURL_MAX_SECS=20
           MAX_POLLS=$(( (25 * 60 - 120) / (CURL_MAX_SECS + POLL_INTERVAL_SECS) ))
@@ -176,7 +168,7 @@ jobs:
           exit 1
 
   # Only after a verified live deploy: move the floating :delivery tag to
-  # this digest so a restart cannot pick up new code on an old schema.
+  # this digest so a restart uses the image Render reported live.
   promote-delivery-tag:
     name: 🏷️ Point :delivery at sit-${{ github.sha }}
     needs: deploy-staging
