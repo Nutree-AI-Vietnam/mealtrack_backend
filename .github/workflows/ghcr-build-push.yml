@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Optional extra tag. Only sit- or dev- prefixes are pushed. main, latest, and delivery are refused.'
+        description: 'Optional extra tag. Only dev-* or exactly sit-<this commit SHA> is pushed.'
         required: false
         default: ''
 
@@ -43,9 +43,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Manual dispatch can add one extra tag. sit-<full sha> is always
-      # published. main, latest, delivery, and any other prefix are refused
-      # before the image is pushed.
+      # Manual dispatch can add one extra tag. The automatic tag is always
+      # sit-<this sha>. Any other sit- tag is refused so a dispatch cannot
+      # overwrite another commit. dev-* is the only other allowed prefix.
       - name: Reject disallowed manual image tags
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -56,17 +56,14 @@ jobs:
             echo "No extra tag; publishing sit-<full sha> only."
             exit 0
           fi
-          lower=$(printf '%s' "${TAG}" | tr '[:upper:]' '[:lower:]')
-          case "${lower}" in
-            main|latest|delivery)
-              echo "::error::refusing to push tag '${TAG}'"
-              exit 1
-              ;;
-          esac
+          if [ "${TAG}" = "sit-${GITHUB_SHA}" ]; then
+            echo "Extra tag matches this commit."
+            exit 0
+          fi
           case "${TAG}" in
-            sit-*|dev-*) ;;
+            dev-*) ;;
             *)
-              echo "::error::manual tag must start with sit- or dev- (got '${TAG}')"
+              echo "::error::manual tag must be dev-* or exactly sit-${GITHUB_SHA} (got '${TAG}')"
               exit 1
               ;;
           esac
@@ -78,7 +75,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,prefix=sit-,format=long
-            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && (startsWith(inputs.tag, 'sit-') || startsWith(inputs.tag, 'dev-')) }}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && (startsWith(inputs.tag, 'dev-') || inputs.tag == format('sit-{0}', github.sha)) }}
 
       - name: 🐳 Build and push Docker image
         id: build
@@ -88,6 +85,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Attestations change the pushed manifest digest, so Render's
+          # image.sha would not match build-and-push's digest output.
+          provenance: false
+          sbom: false
 
       - name: 📊 Image Summary
         env:
@@ -108,11 +109,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Staging only (push to delivery). Trigger the Render deploy hook for the
-  # pinned sit-<sha> image and poll until live. Does not migrate.
+  # pinned sit-<sha> image, poll until live, then retag :delivery in this
+  # same job. One job in the concurrency group: GitHub keeps a single pending
+  # job per group, so a separate promote job could replace the next push's
+  # deploy. Does not migrate.
   # Secrets are the GitHub Environment `staging` secrets, same pattern as
   # DATABASE_URL_DIRECT on migrate.yml.
-  # Concurrency is on this job and promote-delivery-tag only, so image builds
-  # can overlap but deploys and retags cannot.
   deploy-staging:
     name: 🚀 Deploy staging-instance (sit-${{ github.sha }})
     needs: build-and-push
@@ -123,9 +125,9 @@ jobs:
     concurrency:
       group: staging-deploy
       cancel-in-progress: false
-    permissions: {}
-    outputs:
-      verified: ${{ steps.deploy.outputs.verified }}
+    permissions:
+      contents: read
+      packages: write
     env:
       # Environment `staging` secrets, same lookup as migrate.yml.
       HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}
@@ -133,7 +135,6 @@ jobs:
       EXPECTED_DIGEST: ${{ needs.build-and-push.outputs.digest }}
     steps:
       - name: Trigger Render deploy hook (pinned image)
-        id: deploy
         run: |
           set -euo pipefail
           IMAGE="${SIT_IMAGE}:sit-${GITHUB_SHA}"
@@ -270,7 +271,6 @@ jobs:
           )
           sys.exit(1)
           PY
-                echo "verified=true" >> "$GITHUB_OUTPUT"
                 exit 0
                 ;;
               build_failed|update_failed|canceled|deactivated|pre_deploy_failed)
@@ -283,22 +283,10 @@ jobs:
           echo "::error::Timed out polling Render deploy ${DEPLOY_ID}"
           exit 1
 
-  # imgURL selects the image for this deploy only. Render does not change the
-  # service imagePath (it stays :delivery; the next deploy without imgURL pulls
-  # that tag). Retag :delivery to the sit-<sha> digest only after the live
-  # deploy's image.ref/sha matched that tag or the build digest.
-  promote-delivery-tag:
-    name: 🏷️ Point :delivery at sit-${{ github.sha }}
-    needs: deploy-staging
-    if: github.event_name == 'push' && needs.deploy-staging.outputs.verified == 'true'
-    runs-on: ubuntu-latest
-    concurrency:
-      group: staging-deploy
-      cancel-in-progress: false
-    permissions:
-      contents: read
-      packages: write
-    steps:
+      # imgURL does not change the service imagePath (it stays :delivery).
+      # Point :delivery at the build digest, not the sit- tag, and only after
+      # the poll above has matched that digest. This step is in deploy-staging
+      # so the concurrency group has a single job.
       - name: 🔑 Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -309,11 +297,19 @@ jobs:
       - name: 🧰 Setup Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Retag :delivery to the sit-<full sha> digest
+      - name: Retag :delivery to the verified digest
         env:
-          SRC: ${{ env.SIT_IMAGE }}:sit-${{ github.sha }}
-          DST: ${{ env.SIT_IMAGE }}:delivery
+          DIGEST: ${{ needs.build-and-push.outputs.digest }}
         run: |
           set -euo pipefail
+          case "${DIGEST}" in
+            sha256:*) ;;
+            *)
+              echo "::error::refusing to retag :delivery without a sha256 digest"
+              exit 1
+              ;;
+          esac
+          SRC="${SIT_IMAGE}@${DIGEST}"
+          DST="${SIT_IMAGE}:delivery"
           docker buildx imagetools create -t "${DST}" "${SRC}"
-          echo "Retagged ${DST} to the digest of ${SRC}"
+          echo "Retagged ${DST} to ${SRC}"
