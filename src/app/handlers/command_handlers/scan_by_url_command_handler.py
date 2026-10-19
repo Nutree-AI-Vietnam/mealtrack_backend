@@ -48,7 +48,7 @@ from src.domain.utils.timezone_utils import (
     user_today,
     utc_now,
 )
-from src.observability import capture_message, distribution_metric, increment_metric
+from src.observability import distribution_metric, increment_metric
 
 logger = logging.getLogger(__name__)
 
@@ -119,18 +119,25 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         self,
         *,
         image_id: str,
-        image_url: str,
         reason: str,
     ) -> None:
-        capture_message(
+        """Record an expected non-food rejection without opening a Sentry issue.
+
+        ``capture_message`` at warning created PYTHON-DJ. LoggingIntegration
+        only sends ERROR records as events, so this info log stays a breadcrumb.
+        """
+        logger.info(
+            "meal_scan.image_rejected operation=%s reason=%s image_id=%s",
+            "scan_by_url",
+            reason,
+            image_id,
+        )
+        increment_metric(
             "meal_scan.image_rejected",
-            level="warning",
-            context={
+            attributes={
                 "component": "meal_scan",
                 "operation": "scan_by_url",
                 "ai_purpose": "meal_scan",
-                "image_id": image_id,
-                "image_url": image_url,
                 "rejection_reason": reason,
             },
         )
@@ -361,7 +368,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             if not self.gpt_parser.parse_is_food(vision_result):
                 self._capture_rejected_scan(
                     image_id=image_id,
-                    image_url=command.image_url,
                     reason="parser_not_food",
                 )
                 raise ValidationException(
@@ -384,7 +390,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             if not has_food:
                 self._capture_rejected_scan(
                     image_id=image_id,
-                    image_url=command.image_url,
                     reason="nutrition_empty_or_zero_calorie",
                 )
                 raise ValidationException(
