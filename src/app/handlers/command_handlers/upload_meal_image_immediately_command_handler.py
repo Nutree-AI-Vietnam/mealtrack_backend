@@ -47,7 +47,7 @@ from src.domain.utils.timezone_utils import (
     utc_now,
 )
 from src.infra.config.settings import get_settings
-from src.observability import capture_message, distribution_metric, increment_metric
+from src.observability import distribution_metric, increment_metric
 
 logger = logging.getLogger(__name__)
 
@@ -195,18 +195,25 @@ class UploadMealImageImmediatelyHandler(
         self,
         *,
         image_id: str,
-        image_url: str,
         reason: str,
     ) -> None:
-        capture_message(
+        """Record an expected non-food rejection without opening a Sentry issue.
+
+        The same ``capture_message`` grouped upload rejects into PYTHON-DJ.
+        LoggingIntegration only sends ERROR records as events.
+        """
+        logger.info(
+            "meal_scan.image_rejected operation=%s reason=%s image_id=%s",
+            "upload_meal_image_immediate",
+            reason,
+            image_id,
+        )
+        increment_metric(
             "meal_scan.image_rejected",
-            level="warning",
-            context={
+            attributes={
                 "component": "meal_scan",
                 "operation": "upload_meal_image_immediate",
                 "ai_purpose": "meal_scan",
-                "image_id": image_id,
-                "image_url": image_url,
                 "rejection_reason": reason,
             },
         )
@@ -255,7 +262,6 @@ class UploadMealImageImmediatelyHandler(
             ):
                 self._capture_rejected_scan(
                     image_id=image_id,
-                    image_url=image_url,
                     reason="vision_no_food",
                 )
             increment_metric(
@@ -283,7 +289,6 @@ class UploadMealImageImmediatelyHandler(
         if not self.gpt_parser.parse_is_food(analysis_result):
             self._capture_rejected_scan(
                 image_id=image_id,
-                image_url=image_url,
                 reason="parser_not_food",
             )
             raise ValidationException(
@@ -306,7 +311,6 @@ class UploadMealImageImmediatelyHandler(
         if not has_food:
             self._capture_rejected_scan(
                 image_id=image_id,
-                image_url=image_url,
                 reason="nutrition_empty_or_zero_calorie",
             )
             raise ValidationException(

@@ -58,6 +58,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
+# Commit that produced this image. Workflows pass --build-arg GIT_SHA.
+# Sentry uses it as the release when SENTRY_RELEASE is unset. Empty for
+# local builds, which keeps the SDK's git-checkout fallback.
+ARG GIT_SHA=
+ENV GIT_SHA=${GIT_SHA}
+
 # Default worker count. Override with UVICORN_WORKERS on Render.
 ENV UVICORN_WORKERS=1
 

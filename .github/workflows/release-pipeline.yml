@@ -120,7 +120,7 @@ jobs:
 
       - name: Build and push production image
         run: |
-          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main .
+          docker build --build-arg GIT_SHA=${{ github.sha }} -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main .
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
