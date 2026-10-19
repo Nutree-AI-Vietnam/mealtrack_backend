@@ -4,8 +4,40 @@ import pytest
 
 from src.infra.adapters.openai_chat_completion_adapter import (
     OpenAIChatCompletionAdapter,
+    _response_truncated,
     _structured_payload,
 )
+
+
+def test_response_truncated_detects_reasoning_budget_cutoff() -> None:
+    class _Chunk:
+        def __init__(self, metadata):
+            self.response_metadata = metadata
+
+    assert _response_truncated(_Chunk({"finish_reason": "length"})) is True
+    assert (
+        _response_truncated(
+            _Chunk(
+                {
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                }
+            )
+        )
+        is True
+    )
+    assert _response_truncated(_Chunk({"finish_reason": "stop"})) is False
+    assert (
+        _response_truncated(
+            _Chunk(
+                {
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "content_filter"},
+                }
+            )
+        )
+        is False
+    )
 
 
 def test_structured_payload_unwraps_include_raw_dict() -> None:

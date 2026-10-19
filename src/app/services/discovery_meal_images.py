@@ -10,6 +10,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 IMAGE_FETCH_TIMEOUT_SECONDS = 3.0
+# Workers AI image generation is slower than a stock-photo search. The coach
+# text is already on screen; this only bounds the later photo update.
+IMAGE_GENERATE_TIMEOUT_SECONDS = 40.0
 
 
 async def attach_food_images(
@@ -17,14 +20,16 @@ async def attach_food_images(
     search_fn: Callable[[str], Awaitable[Any]] | None,
     *,
     timeout: float = IMAGE_FETCH_TIMEOUT_SECONDS,
+    generate_fn: Callable[[dict[str, Any]], Awaitable[Any]] | None = None,
+    generate_timeout: float = IMAGE_GENERATE_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
-    """Copy meals and add image fields. Search failures leave meals unchanged."""
+    """Copy meals and add image fields. A miss leaves that meal unchanged."""
     copied = [dict(meal) for meal in meals]
-    if search_fn is None or not copied:
+    if not copied or (search_fn is None and generate_fn is None):
         return copied
 
     async def safe_fetch(name: str) -> Any:
-        if not name:
+        if search_fn is None or not name:
             return None
         try:
             return await asyncio.wait_for(search_fn(name), timeout=timeout)
@@ -34,14 +39,34 @@ async def attach_food_images(
             )
             return None
 
-    names = [
-        str(meal.get("english_name") or meal.get("name") or "").strip()
-        for meal in copied
-    ]
-    images = await asyncio.gather(*[safe_fetch(name) for name in names])
+    async def resolve(meal: dict[str, Any]) -> Any:
+        if _has_image(meal):
+            return None
+        name = str(meal.get("english_name") or meal.get("name") or "").strip()
+        if generate_fn is not None:
+            try:
+                generated = await asyncio.wait_for(
+                    generate_fn(meal), timeout=generate_timeout
+                )
+            except Exception:
+                logger.warning(
+                    "chat meal image generation failed",
+                    extra={"food_name": name},
+                )
+                generated = None
+            if generated is not None:
+                return generated
+        return await safe_fetch(name)
+
+    images = await asyncio.gather(*(resolve(meal) for meal in copied))
     for meal, image in zip(copied, images, strict=True):
         meal.update(_image_fields(image))
     return copied
+
+
+def _has_image(meal: dict[str, Any]) -> bool:
+    image_url = meal.get("image_url")
+    return isinstance(image_url, str) and bool(image_url.strip())
 
 
 def _image_fields(image: Any) -> dict[str, Any]:

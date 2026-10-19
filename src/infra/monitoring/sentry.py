@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
 
@@ -28,6 +30,11 @@ from src.infra.monitoring.connectors import (
 
 logger = logging.getLogger(__name__)
 
+# Opt out only when ENVIRONMENT is explicitly one of these. An unset or blank
+# variable must still send when a DSN is set, so a missing env var cannot
+# silence production (settings defaults ENVIRONMENT to "development").
+_SENTRY_NON_REPORTING_ENVIRONMENTS = frozenset({"development", "local"})
+
 SentryMessageLevel = Literal["fatal", "critical", "error", "warning", "info", "debug"]
 SentryLogLevel = Literal["fatal", "error", "warning", "info", "debug", "trace"]
 _SENTRY_MESSAGE_LEVELS = {"fatal", "critical", "error", "warning", "info", "debug"}
@@ -45,23 +52,43 @@ class SentryObservabilityConnector:
         self._enabled = False
 
     def initialize(self) -> None:
-        """Initialize Sentry SDK if SENTRY_DSN is configured.
+        """Initialize Sentry when this process should publish events.
+
+        Sending is skipped only when ENVIRONMENT is explicitly development or
+        local. An unset or blank ENVIRONMENT still sends when SENTRY_DSN is
+        set. The environment label is SENTRY_ENVIRONMENT, then ENVIRONMENT.
+        The release is SENTRY_RELEASE, then GIT_SHA, then settings.SENTRY_RELEASE.
 
         Must be called BEFORE the FastAPI app is instantiated so integrations
         can patch Starlette/FastAPI middleware.
         """
+        explicit_environment = _explicit_environment()
         if sentry_sdk is None:
-            logger.info("Sentry disabled (sentry_sdk not installed)")
+            logger.info(
+                "Sentry disabled (sentry_sdk not installed, env=%s)",
+                explicit_environment,
+            )
+            return
+
+        if explicit_environment in _SENTRY_NON_REPORTING_ENVIRONMENTS:
+            logger.info(
+                "Sentry disabled (environment=%s does not send events)",
+                explicit_environment,
+            )
             return
 
         if not settings.SENTRY_DSN:
-            logger.info("Sentry disabled (SENTRY_DSN not set)")
+            logger.info(
+                "Sentry disabled (SENTRY_DSN not set, env=%s)",
+                explicit_environment,
+            )
             return
 
+        environment = _sentry_environment_label(explicit_environment)
         init_kwargs: dict[str, Any] = {
             "dsn": settings.SENTRY_DSN,
-            "environment": settings.ENVIRONMENT,
-            "release": settings.SENTRY_RELEASE,
+            "environment": environment,
+            "release": _sentry_release(),
             "traces_sample_rate": settings.SENTRY_TRACES_SAMPLE_RATE,
             "profiles_sample_rate": settings.SENTRY_PROFILES_SAMPLE_RATE,
             "send_default_pii": settings.SENTRY_SEND_PII,
@@ -88,7 +115,7 @@ class SentryObservabilityConnector:
 
         sentry_sdk.init(**init_kwargs)
         self._enabled = True
-        logger.info("Sentry initialized (env=%s)", settings.ENVIRONMENT)
+        logger.info("Sentry initialized (env=%s)", environment)
 
     def capture_exception(
         self,
@@ -199,8 +226,8 @@ class SentryObservabilityConnector:
             "method": method,
             "path": path,
             "route": path,
-            "environment": settings.ENVIRONMENT,
-            "release": settings.SENTRY_RELEASE,
+            "environment": _sentry_environment_label(_explicit_environment()),
+            "release": _sentry_release(),
             "user_id": user_id,
         }
         self._apply_safe_context(context)
@@ -248,10 +275,16 @@ def initialize_sentry() -> None:
 def _drop_expected_events(
     event: dict[str, Any], hint: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Drop provider safety-filter rejections of user input.
+    """Drop expected signals that are not backend failures.
 
-    The LangChain integration captures the raw provider error before our
-    handlers map it to a 422, so it must be filtered here.
+    Provider safety-filter rejections of user input are mapped to HTTP 422,
+    but the LangChain integration captures the raw provider error before that
+    mapping, so those events are dropped here.
+
+    A direct ``asyncio.CancelledError`` on ``POST /v1/chat/messages`` is the
+    ASGI request task cancelling in-flight streaming after the client
+    disconnects. Chained non-cancellation causes and contexts stay visible,
+    as do other routes and events with no original exception.
     """
     exc_info = hint.get("exc_info")
     exc = exc_info[1] if exc_info else None
@@ -259,7 +292,80 @@ def _drop_expected_events(
         return None
     if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
         return None
+    if _is_expected_chat_cancellation(event, exc_info):
+        return None
     return event
+
+
+def _is_expected_chat_cancellation(event: dict[str, Any], exc_info: Any) -> bool:
+    """True for a direct client disconnect on the chat messages route only."""
+    if event.get("transaction") != "/v1/chat/messages":
+        return False
+    if not isinstance(exc_info, tuple) or len(exc_info) < 2:
+        return False
+
+    error = exc_info[1]
+    if not isinstance(error, asyncio.CancelledError):
+        return False
+
+    for related_error in (error.__cause__, error.__context__):
+        if related_error is not None and not isinstance(
+            related_error, asyncio.CancelledError
+        ):
+            return False
+    return True
+
+
+def _env_value(name: str) -> str | None:
+    """Return a stripped, lowercased process env var, or None when blank."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return None
+    return str(raw).strip().lower()
+
+
+def _explicit_environment() -> str | None:
+    """Return ENVIRONMENT when it is set to a non-blank value.
+
+    ``None`` means unset or blank. That is not an opt-out: settings defaults
+    the same name to ``development``, and treating the default as local would
+    disable Sentry in any process that forgot the variable. SENTRY_ENVIRONMENT
+    is not an opt-out either; it only names the environment on events we send.
+    """
+    return _env_value("ENVIRONMENT")
+
+
+def _sentry_release() -> str | None:
+    """Release passed to sentry_sdk.init and request context.
+
+    An explicit ``SENTRY_RELEASE`` wins, then the image build SHA in
+    ``GIT_SHA``. Otherwise ``settings.SENTRY_RELEASE``, which is ``None``
+    when unset so the SDK keeps its own fallback (``git rev-parse HEAD``
+    when a checkout is present, then ``SOURCE_VERSION`` and similar).
+    Values are stripped and not lowercased. A blank variable is unset.
+    """
+    for name in ("SENTRY_RELEASE", "GIT_SHA"):
+        raw = os.environ.get(name)
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+    return settings.SENTRY_RELEASE
+
+
+def _sentry_environment_label(explicit: str | None) -> str:
+    """Label passed to sentry_sdk.init and request context.
+
+    SENTRY_ENVIRONMENT wins, then ENVIRONMENT. Both are the process env vars.
+    Passing the label ourselves matters because an explicit ``environment=``
+    argument overrides the SDK's own SENTRY_ENVIRONMENT read. settings
+    defaults ENVIRONMENT to ``development``, so a missing variable must not
+    use that value. The neutral label is ``unknown``.
+    """
+    sentry_environment = _env_value("SENTRY_ENVIRONMENT")
+    if sentry_environment is not None:
+        return sentry_environment
+    if explicit is not None:
+        return explicit
+    return "unknown"
 
 
 def _normalize_message_level(level: str) -> SentryMessageLevel:

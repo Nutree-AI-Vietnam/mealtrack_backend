@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from src.domain.ports.ai_job_repository_port import AiJobRepositoryPort
     from src.domain.ports.body_fat_visual_profile_repository_port import (
         BodyFatVisualProfileRepositoryPort,
     )
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
         MealSuggestionRepositoryPort,
     )
     from src.domain.ports.notification_repository_port import NotificationRepositoryPort
+    from src.domain.ports.push_token_repository_port import PushTokenRepositoryPort
     from src.domain.ports.saved_suggestion_repository_port import (
         SavedSuggestionRepositoryPort,
     )
@@ -60,6 +62,8 @@ class AsyncUnitOfWorkPort(ABC):
     chat: ChatRepositoryPort
     weekly_meal_plans: Any
     weekly_recaps: WeeklyRecapRepositoryPort
+    ai_jobs: AiJobRepositoryPort
+    push_tokens: PushTokenRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:

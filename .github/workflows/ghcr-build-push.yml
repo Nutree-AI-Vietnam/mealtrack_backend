@@ -85,6 +85,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           # Attestations change the pushed manifest digest, so Render's
           # image.sha would not match build-and-push's digest output.
           provenance: false

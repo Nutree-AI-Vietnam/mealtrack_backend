@@ -1,9 +1,14 @@
 """Tests for the Sentry observability connector."""
 
+import asyncio
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
 from src.domain.exceptions.ai_exceptions import AIContentRejectedError
+from src.domain.exceptions.weekly_meal_planner_exceptions import (
+    WeeklyMealPlanConflictError,
+    WeeklyMealPlanIdempotencyConflictError,
+)
 from src.infra.monitoring.connectors import (
     filter_safe_attributes,
     filter_safe_context,
@@ -27,9 +32,83 @@ def _hint(exc):
 
 def test_before_send_drops_content_rejections():
     event = {"level": "error"}
+    chat = {"level": "error", "transaction": "/v1/chat/messages"}
 
     assert _drop_expected_events(event, _hint(AIContentRejectedError("x"))) is None
+    assert _drop_expected_events(chat, _hint(AIContentRejectedError("blocked"))) is None
     assert _drop_expected_events(event, _hint(_ProviderError("invalid_prompt"))) is None
+    assert _drop_expected_events(event, _hint(_ProviderError("content_filter"))) is None
+    assert (
+        _drop_expected_events(event, _hint(_ProviderError("content_policy_violation")))
+        is None
+    )
+
+
+def test_before_send_drops_expected_chat_cancellations():
+    """Fails while chat cancellations still pass through before_send.
+
+    Production signature from PYTHON-HY / PYTHON-HW / PYTHON-HR / PYTHON-HP:
+    CancelledError raised by the ASGI request task on POST /v1/chat/messages.
+    """
+    event = {
+        "level": "error",
+        "transaction": "/v1/chat/messages",
+        "exception": {
+            "values": [
+                {
+                    "type": "CancelledError",
+                    "value": (
+                        "Cancelled via cancel scope 76eea13091d0 by "
+                        "<Task pending name='Task-725790' "
+                        "coro=<RequestResponseCycle.run_asgi() "
+                        "running at uvicorn/protocols/http/httptools_impl.py:421>"
+                    ),
+                }
+            ]
+        },
+    }
+    scoped = asyncio.CancelledError(
+        "Cancelled via cancel scope 76eea13091d0 by "
+        "<Task pending name='Task-725790' "
+        "coro=<RequestResponseCycle.run_asgi() "
+        "running at uvicorn/protocols/http/httptools_impl.py:421>"
+    )
+    empty = asyncio.CancelledError()
+    nested = asyncio.CancelledError("cancelled")
+    nested.__context__ = asyncio.CancelledError()
+
+    assert _drop_expected_events(event, _hint(scoped)) is None
+    assert _drop_expected_events(event, _hint(empty)) is None
+    assert _drop_expected_events(event, _hint(nested)) is None
+
+
+def test_before_send_keeps_chat_cancellations_that_are_not_client_disconnects():
+    event = {"level": "error", "transaction": "/v1/chat/messages"}
+    provider_error = RuntimeError("provider failed")
+    caused = asyncio.CancelledError("cancelled")
+    caused.__cause__ = provider_error
+    contextual = asyncio.CancelledError("cancelled")
+    contextual.__context__ = provider_error
+    other_route = {**event, "transaction": "/v1/meals/scan-by-url"}
+    plain = asyncio.CancelledError("Cancelled via cancel scope")
+
+    assert _drop_expected_events(event, _hint(provider_error)) is event
+    assert _drop_expected_events(event, _hint(caused)) is event
+    assert _drop_expected_events(event, _hint(contextual)) is event
+    assert _drop_expected_events(event, {}) is event
+    assert _drop_expected_events(other_route, _hint(plain)) is other_route
+
+
+def test_before_send_keeps_weekly_meal_plan_conflicts():
+    """A type filter would hide unexpected bugs that use this exception."""
+    event = {"level": "error"}
+    conflict = WeeklyMealPlanConflictError(
+        "Logged weekly meal slots cannot be replaced"
+    )
+    idempotency = WeeklyMealPlanIdempotencyConflictError()
+
+    assert _drop_expected_events(event, _hint(conflict)) is event
+    assert _drop_expected_events(event, _hint(idempotency)) is event
 
 
 def test_before_send_keeps_other_events():
@@ -104,9 +183,117 @@ def test_filter_safe_attributes_drops_sensitive_none_and_complex_values():
     }
 
 
+def test_initialize_does_not_send_for_development_or_local(monkeypatch):
+    """Local Macs with a DSN and ENVIRONMENT=development were publishing events."""
+    for environment in ("development", "local", "Development", "LOCAL", " local "):
+        mock_sdk = MagicMock()
+        monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+        monkeypatch.setenv("ENVIRONMENT", environment)
+        monkeypatch.setenv("SENTRY_ENVIRONMENT", "production")
+        monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+        monkeypatch.setattr(
+            "src.infra.monitoring.sentry.settings.ENVIRONMENT", "production"
+        )
+
+        connector = SentryObservabilityConnector()
+        connector.initialize()
+
+        mock_sdk.init.assert_not_called()
+        assert connector._enabled is False
+
+
+def test_initialize_sends_when_environment_is_unset_or_blank(monkeypatch):
+    """A missing ENVIRONMENT must not silence a process that has a DSN."""
+    for raw in (None, "", "   "):
+        mock_sdk = MagicMock()
+        monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+        if raw is None:
+            monkeypatch.delenv("ENVIRONMENT", raising=False)
+        else:
+            monkeypatch.setenv("ENVIRONMENT", raw)
+        monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+        monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+        monkeypatch.setattr(
+            "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+        )
+
+        connector = SentryObservabilityConnector()
+        connector.initialize()
+
+        mock_sdk.init.assert_called_once()
+        init_kwargs = mock_sdk.init.call_args.kwargs
+        assert init_kwargs["environment"] == "unknown"
+        assert "ignore_errors" not in init_kwargs
+        assert connector._enabled is True
+
+
+def test_initialize_environment_comes_from_environment_env_var(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "   ")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.SENTRY_TRACES_SAMPLE_RATE", 0.1
+    )
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.SENTRY_PROFILES_SAMPLE_RATE", 0.05
+    )
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["environment"] == "production"
+    assert init_kwargs["traces_sample_rate"] == 0.1
+    assert init_kwargs["profiles_sample_rate"] == 0.05
+    assert "ignore_errors" not in init_kwargs
+    assert connector._enabled is True
+
+
+def test_initialize_prefers_sentry_environment_over_environment(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "Staging")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["environment"] == "staging"
+    assert connector._enabled is True
+
+
+def test_initialize_sentry_environment_does_not_opt_out(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "development")
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["environment"] == "development"
+    assert connector._enabled is True
+
+
 def test_initialize_skips_when_dsn_unset(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", None)
 
     connector = SentryObservabilityConnector()
@@ -115,9 +302,62 @@ def test_initialize_skips_when_dsn_unset(monkeypatch):
     mock_sdk.init.assert_not_called()
 
 
+def test_initialize_release_uses_git_sha_when_sentry_release_unset(monkeypatch):
+    """Image builds export GIT_SHA. Init must use it when SENTRY_RELEASE is unset.
+
+    Fails while init still passes settings.SENTRY_RELEASE only: production
+    images have no git binary and no .git, so the SDK fallback is empty and
+    the release stays None.
+    """
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_RELEASE", raising=False)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("GIT_SHA", "abc123def456")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", None)
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    init_kwargs = mock_sdk.init.call_args.kwargs
+    assert init_kwargs["release"] == "abc123def456"
+    assert init_kwargs["environment"] == "production"
+    assert init_kwargs["before_send"] is _drop_expected_events
+
+    connector.set_request_context(
+        request_id="abc12345",
+        method="POST",
+        path="/v1/chat/messages",
+    )
+    assert mock_sdk.set_context.call_args.args[1]["release"] == "abc123def456"
+
+
+def test_initialize_release_prefers_explicit_sentry_release_over_git_sha(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("SENTRY_RELEASE", " explicit-rel ")
+    monkeypatch.setenv("GIT_SHA", "abc123def456")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
+    monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", None)
+
+    connector = SentryObservabilityConnector()
+    connector.initialize()
+
+    assert mock_sdk.init.call_args.kwargs["release"] == "explicit-rel"
+    assert mock_sdk.init.call_args.kwargs["environment"] == "production"
+
+
 def test_initialize_configures_integrations_and_release(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("SENTRY_RELEASE", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.ENVIRONMENT", "test")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", "rel-1")
@@ -157,6 +397,8 @@ def test_initialize_configures_integrations_and_release(monkeypatch):
 def test_initialize_omits_optional_profile_session_settings_when_unset(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_DSN", "dsn")
     monkeypatch.setattr(
         "src.infra.monitoring.sentry.settings.SENTRY_PROFILE_SESSION_SAMPLE_RATE",
@@ -210,7 +452,13 @@ def test_capture_message_applies_only_safe_context(monkeypatch):
 def test_request_context_sets_safe_context_and_user(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
-    monkeypatch.setattr("src.infra.monitoring.sentry.settings.ENVIRONMENT", "test")
+    monkeypatch.delenv("SENTRY_RELEASE", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
     monkeypatch.setattr("src.infra.monitoring.sentry.settings.SENTRY_RELEASE", "rel-1")
 
     connector = SentryObservabilityConnector()
@@ -226,9 +474,30 @@ def test_request_context_sets_safe_context_and_user(monkeypatch):
     assert safe_context["request_id"] == "abc12345"
     assert safe_context["method"] == "GET"
     assert safe_context["path"] == "/v1/meals"
-    assert safe_context["environment"] == "test"
+    assert safe_context["environment"] == "staging"
     assert safe_context["release"] == "rel-1"
     mock_sdk.set_user.assert_called_once_with({"id": "user-1"})
+
+
+def test_request_context_uses_unknown_when_env_vars_are_unset(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.settings.ENVIRONMENT", "development"
+    )
+
+    connector = SentryObservabilityConnector()
+    connector._enabled = True
+    connector.set_request_context(
+        request_id="abc12345",
+        method="GET",
+        path="/v1/meals",
+    )
+
+    safe_context = mock_sdk.set_context.call_args.args[1]
+    assert safe_context["environment"] == "unknown"
 
 
 def test_start_span_returns_noop_when_disabled(monkeypatch):

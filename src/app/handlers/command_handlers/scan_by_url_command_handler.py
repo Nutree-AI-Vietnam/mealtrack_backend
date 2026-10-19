@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +12,8 @@ from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
 from src.app.graphs.meal_analyze.runtime import MealAnalyzeRuntime
+from src.app.ports.image_download_port import ImageDownloadPort
+from src.app.services.cancellation import run_to_completion
 from src.app.services.food_label_localizer import localize_food_label_display
 from src.app.services.meal_analyze_workflow import MealAnalyzeWorkflow
 from src.domain.constants import MealDefaults
@@ -47,7 +50,7 @@ from src.domain.utils.timezone_utils import (
     user_today,
     utc_now,
 )
-from src.observability import capture_message, distribution_metric, increment_metric
+from src.observability import distribution_metric, increment_metric
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +71,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         environment: str = "development",
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
-        download_image_bytes: Any | None = None,
+        *,
+        download_image_bytes: ImageDownloadPort,
         uow_factory=None,
         cloudflare_custom_domain: str | None = None,
         cloudflare_flexible_variants_enabled: bool = False,
@@ -117,31 +121,31 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         self,
         *,
         image_id: str,
-        image_url: str,
         reason: str,
     ) -> None:
-        capture_message(
+        """Record an expected non-food rejection without opening a Sentry issue.
+
+        ``capture_message`` at warning created PYTHON-DJ. LoggingIntegration
+        only sends ERROR records as events, so this info log stays a breadcrumb.
+        """
+        logger.info(
+            "meal_scan.image_rejected operation=%s reason=%s image_id=%s",
+            "scan_by_url",
+            reason,
+            image_id,
+        )
+        increment_metric(
             "meal_scan.image_rejected",
-            level="warning",
-            context={
+            attributes={
                 "component": "meal_scan",
                 "operation": "scan_by_url",
                 "ai_purpose": "meal_scan",
-                "image_id": image_id,
-                "image_url": image_url,
                 "rejection_reason": reason,
             },
         )
 
     async def _download_image_bytes(self, image_url: str) -> bytes:
-        if self._download_image_bytes_fn is not None:
-            return await self._download_image_bytes_fn(image_url)
-        import httpx
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(image_url)
-            resp.raise_for_status()
-            return resp.content
+        return await self._download_image_bytes_fn(image_url)
 
     async def _analyze_food_label_image_with_ai(
         self,
@@ -319,7 +323,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 )
 
                 meal = Meal(
-                    meal_id=str(uuid4()),
+                    meal_id=command.meal_id or str(uuid4()),
                     user_id=command.user_id,
                     status=MealStatus.READY,
                     created_at=meal_datetime,
@@ -338,21 +342,12 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     nutrition=nutrition,
                 )
 
-                async with self.uow_factory() as uow:
-                    saved_meal = await uow.meals.save(meal)
-                    await uow.commit()
-
-                if meal_date is not None:
-                    await publish_meal_event(
-                        self.event_publisher,
-                        saved_meal,
-                        event_type="created",
-                        environment=self.environment,
-                        meal_date=meal_date,
-                        language=command.language,
-                        event_bus=self.event_bus,
-                        source="scan_food_label",
-                    )
+                saved_meal = await self._save_and_publish_created(
+                    meal,
+                    meal_date=meal_date,
+                    language=command.language,
+                    source="scan_food_label",
+                )
 
                 logger.info(
                     "[SCAN-BY-URL-FOOD-LABEL-COMPLETE] meal=%s vision=%.2fs total=%.2fs",
@@ -366,7 +361,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             if not self.gpt_parser.parse_is_food(vision_result):
                 self._capture_rejected_scan(
                     image_id=image_id,
-                    image_url=command.image_url,
                     reason="parser_not_food",
                 )
                 raise ValidationException(
@@ -389,7 +383,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             if not has_food:
                 self._capture_rejected_scan(
                     image_id=image_id,
-                    image_url=command.image_url,
                     reason="nutrition_empty_or_zero_calorie",
                 )
                 raise ValidationException(
@@ -401,7 +394,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 )
 
             meal = Meal(
-                meal_id=str(uuid4()),
+                meal_id=command.meal_id or str(uuid4()),
                 user_id=command.user_id,
                 status=MealStatus.READY,
                 created_at=meal_datetime,
@@ -421,21 +414,12 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             )
             meal = persist_meal_response_localization(meal, localization)
 
-            async with self.uow_factory() as uow:
-                saved_meal = await uow.meals.save(meal)
-                await uow.commit()
-
-            if meal_date is not None:
-                await publish_meal_event(
-                    self.event_publisher,
-                    saved_meal,
-                    event_type="created",
-                    environment=self.environment,
-                    meal_date=meal_date,
-                    language=command.language,
-                    event_bus=self.event_bus,
-                    source="scan_by_url",
-                )
+            saved_meal = await self._save_and_publish_created(
+                meal,
+                meal_date=meal_date,
+                language=command.language,
+                source="scan_by_url",
+            )
 
             logger.info(
                 "[SCAN-BY-URL-COMPLETE] meal=%s vision=%.2fs total=%.2fs",
@@ -448,6 +432,36 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
 
         except Exception:
             raise
+
+    async def _save_and_publish_created(
+        self, meal: Meal, *, meal_date: date | None, language: str, source: str
+    ) -> Meal:
+        """Save the meal and publish its created event as one step.
+
+        Both finish even if the caller is cancelled, e.g. a background job
+        stopped at its deadline, so a saved meal never misses its event.
+        """
+
+        async def save_and_publish() -> Meal:
+            async with self.uow_factory() as uow:
+                saved_meal = await uow.meals.save(meal)
+                await uow.commit()
+            if meal_date is not None:
+                await publish_meal_event(
+                    self.event_publisher,
+                    saved_meal,
+                    event_type="created",
+                    environment=self.environment,
+                    meal_date=meal_date,
+                    language=language,
+                    event_bus=self.event_bus,
+                    source=source,
+                )
+            return saved_meal
+
+        return await run_to_completion(
+            save_and_publish(), description=f"saving scanned meal {meal.meal_id}"
+        )
 
     async def handle(self, command: ScanByUrlCommand) -> Meal:
         if not all([self.vision_service, self.gpt_parser]):
@@ -472,6 +486,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     text_translation_service=self.text_translation_service,
                     cloudflare_custom_domain=self.cloudflare_custom_domain,
                     cloudflare_flexible_variants_enabled=self.cloudflare_flexible_variants_enabled,
+                    meal_id_factory=lambda: command.meal_id or str(uuid4()),
                 ),
             )
 

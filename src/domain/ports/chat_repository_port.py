@@ -117,6 +117,16 @@ class ChatRepositoryPort(ABC):
         """Complete the generating assistant only if the fencing token still owns it."""
 
     @abstractmethod
+    async def extend_generation_lease(
+        self,
+        *,
+        message_id: str,
+        generation_id: str | None,
+        lease_expires_at: datetime,
+    ) -> bool:
+        """Push the lease forward while this generation still owns the row."""
+
+    @abstractmethod
     async def attach_follow_ups(
         self,
         *,

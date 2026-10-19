@@ -1,6 +1,8 @@
 """Unit tests for async database config."""
 
+import asyncio
 import importlib
+import logging
 
 import pytest
 from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
@@ -27,6 +29,143 @@ async def test_get_async_db_raises_clear_error_when_session_factory_missing(
     with pytest.raises(RuntimeError, match="AsyncSessionLocal is not initialized"):
         async for _ in cfg.get_async_db():
             pass
+
+
+@pytest.mark.asyncio
+async def test_get_async_db_finishes_close_when_caller_is_cancelled(
+    monkeypatch, caplog
+):
+    """PYTHON-HP: a client disconnect must not abandon session close.
+
+    On main, close runs on the cancelled request task. NullPool then logs
+    "Exception terminating connection" and the close never finishes.
+    """
+    import src.infra.database.config_async as cfg
+
+    started = asyncio.Event()
+    finished = asyncio.Event()
+
+    class _Session:
+        async def rollback(self) -> None:
+            raise AssertionError("cancellation must not roll back")
+
+        async def close(self) -> None:
+            started.set()
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                logging.getLogger("sqlalchemy.pool.impl.NullPool").error(
+                    "Exception terminating connection %r",
+                    self,
+                    exc_info=True,
+                )
+                raise
+            finished.set()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            await self.close()
+
+    monkeypatch.setattr(cfg, "AsyncSessionLocal", lambda: _Session())
+
+    async def _request() -> None:
+        generator = cfg.get_async_db()
+        await generator.__anext__()
+        await generator.aclose()
+
+    request = asyncio.create_task(_request())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    request.cancel()
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        await asyncio.wait_for(finished.wait(), timeout=1)
+
+    assert finished.is_set()
+    assert not any(
+        "Exception terminating connection" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_close_async_session_logs_warning_when_close_exceeds_timeout(
+    monkeypatch, caplog
+):
+    """A hung terminate must not hold the request for longer than the bound."""
+    import src.infra.database.config_async as cfg
+
+    monkeypatch.setattr(cfg, "SESSION_CLOSE_TIMEOUT_SECONDS", 0.05)
+    release = asyncio.Event()
+
+    class _Session:
+        async def close(self) -> None:
+            await release.wait()
+
+    with caplog.at_level(logging.WARNING):
+        await cfg.close_async_session(_Session())
+
+    assert any(
+        record.levelno == logging.WARNING
+        and "releasing the request" in record.getMessage()
+        for record in caplog.records
+    )
+    pending = list(cfg._CLOSING_SESSIONS)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_close_failure_is_reported_once_when_request_is_not_cancelled(caplog):
+    """The done callback must not log a failure the caller is about to raise."""
+    import src.infra.database.config_async as cfg
+
+    class _Session:
+        async def close(self) -> None:
+            raise RuntimeError("close failed")
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError, match="close failed"):
+            await cfg.close_async_session(_Session())
+
+    assert not any(
+        "Async DB session close failed" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_async_db_rolls_back_then_closes_on_exception(monkeypatch):
+    import src.infra.database.config_async as cfg
+
+    events: list[str] = []
+
+    class _Session:
+        async def rollback(self) -> None:
+            events.append("rollback")
+
+        async def close(self) -> None:
+            events.append("close")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            await self.close()
+
+    monkeypatch.setattr(cfg, "AsyncSessionLocal", lambda: _Session())
+
+    generator = cfg.get_async_db()
+    await generator.__anext__()
+    with pytest.raises(RuntimeError, match="boom"):
+        await generator.athrow(RuntimeError("boom"))
+
+    assert events == ["rollback", "close"]
 
 
 def test_async_url_rewrite_psycopg2_to_asyncpg(monkeypatch):

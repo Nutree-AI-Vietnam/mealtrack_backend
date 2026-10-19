@@ -2,6 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from src.domain.model.user import UserDomainModel, UserProfileDomainModel
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.user_repository_port import UserRepositoryPort
 
 
@@ -27,12 +28,12 @@ class FakeUserRepository(UserRepositoryPort):
                 return user
         return None
 
-    async def find_deleted_by_firebase_uid(
+    async def find_by_firebase_uid_including_deleted(
         self, firebase_uid: str
     ) -> Optional[UserDomainModel]:
-        """Find deleted (inactive) user by Firebase UID."""
+        """Find a user by Firebase UID whether active or deleted."""
         for user in self.users.values():
-            if user.firebase_uid == firebase_uid and not user.is_active:
+            if user.firebase_uid == firebase_uid:
                 return user
         return None
 
@@ -51,6 +52,7 @@ class FakeUserRepository(UserRepositoryPort):
         """Soft delete user by marking as inactive (matches real repository behavior)."""
         if user_id in self.users:
             self.users[user_id].is_active = False
+            self.users[user_id].firebase_uid = tombstone_firebase_uid(user_id)
             return True
         return False
 

@@ -1,9 +1,12 @@
 """Tests that AIOutputValidationError from vision service produces controlled failures."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from src.domain.exceptions.ai_exceptions import AIOutputValidationError
+from src.infra.http.image_download import ScanImageDownloadAdapter
 
 VALIDATION_ERROR = AIOutputValidationError(
     "Invalid AI output after validation retry",
@@ -47,7 +50,7 @@ async def test_upload_handler_propagates_ai_validation_error():
 
 
 @pytest.mark.asyncio
-async def test_scan_by_url_handler_propagates_ai_validation_error():
+async def test_scan_by_url_handler_propagates_ai_validation_error(monkeypatch):
     """AIOutputValidationError from vision_service.analyze propagates out of handle()."""
     from src.app.commands.meal.scan_by_url_command import ScanByUrlCommand
     from src.app.handlers.command_handlers.scan_by_url_command_handler import (
@@ -65,6 +68,7 @@ async def test_scan_by_url_handler_propagates_ai_validation_error():
         event_bus=MagicMock(),
         vision_service=MagicMock(),
         gpt_parser=MagicMock(),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
     handler.vision_service.analyze = AsyncMock(side_effect=VALIDATION_ERROR)
 
@@ -75,19 +79,19 @@ async def test_scan_by_url_handler_propagates_ai_validation_error():
     )
 
     image_bytes = b"fake-image-bytes"
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_response = MagicMock()
-        mock_response.content = image_bytes
-        mock_response.raise_for_status = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+    from src.infra.http import image_download
 
-        with patch("asyncio.to_thread", return_value=image_bytes):
-            with pytest.raises(AIOutputValidationError) as exc_info:
-                await handler.handle(command)
+    shared = MagicMock()
+    shared.is_closed = False
+    mock_response = MagicMock()
+    mock_response.content = image_bytes
+    mock_response.raise_for_status = MagicMock()
+    shared.get = AsyncMock(return_value=mock_response)
+    monkeypatch.setattr(image_download, "_scan_image_client", None)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: shared)
+
+    with patch("asyncio.to_thread", return_value=image_bytes):
+        with pytest.raises(AIOutputValidationError) as exc_info:
+            await handler.handle(command)
 
     assert exc_info.value is VALIDATION_ERROR
-
-

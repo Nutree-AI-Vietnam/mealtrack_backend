@@ -3,6 +3,7 @@
 import logging
 from uuid import UUID
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,7 @@ from src.domain.exceptions.firebase_identity_exceptions import (
     FirebaseIdentityConflictError,
 )
 from src.domain.model.user import UserDomainModel, UserProfileDomainModel
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.user_repository_port import UserRepositoryPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.user.profile import UserProfile
@@ -54,6 +56,32 @@ def _copy_user_save_columns(entity: User, updated: User) -> None:
         new_val = getattr(updated, col_name)
         if getattr(entity, col_name) != new_val:
             setattr(entity, col_name, new_val)
+
+
+def _identity_conflict(exc: IntegrityError) -> Exception:
+    """Map a users unique-index violation to the API conflict error.
+
+    Callers that can recover (a concurrent insert of the same firebase_uid)
+    must see FirebaseIdentityConflictError without the transaction aborted.
+    """
+    error_msg = str(exc.orig).lower() if exc.orig else str(exc).lower()
+    if "email" in error_msg or "firebase_uid" in error_msg:
+        return FirebaseIdentityConflictError(
+            "A Firebase identity conflicts with an existing account"
+        )
+    return ValueError("User with this email or username already exists")
+
+
+def _profiles_ready_for_mapping(entity: User) -> bool:
+    """True when profiles can be read without another SELECT.
+
+    profiles uses lazy="raise". Callers that already selectinload the user,
+    or assign profiles before insert, do not need the post-flush reload.
+    """
+    state = sa_inspect(entity)
+    return (
+        "profiles" not in state.unloaded and "profiles" not in state.expired_attributes
+    )
 
 
 def _sync_profile_preference_entries(
@@ -101,35 +129,31 @@ class AsyncUserRepository(UserRepositoryPort):
         if existing_entity:
             _copy_user_save_columns(existing_entity, user_entity)
             user_entity = existing_entity
+            try:
+                await self.session.flush()
+            except IntegrityError as exc:
+                # Do NOT call session.rollback() — UoW.__aexit__ handles rollback
+                raise _identity_conflict(exc) from exc
         else:
             user_entity.profiles = [
                 UserProfileMapper.to_persistence(p) for p in user_domain.profiles
             ]
-            self.session.add(user_entity)
-        try:
-            await self.session.flush()
-            # Re-fetch with eager loading to satisfy lazy="raise" on profiles/subscriptions
+            # Savepoint keeps the outer transaction usable so the caller can
+            # re-read the row that won ix_users_firebase_uid.
+            try:
+                async with self.session.begin_nested():
+                    self.session.add(user_entity)
+                    await self.session.flush()
+            except IntegrityError as exc:
+                raise _identity_conflict(exc) from exc
+
+        if not _profiles_ready_for_mapping(user_entity):
             user_id_str = str(user_entity.id)
             result = await self.session.execute(
                 select(User).options(*_USER_LOADS).where(User.id == user_id_str)
             )
             user_entity = result.scalars().first()
-            return UserMapper.to_domain(user_entity)
-        except IntegrityError as e:
-            # Do NOT call session.rollback() — UoW.__aexit__ handles rollback
-            error_msg = str(e.orig).lower() if e.orig else str(e).lower()
-            if "email" in error_msg:
-                raise FirebaseIdentityConflictError(
-                    "A Firebase identity conflicts with an existing account"
-                ) from e
-            elif "firebase_uid" in error_msg:
-                raise FirebaseIdentityConflictError(
-                    "A Firebase identity conflicts with an existing account"
-                ) from e
-            else:
-                raise ValueError(
-                    "User with this email or username already exists"
-                ) from e
+        return UserMapper.to_domain(user_entity)
 
     async def find_by_id(self, user_id: UUID) -> UserDomainModel | None:
         user_id_str = str(user_id) if isinstance(user_id, UUID) else user_id
@@ -159,13 +183,11 @@ class AsyncUserRepository(UserRepositoryPort):
         entity = result.scalars().first()
         return UserMapper.to_domain(entity) if entity else None
 
-    async def find_deleted_by_firebase_uid(
+    async def find_by_firebase_uid_including_deleted(
         self, firebase_uid: str
     ) -> UserDomainModel | None:
         result = await self.session.execute(
-            select(User)
-            .options(*_USER_LOADS)
-            .where(User.firebase_uid == firebase_uid, User.is_active.is_(False))
+            select(User).options(*_USER_LOADS).where(User.firebase_uid == firebase_uid)
         )
         entity = result.scalars().first()
         return UserMapper.to_domain(entity) if entity else None
@@ -188,6 +210,7 @@ class AsyncUserRepository(UserRepositoryPort):
         entity = result.scalars().first()
         if entity:
             entity.is_active = False
+            entity.firebase_uid = tombstone_firebase_uid(str(entity.id))
             await self.session.flush()
             return True
         return False

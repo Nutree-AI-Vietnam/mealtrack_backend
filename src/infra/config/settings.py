@@ -21,6 +21,9 @@ from src.domain.model.chat import (
 from src.domain.model.chat import (
     CHAT_MAX_OUTPUT_TOKENS as _CHAT_MAX_OUTPUT_TOKENS,
 )
+from src.domain.model.chat import (
+    CHAT_OUTPUT_TOKEN_CEILING as _CHAT_OUTPUT_TOKEN_CEILING,
+)
 from src.domain.services.meal_analysis.fast_path_policy import (
     MEAL_ANALYZE_DEFAULT_MAX_OUTPUT_TOKENS,
 )
@@ -217,7 +220,13 @@ class Settings(BaseSettings):
     CHAT_EMBEDDING_MODEL: str = Field(default="text-embedding-3-small")
     CHAT_REASONING_EFFORT: str = Field(default="low")
     CHAT_MAX_OUTPUT_TOKENS: int = Field(
-        default=_CHAT_MAX_OUTPUT_TOKENS, ge=100, le=2000
+        default=_CHAT_MAX_OUTPUT_TOKENS,
+        ge=100,
+        le=_CHAT_OUTPUT_TOKEN_CEILING,
+        description=(
+            "Visible answer plus reasoning tokens. gpt-5.6-luna spends part of "
+            "this budget before any reply text; values under 4096 truncate answers."
+        ),
     )
     CHAT_REQUEST_TIMEOUT_SECONDS: int = Field(default=45, ge=5)
     CHAT_DAILY_TURN_BUDGET: int = Field(default=_CHAT_DAILY_TURN_BUDGET, ge=1)
@@ -225,6 +234,36 @@ class Settings(BaseSettings):
         default=_CHAT_GENERATION_LEASE_SECONDS, ge=15
     )
     CHAT_GLOBAL_CONCURRENCY: int = Field(default=8, ge=1)
+    # Background AI jobs (meal scan, parse-text, chat) + completion pushes
+    AI_JOBS_ENABLED: bool = Field(
+        default=False,
+        description="Advertise and accept background AI jobs (capability + enqueue).",
+    )
+    AI_JOBS_WORKER_ENABLED: bool = Field(
+        default=False,
+        description="Run AI job worker lanes and the push notifier in this process.",
+    )
+    AI_JOBS_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=16)
+    AI_JOBS_GLOBAL_CAPACITY: int = Field(default=4, ge=1, le=64)
+    AI_JOBS_LEASE_SECONDS: int = Field(default=120, ge=30, le=3600)
+    AI_JOBS_EXECUTION_DEADLINE_SECONDS: int = Field(default=90, ge=10, le=600)
+    AI_JOBS_POLL_SECONDS: float = Field(default=1.0, ge=0.1, le=60)
+    AI_JOBS_HEARTBEAT_SECONDS: float = Field(
+        default=2.0,
+        ge=0.5,
+        le=60,
+        description="How often a running job renews its lease and checks for cancel.",
+    )
+    AI_JOBS_NOTIFY_GRACE_SECONDS: int = Field(
+        default=8,
+        ge=0,
+        le=600,
+        description="Push only when a finished job is still unseen after this delay.",
+    )
+    AI_JOBS_CHAT_BACKGROUND_ENABLED: bool = Field(
+        default=True,
+        description="Let chat turns with ai_job_id keep generating after disconnect.",
+    )
     # Image search (meal discovery photos)
     PEXELS_API_KEY: str | None = Field(
         default=None, description="Pexels API key for food photos"
@@ -371,7 +410,7 @@ class Settings(BaseSettings):
     )
     CLOUDFLARE_WORKERS_AI_IMAGE_MODEL: str = Field(
         default="@cf/black-forest-labs/flux-2-klein-9b",
-        description="Workers AI model for catalog meal image generation.",
+        description="Workers AI model for catalog and chat meal image generation.",
     )
     CLOUDFLARE_WORKERS_AI_VISION_ENABLED: bool = Field(
         default=True,

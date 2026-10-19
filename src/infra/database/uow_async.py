@@ -10,7 +10,8 @@ from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.meal_suggestion_repository_port import (
     MealSuggestionRepositoryPort,
 )
-from src.infra.database.config_async import AsyncSessionLocal
+from src.infra.database.config_async import AsyncSessionLocal, close_async_session
+from src.infra.repositories.ai_job_repository import AsyncAiJobRepository
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
 )
@@ -50,6 +51,7 @@ from src.infra.repositories.notification_repository_async import (
     AsyncNotificationRepository,
 )
 from src.infra.repositories.promo_code_repository import PromoCodeRepository
+from src.infra.repositories.push_token_repository import AsyncPushTokenRepository
 from src.infra.repositories.referral_repository import ReferralRepository
 from src.infra.repositories.saved_suggestion_db_repository_async import (
     AsyncSavedSuggestionDbRepository,
@@ -171,6 +173,8 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.weekly_meal_plans = AsyncWeeklyMealPlanRepository(session)
         self.weekly_recaps = AsyncWeeklyRecapRepository(session)
         self.chat = AsyncChatRepository(session)
+        self.ai_jobs = AsyncAiJobRepository(session)
+        self.push_tokens = AsyncPushTokenRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         session = self.session
@@ -205,9 +209,11 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
                         )
                     raise
         finally:
-            await session.close()
-            self.session = None
-            self._session_lock.release()
+            try:
+                await close_async_session(session)
+            finally:
+                self.session = None
+                self._session_lock.release()
 
     @planner_timed("commit")
     async def commit(self) -> None:

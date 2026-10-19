@@ -117,6 +117,7 @@ class UserMapper:
             display_name=user_entity.display_name,
             photo_url=user_entity.photo_url,
             deleted_at=user_entity.deleted_at,
+            language_code=user_entity.language_code,
             created_at=user_entity.created_at,
             updated_at=user_entity.updated_at,
             profiles=[UserProfileMapper.to_domain(p) for p in user_entity.profiles],
@@ -125,24 +126,29 @@ class UserMapper:
     @staticmethod
     def to_persistence(user_domain: UserDomainModel) -> User:
         """Map a UserDomainModel to a User persistence entity."""
-        return User(
-            id=str(user_domain.id) if user_domain.id else None,
-            firebase_uid=user_domain.firebase_uid,
-            email=user_domain.email,
-            username=user_domain.username,
-            password_hash=user_domain.password_hash,
-            provider=user_domain.provider,
-            is_active=user_domain.is_active,
-            onboarding_completed=user_domain.onboarding_completed,
-            last_accessed=user_domain.last_accessed,
-            timezone=user_domain.timezone,
-            first_name=user_domain.first_name,
-            last_name=user_domain.last_name,
-            phone_number=user_domain.phone_number,
-            display_name=user_domain.display_name,
-            photo_url=user_domain.photo_url,
-            deleted_at=user_domain.deleted_at,
-        )
+        values = {
+            "id": str(user_domain.id) if user_domain.id else None,
+            "firebase_uid": user_domain.firebase_uid,
+            "email": user_domain.email,
+            "username": user_domain.username,
+            "password_hash": user_domain.password_hash,
+            "provider": user_domain.provider,
+            "is_active": user_domain.is_active,
+            "onboarding_completed": user_domain.onboarding_completed,
+            "last_accessed": user_domain.last_accessed,
+            "timezone": user_domain.timezone,
+            "first_name": user_domain.first_name,
+            "last_name": user_domain.last_name,
+            "phone_number": user_domain.phone_number,
+            "display_name": user_domain.display_name,
+            "photo_url": user_domain.photo_url,
+            "deleted_at": user_domain.deleted_at,
+        }
+        # Omit a missing language so INSERT keeps the column default and
+        # updates do not null out a language this mapper did not load.
+        if user_domain.language_code:
+            values["language_code"] = user_domain.language_code
+        return User(**values)
 
 
 class UserProfileMapper:

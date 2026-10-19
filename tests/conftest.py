@@ -20,6 +20,7 @@ from sqlalchemy.orm import (
 
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.model.meal_projection import MealProjection
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.parsers.gpt_response_parser import GPTResponseParser
 from src.domain.utils.timezone_utils import get_zone_info, utc_now
 from src.infra.database.base import Base
@@ -490,11 +491,11 @@ class TestUserRepository:
         )
         return UserMapper.to_domain(entity) if entity else None
 
-    def find_deleted_by_firebase_uid(self, firebase_uid: str):
+    def find_by_firebase_uid_including_deleted(self, firebase_uid: str):
         entity = (
             self.db.query(User)
             .options(*self._USER_LOADS)
-            .filter(User.firebase_uid == firebase_uid, User.is_active.is_(False))
+            .filter(User.firebase_uid == firebase_uid)
             .first()
         )
         return UserMapper.to_domain(entity) if entity else None
@@ -504,6 +505,7 @@ class TestUserRepository:
         if not entity:
             return False
         entity.is_active = False
+        entity.firebase_uid = tombstone_firebase_uid(entity.id)
         self.db.commit()
         return True
 
@@ -630,8 +632,8 @@ class AsyncTestUserRepository:
     async def find_by_firebase_uid(self, *args, **kwargs):
         return self._repo.find_by_firebase_uid(*args, **kwargs)
 
-    async def find_deleted_by_firebase_uid(self, *args, **kwargs):
-        return self._repo.find_deleted_by_firebase_uid(*args, **kwargs)
+    async def find_by_firebase_uid_including_deleted(self, *args, **kwargs):
+        return self._repo.find_by_firebase_uid_including_deleted(*args, **kwargs)
 
     async def get_profile(self, *args, **kwargs):
         return self._repo.get_profile(*args, **kwargs)

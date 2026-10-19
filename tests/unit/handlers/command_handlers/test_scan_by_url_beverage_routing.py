@@ -10,10 +10,23 @@ from src.app.handlers.command_handlers.scan_by_url_command_handler import (
     ScanByUrlCommandHandler,
 )
 from src.domain.parsers.vision_response_parser import VisionResponseParser
+from src.infra.http.image_download import ScanImageDownloadAdapter
 
 _IMAGE_URL = "https://res.cloudinary.com/test/image/upload/v1/mealtrack/drink.jpg"
 _PUBLIC_ID = "mealtrack/1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
 _USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+class _FakeImageDownload:
+    """In-memory image download port for handler unit tests."""
+
+    def __init__(self, body: bytes = b"fake-image-bytes") -> None:
+        self.body = body
+        self.urls: list[str] = []
+
+    async def __call__(self, image_url: str) -> bytes:
+        self.urls.append(image_url)
+        return self.body
 
 
 def _make_uow() -> MagicMock:
@@ -52,6 +65,8 @@ def _install_fake_image_download(
             return None
 
     class FakeClient:
+        is_closed = False
+
         async def __aenter__(self):
             return self
 
@@ -68,7 +83,10 @@ def _install_fake_image_download(
 
     import httpx
 
+    from src.infra.http import image_download
+
     fake_client = FakeClient()
+    monkeypatch.setattr(image_download, "_scan_image_client", None)
     monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: fake_client)
     monkeypatch.setattr(module, "compress_image", lambda raw_bytes: raw_bytes)
 
@@ -86,6 +104,7 @@ async def test_scan_by_url_packaged_beverage_creates_standard_meal(monkeypatch):
         vision_service=MagicMock(),
         gpt_parser=MagicMock(),
         event_publisher=publisher,
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
     handler.vision_service.analyze = AsyncMock(
         return_value={
@@ -175,6 +194,7 @@ async def test_scan_by_url_food_label_uses_crop_image_ai_without_ocr(
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         event_publisher=MagicMock(publish=AsyncMock()),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     result = await handler.handle(
@@ -252,6 +272,7 @@ async def test_scan_by_url_food_label_localizes_english_product_name(monkeypatch
         gpt_parser=VisionResponseParser(),
         text_translation_service=translator,
         event_publisher=MagicMock(publish=AsyncMock()),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     result = await handler.handle(
@@ -306,6 +327,7 @@ async def test_scan_by_url_food_label_uses_full_image_when_crop_missing(monkeypa
         vision_service=vision_service,
         gpt_parser=VisionResponseParser(),
         event_publisher=MagicMock(publish=AsyncMock()),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     result = await handler.handle(
@@ -336,6 +358,7 @@ async def test_scan_by_url_food_label_image_ai_failure_does_not_save(monkeypatch
         event_bus=MagicMock(),
         vision_service=vision_service,
         gpt_parser=MagicMock(),
+        download_image_bytes=ScanImageDownloadAdapter(),
     )
 
     with pytest.raises(ValidationException, match="could not be read"):
@@ -356,6 +379,7 @@ async def test_scan_by_url_uses_workflow_only_when_graph_enabled():
     expected_meal = object()
     workflow = MagicMock()
     workflow.run_scan_by_url = AsyncMock(return_value=expected_meal)
+    download = _FakeImageDownload()
     handler = ScanByUrlCommandHandler(
         uow=MagicMock(),
         event_bus=MagicMock(),
@@ -363,6 +387,7 @@ async def test_scan_by_url_uses_workflow_only_when_graph_enabled():
         gpt_parser=MagicMock(),
         meal_analyze_workflow=workflow,
         meal_analyze_graph_enabled=True,
+        download_image_bytes=download,
     )
     command = ScanByUrlCommand(
         user_id=_USER_ID,
@@ -375,6 +400,9 @@ async def test_scan_by_url_uses_workflow_only_when_graph_enabled():
     assert result is expected_meal
     workflow.run_scan_by_url.assert_awaited_once()
     assert workflow.run_scan_by_url.await_args.args[0] == command
+    runtime = workflow.run_scan_by_url.await_args.kwargs["runtime"]
+    assert await runtime.download_image_bytes(_IMAGE_URL) == b"fake-image-bytes"
+    assert download.urls == [_IMAGE_URL]
 
 
 @pytest.mark.asyncio
@@ -388,6 +416,7 @@ async def test_scan_by_url_graph_disabled_keeps_legacy_path():
         gpt_parser=MagicMock(),
         meal_analyze_workflow=workflow,
         meal_analyze_graph_enabled=False,
+        download_image_bytes=_FakeImageDownload(),
     )
     handler._handle_legacy_scan_by_url = AsyncMock(return_value="legacy-result")
     command = ScanByUrlCommand(
@@ -448,6 +477,7 @@ async def test_scan_by_url_graph_path_passes_cloudflare_custom_domain_to_runtime
         meal_analyze_workflow=workflow,
         meal_analyze_graph_enabled=True,
         cloudflare_custom_domain="media.nutree.ai",
+        download_image_bytes=_FakeImageDownload(),
     )
     command = ScanByUrlCommand(
         user_id=_USER_ID,

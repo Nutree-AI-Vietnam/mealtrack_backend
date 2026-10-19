@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Any
@@ -30,8 +29,6 @@ from src.infra.services.chat_concurrency import (
     get_chat_circuit_breaker,
     get_chat_semaphore,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -103,9 +100,17 @@ def _next_meal_service(
         discover=None,
         recipe_generator=recipe_generator,
         image_search=get_food_image_service().search_food_image,
+        image_generator=_chat_meal_image_generator(),
         nutrition_lookup=get_nutrition_lookup_service(),
         model=model,
     )
+
+
+def _chat_meal_image_generator():
+    """Cloudflare Workers AI photo for a chat card. Stock search remains the fallback."""
+    from src.api.base_dependencies import get_chat_meal_image_generator
+
+    return get_chat_meal_image_generator()
 
 
 class _UnavailableCompletion(ChatCompletionPort):

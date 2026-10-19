@@ -93,6 +93,17 @@ class AuthorizationException(MealTrackException):
     pass
 
 
+class ImageDownloadRejected(MealTrackException):
+    """Photo host refused the object.
+
+    Not an authentication failure. A 401 or 403 here would look like a bad
+    session to the app.
+    """
+
+    def __init__(self, message: str = "The meal photo could not be downloaded."):
+        super().__init__(message=message, error_code="IMAGE_DOWNLOAD_REJECTED")
+
+
 def create_http_exception(exc: MealTrackException) -> HTTPException:
     """Convert domain exception to HTTP exception with appropriate status code."""
 
@@ -104,6 +115,7 @@ def create_http_exception(exc: MealTrackException) -> HTTPException:
         AuthenticationException: status.HTTP_401_UNAUTHORIZED,
         AuthorizationException: status.HTTP_403_FORBIDDEN,
         ConflictException: status.HTTP_409_CONFLICT,
+        ImageDownloadRejected: status.HTTP_422_UNPROCESSABLE_ENTITY,
     }
 
     status_code = status_map.get(type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR)

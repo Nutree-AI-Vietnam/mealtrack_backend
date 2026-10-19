@@ -16,7 +16,8 @@ class User(Base, BaseMixin):
 
     __tablename__ = "users"
 
-    # Firebase Integration
+    # Unique for every row, including inactive ones (ix_users_firebase_uid).
+    # Soft-delete must tombstone this value before another account can reuse it.
     firebase_uid = Column(String(128), unique=True, nullable=False, index=True)
     revenuecat_customer_id = Column(String(255), unique=True, nullable=True)
     # Open Wearables user UUID. Data calls require this id, not the Nutree user id.
