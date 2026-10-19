@@ -69,7 +69,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         environment: str = "development",
         meal_analyze_workflow: MealAnalyzeWorkflow | None = None,
         meal_analyze_graph_enabled: bool = False,
-        download_image_bytes: ImageDownloadPort | None = None,
+        *,
+        download_image_bytes: ImageDownloadPort,
         uow_factory=None,
         cloudflare_custom_domain: str | None = None,
         cloudflare_flexible_variants_enabled: bool = False,
@@ -135,8 +136,6 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
         )
 
     async def _download_image_bytes(self, image_url: str) -> bytes:
-        if self._download_image_bytes_fn is None:
-            raise RuntimeError("Image downloader is not configured")
         return await self._download_image_bytes_fn(image_url)
 
     async def _analyze_food_label_image_with_ai(
