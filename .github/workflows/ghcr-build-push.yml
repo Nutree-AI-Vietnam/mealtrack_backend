@@ -107,7 +107,7 @@ jobs:
             echo ""
             echo "Digest: \`${IMAGE_DIGEST}\`"
             echo ""
-            echo "Floating \`:delivery\` is **not** pushed here. It is retagged only after the live deploy's image is this sit-<sha> (or its digest). Migrations are not run."
+            echo "Floating \`:delivery\` is **not** pushed here. It is retagged only after the live deploy's image.sha equals this digest and this commit is still delivery HEAD. Migrations are not run."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Staging only (push to delivery). Trigger the Render deploy hook for the
@@ -136,7 +136,27 @@ jobs:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       EXPECTED_DIGEST: ${{ needs.build-and-push.outputs.digest }}
     steps:
+      # build-and-push is not in the concurrency group, so an older push can
+      # finish after a newer one. Deploy and retag only while this commit is
+      # still the delivery branch head.
+      - name: Skip when delivery HEAD has moved on
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA=$(gh api "repos/${{ github.repository }}/git/ref/heads/delivery" --jq .object.sha)
+          echo "delivery head: ${HEAD_SHA}"
+          echo "this commit: ${GITHUB_SHA}"
+          if [ "${HEAD_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "::notice::delivery head is ${HEAD_SHA}, not ${GITHUB_SHA}; skipping deploy and :delivery retag"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Trigger Render deploy hook (pinned image)
+        if: steps.head.outputs.current == 'true'
         run: |
           set -euo pipefail
           IMAGE="${SIT_IMAGE}:sit-${GITHUB_SHA}"
@@ -249,29 +269,20 @@ jobs:
           expected_image = os.environ["IMAGE"]
           expected_digest = norm_digest(os.environ.get("EXPECTED_DIGEST") or "")
           tag = image_tag(ref)
-          observed = {norm_digest(ref), norm_digest(sha)} - {""}
+          sha_digest = norm_digest(sha)
           tag_ok = tag == expected_tag or ref == expected_image or ref == expected_tag or ref.endswith(":" + expected_tag)
-          digest_ok = bool(expected_digest) and expected_digest in observed
-          # A live deploy whose ref is still the floating tag is the previous
-          # image. Do not retag :delivery onto it, even if a digest collides.
-          if tag == "delivery" or ref.endswith(":delivery"):
+          # image.sha must equal the build digest. ref/tag is logged only.
+          print(f"image.ref={ref or '-'}")
+          print(f"image.sha={sha or '-'}")
+          print(f"ref/tag match={str(tag_ok).lower()} (tag={tag or '-'} expected={expected_tag})")
+          if sha_digest != expected_digest or not expected_digest:
               print(
-                  "::error::live deploy is still :delivery "
-                  f"(ref={ref or '-'} sha={sha or '-'}); not retagging"
+                  "::error::image.sha does not equal the build digest "
+                  f"(image.sha={sha or '-'} build={expected_digest or '-'})"
               )
               sys.exit(1)
-          if tag_ok or digest_ok:
-              print(
-                  f"Live image matches {expected_tag} or its digest "
-                  f"(ref={ref or '-'} sha={sha or '-'})"
-              )
-              sys.exit(0)
-          print(
-              "::error::live deploy image is not "
-              f"{expected_tag} or digest {expected_digest or '-'} "
-              f"(ref={ref or '-'} sha={sha or '-'})"
-          )
-          sys.exit(1)
+          print("sha == build digest")
+          sys.exit(0)
           PY
                 exit 0
                 ;;
@@ -285,11 +296,29 @@ jobs:
           echo "::error::Timed out polling Render deploy ${DEPLOY_ID}"
           exit 1
 
-      # imgURL does not change the service imagePath (it stays :delivery).
-      # Point :delivery at the build digest, not the sit- tag, and only after
-      # the poll above has matched that digest. This step is in deploy-staging
-      # so the concurrency group has a single job.
+      # Re-read delivery HEAD. The poll can outlast a newer push, and retagging
+      # then would point :delivery back at this older digest. imgURL does not
+      # change imagePath. The retag below points :delivery at image@<build
+      # digest> only when image.sha matched and this commit is still HEAD.
+      - name: Confirm delivery HEAD before retag
+        id: before-retag
+        if: success() && steps.head.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA=$(gh api "repos/${{ github.repository }}/git/ref/heads/delivery" --jq .object.sha)
+          echo "delivery head: ${HEAD_SHA}"
+          echo "this commit: ${GITHUB_SHA}"
+          if [ "${HEAD_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "::notice::delivery head is ${HEAD_SHA}, not ${GITHUB_SHA}; skipping :delivery retag"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 🔑 Login to GitHub Container Registry
+        if: success() && steps.head.outputs.current == 'true' && steps.before-retag.outputs.current == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -297,9 +326,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🧰 Setup Buildx
+        if: success() && steps.head.outputs.current == 'true' && steps.before-retag.outputs.current == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Retag :delivery to the verified digest
+        if: success() && steps.head.outputs.current == 'true' && steps.before-retag.outputs.current == 'true'
         env:
           DIGEST: ${{ needs.build-and-push.outputs.digest }}
         run: |
