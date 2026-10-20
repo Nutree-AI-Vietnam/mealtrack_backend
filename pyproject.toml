@@ -23,7 +23,7 @@ dependencies = [
     "httpx==0.28.1",
     "openai>=2.14.0,<3.0.0",
     "pillow==12.2.0",
-    "sqlalchemy==2.0.50",
+    "sqlalchemy==2.0.55",
     "psycopg2-binary==2.9.12",
     "asyncpg==0.31.0",
     "greenlet==3.5.1",
