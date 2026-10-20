@@ -5,6 +5,7 @@ import pytest
 from src.app.services.catalog_persisted_presentation_service import (
     CatalogPersistedPresentationService,
 )
+from src.domain.model.translation_result import TranslationOutcome, TranslationResult
 
 
 class _Uow:
@@ -71,3 +72,39 @@ async def test_english_grocery_names_skip_database_reads():
 
     assert await service.get_grocery_translations(_categories(), "en") == {}
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_delegates_when_a_text_translator_is_configured():
+    class _Translator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[str], str, str]] = []
+
+        async def translate_texts(self, texts, source_language, target_language):
+            self.calls.append((list(texts), source_language, target_language))
+            return TranslationResult(
+                tuple(f"en:{text}" for text in texts),
+                TranslationOutcome.TRANSLATED,
+                source_language,
+                target_language,
+            )
+
+    translator = _Translator()
+    service = CatalogPersistedPresentationService(
+        lambda: None, text_translator=translator
+    )
+
+    result = await service.translate_texts(["ớt", "củ"], "vi", "en")
+
+    assert result.items == ("en:ớt", "en:củ")
+    assert translator.calls == [(["ớt", "củ"], "vi", "en")]
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_stays_unavailable_without_a_text_translator():
+    service = CatalogPersistedPresentationService(lambda: None)
+
+    result = await service.translate_texts(["ớt"], "vi", "en")
+
+    assert result.outcome is TranslationOutcome.UNAVAILABLE
+    assert result.items == ("ớt",)

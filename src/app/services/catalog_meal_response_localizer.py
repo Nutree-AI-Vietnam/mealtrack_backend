@@ -392,32 +392,51 @@ async def localize_grocery_categories(
     language: str,
     translation_service: TextTranslationService | None,
 ) -> tuple[Any, ...]:
-    """Translate item names in grocery categories when language is non-English."""
-    if language == "en" or translation_service is None or not categories:
+    """Translate grocery names, and Vietnamese units when the request is English.
+
+    English requests still translate catalog copy that is Vietnamese. Prepared
+    English grocery maps are empty for rows with no food reference, so those
+    names and units use the same batched presentation translator as other
+    catalog copy.
+    """
+    if translation_service is None or not categories:
         return tuple(categories)
 
-    persisted_loader = getattr(translation_service, "get_grocery_translations", None)
-    if callable(persisted_loader):
-        persisted_translations = await persisted_loader(categories, language)
-        return tuple(
-            replace(
-                cat,
-                items=tuple(
-                    replace(item, name=persisted_translations.get(item.name, item.name))
-                    for item in cat.items
-                ),
-            )
-            for cat in categories
+    if language != "en":
+        persisted_loader = getattr(
+            translation_service, "get_grocery_translations", None
         )
+        if callable(persisted_loader):
+            persisted_translations = await persisted_loader(categories, language)
+            return tuple(
+                replace(
+                    cat,
+                    items=tuple(
+                        replace(
+                            item, name=persisted_translations.get(item.name, item.name)
+                        )
+                        for item in cat.items
+                    ),
+                )
+                for cat in categories
+            )
 
-    item_names = [item.name for cat in categories for item in cat.items if item.name]
-    if not item_names:
+    texts: list[str] = []
+    for category in categories:
+        for item in category.items:
+            _append_unique(texts, item.name)
+            if language == "en":
+                _append_unique(texts, getattr(item, "unit", "") or "")
+    if not texts:
         return tuple(categories)
 
     translations: dict[str, str] = {}
     missing: list[str] = []
-    for text in set(item_names):
+    for text in texts:
         if language == "vi" and _is_vietnamese_text(text):
+            translations[text] = text
+            continue
+        if language == "en" and not _is_vietnamese_text(text):
             translations[text] = text
             continue
         cached = _CATALOG_TRANSLATION_CACHE.get((language, text))
@@ -430,7 +449,10 @@ async def localize_grocery_categories(
         try:
             for batch in iter_translation_batches(missing):
                 result = await translate_for_presentation(
-                    translation_service, batch, language
+                    translation_service,
+                    batch,
+                    language,
+                    source_language="vi" if language == "en" else "en",
                 )
                 if result.outcome is TranslationOutcome.UNAVAILABLE:
                     continue
@@ -449,9 +471,21 @@ async def localize_grocery_categories(
         replace(
             cat,
             items=tuple(
-                replace(item, name=translations.get(item.name, item.name))
+                _localize_grocery_item(item, translations, language=language)
                 for item in cat.items
             ),
         )
         for cat in categories
     )
+
+
+def _localize_grocery_item(
+    item: Any, translations: dict[str, str], *, language: str
+) -> Any:
+    name = translations.get(item.name, item.name)
+    unit = getattr(item, "unit", None)
+    if language == "en" and unit:
+        return replace(item, name=name, unit=translations.get(unit, unit))
+    if name == item.name:
+        return item
+    return replace(item, name=name)

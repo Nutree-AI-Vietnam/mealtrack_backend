@@ -127,6 +127,8 @@ async def translate_for_presentation(
     translation_service: Any | None,
     texts: Sequence[str],
     target_language: str,
+    *,
+    source_language: str = "en",
 ) -> TranslationResult:
     """Compatibility-named presentation wrapper used by catalog projections."""
 
@@ -134,6 +136,7 @@ async def translate_for_presentation(
         texts,
         target_language=target_language,
         translation_service=translation_service,
+        source_language=source_language,
     )
 
 
