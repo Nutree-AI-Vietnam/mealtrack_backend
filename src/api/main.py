@@ -42,6 +42,7 @@ from src.api.middleware.dev_auth_bypass import add_dev_auth_bypass
 from src.api.middleware.preview_body_limit import PreviewBodyLimitMiddleware
 from src.api.middleware.rate_limit import limiter
 from src.api.middleware.request_logger import RequestLoggerMiddleware
+from src.api.ops.memprof import start_if_enabled, startup_decision, stop_if_started
 from src.api.routes.app_download import router as app_download_router
 from src.api.routes.v1.activities import router as activities_router
 from src.api.routes.v1.admin_meal_catalog import router as admin_meal_catalog_router
@@ -67,6 +68,7 @@ from src.api.routes.v1.meal_recommendations import router as meal_recommendation
 from src.api.routes.v1.meal_scan_by_url import router as meal_scan_by_url_router
 from src.api.routes.v1.meal_suggestions import router as meal_suggestions_router
 from src.api.routes.v1.meals import router as meals_router
+from src.api.routes.v1.memprof import router as memprof_router
 from src.api.routes.v1.monitoring import router as monitoring_router
 from src.api.routes.v1.movement import router as movement_router
 from src.api.routes.v1.notifications import router as notifications_router
@@ -180,11 +182,39 @@ def initialize_firebase():
         raise
 
 
+def _start_memory_profiler() -> None:
+    """Start tracemalloc only when the opt-in profiler is allowed to run."""
+    decision = startup_decision()
+    if decision == "refuse_production":
+        logger.warning(
+            "MEMPROF_ENABLED is set but tracemalloc will not start "
+            "because ENVIRONMENT is production"
+        )
+        return
+    if decision == "refuse_unset_environment":
+        logger.warning(
+            "MEMPROF_ENABLED is set but tracemalloc will not start "
+            "because ENVIRONMENT is unset"
+        )
+        return
+    if decision != "start":
+        return
+    try:
+        if start_if_enabled():
+            logger.info(
+                "tracemalloc memory profiler started (nframe=25, pid=%s)",
+                os.getpid(),
+            )
+    except Exception:
+        logger.exception("memory profiler failed to start; continuing without it")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
     # Startup
     logger.info("Starting MealTrack API...")
+    _start_memory_profiler()
 
     # Initialize Firebase Admin SDK
     try:
@@ -262,6 +292,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down MealTrack API...")
+    try:
+        stop_if_started()
+    except Exception:
+        logger.exception("memory profiler shutdown failed")
 
     # First, while the database and cache are still up: running jobs record
     # their outcome on the way out.
@@ -339,6 +373,7 @@ app.include_router(root_health_router)
 app.include_router(health_router)
 app.include_router(admin_meal_catalog_router)
 app.include_router(admin_meal_catalog_import_router)
+app.include_router(memprof_router)
 app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)

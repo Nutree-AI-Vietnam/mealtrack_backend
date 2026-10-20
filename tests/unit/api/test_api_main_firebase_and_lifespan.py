@@ -204,6 +204,40 @@ async def test_warm_database_connection_uses_async_engine(monkeypatch):
     engine.context.connection.commit.assert_awaited_once()
 
 
+def test_lifespan_starts_tracemalloc_outside_production(monkeypatch, fresh_main):
+    import tracemalloc
+
+    from src.api.ops.memprof import reset_state_for_tests
+
+    monkeypatch.setenv("MEMPROF_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    reset_state_for_tests()
+    try:
+        with TestClient(fresh_main.app):
+            assert tracemalloc.is_tracing()
+            assert tracemalloc.get_traceback_limit() == 25
+        assert tracemalloc.is_tracing() is False
+    finally:
+        reset_state_for_tests()
+
+
+def test_lifespan_refuses_tracemalloc_in_production(monkeypatch, fresh_main, caplog):
+    import tracemalloc
+
+    from src.api.ops.memprof import reset_state_for_tests
+
+    monkeypatch.setenv("MEMPROF_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    reset_state_for_tests()
+    try:
+        with caplog.at_level("WARNING"):
+            with TestClient(fresh_main.app):
+                assert tracemalloc.is_tracing() is False
+        assert any("production" in record.message for record in caplog.records)
+    finally:
+        reset_state_for_tests()
+
+
 def test_development_static_uploads_mount(tmp_path, monkeypatch):
     from starlette.routing import Mount
 
