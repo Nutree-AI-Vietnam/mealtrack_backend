@@ -111,6 +111,7 @@ def test_local_hooks_not_registered_in_production(monkeypatch):
     import src.api.base_dependencies as dependencies
     import src.app.events.hydration.local_cache_invalidation as hydration_cache
     import src.app.events.meal.meal_events as meal_events
+    import src.app.events.movement.local_cache_invalidation as movement_cache
 
     monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "production")
     monkeypatch.setattr(
@@ -119,6 +120,7 @@ def test_local_hooks_not_registered_in_production(monkeypatch):
     meal_events.register_local_insight_hook(None)
     meal_events.register_local_cache_invalidation_hook(None)
     hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+    movement_cache.register_local_movement_cache_invalidation_hook(None)
 
     dependencies._register_local_insight_hook()
     dependencies._register_local_cache_invalidation_hook()
@@ -126,18 +128,44 @@ def test_local_hooks_not_registered_in_production(monkeypatch):
     assert meal_events._local_insight_hook is None
     assert meal_events._local_cache_invalidation_hook is None
     assert hydration_cache._local_hydration_cache_invalidation_hook is None
+    assert movement_cache._local_movement_cache_invalidation_hook is None
+
+
+def test_local_cache_hooks_not_registered_in_development_with_hosted_redis(
+    monkeypatch,
+):
+    import src.api.base_dependencies as dependencies
+    import src.app.events.hydration.local_cache_invalidation as hydration_cache
+    import src.app.events.meal.meal_events as meal_events
+    import src.app.events.movement.local_cache_invalidation as movement_cache
+
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(
+        dependencies.settings, "REDIS_URL", "rediss://default:pwd@upstash.io:6379"
+    )
+    meal_events.register_local_cache_invalidation_hook(None)
+    hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+    movement_cache.register_local_movement_cache_invalidation_hook(None)
+
+    dependencies._register_local_cache_invalidation_hook()
+
+    assert meal_events._local_cache_invalidation_hook is None
+    assert hydration_cache._local_hydration_cache_invalidation_hook is None
+    assert movement_cache._local_movement_cache_invalidation_hook is None
 
 
 def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
     import src.api.base_dependencies as dependencies
     import src.app.events.hydration.local_cache_invalidation as hydration_cache
     import src.app.events.meal.meal_events as meal_events
+    import src.app.events.movement.local_cache_invalidation as movement_cache
 
     monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "development")
     monkeypatch.setattr(dependencies.settings, "REDIS_URL", "redis://localhost:6379/0")
     meal_events.register_local_insight_hook(None)
     meal_events.register_local_cache_invalidation_hook(None)
     hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+    movement_cache.register_local_movement_cache_invalidation_hook(None)
 
     try:
         dependencies._register_local_insight_hook()
@@ -146,10 +174,12 @@ def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
         assert meal_events._local_insight_hook is not None
         assert meal_events._local_cache_invalidation_hook is not None
         assert hydration_cache._local_hydration_cache_invalidation_hook is not None
+        assert movement_cache._local_movement_cache_invalidation_hook is not None
     finally:
         meal_events.register_local_insight_hook(None)
         meal_events.register_local_cache_invalidation_hook(None)
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+        movement_cache.register_local_movement_cache_invalidation_hook(None)
 
 
 @pytest.mark.asyncio
@@ -160,6 +190,7 @@ async def test_registered_hydration_hook_purges_streak_on_local_redis(monkeypatc
     import src.api.base_dependencies as dependencies
     import src.app.events.hydration.local_cache_invalidation as hydration_cache
     import src.app.events.meal.meal_events as meal_events
+    import src.app.events.movement.local_cache_invalidation as movement_cache
     from src.domain.cache.cache_keys import CacheKeys
 
     cache = AsyncMock()
@@ -176,8 +207,43 @@ async def test_registered_hydration_hook_purges_streak_on_local_redis(monkeypatc
     finally:
         meal_events.register_local_cache_invalidation_hook(None)
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+        movement_cache.register_local_movement_cache_invalidation_hook(None)
 
     cache.invalidate.assert_any_await(CacheKeys.user_streak("user-1")[0])
+
+
+@pytest.mark.asyncio
+async def test_registered_movement_hook_purges_day_totals_on_local_redis(monkeypatch):
+    from datetime import date
+    from unittest.mock import AsyncMock
+
+    import src.api.base_dependencies as dependencies
+    import src.app.events.hydration.local_cache_invalidation as hydration_cache
+    import src.app.events.meal.meal_events as meal_events
+    import src.app.events.movement.local_cache_invalidation as movement_cache
+    from src.domain.cache.cache_keys import CacheKeys
+
+    cache = AsyncMock()
+    cache.redis = type("Redis", (), {"_redis_url": "redis://localhost:6379/0"})()
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(dependencies.settings, "REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(dependencies, "get_cache_service", lambda: cache)
+
+    try:
+        dependencies._register_local_cache_invalidation_hook()
+        await movement_cache.invoke_local_movement_cache_invalidation_hook(
+            "user-1", date(2026, 10, 20)
+        )
+    finally:
+        meal_events.register_local_cache_invalidation_hook(None)
+        hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+        movement_cache.register_local_movement_cache_invalidation_hook(None)
+
+    cache.invalidate.assert_any_await(
+        CacheKeys.daily_macros("user-1", date(2026, 10, 20))[0]
+    )
+    deleted_keys = {call.args[0] for call in cache.invalidate.await_args_list}
+    assert CacheKeys.user_streak("user-1")[0] not in deleted_keys
 
 
 @pytest.mark.asyncio
@@ -187,13 +253,16 @@ async def test_shutdown_cache_layer_unregisters_local_cache_hooks(monkeypatch):
     import src.api.base_dependencies as dependencies
     import src.app.events.hydration.local_cache_invalidation as hydration_cache
     import src.app.events.meal.meal_events as meal_events
+    import src.app.events.movement.local_cache_invalidation as movement_cache
 
     monkeypatch.setattr(dependencies, "_cache_service", None)
     monkeypatch.setattr(dependencies, "_redis_client", None)
     meal_events.register_local_cache_invalidation_hook(AsyncMock())
     hydration_cache.register_local_hydration_cache_invalidation_hook(AsyncMock())
+    movement_cache.register_local_movement_cache_invalidation_hook(AsyncMock())
 
     await dependencies.shutdown_cache_layer()
 
     assert meal_events._local_cache_invalidation_hook is None
     assert hydration_cache._local_hydration_cache_invalidation_hook is None
+    assert movement_cache._local_movement_cache_invalidation_hook is None

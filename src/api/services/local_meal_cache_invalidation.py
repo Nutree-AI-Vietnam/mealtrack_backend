@@ -1,4 +1,4 @@
-"""Purge meal- and hydration-write Redis keys on the local Docker cache the Worker cannot reach."""
+"""Purge meal-, hydration- and movement-write Redis keys on the local Docker cache the Worker cannot reach."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from src.domain.cache.cache_invalidation_operations import (
     DELETE_PATTERN,
     build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
+    build_movement_invalidation_operations,
 )
 from src.domain.ports.cache_port import CachePort
 
@@ -79,6 +80,27 @@ async def apply_hydration_write_cache_invalidation(
     except Exception:
         logger.warning(
             "local hydration cache invalidation failed user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+
+async def apply_movement_write_cache_invalidation(
+    cache: CachePort | None,
+    user_id: str,
+    log_date: date | datetime,
+) -> None:
+    """Delete activity, day-total and weekly budget keys on Docker Redis after a movement write."""
+    if cache is None or not user_id or _is_hosted_redis(cache):
+        return
+    try:
+        await _apply_operations(
+            cache,
+            build_movement_invalidation_operations(user_id, _as_date(log_date)),
+        )
+    except Exception:
+        logger.warning(
+            "local movement cache invalidation failed user_id=%s",
             user_id,
             exc_info=True,
         )
