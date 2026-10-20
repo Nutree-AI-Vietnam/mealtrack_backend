@@ -519,11 +519,21 @@ async def get_weekly_groceries(
         if result is None:
             raise HTTPException(status_code=404, detail="Weekly meal plan not found")
         _, categories = result
-        localized_categories = await localize_grocery_categories(
-            categories,
-            language=get_request_language(request),
-            translation_service=translation_service,
-        )
+        try:
+            localized_categories = await asyncio.wait_for(
+                localize_grocery_categories(
+                    categories,
+                    language=get_request_language(request),
+                    translation_service=translation_service,
+                ),
+                timeout=1.5,
+            )
+        except TimeoutError:
+            logger.info("Grocery localization timed out; using catalog names")
+            localized_categories = categories
+        except Exception:
+            logger.warning("Grocery localization failed; using catalog names")
+            localized_categories = categories
         items = [item for category in localized_categories for item in category.items]
         return WeeklyGroceriesResponse(
             total_items_count=len(items),

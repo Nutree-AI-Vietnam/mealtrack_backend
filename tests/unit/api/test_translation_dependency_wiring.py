@@ -42,7 +42,10 @@ def test_planner_translation_always_reads_persisted_overlays(monkeypatch):
 
     monkeypatch.delenv("CATALOG_PERSISTED_PRESENTATION_ENABLED", raising=False)
     monkeypatch.setattr(deps.settings, "OPENAI_API_KEY", "test-key")
+    sentinel = object()
+    monkeypatch.setattr(deps, "get_text_translation_service", lambda: sentinel)
 
-    assert isinstance(
-        deps.get_planner_translation_service(), CatalogPersistedPresentationService
-    )
+    service = deps.get_planner_translation_service()
+
+    assert isinstance(service, CatalogPersistedPresentationService)
+    assert service._text_translator is sentinel

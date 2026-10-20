@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
+from time import perf_counter
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +22,7 @@ from src.app.handlers.query_handlers.meal_planner.weekly_meal_planner_query_hand
     ListRecipesQueryHandler,
 )
 from src.app.queries.meal_planner import ListRecipesQuery
+from src.app.services.weekly_grocery_service import GroceryCategory, GroceryItem
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
@@ -127,6 +129,7 @@ def _app(
     food_reference_repository=None,
     authenticated=True,
     plan=_DEFAULT_PLAN,
+    translation_service=None,
 ):
     app = FastAPI()
     app.add_middleware(AcceptLanguageMiddleware)
@@ -136,7 +139,9 @@ def _app(
     event_bus = bus or _Bus(recipe, plan=plan)
     app.dependency_overrides[get_configured_event_bus] = lambda: event_bus
     app.dependency_overrides[get_text_translation_service] = lambda: None
-    app.dependency_overrides[get_planner_translation_service] = lambda: None
+    app.dependency_overrides[get_planner_translation_service] = lambda: (
+        translation_service
+    )
     app.dependency_overrides[get_async_food_reference_repository] = lambda: (
         food_reference_repository or _FoodReferenceRepository()
     )
@@ -409,6 +414,43 @@ def test_recipe_query_passes_meal_type_to_catalog_repository():
     asyncio.run(handler.handle(ListRecipesQuery(meal_type="dinner")))
 
     assert catalog_repository.meal_type == "dinner"
+
+
+def test_hung_grocery_translator_returns_original_names_within_timeout():
+    class _Hung:
+        async def translate_texts(self, texts, source_language, target_language):
+            await asyncio.sleep(5)
+
+    item = GroceryItem(
+        ingredient_id=7,
+        name="Hành tím",
+        category="fresh_produce",
+        total_needed=2,
+        unit="củ",
+        stock_amount=None,
+        status="needed",
+        quantity_confidence="exact",
+        remaining=2,
+    )
+
+    class _GroceryBus(_Bus):
+        async def send(self, query):
+            if query.__class__.__name__ == "GetWeeklyGroceriesQuery":
+                return (_plan(), (GroceryCategory("fresh_produce", (item,)),))
+            return await super().send(query)
+
+    started = perf_counter()
+    response = TestClient(_app(bus=_GroceryBus(), translation_service=_Hung())).get(
+        "/v1/meal-plans/plan-1/groceries",
+        headers={"Accept-Language": "en"},
+    )
+    elapsed = perf_counter() - started
+
+    assert response.status_code == 200
+    assert elapsed < 3
+    grocery = response.json()["categories"][0]["items"][0]
+    assert grocery["name"] == "Hành tím"
+    assert grocery["unit"] == "củ"
 
 
 def test_vietnamese_ai_proposal_uses_catalog_grocery_name_vi():

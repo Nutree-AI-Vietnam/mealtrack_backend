@@ -5,8 +5,9 @@ from src.domain.model.translation_result import TranslationResult
 
 
 class CatalogPersistedPresentationService:
-    def __init__(self, uow_factory):
+    def __init__(self, uow_factory, text_translator=None):
         self.uow_factory = uow_factory
+        self._text_translator = text_translator
 
     async def get_catalog_translations(self, meals, language):
         locale = normalize_language(language)
@@ -43,7 +44,11 @@ class CatalogPersistedPresentationService:
         return translated
 
     async def translate_texts(self, texts, *args):
-        # Generic copy without a recipe/version identity has no prepared authority.
+        # Grocery rows with Vietnamese display names and no food reference have
+        # no prepared English label. Delegate that presentation translate to the
+        # shared text translator when one is configured.
+        if self._text_translator is not None:
+            return await self._text_translator.translate_texts(texts, *args)
         return TranslationResult.unavailable(
             texts, source_language="en", target_language=args[-1] if args else "en"
         )

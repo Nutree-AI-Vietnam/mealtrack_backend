@@ -789,4 +789,7 @@ def get_planner_translation_service():
     )
     from src.infra.database.uow_async import AsyncUnitOfWork
 
-    return CatalogPersistedPresentationService(AsyncUnitOfWork.read_only)
+    return CatalogPersistedPresentationService(
+        AsyncUnitOfWork.read_only,
+        text_translator=get_text_translation_service(),
+    )
