@@ -3,7 +3,10 @@ import asyncio
 import pytest
 
 from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
-from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
+from src.app.services.chat_turn_orchestrator import (
+    ChatTurnOrchestrator,
+    PreparedChatTurn,
+)
 from src.domain.exceptions.chat_exceptions import (
     ChatBusyError,
     ChatInvalidCursorError,
@@ -3109,3 +3112,217 @@ async def test_regenerate_in_a_foreign_thread_is_not_found():
         )
 
     assert repo.reopened is None
+
+
+class _TrackedProviderStream:
+    """Async iterator whose aclose is explicit. Garbage collection does not close it."""
+
+    def __init__(
+        self,
+        owner: "_TrackedCompletion",
+        index: int,
+        deltas: list[ChatCompletionDelta],
+    ):
+        self.owner = owner
+        self.index = index
+        self._deltas = list(deltas)
+        self.consumed = 0
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.consumed >= len(self._deltas):
+            raise StopAsyncIteration
+        delta = self._deltas[self.consumed]
+        self.consumed += 1
+        return delta
+
+    async def aclose(self):
+        self.closed = True
+        self.owner.events.append(("close", self.index))
+
+
+class _TrackedCompletion:
+    def __init__(self, rounds: list[list[ChatCompletionDelta]]):
+        self._rounds = rounds
+        self.streams: list[_TrackedProviderStream] = []
+        self.events: list[tuple[str, int]] = []
+
+    def stream(self, **kwargs):
+        del kwargs
+        index = len(self.streams)
+        self.events.append(("open", index))
+        deltas = self._rounds[index] if index < len(self._rounds) else []
+        tracked = _TrackedProviderStream(self, index, deltas)
+        self.streams.append(tracked)
+        return tracked
+
+
+def _assert_previous_stream_closed(completion: _TrackedCompletion) -> None:
+    opens = [index for kind, index in completion.events if kind == "open"]
+    assert len(opens) >= 2
+    for index in opens[1:]:
+        previous = index - 1
+        close_at = completion.events.index(("close", previous))
+        open_at = completion.events.index(("open", index))
+        assert close_at < open_at
+    assert all(stream.closed for stream in completion.streams)
+
+
+class _StatusRepo(_FakeRepo):
+    def __init__(self, claim):
+        super().__init__(claim=claim)
+        self.status = claim.assistant_message.status
+
+    async def complete_assistant_message(self, **kwargs):
+        message = await super().complete_assistant_message(**kwargs)
+        self.status = ChatMessageStatus.COMPLETED
+        return message
+
+    async def fail_assistant_message(self, **kwargs):
+        message = await super().fail_assistant_message(**kwargs)
+        self.status = ChatMessageStatus.FAILED
+        return message
+
+
+@pytest.mark.asyncio
+async def test_blocked_chunk_closes_the_provider_stream():
+    completion = _TrackedCompletion(
+        [
+            [
+                ChatCompletionDelta(text="Try a peanut snack. "),
+                ChatCompletionDelta(
+                    text="And then more. ",
+                    done=True,
+                    usage=ChatUsage(
+                        input_tokens=4, output_tokens=8, model="gpt-5.6-luna"
+                    ),
+                ),
+            ]
+        ]
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, completion=completion)
+
+    await _stream(orchestrator, content="Cite protein guidance")
+
+    assert len(completion.streams) == 1
+    stream = completion.streams[0]
+    assert stream.closed
+    assert stream.consumed == 1
+    assert repo.completed is not None
+    assert "peanut" not in repo.completed["content"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_tool_call_and_output_limit_retry_close_the_previous_stream():
+    tool_completion = _TrackedCompletion(
+        [
+            [
+                ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    tool_calls=[
+                        {
+                            "id": "c1",
+                            "name": "check_daily_progress",
+                            "args": {"focus": "remaining_budget"},
+                        }
+                    ],
+                    usage=ChatUsage(
+                        input_tokens=6, output_tokens=4, model="gpt-5.6-luna"
+                    ),
+                )
+            ],
+            [
+                ChatCompletionDelta(text="Protein stays at your Nutree target. "),
+                ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    usage=ChatUsage(
+                        input_tokens=8, output_tokens=6, model="gpt-5.6-luna"
+                    ),
+                ),
+            ],
+        ]
+    )
+    tool_repo = _FakeRepo(claim=_claim())
+    tool_orchestrator = _orchestrator(tool_repo, completion=tool_completion)
+    await _stream(tool_orchestrator, content="Cite protein guidance")
+    _assert_previous_stream_closed(tool_completion)
+    assert tool_repo.completed is not None
+
+    retry_completion = _TrackedCompletion(
+        [
+            [
+                ChatCompletionDelta(text="Nếu"),
+                ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    truncated=True,
+                    usage=ChatUsage(
+                        input_tokens=10, output_tokens=900, model="gpt-5.6-luna"
+                    ),
+                ),
+            ],
+            [
+                ChatCompletionDelta(
+                    text="Dư 200 kcal trong bốn tháng là khoảng vài cân. "
+                ),
+                ChatCompletionDelta(
+                    text="",
+                    done=True,
+                    usage=ChatUsage(
+                        input_tokens=8, output_tokens=30, model="gpt-5.6-luna"
+                    ),
+                ),
+            ],
+        ]
+    )
+    retry_repo = _FakeRepo(claim=_claim())
+    retry_orchestrator = _orchestrator(retry_repo, completion=retry_completion)
+    events = [
+        event
+        async for event in retry_orchestrator.stream_turn(
+            user_id="u1",
+            content="Ăn ngày dư 200 trong 4 tháng lên mấy cân",
+            idempotency_key="key-1",
+            locale="vi",
+            header_timezone="UTC",
+            user_language="vi",
+        )
+    ]
+    _assert_previous_stream_closed(retry_completion)
+    assert events[-1].event == "message.completed"
+
+
+@pytest.mark.asyncio
+async def test_outer_aclose_leaves_the_message_terminal():
+    repo = _StatusRepo(_claim())
+    orchestrator = _orchestrator(repo)
+    prepared = PreparedChatTurn(
+        claim=repo.claim,
+        content="How much is left?",
+        locale="en",
+        header_timezone="UTC",
+        started=0.0,
+    )
+    stream = orchestrator.stream_prepared(user_id="u1", prepared=prepared)
+    started = await anext(stream)
+    assert started.event == "message.started"
+    assert repo.status == ChatMessageStatus.GENERATING
+
+    before = set(asyncio.all_tasks())
+    await stream.aclose()
+    spawned = [
+        task for task in asyncio.all_tasks() if task not in before and not task.done()
+    ]
+    if spawned:
+        await asyncio.gather(*spawned)
+
+    assert repo.status != ChatMessageStatus.GENERATING
+    assert repo.status == ChatMessageStatus.FAILED
+    assert repo.failed["error_code"] == "CHAT_CANCELLED"
+    assert repo.completed is None

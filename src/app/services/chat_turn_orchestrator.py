@@ -8,6 +8,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
@@ -245,6 +246,7 @@ class ChatTurnOrchestrator:
         self._circuit = circuit_breaker
         self._next_meals = next_meals
         self._follow_ups = follow_ups
+        self._abandoned_close_tasks: set[asyncio.Task[None]] = set()
 
     async def prepare_turn(
         self,
@@ -427,6 +429,7 @@ class ChatTurnOrchestrator:
         lease_task: asyncio.Task[None] | None = None
         lease_stop = asyncio.Event()
         reply_saved = False
+        generator_closed = False
         meal_photo_task: asyncio.Task[list[dict[str, Any]]] | None = None
         meal_photo_cards: list[dict[str, Any]] | None = None
         photos_saved = asyncio.Event()
@@ -1199,39 +1202,22 @@ class ChatTurnOrchestrator:
                     ),
                 },
             )
+        except GeneratorExit:
+            # Outer aclose() injects GeneratorExit at the yield. Yielding again
+            # raises RuntimeError, and awaiting here is not safe, so the
+            # terminal write is scheduled from finally.
+            generator_closed = True
+            raise
         except asyncio.CancelledError:
-            if reply_saved:
-                raise
-            partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
-            if partial:
-                try:
-                    await self._complete(
-                        claim.assistant_message,
-                        content=partial,
-                        usage=generation["usage"],
-                        citations=[],
-                        provider_response_id=generation.get("provider_response_id"),
-                        reply_payload=_reply_payload(
-                            suggestions=suggestions,
-                            follow_ups=[],
-                            discover_session_id=discover_session_id,
-                            intent=intent,
-                        ),
-                    )
-                except Exception:
-                    await self._fail(
-                        claim.assistant_message.id,
-                        "CHAT_CANCELLED",
-                        generation_id=claim.assistant_message.generation_id,
-                        content=partial,
-                    )
-            else:
-                await self._fail(
-                    claim.assistant_message.id,
-                    "CHAT_CANCELLED",
-                    generation_id=claim.assistant_message.generation_id,
+            if not reply_saved:
+                await self._persist_cancelled_turn(
+                    claim,
+                    sentences=sentences,
+                    generation=generation,
+                    suggestions=suggestions,
+                    discover_session_id=discover_session_id,
+                    intent=intent,
                 )
-            increment_metric("chat.turn.cancelled")
             raise
         except ChatProviderUnavailableError as exc:
             await self._save_partial_or_fail(
@@ -1286,6 +1272,15 @@ class ChatTurnOrchestrator:
                 "chat.turn.failed", attributes={"code": "CHAT_TURN_FAILED"}
             )
         finally:
+            if generator_closed and not reply_saved:
+                self._schedule_abandoned_turn(
+                    claim,
+                    sentences=sentences,
+                    generation=generation,
+                    suggestions=suggestions,
+                    discover_session_id=discover_session_id,
+                    intent=intent,
+                )
             lease_stop.set()
             if lease_task is not None and not lease_task.done():
                 lease_task.cancel()
@@ -1890,56 +1885,61 @@ class ChatTurnOrchestrator:
             generation["blocked"] = False
             generation["truncated"] = False
             try:
-                async for delta in self._completion.stream(
-                    model=self._model,
-                    system_instructions=instructions,
-                    grounding_message=grounding,
-                    history=history,
-                    user_message=user_message,
-                    max_output_tokens=budget,
-                    cache_kwargs=cache_kwargs,
-                    tools=generation.get("tools"),
-                ):
-                    if delta.provider_response_id:
-                        generation["provider_response_id"] = delta.provider_response_id
-                    if delta.usage is not None:
-                        generation["usage"] = delta.usage
-                    if delta.truncated:
-                        generation["truncated"] = True
-                    if delta.tool_calls is not None:
-                        generation["tool_calls"] = delta.tool_calls
-                    if delta.text:
-                        if first_token_at is None:
-                            first_token_at = time.perf_counter()
-                            distribution_metric(
-                                "chat.turn.ttft_ms",
-                                (first_token_at - started) * 1000,
-                                unit="millisecond",
+                async with aclosing(
+                    self._completion.stream(
+                        model=self._model,
+                        system_instructions=instructions,
+                        grounding_message=grounding,
+                        history=history,
+                        user_message=user_message,
+                        max_output_tokens=budget,
+                        cache_kwargs=cache_kwargs,
+                        tools=generation.get("tools"),
+                    )
+                ) as provider_stream:
+                    async for delta in provider_stream:
+                        if delta.provider_response_id:
+                            generation["provider_response_id"] = (
+                                delta.provider_response_id
                             )
-                        next_pending = _accept_stream_chunk(
-                            emitted="".join(kept),
-                            pending=pending,
-                            chunk=delta.text,
-                            allergies=allergies,
-                            chunks=chunks,
-                            context=context,
-                            meal_candidates=traceable_meals
-                            if traceable_meals is not None
-                            else meal_candidates,
-                            user_text=stated_user_text,
-                        )
-                        if next_pending is None:
-                            generation["blocked"] = True
-                            break
-                        kept.append(delta.text)
-                        pending = next_pending
-                        for sentence in buffer.push(delta.text):
-                            yielded_any = True
-                            yield sentence
-                        prefix = buffer.take_streamable_prefix()
-                        if prefix:
-                            yielded_any = True
-                            yield prefix
+                        if delta.usage is not None:
+                            generation["usage"] = delta.usage
+                        if delta.truncated:
+                            generation["truncated"] = True
+                        if delta.tool_calls is not None:
+                            generation["tool_calls"] = delta.tool_calls
+                        if delta.text:
+                            if first_token_at is None:
+                                first_token_at = time.perf_counter()
+                                distribution_metric(
+                                    "chat.turn.ttft_ms",
+                                    (first_token_at - started) * 1000,
+                                    unit="millisecond",
+                                )
+                            next_pending = _accept_stream_chunk(
+                                emitted="".join(kept),
+                                pending=pending,
+                                chunk=delta.text,
+                                allergies=allergies,
+                                chunks=chunks,
+                                context=context,
+                                meal_candidates=traceable_meals
+                                if traceable_meals is not None
+                                else meal_candidates,
+                                user_text=stated_user_text,
+                            )
+                            if next_pending is None:
+                                generation["blocked"] = True
+                                break
+                            kept.append(delta.text)
+                            pending = next_pending
+                            for sentence in buffer.push(delta.text):
+                                yielded_any = True
+                                yield sentence
+                            prefix = buffer.take_streamable_prefix()
+                            if prefix:
+                                yielded_any = True
+                                yield prefix
                 leftover = buffer.flush()
                 if leftover:
                     yielded_any = True
@@ -2220,6 +2220,83 @@ class ChatTurnOrchestrator:
             error_code,
             generation_id=claim.assistant_message.generation_id,
         )
+
+    async def _persist_cancelled_turn(
+        self,
+        claim: ChatTurnClaim,
+        *,
+        sentences: list[str],
+        generation: dict[str, Any],
+        suggestions: list[dict[str, Any]],
+        discover_session_id: str | None,
+        intent: str | None,
+    ) -> None:
+        """Save text the client already saw, or mark the turn CHAT_CANCELLED."""
+        partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
+        if partial:
+            try:
+                await self._complete(
+                    claim.assistant_message,
+                    content=partial,
+                    usage=generation["usage"],
+                    citations=[],
+                    provider_response_id=generation.get("provider_response_id"),
+                    reply_payload=_reply_payload(
+                        suggestions=suggestions,
+                        follow_ups=[],
+                        discover_session_id=discover_session_id,
+                        intent=intent,
+                    ),
+                )
+            except Exception:
+                await self._fail(
+                    claim.assistant_message.id,
+                    "CHAT_CANCELLED",
+                    generation_id=claim.assistant_message.generation_id,
+                    content=partial,
+                )
+        else:
+            await self._fail(
+                claim.assistant_message.id,
+                "CHAT_CANCELLED",
+                generation_id=claim.assistant_message.generation_id,
+            )
+        increment_metric("chat.turn.cancelled")
+
+    def _schedule_abandoned_turn(
+        self,
+        claim: ChatTurnClaim,
+        *,
+        sentences: list[str],
+        generation: dict[str, Any],
+        suggestions: list[dict[str, Any]],
+        discover_session_id: str | None,
+        intent: str | None,
+    ) -> None:
+        """Schedule the terminal write. Must not await: this runs during aclose."""
+        task = asyncio.create_task(
+            self._persist_cancelled_turn(
+                claim,
+                sentences=list(sentences),
+                generation={
+                    "usage": generation.get("usage") or ChatUsage(model=self._model),
+                    "provider_response_id": generation.get("provider_response_id"),
+                },
+                suggestions=list(suggestions),
+                discover_session_id=discover_session_id,
+                intent=intent,
+            )
+        )
+        self._abandoned_close_tasks.add(task)
+        task.add_done_callback(self._on_abandoned_close_done)
+
+    def _on_abandoned_close_done(self, task: asyncio.Task[None]) -> None:
+        self._abandoned_close_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning("chat abandoned generation close failed", exc_info=error)
 
     async def _fail(
         self,
