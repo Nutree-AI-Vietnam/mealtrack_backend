@@ -472,7 +472,7 @@ _MIXED_GROCERY_TRANSLATIONS = {
             "en",
             ("chili", "Rice", "Shallot", "Lime"),
             ("piece", "g", "piece", "piece"),
-            (["ớt", "củ", "Hành tím", "quả"], "vi", "en"),
+            (["ớt", "Hành tím"], "vi", "en"),
         ),
         (
             "vi",
@@ -543,7 +543,7 @@ async def test_english_groceries_translate_when_prepared_names_are_empty():
         "piece",
         "piece",
     )
-    assert service.translator.calls == [(["ớt", "củ", "Hành tím", "quả"], "vi", "en")]
+    assert service.translator.calls == [(["ớt", "Hành tím"], "vi", "en")]
 
 
 @pytest.mark.asyncio
@@ -574,3 +574,72 @@ async def test_vietnamese_groceries_keep_using_prepared_names():
         "piece",
         "quả",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("unit", "expected"),
+    [
+        ("củ", "piece"),
+        ("quả", "piece"),
+        ("trái", "piece"),
+        ("muỗng", "tbsp"),
+        ("muỗng cà phê", "tsp"),
+        ("thìa", "tbsp"),
+        ("bó", "bunch"),
+        ("gói", "pack"),
+        ("chai", "bottle"),
+        ("cái", "piece"),
+        ("lát", "slice"),
+        ("chén", "cup"),
+        ("tép", "clove"),
+    ],
+)
+async def test_common_vietnamese_units_are_not_sent_to_the_translator(unit, expected):
+    translator = _GroceryTranslator({"ớt": "chili"})
+    localized = await localize_grocery_categories(
+        (_GroceryCategory(items=(_GroceryItem("ớt", unit),)),),
+        language="en",
+        translation_service=translator,
+    )
+
+    assert localized[0].items[0].unit == expected
+    assert localized[0].items[0].name == "chili"
+    assert translator.calls == [(["ớt"], "vi", "en")]
+
+
+@pytest.mark.asyncio
+async def test_grocery_translation_failure_is_not_retried_inside_negative_cache():
+    from src.app.services.catalog_meal_response_localizer import (
+        _CATALOG_TRANSLATION_CACHE,
+        _CATALOG_TRANSLATION_MISS_CACHE,
+        _GROCERY_TRANSLATION_MISS_TTL_SECONDS,
+    )
+
+    class _Down:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        async def translate_texts(self, texts, source_language, target_language):
+            self.calls.append(list(texts))
+            return TranslationResult.unavailable(
+                texts,
+                source_language=source_language,
+                target_language=target_language,
+            )
+
+    translator = _Down()
+    categories = (_GroceryCategory(items=(_GroceryItem("ớt", "g"),)),)
+    first = await localize_grocery_categories(
+        categories, language="en", translation_service=translator
+    )
+    second = await localize_grocery_categories(
+        categories, language="en", translation_service=translator
+    )
+
+    assert first[0].items[0].name == second[0].items[0].name == "ớt"
+    assert translator.calls == [["ớt"]]
+    assert ("en", "ớt") not in _CATALOG_TRANSLATION_CACHE
+    assert ("en", "ớt") in _CATALOG_TRANSLATION_MISS_CACHE
+    assert _CATALOG_TRANSLATION_MISS_CACHE.ttl == _GROCERY_TRANSLATION_MISS_TTL_SECONDS
+    assert _GROCERY_TRANSLATION_MISS_TTL_SECONDS == 5 * 60

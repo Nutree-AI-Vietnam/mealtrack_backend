@@ -28,6 +28,44 @@ logger = logging.getLogger(__name__)
 _CATALOG_TRANSLATION_CACHE: TTLCache[tuple[str, str], str] = TTLCache(
     maxsize=4096, ttl=6 * 3600
 )
+_GROCERY_TRANSLATION_MISS_TTL_SECONDS = 5 * 60
+_CATALOG_TRANSLATION_MISS_CACHE: TTLCache[tuple[str, str], bool] = TTLCache(
+    maxsize=4096, ttl=_GROCERY_TRANSLATION_MISS_TTL_SECONDS
+)
+# Whole-unit labels. Longer phrases are exact keys, so "quả lớn" does not
+# collapse to the "quả" entry.
+_ENGLISH_GROCERY_UNITS = {
+    "củ": "piece",
+    "quả": "piece",
+    "trái": "piece",
+    "cái": "piece",
+    "miếng": "piece",
+    "khúc": "piece",
+    "lát": "slice",
+    "tép": "clove",
+    "nhánh": "stalk",
+    "bó": "bunch",
+    "gói": "pack",
+    "chai": "bottle",
+    "muỗng": "tbsp",
+    "muỗng canh": "tbsp",
+    "muỗng súp": "tbsp",
+    "muỗng cà phê": "tsp",
+    "thìa": "tbsp",
+    "thìa canh": "tbsp",
+    "thìa cà phê": "tsp",
+    "tô": "cup",
+    "chén": "cup",
+    "bát": "cup",
+    "cốc": "cup",
+    "quả lớn": "large",
+    "quả to": "large",
+    "trái lớn": "large",
+    "quả vừa": "medium",
+    "trái vừa": "medium",
+    "quả nhỏ": "small",
+    "trái nhỏ": "small",
+}
 _VIETNAMESE_CHARACTERS = frozenset(
     "ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ"
 )
@@ -37,6 +75,7 @@ def clear_catalog_presentation_cache() -> None:
     """Reset process-local catalog presentation translations. Tests only."""
 
     _CATALOG_TRANSLATION_CACHE.clear()
+    _CATALOG_TRANSLATION_MISS_CACHE.clear()
 
 
 class TextTranslationService(Protocol):
@@ -426,8 +465,10 @@ async def localize_grocery_categories(
         for item in category.items:
             _append_unique(texts, item.name)
             if language == "en":
-                _append_unique(texts, getattr(item, "unit", "") or "")
-    if not texts:
+                unit = getattr(item, "unit", "") or ""
+                if unit and _english_grocery_unit(unit) is None:
+                    _append_unique(texts, unit)
+    if not texts and language != "en":
         return tuple(categories)
 
     translations: dict[str, str] = {}
@@ -442,8 +483,11 @@ async def localize_grocery_categories(
         cached = _CATALOG_TRANSLATION_CACHE.get((language, text))
         if cached is not None:
             translations[text] = cached
-        else:
-            missing.append(text)
+            continue
+        if (language, text) in _CATALOG_TRANSLATION_MISS_CACHE:
+            translations[text] = text
+            continue
+        missing.append(text)
 
     if missing:
         try:
@@ -455,6 +499,7 @@ async def localize_grocery_categories(
                     source_language="vi" if language == "en" else "en",
                 )
                 if result.outcome is TranslationOutcome.UNAVAILABLE:
+                    _remember_grocery_translation_misses(language, batch)
                     continue
                 cacheable = translation_is_cacheable(result)
                 for index, text in enumerate(batch):
@@ -466,6 +511,9 @@ async def localize_grocery_categories(
                         _CATALOG_TRANSLATION_CACHE[(language, text)] = translated
         except Exception as exc:
             logger.warning("grocery localization failed: %s", exc)
+            _remember_grocery_translation_misses(
+                language, [text for text in missing if text not in translations]
+            )
 
     return tuple(
         replace(
@@ -479,13 +527,28 @@ async def localize_grocery_categories(
     )
 
 
+def _english_grocery_unit(unit: str) -> str | None:
+    key = " ".join(unit.casefold().split())
+    return _ENGLISH_GROCERY_UNITS.get(key)
+
+
+def _remember_grocery_translation_misses(language: str, texts: list[str]) -> None:
+    for text in texts:
+        _CATALOG_TRANSLATION_MISS_CACHE[(language, text)] = True
+
+
 def _localize_grocery_item(
     item: Any, translations: dict[str, str], *, language: str
 ) -> Any:
     name = translations.get(item.name, item.name)
     unit = getattr(item, "unit", None)
     if language == "en" and unit:
-        return replace(item, name=name, unit=translations.get(unit, unit))
+        mapped = _english_grocery_unit(unit)
+        return replace(
+            item,
+            name=name,
+            unit=mapped if mapped is not None else translations.get(unit, unit),
+        )
     if name == item.name:
         return item
     return replace(item, name=name)
