@@ -91,6 +91,10 @@ from src.infra.database.config_async import async_engine
 
 load_dotenv()
 
+# Routes already decorated this singleton. Hand it the Redis URL here so the
+# limiter module does not read settings itself.
+limiter.configure(settings.redis_url)
+
 # Initialize observability before creating the FastAPI app so provider integrations
 # can patch framework middleware.
 initialize_observability()
@@ -248,8 +252,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Event bus eager init failed (non-fatal): %s", e)
 
+    # Re-probe Redis only from this task. Request handling must not ping.
+    limiter.start_redis_probe()
     logger.info("MealTrack API started successfully!")
-    yield
+    try:
+        yield
+    finally:
+        await limiter.stop_redis_probe()
 
     # Shutdown
     logger.info("Shutting down MealTrack API...")
