@@ -18,8 +18,12 @@ class OpenAIChatEmbeddingAdapter(ChatEmbeddingPort):
         api_key: str,
         model: str = "text-embedding-3-small",
         timeout_seconds: float = 10.0,
+        max_retries: int = 0,
     ) -> None:
-        self._client = AsyncOpenAI(api_key=api_key, timeout=timeout_seconds)
+        # The SDK default (2 retries) honours Retry-After up to 120 s per retry.
+        self._client = AsyncOpenAI(
+            api_key=api_key, timeout=timeout_seconds, max_retries=max_retries
+        )
         self._model = model
 
     async def embed_query(self, text: str) -> list[float]:

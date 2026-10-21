@@ -144,6 +144,10 @@ _RETRYABLE_PROVIDER_MARKERS = (
     "504",
 )
 
+# Embedding only sharpens retrieval; full-text search still answers without it.
+# The SDK can sleep up to 120 s on a 429 Retry-After, so cap the whole step.
+CHAT_EMBEDDING_DEADLINE_SECONDS = 3.0
+
 
 class PromptCachePolicy(Protocol):
     def request_kwargs(
@@ -1779,7 +1783,8 @@ class ChatTurnOrchestrator:
     ) -> tuple[list[RetrievedKnowledgeChunk], list[float] | None]:
         embedding: list[float] | None = None
         try:
-            embedding = await self._embedding.embed_query(query)
+            async with asyncio.timeout(CHAT_EMBEDDING_DEADLINE_SECONDS):
+                embedding = await self._embedding.embed_query(query)
         except Exception:
             log_event(
                 "warning",
