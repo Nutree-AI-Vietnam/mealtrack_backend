@@ -392,11 +392,14 @@ async def _post_message(
 
     async def event_stream() -> AsyncIterator[bytes]:
         try:
-            async for event in orchestrator.stream_prepared(
-                user_id=user_id,
-                prepared=prepared,
-            ):
-                yield _encode_sse(event)
+            async with aclosing(
+                orchestrator.stream_prepared(
+                    user_id=user_id,
+                    prepared=prepared,
+                )
+            ) as events:
+                async for event in events:
+                    yield _encode_sse(event)
         finally:
             orchestrator.release_slot(prepared)
 

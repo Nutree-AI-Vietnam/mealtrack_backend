@@ -16,7 +16,11 @@ from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.chat import get_chat_turn_orchestrator
 from src.api.exception_handlers import register_exception_handlers
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
-from src.api.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from src.api.middleware.rate_limit import (
+    limiter,
+    rate_limit_exceeded_handler,
+    reset_limiter_counters,
+)
 from src.api.routes.v1 import chat as chat_mod
 from src.app.services.chat_turn_orchestrator import PreparedChatTurn
 from src.domain.exceptions.ai_job_exceptions import (
@@ -158,9 +162,9 @@ class _StubRunner:
 @pytest.fixture(autouse=True)
 def _reset_limiter():
     # Chat allows 10 messages a minute and the chat route tests never reset.
-    limiter._storage.reset()
+    reset_limiter_counters()
     yield
-    limiter._storage.reset()
+    reset_limiter_counters()
 
 
 def _app(orchestrator, ai_jobs, runner) -> FastAPI:

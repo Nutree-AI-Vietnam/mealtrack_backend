@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -8,7 +9,7 @@ from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.chat import get_chat_turn_orchestrator
 from src.api.exception_handlers import register_exception_handlers
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
-from src.api.middleware.rate_limit import limiter
+from src.api.middleware.rate_limit import limiter, reset_limiter_counters
 from src.api.routes.v1 import chat as chat_mod
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.app.services.chat_turn_orchestrator import PreparedChatTurn
@@ -34,9 +35,9 @@ from src.domain.utils.timezone_utils import utc_now
 @pytest.fixture(autouse=True)
 def _reset_rate_limits():
     # Both message routes share one per-user bucket across this module.
-    limiter._storage.reset()
+    reset_limiter_counters()
     yield
-    limiter._storage.reset()
+    reset_limiter_counters()
 
 
 class _StubOrchestrator:
@@ -662,6 +663,52 @@ def test_message_routes_share_one_rate_limit():
         statuses.append(response.status_code)
     assert statuses[:10] == [200] * 10
     assert statuses[10] == 429
+
+
+def test_client_disconnect_acloses_prepared_stream():
+    class _Body:
+        def __init__(self) -> None:
+            self.closed = False
+            self._sent = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._sent:
+                await asyncio.Event().wait()
+            self._sent = True
+            return ChatSseEvent(
+                event="message.started",
+                data={"thread_id": "t1", "assistant_message_id": "m-asst"},
+            )
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    class _Orchestrator(_StubOrchestrator):
+        def __init__(self) -> None:
+            super().__init__()
+            self.body = _Body()
+
+        def stream_prepared(self, **kwargs):
+            del kwargs
+            return self.body
+
+    orchestrator = _Orchestrator()
+    client = TestClient(_app(orchestrator))
+    with client.stream(
+        "POST",
+        "/v1/chat/messages",
+        json={"content": "Hello"},
+        headers={"Idempotency-Key": "k-close"},
+    ) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if line.strip():
+                break
+    # Do not gc.collect(): disconnect must aclose the orchestrator stream.
+    assert orchestrator.body.closed is True
 
 
 def test_list_threads_rejects_unknown_cursor():
