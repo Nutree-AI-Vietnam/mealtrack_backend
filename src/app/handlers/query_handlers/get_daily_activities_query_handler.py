@@ -67,10 +67,6 @@ class GetDailyActivitiesQueryHandler(
             if cached is not None:
                 return cached
 
-        meal_activities: list[dict[str, Any]] = []
-        workout_activities: list[dict[str, Any]] = []
-
-        fetch_ok = False
         try:
             async with AsyncUnitOfWork(read_only=True) as uow:
                 user_tz_str = await resolve_user_timezone_async(
@@ -91,9 +87,17 @@ class GetDailyActivitiesQueryHandler(
                 workout_activities = await self._get_workout_activities(
                     uow, query, tz, local_date, query.language or "en"
                 )
-            fetch_ok = True
         except Exception as e:
-            logger.error(f"Error getting activities: {str(e)}", exc_info=True)
+            # Clients treat a 200 as the whole day and drop rows it leaves out,
+            # so an empty or partial feed must not be returned or cached. The
+            # global handler logs the root-cause ERROR and answers 500.
+            logger.warning(
+                "Daily activities fetch failed for user %s on %s: %s",
+                query.user_id,
+                local_date,
+                type(e).__name__,
+            )
+            raise
 
         activities = meal_activities + workout_activities
         logger.info(
@@ -104,9 +108,7 @@ class GetDailyActivitiesQueryHandler(
             query.user_id,
             local_date,
         )
-        # Only cache a fully-successful fetch. Caching on the error path would
-        # pin an empty/partial feed for the whole TTL after a transient DB blip.
-        if self.cache_service and fetch_ok:
+        if self.cache_service:
             await self.cache_service.set_json(cache_key, activities, ttl)
         return activities
 
