@@ -9,8 +9,11 @@ application settings.
 If Redis errors, requests stay on an in-memory fixed window. They never ping
 Redis. A background task, started and stopped with the app lifespan, pings
 every five minutes while that fallback is active and switches back to Redis
-after a ping succeeds. A storage failure never fails the request: the memory
-window still applies, and if that window errors the request is allowed.
+after a ping succeeds. A failed ping is logged at DEBUG with the exception
+type only. Each Redis client is tagged with a generation; an error from an
+older generation does not move the limiter back to memory after that switch.
+A storage failure never fails the request: the memory window still applies,
+and if that window errors the request is allowed.
 """
 
 from __future__ import annotations
@@ -242,6 +245,14 @@ def _async_redis_target(storage_uri: str | None) -> tuple[str, str] | None:
 
 
 @dataclass(frozen=True)
+class _TaggedRedis:
+    """Request-path Redis client plus the generation that opened it."""
+
+    strategy: FixedWindowRateLimiter
+    generation: int
+
+
+@dataclass(frozen=True)
 class _RouteLimit:
     items: tuple[RateLimitItem, ...]
     key_func: Callable[..., Any]
@@ -266,7 +277,8 @@ class RateLimitGuard:
         self._redis_uri: str | None = None
         self._scheme = "async+memory"
         self._redis_failed = False
-        self._redis: FixedWindowRateLimiter | None = None
+        self._redis_generation = 0
+        self._redis: _TaggedRedis | None = None
         self._redis_loop: asyncio.AbstractEventLoop | None = None
         self._probe_interval = _REDIS_REPROBE_INTERVAL_SECONDS
         self._probe_task: asyncio.Task[None] | None = None
@@ -297,6 +309,8 @@ class RateLimitGuard:
         """Select Redis or memory. Does not connect; the client is loop-local."""
         self.socket_timeout = socket_timeout
         self._memory.clear()
+        # Drop in-flight clients. Their generation no longer matches.
+        self._redis_generation += 1
         self._redis_failed = False
         self._redis = None
         self._redis_loop = None
@@ -402,15 +416,16 @@ class RateLimitGuard:
         """
         if self._redis_uri is None or self._redis_failed:
             return
+        generation = self._redis_generation
         try:
             storage = _open_redis(self._redis_uri, self.socket_timeout)
         except Exception as exc:
-            self._mark_redis_failed(exc)
+            self._mark_redis_failed(exc, generation)
             return
         try:
             await asyncio.wait_for(storage.reset(), timeout=self.socket_timeout)
         except Exception as exc:
-            self._mark_redis_failed(exc)
+            self._mark_redis_failed(exc, generation)
         finally:
             await _close_redis(storage)
 
@@ -518,12 +533,12 @@ class RateLimitGuard:
             )
 
     async def _hit(self, item: RateLimitItem, key: str, bucket: str, cost: int) -> bool:
-        strategy = await self._redis_strategy()
-        if strategy is not None:
+        tagged = await self._redis_strategy()
+        if tagged is not None:
             try:
-                return await strategy.hit(item, key, bucket, cost=cost)
+                return await tagged.strategy.hit(item, key, bucket, cost=cost)
             except Exception as exc:
-                self._mark_redis_failed(exc)
+                self._mark_redis_failed(exc, tagged.generation)
         try:
             return self._memory.hit(
                 item.key_for(key, bucket), item.amount, item.get_expiry(), cost
@@ -535,23 +550,29 @@ class RateLimitGuard:
             )
             return True
 
-    async def _redis_strategy(self) -> FixedWindowRateLimiter | None:
+    async def _redis_strategy(self) -> _TaggedRedis | None:
         if self._redis_uri is None or self._redis_failed:
             return None
         loop = asyncio.get_running_loop()
         if self._redis is not None and self._redis_loop is loop:
             return self._redis
+        generation = self._redis_generation
         try:
             storage = _open_redis(self._redis_uri, self.socket_timeout)
         except Exception as exc:
-            self._mark_redis_failed(exc)
+            self._mark_redis_failed(exc, generation)
             return None
-        self._redis = FixedWindowRateLimiter(storage)
+        self._redis = _TaggedRedis(FixedWindowRateLimiter(storage), generation)
         self._redis_loop = loop
         return self._redis
 
-    def _mark_redis_failed(self, exc: BaseException) -> None:
-        if self._redis_failed:
+    def _mark_redis_failed(self, exc: BaseException, generation: int) -> None:
+        """Fail open only when ``generation`` is still the active Redis client.
+
+        A request can be awaiting ``hit`` on the client from before the probe
+        restored Redis. That error must not send the limiter back to memory.
+        """
+        if generation != self._redis_generation or self._redis_failed:
             return
         self._redis_failed = True
         self._redis = None
@@ -570,10 +591,13 @@ class RateLimitGuard:
                 recovered = await self._ping_redis()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                _log_probe_failure(exc)
                 continue
             if recovered:
                 self._switch_to_redis()
+            else:
+                _log_probe_failure(None)
 
     async def _ping_redis(self) -> bool:
         """One PING on a throwaway client. Callers are the probe task only."""
@@ -590,10 +614,19 @@ class RateLimitGuard:
     def _switch_to_redis(self) -> None:
         if not self._redis_failed or self._redis_uri is None:
             return
+        # Bump before clearing the failed flag so a client opened after the
+        # switch, and only that client, can fall back again.
+        self._redis_generation += 1
         self._redis_failed = False
         self._redis = None
         self._redis_loop = None
         logger.info("Rate limiter switched from memory to Redis")
+
+
+def _log_probe_failure(exc: BaseException | None) -> None:
+    """DEBUG only. The exception type is the whole payload; no URL or message."""
+    kind = type(exc).__name__ if exc is not None else "CheckFailed"
+    logger.debug("Rate limiter Redis probe failed (%s)", kind)
 
 
 def _open_redis(uri: str, socket_timeout: float) -> RedisStorage:

@@ -582,6 +582,128 @@ async def test_failed_reprobe_stays_on_memory(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_failed_probe_ping_logs_exception_type_at_debug(monkeypatch, caplog):
+    async def ping(self):
+        raise ConnectionError("redis://:s3cret-token@127.0.0.1:1/0 refused")
+
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+
+    with caplog.at_level(logging.DEBUG):
+        await _request_until_fallback(limited)
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            deadline = time.perf_counter() + 1.0
+            while time.perf_counter() < deadline:
+                if any(
+                    record.levelname == "DEBUG"
+                    and "Redis probe failed (ConnectionError)" in record.message
+                    for record in caplog.records
+                    if record.name == "src.api.middleware.rate_limit"
+                ):
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            await limited.stop_redis_probe()
+
+    probe_logs = [
+        record
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+        and "Redis probe failed" in record.message
+    ]
+    assert task is not None
+    assert probe_logs
+    assert limited.backend == "memory"
+    assert {record.levelname for record in probe_logs} == {"DEBUG"}
+    assert {record.message for record in probe_logs} == {
+        "Rate limiter Redis probe failed (ConnectionError)"
+    }
+    assert all(record.exc_info is None for record in probe_logs)
+    assert all(
+        "s3cret-token" not in record.message and "redis://" not in record.message
+        for record in probe_logs
+    )
+    assert all(
+        "s3cret-token" not in str(record.args) and "redis://" not in str(record.args)
+        for record in probe_logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_error_does_not_flip_back_to_memory(monkeypatch, caplog):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def hit(self, item, *identifiers, cost=1):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await release.wait()
+            raise ConnectionError("redis://:s3cret-token@127.0.0.1:1/0 stale")
+        if calls == 2:
+            raise ConnectionError("current failure")
+        if calls == 3:
+            return True
+        raise TimeoutError("fresh client")
+
+    async def ping(self):
+        return True
+
+    monkeypatch.setattr(rate_limit_mod.FixedWindowRateLimiter, "hit", hit)
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+    item = rate_limit_mod.parse_many("10/minute")[0]
+
+    with caplog.at_level(logging.INFO):
+        first = asyncio.create_task(limited._hit(item, "user", "/limited", 1))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert await limited._hit(item, "user", "/limited", 1) is True
+        assert calls == 2
+        assert limited.backend == "memory"
+
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            await _wait_for_backend(limited, "redis")
+            release.set()
+            assert await first is True
+            await asyncio.sleep(0)
+            assert calls == 2
+            assert limited.backend == "redis"
+
+            assert await limited._hit(item, "user", "/limited", 1) is True
+            assert calls == 3
+            assert limited.backend == "redis"
+
+            assert await limited._hit(item, "other", "/limited", 1) is True
+            assert calls == 4
+            assert limited.backend == "memory"
+        finally:
+            release.set()
+            if not first.done():
+                await first
+            await limited.stop_redis_probe()
+
+    switches = [
+        record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+        and "Redis to memory" in record.message
+    ]
+    assert task is not None
+    assert switches == [
+        "Rate limiter switched from Redis to memory (ConnectionError)",
+        "Rate limiter switched from Redis to memory (TimeoutError)",
+    ]
+    assert all(
+        "s3cret-token" not in message and "redis://" not in message
+        for message in _our_log_messages(caplog)
+    )
+
+
+@pytest.mark.asyncio
 async def test_redis_probe_cancels_on_shutdown():
     limited = create_limiter("redis://127.0.0.1:1/0")
     started = time.perf_counter()
