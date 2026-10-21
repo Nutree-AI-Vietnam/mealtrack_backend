@@ -150,15 +150,57 @@ def test_761_rightmost_public_on_the_cloudflare_chain_is_the_edge():
     assert get_ip_only_rate_limit_key(request) == visitor
 
 
-def test_direct_onrender_traffic_is_unchanged_from_761():
-    # Render recorded the visitor. There is no Cloudflare hop, so a
-    # CF-Connecting-IP header does not replace the #761 address.
-    forwarded = "1.1.1.1, 93.184.216.9"
-    direct = _Req(None, "10.9.9.9", forwarded)
-    with_header = _Req(None, "10.9.9.9", forwarded, cf_connecting_ip="8.8.8.8")
-    assert _rightmost_public_or_peer(direct) == "93.184.216.9"
-    assert get_client_ip(direct) == "93.184.216.9"
-    assert get_client_ip(with_header) == "93.184.216.9"
+def test_direct_onrender_traffic_arrives_on_renders_cloudflare_edge():
+    """client -> Render's Cloudflare -> Render proxy -> uvicorn.
+
+    *.onrender.com is proxied by Cloudflare. Cloudflare appends the visitor
+    to X-Forwarded-For and sets CF-Connecting-IP. Render's proxy appends the
+    Cloudflare edge it saw. #761's right-most public hop is that edge.
+    """
+    visitor = "93.184.216.9"
+    render_edge = "104.16.8.1"  # inside vendored 104.16.0.0/13
+    forwarded = f"1.1.1.1, {visitor}, {render_edge}"
+    without_header = _Req(None, "10.9.9.9", forwarded)
+    request = _Req(None, "10.9.9.9", forwarded, cf_connecting_ip=visitor)
+
+    assert _rightmost_public_or_peer(request) == render_edge
+    assert get_client_ip(without_header) == render_edge
+    assert get_client_ip(request) == visitor
+    assert get_ip_only_rate_limit_key(request) == visitor
+
+
+def test_ipv4_mapped_cf_connecting_ip_collapses_to_ipv4():
+    edge = "104.18.1.1"
+    plain = _Req(
+        None,
+        "10.9.9.9",
+        f"8.8.8.8, {edge}",
+        cf_connecting_ip="93.184.216.9",
+    )
+    mapped = _Req(
+        None,
+        "10.9.9.9",
+        f"8.8.8.8, {edge}",
+        cf_connecting_ip="::ffff:93.184.216.9",
+    )
+    assert get_client_ip(mapped) == "93.184.216.9"
+    assert get_ip_only_rate_limit_key(mapped) == get_ip_only_rate_limit_key(plain)
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["10.1.2.3", "203.0.113.5", "::ffff:10.1.2.3", "fd00::1"],
+)
+def test_non_global_cf_connecting_ip_falls_back_to_761(header):
+    edge = "172.64.1.1"  # inside vendored 172.64.0.0/13
+    request = _Req(
+        None,
+        "10.9.9.9",
+        f"93.184.216.9, {edge}",
+        cf_connecting_ip=header,
+    )
+    assert _rightmost_public_or_peer(request) == edge
+    assert get_client_ip(request) == edge
 
 
 def test_ipv6_cloudflare_range_uses_cf_connecting_ip():

@@ -61,11 +61,21 @@ def _is_cloudflare_ip(value: str) -> bool:
 
 
 def _parsed_ip(value: str) -> str | None:
-    """Canonical IP text, or None when the value is not an IP."""
+    """Canonical global IP, or None when the value is not one.
+
+    IPv4-mapped IPv6 (::ffff:a.b.c.d) collapses via ipv4_mapped so it shares a
+    rate-limit key with the dotted IPv4 form. Anything that is not global
+    (private, documentation, link-local, unique-local) is rejected.
+    """
     try:
-        return str(ipaddress.ip_address(value.strip()))
+        ip = ipaddress.ip_address(value.strip())
     except ValueError:
         return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if not ip.is_global:
+        return None
+    return str(ip)
 
 
 def _rightmost_public_or_peer(request) -> str:
@@ -89,9 +99,8 @@ def get_client_ip(request) -> str:
     """Client IP for rate-limit keys and request logs.
 
     Starts from the #761 hop. When that hop is inside Cloudflare's published
-    ranges, the visitor IP is CF-Connecting-IP. Trust that header only in that
-    case, and only when it parses as an IP. Otherwise keep the #761 hop, which
-    leaves direct Render traffic unchanged.
+    ranges, use CF-Connecting-IP if it normalizes to a global IP. A missing,
+    malformed, or non-global header keeps the #761 hop.
     """
     hop = _rightmost_public_or_peer(request)
     if _is_cloudflare_ip(hop):
