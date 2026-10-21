@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import socket
 import threading
 import time
@@ -463,6 +464,135 @@ def test_malformed_cf_connecting_ip_falls_back_to_761(header):
     )
     assert _rightmost_public_or_peer(request) == edge
     assert get_client_ip(request) == edge
+
+
+_SECRET_REDIS_URL = "redis://:s3cret-token@127.0.0.1:1/0"
+
+
+def _our_log_messages(caplog) -> list[str]:
+    return [
+        record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+    ]
+
+
+async def _request_until_fallback(limited):
+    app = _limited_app(limited, "10/minute")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.get("/limited")
+        second = await client.get("/limited")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert limited.backend == "memory"
+
+
+async def _wait_for_backend(limited, backend: str, timeout: float = 1.0) -> None:
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        if limited.backend == backend:
+            return
+        await asyncio.sleep(0.01)
+    assert limited.backend == backend
+
+
+def test_reprobe_interval_defaults_to_five_minutes():
+    limited = create_limiter(None)
+
+    assert limited.probe_interval == 300
+    assert limited.start_redis_probe(interval=0.01) is None
+
+
+@pytest.mark.asyncio
+async def test_fallback_then_successful_reprobe_switches_back_to_redis(
+    monkeypatch, caplog
+):
+    pings = 0
+
+    async def ping(self):
+        nonlocal pings
+        pings += 1
+        return True
+
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+
+    with caplog.at_level(logging.INFO):
+        await _request_until_fallback(limited)
+        assert pings == 0
+
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            assert task is not None
+            assert limited.probe_interval == 0.05
+            await _wait_for_backend(limited, "redis")
+        finally:
+            await limited.stop_redis_probe()
+
+    messages = _our_log_messages(caplog)
+    assert pings >= 1
+    assert limited.backend == "redis"
+    assert any(
+        record.levelname == "WARNING" and "Redis to memory" in record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+    )
+    assert any(
+        record.levelname == "INFO" and "memory to Redis" in record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+    )
+    assert all(
+        "s3cret-token" not in message and "redis://" not in message
+        for message in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_reprobe_stays_on_memory(monkeypatch, caplog):
+    pings = 0
+
+    async def ping(self):
+        nonlocal pings
+        pings += 1
+        return False
+
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+
+    with caplog.at_level(logging.INFO):
+        await _request_until_fallback(limited)
+        assert pings == 0
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            await asyncio.sleep(0.2)
+        finally:
+            await limited.stop_redis_probe()
+
+    messages = _our_log_messages(caplog)
+    assert task is not None
+    assert pings >= 1
+    assert limited.backend == "memory"
+    assert not any("memory to Redis" in message for message in messages)
+    assert all(
+        "s3cret-token" not in message and "redis://" not in message
+        for message in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_redis_probe_cancels_on_shutdown():
+    limited = create_limiter("redis://127.0.0.1:1/0")
+    started = time.perf_counter()
+    task = limited.start_redis_probe(interval=30)
+    assert task is not None
+    assert not task.done()
+
+    await limited.stop_redis_probe()
+
+    assert time.perf_counter() - started < 0.5
+    assert task.cancelled()
 
 
 @pytest.mark.asyncio

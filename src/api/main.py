@@ -252,8 +252,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Event bus eager init failed (non-fatal): %s", e)
 
+    # Re-probe Redis only from this task. Request handling must not ping.
+    limiter.start_redis_probe()
     logger.info("MealTrack API started successfully!")
-    yield
+    try:
+        yield
+    finally:
+        await limiter.stop_redis_probe()
 
     # Shutdown
     logger.info("Shutting down MealTrack API...")

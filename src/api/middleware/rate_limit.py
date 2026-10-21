@@ -6,10 +6,11 @@ A slow Redis therefore does not block the event loop. The Redis URL is
 injected through :meth:`RateLimitGuard.configure`; this module does not read
 application settings.
 
-If Redis errors, the process keeps using an in-memory fixed window for the
-rest of its lifetime and does not probe Redis again on the request path.
-A storage failure never fails the request: the in-memory window still applies,
-and if that window itself errors the request is allowed.
+If Redis errors, requests stay on an in-memory fixed window. They never ping
+Redis. A background task, started and stopped with the app lifespan, pings
+every five minutes while that fallback is active and switches back to Redis
+after a ping succeeds. A storage failure never fails the request: the memory
+window still applies, and if that window errors the request is allowed.
 """
 
 from __future__ import annotations
@@ -41,6 +42,8 @@ logger = logging.getLogger(__name__)
 # Injected URLs reuse settings.redis_url; this is not a separate setting.
 _REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
 _MEMORY_SWEEP_SECONDS = 60.0
+# Off the request path. Tests pass a shorter interval to start_redis_probe.
+_REDIS_REPROBE_INTERVAL_SECONDS = 300.0
 
 # Published Cloudflare proxy ranges.
 # Source: https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6
@@ -265,6 +268,8 @@ class RateLimitGuard:
         self._redis_failed = False
         self._redis: FixedWindowRateLimiter | None = None
         self._redis_loop: asyncio.AbstractEventLoop | None = None
+        self._probe_interval = _REDIS_REPROBE_INTERVAL_SECONDS
+        self._probe_task: asyncio.Task[None] | None = None
 
     @property
     def backend(self) -> str:
@@ -277,6 +282,11 @@ class RateLimitGuard:
     def scheme(self) -> str:
         """Configured storage scheme, without host or credentials."""
         return self._scheme
+
+    @property
+    def probe_interval(self) -> float:
+        """Seconds between off-request Redis pings while the limiter is on memory."""
+        return self._probe_interval
 
     def configure(
         self,
@@ -292,6 +302,7 @@ class RateLimitGuard:
         self._redis_loop = None
         self._redis_uri = None
         self._scheme = "async+memory"
+        self._probe_interval = _REDIS_REPROBE_INTERVAL_SECONDS
         target = _async_redis_target(storage_uri)
         if target is None:
             return
@@ -347,12 +358,47 @@ class RateLimitGuard:
     def clear_memory(self) -> None:
         self._memory.clear()
 
+    def start_redis_probe(
+        self, *, interval: float | None = None
+    ) -> asyncio.Task[None] | None:
+        """Ping Redis on a background task while the limiter is on memory.
+
+        The request path does not call this. ``interval`` replaces the default
+        five minutes; the running task reads it on its next sleep. No Redis URL
+        means there is nothing to probe.
+        """
+        if interval is not None:
+            if interval <= 0:
+                raise ValueError("Redis re-probe interval must be positive")
+            self._probe_interval = interval
+        if self._redis_uri is None:
+            return None
+        if self._probe_task is not None and not self._probe_task.done():
+            return self._probe_task
+        self._probe_task = asyncio.create_task(
+            self._probe_loop(), name="rate-limit-redis-probe"
+        )
+        return self._probe_task
+
+    async def stop_redis_probe(self) -> None:
+        """Cancel the background probe. Safe to call when it was never started."""
+        task = self._probe_task
+        self._probe_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     async def reset_redis(self) -> None:
-        """Clear Redis keys on a fresh client. A failure sticks to memory.
+        """Clear Redis keys on a fresh client.
 
         The request-path client stays on the application loop. Reset opens its
         own client so a sync test caller cannot bind that client to a loop it
-        then closes. Failure does not schedule a later probe.
+        then closes. A failure marks Redis unavailable; only the background
+        probe pings after that, never this method and never the request path.
         """
         if self._redis_uri is None or self._redis_failed:
             return
@@ -511,9 +557,43 @@ class RateLimitGuard:
         self._redis = None
         self._redis_loop = None
         logger.warning(
-            "Rate limiter Redis unavailable (%s); using in-memory storage",
+            "Rate limiter switched from Redis to memory (%s)",
             type(exc).__name__,
         )
+
+    async def _probe_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._probe_interval)
+            if self._redis_uri is None or not self._redis_failed:
+                continue
+            try:
+                recovered = await self._ping_redis()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                continue
+            if recovered:
+                self._switch_to_redis()
+
+    async def _ping_redis(self) -> bool:
+        """One PING on a throwaway client. Callers are the probe task only."""
+        if self._redis_uri is None:
+            return False
+        storage = _open_redis(self._redis_uri, self.socket_timeout)
+        try:
+            return bool(
+                await asyncio.wait_for(storage.check(), timeout=self.socket_timeout)
+            )
+        finally:
+            await _close_redis(storage)
+
+    def _switch_to_redis(self) -> None:
+        if not self._redis_failed or self._redis_uri is None:
+            return
+        self._redis_failed = False
+        self._redis = None
+        self._redis_loop = None
+        logger.info("Rate limiter switched from memory to Redis")
 
 
 def _open_redis(uri: str, socket_timeout: float) -> RedisStorage:
