@@ -3,12 +3,38 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+
+
+def _public_ip(value: str) -> str | None:
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    return str(ip) if ip.is_global else None
+
+
+def get_client_ip(request) -> str:
+    """Real client IP behind Render's proxy.
+
+    The socket peer is Render's internal proxy (10.x), shared by every caller.
+    Render appends the address it saw to X-Forwarded-For but keeps whatever the
+    client sent, so the leftmost entries can be faked. Reading from the right,
+    the first public address is the one Render's edge recorded; a client can
+    only add entries to its left. Without a public entry, the peer address is used.
+    """
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    for entry in reversed(forwarded.split(",")):
+        ip = _public_ip(entry)
+        if ip:
+            return ip
+    return get_remote_address(request)
 
 
 def get_user_id_or_ip(request):
@@ -31,12 +57,12 @@ def get_user_id_or_ip(request):
                 return uid
         except Exception:
             pass
-    return get_remote_address(request)
+    return get_client_ip(request)
 
 
 def get_ip_only_rate_limit_key(request):
     """Ignore Authorization. Unauthenticated routes must not key on JWT `sub`."""
-    return get_remote_address(request)
+    return get_client_ip(request)
 
 
 limiter = Limiter(key_func=get_user_id_or_ip)

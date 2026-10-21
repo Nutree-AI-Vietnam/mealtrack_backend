@@ -3,10 +3,9 @@ TDEE calculation API endpoints - Preview and calculation without authentication.
 """
 
 from fastapi import APIRouter, Depends, Request
-from slowapi.util import get_remote_address
 
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.api.middleware.rate_limit import limiter
+from src.api.middleware.rate_limit import get_ip_only_rate_limit_key, limiter
 from src.api.schemas.request import TdeeCalculationRequest
 from src.api.schemas.response import (
     TDEE_PREVIEW_CALCULATION_CONTRACT,
@@ -20,7 +19,7 @@ router = APIRouter(prefix="/v1/tdee", tags=["TDEE"])
 
 
 @router.post("/preview", response_model=TdeeCalculationResponse)
-@limiter.limit("10/minute", key_func=get_remote_address)
+@limiter.limit("10/minute", key_func=get_ip_only_rate_limit_key)
 async def preview_tdee(
     request: Request,
     payload: TdeeCalculationRequest,
