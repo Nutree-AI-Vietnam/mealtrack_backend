@@ -687,26 +687,29 @@ class ChatTurnOrchestrator:
                 # Cards are already chosen. Stream the model's sentence, and
                 # replace it with the template when that sentence is not usable.
                 streamed: list[str] = []
-                async for delta_text, replace in self._iter_meal_reply_deltas(
-                    context=context,
-                    chunks=chunks,
-                    history=history,
-                    user_message=current_user_message,
-                    generation=generation,
-                    intent=intent,
-                    suggestions=suggestions,
-                    history_messages=history_messages,
-                    earlier=earlier,
-                ):
-                    streamed.append(delta_text)
-                    yield ChatSseEvent(
-                        event="message.delta",
-                        data={
-                            "assistant_message_id": claim.assistant_message.id,
-                            "delta": delta_text,
-                            "replace": replace,
-                        },
+                async with aclosing(
+                    self._iter_meal_reply_deltas(
+                        context=context,
+                        chunks=chunks,
+                        history=history,
+                        user_message=current_user_message,
+                        generation=generation,
+                        intent=intent,
+                        suggestions=suggestions,
+                        history_messages=history_messages,
+                        earlier=earlier,
                     )
+                ) as meal_deltas:
+                    async for delta_text, replace in meal_deltas:
+                        streamed.append(delta_text)
+                        yield ChatSseEvent(
+                            event="message.delta",
+                            data={
+                                "assistant_message_id": claim.assistant_message.id,
+                                "delta": delta_text,
+                                "replace": replace,
+                            },
+                        )
                 meal_reply = (
                     "" if generation.get("blocked") else "".join(streamed).strip()
                 )
@@ -832,27 +835,32 @@ class ChatTurnOrchestrator:
                 iteration = 0
                 while iteration < max_tool_iterations:
                     iteration += 1
-                    async for delta_text in self._iter_validated_sentences(
-                        context=context,
-                        chunks=chunks,
-                        history=history,
-                        user_message=current_user_message,
-                        generation=generation,
-                        intent=intent,
-                        meal_candidates=suggestions,
-                        traceable_meals=_traceable_meals(suggestions, history_messages),
-                        earlier=earlier,
-                    ):
-                        if not delta_text:
-                            continue
-                        sentences.append(delta_text)
-                        yield ChatSseEvent(
-                            event="message.delta",
-                            data={
-                                "assistant_message_id": claim.assistant_message.id,
-                                "delta": delta_text,
-                            },
+                    async with aclosing(
+                        self._iter_validated_sentences(
+                            context=context,
+                            chunks=chunks,
+                            history=history,
+                            user_message=current_user_message,
+                            generation=generation,
+                            intent=intent,
+                            meal_candidates=suggestions,
+                            traceable_meals=_traceable_meals(
+                                suggestions, history_messages
+                            ),
+                            earlier=earlier,
                         )
+                    ) as sentence_stream:
+                        async for delta_text in sentence_stream:
+                            if not delta_text:
+                                continue
+                            sentences.append(delta_text)
+                            yield ChatSseEvent(
+                                event="message.delta",
+                                data={
+                                    "assistant_message_id": claim.assistant_message.id,
+                                    "delta": delta_text,
+                                },
+                            )
 
                     tool_calls = generation.get("tool_calls")
                     # A how/why question about the cards stays a written answer.
@@ -955,35 +963,41 @@ class ChatTurnOrchestrator:
                     )
                     first_retry_delta = True
                     try:
-                        async for delta_text in self._iter_validated_sentences(
-                            context=context,
-                            chunks=chunks,
-                            history=history,
-                            user_message=current_user_message,
-                            generation=generation,
-                            intent=intent,
-                            meal_candidates=suggestions,
-                            traceable_meals=_traceable_meals(
-                                suggestions, history_messages
-                            ),
-                            earlier=earlier,
-                            output_token_budget=min(
-                                self._max_output_tokens * 2,
-                                CHAT_OUTPUT_TOKEN_CEILING,
-                            ),
-                        ):
-                            if not delta_text:
-                                continue
-                            sentences.append(delta_text)
-                            yield ChatSseEvent(
-                                event="message.delta",
-                                data={
-                                    "assistant_message_id": claim.assistant_message.id,
-                                    "delta": delta_text,
-                                    "replace": already_streamed and first_retry_delta,
-                                },
+                        async with aclosing(
+                            self._iter_validated_sentences(
+                                context=context,
+                                chunks=chunks,
+                                history=history,
+                                user_message=current_user_message,
+                                generation=generation,
+                                intent=intent,
+                                meal_candidates=suggestions,
+                                traceable_meals=_traceable_meals(
+                                    suggestions, history_messages
+                                ),
+                                earlier=earlier,
+                                output_token_budget=min(
+                                    self._max_output_tokens * 2,
+                                    CHAT_OUTPUT_TOKEN_CEILING,
+                                ),
                             )
-                            first_retry_delta = False
+                        ) as sentence_stream:
+                            async for delta_text in sentence_stream:
+                                if not delta_text:
+                                    continue
+                                sentences.append(delta_text)
+                                yield ChatSseEvent(
+                                    event="message.delta",
+                                    data={
+                                        "assistant_message_id": (
+                                            claim.assistant_message.id
+                                        ),
+                                        "delta": delta_text,
+                                        "replace": already_streamed
+                                        and first_retry_delta,
+                                    },
+                                )
+                                first_retry_delta = False
                     except BaseException:
                         if sentences:
                             # The client already replaced the stump with this
@@ -1204,8 +1218,9 @@ class ChatTurnOrchestrator:
             )
         except GeneratorExit:
             # Outer aclose() injects GeneratorExit at the yield. Yielding again
-            # raises RuntimeError, and awaiting here is not safe, so the
-            # terminal write is scheduled from finally.
+            # raises RuntimeError. Awaiting during aclose is fine; only a
+            # further yield is forbidden. The terminal write is scheduled from
+            # finally so this handler can re-raise without yielding.
             generator_closed = True
             raise
         except asyncio.CancelledError:
@@ -1819,21 +1834,24 @@ class ChatTurnOrchestrator:
         generation["tool_calls"] = None
         first = True
         try:
-            async for delta in self._iter_validated_sentences(
-                context=context,
-                chunks=chunks,
-                history=history,
-                user_message=user_message,
-                generation=generation,
-                intent=intent,
-                meal_candidates=suggestions,
-                traceable_meals=_traceable_meals(suggestions, history_messages),
-                earlier=earlier,
-            ):
-                if not delta:
-                    continue
-                yield delta, first
-                first = False
+            async with aclosing(
+                self._iter_validated_sentences(
+                    context=context,
+                    chunks=chunks,
+                    history=history,
+                    user_message=user_message,
+                    generation=generation,
+                    intent=intent,
+                    meal_candidates=suggestions,
+                    traceable_meals=_traceable_meals(suggestions, history_messages),
+                    earlier=earlier,
+                )
+            ) as sentence_stream:
+                async for delta in sentence_stream:
+                    if not delta:
+                        continue
+                    yield delta, first
+                    first = False
         except ChatProviderUnavailableError:
             return
 
