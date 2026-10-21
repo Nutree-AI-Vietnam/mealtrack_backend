@@ -110,11 +110,15 @@ class MealRepositoryPort(ABC):
         user_id: str,
         start_date: date,
         end_date: date,
-        limit: int = 500,
+        limit: int | None = None,
         user_timezone: str | None = None,
         projection: Any = None,
     ) -> list[Meal]:
-        """Find meals created within a local date range, inclusive."""
+        """Find meals created within a local date range, inclusive, oldest first.
+
+        ``limit=None`` (the default) returns every row in the range. A limit
+        keeps the oldest rows and drops the newest days.
+        """
         return []
 
     async def find_recent_food_meals(

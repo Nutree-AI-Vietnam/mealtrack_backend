@@ -267,7 +267,7 @@ class TestMealRepository:
         user_id: str,
         start_date: date,
         end_date: date,
-        limit: int = 500,
+        limit: int | None = None,
         user_timezone: str | None = None,
         projection: MealProjection = MealProjection.FULL,
     ) -> list[Meal]:

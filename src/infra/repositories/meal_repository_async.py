@@ -435,10 +435,12 @@ class AsyncMealRepository(MealRepositoryPort):
         user_id: str,
         start_date: date,
         end_date: date,
-        limit: int = 500,
+        limit: int | None = None,
         user_timezone: str | None = None,
         projection: MealProjection = MealProjection.FULL,
     ) -> list[Meal]:
+        # Rows come oldest first, so a cap drops the newest days. The date
+        # range bounds the read; no limit by default.
         tz = get_zone_info(user_timezone) if user_timezone else UTC
         start_dt = datetime.combine(
             start_date, datetime.min.time(), tzinfo=tz
