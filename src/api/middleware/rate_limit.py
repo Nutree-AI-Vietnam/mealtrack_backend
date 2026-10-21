@@ -42,6 +42,38 @@ logger = logging.getLogger(__name__)
 _REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
 _MEMORY_SWEEP_SECONDS = 60.0
 
+# Published Cloudflare proxy ranges.
+# Source: https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6
+# Vendored 2026-10-21. Do not fetch these at runtime.
+_CLOUDFLARE_IP_RANGES: tuple[str, ...] = (
+    "173.245.48.0/20",
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "141.101.64.0/18",
+    "108.162.192.0/18",
+    "190.93.240.0/20",
+    "188.114.96.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "162.158.0.0/15",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "172.64.0.0/13",
+    "131.0.72.0/22",
+    "2400:cb00::/32",
+    "2606:4700::/32",
+    "2803:f800::/32",
+    "2405:b500::/32",
+    "2405:8100::/32",
+    "2a06:98c0::/29",
+    "2c0f:f248::/32",
+)
+
+_CLOUDFLARE_NETWORKS = tuple(
+    ipaddress.ip_network(cidr) for cidr in _CLOUDFLARE_IP_RANGES
+)
+
 
 def _public_ip(value: str) -> str | None:
     try:
@@ -51,8 +83,24 @@ def _public_ip(value: str) -> str | None:
     return str(ip) if ip.is_global else None
 
 
-def get_client_ip(request) -> str:
-    """Real client IP behind Render's proxy.
+def _is_cloudflare_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return False
+    return any(ip in network for network in _CLOUDFLARE_NETWORKS)
+
+
+def _parsed_ip(value: str) -> str | None:
+    """Canonical IP text, or None when the value is not an IP."""
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
+def _rightmost_public_or_peer(request) -> str:
+    """#761 selection: right-most public X-Forwarded-For hop, else the socket peer.
 
     The socket peer is Render's internal proxy (10.x), shared by every caller.
     Render appends the address it saw to X-Forwarded-For but keeps whatever the
@@ -66,6 +114,22 @@ def get_client_ip(request) -> str:
         if ip:
             return ip
     return get_remote_address(request)
+
+
+def get_client_ip(request) -> str:
+    """Client IP for rate-limit keys and request logs.
+
+    Starts from the #761 hop. When that hop is inside Cloudflare's published
+    ranges, the visitor IP is CF-Connecting-IP. Trust that header only in that
+    case, and only when it parses as an IP. Otherwise keep the #761 hop, which
+    leaves direct Render traffic unchanged.
+    """
+    hop = _rightmost_public_or_peer(request)
+    if _is_cloudflare_ip(hop):
+        connecting = _parsed_ip(request.headers.get("CF-Connecting-IP") or "")
+        if connecting is not None:
+            return connecting
+    return hop
 
 
 def get_user_id_or_ip(request):

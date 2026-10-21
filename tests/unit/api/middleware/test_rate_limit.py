@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from src.api.middleware import rate_limit as rate_limit_mod
 from src.api.middleware.rate_limit import (
+    _rightmost_public_or_peer,
     create_limiter,
     get_client_ip,
     get_ip_only_rate_limit_key,
@@ -23,12 +24,20 @@ from src.api.middleware.rate_limit import (
 
 
 class _Req:
-    def __init__(self, auth: str | None, ip: str, forwarded: str | None = None):
+    def __init__(
+        self,
+        auth: str | None,
+        ip: str,
+        forwarded: str | None = None,
+        cf_connecting_ip: str | None = None,
+    ):
         self.headers = {}
         if auth is not None:
             self.headers["Authorization"] = auth
         if forwarded is not None:
             self.headers["X-Forwarded-For"] = forwarded
+        if cf_connecting_ip is not None:
+            self.headers["CF-Connecting-IP"] = cf_connecting_ip
         self.client = type("C", (), {"host": ip})()
 
 
@@ -352,6 +361,108 @@ async def test_blackhole_redis_fails_open_without_blocking_the_loop():
     assert again.status_code == 200
     assert again_elapsed < fast_bound, again_elapsed
     assert limited.backend == "memory"
+
+
+def test_spoofed_cf_connecting_ip_from_a_non_cloudflare_hop_is_ignored():
+    # A client can send CF-Connecting-IP. It counts only when the hop #761
+    # already trusts is a Cloudflare address. A CF-looking entry on the left
+    # does not make the right-most public hop Cloudflare.
+    spoofed = _Req(
+        None,
+        "10.9.9.9",
+        "104.16.0.1, 93.184.216.9",
+        cf_connecting_ip="8.8.8.8",
+    )
+    assert get_client_ip(spoofed) == "93.184.216.9"
+    assert _rightmost_public_or_peer(spoofed) == "93.184.216.9"
+
+    # No public XFF hop: the socket peer is Render's proxy, not Cloudflare.
+    peer_only = _Req(None, "10.9.9.9", cf_connecting_ip="8.8.8.8")
+    assert get_client_ip(peer_only) == "10.9.9.9"
+
+
+def test_request_via_cloudflare_edge_uses_cf_connecting_ip():
+    edge = "104.18.1.1"  # inside vendored 104.16.0.0/13
+    visitor = "93.184.216.9"
+    request = _Req(
+        None,
+        "10.9.9.9",
+        f"{visitor}, {edge}",
+        cf_connecting_ip=visitor,
+    )
+    assert get_client_ip(request) == visitor
+    assert get_ip_only_rate_limit_key(request) == visitor
+
+
+def test_761_rightmost_public_on_the_cloudflare_chain_is_the_edge():
+    """client -> Cloudflare -> Render -> uvicorn.
+
+    Cloudflare appends the client IP to X-Forwarded-For and sets
+    CF-Connecting-IP. Render's proxy appends the Cloudflare edge IP.
+    #761's right-most public hop is that edge, so every visitor on the edge
+    would share one bucket. The key uses CF-Connecting-IP instead.
+    """
+    visitor = "93.184.216.9"
+    edge = "104.18.1.1"
+    request = _Req(
+        None,
+        "10.20.0.8",
+        f"45.33.32.77, {visitor}, {edge}",
+        cf_connecting_ip=visitor,
+    )
+
+    assert _rightmost_public_or_peer(request) == edge
+    assert get_client_ip(request) == visitor
+    assert get_ip_only_rate_limit_key(request) == visitor
+
+
+def test_direct_onrender_traffic_is_unchanged_from_761():
+    # Render recorded the visitor. There is no Cloudflare hop, so a
+    # CF-Connecting-IP header does not replace the #761 address.
+    forwarded = "1.1.1.1, 93.184.216.9"
+    direct = _Req(None, "10.9.9.9", forwarded)
+    with_header = _Req(None, "10.9.9.9", forwarded, cf_connecting_ip="8.8.8.8")
+    assert _rightmost_public_or_peer(direct) == "93.184.216.9"
+    assert get_client_ip(direct) == "93.184.216.9"
+    assert get_client_ip(with_header) == "93.184.216.9"
+
+
+def test_ipv6_cloudflare_range_uses_cf_connecting_ip():
+    edge = "2606:4700::1"  # inside vendored 2606:4700::/32
+    visitor = "2402:800:629d::1"
+    request = _Req(
+        None,
+        "10.9.9.9",
+        f"{visitor}, {edge}",
+        cf_connecting_ip=visitor,
+    )
+    assert _rightmost_public_or_peer(request) == edge
+    assert get_client_ip(request) == visitor
+
+
+def test_cloudflare_socket_peer_uses_cf_connecting_ip_when_xff_has_no_public_hop():
+    request = _Req(None, "104.16.0.1", "", cf_connecting_ip="93.184.216.9")
+    assert _rightmost_public_or_peer(request) == "104.16.0.1"
+    assert get_client_ip(request) == "93.184.216.9"
+
+
+def test_missing_cf_connecting_ip_on_a_cloudflare_hop_falls_back_to_761():
+    edge = "104.18.1.1"
+    request = _Req(None, "10.9.9.9", f"93.184.216.9, {edge}")
+    assert get_client_ip(request) == edge
+
+
+@pytest.mark.parametrize("header", ["not-an-ip", "", "999.1.1.1"])
+def test_malformed_cf_connecting_ip_falls_back_to_761(header):
+    edge = "172.64.1.1"  # inside vendored 172.64.0.0/13
+    request = _Req(
+        None,
+        "10.9.9.9",
+        f"93.184.216.9, {edge}",
+        cf_connecting_ip=header,
+    )
+    assert _rightmost_public_or_peer(request) == edge
+    assert get_client_ip(request) == edge
 
 
 @pytest.mark.asyncio
