@@ -7,21 +7,30 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Custom image tag (default: delivery)'
+        description: 'Optional extra tag. Only dev-* or exactly sit-<this commit SHA> is pushed.'
         required: false
-        default: 'delivery'
+        default: ''
+
+permissions:
+  contents: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Immutable GHCR repo (metadata-action lowercases). Render staging-instance
+  # is srv-d7eva9v41pts73f4g390, image-backed.
+  SIT_IMAGE: ghcr.io/nutree-ai-vietnam/mealtrack_backend
+  STAGING_SERVICE_ID: srv-d7eva9v41pts73f4g390
 
 jobs:
   build-and-push:
-    name: 🐳 Build and Push SIT Image
+    name: 🐳 Build and Push sit-<sha>
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: 📥 Checkout code
@@ -34,16 +43,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Manual dispatch can add one extra tag. The automatic tag is always
+      # sit-<this sha>. Any other sit- tag is refused so a dispatch cannot
+      # overwrite another commit. dev-* is the only other allowed prefix.
+      - name: Reject disallowed manual image tags
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG}" ]; then
+            echo "No extra tag; publishing sit-<full sha> only."
+            exit 0
+          fi
+          if [ "${TAG}" = "sit-${GITHUB_SHA}" ]; then
+            echo "Extra tag matches this commit."
+            exit 0
+          fi
+          case "${TAG}" in
+            dev-*) ;;
+            *)
+              echo "::error::manual tag must be dev-* or exactly sit-${GITHUB_SHA} (got '${TAG}')"
+              exit 1
+              ;;
+          esac
+
       - name: 🏷️ Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.event.inputs.tag || 'delivery' }}
-            type=sha,prefix=sit-
+            type=sha,prefix=sit-,format=long
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && (startsWith(inputs.tag, 'dev-') || inputs.tag == format('sit-{0}', github.sha)) }}
 
       - name: 🐳 Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -52,12 +87,262 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GIT_SHA=${{ github.sha }}
+          # Attestations change the pushed manifest digest, so Render's
+          # image.sha would not match build-and-push's digest output.
+          provenance: false
+          sbom: false
 
       - name: 📊 Image Summary
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          echo "## 🐳 SIT Image Published" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Tags Published" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## 🐳 SIT Image Published"
+            echo ""
+            echo "### Tags Published"
+            echo "\`\`\`"
+            echo "${IMAGE_TAGS}"
+            echo "\`\`\`"
+            echo ""
+            echo "Digest: \`${IMAGE_DIGEST}\`"
+            echo ""
+            echo "Floating \`:delivery\` is **not** pushed here. It is retagged only after the live deploy's image.sha equals this digest and this commit is still delivery HEAD. Migrations are not run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Staging only (push to delivery). Trigger the Render deploy hook for the
+  # pinned sit-<sha> image, poll until live, then retag :delivery in this
+  # same job. One job in the concurrency group: GitHub keeps a single pending
+  # job per group, so a separate promote job could replace the next push's
+  # deploy. Does not migrate.
+  # Secrets are the GitHub Environment `staging` secrets, same pattern as
+  # DATABASE_URL_DIRECT on migrate.yml.
+  deploy-staging:
+    name: 🚀 Deploy staging-instance (sit-${{ github.sha }})
+    needs: build-and-push
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: staging
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # Environment `staging` secrets, same lookup as migrate.yml.
+      HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      EXPECTED_DIGEST: ${{ needs.build-and-push.outputs.digest }}
+    steps:
+      # build-and-push is not in the concurrency group, so an older push can
+      # finish after a newer one. Deploy and retag only while this commit is
+      # still the delivery branch head.
+      - name: Skip when delivery HEAD has moved on
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA=$(gh api "repos/${{ github.repository }}/git/ref/heads/delivery" --jq .object.sha)
+          echo "delivery head: ${HEAD_SHA}"
+          echo "this commit: ${GITHUB_SHA}"
+          if [ "${HEAD_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "::notice::delivery head is ${HEAD_SHA}, not ${GITHUB_SHA}; skipping deploy and :delivery retag"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger Render deploy hook (pinned image)
+        if: steps.head.outputs.current == 'true'
+        run: |
+          set -euo pipefail
+          IMAGE="${SIT_IMAGE}:sit-${GITHUB_SHA}"
+          EXPECTED_TAG="sit-${GITHUB_SHA}"
+          export IMAGE EXPECTED_TAG
+          if [ -z "${HOOK}" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_STAGING secret is not set"; exit 1
+          fi
+          if [ -z "${RENDER_API_KEY}" ]; then
+            echo "::error::RENDER_API_KEY secret is not set; cannot verify the deploy before retagging :delivery"
+            exit 1
+          fi
+          if [ -z "${EXPECTED_DIGEST}" ]; then
+            echo "::error::build-and-push did not output an image digest; refusing to deploy"
+            exit 1
+          fi
+          ENC=$(python3 -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["IMAGE"],safe=""))')
+          # Do not print HOOK or curl stderr — the hook URL is a secret.
+          # A hook URL without ?key= must get imgURL as the first query param.
+          case "${HOOK}" in
+            *'?'*) SEP='&' ;;
+            *) SEP='?' ;;
+          esac
+          CODE=$(curl -sS --max-time 20 -o /tmp/resp -w '%{http_code}' -X POST "${HOOK}${SEP}imgURL=${ENC}" 2>/tmp/curl.err) || {
+            echo "::error::curl failed to reach Render deploy hook"
+            exit 1
+          }
+          if [ "${CODE}" = "401" ] || [ "${CODE}" = "403" ]; then
+            echo "::error::Render deploy hook returned HTTP ${CODE} (auth)"
+            exit 1
+          fi
+          if [ "${CODE}" = "202" ]; then
+            echo "::error::Render deploy hook returned HTTP 202 (another deploy already running); no deploy id"
+            exit 1
+          fi
+          if [ "${CODE}" -lt 200 ] || [ "${CODE}" -ge 300 ]; then
+            echo "::error::Render deploy hook returned HTTP ${CODE}"; exit 1
+          fi
+          echo "Deploy triggered for ${IMAGE} (HTTP ${CODE})"
+
+          DEPLOY_ID=$(python3 -c 'import json; d=json.load(open("/tmp/resp")); print((d.get("deploy") or {}).get("id") or "")') || DEPLOY_ID=""
+          if [ -z "${DEPLOY_ID}" ]; then
+            echo "::error::Render did not return a deploy id (HTTP ${CODE}); failing closed so :delivery is not retagged"
+            exit 1
+          fi
+          echo "Render deploy id: ${DEPLOY_ID}"
+
+          # timeout-minutes: 25. Worst-case poll is curl --max-time 20 + sleep 15.
+          # Reserve ~2 minutes for the hook POST and job overhead.
+          # (25 * 60 - 120) / (20 + 15) = 39, the approved poll cap.
+          POLL_INTERVAL_SECS=15
+          CURL_MAX_SECS=20
+          MAX_POLLS=$(( (25 * 60 - 120) / (CURL_MAX_SECS + POLL_INTERVAL_SECS) ))
+          echo "Polling Render deploy ${DEPLOY_ID} on ${STAGING_SERVICE_ID} (max ${MAX_POLLS} attempts)..."
+          i=0
+          while [ "${i}" -lt "${MAX_POLLS}" ]; do
+            i=$((i + 1))
+            rm -f /tmp/deploy.json
+            POLL_CODE=$(curl -sS --max-time "${CURL_MAX_SECS}" -o /tmp/deploy.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              "https://api.render.com/v1/services/${STAGING_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              2>/tmp/poll.err) || POLL_CODE="000"
+            if [ "${POLL_CODE}" = "401" ] || [ "${POLL_CODE}" = "403" ]; then
+              echo "::error::Render API returned HTTP ${POLL_CODE} (auth)"
+              exit 1
+            fi
+            if [ "${POLL_CODE}" = "404" ]; then
+              echo "::error::Render API returned HTTP 404 (deploy or service not found)"
+              exit 1
+            fi
+            if [ ! -s /tmp/deploy.json ]; then
+              STATUS="unknown"
+            else
+              STATUS=$(python3 -c 'import json; print(json.load(open("/tmp/deploy.json")).get("status") or "unknown")') || STATUS="unknown"
+            fi
+            echo "Poll ${i}/${MAX_POLLS} HTTP ${POLL_CODE} status=${STATUS}"
+            case "${STATUS}" in
+              live)
+                python3 - <<'PY'
+          import json, os, sys
+
+          def norm_digest(value):
+              value = (value or "").strip().lower()
+              if not value:
+                  return ""
+              if "@" in value:
+                  value = value.rsplit("@", 1)[-1]
+              hexpart = value.split(":", 1)[1] if value.startswith("sha256:") else value
+              if len(hexpart) == 64 and all(c in "0123456789abcdef" for c in hexpart):
+                  return "sha256:" + hexpart
+              return ""
+
+          def image_tag(ref):
+              ref = (ref or "").strip()
+              if not ref:
+                  return ""
+              last = ref.split("@", 1)[0].rsplit("/", 1)[-1]
+              if ":" in last:
+                  return last.rsplit(":", 1)[-1]
+              return ""
+
+          deploy = json.load(open("/tmp/deploy.json"))
+          image = deploy.get("image") or {}
+          if isinstance(image, str):
+              ref, sha = image, ""
+          else:
+              ref = (image.get("ref") or "").strip()
+              sha = (image.get("sha") or "").strip()
+          expected_tag = os.environ["EXPECTED_TAG"]
+          expected_image = os.environ["IMAGE"]
+          expected_digest = norm_digest(os.environ.get("EXPECTED_DIGEST") or "")
+          tag = image_tag(ref)
+          sha_digest = norm_digest(sha)
+          tag_ok = tag == expected_tag or ref == expected_image or ref == expected_tag or ref.endswith(":" + expected_tag)
+          # image.sha must equal the build digest. ref/tag is logged only.
+          print(f"image.ref={ref or '-'}")
+          print(f"image.sha={sha or '-'}")
+          print(f"ref/tag match={str(tag_ok).lower()} (tag={tag or '-'} expected={expected_tag})")
+          if sha_digest != expected_digest or not expected_digest:
+              print(
+                  "::error::image.sha does not equal the build digest "
+                  f"(image.sha={sha or '-'} build={expected_digest or '-'})"
+              )
+              sys.exit(1)
+          print("sha == build digest")
+          sys.exit(0)
+          PY
+                exit 0
+                ;;
+              build_failed|update_failed|canceled|deactivated|pre_deploy_failed)
+                echo "::error::Render deploy ${DEPLOY_ID} failed with status ${STATUS}"
+                exit 1
+                ;;
+            esac
+            sleep "${POLL_INTERVAL_SECS}"
+          done
+          echo "::error::Timed out polling Render deploy ${DEPLOY_ID}"
+          exit 1
+
+      # Re-read delivery HEAD. The poll can outlast a newer push, and retagging
+      # then would point :delivery back at this older digest. imgURL does not
+      # change imagePath. The retag below points :delivery at image@<build
+      # digest> only when image.sha matched and this commit is still HEAD.
+      - name: Confirm delivery HEAD before retag
+        id: before-retag
+        if: success() && steps.head.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA=$(gh api "repos/${{ github.repository }}/git/ref/heads/delivery" --jq .object.sha)
+          echo "delivery head: ${HEAD_SHA}"
+          echo "this commit: ${GITHUB_SHA}"
+          if [ "${HEAD_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "::notice::delivery head is ${HEAD_SHA}, not ${GITHUB_SHA}; skipping :delivery retag"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 🔑 Login to GitHub Container Registry
+        if: success() && steps.head.outputs.current == 'true' && steps.before-retag.outputs.current == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧰 Setup Buildx
+        if: success() && steps.head.outputs.current == 'true' && steps.before-retag.outputs.current == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Retag :delivery to the verified digest
+        if: success() && steps.head.outputs.current == 'true' && steps.before-retag.outputs.current == 'true'
+        env:
+          DIGEST: ${{ needs.build-and-push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          case "${DIGEST}" in
+            sha256:*) ;;
+            *)
+              echo "::error::refusing to retag :delivery without a sha256 digest"
+              exit 1
+              ;;
+          esac
+          SRC="${SIT_IMAGE}@${DIGEST}"
+          DST="${SIT_IMAGE}:delivery"
+          docker buildx imagetools create -t "${DST}" "${SRC}"
+          echo "Retagged ${DST} to ${SRC}"
