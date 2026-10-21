@@ -15,6 +15,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from src.api.middleware.rate_limit import get_client_ip
 from src.observability import set_request_context
 from src.planner_observability import (
     planner_operation,
@@ -212,12 +213,7 @@ class RequestLoggerMiddleware:
         )
 
     def _get_client_ip(self, request: Request) -> str:
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        if request.client:
-            return request.client.host
-        return "unknown"
+        return get_client_ip(request)
 
     def _get_user_id(self, request: Request) -> str | None:
         try:
