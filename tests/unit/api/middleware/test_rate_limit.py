@@ -1,14 +1,26 @@
+import asyncio
 import base64
 import json
+import logging
+import socket
+import threading
+import time
+from pathlib import Path
 
+import httpx
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
+from src.api.middleware import rate_limit as rate_limit_mod
 from src.api.middleware.rate_limit import (
     _rightmost_public_or_peer,
+    create_limiter,
     get_client_ip,
     get_ip_only_rate_limit_key,
     get_user_id_or_ip,
     rate_limit_exceeded_handler,
+    reset_limiter_counters,
 )
 
 
@@ -95,6 +107,261 @@ def test_ip_keys_use_forwarded_client_not_the_proxy_peer():
     second = _Req(None, "10.0.0.1", "93.184.216.2")
     assert get_ip_only_rate_limit_key(first) != get_ip_only_rate_limit_key(second)
     assert get_user_id_or_ip(first) == "93.184.216.1"
+
+
+def test_limiter_module_does_not_read_settings():
+    assert not hasattr(rate_limit_mod, "settings")
+
+
+def test_application_injects_the_redis_url():
+    main = Path("src/api/main.py").read_text(encoding="utf-8")
+    assert "limiter.configure(settings.redis_url)" in main
+
+
+def test_limiter_uses_redis_storage_when_a_redis_url_is_configured():
+    limited = create_limiter("redis://127.0.0.1:6379/0")
+
+    assert limited.backend == "redis"
+    assert limited.scheme == "async+redis"
+    assert limited.key_func is get_user_id_or_ip
+    assert limited.socket_timeout == 1.0
+
+
+def test_tls_redis_url_uses_redis_storage():
+    limited = create_limiter("rediss://127.0.0.1:6379/0")
+
+    assert limited.backend == "redis"
+    assert limited.scheme == "async+rediss"
+
+
+def test_async_redis_url_is_accepted_as_is():
+    limited = create_limiter("async+redis://127.0.0.1:6379/0")
+
+    assert limited.backend == "redis"
+    assert limited.scheme == "async+redis"
+
+
+def test_redis_url_is_injected_explicitly():
+    limited = create_limiter(None)
+    assert limited.backend == "memory"
+    assert limited.scheme == "async+memory"
+
+    limited.configure("redis://127.0.0.1:6379/0")
+    assert limited.backend == "redis"
+    assert limited.scheme == "async+redis"
+
+    limited.configure(None)
+    assert limited.backend == "memory"
+    assert limited.scheme == "async+memory"
+
+
+def test_blank_redis_url_stays_on_memory_storage():
+    limited = create_limiter("  ")
+
+    assert limited.backend == "memory"
+    assert limited.scheme == "async+memory"
+    assert limited.key_func is get_user_id_or_ip
+
+
+def test_unsupported_scheme_stays_on_memory_storage():
+    limited = create_limiter("memory://")
+
+    assert limited.backend == "memory"
+    assert limited.scheme == "async+memory"
+
+
+def _limited_app(limited, rule: str):
+    app = FastAPI()
+
+    @app.get("/limited")
+    @limited.limit(rule)
+    async def limited_route(request: Request):
+        return {"ok": True}
+
+    app.state.limiter = limited
+    return app
+
+
+def test_storage_construction_error_falls_open_to_memory(monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(rate_limit_mod, "RedisStorage", boom)
+    limited = create_limiter("redis://127.0.0.1:6379/0")
+    assert limited.backend == "redis"
+    client = TestClient(_limited_app(limited, "1/minute"))
+
+    first = client.get("/limited")
+    second = client.get("/limited")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert limited.backend == "memory"
+    assert limited.key_func is get_user_id_or_ip
+
+
+def test_unreachable_redis_falls_back_to_memory_without_raising():
+    limited = create_limiter("redis://127.0.0.1:1/0", socket_timeout=0.3)
+    assert limited.backend == "redis"
+    client = TestClient(_limited_app(limited, "1/minute"))
+
+    first = client.get("/limited")
+    second = client.get("/limited")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert limited.backend == "memory"
+
+
+def test_shared_scope_is_one_bucket_and_paths_are_not():
+    limited = create_limiter(None)
+    app = FastAPI()
+
+    @app.get("/a")
+    @limited.shared_limit("1/minute", scope="chat_messages")
+    async def shared_a(request: Request):
+        return {"ok": True}
+
+    @app.get("/b")
+    @limited.shared_limit("1/minute", scope="chat_messages")
+    async def shared_b(request: Request):
+        return {"ok": True}
+
+    @app.get("/c")
+    @limited.limit("1/minute")
+    async def separate(request: Request):
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.get("/a").status_code == 200
+    assert client.get("/b").status_code == 429
+    assert client.get("/c").status_code == 200
+    assert client.get("/c").status_code == 429
+
+
+class _SilentPeer:
+    """TCP listener that accepts and never answers. A closed port is not this."""
+
+    def __init__(self) -> None:
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("127.0.0.1", 0))
+        self._sock.listen(32)
+        self._sock.settimeout(0.2)
+        self.port = self._sock.getsockname()[1]
+        self._stop = threading.Event()
+        self._held: list[socket.socket] = []
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+    def __enter__(self) -> "_SilentPeer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+        for conn in self._held:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        self._thread.join(timeout=1)
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                conn, _addr = self._sock.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            self._held.append(conn)
+
+
+@pytest.mark.asyncio
+async def test_blackhole_redis_fails_open_without_blocking_the_loop():
+    # A silent accept is not ECONNREFUSED. The first check must wait out the
+    # socket timeout, stay under this bound, and keep the loop scheduling.
+    socket_timeout = 0.5
+    request_bound = 1.5
+    fast_bound = 0.2
+    with _SilentPeer() as peer:
+        started = time.perf_counter()
+        limited = create_limiter(
+            f"redis://127.0.0.1:{peer.port}/0",
+            socket_timeout=socket_timeout,
+        )
+        assert time.perf_counter() - started < fast_bound
+        assert limited.backend == "redis"
+        assert limited.scheme == "async+redis"
+        app = _limited_app(limited, "2/minute")
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            ticks: list[float] = []
+
+            async def heartbeat() -> None:
+                while True:
+                    ticks.append(time.perf_counter())
+                    await asyncio.sleep(0.05)
+
+            heart = asyncio.create_task(heartbeat())
+            try:
+                started = time.perf_counter()
+                first = await asyncio.wait_for(
+                    client.get("/limited"), timeout=request_bound
+                )
+                elapsed = time.perf_counter() - started
+            finally:
+                heart.cancel()
+                try:
+                    await heart
+                except asyncio.CancelledError:
+                    pass
+            gaps = [ticks[index + 1] - ticks[index] for index in range(len(ticks) - 1)]
+
+            assert first.status_code == 200
+            assert elapsed < request_bound, elapsed
+            assert elapsed > socket_timeout / 2, elapsed
+            assert gaps, ticks
+            assert max(gaps) < 0.25, gaps
+            assert limited.backend == "memory"
+
+            follow_ups = []
+            for _ in range(2):
+                follow_started = time.perf_counter()
+                response = await asyncio.wait_for(
+                    client.get("/limited"), timeout=request_bound
+                )
+                follow_ups.append(
+                    (response.status_code, time.perf_counter() - follow_started)
+                )
+
+            assert [status for status, _latency in follow_ups] == [200, 429]
+            assert all(latency < fast_bound for _status, latency in follow_ups), (
+                follow_ups
+            )
+
+            # Sync fixtures call reset with no running loop. That path must
+            # not open another Redis probe after the limiter has failed open.
+            reset_started = time.perf_counter()
+            await asyncio.to_thread(reset_limiter_counters, limited)
+            reset_elapsed = time.perf_counter() - reset_started
+            assert reset_elapsed < fast_bound, reset_elapsed
+
+            again_started = time.perf_counter()
+            again = await asyncio.wait_for(
+                client.get("/limited"), timeout=request_bound
+            )
+            again_elapsed = time.perf_counter() - again_started
+
+    assert again.status_code == 200
+    assert again_elapsed < fast_bound, again_elapsed
+    assert limited.backend == "memory"
 
 
 def test_spoofed_cf_connecting_ip_from_a_non_cloudflare_hop_is_ignored():
@@ -197,6 +464,135 @@ def test_malformed_cf_connecting_ip_falls_back_to_761(header):
     )
     assert _rightmost_public_or_peer(request) == edge
     assert get_client_ip(request) == edge
+
+
+_SECRET_REDIS_URL = "redis://:s3cret-token@127.0.0.1:1/0"
+
+
+def _our_log_messages(caplog) -> list[str]:
+    return [
+        record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+    ]
+
+
+async def _request_until_fallback(limited):
+    app = _limited_app(limited, "10/minute")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.get("/limited")
+        second = await client.get("/limited")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert limited.backend == "memory"
+
+
+async def _wait_for_backend(limited, backend: str, timeout: float = 1.0) -> None:
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        if limited.backend == backend:
+            return
+        await asyncio.sleep(0.01)
+    assert limited.backend == backend
+
+
+def test_reprobe_interval_defaults_to_five_minutes():
+    limited = create_limiter(None)
+
+    assert limited.probe_interval == 300
+    assert limited.start_redis_probe(interval=0.01) is None
+
+
+@pytest.mark.asyncio
+async def test_fallback_then_successful_reprobe_switches_back_to_redis(
+    monkeypatch, caplog
+):
+    pings = 0
+
+    async def ping(self):
+        nonlocal pings
+        pings += 1
+        return True
+
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+
+    with caplog.at_level(logging.INFO):
+        await _request_until_fallback(limited)
+        assert pings == 0
+
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            assert task is not None
+            assert limited.probe_interval == 0.05
+            await _wait_for_backend(limited, "redis")
+        finally:
+            await limited.stop_redis_probe()
+
+    messages = _our_log_messages(caplog)
+    assert pings >= 1
+    assert limited.backend == "redis"
+    assert any(
+        record.levelname == "WARNING" and "Redis to memory" in record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+    )
+    assert any(
+        record.levelname == "INFO" and "memory to Redis" in record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+    )
+    assert all(
+        "s3cret-token" not in message and "redis://" not in message
+        for message in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_reprobe_stays_on_memory(monkeypatch, caplog):
+    pings = 0
+
+    async def ping(self):
+        nonlocal pings
+        pings += 1
+        return False
+
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+
+    with caplog.at_level(logging.INFO):
+        await _request_until_fallback(limited)
+        assert pings == 0
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            await asyncio.sleep(0.2)
+        finally:
+            await limited.stop_redis_probe()
+
+    messages = _our_log_messages(caplog)
+    assert task is not None
+    assert pings >= 1
+    assert limited.backend == "memory"
+    assert not any("memory to Redis" in message for message in messages)
+    assert all(
+        "s3cret-token" not in message and "redis://" not in message
+        for message in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_redis_probe_cancels_on_shutdown():
+    limited = create_limiter("redis://127.0.0.1:1/0")
+    started = time.perf_counter()
+    task = limited.start_redis_probe(interval=30)
+    assert task is not None
+    assert not task.done()
+
+    await limited.stop_redis_probe()
+
+    assert time.perf_counter() - started < 0.5
+    assert task.cancelled()
 
 
 @pytest.mark.asyncio
