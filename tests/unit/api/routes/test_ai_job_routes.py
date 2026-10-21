@@ -28,7 +28,11 @@ from src.api.dependencies.ai_jobs import get_ai_job_service
 from src.api.dependencies.auth import get_current_user_id
 from src.api.exception_handlers import register_exception_handlers
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
-from src.api.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from src.api.middleware.rate_limit import (
+    limiter,
+    rate_limit_exceeded_handler,
+    reset_limiter_counters,
+)
 from src.api.routes.v1 import ai_jobs as ai_jobs_mod
 from src.app.services.ai_jobs import AiJobCancelSignals, AiJobService, AiJobWakeup
 from src.domain.exceptions.ai_job_exceptions import (
@@ -65,7 +69,7 @@ class _Api:
 @pytest.fixture
 def make_api():
     apps: list[FastAPI] = []
-    limiter._storage.reset()
+    reset_limiter_counters()
 
     def build(*, enabled: bool = True, ready: bool = True) -> _Api:
         uow = FakeAiJobsUow()
@@ -95,7 +99,7 @@ def make_api():
     yield build
     for app in apps:
         app.dependency_overrides.clear()
-    limiter._storage.reset()
+    reset_limiter_counters()
 
 
 @pytest.fixture
