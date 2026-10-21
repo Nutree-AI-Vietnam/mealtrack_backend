@@ -242,6 +242,7 @@ ignore_imports =
     src.api.middleware.dev_auth_bypass -> src.infra.database.models.nutrition.nutrition
     src.api.middleware.dev_auth_bypass -> src.infra.database.models.user.profile
     src.api.middleware.dev_auth_bypass -> src.infra.database.models.user.user
+    src.api.middleware.rate_limit -> src.infra.config.settings
     src.api.routes.v1.activities -> src.infra.event_bus
     src.api.routes.v1.cheat_days -> src.infra.event_bus
     src.api.routes.v1.feature_flags -> src.infra.cache.cache_service

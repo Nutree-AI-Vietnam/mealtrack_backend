@@ -2,11 +2,15 @@ import base64
 import json
 
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
 from src.api.middleware.rate_limit import (
+    create_limiter,
     get_client_ip,
     get_ip_only_rate_limit_key,
     get_user_id_or_ip,
+    limiter,
     rate_limit_exceeded_handler,
 )
 
@@ -86,6 +90,83 @@ def test_ip_keys_use_forwarded_client_not_the_proxy_peer():
     second = _Req(None, "10.0.0.1", "93.184.216.2")
     assert get_ip_only_rate_limit_key(first) != get_ip_only_rate_limit_key(second)
     assert get_user_id_or_ip(first) == "93.184.216.1"
+
+
+def _storage_name(storage: object) -> str:
+    return type(storage).__name__
+
+
+def test_limiter_uses_redis_storage_when_a_redis_url_is_configured():
+    limited = create_limiter("redis://127.0.0.1:6379/0")
+
+    assert _storage_name(limited._storage) == "RedisStorage"
+    assert limited._key_func is get_user_id_or_ip
+    assert limited._in_memory_fallback_enabled is True
+    assert limited._swallow_errors is True
+    assert limited._storage_options["socket_connect_timeout"] == 1.0
+    assert limited._storage_options["socket_timeout"] == 1.0
+
+
+def test_tls_redis_url_uses_redis_storage():
+    limited = create_limiter("rediss://127.0.0.1:6379/0")
+
+    assert _storage_name(limited._storage) == "RedisStorage"
+    assert limited._in_memory_fallback_enabled is True
+
+
+def test_shared_limiter_uses_the_app_redis_url():
+    assert _storage_name(limiter._storage) == "RedisStorage"
+    assert limiter._key_func is get_user_id_or_ip
+    assert limiter._in_memory_fallback_enabled is True
+    assert limiter._swallow_errors is True
+
+
+def test_storage_construction_error_falls_open_to_memory(monkeypatch):
+    from slowapi import Limiter
+
+    from src.api.middleware import rate_limit as rate_limit_mod
+
+    def fail_redis(*args, **kwargs):
+        if kwargs.get("storage_uri"):
+            raise RuntimeError("storage unavailable")
+        return Limiter(*args, **kwargs)
+
+    monkeypatch.setattr(rate_limit_mod, "Limiter", fail_redis)
+    limited = rate_limit_mod.create_limiter("redis://127.0.0.1:6379/0")
+
+    assert _storage_name(limited._storage) == "MemoryStorage"
+    assert limited._key_func is get_user_id_or_ip
+    assert limited._swallow_errors is True
+
+
+def test_blank_redis_url_stays_on_memory_storage():
+    limited = create_limiter("  ")
+
+    assert _storage_name(limited._storage) == "MemoryStorage"
+    assert limited._key_func is get_user_id_or_ip
+
+
+def test_unreachable_redis_falls_back_to_memory_without_raising():
+    limited = create_limiter("redis://127.0.0.1:1/0")
+    assert _storage_name(limited._storage) == "RedisStorage"
+    app = FastAPI()
+
+    @app.get("/limited")
+    @limited.limit("1/minute")
+    def limited_route(request: Request):
+        return {"ok": True}
+
+    app.state.limiter = limited
+    client = TestClient(app)
+
+    first = client.get("/limited")
+    second = client.get("/limited")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert limited._storage_dead is True
+    assert _storage_name(limited._fallback_storage) == "MemoryStorage"
+    assert _storage_name(limited.limiter.storage) == "MemoryStorage"
 
 
 @pytest.mark.asyncio

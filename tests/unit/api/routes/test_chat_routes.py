@@ -8,7 +8,7 @@ from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.chat import get_chat_turn_orchestrator
 from src.api.exception_handlers import register_exception_handlers
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
-from src.api.middleware.rate_limit import limiter
+from src.api.middleware.rate_limit import limiter, reset_limiter_counters
 from src.api.routes.v1 import chat as chat_mod
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.app.services.chat_turn_orchestrator import PreparedChatTurn
@@ -34,9 +34,9 @@ from src.domain.utils.timezone_utils import utc_now
 @pytest.fixture(autouse=True)
 def _reset_rate_limits():
     # Both message routes share one per-user bucket across this module.
-    limiter._storage.reset()
+    reset_limiter_counters()
     yield
-    limiter._storage.reset()
+    reset_limiter_counters()
 
 
 class _StubOrchestrator:

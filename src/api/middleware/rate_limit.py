@@ -5,11 +5,21 @@ from __future__ import annotations
 import base64
 import ipaddress
 import json
+import logging
+from typing import cast
 
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+
+from src.infra.config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+# How long a rate-limit check may block on Redis before failing open.
+# The URL is settings.redis_url; this is not a separate setting.
+_REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
 
 
 def _public_ip(value: str) -> str | None:
@@ -65,7 +75,64 @@ def get_ip_only_rate_limit_key(request):
     return get_client_ip(request)
 
 
-limiter = Limiter(key_func=get_user_id_or_ip)
+def create_limiter(storage_uri: str | None) -> Limiter:
+    """Build a limiter. A Redis URL stores counters in Redis.
+
+    Redis errors fail open onto in-memory storage (original route limits) and
+    are swallowed so a storage outage cannot fail the request. A blank URI
+    stays in memory, which is also the construction fallback.
+    """
+    uri = (storage_uri or "").strip()
+    if not uri:
+        return Limiter(key_func=get_user_id_or_ip, swallow_errors=True)
+
+    try:
+        return Limiter(
+            key_func=get_user_id_or_ip,
+            storage_uri=uri,
+            # slowapi types this as dict[str, str]; redis-py timeouts are floats.
+            storage_options=cast(
+                dict[str, str],
+                {
+                    "socket_connect_timeout": _REDIS_SOCKET_TIMEOUT_SECONDS,
+                    "socket_timeout": _REDIS_SOCKET_TIMEOUT_SECONDS,
+                },
+            ),
+            in_memory_fallback_enabled=True,
+            swallow_errors=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Rate limiter could not use Redis storage (%s); using in-memory storage",
+            type(exc).__name__,
+        )
+        return Limiter(key_func=get_user_id_or_ip, swallow_errors=True)
+
+
+def reset_limiter_counters(target: Limiter | None = None) -> None:
+    """Clear counters. A down Redis does not raise; the memory fallback is cleared too."""
+    active = limiter if target is None else target
+    if not active._storage_dead:
+        try:
+            active._storage.reset()
+        except Exception as exc:
+            active._storage_dead = True
+            logger.debug(
+                "Rate limiter storage reset failed (%s)",
+                type(exc).__name__,
+            )
+    fallback = getattr(active, "_fallback_storage", None)
+    if fallback is not None:
+        try:
+            fallback.reset()
+        except Exception as exc:
+            logger.debug(
+                "Rate limiter memory fallback could not be reset (%s)",
+                type(exc).__name__,
+            )
+
+
+limiter = create_limiter(settings.redis_url)
 
 
 async def rate_limit_exceeded_handler(request, exc: RateLimitExceeded):
