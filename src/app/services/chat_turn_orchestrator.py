@@ -447,8 +447,9 @@ class ChatTurnOrchestrator:
 
         try:
             if claim.kind == ChatClaimKind.REPLAY:
-                async for event in self._replay(claim):
-                    yield event
+                async with aclosing(self._replay(claim)) as replayed:
+                    async for event in replayed:
+                        yield event
                 distribution_metric(
                     "chat.turn.latency_ms",
                     (time.perf_counter() - started) * 1000,
@@ -2291,7 +2292,11 @@ class ChatTurnOrchestrator:
         discover_session_id: str | None,
         intent: str | None,
     ) -> None:
-        """Schedule the terminal write. Must not await: this runs during aclose."""
+        """Schedule the terminal write from an aclose() finally.
+
+        Awaiting during aclose is allowed. Only yielding is forbidden, so
+        this method does not yield: it schedules the write and returns.
+        """
         task = asyncio.create_task(
             self._persist_cancelled_turn(
                 claim,

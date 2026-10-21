@@ -3389,6 +3389,57 @@ async def test_outer_close_during_tool_call_loop_acloses_provider_stream():
 
 
 @pytest.mark.asyncio
+async def test_outer_close_during_next_meal_stream_acloses_provider_stream():
+    cards = _three_cards()
+    completion = _TrackedCompletion(
+        [
+            [
+                ChatCompletionDelta(text="Egg rice bowl fits the rest of your day. "),
+                ChatCompletionDelta(
+                    text="Tap the card to see the recipe. ",
+                    done=True,
+                    usage=ChatUsage(
+                        input_tokens=8, output_tokens=12, model="gpt-5.6-luna"
+                    ),
+                ),
+            ]
+        ]
+    )
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo,
+        completion=completion,
+        next_meals=_FakeNextMeals(
+            NextMealCandidateResult(
+                suggestions=cards, session_id="sess-9", meal_slot="breakfast"
+            )
+        ),
+    )
+    prepared = _prepared_turn(repo.claim, content="What should I eat next?")
+    prepared.intent = "next_meal"
+    stream = orchestrator.stream_prepared(user_id="u1", prepared=prepared)
+    saw_model_delta = False
+    async for event in stream:
+        if event.event == "message.delta" and event.data.get("replace"):
+            saw_model_delta = True
+            break
+    assert saw_model_delta
+    # Assert before draining other tasks. The sentence generator's finalizer
+    # would close the provider on a later tick, which hides a missing aclosing.
+    # Do not gc.collect().
+    await stream.aclose()
+    assert len(completion.streams) == 1
+    assert completion.streams[0].closed
+    assert completion.streams[0].consumed == 1
+    current = asyncio.current_task()
+    spawned = [
+        task for task in asyncio.all_tasks() if task is not current and not task.done()
+    ]
+    if spawned:
+        await asyncio.gather(*spawned)
+
+
+@pytest.mark.asyncio
 async def test_outer_close_during_retry_loop_acloses_provider_stream():
     completion = _TrackedCompletion(
         [
