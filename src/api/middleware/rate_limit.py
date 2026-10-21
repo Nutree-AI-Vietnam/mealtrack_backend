@@ -1,25 +1,46 @@
-"""Rate limiting middleware using slowapi."""
+"""Request rate limits.
+
+Redis counters are checked with ``limits``' async redis-py client
+(``async+redis://`` / ``async+rediss://``), awaited from the route decorator.
+A slow Redis therefore does not block the event loop. The Redis URL is
+injected through :meth:`RateLimitGuard.configure`; this module does not read
+application settings.
+
+If Redis errors, the process keeps using an in-memory fixed window for the
+rest of its lifetime and does not probe Redis again on the request path.
+A storage failure never fails the request: the in-memory window still applies,
+and if that window itself errors the request is allowed.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import functools
+import inspect
 import ipaddress
 import json
 import logging
-from typing import cast
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
+from limits import RateLimitItem, parse_many
+from limits.aio.storage import RedisStorage
+from limits.aio.strategies import FixedWindowRateLimiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-
-from src.infra.config.settings import settings
+from slowapi.wrappers import Limit
+from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
-# How long a rate-limit check may block on Redis before failing open.
-# The URL is settings.redis_url; this is not a separate setting.
+# How long one Redis command may wait before the limiter fails open.
+# Injected URLs reuse settings.redis_url; this is not a separate setting.
 _REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
+_MEMORY_SWEEP_SECONDS = 60.0
 
 
 def _public_ip(value: str) -> str | None:
@@ -75,64 +96,413 @@ def get_ip_only_rate_limit_key(request):
     return get_client_ip(request)
 
 
-def create_limiter(storage_uri: str | None) -> Limiter:
-    """Build a limiter. A Redis URL stores counters in Redis.
+class _MemoryFixedWindow:
+    """In-process fixed window. No timer thread and no event-loop lock."""
 
-    Redis errors fail open onto in-memory storage (original route limits) and
-    are swallowed so a storage outage cannot fail the request. A blank URI
-    stays in memory, which is also the construction fallback.
-    """
-    uri = (storage_uri or "").strip()
-    if not uri:
-        return Limiter(key_func=get_user_id_or_ip, swallow_errors=True)
+    def __init__(self) -> None:
+        self._counts: dict[str, int] = {}
+        self._expires_at: dict[str, float] = {}
+        self._next_sweep = 0.0
 
-    try:
-        return Limiter(
-            key_func=get_user_id_or_ip,
-            storage_uri=uri,
-            # slowapi types this as dict[str, str]; redis-py timeouts are floats.
-            storage_options=cast(
-                dict[str, str],
-                {
-                    "socket_connect_timeout": _REDIS_SOCKET_TIMEOUT_SECONDS,
-                    "socket_timeout": _REDIS_SOCKET_TIMEOUT_SECONDS,
-                },
-            ),
-            in_memory_fallback_enabled=True,
-            swallow_errors=True,
+    def hit(self, key: str, limit: int, expiry: int, cost: int) -> bool:
+        now = time.monotonic()
+        self._sweep(now)
+        if self._expires_at.get(key, 0.0) <= now:
+            self._counts.pop(key, None)
+            self._expires_at.pop(key, None)
+        current = self._counts.get(key, 0) + cost
+        self._counts[key] = current
+        if current == cost:
+            self._expires_at[key] = now + expiry
+        return current <= limit
+
+    def _sweep(self, now: float) -> None:
+        if now < self._next_sweep:
+            return
+        self._next_sweep = now + _MEMORY_SWEEP_SECONDS
+        expired = [key for key, expiry in self._expires_at.items() if expiry <= now]
+        for key in expired:
+            self._counts.pop(key, None)
+            self._expires_at.pop(key, None)
+
+    def clear(self) -> None:
+        self._counts.clear()
+        self._expires_at.clear()
+        self._next_sweep = 0.0
+
+
+def _request_index(func: Callable[..., Any]) -> int:
+    for index, parameter in enumerate(inspect.signature(func).parameters.values()):
+        if parameter.name in {"request", "websocket"}:
+            return index
+    raise Exception(f'No "request" or "websocket" argument on function "{func}"')
+
+
+def _request_from_call(
+    args: tuple[Any, ...], kwargs: dict[str, Any], index: int
+) -> Request:
+    request = kwargs.get("request", args[index] if len(args) > index else None)
+    if not isinstance(request, Request):
+        raise Exception(
+            "parameter `request` must be an instance of starlette.requests.Request"
         )
-    except Exception as exc:
+    return request
+
+
+def _async_redis_target(storage_uri: str | None) -> tuple[str, str] | None:
+    """Return ``(async_uri, scheme)`` or None to stay on memory.
+
+    ``scheme`` is ``async+redis`` or ``async+rediss`` and never includes the host.
+    """
+    raw = (storage_uri or "").strip()
+    if not raw:
+        return None
+    for prefix, scheme in (
+        ("async+rediss://", "async+rediss"),
+        ("async+redis://", "async+redis"),
+        ("rediss://", "async+rediss"),
+        ("redis://", "async+redis"),
+    ):
+        if raw.startswith(prefix):
+            if prefix.startswith("async+"):
+                return raw, scheme
+            return f"async+{raw}", scheme
+    logger.warning(
+        "Rate limiter storage scheme %s is unsupported; using in-memory storage",
+        raw.split(":", 1)[0],
+    )
+    return None
+
+
+@dataclass(frozen=True)
+class _RouteLimit:
+    items: tuple[RateLimitItem, ...]
+    key_func: Callable[..., Any]
+    key_takes_request: bool
+    scope: str | None
+    per_method: bool
+    methods: tuple[str, ...] | None
+    error_message: str | None
+    exempt_when: Callable[..., bool] | None
+    exempt_takes_request: bool
+    cost: int | Callable[..., int]
+    override_defaults: bool
+
+
+class RateLimitGuard:
+    """Async fixed-window limiter with an injected Redis URL and memory fallback."""
+
+    def __init__(self) -> None:
+        self.key_func: Callable[..., Any] = get_user_id_or_ip
+        self.socket_timeout = _REDIS_SOCKET_TIMEOUT_SECONDS
+        self._memory = _MemoryFixedWindow()
+        self._redis_uri: str | None = None
+        self._scheme = "async+memory"
+        self._redis_failed = False
+        self._redis: FixedWindowRateLimiter | None = None
+        self._redis_loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def backend(self) -> str:
+        """``redis`` while Redis is the active store, otherwise ``memory``."""
+        if self._redis_uri is not None and not self._redis_failed:
+            return "redis"
+        return "memory"
+
+    @property
+    def scheme(self) -> str:
+        """Configured storage scheme, without host or credentials."""
+        return self._scheme
+
+    def configure(
+        self,
+        storage_uri: str | None,
+        *,
+        socket_timeout: float = _REDIS_SOCKET_TIMEOUT_SECONDS,
+    ) -> None:
+        """Select Redis or memory. Does not connect; the client is loop-local."""
+        self.socket_timeout = socket_timeout
+        self._memory.clear()
+        self._redis_failed = False
+        self._redis = None
+        self._redis_loop = None
+        self._redis_uri = None
+        self._scheme = "async+memory"
+        target = _async_redis_target(storage_uri)
+        if target is None:
+            return
+        uri, scheme = target
+        self._redis_uri = uri
+        self._scheme = scheme
+
+    def limit(
+        self,
+        limit_value: str,
+        key_func: Callable[..., Any] | None = None,
+        per_method: bool = False,
+        methods: list[str] | None = None,
+        error_message: str | None = None,
+        exempt_when: Callable[..., bool] | None = None,
+        cost: int | Callable[..., int] = 1,
+        override_defaults: bool = True,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        return self._decorate(
+            limit_value,
+            key_func=key_func,
+            scope=None,
+            per_method=per_method,
+            methods=methods,
+            error_message=error_message,
+            exempt_when=exempt_when,
+            cost=cost,
+            override_defaults=override_defaults,
+        )
+
+    def shared_limit(
+        self,
+        limit_value: str,
+        scope: str,
+        key_func: Callable[..., Any] | None = None,
+        error_message: str | None = None,
+        exempt_when: Callable[..., bool] | None = None,
+        cost: int | Callable[..., int] = 1,
+        override_defaults: bool = True,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        return self._decorate(
+            limit_value,
+            key_func=key_func,
+            scope=scope,
+            per_method=False,
+            methods=None,
+            error_message=error_message,
+            exempt_when=exempt_when,
+            cost=cost,
+            override_defaults=override_defaults,
+        )
+
+    def clear_memory(self) -> None:
+        self._memory.clear()
+
+    async def reset_redis(self) -> None:
+        """Clear Redis keys on a fresh client. A failure sticks to memory.
+
+        The request-path client stays on the application loop. Reset opens its
+        own client so a sync test caller cannot bind that client to a loop it
+        then closes. Failure does not schedule a later probe.
+        """
+        if self._redis_uri is None or self._redis_failed:
+            return
+        try:
+            storage = _open_redis(self._redis_uri, self.socket_timeout)
+        except Exception as exc:
+            self._mark_redis_failed(exc)
+            return
+        try:
+            await asyncio.wait_for(storage.reset(), timeout=self.socket_timeout)
+        except Exception as exc:
+            self._mark_redis_failed(exc)
+        finally:
+            await _close_redis(storage)
+
+    def _decorate(
+        self,
+        limit_value: str,
+        *,
+        key_func: Callable[..., Any] | None,
+        scope: str | None,
+        per_method: bool,
+        methods: list[str] | None,
+        error_message: str | None,
+        exempt_when: Callable[..., bool] | None,
+        cost: int | Callable[..., int],
+        override_defaults: bool,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        keyfunc = key_func or self.key_func
+        route = _RouteLimit(
+            items=tuple(parse_many(limit_value)),
+            key_func=keyfunc,
+            key_takes_request="request" in inspect.signature(keyfunc).parameters,
+            scope=scope,
+            per_method=per_method,
+            methods=tuple(method.lower() for method in methods) if methods else None,
+            error_message=error_message,
+            exempt_when=exempt_when,
+            exempt_takes_request=(
+                exempt_when is not None
+                and len(inspect.signature(exempt_when).parameters) == 1
+            ),
+            cost=cost,
+            override_defaults=override_defaults,
+        )
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            request_index = _request_index(func)
+
+            if asyncio.iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                    request = _request_from_call(args, kwargs, request_index)
+                    await self._check(request, route)
+                    return await func(*args, **kwargs)
+
+                return async_wrapper
+
+            @functools.wraps(func)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                # Sync routes run in FastAPI's threadpool, off the application
+                # loop. asyncio.run keeps the Redis await off that loop too.
+                request = _request_from_call(args, kwargs, request_index)
+                asyncio.run(self._check(request, route))
+                return func(*args, **kwargs)
+
+            return sync_wrapper
+
+        return decorator
+
+    async def _check(self, request: Request, route: _RouteLimit) -> None:
+        path = request.scope.get("path") or ""
+        bucket = route.scope or path
+        if not bucket:
+            return
+        if route.methods is not None and request.method.lower() not in route.methods:
+            return
+        if route.exempt_when is not None:
+            exempt = (
+                route.exempt_when(request)
+                if route.exempt_takes_request
+                else route.exempt_when()
+            )
+            if exempt:
+                return
+        if route.per_method:
+            bucket = f"{bucket}:{request.method}"
+        limit_key = (
+            route.key_func(request) if route.key_takes_request else route.key_func()
+        )
+        if not limit_key or not bucket:
+            return
+        cost = route.cost(request) if callable(route.cost) else route.cost
+        for item in route.items:
+            allowed = await self._hit(item, str(limit_key), bucket, int(cost))
+            if allowed:
+                continue
+            logger.warning(
+                "Rate limit exceeded at %s (%s/%ss)",
+                bucket,
+                item.amount,
+                item.get_expiry(),
+            )
+            raise RateLimitExceeded(
+                Limit(
+                    item,
+                    route.key_func,
+                    route.scope,
+                    route.per_method,
+                    list(route.methods) if route.methods is not None else None,
+                    route.error_message,
+                    route.exempt_when,
+                    route.cost,
+                    route.override_defaults,
+                )
+            )
+
+    async def _hit(self, item: RateLimitItem, key: str, bucket: str, cost: int) -> bool:
+        strategy = await self._redis_strategy()
+        if strategy is not None:
+            try:
+                return await strategy.hit(item, key, bucket, cost=cost)
+            except Exception as exc:
+                self._mark_redis_failed(exc)
+        try:
+            return self._memory.hit(
+                item.key_for(key, bucket), item.amount, item.get_expiry(), cost
+            )
+        except Exception as exc:
+            logger.warning(
+                "Rate limiter memory storage failed (%s); allowing request",
+                type(exc).__name__,
+            )
+            return True
+
+    async def _redis_strategy(self) -> FixedWindowRateLimiter | None:
+        if self._redis_uri is None or self._redis_failed:
+            return None
+        loop = asyncio.get_running_loop()
+        if self._redis is not None and self._redis_loop is loop:
+            return self._redis
+        try:
+            storage = _open_redis(self._redis_uri, self.socket_timeout)
+        except Exception as exc:
+            self._mark_redis_failed(exc)
+            return None
+        self._redis = FixedWindowRateLimiter(storage)
+        self._redis_loop = loop
+        return self._redis
+
+    def _mark_redis_failed(self, exc: BaseException) -> None:
+        if self._redis_failed:
+            return
+        self._redis_failed = True
+        self._redis = None
+        self._redis_loop = None
         logger.warning(
-            "Rate limiter could not use Redis storage (%s); using in-memory storage",
+            "Rate limiter Redis unavailable (%s); using in-memory storage",
             type(exc).__name__,
         )
-        return Limiter(key_func=get_user_id_or_ip, swallow_errors=True)
 
 
-def reset_limiter_counters(target: Limiter | None = None) -> None:
-    """Clear counters. A down Redis does not raise; the memory fallback is cleared too."""
+def _open_redis(uri: str, socket_timeout: float) -> RedisStorage:
+    # options are float | str | bool. Timeouts are floats; no Retry object.
+    return RedisStorage(
+        uri,
+        implementation="redispy",
+        socket_connect_timeout=socket_timeout,
+        socket_timeout=socket_timeout,
+    )
+
+
+async def _close_redis(storage: RedisStorage) -> None:
+    bridge = getattr(storage, "bridge", None)
+    client = getattr(bridge, "storage", None)
+    close = getattr(client, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception as exc:
+        logger.debug("Rate limiter Redis client close failed (%s)", type(exc).__name__)
+
+
+def create_limiter(
+    storage_uri: str | None,
+    *,
+    socket_timeout: float = _REDIS_SOCKET_TIMEOUT_SECONDS,
+) -> RateLimitGuard:
+    """Build a limiter for ``storage_uri``. A blank URI stays in memory."""
+    guard = RateLimitGuard()
+    guard.configure(storage_uri, socket_timeout=socket_timeout)
+    return guard
+
+
+def reset_limiter_counters(target: RateLimitGuard | None = None) -> None:
+    """Clear counters. A down Redis does not raise and is not retried later.
+
+    Callers are synchronous test fixtures. Memory is cleared here. Redis is
+    reset on a throwaway client only when this thread has no running loop, so
+    the request-path client is never moved onto a loop that is about to close.
+    """
     active = limiter if target is None else target
-    if not active._storage_dead:
-        try:
-            active._storage.reset()
-        except Exception as exc:
-            active._storage_dead = True
-            logger.debug(
-                "Rate limiter storage reset failed (%s)",
-                type(exc).__name__,
-            )
-    fallback = getattr(active, "_fallback_storage", None)
-    if fallback is not None:
-        try:
-            fallback.reset()
-        except Exception as exc:
-            logger.debug(
-                "Rate limiter memory fallback could not be reset (%s)",
-                type(exc).__name__,
-            )
+    active.clear_memory()
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(active.reset_redis())
 
 
-limiter = create_limiter(settings.redis_url)
+# Memory until the application injects settings.redis_url. Route decorators
+# bind this instance, so configure() mutates it instead of replacing it.
+limiter = RateLimitGuard()
 
 
 async def rate_limit_exceeded_handler(request, exc: RateLimitExceeded):

@@ -91,6 +91,10 @@ from src.infra.database.config_async import async_engine
 
 load_dotenv()
 
+# Routes already decorated this singleton. Hand it the Redis URL here so the
+# limiter module does not read settings itself.
+limiter.configure(settings.redis_url)
+
 # Initialize observability before creating the FastAPI app so provider integrations
 # can patch framework middleware.
 initialize_observability()
