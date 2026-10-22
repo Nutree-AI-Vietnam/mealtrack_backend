@@ -65,8 +65,8 @@ class RevenueCatAdapter(SubscriptionServicePort):
     ) -> bool:
         """Grant an entitlement from now until end_time_ms; False when it failed.
 
-        RevenueCat keeps a subscriber's latest promotional expiry, so resending
-        an end is a duplicate and an earlier end never shortens access.
+        RevenueCat may replace a subscriber's earlier custom promotional, so
+        callers send one subscriber's grants in order.
         """
         url = (
             f"{self.BASE_URL}/subscribers/{quote(app_user_id, safe='')}"

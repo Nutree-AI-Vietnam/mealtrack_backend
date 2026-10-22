@@ -1,4 +1,4 @@
-"""In-app MoMo one-time pass checkout and the MoMo IPN webhook."""
+"""In-app MoMo one-time pass checkout, activation and the MoMo IPN webhook."""
 
 import logging
 from typing import Literal
@@ -12,6 +12,7 @@ from src.bootstrap.momo_payments import (
     MomoBuyer,
     MomoGatewayError,
     MomoNotConfigured,
+    activate_momo_passes,
     get_momo_pass_service,
 )
 from src.domain.model.payments.momo_pass import (
@@ -109,6 +110,22 @@ async def get_momo_order(
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return order
+
+
+@router.post("/activate")
+@limiter.limit("10/minute")
+async def activate_momo_pass(
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+    token: dict = Depends(verify_firebase_token),
+):
+    """Settle, credit and grant the caller's MoMo passes, as sign-in does.
+
+    The app calls this on launch and resume while it lacks Premium. It never
+    fails: an outage answers ``has_pass`` false and a later call retries.
+    """
+    has_pass = await activate_momo_passes(user_id, momo_pass_email(token))
+    return {"has_pass": has_pass}
 
 
 @webhook_router.post("/ipn", status_code=status.HTTP_204_NO_CONTENT)

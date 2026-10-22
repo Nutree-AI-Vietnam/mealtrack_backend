@@ -83,10 +83,10 @@ def get_momo_pass_service() -> MomoPassService:
 
 
 async def activate_momo_passes(user_id: str, verified_email: str | None) -> bool:
-    """Grant pending passes on sign-in; True when the user now holds a pass.
+    """Grant pending passes on sign-in or app activate; True when one is held.
 
-    Never raises: a database or RevenueCat outage must not block sign-in, and
-    the next sync retries.
+    Never raises: a database or RevenueCat outage must not block sign-in or
+    the app, and the next status read, IPN, sign-in or activate retries.
     """
     try:
         return await get_momo_pass_service().activate(user_id, verified_email)

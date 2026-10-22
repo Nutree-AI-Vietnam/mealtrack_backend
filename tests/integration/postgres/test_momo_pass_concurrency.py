@@ -1,4 +1,4 @@
-"""MoMo passes under real row locks: one window per order, one MoMo query per slot.
+"""MoMo passes under real locks: one window per order, one MoMo query per slot.
 
 Concurrent deliveries, concurrent IPNs, an IPN racing a status poll, and
 concurrent polls run against Postgres. MoMo and RevenueCat are fakes; no real
@@ -166,7 +166,7 @@ async def test_concurrent_status_polls_ask_momo_once(factory, momo_fails):
     assert (await load_order(factory)).last_checked_at is not None
 
 
-async def test_momo_and_revenuecat_calls_run_outside_any_transaction(factory):
+async def test_remote_calls_hold_no_row_locks(factory):
     await seed(factory, momo_order())
     momo, revenuecat = FakeMomo(sessions=factory), SlowRevenueCat(sessions=factory)
     service = MomoPassService(factory, momo, MomoPassEntitlements(revenuecat), URLS)
@@ -174,5 +174,8 @@ async def test_momo_and_revenuecat_calls_run_outside_any_transaction(factory):
     polled = await service.app_order(ORDER_ID, USER_ID)
 
     assert polled is not None and polled["status"] == "paid"
-    assert momo.open_transactions == [0]
-    assert revenuecat.open_transactions == [0]
+    # MoMo is asked with no transaction open.
+    assert momo.open_transactions == [(0, 0)]
+    # RevenueCat only inside the sync lock holder's read transaction, which has
+    # written and locked no row.
+    assert revenuecat.open_transactions == [(1, 0)]

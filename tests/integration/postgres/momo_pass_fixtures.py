@@ -29,9 +29,11 @@ AMOUNT = 99_000
 PASS = timedelta(weeks=4)
 CREDENTIALS = MomoCredentials("sandbox", "NUTREE", "access", "secret")
 URLS = MomoUrls("https://api.example/ipn", "https://quiz.example/r", "nutree://r")
+# Open transactions, and how many of them wrote or locked a row (have an xid).
 _OPEN_TRANSACTIONS = text(
-    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
-    "AND pid <> pg_backend_pid() AND state LIKE 'idle in transaction%'"
+    "SELECT count(*), count(backend_xid) FROM pg_stat_activity "
+    "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+    "AND state LIKE 'idle in transaction%'"
 )
 
 
@@ -109,26 +111,47 @@ def ms(moment: datetime) -> int:
     return int(moment.timestamp() * 1000)
 
 
-async def open_transactions(sessions: async_sessionmaker) -> int:
+async def open_transactions(sessions: async_sessionmaker) -> tuple[int, int]:
+    """Other connections' open transactions, and those holding row changes."""
     async with sessions() as db:
-        return int(await db.scalar(_OPEN_TRANSACTIONS))
+        opened, writing = (await db.execute(_OPEN_TRANSACTIONS)).one()
+        return int(opened), int(writing)
 
 
 class SlowRevenueCat:
-    """Grants slowly; ``ok=False`` is a failed grant or a lost answer."""
+    """Grants slowly and, as RevenueCat may, replaces the stored end each time.
 
-    def __init__(self, sessions=None, ok=True):
+    ``ok=False`` fails every grant (or loses its answer); ``fail_calls`` fails
+    only those calls (1-based). Call ``n`` sleeps ``delays[n - 1]``, the last
+    delay repeating.
+    """
+
+    def __init__(self, sessions=None, ok=True, delays=(0.2,), fail_calls=()):
         self.sessions, self.ok = sessions, ok
+        self.delays, self.fail_calls = delays, fail_calls
         self.end_times: list[int] = []
-        self.open_transactions: list[int] = []
+        self.open_transactions: list[tuple[int, int]] = []
+        self.end_ms: int | None = None
+        self.in_flight = self.most_in_flight = 0
+        self.called = asyncio.Event()
 
     async def grant_promotional_entitlement(self, app_user_id, _entitlement, end_ms):
         assert app_user_id == FIREBASE_UID
+        call = len(self.end_times) + 1
         self.end_times.append(end_ms)
-        if self.sessions:
-            self.open_transactions.append(await open_transactions(self.sessions))
-        await asyncio.sleep(0.2)
-        return self.ok
+        self.in_flight += 1
+        self.most_in_flight = max(self.most_in_flight, self.in_flight)
+        self.called.set()
+        try:
+            if self.sessions:
+                self.open_transactions.append(await open_transactions(self.sessions))
+            await asyncio.sleep(self.delays[min(call, len(self.delays)) - 1])
+        finally:
+            self.in_flight -= 1
+        if not self.ok or call in self.fail_calls:
+            return False
+        self.end_ms = end_ms
+        return True
 
 
 async def deliver(

@@ -1,7 +1,8 @@
-"""Sign-in settles, credits and syncs MoMo passes on Postgres.
+"""Sign-in and app activate settle, credit and sync MoMo passes on Postgres.
 
 A payment whose IPN and status polls never arrived still unlocks when its
-buyer signs in, and only that buyer's few newest pending orders are asked about.
+buyer signs in or the app activates, and only that buyer's few newest pending
+orders are asked about.
 """
 
 from __future__ import annotations
@@ -9,8 +10,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import timedelta
 
+import httpx
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from tests.integration.postgres.momo_pass_fixtures import (
     BUYER_EMAIL,
@@ -25,6 +28,8 @@ from tests.integration.postgres.momo_pass_fixtures import (
     seed,
 )
 
+from src.api.dependencies.auth import get_current_user_id, verify_firebase_token
+from src.api.routes.v1.momo_payments import router as momo_router
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.services.momo_pass_entitlement import MomoPassEntitlements
 from src.infra.services.momo_pass_service import MomoPassService
@@ -120,3 +125,38 @@ async def test_sign_in_retries_a_pass_credited_while_revenuecat_was_down(factory
     order = await load_order(factory)
     assert revenuecat.end_times == down.end_times == [ms(order.access_ends_at)]
     assert order.granted_at is not None
+
+
+async def test_app_activate_unlocks_a_quiz_pass_paid_while_signed_in(
+    factory, monkeypatch
+):
+    # The buyer was signed in when they paid on the quiz, and the IPN was lost.
+    await seed(
+        factory,
+        momo_order(channel="web_funnel", user_id=None, buyer_email=BUYER_EMAIL),
+    )
+    momo, revenuecat = FakeMomo(result_code=0), SlowRevenueCat()
+    service = MomoPassService(factory, momo, MomoPassEntitlements(revenuecat), URLS)
+    monkeypatch.setattr(
+        "src.bootstrap.momo_payments.get_momo_pass_service", lambda: service
+    )
+    app = FastAPI()
+    app.include_router(momo_router)
+    app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+    app.dependency_overrides[verify_firebase_token] = lambda: {
+        "email": BUYER_EMAIL,
+        "email_verified": True,
+        "firebase": {"sign_in_provider": "apple.com"},
+    }
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as api:
+        response = await api.post("/v1/payments/momo/activate")
+
+    order = await load_order(factory)
+    assert response.status_code == 200
+    assert response.json() == {"has_pass": True}
+    assert momo.queries == 1
+    assert (order.status, order.granted_user_id) == ("paid", USER_ID)
+    assert order.granted_at is not None
+    assert revenuecat.end_ms == ms(order.access_ends_at)

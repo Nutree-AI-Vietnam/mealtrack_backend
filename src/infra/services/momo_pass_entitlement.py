@@ -1,28 +1,39 @@
 """Turn paid MoMo orders into Premium time on the buyer's RevenueCat account.
 
-Two steps, and no remote call ever runs inside a transaction:
-
 1. Credit (database only): a paid order whose owner is known gets its access
-   window once. Under the user row lock it starts now, or when the user's
-   latest credited window ends, and lasts the pass's weeks.
+   window once. Under the user and order row locks it starts now, or when the
+   user's latest credited window ends, and lasts the pass's weeks.
 2. Sync (RevenueCat): send the end of the user's latest window as a
    promotional ``standard`` entitlement, then mark every credited order that
-   ends by then as granted and claim its quiz lead. RevenueCat starts every
-   promotional at once and keeps the latest expiry, so resending an end (a
-   retry, a lost answer) is a duplicate and an earlier end landing late never
-   shortens access: no ordering or recovery is needed.
+   ends by then as granted and claim its quiz lead.
 
-Accepted trade-off: a window is fixed when it is credited. While RevenueCat is
-down the pass still ends on that date, so an outage eats into it; status
-polls, IPNs and sign-in retry the sync. When every unsent window has already
-ended there is nothing left to deliver: nothing is sent, the orders are marked
-granted and an error is logged.
+RevenueCat may replace a custom promotional instead of keeping the latest
+expiry, so one user's sends must land in order. Only the request holding the
+user's transaction-scoped advisory try-lock sends, always the latest credited
+end, and it loops until nothing is unsent; a request that finds the lock taken
+returns, because its credit committed before the holder releases the lock and
+the holder's next pass sends it. A failed grant leaves the orders unsent for
+the next status read, IPN, sign-in or app activate.
+
+Accepted trade-off: the lock holder keeps one database connection, in a read
+transaction that holds the advisory lock and no row locks, for up to
+``_GRANT_TIMEOUT_SECONDS`` while RevenueCat answers. Only one request per user
+does this, and only while a credit is unsent. No other transaction stays open
+across a remote call, and crediting never waits on RevenueCat.
+
+Residual risk: a grant that timed out here may still land at RevenueCat after
+a later end was sent, and shorten access to its earlier end; nothing detects
+that. A window is also fixed when it is credited, so while RevenueCat is down
+the pass still ends on that date, and a window that ended before delivery is
+not sent (it is marked and logged as an error).
 """
 
+import asyncio
+import hashlib
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.payments.momo_pass import next_access_window
@@ -34,6 +45,8 @@ from src.infra.services.momo_pass_orders import bought_by, lock_order, mark_lead
 logger = logging.getLogger(__name__)
 
 STANDARD_ENTITLEMENT = "standard"
+
+_GRANT_TIMEOUT_SECONDS = 10.0
 
 _CREDITED_TO = MomoPaymentOrder.granted_user_id
 
@@ -63,25 +76,45 @@ class MomoPassEntitlements:
         await db.commit()
 
     async def sync(self, db: AsyncSession, user_id: str) -> bool:
-        """Send the user's latest pass end to RevenueCat; False leaves a retry."""
-        unsent = await _latest_unsent_end(db, user_id)
-        # End the read: no transaction stays open across the RevenueCat call.
+        """Send the user's latest pass end to RevenueCat; False leaves a retry.
+
+        True also when another request holds the user's sync lock: that holder
+        sends the latest end, this request's credit included. Call with no
+        transaction open, so the holder's transaction carries no row locks.
+        """
+        while await _latest_unsent_end(db, user_id):
+            if not await _try_sync_lock(db, user_id):
+                break
+            # Re-read under the lock: the previous holder may have sent it,
+            # and only the end read while holding the lock may be sent.
+            if unsent := await _latest_unsent_end(db, user_id):
+                firebase_uid, end = unsent
+                if end <= utc_now():
+                    logger.error(
+                        "Paid MoMo passes of user %s lapsed before they "
+                        "reached RevenueCat",
+                        user_id,
+                    )
+                elif not await self._grant(user_id, firebase_uid, end):
+                    await db.rollback()
+                    return False
+                await _mark_granted(db, user_id, firebase_uid, end)
+            # Releases the lock; the next pass picks up credits made meanwhile.
+            await db.commit()
         await db.rollback()
-        if unsent is None:
-            return True
-        firebase_uid, end = unsent
-        if end <= utc_now():
-            logger.error(
-                "Paid MoMo passes of user %s lapsed before they reached RevenueCat",
-                user_id,
-            )
-        elif not await self._revenuecat.grant_promotional_entitlement(
-            firebase_uid, STANDARD_ENTITLEMENT, int(end.timestamp() * 1000)
-        ):
-            logger.warning("MoMo pass sync deferred for user %s", user_id)
-            return False
-        await _mark_granted(db, user_id, firebase_uid, end)
         return True
+
+    async def _grant(self, user_id: str, firebase_uid: str, end: datetime) -> bool:
+        try:
+            async with asyncio.timeout(_GRANT_TIMEOUT_SECONDS):
+                granted = await self._revenuecat.grant_promotional_entitlement(
+                    firebase_uid, STANDARD_ENTITLEMENT, int(end.timestamp() * 1000)
+                )
+        except TimeoutError:
+            granted = False
+        if not granted:
+            logger.warning("MoMo pass sync deferred for user %s", user_id)
+        return granted
 
     async def activate_for_user(
         self, db: AsyncSession, user_id: str, verified_email: str | None
@@ -113,6 +146,15 @@ class MomoPassEntitlements:
         return bool(ends and ends > utc_now())
 
 
+async def _try_sync_lock(db: AsyncSession, user_id: str) -> bool:
+    """Take the user's sync lock until this transaction ends, without waiting."""
+    digest = hashlib.sha256(f"momo-sync:{user_id}".encode()).digest()
+    key = int.from_bytes(digest[:8], "big", signed=True)
+    return bool(
+        await db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": key})
+    )
+
+
 async def _latest_unsent_end(
     db: AsyncSession, user_id: str
 ) -> tuple[str, datetime] | None:
@@ -132,9 +174,11 @@ async def _latest_unsent_end(
 async def _mark_granted(
     db: AsyncSession, user_id: str, firebase_uid: str, end: datetime
 ) -> None:
-    """Mark the user's unsent windows ending by ``end`` and claim their leads."""
-    # The user lock serialises this with the user's credits and other syncs.
-    await db.get(User, user_id, with_for_update=True, populate_existing=True)
+    """Mark the user's unsent windows ending by ``end`` and claim their leads.
+
+    The sync lock orders this with other syncs; a window being credited
+    meanwhile has no end yet, so it is left for the next pass.
+    """
     lead_ids = (
         await db.scalars(
             update(MomoPaymentOrder)
@@ -151,4 +195,3 @@ async def _mark_granted(
     for lead_id in lead_ids:
         if lead_id:
             await mark_lead_claimed(db, lead_id, firebase_uid)
-    await db.commit()

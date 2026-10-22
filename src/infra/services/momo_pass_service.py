@@ -28,10 +28,10 @@ from src.infra.services.momo_pass_settlement import apply_result, settle_pending
 
 logger = logging.getLogger(__name__)
 
-# Sign-in asks MoMo about the buyer's newest pending orders from this period,
-# so a payment whose IPN and status polls were all missed still unlocks.
-_SIGN_IN_SETTLE_PERIOD = timedelta(days=30)
-_SIGN_IN_SETTLE_LIMIT = 3
+# Activation asks MoMo about the buyer's newest pending orders from this
+# period, so a payment whose IPN and status polls were all missed still unlocks.
+_ACTIVATE_SETTLE_PERIOD = timedelta(days=30)
+_ACTIVATE_SETTLE_LIMIT = 3
 
 
 class MomoNotConfigured(Exception):
@@ -194,9 +194,10 @@ class MomoPassService:
     async def activate(self, user_id: str, verified_email: str | None) -> bool:
         """Settle, credit and sync a signed-in user's passes; True when one is active.
 
-        The IPN and the buyer's status polls can all be missed (a deploy, or
-        MoMo handing back to another browser), so sign-in first asks MoMo about
-        the buyer's few newest pending orders through the throttled query.
+        Runs on sign-in and when the app activates without Premium. The IPN and
+        the buyer's status polls can all be missed (a deploy, or MoMo handing
+        back to another browser), so this first asks MoMo about the buyer's few
+        newest pending orders through the throttled query.
         """
         if not self.gateway.credentials.missing:
             async with self._session() as db:
@@ -204,10 +205,10 @@ class MomoPassService:
                     db,
                     user_id,
                     verified_email,
-                    since=utc_now() - _SIGN_IN_SETTLE_PERIOD,
-                    limit=_SIGN_IN_SETTLE_LIMIT,
+                    since=utc_now() - _ACTIVATE_SETTLE_PERIOD,
+                    limit=_ACTIVATE_SETTLE_LIMIT,
                 )
-            # One session per order, so sign-in waits for one MoMo answer, not N.
+            # One session per order, so activation waits for one MoMo answer.
             await asyncio.gather(
                 *(self._settle_alone(order_id) for order_id in pending)
             )
@@ -216,17 +217,18 @@ class MomoPassService:
             return await self.entitlements.has_active_pass(db, user_id)
 
     async def _settle_alone(self, order_id: str) -> None:
-        """A failed settle leaves the order pending and never blocks sign-in."""
+        """A failed settle leaves the order pending and never blocks activation."""
         try:
             async with self._session() as db:
                 await settle_pending(db, self.gateway, order_id)
         except Exception:
-            logger.exception("MoMo order %s could not be settled on sign-in", order_id)
+            logger.exception("MoMo order %s could not be settled", order_id)
 
     async def _refresh(self, db: AsyncSession, order_id: str) -> dict | None:
         """Ask MoMo about a pending order, then retry an undelivered pass.
 
-        No transaction stays open across the MoMo or RevenueCat call.
+        No transaction stays open across the MoMo call; see the entitlements
+        for the one held across the RevenueCat call.
         """
         await db.rollback()
         await settle_pending(db, self.gateway, order_id)
@@ -238,7 +240,8 @@ class MomoPassService:
         """Credit and sync a paid order once its owner is known.
 
         In-app orders belong to their buyer; quiz orders wait for the sign-in
-        that credits them, after which their status poll and IPN retry too.
+        or app activate that credits them, after which their status poll and
+        IPN retry too.
         """
         order = await orders.find_order(db, order_id)
         if not order or order.status != "paid" or order.granted_at:

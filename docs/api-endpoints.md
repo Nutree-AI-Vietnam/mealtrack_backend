@@ -388,7 +388,9 @@ handler/schema when implementing; the bullets below are the durable WHY.
   whether a typed email bought before; an app price counts the account's
   orders and orders under its verified Google, Apple or email/password email.
 - App: `GET /v1/payments/momo/plans`, `POST /v1/payments/momo/checkouts`
-  `{plan, lang, method: wallet|atm}`, `GET /v1/payments/momo/orders/{id}`.
+  `{plan, lang, method: wallet|atm}`, `GET /v1/payments/momo/orders/{id}`,
+  `POST /v1/payments/momo/activate` (10/minute per user) answering
+  `{"has_pass": bool}`.
   Quiz BFF (BFF token + `X-Lead-Access-Key`): the same under
   `/v1/web-funnel/momo/*` with `lead_id`, rate-limited per lead access key
   (SHA-256), not per BFF IP. `wallet` is MoMo `captureWallet`, `atm` is
@@ -397,25 +399,33 @@ handler/schema when implementing; the bullets below are the durable WHY.
   and amount, then answers 204; it rejects every body while MoMo is not
   configured. The browser or app redirect is never trusted; a pending order is
   reconciled through MoMo's query API on status reads, at most once per 3 s
-  per order, outside any database transaction. `POST /v1/users/sync` first
-  asks MoMo, through the same throttle, about the buyer's 3 newest pending
-  orders from the last 30 days (their in-app orders, and quiz orders under the
+  per order, outside any database transaction. Activation, run by
+  `POST /v1/users/sync` and by `POST /v1/payments/momo/activate`, first asks
+  MoMo, through the same throttle, about the buyer's 3 newest pending orders
+  from the last 30 days (their in-app orders, and quiz orders under the
   verified email), so a payment whose IPN and status reads were all missed
-  still unlocks; a failed query never fails the sync.
+  still unlocks; a failed query never fails the call. The app calls
+  `activate` on launch and resume while it lacks Premium: that unlocks a quiz
+  pass paid while the buyer was already signed in, retries a failed
+  RevenueCat grant, and settles an order whose IPN was lost. It never answers
+  an error for an outage; `has_pass` is then false and a later call retries.
 - A paid pass is a RevenueCat promotional `standard` entitlement on the
-  buyer's Firebase uid. Once its owner is known a paid order is credited once:
-  its window starts now or when the buyer's latest window ends. The buyer's
-  latest end is then sent to RevenueCat outside any transaction, and every
-  credited order ending by it is marked granted. RevenueCat starts a
-  promotional at once and keeps the latest expiry, so a retry resends the same
-  end and a late earlier end never shortens access. A window is fixed when it
-  is credited: if RevenueCat is down the pass still ends on that date, and a
-  credit whose window ended before delivery is not sent (logged as an error).
-  Status reads, IPNs and `POST /v1/users/sync` retry undelivered credits.
-  In-app orders unlock on payment; quiz orders unlock on
-  `POST /v1/users/sync` when a Google, Apple or email/password token carries
-  a verified email equal to the checkout email (custom tokens never match;
-  `has_subscription` is then true).
+  buyer's Firebase uid. Once its owner is known a paid order is credited once,
+  in the database only: its window starts now or when the buyer's latest
+  window ends. The buyer's latest end is then sent to RevenueCat and every
+  credited order ending by it is marked granted. RevenueCat may replace a
+  promotional instead of keeping the latest expiry, so one user's sends are
+  serialized by a per-user Postgres advisory try-lock: only its holder sends,
+  always the latest credited end, and it repeats until nothing is unsent, so
+  a credit made meanwhile is sent too. A failed grant leaves its orders unsent.
+  A window is fixed when it is credited: if RevenueCat is down the pass still
+  ends on that date, and a credit whose window ended before delivery is not
+  sent (logged as an error). Status reads, IPNs, `POST /v1/users/sync` and
+  `POST /v1/payments/momo/activate` retry undelivered credits. In-app orders
+  unlock on payment; quiz orders unlock on `POST /v1/users/sync` or
+  `POST /v1/payments/momo/activate` when a Google, Apple or email/password
+  token carries a verified email equal to the checkout email (custom tokens
+  never match; sync then reports `has_subscription` true).
 - `POST /v1/webhooks/revenuecat` answers 200 `ignored` to purchase, renewal,
   cancellation, expiration, billing, product-change and refund events with
   `store=PROMOTIONAL` (pass and dashboard grants), so they never create or
