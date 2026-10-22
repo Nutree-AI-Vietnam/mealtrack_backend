@@ -8,15 +8,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.adapters.momo_gateway_adapter import MomoCredentials, MomoGatewayError
 from src.infra.database.models.momo_payment_order import MomoPaymentOrder
 from src.infra.database.models.user.user import User
+from src.infra.services.momo_pass_entitlement import MomoPassEntitlements
 from src.infra.services.momo_pass_orders import find_order
 from src.infra.services.momo_pass_service import MomoUrls
 
@@ -114,21 +115,12 @@ async def open_transactions(sessions: async_sessionmaker) -> int:
 
 
 class SlowRevenueCat:
-    """Grants slowly and, like RevenueCat, lists the latest custom promotional.
+    """Grants slowly; ``ok=False`` is a failed grant or a lost answer."""
 
-    ``promotional_ends=None`` makes the subscriber unreadable, and
-    ``lands=True`` with ``ok=False`` applies a grant whose answer is lost.
-    """
-
-    def __init__(self, sessions=None, ok=True, promotional_ends=(), lands=None):
+    def __init__(self, sessions=None, ok=True):
         self.sessions, self.ok = sessions, ok
-        # A grant can land upstream while its answer is lost (a timeout).
-        self.lands = ok if lands is None else lands
         self.end_times: list[int] = []
         self.open_transactions: list[int] = []
-        self.promotional_ends = (
-            None if promotional_ends is None else list(promotional_ends)
-        )
 
     async def grant_promotional_entitlement(self, app_user_id, _entitlement, end_ms):
         assert app_user_id == FIREBASE_UID
@@ -136,15 +128,29 @@ class SlowRevenueCat:
         if self.sessions:
             self.open_transactions.append(await open_transactions(self.sessions))
         await asyncio.sleep(0.2)
-        if self.lands:
-            self.promotional_ends = [datetime.fromtimestamp(end_ms / 1000, UTC)]
         return self.ok
 
-    async def promotional_expiries(self, app_user_id):
-        assert app_user_id == FIREBASE_UID
-        if self.promotional_ends is None:
-            return None
-        return list(self.promotional_ends)
+
+async def deliver(
+    sessions: async_sessionmaker, revenuecat, order_id: str = ORDER_ID
+) -> bool:
+    """Credit one order to the seeded user, then sync them, as a status poll does."""
+    entitlements = MomoPassEntitlements(revenuecat)
+    async with sessions() as db:
+        await entitlements.credit(db, order_id, USER_ID)
+        return await entitlements.sync(db, USER_ID)
+
+
+async def move_windows_back(sessions: async_sessionmaker, by: timedelta) -> None:
+    """Age every credited window, as if that much time had passed."""
+    async with sessions() as db:
+        await db.execute(
+            update(MomoPaymentOrder).values(
+                access_starts_at=MomoPaymentOrder.access_starts_at - by,
+                access_ends_at=MomoPaymentOrder.access_ends_at - by,
+            )
+        )
+        await db.commit()
 
 
 class FakeMomo:

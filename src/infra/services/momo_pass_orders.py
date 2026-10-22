@@ -104,8 +104,13 @@ async def owned_lead(
 
 
 async def has_paid_before(
-    db: AsyncSession, user_id: str | None, email: str | None
+    db: AsyncSession,
+    *,
+    user_id: str | None = None,
+    email: str | None = None,
+    lead_id: str | None = None,
 ) -> bool:
+    """Whether any paid order matches the account, the email or the quiz lead."""
     owners = []
     if user_id:
         owners += [
@@ -114,6 +119,8 @@ async def has_paid_before(
         ]
     if email:
         owners.append(MomoPaymentOrder.buyer_email == normalize_email(email))
+    if lead_id:
+        owners.append(MomoPaymentOrder.lead_id == lead_id)
     if not owners:
         return False
     found = await db.scalar(

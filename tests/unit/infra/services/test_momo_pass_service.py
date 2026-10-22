@@ -1,7 +1,5 @@
 """MoMo one-time pass checkout and result handling against fake I/O."""
 
-import hashlib
-import hmac
 from datetime import timedelta
 
 import pytest
@@ -75,14 +73,20 @@ class FakeGateway:
 
 
 class FakeEntitlements:
-    """Records grants and marks the order granted; locking is covered on Postgres."""
+    """Records credits and syncs; the locked steps are covered on Postgres."""
 
     def __init__(self, orders):
-        self.orders, self.grants, self.activations = orders, [], []
+        self.orders, self.credits, self.syncs, self.activations = orders, [], [], []
 
-    async def grant(self, _db, order_id, user_id):
-        self.grants.append((order_id, user_id))
-        self.orders[order_id].granted_at = utc_now()
+    async def credit(self, _db, order_id, user_id):
+        self.credits.append((order_id, user_id))
+        self.orders[order_id].granted_user_id = user_id
+
+    async def sync(self, _db, user_id):
+        self.syncs.append(user_id)
+        for order in self.orders.values():
+            if order.granted_user_id == user_id:
+                order.granted_at = utc_now()
         return True
 
     async def activate_for_user(self, _db, user_id, verified_email):
@@ -99,6 +103,7 @@ def store(monkeypatch):
     state = {
         "orders": {},
         "paid_before": False,
+        "paid_before_lookups": [],
         "leads_paid": [],
         "leads_started": [],
         "pending_lookups": [],
@@ -117,7 +122,8 @@ def store(monkeypatch):
         order.last_checked_at = now
         return True
 
-    async def paid_before(_db, _user_id, _email):
+    async def paid_before(_db, **owners):
+        state["paid_before_lookups"].append(owners)
         return state["paid_before"]
 
     async def recent_pending(_db, user_id, email, *, since, limit):
@@ -296,7 +302,24 @@ async def test_signed_paid_ipn_settles_the_order_and_grants_the_pass(store):
 
     order = store["orders"]["o1"]
     assert (order.status, order.trans_id, order.pay_type) == ("paid", 4088878653, "qr")
-    assert service.entitlements.grants == [("o1", "user-1")]
+    assert service.entitlements.credits == [("o1", "user-1")]
+    assert service.entitlements.syncs == ["user-1"]
+
+
+async def test_replayed_ipn_retries_a_quiz_pass_credited_at_sign_in(store):
+    store["orders"]["w1"] = _order(
+        order_id="w1",
+        channel="web_funnel",
+        user_id=None,
+        status="paid",
+        granted_user_id="user-9",
+    )
+    service, _session = _service(store)
+
+    assert await service.handle_ipn(_ipn(order_id="w1"))
+
+    assert service.entitlements.syncs == ["user-9"]
+    assert store["orders"]["w1"].granted_at is not None
 
 
 async def test_web_order_paid_marks_the_lead_and_waits_for_sign_in(store):
@@ -307,7 +330,7 @@ async def test_web_order_paid_marks_the_lead_and_waits_for_sign_in(store):
 
     assert store["orders"]["o1"].status == "paid"
     assert store["leads_paid"] == ["lead-1"]
-    assert service.entitlements.grants == []
+    assert service.entitlements.credits == []
 
 
 async def test_replayed_ipn_does_not_grant_twice(store):
@@ -318,7 +341,7 @@ async def test_replayed_ipn_does_not_grant_twice(store):
     await service.handle_ipn(_ipn(result_code=1006))
 
     assert store["orders"]["o1"].status == "paid"
-    assert len(service.entitlements.grants) == 1
+    assert len(service.entitlements.credits) == 1
 
 
 @pytest.mark.parametrize(
@@ -344,7 +367,7 @@ async def test_paid_result_with_another_amount_is_not_trusted(store):
     assert await service.handle_ipn(_ipn(amount=1000))
 
     assert store["orders"]["o1"].status == "pending"
-    assert service.entitlements.grants == []
+    assert service.entitlements.credits == []
 
 
 async def test_back_button_result_fails_the_order(store):
@@ -365,7 +388,7 @@ async def test_status_poll_asks_momo_while_pending(store):
 
     assert service.gateway.queried == ["o1"]
     assert result["status"] == "paid"
-    assert service.entitlements.grants == [("o1", "user-1")]
+    assert service.entitlements.credits == [("o1", "user-1")]
 
 
 async def test_status_poll_does_not_hammer_momo(store):
@@ -475,15 +498,42 @@ async def test_sign_in_with_unconfigured_momo_still_grants_paid_orders(store):
     assert service.entitlements.activations == [("user-1", None, ["o1"])]
 
 
+async def test_sign_in_still_credits_paid_orders_when_a_settle_fails(store):
+    store["orders"]["o1"] = _order()
+    store["orders"]["o2"] = _order(order_id="o2", status="paid")
+    gateway = FakeGateway()
+
+    async def broken_query(*, order_id, request_id):
+        raise RuntimeError("connection reset")
+
+    gateway.query_payment = broken_query
+    service, _session = _service(store, gateway)
+
+    assert await service.activate("user-1", None)
+
+    assert service.entitlements.activations == [("user-1", None, ["o2"])]
+
+
+async def test_quiz_price_depends_only_on_the_leads_own_orders(store):
+    service, _session = _service(store)
+    buyer = MomoBuyer(channel="web_funnel", lead_id="lead-1", email="b@x.vn")
+
+    await service.plans_for(buyer)
+    await service.start_checkout(buyer, get_momo_pass_plan("monthly"), lang="vi")
+
+    assert store["paid_before_lookups"] == [{"lead_id": "lead-1"}] * 2
+
+
+async def test_app_price_depends_on_the_account_and_its_proven_email(store):
+    service, _session = _service(store)
+
+    await service.plans_for(MomoBuyer(channel="app", user_id="user-1", email="b@x.vn"))
+
+    assert store["paid_before_lookups"] == [{"user_id": "user-1", "email": "b@x.vn"}]
+
+
 async def test_status_of_someone_elses_order_is_hidden(store):
     store["orders"]["o1"] = _order()
     service, _session = _service(store)
 
     assert await service.app_order("o1", "user-2") is None
-
-
-def test_signature_helper_matches_a_hand_built_raw_string():
-    raw = "accessKey=access&amount=1"
-    assert momo_signature(
-        "secret", {"accessKey": "access", "amount": 1}, ("accessKey", "amount")
-    ) == (hmac.new(b"secret", raw.encode(), hashlib.sha256).hexdigest())

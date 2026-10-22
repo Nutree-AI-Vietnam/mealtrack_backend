@@ -1,4 +1,4 @@
-"""MoMo route edges: quiz rate-limit keys, the 503 body and production mode."""
+"""MoMo route edges: rate-limit keys, the 503 body, production mode, emails."""
 
 import hashlib
 import logging
@@ -6,6 +6,7 @@ import logging
 import pytest
 from starlette.requests import Request
 
+from src.api.routes.v1 import momo_payments as momo_routes
 from src.api.routes.v1.momo_payments import checkout_error
 from src.api.routes.v1.web_funnel_momo import lead_access_rate_limit_key
 from src.bootstrap import momo_payments as momo_bootstrap
@@ -115,3 +116,69 @@ def test_unconfigured_momo_in_production_is_not_an_error(monkeypatch, caplog):
     assert "MOMO_SECRET_KEY" in credentials.missing
     assert caplog.records
     assert all(record.levelno == logging.INFO for record in caplog.records)
+
+
+def test_momo_settings_are_reported_once_per_process(monkeypatch, caplog):
+    _settings(monkeypatch, "production", "sandbox", keys=False)
+    momo_bootstrap.get_momo_pass_service.cache_clear()
+    try:
+        with caplog.at_level(logging.INFO, logger=momo_bootstrap.__name__):
+            first = momo_bootstrap.get_momo_pass_service()
+            second = momo_bootstrap.get_momo_pass_service()
+    finally:
+        momo_bootstrap.get_momo_pass_service.cache_clear()
+
+    assert first is second
+    assert [record.levelno for record in caplog.records] == [logging.INFO]
+
+
+class _PlansService:
+    def __init__(self):
+        self.buyers = []
+
+    async def plans_for(self, buyer):
+        self.buyers.append(buyer)
+        return []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token", "priced_email"),
+    [
+        (
+            {
+                "email": "a@x.vn",
+                "email_verified": True,
+                "firebase": {"sign_in_provider": "google.com"},
+            },
+            "a@x.vn",
+        ),
+        (
+            {
+                "email": "a@x.vn",
+                "email_verified": False,
+                "firebase": {"sign_in_provider": "password"},
+            },
+            None,
+        ),
+        (
+            {
+                "email": "a@x.vn",
+                "email_verified": True,
+                "firebase": {"sign_in_provider": "custom"},
+            },
+            None,
+        ),
+    ],
+    ids=["verified", "unverified", "custom-token"],
+)
+async def test_app_prices_use_only_a_proven_email(monkeypatch, token, priced_email):
+    service = _PlansService()
+    monkeypatch.setattr(momo_routes, "get_momo_pass_service", lambda: service)
+
+    await momo_routes.list_momo_plans(user_id="user-1", token=token)
+
+    assert (service.buyers[0].user_id, service.buyers[0].email) == (
+        "user-1",
+        priced_email,
+    )

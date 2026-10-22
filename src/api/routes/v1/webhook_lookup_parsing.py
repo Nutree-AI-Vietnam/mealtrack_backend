@@ -88,8 +88,8 @@ async def get_subscription_by_revenuecat_id(uow, revenuecat_id: str):
 def is_promotional_event(event: dict) -> bool:
     """A RevenueCat promotional grant: a MoMo pass or a dashboard grant.
 
-    Promotionals are entitlements, not store subscriptions. Their CANCELLATION,
-    EXPIRATION and NON_RENEWING_PURCHASE events carry the user's app_user_id,
+    Promotionals are entitlements, not store subscriptions. Their lifecycle
+    events (purchase, cancellation, expiration) carry the user's app_user_id,
     so the store-subscription handlers would expire or invent that user's
     subscription row.
     """

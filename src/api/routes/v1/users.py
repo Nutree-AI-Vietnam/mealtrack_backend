@@ -14,6 +14,7 @@ from src.api.dependencies.auth import (
     verify_firebase_uid_ownership,
 )
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.routes.v1.momo_payments import momo_pass_email
 from src.api.schemas.request.user_requests import (
     UserSyncRequest,
     UserUpdateLastAccessedRequest,
@@ -72,26 +73,6 @@ class UpdateWeeklyAutoAdjustRequest(BaseModel):
     """Request body for leftover-split daily adjustment."""
 
     enabled: bool
-
-
-# Sign-in methods that prove the user owns the mailbox. Custom tokens, the web
-# funnel's silent login included, never unlock passes bought under an email.
-_MOMO_PASS_EMAIL_PROVIDERS = frozenset({"google.com", "apple.com", "password"})
-
-
-def _momo_pass_email(token: dict) -> str | None:
-    """The email that may unlock MoMo web passes, or None."""
-    firebase = token.get("firebase")
-    provider = firebase.get("sign_in_provider") if isinstance(firebase, dict) else None
-    email = token.get("email")
-    if (
-        token.get("email_verified") is True
-        and provider in _MOMO_PASS_EMAIL_PROVIDERS
-        and isinstance(email, str)
-        and email
-    ):
-        return email
-    return None
 
 
 @router.post("/sync", response_model=UserSyncResponse)
@@ -159,7 +140,7 @@ async def sync_user_from_firebase(
 
     # Map result to response
     user_data = result["user"]
-    if await activate_momo_passes(str(user_data["id"]), _momo_pass_email(token)):
+    if await activate_momo_passes(str(user_data["id"]), momo_pass_email(token)):
         user_data = {**user_data, "has_subscription": True}
 
     logger.info(

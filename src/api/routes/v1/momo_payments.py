@@ -33,6 +33,30 @@ class MomoCheckoutRequest(BaseModel):
     method: MomoPayMethod = MomoPayMethod.WALLET
 
 
+# Sign-in methods that prove the user owns the mailbox. Custom tokens, the web
+# funnel's silent login included, never vouch for an email.
+_PROVEN_EMAIL_PROVIDERS = frozenset({"google.com", "apple.com", "password"})
+
+
+def momo_pass_email(token: dict) -> str | None:
+    """The email that may unlock quiz passes and price app passes, or None."""
+    firebase = token.get("firebase")
+    provider = firebase.get("sign_in_provider") if isinstance(firebase, dict) else None
+    email = token.get("email")
+    if (
+        token.get("email_verified") is True
+        and provider in _PROVEN_EMAIL_PROVIDERS
+        and isinstance(email, str)
+        and email
+    ):
+        return email
+    return None
+
+
+def _app_buyer(user_id: str, token: dict) -> MomoBuyer:
+    return MomoBuyer(channel="app", user_id=user_id, email=momo_pass_email(token))
+
+
 def checkout_error(error: Exception) -> HTTPException:
     if isinstance(error, MomoNotConfigured):
         # Setting names go to the server log only, never to the caller.
@@ -52,7 +76,7 @@ async def list_momo_plans(
     user_id: str = Depends(get_current_user_id),
     token: dict = Depends(verify_firebase_token),
 ):
-    buyer = MomoBuyer(channel="app", user_id=user_id, email=token.get("email"))
+    buyer = _app_buyer(user_id, token)
     return {"plans": await get_momo_pass_service().plans_for(buyer)}
 
 
@@ -64,7 +88,7 @@ async def create_momo_checkout(
     user_id: str = Depends(get_current_user_id),
     token: dict = Depends(verify_firebase_token),
 ):
-    buyer = MomoBuyer(channel="app", user_id=user_id, email=token.get("email"))
+    buyer = _app_buyer(user_id, token)
     try:
         return await get_momo_pass_service().start_checkout(
             buyer,

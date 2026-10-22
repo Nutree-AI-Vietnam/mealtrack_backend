@@ -1,7 +1,8 @@
-"""MoMo passes under real row locks: one grant per order, one MoMo query per slot.
+"""MoMo passes under real row locks: one window per order, one MoMo query per slot.
 
-Concurrent grants, an IPN racing a status poll, and concurrent polls run
-against Postgres. MoMo and RevenueCat are fakes; no real service is called.
+Concurrent deliveries, concurrent IPNs, an IPN racing a status poll, and
+concurrent polls run against Postgres. MoMo and RevenueCat are fakes; no real
+service is called.
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ from src.infra.services.momo_pass_service import MomoPassService
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
+SECOND_ORDER_ID = "b" * 32
+
 
 @pytest_asyncio.fixture
 async def factory(migrated_database: str) -> AsyncIterator[async_sessionmaker]:
@@ -44,10 +47,10 @@ async def factory(migrated_database: str) -> AsyncIterator[async_sessionmaker]:
         yield sessions
 
 
-def _paid_ipn(trans_id: int) -> dict:
+def _paid_ipn(order_id: str = ORDER_ID, trans_id: int = 111) -> dict:
     body = {
         "partnerCode": "NUTREE",
-        "orderId": ORDER_ID,
+        "orderId": order_id,
         "requestId": "r" * 32,
         "amount": AMOUNT,
         "orderInfo": "Nutree Premium 4 tuần",
@@ -64,24 +67,25 @@ def _paid_ipn(trans_id: int) -> dict:
     return body
 
 
-async def test_concurrent_grants_leave_one_window_with_one_end_time(factory):
+async def test_concurrent_deliveries_credit_one_window_and_send_its_end(factory):
     await seed(factory, momo_order(status="paid"))
     revenuecat = SlowRevenueCat()
     entitlements = MomoPassEntitlements(revenuecat)
-    grants = 6
-    loaded = asyncio.Barrier(grants)
+    deliveries = 6
+    loaded = asyncio.Barrier(deliveries)
     started = utc_now()
 
-    async def grant() -> bool:
+    async def deliver() -> bool:
         async with factory() as db:
-            # Keep the ungranted order in the identity map (a weak map, so hold
-            # a reference) while granting, as status polls and IPNs do.
+            # Keep the uncredited order in the identity map (a weak map, so
+            # hold a reference) while crediting, as status polls and IPNs do.
             held = await find_order(db, ORDER_ID)
             assert held is not None
             await loaded.wait()
-            return await entitlements.grant(db, held.order_id, held.user_id)
+            await entitlements.credit(db, held.order_id, USER_ID)
+            return await entitlements.sync(db, USER_ID)
 
-    results = await asyncio.gather(*(grant() for _ in range(grants)))
+    results = await asyncio.gather(*(deliver() for _ in range(deliveries)))
 
     order = await load_order(factory)
     assert all(results)
@@ -90,6 +94,39 @@ async def test_concurrent_grants_leave_one_window_with_one_end_time(factory):
     assert order.access_ends_at - order.access_starts_at == PASS
     assert revenuecat.end_times
     assert set(revenuecat.end_times) == {ms(order.access_ends_at)}
+
+
+async def test_orders_paid_concurrently_stack_back_to_back(factory):
+    await seed(
+        factory, momo_order(status="paid"), momo_order(SECOND_ORDER_ID, status="paid")
+    )
+    revenuecat = SlowRevenueCat()
+    entitlements = MomoPassEntitlements(revenuecat)
+    order_ids = [ORDER_ID, SECOND_ORDER_ID] * 2
+    loaded = asyncio.Barrier(len(order_ids))
+    started = utc_now()
+
+    async def deliver(order_id: str) -> bool:
+        async with factory() as db:
+            # Hold a connection, so every credit reaches the database at once.
+            held = await find_order(db, order_id)
+            assert held is not None
+            await loaded.wait()
+            await entitlements.credit(db, held.order_id, USER_ID)
+            return await entitlements.sync(db, USER_ID)
+
+    results = await asyncio.gather(*(deliver(order_id) for order_id in order_ids))
+
+    first, second = sorted(
+        [await load_order(factory), await load_order(factory, SECOND_ORDER_ID)],
+        key=lambda order: order.access_starts_at,
+    )
+    assert all(results)
+    assert first.access_starts_at - started < timedelta(minutes=1)
+    assert second.access_starts_at == first.access_ends_at
+    assert second.access_ends_at - first.access_starts_at == 2 * PASS
+    assert first.granted_at is not None and second.granted_at is not None
+    assert max(revenuecat.end_times) == ms(second.access_ends_at)
 
 
 async def test_paid_ipn_racing_a_status_poll_settles_once_and_grants_once(factory):
@@ -139,17 +176,3 @@ async def test_momo_and_revenuecat_calls_run_outside_any_transaction(factory):
     assert polled is not None and polled["status"] == "paid"
     assert momo.open_transactions == [0]
     assert revenuecat.open_transactions == [0]
-
-
-async def test_a_reserved_window_is_not_an_active_pass_until_granted(factory):
-    await seed(factory, momo_order(status="paid"))
-    down = SlowRevenueCat(ok=False)
-    async with factory() as db:
-        assert not await MomoPassEntitlements(down).grant(db, ORDER_ID, USER_ID)
-        assert not await MomoPassEntitlements(down).has_active_pass(db, USER_ID)
-
-    retry = SlowRevenueCat()
-    async with factory() as db:
-        assert await MomoPassEntitlements(retry).grant(db, ORDER_ID, USER_ID)
-        assert await MomoPassEntitlements(retry).has_active_pass(db, USER_ID)
-    assert retry.end_times == down.end_times

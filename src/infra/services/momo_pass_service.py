@@ -81,7 +81,7 @@ class MomoPassService:
 
     async def plans_for(self, buyer: MomoBuyer) -> list[dict]:
         async with self._session() as db:
-            paid_before = await orders.has_paid_before(db, buyer.user_id, buyer.email)
+            paid_before = await _paid_before(db, buyer)
         return [
             orders.plan_projection(plan, paid_before)
             for plan in MOMO_PASS_PLANS.values()
@@ -111,7 +111,7 @@ class MomoPassService:
         if missing:
             raise MomoNotConfigured(missing)
         async with self._session() as db:
-            paid_before = await orders.has_paid_before(db, buyer.user_id, buyer.email)
+            paid_before = await _paid_before(db, buyer)
             order = MomoPaymentOrder(
                 order_id=uuid.uuid4().hex,
                 request_id=uuid.uuid4().hex,
@@ -188,15 +188,15 @@ class MomoPassService:
             if not await orders.find_order(db, order_id):
                 return False
             await apply_result(db, order_id, payload)
-            await self._grant_if_due(db, order_id)
+            await self._deliver_if_paid(db, order_id)
         return True
 
     async def activate(self, user_id: str, verified_email: str | None) -> bool:
-        """Settle and grant a signed-in user's passes; True when they hold one now.
+        """Settle, credit and sync a signed-in user's passes; True when one is active.
 
         The IPN and the buyer's status polls can all be missed (a deploy, or
-        MoMo handing back to another browser), so sign-in asks MoMo about the
-        buyer's recent pending orders before granting the paid ones.
+        MoMo handing back to another browser), so sign-in first asks MoMo about
+        the buyer's few newest pending orders through the throttled query.
         """
         if not self.gateway.credentials.missing:
             async with self._session() as db:
@@ -208,31 +208,50 @@ class MomoPassService:
                     limit=_SIGN_IN_SETTLE_LIMIT,
                 )
             # One session per order, so sign-in waits for one MoMo answer, not N.
-            async with asyncio.TaskGroup() as settling:
-                for order_id in pending:
-                    settling.create_task(self._settle_alone(order_id))
+            await asyncio.gather(
+                *(self._settle_alone(order_id) for order_id in pending)
+            )
         async with self._session() as db:
             await self.entitlements.activate_for_user(db, user_id, verified_email)
             return await self.entitlements.has_active_pass(db, user_id)
 
     async def _settle_alone(self, order_id: str) -> None:
-        async with self._session() as db:
-            await settle_pending(db, self.gateway, order_id)
+        """A failed settle leaves the order pending and never blocks sign-in."""
+        try:
+            async with self._session() as db:
+                await settle_pending(db, self.gateway, order_id)
+        except Exception:
+            logger.exception("MoMo order %s could not be settled on sign-in", order_id)
 
     async def _refresh(self, db: AsyncSession, order_id: str) -> dict | None:
-        """Ask MoMo about a pending order, then retry an outstanding grant.
+        """Ask MoMo about a pending order, then retry an undelivered pass.
 
         No transaction stays open across the MoMo or RevenueCat call.
         """
         await db.rollback()
         await settle_pending(db, self.gateway, order_id)
-        await self._grant_if_due(db, order_id)
+        await self._deliver_if_paid(db, order_id)
         order = await orders.find_order(db, order_id)
         return orders.order_projection(order) if order else None
 
-    async def _grant_if_due(self, db: AsyncSession, order_id: str) -> None:
-        """In-app orders unlock on payment; web orders wait for sign-in."""
+    async def _deliver_if_paid(self, db: AsyncSession, order_id: str) -> None:
+        """Credit and sync a paid order once its owner is known.
+
+        In-app orders belong to their buyer; quiz orders wait for the sign-in
+        that credits them, after which their status poll and IPN retry too.
+        """
         order = await orders.find_order(db, order_id)
-        if order and order.status == "paid" and not order.granted_at and order.user_id:
-            # grant() ends this read before it calls RevenueCat.
-            await self.entitlements.grant(db, order_id, order.user_id)
+        if not order or order.status != "paid" or order.granted_at:
+            return
+        if owner := order.granted_user_id or order.user_id:
+            await self.entitlements.credit(db, order_id, owner)
+            await self.entitlements.sync(db, owner)
+
+
+async def _paid_before(db: AsyncSession, buyer: MomoBuyer) -> bool:
+    """Whether the buyer pays the regular price instead of the intro price."""
+    if buyer.channel == "web_funnel":
+        # Only the lead's own orders: an anonymous quiz visitor must not learn
+        # whether an email they typed has bought before.
+        return await orders.has_paid_before(db, lead_id=buyer.lead_id)
+    return await orders.has_paid_before(db, user_id=buyer.user_id, email=buyer.email)

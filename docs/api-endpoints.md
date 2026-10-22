@@ -383,7 +383,10 @@ handler/schema when implementing; the bullets below are the durable WHY.
 
 - MoMo takes one-time payments only. A paid order buys a 4, 12 or 52 week
   pass that never renews; the buyer's first pass costs the intro price, later
-  passes the regular price (`src/domain/model/payments/momo_pass.py`).
+  passes the regular price (`src/domain/model/payments/momo_pass.py`). A quiz
+  price depends only on that lead's own paid orders, so a visitor never learns
+  whether a typed email bought before; an app price counts the account's
+  orders and orders under its verified Google, Apple or email/password email.
 - App: `GET /v1/payments/momo/plans`, `POST /v1/payments/momo/checkouts`
   `{plan, lang, method: wallet|atm}`, `GET /v1/payments/momo/orders/{id}`.
   Quiz BFF (BFF token + `X-Lead-Access-Key`): the same under
@@ -394,30 +397,36 @@ handler/schema when implementing; the bullets below are the durable WHY.
   and amount, then answers 204; it rejects every body while MoMo is not
   configured. The browser or app redirect is never trusted; a pending order is
   reconciled through MoMo's query API on status reads, at most once per 3 s
-  per order, outside any database transaction. `POST /v1/users/sync` also
-  asks MoMo about the buyer's 3 newest pending orders from the last 30 days
-  (their in-app orders, and quiz orders under the verified email), so a
-  payment whose IPN and status reads were all missed still unlocks.
+  per order, outside any database transaction. `POST /v1/users/sync` first
+  asks MoMo, through the same throttle, about the buyer's 3 newest pending
+  orders from the last 30 days (their in-app orders, and quiz orders under the
+  verified email), so a payment whose IPN and status reads were all missed
+  still unlocks; a failed query never fails the sync.
 - A paid pass is a RevenueCat promotional `standard` entitlement on the
-  buyer's Firebase uid, stacked after the buyer's other passes. RevenueCat
-  starts a grant when it is made, so each grant sends the end of the buyer's
-  whole chain of windows and confirms every window ending by then; windows are
-  persisted before RevenueCat is called, a retry resends the same end, and the
-  end sent only grows. While a window is still ungranted 2 h after its start,
-  nothing is sent for that buyer until RevenueCat is read: windows it already
-  covers are confirmed, and the rest of the chain is stacked again from now
-  (logged as an error), so each paid week is granted once. In-app orders unlock on payment; quiz orders unlock on
+  buyer's Firebase uid. Once its owner is known a paid order is credited once:
+  its window starts now or when the buyer's latest window ends. The buyer's
+  latest end is then sent to RevenueCat outside any transaction, and every
+  credited order ending by it is marked granted. RevenueCat starts a
+  promotional at once and keeps the latest expiry, so a retry resends the same
+  end and a late earlier end never shortens access. A window is fixed when it
+  is credited: if RevenueCat is down the pass still ends on that date, and a
+  credit whose window ended before delivery is not sent (logged as an error).
+  Status reads, IPNs and `POST /v1/users/sync` retry undelivered credits.
+  In-app orders unlock on payment; quiz orders unlock on
   `POST /v1/users/sync` when a Google, Apple or email/password token carries
   a verified email equal to the checkout email (custom tokens never match;
   `has_subscription` is then true).
-- `POST /v1/webhooks/revenuecat` ignores events with `store=PROMOTIONAL`
-  (pass and dashboard grants): their CANCELLATION, EXPIRATION and
-  NON_RENEWING_PURCHASE never touch the user's store subscription row.
+- `POST /v1/webhooks/revenuecat` answers 200 `ignored` to purchase, renewal,
+  cancellation, expiration, billing, product-change and refund events with
+  `store=PROMOTIONAL` (pass and dashboard grants), so they never create or
+  expire the user's store subscription row. Web-funnel redemption and
+  reconcile, and `TRANSFER`, are handled as before.
 - Checkout returns 503 `MoMo checkout is unavailable.` until `MOMO_*` is set;
   the missing setting names are only logged. MoMo's sandbox runs only where
   the `ENVIRONMENT` variable is `development`, `local`, `staging` or `test`;
   anywhere else, unset included, `MOMO_ENV` must be `production` or MoMo
-  stays off (an error is logged only when the MoMo keys are set).
+  stays off. The settings are checked once per process: an error is logged
+  only when the MoMo keys are set, otherwise an info line.
 
 ### Food-label scan
 

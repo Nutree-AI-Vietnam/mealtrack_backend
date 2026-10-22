@@ -170,9 +170,6 @@ async def revenuecat_webhook(
         event_type,
         event.get("environment"),
     )
-    if is_promotional_event(event):
-        logger.info("RevenueCat promotional %s ignored", event_type)
-        return {"status": "ignored", "reason": "promotional_entitlement"}
 
     # Resolve shared dependencies for affiliate delivery
     affiliate_handler = _get_affiliate_handler()
@@ -204,6 +201,13 @@ async def revenuecat_webhook(
                 attributes={"event_type": event_type, "status": "success"},
             )
             return {"status": "success"}
+
+        if is_promotional_event(event):
+            # Promotional grants (MoMo passes, dashboard grants) are not store
+            # subscriptions: their lifecycle events must not create or expire
+            # the user's subscription row.
+            logger.info("RevenueCat promotional %s ignored", event_type)
+            return {"status": "ignored", "reason": "promotional_entitlement"}
 
         if not user:
             logger.error(

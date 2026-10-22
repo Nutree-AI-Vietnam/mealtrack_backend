@@ -7,7 +7,7 @@ and handles HTTP communication with RevenueCat API.
 
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import datetime
 from urllib.parse import quote
 
 import httpx
@@ -63,7 +63,11 @@ class RevenueCatAdapter(SubscriptionServicePort):
     async def grant_promotional_entitlement(
         self, app_user_id: str, entitlement_id: str, end_time_ms: int
     ) -> bool:
-        """Grant an entitlement until end_time_ms. Repeating a grant is harmless."""
+        """Grant an entitlement from now until end_time_ms; False when it failed.
+
+        RevenueCat keeps a subscriber's latest promotional expiry, so resending
+        an end is a duplicate and an earlier end never shortens access.
+        """
         url = (
             f"{self.BASE_URL}/subscribers/{quote(app_user_id, safe='')}"
             f"/entitlements/{quote(entitlement_id, safe='')}/promotional"
@@ -72,7 +76,10 @@ class RevenueCatAdapter(SubscriptionServicePort):
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     url,
-                    headers=self._headers(),
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
                     json={"end_time_ms": end_time_ms},
                     timeout=10.0,
                 )
@@ -81,40 +88,6 @@ class RevenueCatAdapter(SubscriptionServicePort):
         except httpx.HTTPError as e:
             logger.error(f"RevenueCat promotional grant failed: {e}")
             return False
-
-    async def promotional_expiries(self, app_user_id: str) -> list[datetime] | None:
-        """Expiry of each promotional grant RevenueCat lists for the subscriber.
-
-        Empty when there is none; None when RevenueCat cannot be read, so an
-        outage is never mistaken for a missing grant.
-        """
-        url = f"{self.BASE_URL}/subscribers/{quote(app_user_id, safe='')}"
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=self._headers(), timeout=10.0)
-            if response.status_code == 404:
-                return []
-            response.raise_for_status()
-            subscriptions = response.json()["subscriber"].get("subscriptions") or {}
-            promotionals = [
-                entry
-                for entry in subscriptions.values()
-                if str(entry.get("store", "")).lower() == "promotional"
-            ]
-        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as e:
-            logger.error(f"RevenueCat subscriber read failed: {e}")
-            return None
-        return [
-            expiry
-            for entry in promotionals
-            if (expiry := _parse_expiry(entry.get("expires_date"))) is not None
-        ]
-
-    def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
 
     async def has_active_subscription(self, app_user_id: str) -> bool:
         """
@@ -185,14 +158,3 @@ class RevenueCatAdapter(SubscriptionServicePort):
                     continue
 
         return None
-
-
-def _parse_expiry(value: object) -> datetime | None:
-    """A RevenueCat ISO-8601 date in UTC; None for lifetime grants or bad values."""
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
