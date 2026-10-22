@@ -8,18 +8,17 @@
    ends by then as granted and claim its quiz lead.
 
 RevenueCat may replace a custom promotional instead of keeping the latest
-expiry, so one user's sends must land in order. Only the request holding the
-user's transaction-scoped advisory try-lock sends, always the latest credited
-end, and it loops until nothing is unsent; a request that finds the lock taken
-returns, because its credit committed before the holder releases the lock and
-the holder's next pass sends it. A failed grant leaves the orders unsent for
-the next status read, IPN, sign-in or app activate.
+expiry, so one user's sends must land in order: only the holder of the user's
+transaction-scoped advisory lock sends, always the latest credited end, until
+nothing is unsent. A status read or IPN that finds the lock taken returns, as
+the holder's next pass sends its committed credit; activation waits a little
+longer than one grant, so the pass it reports has reached RevenueCat. A failed
+grant leaves the orders unsent for the next status read, IPN or activation.
 
-Accepted trade-off: the lock holder keeps one database connection, in a read
-transaction that holds the advisory lock and no row locks, for up to
-``_GRANT_TIMEOUT_SECONDS`` while RevenueCat answers. Only one request per user
-does this, and only while a credit is unsent. No other transaction stays open
-across a remote call, and crediting never waits on RevenueCat.
+Accepted trade-off: the holder keeps a connection, in a read transaction with
+the advisory lock and no row locks, for up to ``_GRANT_TIMEOUT_SECONDS`` while
+RevenueCat answers, as does an activation waiting behind it. No other
+transaction stays open across a remote call; crediting never waits on it.
 
 Residual risk: a grant that timed out here may still land at RevenueCat after
 a later end was sent, and shorten access to its earlier end; nothing detects
@@ -34,6 +33,7 @@ import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.payments.momo_pass import next_access_window
@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 STANDARD_ENTITLEMENT = "standard"
 
 _GRANT_TIMEOUT_SECONDS = 10.0
+# Long enough for the holder to finish one grant and release the lock.
+_LOCK_WAIT_SECONDS = _GRANT_TIMEOUT_SECONDS + 2.0
+_LOCK_NOT_AVAILABLE = "55P03"  # SQLSTATE of an expired lock_timeout
 
 _CREDITED_TO = MomoPaymentOrder.granted_user_id
 
@@ -75,15 +78,16 @@ class MomoPassEntitlements:
         )
         await db.commit()
 
-    async def sync(self, db: AsyncSession, user_id: str) -> bool:
+    async def sync(self, db: AsyncSession, user_id: str, *, wait: bool = False) -> bool:
         """Send the user's latest pass end to RevenueCat; False leaves a retry.
 
         True also when another request holds the user's sync lock: that holder
-        sends the latest end, this request's credit included. Call with no
-        transaction open, so the holder's transaction carries no row locks.
+        sends the latest end, this request's credit included. ``wait`` queues
+        behind the holder, so its grant has landed or failed on return. Call
+        with no transaction open, so the lock's transaction has no row locks.
         """
         while await _latest_unsent_end(db, user_id):
-            if not await _try_sync_lock(db, user_id):
+            if not await _sync_lock(db, user_id, wait):
                 break
             # Re-read under the lock: the previous holder may have sent it,
             # and only the end read while holding the lock may be sent.
@@ -134,7 +138,7 @@ class MomoPassEntitlements:
         await db.rollback()
         for order_id in order_ids:
             await self.credit(db, order_id, user_id)
-        await self.sync(db, user_id)
+        await self.sync(db, user_id, wait=True)
 
     async def has_active_pass(self, db: AsyncSession, user_id: str) -> bool:
         """Only granted windows count; a credited one may not exist upstream."""
@@ -146,13 +150,28 @@ class MomoPassEntitlements:
         return bool(ends and ends > utc_now())
 
 
-async def _try_sync_lock(db: AsyncSession, user_id: str) -> bool:
-    """Take the user's sync lock until this transaction ends, without waiting."""
+async def _sync_lock(db: AsyncSession, user_id: str, wait: bool) -> bool:
+    """Take the user's sync lock until this transaction ends.
+
+    Without ``wait`` a taken lock answers False at once. With it the request
+    queues for up to ``_LOCK_WAIT_SECONDS``; a wait that runs out rolls back.
+    """
     digest = hashlib.sha256(f"momo-sync:{user_id}".encode()).digest()
-    key = int.from_bytes(digest[:8], "big", signed=True)
-    return bool(
-        await db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": key})
-    )
+    key = {"key": int.from_bytes(digest[:8], "big", signed=True)}
+    if not wait:
+        return bool(
+            await db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), key)
+        )
+    timeout = {"timeout": f"{int(_LOCK_WAIT_SECONDS * 1000)}ms"}
+    await db.execute(text("SELECT set_config('lock_timeout', :timeout, true)"), timeout)
+    try:
+        await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), key)
+    except DBAPIError as error:
+        if getattr(error.orig, "sqlstate", None) != _LOCK_NOT_AVAILABLE:
+            raise
+        await db.rollback()
+        return False
+    return True
 
 
 async def _latest_unsent_end(

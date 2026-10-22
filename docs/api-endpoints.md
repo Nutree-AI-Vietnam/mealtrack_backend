@@ -415,9 +415,12 @@ handler/schema when implementing; the bullets below are the durable WHY.
   window ends. The buyer's latest end is then sent to RevenueCat and every
   credited order ending by it is marked granted. RevenueCat may replace a
   promotional instead of keeping the latest expiry, so one user's sends are
-  serialized by a per-user Postgres advisory try-lock: only its holder sends,
+  serialized by a per-user Postgres advisory lock: only its holder sends,
   always the latest credited end, and it repeats until nothing is unsent, so
-  a credit made meanwhile is sent too. A failed grant leaves its orders unsent.
+  a credit made meanwhile is sent too. A status read or IPN that finds the
+  lock taken leaves the send to its holder; activation waits for it (up to
+  12 s), so `has_pass` and `has_subscription` count a grant in flight. A
+  failed grant leaves its orders unsent.
   A window is fixed when it is credited: if RevenueCat is down the pass still
   ends on that date, and a credit whose window ended before delivery is not
   sent (logged as an error). Status reads, IPNs, `POST /v1/users/sync` and

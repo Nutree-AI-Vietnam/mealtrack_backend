@@ -33,8 +33,8 @@ class Steps:
     async def rollback(self):
         self.events.append(("rollback",))
 
-    async def try_sync_lock(self, _db, user_id):
-        self.events.append(("lock", user_id))
+    async def sync_lock(self, _db, user_id, wait):
+        self.events.append(("lock", user_id, wait))
         return self.lock_free
 
     async def latest_unsent_end(self, _db, user_id):
@@ -67,7 +67,7 @@ def steps(monkeypatch):
         fake = Steps(unsent, lock_free)
         for name, step in {
             "_latest_unsent_end": fake.latest_unsent_end,
-            "_try_sync_lock": fake.try_sync_lock,
+            "_sync_lock": fake.sync_lock,
             "_mark_granted": fake.mark_granted,
         }.items():
             monkeypatch.setattr(momo_pass_entitlement, name, step)
@@ -88,7 +88,7 @@ async def test_sync_sends_the_latest_end_under_the_lock_then_marks_it(steps):
     assert synced
     assert fake.events == [
         ("read", "user-1"),
-        ("lock", "user-1"),
+        ("lock", "user-1", False),
         ("read", "user-1"),
         ("grant", UID, "standard", _ms(LATEST_END)),
         ("mark", "user-1", UID, LATEST_END),
@@ -148,6 +148,18 @@ async def test_request_that_finds_the_lock_taken_leaves_the_send_to_its_holder(
 
     assert await MomoPassEntitlements(FakeRevenueCat(fake)).sync(fake, "user-1")
     assert [event[0] for event in fake.events] == ["read", "lock", "rollback"]
+
+
+async def test_waiting_sync_queues_for_the_lock_instead_of_trying_it(steps):
+    fake = steps(LATEST_END)
+
+    synced = await MomoPassEntitlements(FakeRevenueCat(fake)).sync(
+        fake, "user-1", wait=True
+    )
+
+    assert synced
+    assert ("lock", "user-1", True) in fake.events
+    assert fake.unsent is None
 
 
 async def test_nothing_unsent_takes_no_lock_and_calls_nobody(steps):

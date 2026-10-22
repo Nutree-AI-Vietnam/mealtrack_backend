@@ -2,8 +2,9 @@
 
 RevenueCat may replace a custom promotional instead of keeping the latest
 expiry. The fake here does replace, and its first grant is the slowest, so an
-earlier end sent alongside a later one would land last. Postgres is real;
-MoMo and RevenueCat are fakes.
+earlier end sent alongside a later one would land last. Activation waits for
+a grant in flight, so the pass it reports has reached RevenueCat. Postgres is
+real; MoMo and RevenueCat are fakes.
 """
 
 from __future__ import annotations
@@ -119,3 +120,44 @@ async def test_failed_grant_leaves_its_orders_unsent_until_the_next_activate(
     assert second.access_ends_at - first.access_ends_at == PASS
     assert revenuecat.end_times[-2:] == [ms(second.access_ends_at)] * 2
     assert revenuecat.end_ms == ms(second.access_ends_at)
+
+
+async def test_activation_during_a_grant_reports_the_pass_that_grant_sends(factory):
+    # A status poll or IPN is granting when the app activates or signs in.
+    await _seed_paid(factory, 1)
+    revenuecat = SlowRevenueCat(delays=(0.3,))
+    holder = asyncio.create_task(deliver(factory, revenuecat))
+    await revenuecat.called.wait()
+    service = MomoPassService(
+        factory, FakeMomo(), MomoPassEntitlements(revenuecat), URLS
+    )
+
+    assert await service.activate(USER_ID, None)
+
+    order = await load_order(factory)
+    assert order.granted_at is not None
+    assert revenuecat.end_times == [ms(order.access_ends_at)]
+    assert await holder
+
+
+async def test_activation_that_outwaits_the_lock_leaves_the_send_to_its_holder(
+    factory, monkeypatch
+):
+    monkeypatch.setattr(
+        "src.infra.services.momo_pass_entitlement._LOCK_WAIT_SECONDS", 0.1
+    )
+    await _seed_paid(factory, 1)
+    revenuecat = SlowRevenueCat(delays=(0.6,))
+    holder = asyncio.create_task(deliver(factory, revenuecat))
+    await revenuecat.called.wait()
+    service = MomoPassService(
+        factory, FakeMomo(), MomoPassEntitlements(revenuecat), URLS
+    )
+
+    assert not await service.activate(USER_ID, None)
+    assert revenuecat.in_flight == 1
+    assert await holder
+
+    order = await load_order(factory)
+    assert order.granted_at is not None
+    assert revenuecat.end_times == [ms(order.access_ends_at)]
