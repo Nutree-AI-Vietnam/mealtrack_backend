@@ -19,6 +19,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
 | RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Premium route gates are not enforced yet |
+| MoMo payment gateway | **Billing (one-time passes)** | Checkout 503 until configured, 502 when MoMo refuses; pending orders retry through the query API; a failed RevenueCat grant is retried on the next status read or user sync |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
@@ -71,6 +72,7 @@ durable.
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
+| MoMo one-time passes | `src/infra/adapters/momo_gateway_adapter.py`, `src/infra/services/momo_pass_*.py`, routes `momo_payments.py` and `web_funnel_momo.py`; contract in `api-endpoints.md` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
 | Queue consumer | sibling `nutreeai_async` repository |

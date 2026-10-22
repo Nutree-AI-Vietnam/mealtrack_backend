@@ -379,6 +379,26 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Legacy magic-claim routes remain gated by `WEB_FUNNEL_LEGACY_CLAIM_ENABLED`
   and are not the active flow.
 
+### MoMo one-time passes
+
+- MoMo takes one-time payments only. A paid order buys a 4, 12 or 52 week
+  pass that never renews; the buyer's first pass costs the intro price, later
+  passes the regular price (`src/domain/model/payments/momo_pass.py`).
+- App: `GET /v1/payments/momo/plans`, `POST /v1/payments/momo/checkouts`
+  `{plan, lang, method: wallet|atm}`, `GET /v1/payments/momo/orders/{id}`.
+  Quiz BFF (BFF token + `X-Lead-Access-Key`): the same under
+  `/v1/web-funnel/momo/*` with `lead_id`. `wallet` is MoMo `captureWallet`,
+  `atm` is `payWithATM`.
+- `POST /v1/webhooks/momo/ipn` checks the HMAC-SHA256 signature, partner code
+  and amount, then answers 204. The browser or app redirect is never trusted;
+  a pending order is reconciled through MoMo's query API on status reads.
+- A paid pass is a RevenueCat promotional `standard` entitlement on the
+  buyer's Firebase uid, stacked after any pass still running. In-app orders
+  unlock on payment; quiz orders unlock on `POST /v1/users/sync` when the token
+  carries a verified email equal to the checkout email (`has_subscription`
+  is then true).
+- Checkout returns 503 with `missing` setting names until `MOMO_*` is set.
+
 ### Food-label scan
 
 - `/v1/meals/food-label/scan-by-url` validates AI output against
