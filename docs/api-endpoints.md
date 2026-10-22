@@ -399,12 +399,14 @@ handler/schema when implementing; the bullets below are the durable WHY.
   (their in-app orders, and quiz orders under the verified email), so a
   payment whose IPN and status reads were all missed still unlocks.
 - A paid pass is a RevenueCat promotional `standard` entitlement on the
-  buyer's Firebase uid, stacked after any pass still running. Each order is
-  granted once: its window is persisted before RevenueCat is called, and a
-  retry resends the same end time. A window still ungranted 2 h after its
-  start is never resent: the order is confirmed when RevenueCat already lists
-  a promotional ending there, and otherwise reserved again from now (logged
-  as an error). In-app orders unlock on payment; quiz orders unlock on
+  buyer's Firebase uid, stacked after the buyer's other passes. RevenueCat
+  starts a grant when it is made, so each grant sends the end of the buyer's
+  whole chain of windows and confirms every window ending by then; windows are
+  persisted before RevenueCat is called, a retry resends the same end, and the
+  end sent only grows. While a window is still ungranted 2 h after its start,
+  nothing is sent for that buyer until RevenueCat is read: windows it already
+  covers are confirmed, and the rest of the chain is stacked again from now
+  (logged as an error), so each paid week is granted once. In-app orders unlock on payment; quiz orders unlock on
   `POST /v1/users/sync` when a Google, Apple or email/password token carries
   a verified email equal to the checkout email (custom tokens never match;
   `has_subscription` is then true).

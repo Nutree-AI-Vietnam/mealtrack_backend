@@ -201,8 +201,10 @@ async def test_lapsed_reservations_are_granted_again_back_to_back(factory):
 
     first = await load_order(factory)
     second = await load_order(factory, SECOND_ORDER_ID)
-    assert first.access_starts_at >= retried_at
+    # Grants start when made, so access runs from the retry to the last end:
+    # exactly the two paid passes, never pushed further out.
+    assert abs(first.access_starts_at - retried_at) < timedelta(minutes=1)
     assert second.access_starts_at == first.access_ends_at
-    assert second.access_ends_at - first.access_starts_at == 2 * PASS
-    assert revenuecat.end_times == [ms(first.access_ends_at), ms(second.access_ends_at)]
+    assert second.access_ends_at - retried_at <= 2 * PASS + timedelta(minutes=1)
+    assert revenuecat.end_times == [ms(second.access_ends_at)]
     assert first.granted_at is not None and second.granted_at is not None

@@ -52,7 +52,10 @@ async def momo_sessions(database_url: str) -> AsyncIterator[async_sessionmaker]:
 async def _truncate(sessions: async_sessionmaker) -> None:
     async with sessions() as db:
         await db.execute(
-            text("TRUNCATE TABLE momo_payment_orders, users RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE TABLE momo_payment_orders, web_funnel_leads, users "
+                "RESTART IDENTITY CASCADE"
+            )
         )
         await db.commit()
 
@@ -113,11 +116,14 @@ async def open_transactions(sessions: async_sessionmaker) -> int:
 class SlowRevenueCat:
     """Grants slowly and, like RevenueCat, lists the latest custom promotional.
 
-    ``promotional_ends=None`` makes the subscriber unreadable.
+    ``promotional_ends=None`` makes the subscriber unreadable, and
+    ``lands=True`` with ``ok=False`` applies a grant whose answer is lost.
     """
 
-    def __init__(self, sessions=None, ok=True, promotional_ends=()):
+    def __init__(self, sessions=None, ok=True, promotional_ends=(), lands=None):
         self.sessions, self.ok = sessions, ok
+        # A grant can land upstream while its answer is lost (a timeout).
+        self.lands = ok if lands is None else lands
         self.end_times: list[int] = []
         self.open_transactions: list[int] = []
         self.promotional_ends = (
@@ -130,7 +136,7 @@ class SlowRevenueCat:
         if self.sessions:
             self.open_transactions.append(await open_transactions(self.sessions))
         await asyncio.sleep(0.2)
-        if self.ok:
+        if self.lands:
             self.promotional_ends = [datetime.fromtimestamp(end_ms / 1000, UTC)]
         return self.ok
 
