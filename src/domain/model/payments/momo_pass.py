@@ -68,8 +68,11 @@ MOMO_PASS_PLANS: dict[MomoPlanKey, MomoPassPlan] = {
     )
 }
 
+# Every order is created with autoCapture, a one-step payment, for which MoMo
+# documents 9000 (authorized) as a completed payment.
+_PAID_RESULT_CODES = frozenset({0, 9000})
 # MoMo is still waiting on the buyer or its own processing.
-_PENDING_RESULT_CODES = frozenset({1000, 7000, 7002, 9000})
+_PENDING_RESULT_CODES = frozenset({1000, 7000, 7002})
 # The payment session timed out before the buyer paid.
 _EXPIRED_RESULT_CODES = frozenset({1005})
 
@@ -83,7 +86,7 @@ def get_momo_pass_plan(key: str) -> MomoPassPlan:
 
 def order_status_for_result(result_code: int) -> MomoOrderStatus:
     """Map a MoMo resultCode onto our order status."""
-    if result_code == 0:
+    if result_code in _PAID_RESULT_CODES:
         return MomoOrderStatus.PAID
     # Codes below 1000 describe the API call (format, auth, maintenance), not
     # the buyer's payment, so they never settle an order.

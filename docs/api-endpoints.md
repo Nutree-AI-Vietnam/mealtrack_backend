@@ -396,8 +396,10 @@ handler/schema when implementing; the bullets below are the durable WHY.
   (SHA-256), not per BFF IP. `wallet` is MoMo `captureWallet`, `atm` is
   `payWithATM`.
 - `POST /v1/webhooks/momo/ipn` checks the HMAC-SHA256 signature, partner code
-  and amount, then answers 204; it rejects every body while MoMo is not
-  configured. The browser or app redirect is never trusted; a pending order is
+  and amount, records the result and answers 204 (MoMo allows 15 s), then
+  grants the pass after the response; it rejects every body while MoMo is not
+  configured. Result codes 0 and 9000 (authorized; every order uses
+  autoCapture, a one-step payment) mean paid. The browser or app redirect is never trusted; a pending order is
   reconciled through MoMo's query API on status reads, at most once per 3 s
   per order, outside any database transaction. Activation, run by
   `POST /v1/users/sync` and by `POST /v1/payments/momo/activate`, first asks

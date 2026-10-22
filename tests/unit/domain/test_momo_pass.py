@@ -58,7 +58,7 @@ def test_unknown_plan_is_rejected():
         (1000, MomoOrderStatus.PENDING),
         (7000, MomoOrderStatus.PENDING),
         (7002, MomoOrderStatus.PENDING),
-        (9000, MomoOrderStatus.PENDING),
+        (9000, MomoOrderStatus.PAID),
         (99, MomoOrderStatus.PENDING),
         (11, MomoOrderStatus.PENDING),
         (1005, MomoOrderStatus.EXPIRED),

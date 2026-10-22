@@ -3,7 +3,15 @@
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel
 
 from src.api.dependencies.auth import get_current_user_id, verify_firebase_token
@@ -129,8 +137,12 @@ async def activate_momo_pass(
 
 
 @webhook_router.post("/ipn", status_code=status.HTTP_204_NO_CONTENT)
-async def momo_ipn(request: Request):
-    """MoMo's server-to-server result. MoMo expects 204 once it is recorded."""
+async def momo_ipn(request: Request, background_tasks: BackgroundTasks):
+    """MoMo's server-to-server result. MoMo expects 204 within 15 s.
+
+    The result is recorded before answering; the RevenueCat grant runs after
+    the response, so a slow grant cannot make MoMo retry.
+    """
     try:
         payload = await request.json()
     except ValueError:
@@ -139,9 +151,11 @@ async def momo_ipn(request: Request):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid body"
         )
-    if not await get_momo_pass_service().handle_ipn(payload):
+    service = get_momo_pass_service()
+    if not await service.handle_ipn(payload, deliver=False):
         logger.warning("Rejected MoMo IPN for order %s", payload.get("orderId"))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature"
         )
+    background_tasks.add_task(service.deliver, str(payload["orderId"]))
     return Response(status_code=status.HTTP_204_NO_CONTENT)

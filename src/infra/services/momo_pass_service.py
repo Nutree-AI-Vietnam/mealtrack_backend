@@ -171,8 +171,12 @@ class MomoPassService:
                 return None
             return await self._refresh(db, order_id)
 
-    async def handle_ipn(self, payload: dict) -> bool:
-        """Apply a signed MoMo notification. False means the body is not trusted."""
+    async def handle_ipn(self, payload: dict, *, deliver: bool = True) -> bool:
+        """Apply a signed MoMo notification. False means the body is not trusted.
+
+        MoMo wants its 204 within 15 s, so the webhook records the result with
+        ``deliver=False`` and grants the pass afterwards through ``deliver``.
+        """
         credentials = self.gateway.credentials
         # Unconfigured MoMo has empty keys, and an empty key must never verify.
         if credentials.missing:
@@ -188,8 +192,21 @@ class MomoPassService:
             if not await orders.find_order(db, order_id):
                 return False
             await apply_result(db, order_id, payload)
-            await self._deliver_if_paid(db, order_id)
+            if deliver:
+                await self._deliver_if_paid(db, order_id)
         return True
+
+    async def deliver(self, order_id: str) -> None:
+        """Credit and grant a paid order once its owner is known; never raises.
+
+        A failure leaves the pass unsent for the next status read, sign-in or
+        app activation to retry.
+        """
+        try:
+            async with self._session() as db:
+                await self._deliver_if_paid(db, order_id)
+        except Exception:
+            logger.exception("MoMo order %s could not be delivered", order_id)
 
     async def activate(self, user_id: str, verified_email: str | None) -> bool:
         """Settle, credit and sync a signed-in user's passes; True when one is active.

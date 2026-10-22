@@ -182,3 +182,50 @@ async def test_app_prices_use_only_a_proven_email(monkeypatch, token, priced_ema
         "user-1",
         priced_email,
     )
+
+
+class _IpnService:
+    def __init__(self, trusted: bool):
+        self.trusted = trusted
+        self.calls: list[tuple[str, bool]] = []
+        self.delivered: list[str] = []
+
+    async def handle_ipn(self, payload, *, deliver=True):
+        self.calls.append((payload["orderId"], deliver))
+        return self.trusted
+
+    async def deliver(self, order_id):
+        self.delivered.append(order_id)
+
+
+def _ipn_client(monkeypatch, service):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(momo_routes, "get_momo_pass_service", lambda: service)
+    app = FastAPI()
+    app.include_router(momo_routes.webhook_router)
+    return TestClient(app)
+
+
+def test_ipn_answers_before_granting_the_pass(monkeypatch):
+    service = _IpnService(trusted=True)
+
+    response = _ipn_client(monkeypatch, service).post(
+        "/v1/webhooks/momo/ipn", json={"orderId": "o1", "resultCode": 0}
+    )
+
+    assert response.status_code == 204
+    assert service.calls == [("o1", False)]
+    assert service.delivered == ["o1"]
+
+
+def test_untrusted_ipn_is_rejected_and_grants_nothing(monkeypatch):
+    service = _IpnService(trusted=False)
+
+    response = _ipn_client(monkeypatch, service).post(
+        "/v1/webhooks/momo/ipn", json={"orderId": "o1", "resultCode": 0}
+    )
+
+    assert response.status_code == 400
+    assert service.delivered == []
