@@ -1,10 +1,11 @@
 """Shared reads and projections for MoMo one-time pass orders."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from hmac import compare_digest
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from src.domain.model.payments.momo_pass import MomoPassPlan
 from src.domain.utils.timezone_utils import utc_now
@@ -57,6 +58,39 @@ async def claim_query_slot(
     )
     await db.commit()
     return claimed is not None
+
+
+def bought_by(user_id: str, verified_email: str | None) -> ColumnElement[bool]:
+    """Orders bought in the app by this user, or on the quiz under their email."""
+    owned = MomoPaymentOrder.user_id == user_id
+    if not verified_email:
+        return owned
+    bought_on_web = (MomoPaymentOrder.channel == "web_funnel") & (
+        MomoPaymentOrder.buyer_email == normalize_email(verified_email)
+    )
+    return owned | bought_on_web
+
+
+async def recent_pending_order_ids(
+    db: AsyncSession,
+    user_id: str,
+    verified_email: str | None,
+    *,
+    since: datetime,
+    limit: int,
+) -> list[str]:
+    """The buyer's newest orders created since ``since`` that are still pending."""
+    found = await db.scalars(
+        select(MomoPaymentOrder.order_id)
+        .where(
+            bought_by(user_id, verified_email),
+            MomoPaymentOrder.status == "pending",
+            MomoPaymentOrder.created_at >= since,
+        )
+        .order_by(MomoPaymentOrder.created_at.desc())
+        .limit(limit)
+    )
+    return list(found.all())
 
 
 async def owned_lead(

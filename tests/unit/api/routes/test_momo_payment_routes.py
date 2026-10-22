@@ -3,6 +3,7 @@
 import hashlib
 import logging
 
+import pytest
 from starlette.requests import Request
 
 from src.api.routes.v1.momo_payments import checkout_error
@@ -57,34 +58,60 @@ def test_unconfigured_checkout_hides_setting_names(caplog):
     assert "MOMO_SECRET_KEY" in caplog.text
 
 
-def _settings(monkeypatch, environment: str, momo_env: str) -> None:
+def _settings(
+    monkeypatch, environment: str | None, momo_env: str, keys: bool = True
+) -> None:
+    if environment is None:
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+    else:
+        monkeypatch.setenv("ENVIRONMENT", environment)
     for name, value in {
-        "ENVIRONMENT": environment,
         "MOMO_ENV": momo_env,
-        "MOMO_PARTNER_CODE": "NUTREE",
-        "MOMO_ACCESS_KEY": "access",
-        "MOMO_SECRET_KEY": "secret",
+        "MOMO_PARTNER_CODE": "NUTREE" if keys else "",
+        "MOMO_ACCESS_KEY": "access" if keys else "",
+        "MOMO_SECRET_KEY": "secret" if keys else "",
     }.items():
         monkeypatch.setattr(momo_bootstrap.settings, name, value)
 
 
-def test_production_api_with_sandbox_momo_is_not_configured(monkeypatch, caplog):
-    _settings(monkeypatch, "production", "sandbox")
+@pytest.mark.parametrize(
+    "environment", ["production", "Production", "prod", " ", None], ids=repr
+)
+def test_api_outside_a_sandbox_stage_refuses_sandbox_momo(
+    monkeypatch, caplog, environment
+):
+    _settings(monkeypatch, environment, "sandbox")
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.INFO):
         credentials = momo_bootstrap._momo_credentials()
 
     assert credentials.missing == ["MOMO_ENV"]
+    assert [record.levelno for record in caplog.records] == [logging.ERROR]
     assert "MOMO_ENV=production" in caplog.text
 
 
 def test_production_api_with_production_momo_is_configured(monkeypatch):
-    _settings(monkeypatch, "production", "production")
+    _settings(monkeypatch, "production", " Production ")
+
+    credentials = momo_bootstrap._momo_credentials()
+
+    assert credentials.missing == []
+    assert credentials.base_url == "https://payment.momo.vn"
+
+
+@pytest.mark.parametrize("environment", ["staging", "development", "local", "test"])
+def test_non_production_stages_may_run_the_momo_sandbox(monkeypatch, environment):
+    _settings(monkeypatch, environment.upper(), "sandbox")
 
     assert momo_bootstrap._momo_credentials().missing == []
 
 
-def test_staging_may_run_the_momo_sandbox(monkeypatch):
-    _settings(monkeypatch, "staging", "sandbox")
+def test_unconfigured_momo_in_production_is_not_an_error(monkeypatch, caplog):
+    _settings(monkeypatch, "production", "sandbox", keys=False)
 
-    assert momo_bootstrap._momo_credentials().missing == []
+    with caplog.at_level(logging.INFO):
+        credentials = momo_bootstrap._momo_credentials()
+
+    assert "MOMO_SECRET_KEY" in credentials.missing
+    assert caplog.records
+    assert all(record.levelno == logging.INFO for record in caplog.records)

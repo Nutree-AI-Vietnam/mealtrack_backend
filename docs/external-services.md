@@ -19,7 +19,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
 | RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Premium route gates are not enforced yet |
-| MoMo payment gateway | **Billing (one-time passes)** | Checkout 503 and IPN rejected until configured (in production also until `MOMO_ENV=production`), 502 when MoMo refuses; pending orders retry through the query API (8 s timeout, at most every 3 s per order); a failed RevenueCat grant keeps its reserved window and is retried on the next status read or user sync |
+| MoMo payment gateway | **Billing (one-time passes)** | Checkout 503 and IPN rejected until configured (outside `ENVIRONMENT` development, local, staging or test also until `MOMO_ENV=production`), 502 when MoMo refuses; pending orders retry through the query API on status reads and user sync (8 s timeout, at most every 3 s per order); a failed RevenueCat grant keeps its reserved window and is retried on the next status read or user sync, and a window still ungranted 2 h after its start is checked against RevenueCat and reserved again from now |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |

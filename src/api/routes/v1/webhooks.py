@@ -15,6 +15,7 @@ from src.api.routes.v1.webhook_lookup_parsing import (
     candidate_revenuecat_ids,
     find_user_for_revenuecat_event,
     is_anonymous_event,
+    is_promotional_event,
     parse_platform,
     parse_timestamp,
 )
@@ -169,6 +170,9 @@ async def revenuecat_webhook(
         event_type,
         event.get("environment"),
     )
+    if is_promotional_event(event):
+        logger.info("RevenueCat promotional %s ignored", event_type)
+        return {"status": "ignored", "reason": "promotional_entitlement"}
 
     # Resolve shared dependencies for affiliate delivery
     affiliate_handler = _get_affiliate_handler()

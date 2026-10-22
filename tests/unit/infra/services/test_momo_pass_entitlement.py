@@ -17,9 +17,9 @@ pytestmark = pytest.mark.asyncio
 class GrantSession:
     """Feeds the locked order and the stacking aggregate; records the confirm."""
 
-    def __init__(self, user, order, current_end=None):
+    def __init__(self, user, order, current_end=None, selects=None):
         self.user, self.order = user, order
-        self.selects_left = iter([order, current_end])
+        self.selects_left = iter(selects or [order, current_end])
         self.events = []
 
     async def get(self, _model, _identifier, **kwargs):
@@ -43,8 +43,13 @@ class GrantSession:
 
 
 class FakeRevenueCat:
-    def __init__(self, session=None, ok=True):
+    def __init__(self, session=None, ok=True, promotional_ends=()):
         self.session, self.ok, self.calls = session, ok, []
+        self.promotional_ends, self.reads = promotional_ends, 0
+
+    async def promotional_expiries(self, _app_user_id):
+        self.reads += 1
+        return None if self.promotional_ends is None else list(self.promotional_ends)
 
     async def grant_promotional_entitlement(
         self, app_user_id, entitlement_id, end_time_ms
@@ -146,6 +151,75 @@ async def test_retry_reuses_the_reserved_end_time():
     assert revenuecat.calls == [
         ("firebase-uid-1", "standard", _ms(starts + timedelta(weeks=4)))
     ]
+    assert revenuecat.reads == 0
+
+
+def _lapsed(**values):
+    starts = utc_now() - timedelta(weeks=5)
+    return _paid(
+        granted_user_id="user-1",
+        access_starts_at=starts,
+        access_ends_at=starts + timedelta(weeks=4),
+        **values,
+    )
+
+
+async def test_lapsed_window_is_reserved_again_from_now():
+    order = _lapsed()
+    # Locked order, then the re-reservation's locked order and aggregate.
+    session = GrantSession(_user(), order, selects=[order, order, None])
+    revenuecat = FakeRevenueCat()
+    before = utc_now()
+
+    assert await MomoPassEntitlements(revenuecat).grant(session, "o1", "user-1")
+
+    assert order.access_starts_at >= before
+    assert order.access_ends_at - order.access_starts_at == timedelta(weeks=4)
+    assert revenuecat.reads == 1
+    assert revenuecat.calls == [
+        ("firebase-uid-1", "standard", _ms(order.access_ends_at))
+    ]
+    assert order.granted_at is not None
+
+
+async def test_lapsed_window_stacks_after_the_latest_promotional_upstream():
+    order = _lapsed()
+    upstream_end = utc_now() + timedelta(days=3)
+    session = GrantSession(_user(), order, selects=[order, order, None])
+
+    await MomoPassEntitlements(FakeRevenueCat(promotional_ends=[upstream_end])).grant(
+        session, "o1", "user-1"
+    )
+
+    assert order.access_starts_at == upstream_end
+
+
+async def test_lapsed_window_revenuecat_already_holds_is_confirmed_without_a_grant(
+    claimed_leads,
+):
+    order = _lapsed(lead_id="lead-1")
+    lapsed_end = order.access_ends_at
+    session = GrantSession(_user(), order)
+    revenuecat = FakeRevenueCat(promotional_ends=[lapsed_end + timedelta(minutes=5)])
+
+    assert await MomoPassEntitlements(revenuecat).grant(session, "o1", "user-1")
+
+    assert revenuecat.calls == []
+    assert order.access_ends_at == lapsed_end and order.granted_at is not None
+    assert claimed_leads == [("lead-1", "firebase-uid-1")]
+
+
+async def test_lapsed_window_waits_while_revenuecat_cannot_be_read():
+    order = _lapsed()
+    lapsed_window = (order.access_starts_at, order.access_ends_at)
+    session = GrantSession(_user(), order)
+    revenuecat = FakeRevenueCat(promotional_ends=None)
+
+    assert not await MomoPassEntitlements(revenuecat).grant(session, "o1", "user-1")
+
+    assert revenuecat.calls == []
+    assert (order.access_starts_at, order.access_ends_at) == lapsed_window
+    assert order.granted_at is None
 
 
 async def test_window_reserved_for_another_user_is_restacked_for_this_one():

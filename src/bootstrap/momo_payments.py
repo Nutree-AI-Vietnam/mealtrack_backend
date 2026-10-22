@@ -1,6 +1,7 @@
 """Composition root for MoMo one-time premium passes."""
 
 import logging
+import os
 from functools import lru_cache
 
 from src.infra.adapters.momo_gateway_adapter import (
@@ -31,6 +32,12 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+# MoMo's sandbox is allowed only where ENVIRONMENT explicitly names one of these
+# stages. Settings default ENVIRONMENT to "development", so the process variable
+# is read: an unset, blank or unknown value ("prod", a typo) must not let
+# production settle free sandbox payments.
+_SANDBOX_ENVIRONMENTS = frozenset({"development", "local", "staging", "test"})
+
 
 def _open_session():
     if config_async.AsyncSessionLocal is None:
@@ -39,18 +46,23 @@ def _open_session():
 
 
 def _momo_credentials() -> MomoCredentials:
-    """Production runs MoMo in production mode only; otherwise MoMo stays off."""
+    """Outside the sandbox stages MoMo runs in production mode or stays off."""
+    environment = (os.environ.get("ENVIRONMENT") or "").strip().lower()
     credentials = MomoCredentials(
-        env=settings.MOMO_ENV,
+        env=settings.MOMO_ENV.strip().lower(),
         partner_code=settings.MOMO_PARTNER_CODE,
         access_key=settings.MOMO_ACCESS_KEY,
         secret_key=settings.MOMO_SECRET_KEY,
-        require_production=settings.ENVIRONMENT == "production",
+        require_production=environment not in _SANDBOX_ENVIRONMENTS,
     )
-    if "MOMO_ENV" in credentials.missing:
+    if credentials.missing == ["MOMO_ENV"]:
+        # Keys are set, so this API would otherwise settle sandbox payments.
         logger.error(
-            "MoMo is disabled: ENVIRONMENT=production requires MOMO_ENV=production"
+            "MoMo is disabled: ENVIRONMENT=%r allows only MOMO_ENV=production",
+            environment,
         )
+    elif credentials.missing:
+        logger.info("MoMo is off until set: %s", ", ".join(credentials.missing))
     return credentials
 
 

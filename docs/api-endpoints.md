@@ -394,17 +394,28 @@ handler/schema when implementing; the bullets below are the durable WHY.
   and amount, then answers 204; it rejects every body while MoMo is not
   configured. The browser or app redirect is never trusted; a pending order is
   reconciled through MoMo's query API on status reads, at most once per 3 s
-  per order, outside any database transaction.
+  per order, outside any database transaction. `POST /v1/users/sync` also
+  asks MoMo about the buyer's 3 newest pending orders from the last 30 days
+  (their in-app orders, and quiz orders under the verified email), so a
+  payment whose IPN and status reads were all missed still unlocks.
 - A paid pass is a RevenueCat promotional `standard` entitlement on the
   buyer's Firebase uid, stacked after any pass still running. Each order is
   granted once: its window is persisted before RevenueCat is called, and a
-  retry resends the same end time. In-app orders unlock on payment; quiz
-  orders unlock on `POST /v1/users/sync` when a Google, Apple or
-  email/password token carries a verified email equal to the checkout email
-  (custom tokens never match; `has_subscription` is then true).
+  retry resends the same end time. A window still ungranted 2 h after its
+  start is never resent: the order is confirmed when RevenueCat already lists
+  a promotional ending there, and otherwise reserved again from now (logged
+  as an error). In-app orders unlock on payment; quiz orders unlock on
+  `POST /v1/users/sync` when a Google, Apple or email/password token carries
+  a verified email equal to the checkout email (custom tokens never match;
+  `has_subscription` is then true).
+- `POST /v1/webhooks/revenuecat` ignores events with `store=PROMOTIONAL`
+  (pass and dashboard grants): their CANCELLATION, EXPIRATION and
+  NON_RENEWING_PURCHASE never touch the user's store subscription row.
 - Checkout returns 503 `MoMo checkout is unavailable.` until `MOMO_*` is set;
-  the missing setting names are only logged. With `ENVIRONMENT=production`,
-  `MOMO_ENV` must be `production` or MoMo stays off.
+  the missing setting names are only logged. MoMo's sandbox runs only where
+  the `ENVIRONMENT` variable is `development`, `local`, `staging` or `test`;
+  anywhere else, unset included, `MOMO_ENV` must be `production` or MoMo
+  stays off (an error is logged only when the MoMo keys are set).
 
 ### Food-label scan
 

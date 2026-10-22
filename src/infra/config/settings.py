@@ -281,7 +281,10 @@ class Settings(BaseSettings):
     # MoMo one-time premium passes (payment gateway API v2)
     MOMO_ENV: str = Field(
         default="sandbox",
-        description="sandbox or production; ENVIRONMENT=production needs production",
+        description=(
+            "sandbox or production; sandbox only with ENVIRONMENT development, "
+            "local, staging or test"
+        ),
     )
     MOMO_PARTNER_CODE: str = Field(default="")
     MOMO_ACCESS_KEY: str = Field(default="")

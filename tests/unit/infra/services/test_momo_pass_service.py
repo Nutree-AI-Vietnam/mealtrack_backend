@@ -78,18 +78,31 @@ class FakeEntitlements:
     """Records grants and marks the order granted; locking is covered on Postgres."""
 
     def __init__(self, orders):
-        self.orders, self.grants = orders, []
+        self.orders, self.grants, self.activations = orders, [], []
 
     async def grant(self, _db, order_id, user_id):
         self.grants.append((order_id, user_id))
         self.orders[order_id].granted_at = utc_now()
         return True
 
+    async def activate_for_user(self, _db, user_id, verified_email):
+        paid = sorted(o for o, row in self.orders.items() if row.status == "paid")
+        self.activations.append((user_id, verified_email, paid))
+
+    async def has_active_pass(self, _db, _user_id):
+        return bool(self.activations and self.activations[-1][2])
+
 
 @pytest.fixture
 def store(monkeypatch):
     """Orders by id plus records of lead updates, behind the order helpers."""
-    state = {"orders": {}, "paid_before": False, "leads_paid": [], "leads_started": []}
+    state = {
+        "orders": {},
+        "paid_before": False,
+        "leads_paid": [],
+        "leads_started": [],
+        "pending_lookups": [],
+    }
 
     async def find_order(_db, order_id):
         return state["orders"].get(order_id)
@@ -107,6 +120,11 @@ def store(monkeypatch):
     async def paid_before(_db, _user_id, _email):
         return state["paid_before"]
 
+    async def recent_pending(_db, user_id, email, *, since, limit):
+        state["pending_lookups"].append((user_id, email, limit))
+        pending = [o for o, row in state["orders"].items() if row.status == "pending"]
+        return pending[:limit]
+
     async def lead_paid(_db, lead_id):
         state["leads_paid"].append(lead_id)
 
@@ -117,6 +135,7 @@ def store(monkeypatch):
     monkeypatch.setattr(momo_pass_orders, "lock_order", find_order)
     monkeypatch.setattr(momo_pass_orders, "claim_query_slot", claim_query_slot)
     monkeypatch.setattr(momo_pass_orders, "has_paid_before", paid_before)
+    monkeypatch.setattr(momo_pass_orders, "recent_pending_order_ids", recent_pending)
     monkeypatch.setattr(momo_pass_orders, "mark_lead_paid", lead_paid)
     monkeypatch.setattr(momo_pass_orders, "mark_lead_checkout_started", lead_started)
     return state
@@ -416,6 +435,44 @@ async def test_ipn_is_rejected_when_production_runs_sandbox_keys(store):
 
     assert not await service.handle_ipn(_ipn())
     assert store["orders"]["o1"].status == "pending"
+
+
+async def test_sign_in_settles_a_paid_order_whose_ipn_was_missed(store):
+    store["orders"]["w1"] = _order(
+        order_id="w1", channel="web_funnel", user_id=None, buyer_email="b@x.vn"
+    )
+    service, _session = _service(store, FakeGateway(query_code=0))
+
+    assert await service.activate("user-1", "b@x.vn")
+
+    assert service.gateway.queried == ["w1"]
+    assert store["orders"]["w1"].status == "paid"
+    # Granting runs after the order settled, so the new payment is included.
+    assert service.entitlements.activations == [("user-1", "b@x.vn", ["w1"])]
+
+
+async def test_sign_in_asks_momo_about_each_pending_order_once(store):
+    for order_id in ("o1", "o2"):
+        store["orders"][order_id] = _order(order_id=order_id)
+    service, _session = _service(store, FakeGateway(query_code=1000))
+
+    assert not await service.activate("user-1", None)
+
+    assert sorted(service.gateway.queried) == ["o1", "o2"]
+    assert store["pending_lookups"] == [("user-1", None, 3)]
+    assert service.entitlements.activations == [("user-1", None, [])]
+
+
+async def test_sign_in_with_unconfigured_momo_still_grants_paid_orders(store):
+    store["orders"]["o1"] = _order(status="paid")
+    store["orders"]["o2"] = _order(order_id="o2")
+    unconfigured = MomoCredentials("sandbox", "", "", "")
+    service, _session = _service(store, FakeGateway(unconfigured))
+
+    assert await service.activate("user-1", None)
+
+    assert service.gateway.queried == [] and store["pending_lookups"] == []
+    assert service.entitlements.activations == [("user-1", None, ["o1"])]
 
 
 async def test_status_of_someone_elses_order_is_hidden(store):
