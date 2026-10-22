@@ -1104,7 +1104,10 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         GetUserByFirebaseUidQuery, GetUserByFirebaseUidQueryHandler()
     )
-    event_bus.register_handler(GetMyEntitlementsQuery, GetMyEntitlementsQueryHandler())
+    event_bus.register_handler(
+        GetMyEntitlementsQuery,
+        GetMyEntitlementsQueryHandler(uow_factory=AsyncUnitOfWork),
+    )
     event_bus.register_handler(
         GetUserOnboardingStatusQuery, GetUserOnboardingStatusQueryHandler()
     )

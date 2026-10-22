@@ -12,7 +12,6 @@ from src.app.services.subscription_access_flags import (
 from src.domain.services.subscription_access_policy import (
     SubscriptionAccessUnavailable,
 )
-from src.infra.event_bus import EventBus
 
 router = APIRouter(prefix="/v1/me", tags=["Me"])
 
@@ -21,7 +20,7 @@ router = APIRouter(prefix="/v1/me", tags=["Me"])
 async def get_my_entitlements(
     response: Response,
     user_id: str = Depends(get_current_user_id),
-    event_bus: EventBus = Depends(get_configured_event_bus),
+    event_bus=Depends(get_configured_event_bus),
 ) -> MyEntitlementsResponse:
     """Return the database-owned access decision for the signed-in user."""
     response.headers["Cache-Control"] = "private, no-store"

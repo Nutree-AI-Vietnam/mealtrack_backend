@@ -14,6 +14,10 @@ from typing import cast
 from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.base_dependencies import (
+    normalize_standard_access_facts,
+    sync_revenuecat_access,
+)
 from src.api.routes.v1.webhook_lookup_parsing import (
     candidate_revenuecat_ids,
     find_user_for_revenuecat_event,
@@ -46,10 +50,6 @@ from src.bootstrap.web_funnel_claim_dispatcher import get_web_funnel_outbox_disp
 from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
-from src.infra.services.subscription_access_sync_service import (
-    normalize_standard_access_facts,
-    sync_revenuecat_access,
-)
 from src.observability import increment_metric
 
 router = APIRouter(prefix="/v1/webhooks", tags=["Webhooks"])

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.base_dependencies import (
     get_subscription_service,
     get_web_funnel_redemption_service,
+    normalize_standard_access_facts,
 )
 from src.api.dependencies.auth import verify_firebase_token_revocation_checked
 from src.api.middleware.rate_limit import limiter
@@ -48,9 +49,6 @@ from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
     WebFunnelOutbox,
     WebFunnelRedemption,
-)
-from src.infra.services.subscription_access_sync_service import (
-    normalize_standard_access_facts,
 )
 
 router = APIRouter(prefix="/v1/web-funnel", tags=["Web Funnel"])
