@@ -129,6 +129,8 @@ async def finalize_redemption(
     environment: str,
     auth_provider: str | None = None,
     expires_at=None,
+    provider_snapshot_at=None,
+    subscription_facts: dict | None = None,
     verified_provider_app_user_ids: set[str] | None = None,
 ) -> dict:
     """Restore one paid lead once; hash + preflight UID select the exact row."""
@@ -274,16 +276,43 @@ async def finalize_redemption(
                 user_id=user.id,
                 revenuecat_subscriber_id=uid,
                 product_id=binding.product_id,
-                platform="web",
-                status="active",
-                purchased_at=utcnow(),
+                platform=(subscription_facts or {}).get("platform", "web"),
+                status=(subscription_facts or {}).get("status", "active"),
+                purchased_at=(subscription_facts or {}).get("purchased_at") or utcnow(),
                 expires_at=expires_at,
-                is_sandbox=binding.environment.upper() == "SANDBOX",
+                provider="revenuecat",
+                provider_snapshot_at=provider_snapshot_at,
+                grace_period_expires_at=(subscription_facts or {}).get(
+                    "grace_period_expires_at"
+                ),
+                period_type=(subscription_facts or {}).get("period_type"),
+                cancelled_at=(subscription_facts or {}).get("cancelled_at"),
+                store_transaction_id=(subscription_facts or {}).get(
+                    "store_transaction_id"
+                ),
+                is_sandbox=(subscription_facts or {}).get("is_sandbox", False),
             )
         )
     else:
-        subscription.status = "active"
+        subscription.status = (subscription_facts or {}).get("status", "active")
+        subscription.platform = (subscription_facts or {}).get(
+            "platform", subscription.platform
+        )
+        subscription.purchased_at = (subscription_facts or {}).get(
+            "purchased_at", subscription.purchased_at
+        )
         subscription.expires_at = expires_at
+        subscription.provider = "revenuecat"
+        subscription.provider_snapshot_at = provider_snapshot_at
+        subscription.grace_period_expires_at = (subscription_facts or {}).get(
+            "grace_period_expires_at"
+        )
+        subscription.period_type = (subscription_facts or {}).get("period_type")
+        subscription.cancelled_at = (subscription_facts or {}).get("cancelled_at")
+        subscription.store_transaction_id = (subscription_facts or {}).get(
+            "store_transaction_id"
+        )
+        subscription.is_sandbox = (subscription_facts or {}).get("is_sandbox", False)
     binding.provider_app_user_ids = sorted(
         aliases | verified_aliases | {original_app_user_id, uid}
     )

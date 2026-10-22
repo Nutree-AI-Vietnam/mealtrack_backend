@@ -16,28 +16,28 @@ from .get_daily_hydration_query_handler import GetDailyHydrationQueryHandler
 from .get_daily_macros_query_handler import GetDailyMacrosQueryHandler
 from .get_daily_movement_query_handler import GetDailyMovementQueryHandler
 from .get_drink_catalog_query_handler import GetDrinkCatalogQueryHandler
-from .get_food_details_query_handler import GetFoodDetailsQueryHandler
-from .get_provider_food_details_query_handler import (
-    GetProviderFoodDetailsQueryHandler,
-)
-from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
-from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
-from .get_latest_weekly_recap_query_handler import GetLatestWeeklyRecapQueryHandler
-from .get_progress_recap_query_handler import GetProgressRecapQueryHandler
-from .get_progress_summary_query_handler import GetProgressSummaryQueryHandler
 
 # Meal handlers
 from .get_favorite_meals_query_handler import GetFavoriteMealsQueryHandler
+from .get_food_details_query_handler import GetFoodDetailsQueryHandler
+from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
+from .get_latest_weekly_recap_query_handler import GetLatestWeeklyRecapQueryHandler
 from .get_meal_by_id_query_handler import GetMealByIdQueryHandler
 from .get_meals_by_date_query_handler import GetMealsByDateQueryHandler
 from .get_movement_catalog_query_handler import GetMovementCatalogQueryHandler
-from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
-
+from .get_my_entitlements_query_handler import GetMyEntitlementsQueryHandler
 
 # Notification handlers
 from .get_notification_preferences_query_handler import (
     GetNotificationPreferencesQueryHandler,
 )
+from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
+from .get_progress_recap_query_handler import GetProgressRecapQueryHandler
+from .get_progress_summary_query_handler import GetProgressSummaryQueryHandler
+from .get_provider_food_details_query_handler import (
+    GetProviderFoodDetailsQueryHandler,
+)
+from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
 from .get_saved_suggestions_query_handler import GetSavedSuggestionsQueryHandler
 from .get_streak_query_handler import GetStreakQueryHandler
 from .get_user_by_firebase_uid_query_handler import GetUserByFirebaseUidQueryHandler
@@ -64,6 +64,7 @@ from .search_foods_query_handler import SearchFoodsQueryHandler
 __all__ = [
     # TDEE
     "GetUserTdeeQueryHandler",
+    "GetMyEntitlementsQueryHandler",
     "PreviewTdeeQueryHandler",
     # Food
     "SearchFoodsQueryHandler",

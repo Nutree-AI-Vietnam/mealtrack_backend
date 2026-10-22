@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from src.api.routes.v1 import web_funnel
+from src.domain.ports.subscription_service_port import RevenueCatSnapshot
 from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
     WebFunnelRedemption,
@@ -252,18 +253,35 @@ def _configure_redemption(monkeypatch):
 
 
 class VerifiedSubscriberService:
-    async def get_subscriber_info(self, _app_user_id):
+    def _subscriber(self, app_user_id="$RCAnonymousID:customer"):
         return {
-            "subscriber": {
-                "original_app_user_id": "$RCAnonymousID:customer",
-                "entitlements": {
-                    "standard": {
-                        "product_identifier": "web_monthly",
-                        "expires_date": None,
-                    }
-                },
-            }
+            "original_app_user_id": app_user_id,
+            "request_date_ms": 1792700000000,
+            "entitlements": {
+                "standard": {
+                    "product_identifier": "web_monthly",
+                    "expires_date": None,
+                }
+            },
+            "subscriptions": {
+                "web_monthly": {
+                    "purchase_date": "2026-10-22T00:00:00Z",
+                    "expires_date": None,
+                    "store": "STRIPE",
+                    "is_sandbox": True,
+                }
+            },
         }
+
+    async def get_verified_snapshot(self, _app_user_id):
+        from datetime import UTC, datetime
+
+        return RevenueCatSnapshot(
+            self._subscriber(), datetime(2026, 10, 22, tzinfo=UTC)
+        )
+
+    async def get_subscriber_info(self, _app_user_id):
+        return {"subscriber": self._subscriber()}
 
 
 class FinalizationSession:
@@ -329,7 +347,20 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
     )
 
     assert response["version"] == "redemption_result_v1"
-    assert captured == {
+    assert {
+        key: captured[key]
+        for key in (
+            "uid",
+            "email",
+            "original_app_user_id",
+            "verified_provider_app_user_ids",
+            "redemption_link_hash",
+            "idempotency_key",
+            "environment",
+            "auth_provider",
+            "expires_at",
+        )
+    } == {
         "uid": "firebase-uid",
         "email": "buyer@example.com",
         "original_app_user_id": "$RCAnonymousID:customer",
@@ -354,19 +385,15 @@ async def test_redemption_finalization_verifies_unknown_canonical_alias_from_che
     captured = {}
 
     class AliasedSubscriberService:
+        async def get_verified_snapshot(self, _app_user_id):
+            from datetime import UTC, datetime
+
+            subscriber = VerifiedSubscriberService()._subscriber(canonical_id)
+            return RevenueCatSnapshot(subscriber, datetime(2026, 10, 22, tzinfo=UTC))
+
         async def get_subscriber_info(self, app_user_id):
             provider_lookups.append(app_user_id)
-            return {
-                "subscriber": {
-                    "original_app_user_id": canonical_id,
-                    "entitlements": {
-                        "standard": {
-                            "product_identifier": "web_monthly",
-                            "expires_date": None,
-                        }
-                    },
-                }
-            }
+            return {"subscriber": VerifiedSubscriberService()._subscriber(canonical_id)}
 
     class RedemptionService:
         async def finalize(self, _db, **kwargs):
@@ -402,7 +429,7 @@ async def test_redemption_finalization_verifies_unknown_canonical_alias_from_che
     )
 
     assert response["access_status"] == "active"
-    assert provider_lookups == ["firebase-uid", checkout_id]
+    assert provider_lookups == [checkout_id]
     assert captured["original_app_user_id"] == canonical_id
     assert captured["verified_provider_app_user_ids"] == {canonical_id}
 
@@ -413,21 +440,23 @@ async def test_redemption_finalization_rejects_unrelated_canonical_customer(
 ):
     _configure_redemption(monkeypatch)
     session = FinalizationSession(original_app_user_id="$RCAnonymousID:web-checkout")
-    lookups = iter(["$RCAnonymousID:mobile-original", "$RCAnonymousID:other"])
+    lookups = iter(["$RCAnonymousID:other"])
     captured = {}
 
     class UnrelatedSubscriberService:
+        async def get_verified_snapshot(self, _app_user_id):
+            from datetime import UTC, datetime
+
+            return RevenueCatSnapshot(
+                VerifiedSubscriberService()._subscriber(
+                    "$RCAnonymousID:mobile-original"
+                ),
+                datetime(2026, 10, 22, tzinfo=UTC),
+            )
+
         async def get_subscriber_info(self, _app_user_id):
             return {
-                "subscriber": {
-                    "original_app_user_id": next(lookups),
-                    "entitlements": {
-                        "standard": {
-                            "product_identifier": "web_monthly",
-                            "expires_date": None,
-                        }
-                    },
-                }
+                "subscriber": VerifiedSubscriberService()._subscriber(next(lookups))
             }
 
     class RedemptionService:

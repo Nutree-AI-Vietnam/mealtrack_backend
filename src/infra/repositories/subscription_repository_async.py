@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domain.model.subscription import Subscription as DomainSubscription
 from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
@@ -70,6 +71,19 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
             )
         )
         return result.scalars().first()
+
+    async def find_all_by_revenuecat_ids(
+        self, revenuecat_subscriber_ids: list[str]
+    ) -> list[DomainSubscription]:
+        """Find all rows linked to source aliases before transferring access."""
+        if not revenuecat_subscriber_ids:
+            return []
+        result = await self.session.execute(
+            select(Subscription)
+            .where(Subscription.revenuecat_subscriber_id.in_(revenuecat_subscriber_ids))
+            .with_for_update()
+        )
+        return list(result.scalars().all())  # type: ignore[return-value]
 
     async def find_expiring_soon(
         self, days_until_expiry: int = 7

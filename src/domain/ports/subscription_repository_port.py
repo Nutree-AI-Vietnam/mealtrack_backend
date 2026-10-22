@@ -27,12 +27,21 @@ class SubscriptionRepositoryPort(ABC):
         pass
 
     @abstractmethod
+    async def find_all_by_revenuecat_ids(
+        self, revenuecat_subscriber_ids: list[str]
+    ) -> list[Subscription]:
+        """Find every cached row attached to transferred RevenueCat identities."""
+        pass
+
+    @abstractmethod
     async def find_active_by_user_id(self, user_id: str) -> Subscription | None:
         """Find the active subscription for a user."""
         pass
 
     @abstractmethod
-    async def find_expiring_soon(self, days_until_expiry: int = 7) -> list[Subscription]:
+    async def find_expiring_soon(
+        self, days_until_expiry: int = 7
+    ) -> list[Subscription]:
         """Find subscriptions expiring within specified days."""
         pass
 
