@@ -401,7 +401,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
   reconciled through MoMo's query API on status reads, at most once per 3 s
   per order, outside any database transaction. Activation, run by
   `POST /v1/users/sync` and by `POST /v1/payments/momo/activate`, first asks
-  MoMo, through the same throttle, about the buyer's 3 newest pending orders
+  MoMo, without the status-read throttle (a poll holding the slot cannot
+  credit an ownerless quiz order), about the buyer's 3 newest pending orders
   from the last 30 days (their in-app orders, and quiz orders under the
   verified email), so a payment whose IPN and status reads were all missed
   still unlocks; a failed query never fails the call. The app calls

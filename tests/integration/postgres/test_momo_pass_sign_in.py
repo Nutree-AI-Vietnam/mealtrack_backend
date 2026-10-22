@@ -73,6 +73,29 @@ async def test_sign_in_settles_a_payment_whose_ipn_and_polls_were_missed(
     assert revenuecat.end_times == [ms(order.access_ends_at)]
 
 
+async def test_activation_asks_momo_even_while_a_status_poll_holds_the_slot(factory):
+    # A funnel poll has just claimed the query slot; it could not credit this
+    # ownerless quiz order, so activation must ask MoMo itself.
+    await seed(
+        factory,
+        momo_order(
+            channel="web_funnel",
+            user_id=None,
+            buyer_email=BUYER_EMAIL,
+            last_checked_at=utc_now(),
+        ),
+    )
+    momo, revenuecat = FakeMomo(result_code=0), SlowRevenueCat()
+    service = MomoPassService(factory, momo, MomoPassEntitlements(revenuecat), URLS)
+
+    assert await service.activate(USER_ID, BUYER_EMAIL)
+
+    order = await load_order(factory)
+    assert momo.queries == 1
+    assert order.status == "paid" and order.granted_user_id == USER_ID
+    assert revenuecat.end_times == [ms(order.access_ends_at)]
+
+
 async def test_sign_in_asks_about_every_recent_pending_order(factory):
     await seed(factory, momo_order(), momo_order(SECOND_ORDER_ID))
     momo, revenuecat = FakeMomo(result_code=0), SlowRevenueCat()

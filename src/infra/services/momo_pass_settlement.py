@@ -18,7 +18,10 @@ QUERY_INTERVAL = timedelta(seconds=3)
 
 
 async def settle_pending(
-    db: AsyncSession, gateway: MomoGatewayAdapter, order_id: str
+    db: AsyncSession,
+    gateway: MomoGatewayAdapter,
+    order_id: str,
+    interval: timedelta = QUERY_INTERVAL,
 ) -> None:
     """Ask MoMo about a pending order and apply its answer.
 
@@ -27,7 +30,7 @@ async def settle_pending(
     transaction open: none stays open across the MoMo call.
     """
     if gateway.credentials.missing or not await orders.claim_query_slot(
-        db, order_id, QUERY_INTERVAL
+        db, order_id, interval
     ):
         return
     try:

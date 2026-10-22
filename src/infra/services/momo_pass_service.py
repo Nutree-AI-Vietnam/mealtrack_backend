@@ -197,7 +197,10 @@ class MomoPassService:
         Runs on sign-in and when the app activates without Premium. The IPN and
         the buyer's status polls can all be missed (a deploy, or MoMo handing
         back to another browser), so this first asks MoMo about the buyer's few
-        newest pending orders through the throttled query.
+        newest pending orders. It skips the status-poll throttle: a poll holding
+        the query slot cannot credit a quiz order that has no owner yet, so
+        activation must get its own answer. It is bounded by the order limit and
+        the route's rate limit, and applying a result is idempotent.
         """
         if not self.gateway.credentials.missing:
             async with self._session() as db:
@@ -220,7 +223,7 @@ class MomoPassService:
         """A failed settle leaves the order pending and never blocks activation."""
         try:
             async with self._session() as db:
-                await settle_pending(db, self.gateway, order_id)
+                await settle_pending(db, self.gateway, order_id, interval=timedelta(0))
         except Exception:
             logger.exception("MoMo order %s could not be settled", order_id)
 
