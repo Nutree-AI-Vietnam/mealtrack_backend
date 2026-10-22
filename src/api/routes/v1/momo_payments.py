@@ -35,10 +35,11 @@ class MomoCheckoutRequest(BaseModel):
 
 def checkout_error(error: Exception) -> HTTPException:
     if isinstance(error, MomoNotConfigured):
+        # Setting names go to the server log only, never to the caller.
         logger.error("MoMo checkout is not configured: %s", error.missing)
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": "MoMo is not configured", "missing": error.missing},
+            detail="MoMo checkout is unavailable.",
         )
     logger.warning("MoMo checkout failed: %s", error)
     return HTTPException(

@@ -279,7 +279,10 @@ class Settings(BaseSettings):
     WEB_FUNNEL_BFF_ORIGIN: str = Field(default="")
     WEB_FUNNEL_BFF_SHARED_SECRET: str = Field(default="")
     # MoMo one-time premium passes (payment gateway API v2)
-    MOMO_ENV: str = Field(default="sandbox", description="sandbox or production")
+    MOMO_ENV: str = Field(
+        default="sandbox",
+        description="sandbox or production; ENVIRONMENT=production needs production",
+    )
     MOMO_PARTNER_CODE: str = Field(default="")
     MOMO_ACCESS_KEY: str = Field(default="")
     MOMO_SECRET_KEY: str = Field(default="")

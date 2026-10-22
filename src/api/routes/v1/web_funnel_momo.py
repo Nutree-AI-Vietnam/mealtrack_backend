@@ -5,9 +5,13 @@ from typing import Literal
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
-from src.api.middleware.rate_limit import limiter
+from src.api.middleware.rate_limit import get_user_id_or_ip, limiter
 from src.api.routes.v1.momo_payments import checkout_error
-from src.api.routes.v1.web_funnel import _require_access_key, _require_bff_request
+from src.api.routes.v1.web_funnel import (
+    _hash,
+    _require_access_key,
+    _require_bff_request,
+)
 from src.bootstrap.momo_payments import (
     MomoGatewayError,
     MomoLeadUnavailable,
@@ -34,8 +38,20 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
+def lead_access_rate_limit_key(request: Request) -> str:
+    """One bucket per quiz browser, not per BFF outbound IP.
+
+    Every quiz call arrives from the BFF's few outbound IPs, so an IP key would
+    make all buyers share one bucket. Keys on a hash of the lead access key.
+    """
+    access_key = request.headers.get("X-Lead-Access-Key")
+    if not access_key:
+        return get_user_id_or_ip(request)
+    return _hash(access_key)
+
+
 @router.get("/plans")
-@limiter.limit("30/minute")
+@limiter.limit("30/minute", key_func=lead_access_rate_limit_key)
 async def list_web_momo_plans(
     request: Request,
     lead_id: str,
@@ -53,7 +69,7 @@ async def list_web_momo_plans(
 
 
 @router.post("/checkouts", status_code=status.HTTP_201_CREATED)
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=lead_access_rate_limit_key)
 async def create_web_momo_checkout(
     request: Request,
     payload: WebFunnelMomoCheckoutRequest,
@@ -80,7 +96,7 @@ async def create_web_momo_checkout(
 
 
 @router.get("/orders/{order_id}/status")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=lead_access_rate_limit_key)
 async def get_web_momo_order_status(
     request: Request,
     order_id: str,

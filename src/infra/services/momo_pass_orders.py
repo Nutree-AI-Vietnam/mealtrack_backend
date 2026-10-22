@@ -1,8 +1,9 @@
 """Shared reads and projections for MoMo one-time pass orders."""
 
+from datetime import timedelta
 from hmac import compare_digest
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.payments.momo_pass import MomoPassPlan
@@ -22,11 +23,40 @@ async def find_order(db: AsyncSession, order_id: str) -> MomoPaymentOrder | None
 
 
 async def lock_order(db: AsyncSession, order_id: str) -> MomoPaymentOrder | None:
+    # Sessions keep objects across commits, so a locked read must overwrite the
+    # identity map or it returns what this session saw before the lock.
     return await db.scalar(
         select(MomoPaymentOrder)
         .where(MomoPaymentOrder.order_id == order_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
+
+
+async def claim_query_slot(
+    db: AsyncSession, order_id: str, interval: timedelta
+) -> bool:
+    """Stamp a pending order's query time; only the caller that stamps asks MoMo.
+
+    Commits, so the stamp holds even when the MoMo call that follows fails.
+    """
+    now = utc_now()
+    claimed = await db.scalar(
+        update(MomoPaymentOrder)
+        .where(
+            MomoPaymentOrder.order_id == order_id,
+            MomoPaymentOrder.status == "pending",
+            or_(
+                MomoPaymentOrder.last_checked_at.is_(None),
+                MomoPaymentOrder.last_checked_at < now - interval,
+            ),
+        )
+        .values(last_checked_at=now)
+        .returning(MomoPaymentOrder.id)
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    return claimed is not None
 
 
 async def owned_lead(

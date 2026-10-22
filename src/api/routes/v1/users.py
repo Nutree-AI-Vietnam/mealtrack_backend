@@ -14,7 +14,6 @@ from src.api.dependencies.auth import (
     verify_firebase_uid_ownership,
 )
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.bootstrap.momo_payments import activate_momo_passes
 from src.api.schemas.request.user_requests import (
     UserSyncRequest,
     UserUpdateLastAccessedRequest,
@@ -47,6 +46,7 @@ from src.app.queries.user.get_user_onboarding_status_query import (
 from src.app.queries.user.get_weekly_auto_adjust_query import (
     GetWeeklyAutoAdjustQuery,
 )
+from src.bootstrap.momo_payments import activate_momo_passes
 from src.domain.exceptions.firebase_identity_exceptions import (
     FirebaseIdentityConflictError,
 )
@@ -72,6 +72,26 @@ class UpdateWeeklyAutoAdjustRequest(BaseModel):
     """Request body for leftover-split daily adjustment."""
 
     enabled: bool
+
+
+# Sign-in methods that prove the user owns the mailbox. Custom tokens, the web
+# funnel's silent login included, never unlock passes bought under an email.
+_MOMO_PASS_EMAIL_PROVIDERS = frozenset({"google.com", "apple.com", "password"})
+
+
+def _momo_pass_email(token: dict) -> str | None:
+    """The email that may unlock MoMo web passes, or None."""
+    firebase = token.get("firebase")
+    provider = firebase.get("sign_in_provider") if isinstance(firebase, dict) else None
+    email = token.get("email")
+    if (
+        token.get("email_verified") is True
+        and provider in _MOMO_PASS_EMAIL_PROVIDERS
+        and isinstance(email, str)
+        and email
+    ):
+        return email
+    return None
 
 
 @router.post("/sync", response_model=UserSyncResponse)
@@ -139,8 +159,7 @@ async def sync_user_from_firebase(
 
     # Map result to response
     user_data = result["user"]
-    verified_email = token.get("email") if token.get("email_verified") else None
-    if await activate_momo_passes(str(user_data["id"]), verified_email):
+    if await activate_momo_passes(str(user_data["id"]), _momo_pass_email(token)):
         user_data = {**user_data, "has_subscription": True}
 
     logger.info(
@@ -310,9 +329,7 @@ async def update_weekly_auto_adjust(
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """Enable or disable leftover-split daily targets. Enabled by default."""
-    command = UpdateWeeklyAutoAdjustCommand(
-        user_id=user_id, enabled=request.enabled
-    )
+    command = UpdateWeeklyAutoAdjustCommand(user_id=user_id, enabled=request.enabled)
     result = await event_bus.send(command)
     return result
 

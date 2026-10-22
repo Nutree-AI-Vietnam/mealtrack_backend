@@ -38,17 +38,27 @@ def _open_session():
     return config_async.AsyncSessionLocal()
 
 
-@lru_cache(maxsize=1)
-def get_momo_pass_service() -> MomoPassService:
+def _momo_credentials() -> MomoCredentials:
+    """Production runs MoMo in production mode only; otherwise MoMo stays off."""
     credentials = MomoCredentials(
         env=settings.MOMO_ENV,
         partner_code=settings.MOMO_PARTNER_CODE,
         access_key=settings.MOMO_ACCESS_KEY,
         secret_key=settings.MOMO_SECRET_KEY,
+        require_production=settings.ENVIRONMENT == "production",
     )
+    if "MOMO_ENV" in credentials.missing:
+        logger.error(
+            "MoMo is disabled: ENVIRONMENT=production requires MOMO_ENV=production"
+        )
+    return credentials
+
+
+@lru_cache(maxsize=1)
+def get_momo_pass_service() -> MomoPassService:
     return MomoPassService(
         session_factory=_open_session,
-        gateway=MomoGatewayAdapter(credentials),
+        gateway=MomoGatewayAdapter(_momo_credentials()),
         entitlements=MomoPassEntitlements(
             RevenueCatAdapter(settings.REVENUECAT_SECRET_API_KEY or "")
         ),

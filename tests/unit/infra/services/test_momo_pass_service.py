@@ -7,7 +7,11 @@ from datetime import timedelta
 import pytest
 
 from src.domain.model.payments.momo_pass import MomoPayMethod, get_momo_pass_plan
-from src.domain.model.payments.momo_signature import RESULT_FIELDS, momo_signature
+from src.domain.model.payments.momo_signature import (
+    RESULT_FIELDS,
+    is_valid_result_signature,
+    momo_signature,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.adapters.momo_gateway_adapter import MomoCredentials, MomoGatewayError
 from src.infra.database.models.momo_payment_order import MomoPaymentOrder
@@ -50,9 +54,11 @@ class FakeSession:
 
 
 class FakeGateway:
-    def __init__(self, credentials=CREDENTIALS, fail=False, query_code=1000):
+    def __init__(
+        self, credentials=CREDENTIALS, fail=False, query_code=1000, query_fails=False
+    ):
         self.credentials = credentials
-        self.fail, self.query_code = fail, query_code
+        self.fail, self.query_code, self.query_fails = fail, query_code, query_fails
         self.created, self.queried = [], []
 
     async def create_payment(self, **kwargs):
@@ -63,11 +69,13 @@ class FakeGateway:
 
     async def query_payment(self, *, order_id, request_id):
         self.queried.append(order_id)
+        if self.query_fails:
+            raise MomoGatewayError("MoMo is unreachable")
         return {"orderId": order_id, "resultCode": self.query_code, "amount": 99000}
 
 
 class FakeEntitlements:
-    """Marks the order granted, like the real grant does under its lock."""
+    """Records grants and marks the order granted; locking is covered on Postgres."""
 
     def __init__(self, orders):
         self.orders, self.grants = orders, []
@@ -86,6 +94,16 @@ def store(monkeypatch):
     async def find_order(_db, order_id):
         return state["orders"].get(order_id)
 
+    async def claim_query_slot(_db, order_id, interval):
+        order = state["orders"][order_id]
+        now = utc_now()
+        if order.status != "pending" or (
+            order.last_checked_at and order.last_checked_at >= now - interval
+        ):
+            return False
+        order.last_checked_at = now
+        return True
+
     async def paid_before(_db, _user_id, _email):
         return state["paid_before"]
 
@@ -97,6 +115,7 @@ def store(monkeypatch):
 
     monkeypatch.setattr(momo_pass_orders, "find_order", find_order)
     monkeypatch.setattr(momo_pass_orders, "lock_order", find_order)
+    monkeypatch.setattr(momo_pass_orders, "claim_query_slot", claim_query_slot)
     monkeypatch.setattr(momo_pass_orders, "has_paid_before", paid_before)
     monkeypatch.setattr(momo_pass_orders, "mark_lead_paid", lead_paid)
     monkeypatch.setattr(momo_pass_orders, "mark_lead_checkout_started", lead_started)
@@ -220,6 +239,23 @@ async def test_checkout_without_keys_names_what_is_missing(store):
     ]
 
 
+async def test_production_api_refuses_sandbox_momo_checkout(store):
+    credentials = MomoCredentials(
+        "sandbox", "NUTREE", "access", "secret", require_production=True
+    )
+    service, session = _service(store, FakeGateway(credentials))
+
+    with pytest.raises(MomoNotConfigured) as error:
+        await service.start_checkout(
+            MomoBuyer(channel="app", user_id="user-1"),
+            get_momo_pass_plan("monthly"),
+            lang="vi",
+        )
+
+    assert error.value.missing == ["MOMO_ENV"]
+    assert session.added == []
+
+
 async def test_rejected_create_marks_the_order_failed(store):
     service, session = _service(store, FakeGateway(fail=True))
 
@@ -320,6 +356,66 @@ async def test_status_poll_does_not_hammer_momo(store):
     await service.app_order("o1", "user-1")
 
     assert service.gateway.queried == []
+
+
+async def test_failing_momo_query_is_still_throttled(store):
+    store["orders"]["o1"] = _order()
+    service, _session = _service(store, FakeGateway(query_fails=True))
+
+    first = await service.app_order("o1", "user-1")
+    await service.app_order("o1", "user-1")
+
+    assert first["status"] == "pending"
+    assert service.gateway.queried == ["o1"]
+
+
+async def test_status_poll_ends_the_read_before_asking_momo(store):
+    store["orders"]["o1"] = _order()
+    service, session = _service(store)
+
+    async def query_payment(*, order_id, request_id):
+        assert session.rollbacks == 1
+        return {"orderId": order_id, "resultCode": 1000}
+
+    service.gateway.query_payment = query_payment
+
+    assert await service.app_order("o1", "user-1")
+
+
+async def test_unconfigured_momo_is_never_queried(store):
+    store["orders"]["o1"] = _order()
+    production_with_sandbox = MomoCredentials(
+        "sandbox", "NUTREE", "access", "secret", require_production=True
+    )
+    service, _session = _service(store, FakeGateway(production_with_sandbox))
+
+    await service.app_order("o1", "user-1")
+
+    assert service.gateway.queried == []
+
+
+async def test_ipn_signed_with_an_empty_key_is_rejected_when_unconfigured(store):
+    store["orders"]["o1"] = _order()
+    service, _session = _service(
+        store, FakeGateway(credentials=MomoCredentials("sandbox", "", "", ""))
+    )
+    body = _ipn(partnerCode="")
+    body["signature"] = momo_signature("", {**body, "accessKey": ""}, RESULT_FIELDS)
+    assert is_valid_result_signature("", "", body)
+
+    assert not await service.handle_ipn(body)
+    assert store["orders"]["o1"].status == "pending"
+
+
+async def test_ipn_is_rejected_when_production_runs_sandbox_keys(store):
+    store["orders"]["o1"] = _order()
+    credentials = MomoCredentials(
+        "sandbox", "NUTREE", "access", "secret", require_production=True
+    )
+    service, _session = _service(store, FakeGateway(credentials))
+
+    assert not await service.handle_ipn(_ipn())
+    assert store["orders"]["o1"].status == "pending"
 
 
 async def test_status_of_someone_elses_order_is_hidden(store):

@@ -14,8 +14,10 @@ _BASE_URLS = {
     "sandbox": "https://test-payment.momo.vn",
     "production": "https://payment.momo.vn",
 }
-# MoMo asks partners to wait up to 30 s for create and query responses.
-_TIMEOUT_SECONDS = 30.0
+# MoMo asks partners to wait up to 30 s for a create response.
+_CREATE_TIMEOUT_SECONDS = 30.0
+# Queries run on status polls, and a later poll asks again, so fail fast.
+_QUERY_TIMEOUT_SECONDS = 8.0
 
 
 class MomoGatewayError(Exception):
@@ -28,6 +30,8 @@ class MomoCredentials:
     partner_code: str
     access_key: str
     secret_key: str
+    # A production API must never settle orders against MoMo's sandbox.
+    require_production: bool = False
 
     @property
     def base_url(self) -> str:
@@ -35,12 +39,16 @@ class MomoCredentials:
 
     @property
     def missing(self) -> list[str]:
+        """Settings that keep MoMo off. Any entry means MoMo is not configured."""
         values = {
             "MOMO_PARTNER_CODE": self.partner_code,
             "MOMO_ACCESS_KEY": self.access_key,
             "MOMO_SECRET_KEY": self.secret_key,
         }
-        return [name for name, value in values.items() if not value]
+        missing = [name for name, value in values.items() if not value]
+        if self.require_production and self.env != "production":
+            missing.append("MOMO_ENV")
+        return missing
 
 
 class MomoGatewayAdapter:
@@ -76,7 +84,9 @@ class MomoGatewayAdapter:
             "autoCapture": True,
         }
         body["signature"] = self._sign(body, CREATE_FIELDS)
-        payload = await self._post("/v2/gateway/api/create", body)
+        payload = await self._post(
+            "/v2/gateway/api/create", body, _CREATE_TIMEOUT_SECONDS
+        )
         if payload.get("resultCode") != 0 or not payload.get("payUrl"):
             raise MomoGatewayError(
                 f"MoMo create failed: {payload.get('resultCode')} {payload.get('message')}"
@@ -92,7 +102,9 @@ class MomoGatewayAdapter:
             "lang": "vi",
         }
         body["signature"] = self._sign(body, QUERY_FIELDS)
-        payload = await self._post("/v2/gateway/api/query", body)
+        payload = await self._post(
+            "/v2/gateway/api/query", body, _QUERY_TIMEOUT_SECONDS
+        )
         if payload.get("orderId") != order_id or not isinstance(
             payload.get("resultCode"), int
         ):
@@ -103,9 +115,9 @@ class MomoGatewayAdapter:
         values = {**body, "accessKey": self.credentials.access_key}
         return momo_signature(self.credentials.secret_key, values, fields)
 
-    async def _post(self, path: str, body: dict) -> dict:
+    async def _post(self, path: str, body: dict, timeout: float) -> dict:
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     self.credentials.base_url + path, json=body
                 )

@@ -387,17 +387,24 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - App: `GET /v1/payments/momo/plans`, `POST /v1/payments/momo/checkouts`
   `{plan, lang, method: wallet|atm}`, `GET /v1/payments/momo/orders/{id}`.
   Quiz BFF (BFF token + `X-Lead-Access-Key`): the same under
-  `/v1/web-funnel/momo/*` with `lead_id`. `wallet` is MoMo `captureWallet`,
-  `atm` is `payWithATM`.
+  `/v1/web-funnel/momo/*` with `lead_id`, rate-limited per lead access key
+  (SHA-256), not per BFF IP. `wallet` is MoMo `captureWallet`, `atm` is
+  `payWithATM`.
 - `POST /v1/webhooks/momo/ipn` checks the HMAC-SHA256 signature, partner code
-  and amount, then answers 204. The browser or app redirect is never trusted;
-  a pending order is reconciled through MoMo's query API on status reads.
+  and amount, then answers 204; it rejects every body while MoMo is not
+  configured. The browser or app redirect is never trusted; a pending order is
+  reconciled through MoMo's query API on status reads, at most once per 3 s
+  per order, outside any database transaction.
 - A paid pass is a RevenueCat promotional `standard` entitlement on the
-  buyer's Firebase uid, stacked after any pass still running. In-app orders
-  unlock on payment; quiz orders unlock on `POST /v1/users/sync` when the token
-  carries a verified email equal to the checkout email (`has_subscription`
-  is then true).
-- Checkout returns 503 with `missing` setting names until `MOMO_*` is set.
+  buyer's Firebase uid, stacked after any pass still running. Each order is
+  granted once: its window is persisted before RevenueCat is called, and a
+  retry resends the same end time. In-app orders unlock on payment; quiz
+  orders unlock on `POST /v1/users/sync` when a Google, Apple or
+  email/password token carries a verified email equal to the checkout email
+  (custom tokens never match; `has_subscription` is then true).
+- Checkout returns 503 `MoMo checkout is unavailable.` until `MOMO_*` is set;
+  the missing setting names are only logged. With `ENVIRONMENT=production`,
+  `MOMO_ENV` must be `production` or MoMo stays off.
 
 ### Food-label scan
 

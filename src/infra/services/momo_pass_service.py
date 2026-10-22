@@ -157,7 +157,7 @@ class MomoPassService:
             order = await orders.find_order(db, order_id)
             if not order or order.user_id != user_id:
                 return None
-            return orders.order_projection(await self._refresh(db, order))
+            return await self._refresh(db, order_id)
 
     async def web_order(self, order_id: str, access_key_hash: str) -> dict | None:
         async with self._session() as db:
@@ -166,22 +166,26 @@ class MomoPassService:
                 db, order.lead_id, access_key_hash
             ):
                 return None
-            return orders.order_projection(await self._refresh(db, order))
+            return await self._refresh(db, order_id)
 
     async def handle_ipn(self, payload: dict) -> bool:
         """Apply a signed MoMo notification. False means the body is not trusted."""
         credentials = self.gateway.credentials
+        # Unconfigured MoMo has empty keys, and an empty key must never verify.
+        if credentials.missing:
+            return False
         if payload.get("partnerCode") != credentials.partner_code or not (
             is_valid_result_signature(
                 credentials.secret_key, credentials.access_key, payload
             )
         ):
             return False
+        order_id = str(payload.get("orderId"))
         async with self._session() as db:
-            if not await orders.find_order(db, str(payload.get("orderId"))):
+            if not await orders.find_order(db, order_id):
                 return False
-            await self._apply(db, str(payload["orderId"]), payload)
-            await self._grant_if_due(db, str(payload["orderId"]))
+            await self._apply(db, order_id, payload)
+            await self._grant_if_due(db, order_id)
         return True
 
     async def activate(self, user_id: str, verified_email: str | None) -> bool:
@@ -190,30 +194,35 @@ class MomoPassService:
             await self.entitlements.activate_for_user(db, user_id, verified_email)
             return await self.entitlements.has_active_pass(db, user_id)
 
-    async def _refresh(
-        self, db: AsyncSession, order: MomoPaymentOrder
-    ) -> MomoPaymentOrder:
-        """Ask MoMo about a pending order, then retry an outstanding grant."""
-        now = utc_now()
-        due = (
-            not order.last_checked_at or now - order.last_checked_at >= _QUERY_INTERVAL
-        )
-        if order.status == "pending" and due:
+    async def _refresh(self, db: AsyncSession, order_id: str) -> dict | None:
+        """Ask MoMo about a pending order, then retry an outstanding grant.
+
+        No transaction stays open across the MoMo or RevenueCat call, and only
+        the poll that claims the query slot asks MoMo, at most once per
+        interval per order even while MoMo fails.
+        """
+        await db.rollback()
+        if not self.gateway.credentials.missing and await orders.claim_query_slot(
+            db, order_id, _QUERY_INTERVAL
+        ):
             try:
                 result = await self.gateway.query_payment(
-                    order_id=order.order_id, request_id=uuid.uuid4().hex
+                    order_id=order_id, request_id=uuid.uuid4().hex
                 )
-                await self._apply(db, order.order_id, result)
             except MomoGatewayError as error:
-                logger.warning("MoMo query failed for %s: %s", order.order_id, error)
-        await self._grant_if_due(db, order.order_id)
-        return await orders.find_order(db, order.order_id)
+                logger.warning("MoMo query failed for %s: %s", order_id, error)
+            else:
+                await self._apply(db, order_id, result)
+        await self._grant_if_due(db, order_id)
+        order = await orders.find_order(db, order_id)
+        return orders.order_projection(order) if order else None
 
     async def _grant_if_due(self, db: AsyncSession, order_id: str) -> None:
         """In-app orders unlock on payment; web orders wait for sign-in."""
         order = await orders.find_order(db, order_id)
         if order and order.status == "paid" and not order.granted_at and order.user_id:
-            await self.entitlements.grant(db, order.order_id, order.user_id)
+            # grant() ends this read before it calls RevenueCat.
+            await self.entitlements.grant(db, order_id, order.user_id)
 
     async def _apply(self, db: AsyncSession, order_id: str, result: dict) -> None:
         order = await orders.lock_order(db, order_id)
@@ -221,14 +230,14 @@ class MomoPassService:
         if not order or not isinstance(result_code, int):
             await db.rollback()
             return
-        order.last_checked_at = utc_now()
         status = order_status_for_result(result_code).value
+        # Paid is terminal; a late paid result may still replace failed/expired.
         if order.status == "paid" or status == "pending":
-            await db.commit()
+            await db.rollback()
             return
         if status == "paid" and orders.as_int(result.get("amount")) != order.amount:
-            logger.error("MoMo amount mismatch on order %s", order.order_id)
-            await db.commit()
+            logger.error("MoMo amount mismatch on order %s", order_id)
+            await db.rollback()
             return
         order.status, order.result_code = status, result_code
         order.result_message = str(result.get("message") or "")[:255]
