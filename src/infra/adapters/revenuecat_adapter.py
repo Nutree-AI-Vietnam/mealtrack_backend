@@ -8,6 +8,7 @@ and handles HTTP communication with RevenueCat API.
 import logging
 import os
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
 
@@ -58,6 +59,29 @@ class RevenueCatAdapter(SubscriptionServicePort):
         except httpx.HTTPError as e:
             logger.error(f"RevenueCat API error: {e}")
             return None
+
+    async def grant_promotional_entitlement(
+        self, app_user_id: str, entitlement_id: str, end_time_ms: int
+    ) -> bool:
+        """Grant an entitlement until end_time_ms. Repeating a grant is harmless."""
+        url = (
+            f"{self.BASE_URL}/subscribers/{quote(app_user_id, safe='')}"
+            f"/entitlements/{quote(entitlement_id, safe='')}/promotional"
+        )
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url, headers=headers, json={"end_time_ms": end_time_ms}, timeout=10.0
+                )
+                response.raise_for_status()
+                return True
+        except httpx.HTTPError as e:
+            logger.error(f"RevenueCat promotional grant failed: {e}")
+            return False
 
     async def has_active_subscription(self, app_user_id: str) -> bool:
         """

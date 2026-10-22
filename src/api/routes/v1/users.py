@@ -14,6 +14,7 @@ from src.api.dependencies.auth import (
     verify_firebase_uid_ownership,
 )
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.bootstrap.momo_payments import activate_momo_passes
 from src.api.schemas.request.user_requests import (
     UserSyncRequest,
     UserUpdateLastAccessedRequest,
@@ -138,6 +139,9 @@ async def sync_user_from_firebase(
 
     # Map result to response
     user_data = result["user"]
+    verified_email = token.get("email") if token.get("email_verified") else None
+    if await activate_momo_passes(str(user_data["id"]), verified_email):
+        user_data = {**user_data, "has_subscription": True}
 
     logger.info(
         f"User sync completed for firebase_uid: {request.firebase_uid}",
