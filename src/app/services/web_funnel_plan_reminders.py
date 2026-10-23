@@ -106,7 +106,7 @@ def reminder_email(lead: WebFunnelLead, sequence: int, token: str) -> tuple[str,
         3: "Last reminder: your Nutree plan is still saved",
     }
     intros = {
-        0: "When you built your plan, our checkout showed prices in the wrong currency, so you could not finish. That is fixed: prices are now in US dollars.",
+        0: "When you built your plan, our checkout showed the wrong currency or no plans at all, so you could not finish. That is fixed: prices are now in US dollars.",
         1: "Your calorie and protein targets, a sample day and your first three changes are ready.",
         2: "Most people stall because they try to change everything at once. Your plan starts with three small changes built from your answers.",
         3: "We will stop reminding you after this email. Your plan stays one tap away for the next 7 days.",
