@@ -19,6 +19,7 @@ from src.infra.services.web_funnel_redemption_identity import (
     SILENT_LOGIN_CLAIM,
     RedemptionIdentityUnavailable,
     WebFunnelRedemptionIdentityService,
+    silent_login_uid,
 )
 
 router = APIRouter(prefix="/v1/web-funnel", tags=["Web Funnel"])
@@ -55,13 +56,16 @@ async def create_redemption_session(
     lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
     if not lead or lead.status in _TERMINAL:
         raise claim_not_found()
+    # An existing account signs in itself. Only the account this lead created
+    # (a retry after the app synced it) may be reopened.
+    uid = silent_login_uid(lead.id)
     owner = await db.scalar(
         select(User).where(func.lower(User.email) == lead.email.strip().lower())
     )
+    if owner and owner.firebase_uid != uid:
+        raise claim_not_found()
     try:
-        token = await identity.mint_for_email(
-            lead.email, mealtrack_uid=owner.firebase_uid if owner else None
-        )
+        token = await identity.mint_for_new_buyer(lead.email, uid=uid)
     except RedemptionIdentityUnavailable:
         raise claim_not_found() from None
     binding.silent_login_minted_at = utcnow()

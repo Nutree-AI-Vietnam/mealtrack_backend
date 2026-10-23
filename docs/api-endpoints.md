@@ -373,6 +373,13 @@ handler/schema when implementing; the bullets below are the durable WHY.
   `POST /redemptions/preflight` → redeem-once →
   `POST /redemptions/finalize`. Session is IP-rate-limited; it must not bind
   `preflight_uid`.
+- Silent activation is for new buyers only: session signs in only to the
+  Firebase record it creates under the lead's reserved UID (`wfr_…`). If the email
+  already belongs to a Nutree user or another Firebase record, session returns
+  the same 404 and the buyer must sign in to that account (verified Google,
+  Apple or email link) before preflight. Session never sets `email_verified`
+  on an existing record, and stops minting once the reserved record has any
+  linked provider.
 - Preflight/finalize require verified email and
   `sign_in_provider` in `{google.com, apple.com, password}` or `custom` with
   claim `wf_silent_login`.

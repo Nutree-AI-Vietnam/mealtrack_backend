@@ -1,4 +1,4 @@
-"""Silent-login mint: owner UID, no email in body, no preflight bind."""
+"""Silent-login mint: new buyers only, no email in body, no preflight bind."""
 
 import pytest
 from fastapi import HTTPException
@@ -15,7 +15,10 @@ from src.infra.database.models.web_funnel_claim import (
 )
 from src.infra.services.web_funnel_redemption_identity import (
     RedemptionIdentityUnavailable,
+    silent_login_uid,
 )
+
+NEW_BUYER_UID = silent_login_uid("lead-1")
 
 
 class SessionDb:
@@ -38,16 +41,23 @@ class SessionDb:
 
 
 class FakeIdentity:
-    def __init__(self, uid="google-uid"):
-        self.uid = uid
+    def __init__(self):
         self.emails: list[str] = []
-        self.mealtrack_uids: list[str | None] = []
+        self.uids: list[str] = []
 
-    async def mint_for_email(self, email, *, mealtrack_uid):
+    async def mint_for_new_buyer(self, email, *, uid):
         self.emails.append(email)
-        self.mealtrack_uids.append(mealtrack_uid)
-        self.mealtrack_uid = mealtrack_uid
+        self.uids.append(uid)
         return f"custom-token-{len(self.emails)}"
+
+
+def _owner(firebase_uid):
+    return User(
+        firebase_uid=firebase_uid,
+        email="Buyer@Example.com",
+        username="b",
+        password_hash="",
+    )
 
 
 def _lead(status="payment_verified"):
@@ -96,19 +106,13 @@ _create_session = session_route.create_redemption_session.__wrapped__
 
 
 @pytest.mark.asyncio
-async def test_session_mints_for_mealtrack_owner_and_omits_email():
-    owner = User(
-        firebase_uid="google-uid",
-        email="buyer@example.com",
-        username="b",
-        password_hash="",
-    )
+async def test_session_mints_new_buyer_reserved_uid_and_omits_email():
     binding = _binding()
     identity = FakeIdentity()
     response = await _create_session(
         _request("1.1.1.1"),
         WebFunnelRedemptionPreflightRequest(redemption_link_hash="a" * 64),
-        SessionDb(binding, _lead(), owner),
+        SessionDb(binding, _lead()),
         identity,
     )
     assert response == {
@@ -116,24 +120,51 @@ async def test_session_mints_for_mealtrack_owner_and_omits_email():
         "custom_token": "custom-token-1",
     }
     assert "email" not in response
-    assert identity.mealtrack_uid == "google-uid"
+    assert identity.uids == [NEW_BUYER_UID]
     assert binding.silent_login_minted_at is not None
     assert binding.silent_login_generation == 1
     assert binding.preflight_uid is None
 
 
 @pytest.mark.asyncio
-async def test_session_retry_remints_when_committed_response_was_lost():
-    owner = User(
-        firebase_uid="google-uid",
-        email="buyer@example.com",
-        username="b",
-        password_hash="",
-    )
+async def test_session_refuses_existing_nutree_account_for_lead_email():
     binding = _binding()
     identity = FakeIdentity()
-    first_db = SessionDb(binding, _lead(), owner)
-    retry_db = SessionDb(binding, _lead(), owner)
+    db = SessionDb(binding, _lead(), _owner("victim-google-uid"))
+    with pytest.raises(HTTPException) as error:
+        await _create_session(
+            _request("1.1.1.6"),
+            WebFunnelRedemptionPreflightRequest(redemption_link_hash="a" * 64),
+            db,
+            identity,
+        )
+    assert error.value.status_code == 404
+    assert error.value.detail == "Not found"
+    assert identity.emails == []
+    assert binding.silent_login_minted_at is None
+    assert db.committed is False
+
+
+@pytest.mark.asyncio
+async def test_session_retry_remints_after_app_synced_the_new_account():
+    binding = _binding()
+    identity = FakeIdentity()
+    response = await _create_session(
+        _request("1.1.1.7"),
+        WebFunnelRedemptionPreflightRequest(redemption_link_hash="a" * 64),
+        SessionDb(binding, _lead(), _owner(NEW_BUYER_UID)),
+        identity,
+    )
+    assert response["custom_token"] == "custom-token-1"
+    assert identity.uids == [NEW_BUYER_UID]
+
+
+@pytest.mark.asyncio
+async def test_session_retry_remints_when_committed_response_was_lost():
+    binding = _binding()
+    identity = FakeIdentity()
+    first_db = SessionDb(binding, _lead())
+    retry_db = SessionDb(binding, _lead())
     request = _request("1.1.1.2")
     payload = WebFunnelRedemptionPreflightRequest(redemption_link_hash="a" * 64)
 
@@ -145,7 +176,7 @@ async def test_session_retry_remints_when_committed_response_was_lost():
     assert retry_db.committed is True
     assert response["custom_token"] == "custom-token-2"
     assert identity.emails == ["buyer@example.com", "buyer@example.com"]
-    assert identity.mealtrack_uids == ["google-uid", "google-uid"]
+    assert identity.uids == [NEW_BUYER_UID, NEW_BUYER_UID]
     assert binding.silent_login_generation == 2
 
 
@@ -187,7 +218,7 @@ async def test_session_unknown_hash_404():
 async def test_session_identity_unavailable_404_does_not_consume():
 
     class Boom:
-        async def mint_for_email(self, _email, *, mealtrack_uid):
+        async def mint_for_new_buyer(self, _email, *, uid):
             raise RedemptionIdentityUnavailable()
 
     binding = _binding()

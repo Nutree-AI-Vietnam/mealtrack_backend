@@ -216,7 +216,10 @@ optional caches.
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).
   - **Silent login** (`POST /redemptions/session`, unauthenticated): hash →
-    time-limited Firebase custom token for the lead email owner. Repeated
+    Firebase custom token (the session it starts does not expire) for the
+    account this lead creates under its reserved UID. An email that already
+    has a Nutree user or Firebase record gets a 404 and must sign in to that
+    account instead. Repeated
     requests can mint a replacement while the paid redemption is unfinalized
     and nonterminal, so a lost response can be retried. IP-only SlowAPI key;
     issuance time and generation are recorded. Does not bind `preflight_uid`.
