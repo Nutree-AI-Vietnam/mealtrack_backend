@@ -42,11 +42,33 @@ async def test_delete_user_accepts_an_empty_body():
 
 
 @pytest.mark.asyncio
-async def test_delete_user_treats_404_as_already_deleted():
+async def test_delete_user_treats_open_wearables_missing_user_as_deleted():
+    # Open Wearables 0.10.0 answers a missing user with this exact detail.
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, json={"detail": "User not found."})
+        return httpx.Response(
+            404, json={"detail": f"User with ID: {OW_USER_ID} not found."}
+        )
 
     assert await _client(handler).delete_user(OW_USER_ID) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"json": {"detail": "Not Found"}},
+        {"json": {"detail": "User with ID: someone-else not found."}},
+        {"json": ["Not Found"]},
+        {"text": "<html>404 Not Found</html>"},
+    ],
+)
+async def test_delete_user_raises_on_a_404_that_does_not_name_the_user(body):
+    # A wrong path or a proxy 404 does not show the health data is gone.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, **body)
+
+    with pytest.raises(OpenWearablesError):
+        await _client(handler).delete_user(OW_USER_ID)
 
 
 @pytest.mark.asyncio
