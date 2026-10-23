@@ -9,8 +9,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.auth import AuthProvider
+from src.domain.model.notification.notification_preferences import (
+    OFF_PLAN_MOMENT_REMINDER_MINUTES,
+    NotificationPreferences,
+)
 from src.domain.model.user import Goal, JobType, Sex, TdeeRequest, TrainingLevel
 from src.domain.services.tdee_service import TdeeCalculationService
+from src.infra.database.models.notification.notification_preferences import (
+    NotificationPreferencesORM,
+)
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.models.user.user import User
@@ -284,6 +291,35 @@ async def finalize_redemption(
     else:
         subscription.status = "active"
         subscription.expires_at = expires_at
+    reminder_times = OFF_PLAN_MOMENT_REMINDER_MINUTES.get(lead.off_plan_moment or "")
+    if reminder_times:
+        # A new buyer's first reminders meet the moment they said eating goes off plan.
+        # Preferences someone already set are never changed.
+        existing_preferences = await db.scalar(
+            select(NotificationPreferencesORM).where(
+                NotificationPreferencesORM.user_id == user.id
+            )
+        )
+        if existing_preferences is None:
+            defaults = NotificationPreferences.create_default(user.id)
+            times = {
+                "breakfast_time_minutes": defaults.breakfast_time_minutes,
+                "lunch_time_minutes": defaults.lunch_time_minutes,
+                "dinner_time_minutes": defaults.dinner_time_minutes,
+                "daily_summary_time_minutes": defaults.daily_summary_time_minutes,
+                **reminder_times,
+            }
+            db.add(
+                NotificationPreferencesORM(
+                    id=defaults.preferences_id,
+                    user_id=user.id,
+                    meal_reminders_enabled=True,
+                    daily_summary_enabled=True,
+                    hydration_reminders_enabled=True,
+                    language=lead.locale if lead.locale in {"en", "vi"} else "en",
+                    **times,
+                )
+            )
     binding.provider_app_user_ids = sorted(
         aliases | verified_aliases | {original_app_user_id, uid}
     )

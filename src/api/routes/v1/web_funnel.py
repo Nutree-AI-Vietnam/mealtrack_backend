@@ -184,6 +184,7 @@ async def create_lead(
         access_sync_status="pending",
         locale=payload.locale,
         display_units=payload.units,
+        off_plan_moment=payload.off_plan_moment,
     )
     db.add(lead)
     if payload.locale == "en" and reminders_configured():

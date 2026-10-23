@@ -50,6 +50,10 @@ class WebFunnelLeadCreateRequest(BaseModel):
     # Display hints for reminder emails; never part of the onboarding snapshot.
     locale: Literal["vi", "en"] | None = None
     units: Literal["metric", "imperial"] | None = None
+    off_plan_moment: (
+        Literal["morning", "lunch", "evening", "late_night", "weekend", "eating_out"]
+        | None
+    ) = None
 
 
 class WebFunnelClaimExchangeRequest(BaseModel):

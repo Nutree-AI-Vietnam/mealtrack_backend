@@ -21,6 +21,7 @@ def upgrade() -> None:
     """Plan-link and reminder state on web-funnel leads. All columns are nullable."""
     op.add_column('web_funnel_leads', sa.Column('locale', sa.String(length=8), nullable=True))
     op.add_column('web_funnel_leads', sa.Column('display_units', sa.String(length=16), nullable=True))
+    op.add_column('web_funnel_leads', sa.Column('off_plan_moment', sa.String(length=16), nullable=True))
     op.add_column('web_funnel_leads', sa.Column('plan_link_token_hash', sa.String(length=64), nullable=True))
     op.add_column('web_funnel_leads', sa.Column('plan_link_expires_at', sa.DateTime(timezone=True), nullable=True))
     op.add_column('web_funnel_leads', sa.Column('reminders_unsubscribed_at', sa.DateTime(timezone=True), nullable=True))
@@ -32,5 +33,6 @@ def downgrade() -> None:
     op.drop_column('web_funnel_leads', 'reminders_unsubscribed_at')
     op.drop_column('web_funnel_leads', 'plan_link_expires_at')
     op.drop_column('web_funnel_leads', 'plan_link_token_hash')
+    op.drop_column('web_funnel_leads', 'off_plan_moment')
     op.drop_column('web_funnel_leads', 'display_units')
     op.drop_column('web_funnel_leads', 'locale')

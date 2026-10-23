@@ -38,7 +38,9 @@ def test_lead_snapshot_uses_mobile_dob_wire_fields_without_age() -> None:
 
 def test_lead_snapshot_rejects_client_supplied_age() -> None:
     payload = _payload()
-    payload["payload"] = {key: value for key, value in payload.items() if key != "email"}
+    payload["payload"] = {
+        key: value for key, value in payload.items() if key != "email"
+    }
     payload["payload"]["age"] = 18
 
     with pytest.raises(ValidationError):
@@ -52,11 +54,36 @@ def test_lead_snapshot_rejects_client_supplied_age() -> None:
         {"birth_month": 2, "birth_day": 30},
     ],
 )
-def test_lead_snapshot_rejects_future_or_impossible_dob(changes: dict[str, int]) -> None:
+def test_lead_snapshot_rejects_future_or_impossible_dob(
+    changes: dict[str, int],
+) -> None:
     payload = _payload()
     payload.update(changes)
 
     with pytest.raises(ValidationError):
         WebFunnelLeadCreateRequest.model_validate(
             {"email": payload.pop("email"), "payload": payload}
+        )
+
+
+def test_lead_display_hints_stay_outside_the_snapshot() -> None:
+    payload = _payload()
+    request = WebFunnelLeadCreateRequest.model_validate(
+        {
+            "email": payload.pop("email"),
+            "payload": payload,
+            "locale": "en",
+            "units": "imperial",
+            "off_plan_moment": "morning",
+        }
+    )
+    assert (request.locale, request.units, request.off_plan_moment) == (
+        "en",
+        "imperial",
+        "morning",
+    )
+    assert "off_plan_moment" not in request.payload.model_dump()
+    with pytest.raises(ValidationError):
+        WebFunnelLeadCreateRequest.model_validate(
+            {"email": "a@b.co", "payload": payload, "off_plan_moment": "midnight"}
         )

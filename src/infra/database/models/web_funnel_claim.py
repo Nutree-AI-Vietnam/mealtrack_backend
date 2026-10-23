@@ -44,6 +44,8 @@ class WebFunnelLead(Base, BaseMixin):
     # Display hints from the web funnel, used only to word reminder emails.
     locale = Column(String(8), nullable=True)
     display_units = Column(String(16), nullable=True)
+    # When eating goes off plan most; times the buyer's first app reminders.
+    off_plan_moment = Column(String(16), nullable=True)
     # Private plan link sent in reminder emails; only its hash is stored.
     plan_link_token_hash = Column(String(64), nullable=True, unique=True)
     plan_link_expires_at = Column(DateTime(timezone=True), nullable=True)
