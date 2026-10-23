@@ -20,11 +20,26 @@ from src.domain.model.notification.notification_preferences import (
     DEFAULT_MEAL_REMINDER_MINUTES,
     NotificationPreferences,
 )
+from src.domain.model.weekly_recap import WeeklyRecap
 from src.domain.model.weight.weight_entry import WeightEntry
 from src.domain.services.weekly_recap import monday_of, week_days
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
 
 _MEAL_LIMIT = 2_000
+_NAME_MAX = 20
+# Common Vietnamese family names, with and without diacritics. Names that are
+# as often given names (Mai, Hà, Lâm) are left out.
+_VI_SURNAMES = frozenset(
+    name.casefold()
+    for name in (
+        "Nguyễn Trần Lê Phạm Hoàng Huỳnh Phan Vũ Võ Đặng Bùi Đỗ Hồ Ngô Dương Lý "
+        "Đào Đoàn Trịnh Trương Đinh Lương Vương Phùng Quách Lưu Tạ "
+        "Nguyen Tran Pham Hoang Huynh Dang Bui Ngo Duong Dao Doan Trinh Truong "
+        "Dinh Luong Vuong Phung Quach"
+    ).split()
+)
+# Hiragana and katakana, CJK ideographs, and Hangul syllables.
+_CJK_RANGES = ((0x3040, 0x30FF), (0x3400, 0x9FFF), (0xAC00, 0xD7AF))
 
 
 @dataclass(frozen=True)
@@ -44,6 +59,38 @@ class WeekLogs:
     log_dates: tuple[date, ...]
     case_counts: Mapping[str, int]
     reminders: Mapping[str, int]  # meal reminder times, minutes from midnight
+    first_name: str | None = None
+    last_recap: WeeklyRecap | None = None  # the week before, if it was told
+
+
+def recap_first_name(user: Any) -> str | None:
+    """The name the recap greets the user by, or None.
+
+    Read from the display name, which keeps the order the user wrote their
+    name in (the stored first name is just its first word), then from the
+    first name. A name written family name first, behind a common
+    Vietnamese surname, goes by its last word ("Nguyễn Văn Linh" is Linh).
+    Chinese and Japanese names are used whole. None for a handle or e-mail
+    (anything but letters) or a name longer than ``_NAME_MAX``.
+    """
+    for raw in (getattr(user, "display_name", None), getattr(user, "first_name", None)):
+        words = str(raw or "").split()
+        if not words:
+            continue
+        if any(_is_cjk(char) for char in "".join(words)):
+            name = "".join(words)
+        elif len(words) > 1 and words[0].casefold() in _VI_SURNAMES:
+            name = words[-1]
+        else:
+            name = words[0]
+        letters = name.replace("-", "").replace("'", "").replace(".", "")
+        if letters.isalpha() and len(name) <= _NAME_MAX:
+            return name
+    return None
+
+
+def _is_cjk(char: str) -> bool:
+    return any(start <= ord(char) <= end for start, end in _CJK_RANGES)
 
 
 def sign_up_day(created_at: datetime | None, tz: tzinfo, fallback: date) -> date:
@@ -59,8 +106,9 @@ async def load_week_logs(
     tz_name: str,
     created_at: datetime | None,
     min_week_days: int,
+    first_name: str | None = None,
 ) -> WeekLogs | None:
-    """Read the week's logs.
+    """Read the week's logs, and the recap told for the week before.
 
     None when the account existed for fewer than ``min_week_days`` days of
     the week, or no food was logged in it.
@@ -120,6 +168,8 @@ async def load_week_logs(
         log_dates=log_dates,
         case_counts=await uow.weekly_recaps.count_cases_before(user_id, week_start),
         reminders=_reminders(prefs),
+        first_name=first_name,
+        last_recap=await uow.weekly_recaps.get(user_id, week_start - timedelta(days=7)),
     )
 
 

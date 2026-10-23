@@ -11,6 +11,7 @@ from src.app.services.weekly_recap_activity_stats import (
     recap_goal,
     strength_record,
     sugary_drinks,
+    top_sugary_drink,
     weight_progress,
     workout_starts,
     workouts,
@@ -49,10 +50,10 @@ def _move(
     )
 
 
-def _drink(sugar: float, carbs: float) -> HydrationEntry:
+def _drink(sugar: float, carbs: float, name: str = "Trà sữa") -> HydrationEntry:
     return HydrationEntry(
         user_id=USER,
-        drink_name_snapshot="Trà sữa",
+        drink_name_snapshot=name,
         volume_ml=500,
         credited_ml=400,
         logged_at=_local(2, 15).astimezone(UTC),
@@ -130,6 +131,25 @@ def test_sugary_drinks_counts_drinks_with_enough_sugar():
     drinks = [_drink(sugar=25, carbs=25), _drink(sugar=10, carbs=12), _drink(9, 30)]
 
     assert sugary_drinks(drinks, 10.0) == (2, 148)
+
+
+def test_top_sugary_drink_is_the_one_behind_half_the_sugary_drinks():
+    drinks = [
+        _drink(25, 30, "Trà sữa  trân châu"),
+        _drink(25, 30, "Trà sữa trân châu"),
+        _drink(30, 35, "Coca-Cola"),
+        _drink(2, 2, "Coca-Cola"),  # not sugary
+        _drink(2, 2, "Coca-Cola"),
+    ]
+
+    assert top_sugary_drink(drinks, 10.0) == "Trà sữa trân châu"
+
+
+def test_top_sugary_drink_needs_a_clear_favourite():
+    drinks = [_drink(25, 30, name) for name in ("Trà sữa", "Coca-Cola", "Sinh tố")]
+
+    assert top_sugary_drink(drinks, 10.0) is None
+    assert top_sugary_drink([], 10.0) is None
 
 
 def test_weight_progress_from_the_weeks_average_weigh_in():

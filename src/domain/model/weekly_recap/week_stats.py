@@ -39,6 +39,37 @@ class MissedMeal:
 
 
 @dataclass(frozen=True)
+class PeakMeal:
+    """The biggest meal logged on one day. ``day`` is 0 (Monday) .. 6."""
+
+    day: int
+    name: str
+    kcal: int
+
+
+@dataclass(frozen=True)
+class LastWeek:
+    """The week before, as this week's recap compares with it.
+
+    Read from that week's stored recap. ``water_avg`` is None when no water
+    was logged; ``plan`` holds the issues that week's plan took on.
+    """
+
+    week_days: int
+    protein_avg: float
+    fiber_avg: float
+    water_avg: float | None
+    days_on_budget: int
+    workouts: int
+    late_snack_nights: int
+    sugary_drinks: int
+    weekend_over_days: int
+    rest_under_days: int
+    pre_workout_carbs: float | None = None
+    plan: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class WeekStats:
     """Everything the recap engine reads about one week."""
 
@@ -83,3 +114,10 @@ class WeekStats:
     perfect_weeks_before: int = 0
     had_first_week: bool = False
     cheat_days: tuple[int, ...] = ()
+    first_name: str | None = None
+    diet: str | None = None  # vegetarian | vegan | keto; None for no restriction
+    fiber_by_day: tuple[float, ...] = ()  # empty in snapshots stored before it
+    low_protein_meal: str | None = None  # breakfast | lunch | dinner
+    top_sugary_drink: str | None = None
+    weekend_peaks: tuple[PeakMeal, ...] = ()  # the biggest meal of Fri, Sat, Sun
+    last_week: LastWeek | None = None

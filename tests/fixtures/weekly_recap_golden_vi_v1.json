@@ -8,7 +8,10 @@
   "bulk: a day under 90% of target isn't on budget, so 5/7 days (design 7/7); its bars carry floors at 2520",
   "tough: weekend card averages only the days it names, (550+700+500)/3 = 583 (design shows the sample's hand-set weekend_delta of 600)",
   "first_week: missed_meal carries the breakfast reminder time (510 = 8:30 AM); the reminder is for that meal at that time (design: the usual lunch hour)",
-  "empty foot strings are null; grow slides have no foot"
+  "empty foot strings are null; grow slides have no foot",
+  "steady, bulk, perfect: a dish logged 3+ times replaces the intro sub with the user's go-to dish",
+  "steady: water note names the driest day (T7) instead of claiming 'ngày bận' (busy days), which the week never shows",
+  "tough: weekend note states the days over target instead of claiming 'ăn ngoài' (eating out); with weekend_peaks it names the biggest meal"
  ],
  "cases": [
   {
@@ -138,7 +141,7 @@
     "intro": {
      "eyebrow": "Tuần thứ 14 cùng Nutree",
      "title": "Tuần của bạn, gói gọn.",
-     "sub": "Điều bạn làm tốt, điều chưa tốt và nên thử gì tiếp.",
+     "sub": "Món ruột tuần này: Phở bò (3 lần). Cùng xem phần còn lại.",
      "label": "Bạn đã rất đều đặn",
      "big": 19,
      "big_unit": "/ 21 bữa đã ghi",
@@ -271,7 +274,7 @@
        "title": "Uống chưa đủ nước",
        "value": "2,0 L",
        "unit": "/ 2,5 L mỗi ngày",
-       "note": "Đạt 2/7 ngày, ít nhất vào ngày bận.",
+       "note": "Đạt 2/7 ngày, ít nhất vào T7.",
        "viz": {
         "type": "bar",
         "v": 1.97,
@@ -456,7 +459,7 @@
     "intro": {
      "eyebrow": "Tuần thứ 9 cùng Nutree",
      "title": "Tuần tăng cơ, gói gọn.",
-     "sub": "Bạn đang xây nền tảng. Đây là tuần của bạn.",
+     "sub": "Cơm gà tiếp sức cho bạn 4 lần. Đây là tuần của bạn.",
      "label": "Bạn đã rất đều đặn",
      "big": 18,
      "big_unit": "/ 21 bữa đã ghi",
@@ -1055,7 +1058,7 @@
        "count": 583,
        "prefix": "+",
        "unit": "kcal / ngày",
-       "note": "T6 – CN, chủ yếu từ ăn ngoài.",
+       "note": "Vượt mục tiêu vào T6 – CN.",
        "viz": {
         "type": "dots",
         "on": [
@@ -1547,7 +1550,7 @@
     "intro": {
      "eyebrow": "Tuần thứ 20 cùng Nutree",
      "title": "Tuần này, bạn làm chủ.",
-     "sub": "Mọi chỉ số đều đạt. Hiếm lắm đấy.",
+     "sub": "Mọi chỉ số đều đạt, với Phở bò góp mặt 3 lần.",
      "label": "Bạn đã rất đều đặn",
      "big": 21,
      "big_unit": "/ 21 bữa đã ghi",

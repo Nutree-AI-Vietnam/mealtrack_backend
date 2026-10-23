@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.domain.services.weekly_recap.compare import FIBER, ON_BUDGET, PROTEIN, trend
 from src.domain.services.weekly_recap.context import RecapContext
 from src.domain.services.weekly_recap.format import js_round
 from src.domain.services.weekly_recap.insights_rhythm import (
@@ -17,6 +18,7 @@ from src.domain.services.weekly_recap.insights_rhythm import (
     NEW_STREAK,
     WATER_HIT,
 )
+from src.domain.services.weekly_recap.last_week import FOLLOW_THROUGH
 from src.domain.services.weekly_recap.types import Card, Insight
 from src.domain.services.weekly_recap.viz import bar, card, spark, spark_max
 
@@ -83,6 +85,7 @@ def _protein_hit_card(ctx: RecapContext) -> Card:
         unit=ctx.t("card.unit.per_day_avg"),
         note=ctx.t("protein_hit.note", n=facts.protein_days_hit, d=facts.week_days),
         viz=_protein_spark(ctx),
+        trend=trend(ctx, PROTEIN, good_only=True),
     )
 
 
@@ -107,6 +110,7 @@ def _on_budget_card(ctx: RecapContext) -> Card:
         unit=ctx.t("card.unit.kcal_budget", kcal=ctx.num(ctx.stats.budget)),
         note=ctx.t("on_budget.note", n=facts.days_on_budget, d=facts.week_days),
         viz=_kcal_spark(ctx, invert=True),
+        trend=trend(ctx, ON_BUDGET, good_only=True),
     )
 
 
@@ -142,6 +146,15 @@ def _fiber_hit(ctx: RecapContext) -> bool:
     return target > 0 and ctx.stats.fiber_avg >= target * ctx.config.fiber_hit_ratio
 
 
+def _fiber_hit_note(ctx: RecapContext) -> str:
+    # Snapshots stored before daily fiber was kept only have the average.
+    stats = ctx.stats
+    if not stats.fiber_by_day:
+        return ctx.t("fiber_hit.note")
+    hit = sum(1 for grams in stats.fiber_by_day if grams >= stats.fiber_target)
+    return ctx.t("fiber_hit.note.days", n=hit, d=ctx.facts.week_days)
+
+
 def _fiber_hit_card(ctx: RecapContext) -> Card:
     stats = ctx.stats
     return card(
@@ -151,8 +164,9 @@ def _fiber_hit_card(ctx: RecapContext) -> Card:
         count=js_round(stats.fiber_avg),
         suffix="g",
         unit=ctx.t("card.unit.grams_per_day", t=ctx.num(stats.fiber_target)),
-        note=ctx.t("fiber_hit.note"),
+        note=_fiber_hit_note(ctx),
         viz=bar(stats.fiber_avg, stats.fiber_target),
+        trend=trend(ctx, FIBER, good_only=True),
     )
 
 
@@ -182,6 +196,7 @@ def _good_start_card(ctx: RecapContext) -> Card:
 
 
 GOOD: tuple[Insight, ...] = (
+    FOLLOW_THROUGH,
     Insight(
         "protein_hit",
         90,

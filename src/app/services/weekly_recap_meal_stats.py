@@ -16,7 +16,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 
 from src.domain.constants.meal_constants import MealDefaults
 from src.domain.model.meal import Meal, MealStatus
-from src.domain.model.weekly_recap import DishCount, MissedMeal
+from src.domain.model.weekly_recap import DishCount, MissedMeal, PeakMeal
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
@@ -37,6 +37,8 @@ _TOP_DISHES = 3
 _MIN_DISH_REPEATS = 2
 _MIN_HOUR_MEALS = 2
 _MIN_MISSED_DAYS = 3
+_MIN_PROTEIN_MEALS = 2
+_WEEKEND = (4, 5, 6)
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,7 @@ class FoodMeal:
     carbs: float
     fiber: float
     source: str | None = None
+    protein: float = 0.0
 
     @property
     def backdated(self) -> bool:
@@ -80,6 +83,7 @@ def food_meals(meals: Iterable[Meal], week_start: date, tz: tzinfo) -> list[Food
                 carbs=float(macros.carbs or 0.0),
                 fiber=float(macros.fiber or 0.0),
                 source=meal.source,
+                protein=float(macros.protein or 0.0),
             )
         )
     return sorted(out, key=lambda meal: meal.logged_at)
@@ -187,6 +191,41 @@ def missed_meal(
                 remind_at=reminders.get(meal_type),
             )
     return worst
+
+
+def low_protein_meal(meals: Sequence[FoodMeal]) -> str | None:
+    """The main meal with the least protein per serving, on average.
+
+    Only meals logged at least twice count, and there have to be two such
+    meals to compare; ties go to the earlier meal of the day.
+    """
+    servings: dict[str, list[float]] = {}
+    for meal in meals:
+        if meal.meal_type in MAIN_MEALS:
+            servings.setdefault(meal.meal_type, []).append(meal.protein)
+    averages = {
+        meal_type: sum(grams) / len(grams)
+        for meal_type, grams in servings.items()
+        if len(grams) >= _MIN_PROTEIN_MEALS
+    }
+    if len(averages) < 2:
+        return None
+    return min(averages, key=lambda item: (averages[item], MAIN_MEALS.index(item)))
+
+
+def weekend_peaks(meals: Sequence[FoodMeal]) -> tuple[PeakMeal, ...]:
+    """The biggest named meal of each weekend day (Friday to Sunday)."""
+    peaks: dict[int, FoodMeal] = {}
+    for meal in meals:
+        named = meal.name and meal.name.casefold() not in _PLACEHOLDER_NAMES
+        if meal.day not in _WEEKEND or not named:
+            continue
+        if meal.day not in peaks or meal.kcal > peaks[meal.day].kcal:
+            peaks[meal.day] = meal
+    return tuple(
+        PeakMeal(day=day, name=peaks[day].name, kcal=round(peaks[day].kcal))
+        for day in sorted(peaks)
+    )
 
 
 def photo_share(meals: Sequence[FoodMeal]) -> float:

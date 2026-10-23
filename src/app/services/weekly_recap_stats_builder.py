@@ -2,16 +2,19 @@
 
 Calories, protein, water, and targets come from the progress summary rows,
 so they match what the user saw each day; the rest comes from the logs.
+Last week's numbers come from the recap stored for it.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from src.app.services.weekly_recap_activity_stats import (
     strength_record,
     sugary_drinks,
+    top_sugary_drink,
     weight_progress,
     workout_starts,
     workouts,
@@ -21,14 +24,21 @@ from src.app.services.weekly_recap_meal_stats import (
     common_log_hour,
     dish_stats,
     late_snacks,
+    low_protein_meal,
     lunch_no_veg_days,
     meals_by_day,
     missed_meal,
     photo_share,
     pre_workout_carbs,
+    weekend_peaks,
 )
 from src.app.services.weekly_recap_week_logs import WeekLogs
-from src.domain.model.weekly_recap import WeekStats
+from src.domain.model.weekly_recap import (
+    LastWeek,
+    WeeklyRecap,
+    WeekStats,
+    week_stats_from_dict,
+)
 from src.domain.services.weekly_recap import (
     RecapConfig,
     account_days,
@@ -39,6 +49,12 @@ from src.domain.services.weekly_recap import (
     week_number,
     weekend_delta,
 )
+from src.domain.services.weekly_recap.last_week import last_week_of
+
+logger = logging.getLogger(__name__)
+
+# Diets whose protein foods differ from the default advice.
+_DIETS = frozenset({"vegetarian", "vegan", "keto"})
 
 
 def build_week_stats(
@@ -108,4 +124,38 @@ def build_week_stats(
         perfect_weeks_before=logs.case_counts.get("perfect", 0),
         had_first_week=logs.case_counts.get("first_week", 0) > 0,
         cheat_days=days.cheat_days,
+        first_name=logs.first_name,
+        diet=recap_diet(logs.profile),
+        fiber_by_day=days.fiber,
+        low_protein_meal=low_protein_meal(meals),
+        top_sugary_drink=top_sugary_drink(logs.drinks, config.sugary_min_sugar_g),
+        weekend_peaks=weekend_peaks(meals),
+        last_week=_last_week(logs.last_recap, config),
     )
+
+
+def recap_diet(profile: Any) -> str | None:
+    """The profile's diet when it changes which foods the advice names."""
+    prefs = getattr(profile, "dietary_preferences", None) or []
+    for pref in prefs:
+        diet = str(pref).strip().lower()
+        if diet in _DIETS:
+            return diet
+    return None
+
+
+def _last_week(recap: WeeklyRecap | None, config: RecapConfig) -> LastWeek | None:
+    """Last week's numbers, or None when its stored stats can't be read."""
+    if recap is None:
+        return None
+    try:
+        stats = week_stats_from_dict(recap.stats)
+        return last_week_of(stats, recap.case_id, config)
+    except (KeyError, TypeError, ValueError):
+        logger.warning(
+            "Weekly recap %s for week %s has unreadable stats; not comparing",
+            recap.user_id,
+            recap.week_start,
+            exc_info=True,
+        )
+        return None

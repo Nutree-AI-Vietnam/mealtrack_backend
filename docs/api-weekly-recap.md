@@ -66,6 +66,44 @@ target applies.
   count: the calorie target × 0.9 (`under_ratio`). The app mutes bars
   below it, and ignores `floors` without one value per bar.
 
+## Personal details
+
+All of these are fixed in the stored `stats`, so a retelling in another
+language says the same thing.
+
+- **Name.** The intro title greets the user by name
+  (`{case}.title.named`, `recap_first_name`). It is read from
+  `display_name`, then `first_name`; the stored `first_name` is only the
+  display name's first word, which is the family name for a name written
+  the Vietnamese way. So: behind a common Vietnamese surname, the last word
+  ("Nguyễn Văn Linh" → Linh); a Chinese or Japanese name, whole; otherwise
+  the first word. Handles, e-mails and names over 20 characters get no
+  greeting. The share card never carries the name.
+- **Go-to dish.** In `steady`, `bulk` and `perfect` weeks, a dish logged 3+
+  times replaces the intro `sub` (`{case}.sub.dish`).
+- **Diet.** The protein tip names foods the profile's diet allows
+  (`vegetarian`, `vegan`, `keto`; anything else gets the default) and the
+  main meal with the least protein per serving, logged at least twice.
+- **No guessed causes.** Notes state what the logs show (driest day, the
+  biggest meal on an over-budget weekend day, the sugary drink behind half
+  or more of the week's sugary drinks) and never a cause the logs can't
+  show, such as eating out or busy days.
+
+## Last week
+
+- `stats.last_week` summarizes the **stored** recap of the week before
+  (`last_week_of`). There is none when that week was never read: no recap
+  was built for it.
+- A card can carry `trend: {text, up, good}`: which way its number moved
+  since last week and whether that helps. Averages need a change of at
+  least a step (protein 5 g, fiber 2 g, water 0.2 L); counts (nights,
+  drinks, days, workouts) need 1, and compare only when both weeks counted
+  the same number of days. Win cards show only good trends.
+- `last_week.plan` lists the issues last week's plan took on. The first one
+  that no longer holds and whose number moved a step the right way becomes
+  the top win card (`follow_through`, icon `check_circle`): this week's
+  number, with last week's in its trend.
+
 ## Configuration
 
 `WEEKLY_RECAP_CONFIG_JSON` overrides recap thresholds by `RecapConfig` field

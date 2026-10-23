@@ -28,6 +28,7 @@ class DayStats:
     fiber_target: float
     water_target: float  # litres
     cheat_days: tuple[int, ...]
+    fiber: tuple[float, ...] = ()  # grams, food days only
 
 
 def day_stats(
@@ -66,6 +67,7 @@ def day_stats(
         cheat_days=tuple(
             day for day in sorted(by_day) if by_day[day].get("is_cheat_day")
         ),
+        fiber=_per_day(by_day, "fiber_g", food_days),
     )
 
 

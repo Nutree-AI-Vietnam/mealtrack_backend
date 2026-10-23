@@ -4,13 +4,18 @@ from datetime import UTC, date, datetime, time, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pytest
+from tests.fixtures.weekly_recap_samples import sample_stats
+
 from src.app.services.weekly_recap_meal_stats import FoodMeal
-from src.app.services.weekly_recap_stats_builder import build_week_stats
+from src.app.services.weekly_recap_stats_builder import build_week_stats, recap_diet
 from src.app.services.weekly_recap_week_logs import WeekLogs
 from src.domain.model.movement.movement_entry import MovementEntry
 from src.domain.model.weekly_recap import (
     DishCount,
     MissedMeal,
+    PeakMeal,
+    WeeklyRecap,
     WeekStats,
     Workout,
     week_stats_from_dict,
@@ -18,6 +23,7 @@ from src.domain.model.weekly_recap import (
 )
 from src.domain.model.weight.weight_entry import WeightEntry
 from src.domain.services.weekly_recap import RecapConfig, generate_recap
+from src.domain.services.weekly_recap.last_week import last_week_of
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 MONDAY = date(2026, 10, 5)
@@ -38,6 +44,7 @@ def _food(
     meal_type: str,
     name: str,
     carbs: float = 50.0,
+    protein: float = 20.0,
 ) -> FoodMeal:
     return FoodMeal(
         day=day,
@@ -48,6 +55,7 @@ def _food(
         carbs=carbs,
         fiber=2.0,
         source="scanner",
+        protein=protein,
     )
 
 
@@ -85,7 +93,10 @@ def _row(day: int, calories: float, **values) -> dict:
 
 def _week_logs(**overrides) -> WeekLogs:
     meals = (
-        *(_food(day, 8, meal_type="breakfast", name="Bánh mì") for day in range(5)),
+        *(
+            _food(day, 8, meal_type="breakfast", name="Bánh mì", protein=8.0)
+            for day in range(5)
+        ),
         *(_food(day, 12, 30, meal_type="lunch", name="Phở bò") for day in range(7)),
         _food(2, 16, 30, meal_type="snack", name="Chuối", carbs=60.0),
         _food(4, 22, 30, meal_type="snack", name="Chè"),
@@ -159,6 +170,14 @@ def test_build_week_stats_combines_the_logs_and_the_summary_rows():
         perfect_weeks_before=2,
         had_first_week=True,
         cheat_days=(5,),
+        fiber_by_day=(20.0,) * 7,
+        low_protein_meal="breakfast",
+        # Friday's three meals tie at 500 kcal; the earliest one wins.
+        weekend_peaks=(
+            PeakMeal(4, "Bánh mì", 500),
+            PeakMeal(5, "Phở bò", 500),
+            PeakMeal(6, "Phở bò", 500),
+        ),
     )
 
 
@@ -219,3 +238,52 @@ def test_built_week_stats_can_be_stored_and_rendered():
     assert payload == generate_recap(stats, CONFIG, "en")
     assert payload["week_start"] == "2026-10-05"
     assert payload["slides"][0] == "intro"
+
+
+def test_build_week_stats_compares_with_the_recap_of_the_week_before():
+    rows = [_row(day, kcal) for day, kcal in enumerate(KCAL)]
+    last = WeeklyRecap(
+        USER,
+        MONDAY - timedelta(days=7),
+        "steady",
+        "vi",
+        stats=week_stats_to_dict(sample_stats("steady")),
+        payload={},
+    )
+
+    stats = build_week_stats(
+        _week_logs(last_recap=last, first_name="Linh"), rows, CONFIG
+    )
+
+    assert stats is not None
+    assert stats.first_name == "Linh"
+    assert stats.last_week == last_week_of(sample_stats("steady"), "steady", CONFIG)
+    assert stats.last_week.plan == ("fiber_low", "late_snack", "water_low")
+
+
+def test_build_week_stats_skips_an_unreadable_last_week():
+    rows = [_row(day, kcal) for day, kcal in enumerate(KCAL)]
+    broken = WeeklyRecap(
+        USER, MONDAY - timedelta(days=7), "steady", "vi", stats={}, payload={}
+    )
+
+    stats = build_week_stats(_week_logs(last_recap=broken), rows, CONFIG)
+
+    assert stats is not None
+    assert stats.last_week is None
+
+
+@pytest.mark.parametrize(
+    ("prefs", "expected"),
+    [
+        (["vegan"], "vegan"),
+        (["Vegetarian"], "vegetarian"),
+        (["classic", "keto"], "keto"),
+        (["classic"], None),
+        ([], None),
+        (None, None),
+    ],
+)
+def test_recap_diet(prefs, expected):
+    assert recap_diet(SimpleNamespace(dietary_preferences=prefs)) == expected
+    assert recap_diet(None) is None

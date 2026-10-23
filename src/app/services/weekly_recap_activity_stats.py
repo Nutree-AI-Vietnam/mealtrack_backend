@@ -84,6 +84,22 @@ def sugary_drinks(
     return len(sugary), round(sum(entry.calories for entry in sugary))
 
 
+def top_sugary_drink(
+    entries: Iterable[HydrationEntry], min_sugar_g: float
+) -> str | None:
+    """The sugary drink behind at least half of the week's sugary drinks."""
+    names = Counter(
+        " ".join(entry.drink_name_snapshot.split())
+        for entry in entries
+        if (entry.sugar_g or 0.0) >= min_sugar_g
+    )
+    names.pop("", None)
+    if not names:
+        return None
+    name, count = min(names.items(), key=lambda item: (-item[1], item[0]))
+    return name if count * 2 >= names.total() else None
+
+
 def weight_progress(
     goal: str,
     profile: Any,

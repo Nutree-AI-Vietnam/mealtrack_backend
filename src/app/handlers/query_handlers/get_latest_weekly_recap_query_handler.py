@@ -15,7 +15,10 @@ from src.app.handlers.query_handlers.get_progress_summary_query_handler import (
 )
 from src.app.queries.progress import GetLatestWeeklyRecapQuery, GetProgressSummaryQuery
 from src.app.services.weekly_recap_stats_builder import build_week_stats
-from src.app.services.weekly_recap_week_logs import load_week_logs
+from src.app.services.weekly_recap_week_logs import (
+    load_week_logs,
+    recap_first_name,
+)
 from src.domain.model.weekly_recap import (
     WeeklyRecap,
     week_stats_from_dict,
@@ -88,6 +91,7 @@ class GetLatestWeeklyRecapQueryHandler(
                 tz_name,
                 user.created_at,
                 self.config.min_week_days,
+                first_name=recap_first_name(user),
             )
         if logs is None:
             return None

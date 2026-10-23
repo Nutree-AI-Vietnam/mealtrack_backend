@@ -12,15 +12,17 @@ from src.app.services.weekly_recap_meal_stats import (
     dish_stats,
     food_meals,
     late_snacks,
+    low_protein_meal,
     lunch_no_veg_days,
     meals_by_day,
     missed_meal,
     photo_share,
     pre_workout_carbs,
+    weekend_peaks,
 )
 from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.nutrition import Macros, Nutrition, NutritionOverride
-from src.domain.model.weekly_recap import DishCount, MissedMeal
+from src.domain.model.weekly_recap import DishCount, MissedMeal, PeakMeal
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 MONDAY = date(2026, 10, 5)
@@ -74,6 +76,7 @@ def _food(
     carbs: float = 50.0,
     fiber: float = 0.0,
     source: str | None = "scanner",
+    protein: float = 20.0,
 ) -> FoodMeal:
     return FoodMeal(
         day=day,
@@ -84,6 +87,7 @@ def _food(
         carbs=carbs,
         fiber=fiber,
         source=source,
+        protein=protein,
     )
 
 
@@ -288,3 +292,51 @@ def test_pre_workout_carbs_averages_the_window_before_each_workout():
 
 def test_pre_workout_carbs_without_workouts_on_food_days():
     assert pre_workout_carbs([_food(0, 12)], [(1, _local(1, 18))], 90) is None
+
+
+def test_food_meals_keeps_the_protein():
+    [meal] = food_meals([_meal(0, 8)], MONDAY, TZ)
+
+    assert meal.protein == 20.0
+
+
+def test_low_protein_meal_is_the_main_meal_with_the_least_per_serving():
+    meals = [
+        *(_food(day, 8, meal_type="breakfast", protein=9.0) for day in range(3)),
+        *(_food(day, 12, meal_type="lunch", protein=35.0) for day in range(3)),
+        *(_food(day, 19, meal_type="dinner", protein=28.0) for day in range(2)),
+        _food(4, 16, meal_type="snack", protein=2.0),  # snacks never count
+    ]
+
+    assert low_protein_meal(meals) == "breakfast"
+
+
+def test_low_protein_meal_needs_two_servings_of_two_meals():
+    once = [_food(0, 8, meal_type="breakfast", protein=5.0)]
+    lunches = [_food(day, 12, meal_type="lunch", protein=30.0) for day in range(4)]
+
+    assert low_protein_meal(once + lunches) is None
+
+
+def test_low_protein_meal_ties_go_to_the_earlier_meal():
+    meals = [
+        *(_food(day, 19, meal_type="dinner", protein=20.0) for day in range(2)),
+        *(_food(day, 12, meal_type="lunch", protein=20.0) for day in range(2)),
+    ]
+
+    assert low_protein_meal(meals) == "lunch"
+
+
+def test_weekend_peaks_are_the_biggest_named_meal_of_fri_to_sun():
+    meals = [
+        _food(3, 19, name="Cơm gà", kcal=1500.0),  # Thursday
+        _food(4, 12, name="Bún chả", kcal=700.0),
+        _food(4, 19, name="Lẩu Thái", kcal=1250.4),
+        _food(5, 20, name="Unknown dish", kcal=2000.0),  # placeholder name
+        _food(5, 12, name="Phở bò", kcal=600.0),
+    ]
+
+    assert weekend_peaks(meals) == (
+        PeakMeal(4, "Lẩu Thái", 1250),
+        PeakMeal(5, "Phở bò", 600),
+    )
