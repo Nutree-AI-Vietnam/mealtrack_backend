@@ -24,6 +24,9 @@ from src.infra.mappers.user_mapper import (
     UserProfileMapper,
     build_profile_preference_entries,
 )
+from src.infra.repositories.wearable_account_repository import (
+    load_open_wearables_user_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -303,4 +306,14 @@ class AsyncUserRepository(UserRepositoryPort):
             update(User)
             .where(User.id == str(user_id))
             .values(weekly_auto_adjust=enabled)
+        )
+
+    async def find_open_wearables_user_id(self, user_id: UUID) -> str | None:
+        return await load_open_wearables_user_id(self.session, str(user_id))
+
+    async def clear_open_wearables_user_id(self, user_id: UUID) -> None:
+        await self.session.execute(
+            update(User)
+            .where(User.id == str(user_id))
+            .values(open_wearables_user_id=None)
         )

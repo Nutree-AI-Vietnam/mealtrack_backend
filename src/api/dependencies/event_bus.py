@@ -278,7 +278,10 @@ from src.app.services.food_search_translation_cache import CachedTextTranslation
 from src.app.services.meal_recommendation_history_projector import (
     MealRecommendationHistoryProjector,
 )
-from src.bootstrap.integration_services import get_integration_event_publisher
+from src.bootstrap.integration_services import (
+    get_integration_event_publisher,
+    get_wearable_account_service,
+)
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
@@ -1044,6 +1047,7 @@ def get_configured_event_bus() -> EventBus:
             cache_service=cache_service,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
+            wearable_accounts=get_wearable_account_service(),
         ),
     )
     event_bus.register_handler(

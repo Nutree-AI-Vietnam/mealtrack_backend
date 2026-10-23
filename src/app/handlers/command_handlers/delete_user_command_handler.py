@@ -1,10 +1,12 @@
 """
 DeleteUserCommandHandler - Handler for deleting user accounts.
-Performs soft delete in database and emits UserDeletedEvent for async cleanup.
+Deletes the linked Open Wearables user, performs soft delete in database and
+emits UserDeletedEvent for async cleanup.
 """
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from src.api.dependencies.auth_cache import invalidate_cached_user_id
 from src.api.exceptions import ResourceNotFoundException
@@ -18,6 +20,7 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
 )
+from src.domain.ports.wearable_account_port import WearableAccountPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.enums import MealStatusEnum
 
@@ -41,15 +44,18 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
         cache_service: CachePort | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
+        wearable_accounts: WearableAccountPort | None = None,
     ):
         self.uow = uow
         self.cache_service = cache_service
         self.event_publisher = event_publisher
         self.environment = environment
+        self.wearable_accounts = wearable_accounts
 
     async def handle(self, command: DeleteUserCommand) -> dict[str, Any]:
         """
         Delete user account.
+        - Delete the linked Open Wearables user (health data, provider tokens)
         - Soft delete in database (set is_active=False)
         - Anonymize user data
         - Emit UserDeletedEvent for out-of-process cleanup (nutreeai_async)
@@ -70,10 +76,13 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 # Store user_id for logging
                 user_id = user.id
 
-                # Step 1: Soft-delete all related user data
+                # Step 1: Delete the Open Wearables user before any commit.
+                await self._delete_wearable_account(uow, user_id)
+
+                # Step 2: Soft-delete all related user data
                 await self._soft_delete_related_data(uow, str(user_id))
 
-                # Step 2: Anonymize user data (GDPR compliance).
+                # Step 3: Anonymize user data (GDPR compliance).
                 # firebase_uid stays on the integration event (command.firebase_uid)
                 # so Firebase cleanup still runs, but the column must be released.
                 # ix_users_firebase_uid is unique for inactive rows too.
@@ -87,7 +96,7 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 user.photo_url = None
                 user.password_hash = "DELETED"
 
-                # Step 3: Soft delete user with timestamp
+                # Step 4: Soft delete user with timestamp
                 user.is_active = False
                 user.deleted_at = utc_now()
                 user.last_accessed = utc_now()
@@ -106,7 +115,7 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
 
         await invalidate_cached_user_id(self.cache_service, command.firebase_uid)
 
-        # Step 4: Emit UserDeletedEvent to async queue for nutreeai_async to perform Firebase cleanup
+        # Step 5: Emit UserDeletedEvent to async queue for nutreeai_async to perform Firebase cleanup
         event = UserDeletedEvent(
             environment=self.environment,
             aggregate_id=str(user_id),
@@ -130,6 +139,33 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             "firebase_cleanup_queued": True,
             "message": "Account successfully deleted; Firebase cleanup queued",
         }
+
+    async def _delete_wearable_account(
+        self, uow: AsyncUnitOfWorkPort, user_id: UUID
+    ) -> None:
+        """
+        Delete the linked Open Wearables user and drop the link.
+        Runs inside the transaction: a failure aborts the account deletion, so
+        the person can retry while the link still exists. The UserDeletedEvent
+        path is best effort and can drop events, so it cannot do this.
+        """
+        ow_user_id = await uow.users.find_open_wearables_user_id(user_id)
+        if ow_user_id is None:
+            return
+
+        if self.wearable_accounts is None:
+            # Keep the link on the deleted row so a later cleanup can find it.
+            logger.warning(
+                "Open Wearables is not configured; kept the link for cleanup "
+                "user_id=%s",
+                user_id,
+            )
+            return
+
+        deleted = await self.wearable_accounts.delete_user(ow_user_id)
+        if not deleted:
+            logger.info("Open Wearables user was already deleted user_id=%s", user_id)
+        await uow.users.clear_open_wearables_user_id(user_id)
 
     async def _soft_delete_related_data(self, uow, user_id: str) -> None:
         """

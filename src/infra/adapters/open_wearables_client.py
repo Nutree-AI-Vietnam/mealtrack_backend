@@ -59,12 +59,12 @@ def _number(raw: object) -> float:
     return value if math.isfinite(value) else 0.0
 
 
-def choose_activity_row(rows: list[dict[str, Any]], provider: str) -> dict[str, Any] | None:
+def choose_activity_row(
+    rows: list[dict[str, Any]], provider: str
+) -> dict[str, Any] | None:
     """One daily row for the chosen provider. Summing sources double-counts steps."""
     matching = [
-        row
-        for row in rows
-        if (row.get("source") or {}).get("provider") == provider
+        row for row in rows if (row.get("source") or {}).get("provider") == provider
     ]
     if not matching:
         return None
@@ -102,7 +102,9 @@ class OpenWearablesClient:
         )
         url = payload.get("authorization_url")
         if not isinstance(url, str) or not url:
-            raise OpenWearablesError("Open Wearables did not return an authorization URL")
+            raise OpenWearablesError(
+                "Open Wearables did not return an authorization URL"
+            )
         return url
 
     async def connections(self, user_id: str) -> list[dict[str, str]]:
@@ -119,7 +121,9 @@ class OpenWearablesClient:
                 rows.append({"provider": provider, "status": status})
         return rows
 
-    async def activity_day(self, user_id: str, day: str, provider: str) -> tuple[int, float]:
+    async def activity_day(
+        self, user_id: str, day: str, provider: str
+    ) -> tuple[int, float]:
         # A chosen watch can lose the daily summary contest, so read its samples.
         steps_samples: list[float] = []
         energy_samples: list[float] = []
@@ -154,9 +158,17 @@ class OpenWearablesClient:
                     (daily_steps if daily else steps_samples).append(value)
                 elif row.get("type") == "active_energy":
                     (daily_energy if daily else energy_samples).append(value)
-            pagination = payload.get("pagination") if isinstance(payload, dict) else None
-            cursor = pagination.get("next_cursor") if isinstance(pagination, dict) else None
-            if not isinstance(pagination, dict) or not pagination.get("has_more") or not cursor:
+            pagination = (
+                payload.get("pagination") if isinstance(payload, dict) else None
+            )
+            cursor = (
+                pagination.get("next_cursor") if isinstance(pagination, dict) else None
+            )
+            if (
+                not isinstance(pagination, dict)
+                or not pagination.get("has_more")
+                or not cursor
+            ):
                 break
         steps = daily_steps or steps_samples
         energy = daily_energy or energy_samples
@@ -185,6 +197,17 @@ class OpenWearablesClient:
                 workouts.append(parsed)
         return workouts
 
+    async def delete_user(self, user_id: str) -> bool:
+        """Delete the user, their synced data and provider tokens.
+
+        A 404 means the user is already gone, so a retried account deletion
+        can finish. Returns False in that case.
+        """
+        response = await self._send(
+            "DELETE", f"/api/v1/users/{user_id}", missing_ok=True
+        )
+        return response.status_code != httpx.codes.NOT_FOUND
+
     async def _request(
         self,
         method: str,
@@ -193,6 +216,21 @@ class OpenWearablesClient:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
+        response = await self._send(method, path, json=json, params=params)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise OpenWearablesError("Open Wearables returned invalid JSON") from exc
+
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        missing_ok: bool = False,
+    ) -> httpx.Response:
         try:
             async with httpx.AsyncClient(
                 transport=self._transport,
@@ -205,10 +243,8 @@ class OpenWearablesClient:
                     json=json,
                     params=params,
                 )
-                response.raise_for_status()
+                if not (missing_ok and response.status_code == httpx.codes.NOT_FOUND):
+                    response.raise_for_status()
         except httpx.HTTPError as exc:
             raise OpenWearablesError("Open Wearables request failed") from exc
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise OpenWearablesError("Open Wearables returned invalid JSON") from exc
+        return response
