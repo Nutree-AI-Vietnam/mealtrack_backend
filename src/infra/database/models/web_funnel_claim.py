@@ -41,6 +41,13 @@ class WebFunnelLead(Base, BaseMixin):
     claimed_at = Column(DateTime(timezone=True), nullable=True)
     claimed_uid = Column(String(128), nullable=True)
     access_sync_status = Column(String(16), nullable=False, default="pending")
+    # Display hints from the web funnel, used only to word reminder emails.
+    locale = Column(String(8), nullable=True)
+    display_units = Column(String(16), nullable=True)
+    # Private plan link sent in reminder emails; only its hash is stored.
+    plan_link_token_hash = Column(String(64), nullable=True, unique=True)
+    plan_link_expires_at = Column(DateTime(timezone=True), nullable=True)
+    reminders_unsubscribed_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint(
