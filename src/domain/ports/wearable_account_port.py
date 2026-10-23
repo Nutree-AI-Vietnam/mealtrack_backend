@@ -11,6 +11,6 @@ class WearableAccountPort(Protocol):
     async def delete_user(self, user_id: str) -> bool:
         """Delete the user with their synced health data and provider tokens.
 
-        Returns False when the user was already gone. Raises when the platform
-        could not confirm the deletion.
+        Returns False when the platform reports that this user does not exist.
+        Raises when the platform could not confirm the deletion.
         """

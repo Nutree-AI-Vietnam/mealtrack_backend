@@ -59,6 +59,18 @@ def _number(raw: object) -> float:
     return value if math.isfinite(value) else 0.0
 
 
+def _names_missing_user(response: httpx.Response, user_id: str) -> bool:
+    """True for Open Wearables' own missing-user reply, which names the id."""
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        return False
+    if not isinstance(detail, str):
+        return False
+    text = detail.lower()
+    return user_id.lower() in text and "not found" in text
+
+
 def choose_activity_row(
     rows: list[dict[str, Any]], provider: str
 ) -> dict[str, Any] | None:
@@ -200,13 +212,18 @@ class OpenWearablesClient:
     async def delete_user(self, user_id: str) -> bool:
         """Delete the user, their synced data and provider tokens.
 
-        A 404 means the user is already gone, so a retried account deletion
-        can finish. Returns False in that case.
+        Returns False when Open Wearables reports that this user does not
+        exist, so a retried deletion can finish. Any other 404, such as a
+        wrong path behind a proxy, raises: it does not show the data is gone.
         """
         response = await self._send(
             "DELETE", f"/api/v1/users/{user_id}", missing_ok=True
         )
-        return response.status_code != httpx.codes.NOT_FOUND
+        if response.status_code != httpx.codes.NOT_FOUND:
+            return True
+        if _names_missing_user(response, user_id):
+            return False
+        raise OpenWearablesError("Open Wearables answered 404 without naming the user")
 
     async def _request(
         self,
