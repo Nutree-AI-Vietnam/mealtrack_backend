@@ -81,7 +81,8 @@ def _require_configured() -> None:
 
 
 def _redirect_uri(provider: str) -> str:
-    return f"nutree:///wearables/connected/{provider}"
+    # Android opens nutree links only with the open-nutree host; iOS takes any host.
+    return f"nutree://open-nutree/wearables/connected/{provider}"
 
 
 async def _linked_user_id(session: AsyncSession, user_id: str) -> str | None:

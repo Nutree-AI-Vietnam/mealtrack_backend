@@ -134,10 +134,16 @@ async def test_workouts_on_day_keeps_name_and_calories():
 async def test_authorization_url_uses_api_key_header():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["X-Open-Wearables-API-Key"] == "test-key"
-        assert request.url.params["redirect_uri"] == "nutree:///wearables/connected/garmin"
+        assert (
+            request.url.params["redirect_uri"]
+            == "nutree://open-nutree/wearables/connected/garmin"
+        )
         return httpx.Response(
             200,
-            json={"authorization_url": "https://connect.garmin.com/start", "state": "s"},
+            json={
+                "authorization_url": "https://connect.garmin.com/start",
+                "state": "s",
+            },
         )
 
     client = OpenWearablesClient(
@@ -148,7 +154,7 @@ async def test_authorization_url_uses_api_key_header():
     url = await client.authorization_url(
         "garmin",
         "ow-user",
-        "nutree:///wearables/connected/garmin",
+        "nutree://open-nutree/wearables/connected/garmin",
     )
     assert url == "https://connect.garmin.com/start"
 
@@ -163,7 +169,9 @@ def _client(ow_client: OpenWearablesClient | None = None) -> TestClient:
 
     app.dependency_overrides[get_async_db] = _db
     if ow_client is not None:
-        app.dependency_overrides[wearables_mod.open_wearables_client] = lambda: ow_client
+        app.dependency_overrides[wearables_mod.open_wearables_client] = lambda: (
+            ow_client
+        )
     return TestClient(app)
 
 
@@ -180,6 +188,31 @@ def test_unconfigured_sign_in_conflicts(monkeypatch):
     monkeypatch.setattr(settings, "OPEN_WEARABLES_APP_SECRET", "")
     response = _client().get("/v1/wearables/oauth/garmin/authorize")
     assert response.status_code == 409
+
+
+def test_sign_in_returns_through_the_link_android_opens(monkeypatch):
+    # Android's nutree intent filter requires the open-nutree host.
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+
+    async def linked(_session, _user_id):
+        return "ow-user"
+
+    monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
+    seen: list[tuple[str, str, str]] = []
+
+    class _Client(OpenWearablesClient):
+        async def authorization_url(self, provider, user_id, redirect_uri):
+            seen.append((provider, user_id, redirect_uri))
+            return "https://connect.garmin.com/start"
+
+    response = _client(_Client("http://ow.test", "test-key")).get(
+        "/v1/wearables/oauth/garmin/authorize"
+    )
+    assert response.status_code == 200
+    assert response.json() == {"authorization_url": "https://connect.garmin.com/start"}
+    assert seen == [
+        ("garmin", "ow-user", "nutree://open-nutree/wearables/connected/garmin")
+    ]
 
 
 def test_ultrahuman_steps_ignore_energy(monkeypatch):
