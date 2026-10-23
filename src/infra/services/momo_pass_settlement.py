@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 # MoMo is asked about a pending order at most this often.
 QUERY_INTERVAL = timedelta(seconds=3)
+# Access denied, unsupported API version and failed merchant authentication:
+# our MoMo setup is wrong, and no retry settles the order until someone fixes it.
+_SETUP_ERROR_CODES = frozenset({11, 12, 13})
 
 
 async def settle_pending(
@@ -51,6 +54,16 @@ async def apply_result(db: AsyncSession, order_id: str, result: dict) -> None:
         await db.rollback()
         return
     status = order_status_for_result(result_code).value
+    if 0 < result_code < 1000:
+        # MoMo's call failed, not the payment, so the order stays pending and
+        # this log is the only trace.
+        logger.log(
+            logging.ERROR if result_code in _SETUP_ERROR_CODES else logging.WARNING,
+            "MoMo answered %s for order %s: %s",
+            result_code,
+            order_id,
+            result.get("message"),
+        )
     # Paid is terminal; a late paid result may still replace failed/expired.
     if order.status == "paid" or status == "pending":
         await db.rollback()

@@ -1,9 +1,9 @@
 """MoMo one-time premium passes: catalog, price rule and MoMo result mapping.
 
-MoMo only lets us take one-time payments, so a payment buys a fixed pass that
-never renews. A buyer's first pass is charged the intro price and every later
-pass the regular price, which mirrors an intro-priced subscription renewed by
-hand.
+MoMo has not enabled its subscription method for our merchant for now, so each
+payment buys a fixed pass that never renews. A buyer's first pass is charged
+the intro price and every later pass the regular price, which mirrors an
+intro-priced subscription renewed by hand.
 """
 
 from dataclasses import dataclass

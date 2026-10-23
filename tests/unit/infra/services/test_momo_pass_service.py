@@ -1,5 +1,6 @@
 """MoMo one-time pass checkout and result handling against fake I/O."""
 
+import logging
 from datetime import timedelta
 
 import pytest
@@ -13,7 +14,7 @@ from src.domain.model.payments.momo_signature import (
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.adapters.momo_gateway_adapter import MomoCredentials, MomoGatewayError
 from src.infra.database.models.momo_payment_order import MomoPaymentOrder
-from src.infra.services import momo_pass_orders
+from src.infra.services import momo_pass_orders, momo_pass_settlement
 from src.infra.services.momo_pass_service import (
     MomoBuyer,
     MomoNotConfigured,
@@ -69,7 +70,12 @@ class FakeGateway:
         self.queried.append(order_id)
         if self.query_fails:
             raise MomoGatewayError("MoMo is unreachable")
-        return {"orderId": order_id, "resultCode": self.query_code, "amount": 99000}
+        return {
+            "orderId": order_id,
+            "resultCode": self.query_code,
+            "amount": 99000,
+            "message": "MoMo message",
+        }
 
 
 class FakeEntitlements:
@@ -409,6 +415,31 @@ async def test_failing_momo_query_is_still_throttled(store):
 
     assert first["status"] == "pending"
     assert service.gateway.queried == ["o1"]
+
+
+@pytest.mark.parametrize(
+    ("result_code", "logged"),
+    [
+        (1000, []),
+        (99, [(logging.WARNING, "MoMo answered 99 for order o1: MoMo message")]),
+        (11, [(logging.ERROR, "MoMo answered 11 for order o1: MoMo message")]),
+    ],
+)
+async def test_failed_momo_call_is_logged_and_leaves_the_order_pending(
+    store, caplog, result_code, logged
+):
+    store["orders"]["o1"] = _order()
+    service, _session = _service(store, FakeGateway(query_code=result_code))
+
+    with caplog.at_level(logging.INFO, logger=momo_pass_settlement.__name__):
+        result = await service.app_order("o1", "user-1")
+
+    assert result["status"] == store["orders"]["o1"].status == "pending"
+    assert [
+        (record.levelno, record.getMessage())
+        for record in caplog.records
+        if record.name == momo_pass_settlement.__name__
+    ] == logged
 
 
 async def test_status_poll_ends_the_read_before_asking_momo(store):

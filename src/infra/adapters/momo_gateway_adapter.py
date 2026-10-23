@@ -16,8 +16,10 @@ _BASE_URLS = {
 }
 # MoMo asks partners to wait up to 30 s for a create response.
 _CREATE_TIMEOUT_SECONDS = 30.0
-# Queries run on status polls, and a later poll asks again, so fail fast.
-_QUERY_TIMEOUT_SECONDS = 8.0
+# MoMo sets 30 s as the minimum query timeout for its answer to arrive. httpx
+# applies it to each network step (connect, send, read), so a slow MoMo can hold
+# a status read or a sign-in about that long per step.
+_QUERY_TIMEOUT_SECONDS = 30.0
 
 
 class MomoGatewayError(Exception):

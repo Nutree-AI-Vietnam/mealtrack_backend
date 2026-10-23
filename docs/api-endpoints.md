@@ -381,12 +381,13 @@ handler/schema when implementing; the bullets below are the durable WHY.
 
 ### MoMo one-time passes
 
-- MoMo takes one-time payments only. A paid order buys a 4, 12 or 52 week
-  pass that never renews; the buyer's first pass costs the intro price, later
-  passes the regular price (`src/domain/model/payments/momo_pass.py`). A quiz
-  price depends only on that lead's own paid orders, so a visitor never learns
-  whether a typed email bought before; an app price counts the account's
-  orders and orders under its verified Google, Apple or email/password email.
+- MoMo has not enabled its subscription method for our merchant for now, so
+  each paid order buys a fixed 4, 12 or 52 week pass that never renews; the
+  buyer's first pass costs the intro price, later passes the regular price
+  (`src/domain/model/payments/momo_pass.py`). A quiz price depends only on
+  that lead's own paid orders, so a visitor never learns whether a typed email
+  bought before; an app price counts the account's orders and orders under its
+  verified Google, Apple or email/password email.
 - App: `GET /v1/payments/momo/plans`, `POST /v1/payments/momo/checkouts`
   `{plan, lang, method: wallet|atm}`, `GET /v1/payments/momo/orders/{id}`,
   `POST /v1/payments/momo/activate` (10/minute per user) answering
