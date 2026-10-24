@@ -13,6 +13,7 @@ from src.app.services.catalog_food_reference_review_service import (
 )
 from src.app.services.catalog_meal_seed_import_service import CatalogMealSeedImporter
 from src.app.services.catalog_meal_snapshot_service import CatalogMealSnapshotService
+from src.app.services.open_wearables_account_links import OpenWearablesAccountLinks
 from src.domain.parsers.vision_response_parser import VisionResponseParser
 from src.domain.ports.food_cache_service_port import FoodCacheServicePort
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
@@ -798,6 +799,11 @@ def get_subscription_service() -> "SubscriptionServicePort":
         _subscription_service = RevenueCatAdapter(api_key=api_key)
 
     return _subscription_service
+
+
+def get_open_wearables_account_links() -> OpenWearablesAccountLinks:
+    """Read and store Open Wearables links in their own units of work."""
+    return OpenWearablesAccountLinks(AsyncUnitOfWork, AsyncUnitOfWork.read_only)
 
 
 def get_web_funnel_redemption_service():
