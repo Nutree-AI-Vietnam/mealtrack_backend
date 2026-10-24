@@ -19,11 +19,12 @@ CLOUD_WEARABLE_PROVIDERS = frozenset(
 
 # Providers that can supply both numbers of today's overlay.
 BALANCE_PROVIDERS = frozenset(
-    {"garmin", "oura", "whoop", "polar", "suunto", "withings", "google_health"}
+    {"garmin", "oura", "polar", "suunto", "withings", "google_health"}
 )
 
-# Steps exist. Active calories do not, so burn stays empty for these.
-STEPS_PROVIDERS = frozenset({"ultrahuman"})
+# Steps exist. Active calories do not, so burn stays empty for these. WHOOP
+# reports total energy only, with resting burn included.
+STEPS_PROVIDERS = frozenset({"ultrahuman", "whoop"})
 
 # Per-activity calories. Listed for the person to add, never summed into the day.
 WORKOUT_PROVIDERS = frozenset({"strava"})

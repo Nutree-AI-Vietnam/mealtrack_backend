@@ -29,6 +29,8 @@ def test_cloud_catalog_excludes_phone_sources_and_fitbit():
     assert "samsung" not in wearables_mod.CLOUD_WEARABLE_PROVIDERS
     assert "strava" not in wearables_mod.BALANCE_PROVIDERS
     assert "ultrahuman" in wearables_mod.STEPS_PROVIDERS
+    assert "whoop" in wearables_mod.STEPS_PROVIDERS
+    assert "whoop" not in wearables_mod.BALANCE_PROVIDERS
     assert "strava" in wearables_mod.WORKOUT_PROVIDERS
 
 
@@ -237,6 +239,30 @@ def test_ultrahuman_steps_ignore_energy(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["steps"] == 2000
+    assert body["active_calories_kcal"] == 0
+    assert body["connected"] is True
+
+
+def test_whoop_steps_ignore_energy(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+
+    async def linked(_session, _user_id):
+        return "ow-user"
+
+    monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
+
+    class _Client(OpenWearablesClient):
+        async def activity_day(self, user_id, day, provider):
+            assert provider == "whoop"
+            return 7400, 0.0
+
+    response = _client(_Client("http://ow.test", "test-key")).get(
+        "/v1/wearables/activity",
+        params={"date": "2026-10-24", "provider": "whoop"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["steps"] == 7400
     assert body["active_calories_kcal"] == 0
     assert body["connected"] is True
 
