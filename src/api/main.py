@@ -67,6 +67,10 @@ from src.api.routes.v1.meal_recommendations import router as meal_recommendation
 from src.api.routes.v1.meal_scan_by_url import router as meal_scan_by_url_router
 from src.api.routes.v1.meal_suggestions import router as meal_suggestions_router
 from src.api.routes.v1.meals import router as meals_router
+from src.api.routes.v1.momo_payments import router as momo_payments_router
+from src.api.routes.v1.momo_payments import (
+    webhook_router as momo_webhook_router,
+)
 from src.api.routes.v1.monitoring import router as monitoring_router
 from src.api.routes.v1.movement import router as movement_router
 from src.api.routes.v1.notifications import router as notifications_router
@@ -80,6 +84,7 @@ from src.api.routes.v1.tdee import router as tdee_router
 from src.api.routes.v1.user_profiles import router as user_profiles_router
 from src.api.routes.v1.users import router as users_router
 from src.api.routes.v1.web_funnel import router as web_funnel_router
+from src.api.routes.v1.web_funnel_momo import router as web_funnel_momo_router
 from src.api.routes.v1.web_funnel_redemption_session import (
     router as web_funnel_session_router,
 )
@@ -367,6 +372,9 @@ app.include_router(foods_router)
 app.include_router(monitoring_router)
 app.include_router(webhooks_router)
 app.include_router(web_funnel_router)
+app.include_router(web_funnel_momo_router)
+app.include_router(momo_payments_router)
+app.include_router(momo_webhook_router)
 app.include_router(web_funnel_session_router)
 app.include_router(notifications_router)
 app.include_router(hydration_router)

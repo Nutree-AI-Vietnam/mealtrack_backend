@@ -278,6 +278,27 @@ class Settings(BaseSettings):
     WEB_FUNNEL_CLAIM_LINK_BASE_URL: str = Field(default="")
     WEB_FUNNEL_BFF_ORIGIN: str = Field(default="")
     WEB_FUNNEL_BFF_SHARED_SECRET: str = Field(default="")
+    # MoMo one-time premium passes (payment gateway API v2)
+    MOMO_ENV: str = Field(
+        default="sandbox",
+        description=(
+            "sandbox or production; sandbox only with ENVIRONMENT development, "
+            "local, staging or test"
+        ),
+    )
+    MOMO_PARTNER_CODE: str = Field(default="")
+    MOMO_ACCESS_KEY: str = Field(default="")
+    MOMO_SECRET_KEY: str = Field(default="")
+    MOMO_IPN_URL: str = Field(
+        default="", description="Public URL of POST /v1/webhooks/momo/ipn"
+    )
+    MOMO_WEB_REDIRECT_URL: str = Field(
+        default="", description="Quiz page MoMo sends the browser back to"
+    )
+    MOMO_APP_REDIRECT_URL: str = Field(
+        default="nutree://momo-return",
+        description="App link MoMo opens after an in-app purchase",
+    )
     # Image storage provider configuration
     IMAGE_STORE_PROVIDER: str = Field(
         default="cloudflare",

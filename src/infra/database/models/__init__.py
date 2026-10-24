@@ -114,6 +114,9 @@ from .chat import (
 # Durable mutation replay
 from .durable_write_record import DurableWriteRecordORM
 
+# MoMo one-time premium passes
+from .momo_payment_order import MomoPaymentOrder
+
 # Movement tracking
 from .movement_entry import MovementEntryORM
 
@@ -225,6 +228,7 @@ __all__ = [
     # Durable mutation replay
     "DurableWriteRecordORM",
     # Movement tracking
+    "MomoPaymentOrder",
     "MovementEntryORM",
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",

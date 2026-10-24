@@ -379,6 +379,72 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Legacy magic-claim routes remain gated by `WEB_FUNNEL_LEGACY_CLAIM_ENABLED`
   and are not the active flow.
 
+### MoMo one-time passes
+
+- MoMo has not enabled its subscription method for our merchant for now, so
+  each paid order buys a fixed 4, 12 or 52 week pass that never renews; the
+  buyer's first pass costs the intro price, later passes the regular price
+  (`src/domain/model/payments/momo_pass.py`). A quiz price depends only on
+  that lead's own paid orders, so a visitor never learns whether a typed email
+  bought before; an app price counts the account's orders and orders under its
+  verified Google, Apple or email/password email.
+- App: `GET /v1/payments/momo/plans`, `POST /v1/payments/momo/checkouts`
+  `{plan, lang, method: wallet|atm}`, `GET /v1/payments/momo/orders/{id}`,
+  `POST /v1/payments/momo/activate` (10/minute per user) answering
+  `{"has_pass": bool}`.
+  Quiz BFF (BFF token + `X-Lead-Access-Key`): the same under
+  `/v1/web-funnel/momo/*` with `lead_id`, rate-limited per lead access key
+  (SHA-256), not per BFF IP. `wallet` is MoMo `captureWallet`, `atm` is
+  `payWithATM`.
+- `POST /v1/webhooks/momo/ipn` checks the HMAC-SHA256 signature, partner code
+  and amount, records the result and answers 204 (MoMo allows 15 s), then
+  grants the pass after the response; it rejects every body while MoMo is not
+  configured. Result codes 0 and 9000 (authorized; every order uses
+  autoCapture, a one-step payment) mean paid. The browser or app redirect is never trusted; a pending order is
+  reconciled through MoMo's query API on status reads, at most once per 3 s
+  per order, outside any database transaction. Activation, run by
+  `POST /v1/users/sync` and by `POST /v1/payments/momo/activate`, first asks
+  MoMo, without the status-read throttle (a poll holding the slot cannot
+  credit an ownerless quiz order), about the buyer's 3 newest pending orders
+  from the last 30 days (their in-app orders, and quiz orders under the
+  verified email), so a payment whose IPN and status reads were all missed
+  still unlocks; a failed query never fails the call. The app calls
+  `activate` on launch and resume while it lacks Premium: that unlocks a quiz
+  pass paid while the buyer was already signed in, retries a failed
+  RevenueCat grant, and settles an order whose IPN was lost. It never answers
+  an error for an outage; `has_pass` is then false and a later call retries.
+- A paid pass is a RevenueCat promotional `standard` entitlement on the
+  buyer's Firebase uid. Once its owner is known a paid order is credited once,
+  in the database only: its window starts now or when the buyer's latest
+  window ends. The buyer's latest end is then sent to RevenueCat and every
+  credited order ending by it is marked granted. RevenueCat may replace a
+  promotional instead of keeping the latest expiry, so one user's sends are
+  serialized by a per-user Postgres advisory lock: only its holder sends,
+  always the latest credited end, and it repeats until nothing is unsent, so
+  a credit made meanwhile is sent too. A status read or IPN that finds the
+  lock taken leaves the send to its holder; activation waits for it (up to
+  12 s), so `has_pass` and `has_subscription` count a grant in flight. A
+  failed grant leaves its orders unsent.
+  A window is fixed when it is credited: if RevenueCat is down the pass still
+  ends on that date, and a credit whose window ended before delivery is not
+  sent (logged as an error). Status reads, IPNs, `POST /v1/users/sync` and
+  `POST /v1/payments/momo/activate` retry undelivered credits. In-app orders
+  unlock on payment; quiz orders unlock on `POST /v1/users/sync` or
+  `POST /v1/payments/momo/activate` when a Google, Apple or email/password
+  token carries a verified email equal to the checkout email (custom tokens
+  never match; sync then reports `has_subscription` true).
+- `POST /v1/webhooks/revenuecat` answers 200 `ignored` to purchase, renewal,
+  cancellation, expiration, billing, product-change and refund events with
+  `store=PROMOTIONAL` (pass and dashboard grants), so they never create or
+  expire the user's store subscription row. Web-funnel redemption and
+  reconcile, and `TRANSFER`, are handled as before.
+- Checkout returns 503 `MoMo checkout is unavailable.` until `MOMO_*` is set;
+  the missing setting names are only logged. MoMo's sandbox runs only where
+  the `ENVIRONMENT` variable is `development`, `local`, `staging` or `test`;
+  anywhere else, unset included, `MOMO_ENV` must be `production` or MoMo
+  stays off. The settings are checked once per process: an error is logged
+  only when the MoMo keys are set, otherwise an info line.
+
 ### Food-label scan
 
 - `/v1/meals/food-label/scan-by-url` validates AI output against
