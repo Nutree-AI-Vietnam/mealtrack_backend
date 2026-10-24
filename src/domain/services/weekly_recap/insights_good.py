@@ -147,12 +147,17 @@ def _fiber_hit(ctx: RecapContext) -> bool:
 
 
 def _fiber_hit_note(ctx: RecapContext) -> str:
-    # Snapshots stored before daily fiber was kept only have the average.
-    stats = ctx.stats
-    if not stats.fiber_by_day:
-        return ctx.t("fiber_hit.note")
+    """The days at the full target, when they back up the win.
+
+    The win needs only an average near the target, so a week of 23g days
+    against 25g wins with no day hit; it says so with the average note.
+    Snapshots stored before daily fiber was kept only have the average.
+    """
+    stats, facts = ctx.stats, ctx.facts
     hit = sum(1 for grams in stats.fiber_by_day if grams >= stats.fiber_target)
-    return ctx.t("fiber_hit.note.days", n=hit, d=ctx.facts.week_days)
+    if hit * 2 <= facts.days_logged:
+        return ctx.t("fiber_hit.note")
+    return ctx.t("fiber_hit.note.days", n=hit, d=facts.week_days)
 
 
 def _fiber_hit_card(ctx: RecapContext) -> Card:

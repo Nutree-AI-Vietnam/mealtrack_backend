@@ -49,9 +49,12 @@ from src.domain.services.weekly_recap import (
     week_number,
     weekend_delta,
 )
-from src.domain.services.weekly_recap.last_week import last_week_of
+from src.domain.services.weekly_recap.last_week import last_week_of, shown_plan
 
 logger = logging.getLogger(__name__)
+
+# Key in a stored recap's stats holding the issue ids its plan showed.
+PLAN_ISSUES_KEY = "plan_issues"
 
 # Diets whose protein foods differ from the default advice.
 _DIETS = frozenset({"vegetarian", "vegan", "keto"})
@@ -145,13 +148,24 @@ def recap_diet(profile: Any) -> str | None:
 
 
 def _last_week(recap: WeeklyRecap | None, config: RecapConfig) -> LastWeek | None:
-    """Last week's numbers, or None when its stored stats can't be read."""
+    """Last week's numbers and the plan it showed; None when unreadable.
+
+    The plan comes from the issue ids stored with the recap. Recaps stored
+    before those were kept rebuild it and keep only what matches the moves
+    they showed.
+    """
     if recap is None:
         return None
     try:
         stats = week_stats_from_dict(recap.stats)
-        return last_week_of(stats, recap.case_id, config)
-    except (KeyError, TypeError, ValueError):
+        stored = recap.stats.get(PLAN_ISSUES_KEY)
+        if isinstance(stored, list):
+            plan = tuple(str(issue_id) for issue_id in stored)
+        else:
+            moves = (recap.payload.get("plan") or {}).get("moves") or []
+            plan = shown_plan(stats, recap.case_id, config, moves, recap.locale)
+        return last_week_of(stats, recap.case_id, config, plan)
+    except (AttributeError, KeyError, TypeError, ValueError):
         logger.warning(
             "Weekly recap %s for week %s has unreadable stats; not comparing",
             recap.user_id,

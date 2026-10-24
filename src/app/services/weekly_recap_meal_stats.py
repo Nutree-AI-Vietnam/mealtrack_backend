@@ -194,19 +194,22 @@ def missed_meal(
 
 
 def low_protein_meal(meals: Sequence[FoodMeal]) -> str | None:
-    """The main meal with the least protein per serving, on average.
+    """The main meal with the least protein, on the days it was eaten.
 
-    Only meals logged at least twice count, and there have to be two such
-    meals to compare; ties go to the earlier meal of the day.
+    A meal logged as several items (rice, soup, meat) counts as one meal:
+    its items are summed per day before averaging. Only meals eaten on at
+    least two days count, and there have to be two such meals to compare;
+    ties go to the earlier meal of the day.
     """
-    servings: dict[str, list[float]] = {}
+    daily: dict[str, dict[int, float]] = {}
     for meal in meals:
         if meal.meal_type in MAIN_MEALS:
-            servings.setdefault(meal.meal_type, []).append(meal.protein)
+            days = daily.setdefault(meal.meal_type, {})
+            days[meal.day] = days.get(meal.day, 0.0) + meal.protein
     averages = {
-        meal_type: sum(grams) / len(grams)
-        for meal_type, grams in servings.items()
-        if len(grams) >= _MIN_PROTEIN_MEALS
+        meal_type: sum(days.values()) / len(days)
+        for meal_type, days in daily.items()
+        if len(days) >= _MIN_PROTEIN_MEALS
     }
     if len(averages) < 2:
         return None
@@ -214,18 +217,26 @@ def low_protein_meal(meals: Sequence[FoodMeal]) -> str | None:
 
 
 def weekend_peaks(meals: Sequence[FoodMeal]) -> tuple[PeakMeal, ...]:
-    """The biggest named meal of each weekend day (Friday to Sunday)."""
+    """The biggest meal of each weekend day (Friday to Sunday).
+
+    A biggest meal without a real name (an unnamed label scan) keeps an
+    empty name, so the recap never calls a smaller named meal the biggest.
+    """
     peaks: dict[int, FoodMeal] = {}
     for meal in meals:
-        named = meal.name and meal.name.casefold() not in _PLACEHOLDER_NAMES
-        if meal.day not in _WEEKEND or not named:
+        if meal.day not in _WEEKEND:
             continue
         if meal.day not in peaks or meal.kcal > peaks[meal.day].kcal:
             peaks[meal.day] = meal
     return tuple(
-        PeakMeal(day=day, name=peaks[day].name, kcal=round(peaks[day].kcal))
+        PeakMeal(day=day, name=_dish_name(peaks[day]), kcal=round(peaks[day].kcal))
         for day in sorted(peaks)
     )
+
+
+def _dish_name(meal: FoodMeal) -> str:
+    """The meal's name, or "" for a placeholder."""
+    return "" if meal.name.casefold() in _PLACEHOLDER_NAMES else meal.name
 
 
 def photo_share(meals: Sequence[FoodMeal]) -> float:

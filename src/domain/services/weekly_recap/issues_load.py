@@ -20,12 +20,16 @@ def _weekend_over(ctx: RecapContext) -> bool:
 
 
 def _weekend_over_note(ctx: RecapContext) -> str:
-    """The over days, and the biggest meal logged on them when known."""
+    """The over days, and the biggest meal logged on them when it has a name.
+
+    A peak with no name (an unnamed label scan) is still the biggest meal,
+    so a smaller named one is never called the biggest instead.
+    """
     days = ctx.facts.weekend_over_days
     peaks = [peak for peak in ctx.stats.weekend_peaks if peak.day in days]
-    if not peaks:
+    peak = max(peaks, key=lambda item: (item.kcal, -item.day), default=None)
+    if peak is None or not peak.name:
         return ctx.t("weekend_over.note", days=ctx.span(days))
-    peak = max(peaks, key=lambda item: (item.kcal, -item.day))
     return ctx.t(
         "weekend_over.note.peak",
         days=ctx.span(days),

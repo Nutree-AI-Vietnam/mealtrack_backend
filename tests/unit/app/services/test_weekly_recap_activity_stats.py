@@ -50,10 +50,13 @@ def _move(
     )
 
 
-def _drink(sugar: float, carbs: float, name: str = "Trà sữa") -> HydrationEntry:
+def _drink(
+    sugar: float, carbs: float, name: str = "Trà sữa", drink_id: str | None = None
+) -> HydrationEntry:
     return HydrationEntry(
         user_id=USER,
         drink_name_snapshot=name,
+        drink_id=drink_id,
         volume_ml=500,
         credited_ml=400,
         logged_at=_local(2, 15).astimezone(UTC),
@@ -150,6 +153,23 @@ def test_top_sugary_drink_needs_a_clear_favourite():
 
     assert top_sugary_drink(drinks, 10.0) is None
     assert top_sugary_drink([], 10.0) is None
+
+
+def test_top_sugary_drink_is_no_favourite_on_an_even_split():
+    drinks = [_drink(25, 30, name) for name in ("Trà sữa", "Trà sữa", "Soda", "Soda")]
+
+    assert top_sugary_drink(drinks, 10.0) is None
+
+
+def test_top_sugary_drink_counts_a_catalog_drink_by_id_under_its_catalog_name():
+    # Older rows kept a localized label; the id still says it is milk tea.
+    drinks = [
+        _drink(40, 45, "Milk tea", "milk-tea"),
+        _drink(40, 45, "Trà sữa", "milk-tea"),
+        _drink(30, 35, "Coca-Cola"),
+    ]
+
+    assert top_sugary_drink(drinks, 10.0) == "Milk tea"
 
 
 def test_weight_progress_from_the_weeks_average_weigh_in():

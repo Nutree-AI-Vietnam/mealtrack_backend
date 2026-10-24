@@ -2,8 +2,13 @@
 
 ``WeekStats.last_week`` holds the previous week's numbers, read from its
 stored recap. A trend says which way a card's number moved since then and
-whether that is good. Counts (nights, drinks, days) only compare between
-weeks of the same length; averages compare across any two weeks.
+whether that is good.
+
+Averages over logged days (protein, fiber, pre-workout carbs) compare
+across any two weeks. A count, or the water average, only compares when
+both weeks logged the same number of days that feed it (its coverage):
+a day nobody logged has no late snacks and no water, and fewer logged
+days must never read as progress.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from src.domain.services.weekly_recap.context import RecapContext
 
 # Float noise must not hide a change of exactly one step (2.2 L - 2.0 L).
 _EPSILON = 1e-9
+_WEEKEND = (4, 5, 6)
 
 
 @dataclass(frozen=True)
@@ -24,7 +30,9 @@ class Metric:
     """One number a card shows, read from this week and from last week.
 
     ``shown`` formats a value the way the card writes it, and ``step`` is
-    the smallest change worth pointing out.
+    the smallest change worth pointing out. ``count`` marks whole-number
+    metrics. ``covered`` reads how many days fed the number this week and
+    last week; the weeks compare only when the two agree.
     """
 
     now: Callable[[RecapContext], float | None]
@@ -33,6 +41,31 @@ class Metric:
     step: float
     higher_is_better: bool = True
     count: bool = False
+    covered: tuple[Callable[[RecapContext], int], Callable[[LastWeek], int]] | None = (
+        None
+    )
+
+
+def counted_days(ctx: RecapContext) -> list[int]:
+    """Days with food logged that are not cheat days."""
+    cheat = set(ctx.stats.cheat_days)
+    return [day for day in range(7) if ctx.facts.logged[day] and day not in cheat]
+
+
+def weekend_days_counted(ctx: RecapContext) -> int:
+    """Friday to Sunday days the weekend-over count could look at."""
+    return sum(1 for day in counted_days(ctx) if day in _WEEKEND)
+
+
+def rest_days_counted(ctx: RecapContext) -> int:
+    """Counted days without a workout, which the rest-day count looks at."""
+    workout_days = set(ctx.facts.workout_days)
+    return sum(1 for day in counted_days(ctx) if day not in workout_days)
+
+
+def water_days(ctx: RecapContext) -> int:
+    """Days with any drink logged."""
+    return sum(1 for litres in ctx.stats.water_by_day if litres > 0)
 
 
 def _grams(ctx: RecapContext, value: float) -> str:
@@ -47,6 +80,15 @@ def _whole(ctx: RecapContext, value: float) -> str:
     return ctx.num(value)
 
 
+def _counted(key: str) -> Callable[[RecapContext, float], str]:
+    """A count with its unit, for cards whose headline is another number."""
+
+    def shown(ctx: RecapContext, value: float) -> str:
+        return ctx.t(key, count=int(value), n=ctx.num(value))
+
+    return shown
+
+
 def _positive(value: float | None) -> float | None:
     """An average, or None when nothing was logged to average."""
     return value if value is not None and value > 0 else None
@@ -55,6 +97,11 @@ def _positive(value: float | None) -> float | None:
 def _water_now(ctx: RecapContext) -> float | None:
     return ctx.facts.water_avg if ctx.facts.water_tracked else None
 
+
+_DAYS_LOGGED = (
+    lambda ctx: ctx.facts.days_logged,
+    lambda last: last.days_logged,
+)
 
 PROTEIN = Metric(
     lambda ctx: _positive(ctx.facts.protein_avg),
@@ -68,20 +115,28 @@ FIBER = Metric(
     _grams,
     step=2,
 )
-WATER = Metric(_water_now, lambda last: last.water_avg, _litres, step=0.2)
+WATER = Metric(
+    _water_now,
+    lambda last: last.water_avg,
+    _litres,
+    step=0.2,
+    covered=(water_days, lambda last: last.water_days),
+)
 ON_BUDGET = Metric(
     lambda ctx: ctx.facts.days_on_budget,
     lambda last: last.days_on_budget,
-    _whole,
+    _counted("trend.value.days"),
     step=1,
     count=True,
+    covered=_DAYS_LOGGED,
 )
 WORKOUTS = Metric(
     lambda ctx: len(ctx.stats.workouts),
     lambda last: last.workouts,
-    _whole,
+    _counted("trend.value.workouts"),
     step=1,
     count=True,
+    covered=(lambda ctx: ctx.facts.week_days, lambda last: last.week_days),
 )
 LATE_SNACKS = Metric(
     lambda ctx: len(ctx.stats.late_snack_days),
@@ -90,6 +145,7 @@ LATE_SNACKS = Metric(
     step=1,
     higher_is_better=False,
     count=True,
+    covered=_DAYS_LOGGED,
 )
 SUGARY_DRINKS = Metric(
     lambda ctx: ctx.stats.sugary_drinks,
@@ -98,6 +154,7 @@ SUGARY_DRINKS = Metric(
     step=1,
     higher_is_better=False,
     count=True,
+    covered=(water_days, lambda last: last.water_days),
 )
 WEEKEND_OVER = Metric(
     lambda ctx: len(ctx.facts.weekend_over_days),
@@ -106,6 +163,7 @@ WEEKEND_OVER = Metric(
     step=1,
     higher_is_better=False,
     count=True,
+    covered=(weekend_days_counted, lambda last: last.weekend_days_counted),
 )
 REST_UNDER = Metric(
     lambda ctx: len(ctx.facts.rest_under_days),
@@ -114,6 +172,7 @@ REST_UNDER = Metric(
     step=1,
     higher_is_better=False,
     count=True,
+    covered=(rest_days_counted, lambda last: last.rest_days_counted),
 )
 PRE_WORKOUT_CARBS = Metric(
     lambda ctx: ctx.stats.pre_workout_carbs,
@@ -128,8 +187,10 @@ def compared(ctx: RecapContext, metric: Metric) -> tuple[float, float] | None:
     last = ctx.stats.last_week
     if last is None:
         return None
-    if metric.count and last.week_days != ctx.facts.week_days:
-        return None
+    if metric.covered is not None:
+        covered_now, covered_last = metric.covered
+        if covered_now(ctx) != covered_last(last):
+            return None
     now, before = metric.now(ctx), metric.last(last)
     if now is None or before is None:
         return None

@@ -38,7 +38,7 @@ ES_STORY = {
     "perfect.title": "Esta semana, lo lograste todo.",
     "perfect.title.named": "{name}, esta semana lo lograste todo.",
     "perfect.sub": "Cumpliste todas tus metas. Eso no se ve todos los días.",
-    "perfect.sub.dish": "Cumpliste todas tus metas, con {dish} {n} veces.",
+    "perfect.sub.dish": "Cumpliste todas tus metas, con {dish} en tu plato {n} veces.",
     "perfect.label": "Fuiste muy constante",
     "perfect.chip.first": "Tu primera semana perfecta",
     "perfect.chip.nth": "Semana perfecta n.º {n}",

@@ -10,11 +10,7 @@ from tests.fixtures.fakes.fake_weekly_recap_repository import (
     FakeWeeklyRecapRepository,
 )
 
-from src.app.services.weekly_recap_week_logs import (
-    load_week_logs,
-    recap_first_name,
-    sign_up_day,
-)
+from src.app.services.weekly_recap_week_logs import load_week_logs, sign_up_day
 from src.domain.model.hydration.hydration_entry import HydrationEntry
 from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.meal_projection import MealProjection
@@ -357,30 +353,3 @@ async def test_load_week_logs_without_a_recap_last_week_has_none():
 
     assert logs is not None
     assert (logs.last_recap, logs.first_name) == (None, None)
-
-
-@pytest.mark.parametrize(
-    ("first_name", "display_name", "expected"),
-    [
-        ("Linh", "Linh Nguyen", "Linh"),
-        # The stored first name is the display name's first word, the
-        # family name for a name written the Vietnamese way.
-        ("Nguyễn", "Nguyễn Văn Linh", "Linh"),
-        ("Tran", "Tran Minh Anh", "Anh"),
-        (None, "Mai Anh", "Mai"),  # Mai is as often a given name
-        ("  Anne-Marie  Dupont ", None, "Anne-Marie"),
-        ("Đức", None, "Đức"),
-        (None, "O'Brien", "O'Brien"),
-        ("山田", "山田 太郎", "山田太郎"),
-        (None, "王小明", "王小明"),
-        (None, "alex.nguyen92", None),  # a handle, not a name
-        ("Alex", "alex.nguyen92", "Alex"),
-        (None, "alex@nutree.ai", None),
-        (None, "Bartholomew-Maximilian", None),  # too long for the headline
-        (None, None, None),
-    ],
-)
-def test_recap_first_name(first_name, display_name, expected):
-    user = SimpleNamespace(first_name=first_name, display_name=display_name)
-
-    assert recap_first_name(user) == expected

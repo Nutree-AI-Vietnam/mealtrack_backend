@@ -72,37 +72,58 @@ All of these are fixed in the stored `stats`, so a retelling in another
 language says the same thing.
 
 - **Name.** The intro title greets the user by name
-  (`{case}.title.named`, `recap_first_name`). It is read from
-  `display_name`, then `first_name`; the stored `first_name` is only the
-  display name's first word, which is the family name for a name written
-  the Vietnamese way. So: behind a common Vietnamese surname, the last word
-  ("Nguyễn Văn Linh" → Linh); a Chinese or Japanese name, whole; otherwise
-  the first word. Handles, e-mails and names over 20 characters get no
-  greeting. The share card never carries the name.
+  (`{case}.title.named`, `weekly_recap_names.recap_first_name`). It is read
+  from `display_name`; `first_name` stands in only when the display name is
+  missing or is not a name (a handle, an e-mail), because the stored
+  `first_name` is just the display name's first word. Vietnamese names are
+  written family name first ("Nguyễn Văn Linh" → Linh) or given name first
+  ("Hoàng Nam Nguyễn" → Nam): the name's middle marker (Văn/Thị) and which
+  end is a family name decide, and when that can't be told ("Nguyễn Lê")
+  there is no greeting. Chinese, Japanese and Korean names are used whole.
+  Honorifics are skipped; initials, handles and names with a part longer
+  than 12 letters (it would break mid-word in the headline) get no
+  greeting. The share card never carries the name, and an account's recaps
+  are deleted with the account.
 - **Go-to dish.** In `steady`, `bulk` and `perfect` weeks, a dish logged 3+
   times replaces the intro `sub` (`{case}.sub.dish`).
 - **Diet.** The protein tip names foods the profile's diet allows
   (`vegetarian`, `vegan`, `keto`; anything else gets the default) and the
-  main meal with the least protein per serving, logged at least twice.
-- **No guessed causes.** Notes state what the logs show (driest day, the
-  biggest meal on an over-budget weekend day, the sugary drink behind half
-  or more of the week's sugary drinks) and never a cause the logs can't
-  show, such as eating out or busy days.
+  main meal with the least protein (its items summed per day), eaten on at
+  least two days.
+- **No guessed causes.** Notes state what the logs show and never a cause
+  they can't show, such as eating out or busy days: the driest day among
+  days with something logged; the biggest meal on an over-budget weekend
+  day, only when that meal has a name; the sugary drink behind more than
+  half of the week's sugary drinks, translated when it is a catalog drink;
+  the days fiber hit its target, only when that is more than half the
+  days logged.
 
 ## Last week
 
 - `stats.last_week` summarizes the **stored** recap of the week before
   (`last_week_of`). There is none when that week was never read: no recap
   was built for it.
+- Its plan is the one that recap showed. Each stored recap keeps the issue
+  ids of its plan in `stats.plan_issues`. Recaps stored before that rebuild
+  the plan and keep an issue only when its advice reads exactly like the
+  stored move at the same place, so a config change never credits advice
+  the user did not see.
 - A card can carry `trend: {text, up, good}`: which way its number moved
-  since last week and whether that helps. Averages need a change of at
-  least a step (protein 5 g, fiber 2 g, water 0.2 L); counts (nights,
-  drinks, days, workouts) need 1, and compare only when both weeks counted
-  the same number of days. Win cards show only good trends.
+  since last week and whether that helps. Averages over logged days need a
+  change of at least a step (protein 5 g, fiber 2 g, pre-workout carbs
+  5 g). Counts (nights, drinks, days, workouts) need 1 and water 0.2 L,
+  and these compare only when both weeks logged the same number of days
+  that feed them (days logged, days with a drink, counted weekend or rest
+  days), so a logging gap never reads as progress. Win cards and `tough`
+  stories show only good trends. Day and workout counts carry their unit
+  ("Up from 4 days last week").
 - `last_week.plan` lists the issues last week's plan took on. The first one
-  that no longer holds and whose number moved a step the right way becomes
-  the top win card (`follow_through`, icon `check_circle`): this week's
-  number, with last week's in its trend.
+  that no longer holds and whose number moved a step the right way, by the
+  rule above, becomes the top win card (`follow_through`, icon
+  `check_circle`): this week's number, with last week's in its trend. Its
+  title claims the whole plan only when every item of it was fixed; a fix
+  that is more of something (fiber, water, protein, carbs) also gets a
+  share tile.
 
 ## Configuration
 

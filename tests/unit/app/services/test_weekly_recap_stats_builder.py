@@ -10,6 +10,7 @@ from tests.fixtures.weekly_recap_samples import sample_stats
 from src.app.services.weekly_recap_meal_stats import FoodMeal
 from src.app.services.weekly_recap_stats_builder import build_week_stats, recap_diet
 from src.app.services.weekly_recap_week_logs import WeekLogs
+from src.domain.model.hydration.hydration_entry import HydrationEntry
 from src.domain.model.movement.movement_entry import MovementEntry
 from src.domain.model.weekly_recap import (
     DishCount,
@@ -56,6 +57,19 @@ def _food(
         fiber=2.0,
         source="scanner",
         protein=protein,
+    )
+
+
+def _drink(drink_id: str | None, name: str, sugar: float) -> HydrationEntry:
+    return HydrationEntry(
+        user_id=USER,
+        drink_name_snapshot=name,
+        volume_ml=500,
+        credited_ml=400,
+        logged_at=_local(2, 15).astimezone(UTC),
+        drink_id=drink_id,
+        carbs_g=sugar,
+        sugar_g=sugar,
     )
 
 
@@ -240,25 +254,85 @@ def test_built_week_stats_can_be_stored_and_rendered():
     assert payload["slides"][0] == "intro"
 
 
-def test_build_week_stats_compares_with_the_recap_of_the_week_before():
-    rows = [_row(day, kcal) for day, kcal in enumerate(KCAL)]
-    last = WeeklyRecap(
+def _last_recap(stats: dict | None = None, payload: dict | None = None) -> WeeklyRecap:
+    """Last week's stored recap: the steady sample, told in Vietnamese."""
+    steady = sample_stats("steady")
+    return WeeklyRecap(
         USER,
         MONDAY - timedelta(days=7),
         "steady",
         "vi",
-        stats=week_stats_to_dict(sample_stats("steady")),
-        payload={},
+        stats=week_stats_to_dict(steady) if stats is None else stats,
+        payload=generate_recap(steady, CONFIG, "vi") if payload is None else payload,
     )
 
+
+def test_build_week_stats_compares_with_the_recap_of_the_week_before():
+    rows = [_row(day, kcal) for day, kcal in enumerate(KCAL)]
+    stored = week_stats_to_dict(sample_stats("steady")) | {
+        "plan_issues": ["late_snack"]
+    }
+
     stats = build_week_stats(
-        _week_logs(last_recap=last, first_name="Linh"), rows, CONFIG
+        _week_logs(last_recap=_last_recap(stored), first_name="Linh"), rows, CONFIG
     )
 
     assert stats is not None
     assert stats.first_name == "Linh"
-    assert stats.last_week == last_week_of(sample_stats("steady"), "steady", CONFIG)
-    assert stats.last_week.plan == ("fiber_low", "late_snack", "water_low")
+    assert stats.last_week == last_week_of(
+        sample_stats("steady"), "steady", CONFIG, plan=("late_snack",)
+    )
+
+
+def test_an_older_recap_keeps_the_plan_items_it_showed():
+    # Stored before plan ids were kept: the rebuilt plan is checked against
+    # the moves the recap showed, and a move that reads differently drops.
+    payload = generate_recap(sample_stats("steady"), CONFIG, "vi")
+    payload["plan"]["moves"][1]["title"] = "Không ăn vặt sau 21h"
+    rows = [_row(day, kcal) for day, kcal in enumerate(KCAL)]
+
+    stats = build_week_stats(
+        _week_logs(last_recap=_last_recap(payload=payload)), rows, CONFIG
+    )
+
+    assert stats is not None
+    assert stats.last_week is not None
+    assert stats.last_week.plan == ("fiber_low", "water_low")
+
+
+def test_an_older_recap_without_its_moves_took_on_nothing():
+    rows = [_row(day, kcal) for day, kcal in enumerate(KCAL)]
+
+    stats = build_week_stats(
+        _week_logs(last_recap=_last_recap(payload={"case_id": "steady"})),
+        rows,
+        CONFIG,
+    )
+
+    assert stats is not None
+    assert stats.last_week is not None
+    assert stats.last_week.plan == ()
+
+
+def test_build_week_stats_names_the_drink_and_the_diet():
+    rows = [_row(day, kcal) for day, kcal in enumerate(KCAL)]
+    drinks = (
+        *(_drink("milk-tea", "Milk tea", sugar=40.0) for _ in range(3)),
+        _drink("milk-tea", "Milk tea", sugar=2.0),  # unsweetened: not sugary
+        _drink(None, "Coca-Cola", sugar=35.0),
+    )
+    profile = SimpleNamespace(
+        weight_kg=80.0,
+        target_weight_kg=70.0,
+        goal_start_weight_kg=None,
+        dietary_preferences=["vegan"],
+    )
+
+    stats = build_week_stats(_week_logs(drinks=drinks, profile=profile), rows, CONFIG)
+
+    assert stats is not None
+    assert (stats.sugary_drinks, stats.top_sugary_drink) == (4, "Milk tea")
+    assert stats.diet == "vegan"
 
 
 def test_build_week_stats_skips_an_unreadable_last_week():

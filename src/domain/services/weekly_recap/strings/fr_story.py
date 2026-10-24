@@ -41,7 +41,7 @@ FR_STORY = {
     "perfect.title": "Cette semaine, vous avez assuré.",
     "perfect.title.named": "{name}, cette semaine, vous avez assuré.",
     "perfect.sub": "Tous les objectifs atteints. C'est rare.",
-    "perfect.sub.dish": "Tous les objectifs atteints, avec {dish} {n} fois.",
+    "perfect.sub.dish": "Tous les objectifs atteints, avec {dish} au menu {n} fois.",
     "perfect.label": "Une belle régularité",
     "perfect.chip.first": "Votre première semaine parfaite",
     "perfect.chip.nth": "Semaine parfaite n° {n}",

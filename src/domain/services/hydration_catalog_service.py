@@ -343,6 +343,11 @@ def localized_sub(drink: Drink, language: str = "en") -> str | None:
     return _DRINK_TRANSLATIONS[language].get(drink.id, {}).get("sub", drink.sub)
 
 
+def catalog_drink_id(name: str | None) -> str | None:
+    """The catalog id a stored drink name resolves to, or None for custom drinks."""
+    return _DRINK_IDS_BY_CANONICAL_NAME.get(name.lower()) if name else None
+
+
 def localized_name_for_catalog_name(
     name: str | None,
     language: str = "en",

@@ -19,9 +19,12 @@ CREATED = datetime(2026, 10, 12, 1, 0, tzinfo=UTC)
 
 
 class _Result:
-    def __init__(self, scalar: Any = None, rows: list[Any] | None = None):
+    def __init__(
+        self, scalar: Any = None, rows: list[Any] | None = None, rowcount: int = 0
+    ):
         self._scalar = scalar
         self._rows = rows or []
+        self.rowcount = rowcount
 
     def scalar_one_or_none(self) -> Any:
         return self._scalar
@@ -138,3 +141,15 @@ async def test_count_cases_before_groups_earlier_weeks_by_story() -> None:
     assert "weekly_recaps.user_id = 'user-1'" in sql
     assert "weekly_recaps.week_start < '2026-10-05'" in sql
     assert "GROUP BY weekly_recaps.case_id" in sql
+
+
+@pytest.mark.asyncio
+async def test_delete_for_user_removes_only_that_users_weeks() -> None:
+    session = _Session(_Result(rowcount=3))
+
+    deleted = await AsyncWeeklyRecapRepository(session).delete_for_user("user-1")
+
+    assert deleted == 3
+    sql = _sql(session.statements[0])
+    assert sql.startswith("DELETE FROM weekly_recaps")
+    assert "WHERE weekly_recaps.user_id = 'user-1'" in sql

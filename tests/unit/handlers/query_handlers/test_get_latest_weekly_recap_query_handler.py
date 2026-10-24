@@ -315,8 +315,10 @@ def test_the_query_reads_the_app_language(header, locale):
 
 @pytest.mark.asyncio
 async def test_first_read_greets_by_name_and_compares_with_last_week():
-    # Last week (the steady sample) planned more veggies; this week's 20 g a
-    # day of fiber is the follow-through, stored with the rest of the week.
+    # Last week (the steady sample, stored before plan ids were kept) planned
+    # veggies, fewer late snacks and water; this week's 20 g a day of fiber
+    # is the follow-through. Late snacks and water are still open, so the
+    # card claims one goal, not the whole plan.
     last_monday = MONDAY - timedelta(days=7)
     last_meals = tuple(_meal(day - 7, hour) for day in range(7) for hour in (8, 12))
     account = SimpleNamespace(
@@ -335,14 +337,22 @@ async def test_first_read_greets_by_name_and_compares_with_last_week():
     assert payload["intro"]["title"] == "Linh, your week, wrapped."
     follow = payload["wins"]["cards"][0]
     assert (follow["title"], follow["value"]) == (
-        "You stuck to last week's plan",
+        "You hit one of last week's goals",
         "20g",
     )
     assert follow["trend"]["text"] == "Up from 14g last week"
     [stored] = uow.weekly_recaps.inserted
     assert stored.stats["first_name"] == "Linh"
     assert stored.stats["last_week"]["plan"] == ["fiber_low", "late_snack", "water_low"]
+    # This week's plan is stored for next week to compare with.
+    assert stored.stats["plan_issues"] == ["water_low", "protein_low"]
+    assert [move["kind"] for move in payload["plan"]["moves"][:2]] == [
+        "water",
+        "protein",
+    ]
     # Another language retells the same comparison from the snapshot.
     retold = await _read(_handler(uow), locale="vi")
     assert retold["intro"]["title"] == "Tuần của Linh, gói gọn."
-    assert retold["wins"]["cards"][0]["trend"]["text"] == "Tăng từ 14g tuần trước"
+    assert retold["wins"]["cards"][0]["trend"]["text"] == (
+        "Tăng so với tuần trước (14g)"
+    )

@@ -13,6 +13,8 @@ _OWN_WINS_EYEBROW = frozenset({"low_data", "first_week", "comeback", "tough"})
 _FIXED_WINS_TITLE = frozenset({"first_week", "comeback", "perfect"})
 _GROW_PREFIX = {"tough": "tough.grow", "bulk": "bulk.grow"}
 _MIN_COMEBACK_STREAK = 2
+# Gentle stories whose "room to improve" cards only point out progress.
+_GOOD_TRENDS_ONLY = frozenset({"tough"})
 # Full weeks whose subtitle can name the dish the user kept coming back to.
 _DISH_SUB = frozenset({"steady", "bulk", "perfect"})
 _GO_TO_DISH_MIN = 3
@@ -73,11 +75,16 @@ def grow(
         title = ctx.t(f"{prefix}.title_one")
     else:
         title = ctx.t(f"{prefix}.title_n", n=shown)
+    cards = [issue.card(ctx) for issue in issues]
+    if case_id in _GOOD_TRENDS_ONLY:
+        for issue_card in cards:
+            if issue_card.get("trend") and not issue_card["trend"]["good"]:
+                del issue_card["trend"]
     return {
         "eyebrow": ctx.t(f"{prefix}.eyebrow"),
         "title": title,
         "foot": None,
-        "cards": [issue.card(ctx) for issue in issues],
+        "cards": cards,
     }
 
 

@@ -52,7 +52,9 @@ class LastWeek:
     """The week before, as this week's recap compares with it.
 
     Read from that week's stored recap. ``water_avg`` is None when no water
-    was logged; ``plan`` holds the issues that week's plan took on.
+    was logged; ``plan`` holds the issues that week's plan showed. The
+    ``*_days``/``days_logged`` coverage counts say how many days fed each
+    count, so a week with fewer logged days never reads as progress.
     """
 
     week_days: int
@@ -65,6 +67,10 @@ class LastWeek:
     sugary_drinks: int
     weekend_over_days: int
     rest_under_days: int
+    days_logged: int
+    water_days: int
+    weekend_days_counted: int
+    rest_days_counted: int
     pre_workout_carbs: float | None = None
     plan: tuple[str, ...] = ()
 

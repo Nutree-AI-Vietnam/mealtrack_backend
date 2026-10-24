@@ -327,16 +327,42 @@ def test_low_protein_meal_ties_go_to_the_earlier_meal():
     assert low_protein_meal(meals) == "lunch"
 
 
-def test_weekend_peaks_are_the_biggest_named_meal_of_fri_to_sun():
+def test_weekend_peaks_are_the_biggest_meal_of_fri_to_sun():
     meals = [
         _food(3, 19, name="Cơm gà", kcal=1500.0),  # Thursday
         _food(4, 12, name="Bún chả", kcal=700.0),
         _food(4, 19, name="Lẩu Thái", kcal=1250.4),
-        _food(5, 20, name="Unknown dish", kcal=2000.0),  # placeholder name
+        # An unnamed scan is still Saturday's biggest meal: it keeps no
+        # name rather than letting the smaller Phở bò stand in for it.
+        _food(5, 20, name="Unknown dish", kcal=2000.0),
         _food(5, 12, name="Phở bò", kcal=600.0),
     ]
 
     assert weekend_peaks(meals) == (
         PeakMeal(4, "Lẩu Thái", 1250),
-        PeakMeal(5, "Phở bò", 600),
+        PeakMeal(5, "", 2000),
     )
+
+
+def test_low_protein_meal_counts_a_meal_logged_in_parts_as_one_meal():
+    # Lunch is logged as rice, soup and meat each day: 30 g in all, more than
+    # breakfast's 20 g, though each part alone has less.
+    lunch = [
+        _food(day, 12, minute, meal_type="lunch", protein=grams)
+        for day in range(3)
+        for minute, grams in ((0, 4.0), (5, 6.0), (10, 20.0))
+    ]
+    breakfast = [_food(day, 8, meal_type="breakfast", protein=20.0) for day in range(3)]
+
+    assert low_protein_meal(lunch + breakfast) == "breakfast"
+
+
+def test_low_protein_meal_needs_the_meal_on_two_days():
+    # Two lunch items on one day are one lunch.
+    meals = [
+        _food(0, 12, 0, meal_type="lunch", protein=2.0),
+        _food(0, 12, 5, meal_type="lunch", protein=2.0),
+        *(_food(day, 8, meal_type="breakfast", protein=20.0) for day in range(3)),
+    ]
+
+    assert low_protein_meal(meals) is None
