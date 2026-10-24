@@ -7,8 +7,9 @@ so the person can add it; it is never applied on its own.
 
 import asyncio
 import logging
+from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
 from src.api.base_dependencies import get_open_wearables_account_links
 from src.api.dependencies.auth import get_current_user_id
@@ -20,6 +21,7 @@ from src.api.routes.v1.wearables_route_support import (
     ReturnTo,
     connection_rows,
     has_client_id,
+    local_day_bounds,
     redirect_uri,
     signable_providers,
 )
@@ -204,8 +206,9 @@ def _activity(
 
 @router.get("/activity")
 async def wearable_activity(
-    day: str = Query(alias="date", min_length=10, max_length=10),
+    day: date = Query(alias="date"),
     provider: str = Query(min_length=1),
+    timezone: str | None = Header(default=None, alias="X-Timezone"),
     user_id: str = Depends(get_current_user_id),
     accounts: OpenWearablesAccountLinks = Depends(get_open_wearables_account_links),
     client: OpenWearablesClient = Depends(open_wearables_client),
@@ -219,7 +222,9 @@ async def wearable_activity(
     if ow_user_id is None:
         return _activity(provider)
     try:
-        steps, active = await client.activity_day(ow_user_id, day, provider)
+        steps, active = await client.activity_day(
+            ow_user_id, local_day_bounds(day, timezone), provider
+        )
     except OpenWearablesError:
         return _activity(provider)
     if provider in STEPS_PROVIDERS:
@@ -229,8 +234,9 @@ async def wearable_activity(
 
 @router.get("/workouts")
 async def wearable_workouts(
-    day: str = Query(alias="date", min_length=10, max_length=10),
+    day: date = Query(alias="date"),
     provider: str = Query(min_length=1),
+    timezone: str | None = Header(default=None, alias="X-Timezone"),
     user_id: str = Depends(get_current_user_id),
     accounts: OpenWearablesAccountLinks = Depends(get_open_wearables_account_links),
     client: OpenWearablesClient = Depends(open_wearables_client),
@@ -242,7 +248,9 @@ async def wearable_workouts(
     if ow_user_id is None:
         return {"provider": provider, "workouts": []}
     try:
-        workouts = await client.workouts_on_day(ow_user_id, day, provider)
+        workouts = await client.workouts_on_day(
+            ow_user_id, local_day_bounds(day, timezone), provider
+        )
     except OpenWearablesError:
         return {"provider": provider, "workouts": []}
     return {"provider": provider, "workouts": workouts}
