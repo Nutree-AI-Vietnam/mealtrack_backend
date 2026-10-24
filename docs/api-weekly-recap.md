@@ -79,7 +79,9 @@ language says the same thing.
   `first_name` is just the display name's first word. Vietnamese names are
   written family name first ("Nguyễn Văn Linh" → Linh) or given name first
   ("Tuan Van Nguyen" → Tuan, "Thị Lan Hoàng" → Lan); which end is the
-  surer family name decides, with the middle markers (Văn/Thị) skipped.
+  surer family name decides, with the middle markers (Văn/Thị) skipped; a
+  family name that is also a given name is the given name before a word
+  that isn't a Vietnamese syllable ("Mai Smith" → Mai).
   Whenever that can't be told ("Nguyễn Lê", "Le Anh", "Châu Ngọc Hà", a
   Vietnamese name with no known family name, a lone family name, an
   honorific before a family name, a romanized Korean, Chinese or Japanese

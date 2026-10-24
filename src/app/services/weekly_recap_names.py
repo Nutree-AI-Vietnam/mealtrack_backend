@@ -11,6 +11,7 @@ greeting them, so whenever the order can't be told there is no greeting.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Sequence
 from itertools import pairwise
@@ -85,6 +86,12 @@ _CJK_RANGES = ((0x3040, 0x30FF), (0x3400, 0x9FFF), (0xAC00, 0xD7AF))
 # dot below and the horn (ơ, ư). A tone on a circumflex vowel (ấ, ề, ổ)
 # is Vietnamese too.
 _VIETNAMESE_MARKS = frozenset("\u0309\u0323\u031b")
+# One Vietnamese syllable, without its marks: every Vietnamese name word is
+# one ("Tuấn", "Nguyễn"), and "Smith" or "Tanaka" is not.
+_SYLLABLE = re.compile(
+    r"(ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdghklmnprstvx])?"
+    r"[aeiouy]{1,3}(ch|ng|nh|[cmnpt])?"
+)
 # A token starting with one of these opens a nickname or a note, "(Tony)".
 _OPENERS = '([{<"“‘«'
 
@@ -188,8 +195,15 @@ def _called(words: Sequence[str]) -> str | None:
         return words[0] if first == _NOT and not vietnamese else None
     if first > last:
         # Family name first, unless the first word may as well be a given
-        # name ("Le Anh", "Kim Min-jun").
-        return None if first == _MAYBE else words[-1]
+        # name ("Le Anh", "Kim Min-jun"). A family name that is often a
+        # given name is followed by a Vietnamese given name ("Hoàng Minh
+        # Đức"); before another family name it is the given name ("Mai
+        # Smith", "Mai Tanaka").
+        if first == _MAYBE:
+            return None
+        if first == _OFTEN and not _is_syllable(words[-1]):
+            return words[0]
+        return None if first == _OFTEN and last == _MAYBE else words[-1]
     # Given name first: its first word that isn't a middle marker.
     given = [
         word
@@ -220,6 +234,12 @@ def _looks_vietnamese(words: Sequence[str]) -> bool:
     return any(
         unicodedata.combining(a) and unicodedata.combining(b) for a, b in pairwise(text)
     )
+
+
+def _is_syllable(word: str) -> bool:
+    bare = unicodedata.normalize("NFD", word.casefold().replace("đ", "d"))
+    bare = "".join(char for char in bare if not unicodedata.combining(char))
+    return _SYLLABLE.fullmatch(bare) is not None
 
 
 def _is_marker(word: str, words: Sequence[str]) -> bool:

@@ -94,6 +94,10 @@ def _greet(display_name, first_name=None):
         ("Yamada Taro", None),
         ("Min-jun Kim", "Min-jun"),
         ("Taro Yamada", "Taro"),
+        # A Vietnamese given name before a family name from elsewhere.
+        ("Mai Smith", "Mai"),
+        ("Mai Tanaka", "Mai"),
+        ("Ha Kim", None),
         # Other names.
         ("Anna Schmidt", "Anna"),
         ("Dr. Anna Schmidt", "Anna"),
