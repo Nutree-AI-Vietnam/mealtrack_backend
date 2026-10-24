@@ -99,6 +99,13 @@ class UserRepositoryPort(ABC):
         pass
 
     @abstractmethod
+    async def link_open_wearables_user_id(
+        self, user_id: UUID, open_wearables_user_id: str
+    ) -> str:
+        """Store the link once and return the stored id; the first link wins."""
+        pass
+
+    @abstractmethod
     async def clear_open_wearables_user_id(self, user_id: UUID) -> None:
         """Drop the link after the Open Wearables user is deleted."""
         pass

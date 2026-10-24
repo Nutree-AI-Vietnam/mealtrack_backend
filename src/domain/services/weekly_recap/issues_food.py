@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from src.domain.services.hydration_catalog_service import (
+    catalog_drink_id,
+    localized_name_for_catalog_name,
+)
+from src.domain.services.weekly_recap.compare import (
+    FIBER,
+    LATE_SNACKS,
+    SUGARY_DRINKS,
+    WATER,
+    trend,
+)
 from src.domain.services.weekly_recap.context import RecapContext
 from src.domain.services.weekly_recap.format import js_round
 from src.domain.services.weekly_recap.types import Card, Issue, Move
 from src.domain.services.weekly_recap.viz import bar, card, dots
+
+# Languages that write a drink name ("milk tea") in lower case mid-sentence.
+_LOWER_NOUNS = frozenset({"en", "vi", "es", "fr"})
+# Catalog drinks the recap names in its own words, written as mid-sentence.
+_RECAP_DRINK_NAMES = {"coconut": "drink.coconut"}
 
 
 def _fiber_low(ctx: RecapContext) -> bool:
@@ -33,6 +49,7 @@ def _fiber_low_card(ctx: RecapContext) -> Card:
         unit=ctx.t("card.unit.grams_per_day", t=ctx.num(stats.fiber_target)),
         note=_fiber_low_note(ctx),
         viz=bar(stats.fiber_avg, stats.fiber_target),
+        trend=trend(ctx, FIBER),
     )
 
 
@@ -58,6 +75,29 @@ def _water_low(ctx: RecapContext) -> bool:
     return facts.water_tracked and facts.water_avg < target * ctx.config.water_low_ratio
 
 
+def _driest_day(ctx: RecapContext) -> int | None:
+    """The logged day with the least water, unless another day ties it.
+
+    A day with no food and no drink logged says nothing about water.
+    """
+    water, logged = ctx.stats.water_by_day, ctx.facts.logged
+    days = sorted(
+        (day for day in range(ctx.facts.first_day, 7) if logged[day] or water[day]),
+        key=lambda day: water[day],
+    )
+    if len(days) > 1 and water[days[0]] == water[days[1]]:
+        return None
+    return days[0] if days else None
+
+
+def _water_low_note(ctx: RecapContext) -> str:
+    facts, driest = ctx.facts, _driest_day(ctx)
+    hit = {"n": facts.water_days_hit, "d": facts.week_days}
+    if driest is None:
+        return ctx.t("water_low.note.plain", **hit)
+    return ctx.t("water_low.note", day=ctx.day(driest), **hit)
+
+
 def _water_low_card(ctx: RecapContext) -> Card:
     facts, target = ctx.facts, ctx.stats.water_target
     return card(
@@ -66,8 +106,9 @@ def _water_low_card(ctx: RecapContext) -> Card:
         ctx.t("water_low.title"),
         value=ctx.t("card.value.litres", v=ctx.dec(facts.water_avg)),
         unit=ctx.t("water_low.unit", v=ctx.dec(target)),
-        note=ctx.t("water_low.note", n=facts.water_days_hit, d=facts.week_days),
+        note=_water_low_note(ctx),
         viz=bar(facts.water_avg, target),
+        trend=trend(ctx, WATER),
     )
 
 
@@ -99,6 +140,7 @@ def _late_snack_card(ctx: RecapContext) -> Card:
         ),
         note=ctx.t("late_snack.note", kcal=ctx.num(stats.late_snack_kcal)),
         viz=dots(stats.late_snack_days, "text"),
+        trend=trend(ctx, LATE_SNACKS),
     )
 
 
@@ -115,25 +157,62 @@ def _late_snack_advice(ctx: RecapContext) -> Move:
     )
 
 
+def _drink(ctx: RecapContext) -> str | None:
+    """The week's main sugary drink, named the way the locale names it.
+
+    Catalog drinks are stored by their English catalog name, so they are
+    translated here, which also covers retelling a stored week in another
+    language, and lower-cased where the language writes common nouns so
+    mid-sentence. Custom names are kept as the user wrote them.
+    """
+    raw = ctx.stats.top_sugary_drink
+    drink_id = catalog_drink_id(raw)
+    if not raw or drink_id is None:
+        return raw
+    if drink_id in _RECAP_DRINK_NAMES:
+        # The catalog's tile label ("Coconut") is too short for a sentence.
+        return ctx.t(_RECAP_DRINK_NAMES[drink_id])
+    name = localized_name_for_catalog_name(raw, ctx.locale) or raw
+    if ctx.locale in _LOWER_NOUNS and not any(char.isupper() for char in name[1:]):
+        name = name[:1].lower() + name[1:]
+    return name
+
+
+def _sentence(text: str) -> str:
+    """Capitalize a line that starts with a lower-cased drink name."""
+    return text[:1].upper() + text[1:]
+
+
 def _sugary_card(ctx: RecapContext) -> Card:
     stats = ctx.stats
+    drink, kcal = _drink(ctx), ctx.num(stats.sugary_kcal)
+    if drink:
+        note = _sentence(ctx.t("sugary.note.named", drink=drink, kcal=kcal))
+    else:
+        note = ctx.t("sugary.note", kcal=kcal)
     return card(
         "fat",
         "local_cafe",
         ctx.t("sugary.title"),
         count=stats.sugary_drinks,
         unit=ctx.t("sugary.unit", count=stats.sugary_drinks),
-        note=ctx.t("sugary.note", kcal=ctx.num(stats.sugary_kcal)),
+        note=note,
+        trend=trend(ctx, SUGARY_DRINKS),
     )
 
 
 def _sugary_advice(ctx: RecapContext) -> Move:
     stats = ctx.stats
     drinks = stats.sugary_drinks
+    drink = _drink(ctx)
+    if drink:
+        title = _sentence(ctx.t("sugary.advice.named", drink=drink))
+    else:
+        title = ctx.t("sugary.advice")
     return Move(
         "fat",
         "local_cafe",
-        ctx.t("sugary.advice"),
+        title,
         ctx.t("sugary.impact", kcal=ctx.num(stats.sugary_kcal / max(drinks, 1))),
         ctx.t("sugary.why", count=drinks, n=drinks),
         ctx.t("sugary.short"),

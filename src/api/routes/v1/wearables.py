@@ -10,8 +10,8 @@ import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.base_dependencies import get_open_wearables_account_links
 from src.api.dependencies.auth import get_current_user_id
 from src.api.routes.v1.wearables_route_support import (
     BALANCE_PROVIDERS,
@@ -25,16 +25,12 @@ from src.api.routes.v1.wearables_route_support import (
     redirect_uri,
     signable_providers,
 )
+from src.app.services.open_wearables_account_links import OpenWearablesAccountLinks
 from src.infra.adapters.open_wearables_client import (
     OpenWearablesClient,
     OpenWearablesError,
 )
 from src.infra.config.settings import settings
-from src.infra.database.config_async import get_async_db
-from src.infra.repositories.wearable_account_repository import (
-    load_open_wearables_user_id,
-    save_open_wearables_user_id,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -81,34 +77,10 @@ def _require_configured() -> None:
         )
 
 
-async def _linked_user_id(session: AsyncSession, user_id: str) -> str | None:
-    try:
-        return await load_open_wearables_user_id(session, user_id)
-    finally:
-        await _end_transaction(session)
-
-
-async def _store_linked_user_id(
-    session: AsyncSession,
-    user_id: str,
-    open_wearables_user_id: str,
-) -> str:
-    try:
-        return await save_open_wearables_user_id(
-            session, user_id, open_wearables_user_id
-        )
-    finally:
-        await _end_transaction(session)
-
-
-async def _end_transaction(session: AsyncSession) -> None:
-    """Return the pooled connection before the route calls Open Wearables.
-
-    ``get_async_db`` keeps the session until the response is sent. Without
-    this, the connection stays checked out for the whole Open Wearables round
-    trip, and a burst of these requests drains the pool.
-    """
-    await session.rollback()
+async def _linked_user_id(
+    accounts: OpenWearablesAccountLinks, user_id: str
+) -> str | None:
+    return await accounts.linked_user_id(user_id)
 
 
 async def _sync_states_or_empty(
@@ -140,7 +112,7 @@ async def authorize_wearable(
     provider: str,
     return_to: ReturnTo = Query(default="link"),
     user_id: str = Depends(get_current_user_id),
-    session: AsyncSession = Depends(get_async_db),
+    accounts: OpenWearablesAccountLinks = Depends(get_open_wearables_account_links),
     client: OpenWearablesClient = Depends(open_wearables_client),
 ) -> dict[str, str]:
     _require_cloud_provider(provider)
@@ -148,10 +120,10 @@ async def authorize_wearable(
     if provider not in _signable():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_NOT_AVAILABLE)
     try:
-        ow_user_id = await _linked_user_id(session, user_id)
+        ow_user_id = await _linked_user_id(accounts, user_id)
         if ow_user_id is None:
             created = await client.create_user()
-            ow_user_id = await _store_linked_user_id(session, user_id, created)
+            ow_user_id = await accounts.link(user_id, created)
         authorization_url = await client.authorization_url(
             provider,
             ow_user_id,
@@ -175,11 +147,11 @@ async def authorize_wearable(
 @router.get("/connections")
 async def list_wearable_connections(
     user_id: str = Depends(get_current_user_id),
-    session: AsyncSession = Depends(get_async_db),
+    accounts: OpenWearablesAccountLinks = Depends(get_open_wearables_account_links),
     client: OpenWearablesClient = Depends(open_wearables_client),
 ) -> dict[str, list[dict[str, str | None]]]:
     _require_configured()
-    ow_user_id = await _linked_user_id(session, user_id)
+    ow_user_id = await _linked_user_id(accounts, user_id)
     if ow_user_id is None:
         return {"connections": []}
     try:
@@ -199,13 +171,13 @@ async def list_wearable_connections(
 async def disconnect_wearable(
     provider: str,
     user_id: str = Depends(get_current_user_id),
-    session: AsyncSession = Depends(get_async_db),
+    accounts: OpenWearablesAccountLinks = Depends(get_open_wearables_account_links),
     client: OpenWearablesClient = Depends(open_wearables_client),
 ) -> Response:
     """Revoke the sign-in and delete what Open Wearables synced from it."""
     _require_cloud_provider(provider)
     _require_configured()
-    ow_user_id = await _linked_user_id(session, user_id)
+    ow_user_id = await _linked_user_id(accounts, user_id)
     if ow_user_id is not None:
         try:
             await client.disconnect(ow_user_id, provider)
@@ -238,7 +210,7 @@ async def wearable_activity(
     provider: str = Query(min_length=1),
     timezone: str | None = Header(default=None, alias="X-Timezone"),
     user_id: str = Depends(get_current_user_id),
-    session: AsyncSession = Depends(get_async_db),
+    accounts: OpenWearablesAccountLinks = Depends(get_open_wearables_account_links),
     client: OpenWearablesClient = Depends(open_wearables_client),
 ) -> dict[str, object]:
     """Steps and active calories for one provider. Resting burn is excluded."""
@@ -246,7 +218,7 @@ async def wearable_activity(
         return _activity(provider)
     if not wearable_sign_in_ready():
         return _activity(provider)
-    ow_user_id = await _linked_user_id(session, user_id)
+    ow_user_id = await _linked_user_id(accounts, user_id)
     if ow_user_id is None:
         return _activity(provider)
     try:
@@ -266,13 +238,13 @@ async def wearable_workouts(
     provider: str = Query(min_length=1),
     timezone: str | None = Header(default=None, alias="X-Timezone"),
     user_id: str = Depends(get_current_user_id),
-    session: AsyncSession = Depends(get_async_db),
+    accounts: OpenWearablesAccountLinks = Depends(get_open_wearables_account_links),
     client: OpenWearablesClient = Depends(open_wearables_client),
 ) -> dict[str, object]:
     """Activities the person can add. They are not written into the day here."""
     if provider not in WORKOUT_PROVIDERS or not wearable_sign_in_ready():
         return {"provider": provider, "workouts": []}
-    ow_user_id = await _linked_user_id(session, user_id)
+    ow_user_id = await _linked_user_id(accounts, user_id)
     if ow_user_id is None:
         return {"provider": provider, "workouts": []}
     try:

@@ -328,3 +328,28 @@ async def test_load_week_logs_without_a_profile_reads_as_recomp():
 )
 def test_sign_up_day_is_local(created_at, expected):
     assert sign_up_day(created_at, TZ, fallback=date(2026, 9, 1)) == expected
+
+
+@pytest.mark.asyncio
+async def test_load_week_logs_reads_the_recap_of_the_week_before():
+    last = _recap(MONDAY - timedelta(days=7), "steady")
+    older = _recap(MONDAY - timedelta(days=14), "perfect")
+    uow = _Uow([_meal(0, 8)], recaps=[older, last])
+
+    logs = await load_week_logs(
+        uow, USER, MONDAY, TZ_NAME, LONG_AGO, 3, first_name="Linh"
+    )
+
+    assert logs is not None
+    assert logs.last_recap is last
+    assert logs.first_name == "Linh"
+
+
+@pytest.mark.asyncio
+async def test_load_week_logs_without_a_recap_last_week_has_none():
+    uow = _Uow([_meal(0, 8)], recaps=[_recap(MONDAY - timedelta(days=14), "steady")])
+
+    logs = await _load(uow)
+
+    assert logs is not None
+    assert (logs.last_recap, logs.first_name) == (None, None)

@@ -180,12 +180,18 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 await uow.chat.delete_user_chat(user_id)
                 chat_count = 1
 
+            # Weekly recaps are derived stories that greet the user by name.
+            recaps_count = 0
+            if getattr(uow, "weekly_recaps", None) is not None:
+                recaps_count = await uow.weekly_recaps.delete_for_user(user_id)
+
             # Flush to ensure all changes are pending in the transaction
             await uow.session.flush()
 
             logger.info(
                 f"Soft-deleted related data: meals={meals_count}, "
-                f"notification_prefs={notif_prefs_count}, chat={chat_count}"
+                f"notification_prefs={notif_prefs_count}, chat={chat_count}, "
+                f"weekly_recaps={recaps_count}"
             )
         except Exception:
             raise

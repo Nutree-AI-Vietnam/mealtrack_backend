@@ -1,7 +1,7 @@
 """Wearables routes return their DB connection before calling Open Wearables.
 
-The routes read the link through ``get_async_db``, which keeps the session until
-the response is sent. The fake client counts checked-out connections as each
+The routes read and store the link in a unit of work per call, so no session
+outlives the lookup. The fake client counts checked-out connections as each
 Open Wearables call starts.
 """
 
@@ -18,7 +18,7 @@ from src.api.dependencies.auth import get_current_user_id
 from src.api.routes.v1 import wearables as wearables_mod
 from src.infra.adapters.open_wearables_client import OpenWearablesClient
 from src.infra.config.settings import settings
-from src.infra.database import config_async
+from src.infra.database import uow_async
 from src.infra.database.models.user.user import User
 
 pytestmark = pytest.mark.integration
@@ -90,9 +90,9 @@ async def _seed_user(session: AsyncSession, open_wearables_user_id: str | None) 
 
 
 async def _get(monkeypatch, engine, ow_client, user_id, path, params=None):
-    # The real get_async_db runs, drawing from the pool the client counts.
+    # The real unit of work runs, drawing from the pool the client counts.
     monkeypatch.setattr(
-        config_async,
+        uow_async,
         "AsyncSessionLocal",
         async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False),
     )
@@ -161,8 +161,8 @@ async def test_first_sign_in_releases_the_connection_before_each_call(
 async def test_sign_in_that_loses_the_create_race_releases_the_reread(
     pg_session, engine, monkeypatch
 ):
-    # Another request stores its id while this one creates a user. The save
-    # then returns the stored id from a read and commits nothing.
+    # Another request stores its id while this one creates a user. The link
+    # then returns the stored id from a read and changes nothing.
     user_id = await _seed_user(pg_session, None)
     first_id = str(uuid4())
 

@@ -3,6 +3,7 @@ Unit tests for DeleteUserCommandHandler.
 """
 
 import logging
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -10,12 +11,16 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tests.conftest import TestUserRepository
+from tests.fixtures.fakes.fake_weekly_recap_repository import (
+    FakeWeeklyRecapRepository,
+)
 
 from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.user import DeleteUserCommand
 from src.app.handlers.command_handlers.delete_user_command_handler import (
     DeleteUserCommandHandler,
 )
+from src.domain.model.weekly_recap import WeeklyRecap
 from src.infra.adapters.open_wearables_client import OpenWearablesClient
 from src.infra.database.base import Base
 from src.infra.database.models.user import User
@@ -234,6 +239,33 @@ class TestDeleteUserCommandHandler:
             assert deleted_user.photo_url is None
             assert deleted_user.password_hash == "DELETED"
             assert deleted_user.firebase_uid == f"deleted:{user_id}"
+
+    @pytest.mark.asyncio
+    async def test_deletion_removes_the_users_weekly_recaps(
+        self, delete_handler, active_user, db_session
+    ):
+        """Recaps greet the user by name, so they go with the account."""
+        user_id, other = str(active_user.id), "22222222-2222-2222-2222-222222222222"
+        recaps = FakeWeeklyRecapRepository(
+            WeeklyRecap(owner, week, "steady", "en", stats={}, payload={})
+            for owner, week in (
+                (user_id, date(2026, 10, 5)),
+                (user_id, date(2026, 9, 28)),
+                (other, date(2026, 10, 5)),
+            )
+        )
+        uow = DummyUnitOfWork(db_session)
+        uow.weekly_recaps = recaps
+
+        with patch(
+            "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
+            MagicMock(return_value=uow),
+        ):
+            await delete_handler.handle(
+                DeleteUserCommand(firebase_uid=active_user.firebase_uid)
+            )
+
+        assert list(recaps.recaps) == [(other, date(2026, 10, 5))]
 
     @pytest.mark.asyncio
     async def test_delete_inactive_user_raises_not_found(

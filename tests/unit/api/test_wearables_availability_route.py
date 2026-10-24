@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.api.base_dependencies import get_open_wearables_account_links
 from src.api.dependencies.auth import get_current_user_id
 from src.api.routes.v1 import wearables as wearables_mod
 from src.infra.adapters.open_wearables_client import (
@@ -16,18 +17,14 @@ from src.infra.adapters.open_wearables_client import (
     OpenWearablesError,
 )
 from src.infra.config.settings import settings
-from src.infra.database.config_async import get_async_db
 
 
 def _client(ow_client: OpenWearablesClient | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(wearables_mod.router)
     app.dependency_overrides[get_current_user_id] = lambda: "user-1"
-
-    async def _db():
-        yield None
-
-    app.dependency_overrides[get_async_db] = _db
+    # Tests that need a linked account replace _linked_user_id itself.
+    app.dependency_overrides[get_open_wearables_account_links] = lambda: None
     if ow_client is not None:
         app.dependency_overrides[wearables_mod.open_wearables_client] = lambda: (
             ow_client
@@ -43,7 +40,7 @@ def ready(monkeypatch):
 
 @pytest.fixture
 def linked(monkeypatch):
-    async def _linked(_session, _user_id):
+    async def _linked(_accounts, _user_id):
         return "ow-user"
 
     monkeypatch.setattr(wearables_mod, "_linked_user_id", _linked)
@@ -198,7 +195,7 @@ def test_disconnect_revokes_through_open_wearables(ready, linked):
 
 
 def test_disconnect_without_a_linked_account_succeeds(ready, monkeypatch):
-    async def _not_linked(_session, _user_id):
+    async def _not_linked(_accounts, _user_id):
         return None
 
     monkeypatch.setattr(wearables_mod, "_linked_user_id", _not_linked)

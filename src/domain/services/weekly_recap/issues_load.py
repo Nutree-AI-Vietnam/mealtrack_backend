@@ -2,17 +2,40 @@
 
 from __future__ import annotations
 
+from src.domain.services.weekly_recap.compare import PRE_WORKOUT_CARBS, PROTEIN, trend
 from src.domain.services.weekly_recap.context import RecapContext
 from src.domain.services.weekly_recap.format import js_round
 from src.domain.services.weekly_recap.types import Card, Issue, Move
 from src.domain.services.weekly_recap.viz import bar, card, dots
 
 _MINUS = "−"
+_DIETS = frozenset({"vegetarian", "vegan", "keto"})
+# Meals logged before the weakest meal was kept get the design's breakfast tip.
+_DEFAULT_PROTEIN_MEAL = "breakfast"
 
 
 def _weekend_over(ctx: RecapContext) -> bool:
     delta = ctx.stats.weekend_delta
     return delta >= ctx.config.weekend_delta_kcal and bool(ctx.facts.weekend_over_days)
+
+
+def _weekend_over_note(ctx: RecapContext) -> str:
+    """The over days, and the biggest meal logged on them when it has a name.
+
+    A peak with no name (an unnamed label scan) is still the biggest meal,
+    so a smaller named one is never called the biggest instead.
+    """
+    days = ctx.facts.weekend_over_days
+    peaks = [peak for peak in ctx.stats.weekend_peaks if peak.day in days]
+    peak = max(peaks, key=lambda item: (item.kcal, -item.day), default=None)
+    if peak is None or not peak.name:
+        return ctx.t("weekend_over.note", days=ctx.span(days))
+    return ctx.t(
+        "weekend_over.note.peak",
+        days=ctx.span(days),
+        dish=peak.name,
+        kcal=ctx.num(peak.kcal),
+    )
 
 
 def _weekend_over_card(ctx: RecapContext) -> Card:
@@ -26,7 +49,7 @@ def _weekend_over_card(ctx: RecapContext) -> Card:
         count=js_round(facts.weekend_over_kcal),
         prefix="+",
         unit=ctx.t("weekend_over.unit"),
-        note=ctx.t("weekend_over.note", days=ctx.span(days)),
+        note=_weekend_over_note(ctx),
         viz=dots(days, "delta_down"),
     )
 
@@ -62,17 +85,27 @@ def _protein_low_card(ctx: RecapContext) -> Card:
         unit=ctx.t("card.unit.grams_per_day", t=ctx.num(target)),
         note=ctx.t("protein_low.note", n=facts.protein_days_hit, d=facts.week_days),
         viz=bar(facts.protein_avg, target),
+        trend=trend(ctx, PROTEIN),
     )
 
 
 def _protein_low_advice(ctx: RecapContext) -> Move:
-    gap = ctx.stats.protein_target - ctx.facts.protein_avg
+    """Protein foods the user's diet allows, for their lowest-protein meal."""
+    stats = ctx.stats
+    gap = ctx.num(stats.protein_target - ctx.facts.protein_avg)
+    weakest = stats.low_protein_meal
+    meal = ctx.meal(weakest or _DEFAULT_PROTEIN_MEAL)
+    key = f"protein_low.advice.{stats.diet}" if stats.diet in _DIETS else None
+    if weakest is not None:
+        why = ctx.t("protein_low.why.meal", n=gap, meal=meal)
+    else:
+        why = ctx.t("protein_low.why", n=gap)
     return Move(
         "protein",
         "egg_alt",
-        ctx.t("protein_low.advice"),
+        ctx.t(key or "protein_low.advice", meal=meal),
         ctx.t("protein_low.impact", n=ctx.num(ctx.config.protein_impact_g)),
-        ctx.t("protein_low.why", n=ctx.num(gap)),
+        why,
         ctx.t("protein_low.short"),
     )
 
@@ -133,6 +166,7 @@ def _preworkout_carbs_card(ctx: RecapContext) -> Card:
         unit=ctx.t("preworkout_carbs.unit", t=ctx.num(stats.carbs_target)),
         note=ctx.t("preworkout_carbs.note"),
         viz=bar(carbs, stats.carbs_target),
+        trend=trend(ctx, PRE_WORKOUT_CARBS),
     )
 
 

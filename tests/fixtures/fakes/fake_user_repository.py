@@ -90,5 +90,12 @@ class FakeUserRepository(UserRepositoryPort):
     async def find_open_wearables_user_id(self, user_id: UUID) -> Optional[str]:
         return self.open_wearables_user_ids.get(str(user_id))
 
+    async def link_open_wearables_user_id(
+        self, user_id: UUID, open_wearables_user_id: str
+    ) -> str:
+        return self.open_wearables_user_ids.setdefault(
+            str(user_id), open_wearables_user_id
+        )
+
     async def clear_open_wearables_user_id(self, user_id: UUID) -> None:
         self.open_wearables_user_ids.pop(str(user_id), None)

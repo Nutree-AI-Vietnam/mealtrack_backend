@@ -20,6 +20,7 @@ from src.domain.model.notification.notification_preferences import (
     DEFAULT_MEAL_REMINDER_MINUTES,
     NotificationPreferences,
 )
+from src.domain.model.weekly_recap import WeeklyRecap
 from src.domain.model.weight.weight_entry import WeightEntry
 from src.domain.services.weekly_recap import monday_of, week_days
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
@@ -44,6 +45,8 @@ class WeekLogs:
     log_dates: tuple[date, ...]
     case_counts: Mapping[str, int]
     reminders: Mapping[str, int]  # meal reminder times, minutes from midnight
+    first_name: str | None = None
+    last_recap: WeeklyRecap | None = None  # the week before, if it was told
 
 
 def sign_up_day(created_at: datetime | None, tz: tzinfo, fallback: date) -> date:
@@ -59,8 +62,9 @@ async def load_week_logs(
     tz_name: str,
     created_at: datetime | None,
     min_week_days: int,
+    first_name: str | None = None,
 ) -> WeekLogs | None:
-    """Read the week's logs.
+    """Read the week's logs, and the recap told for the week before.
 
     None when the account existed for fewer than ``min_week_days`` days of
     the week, or no food was logged in it.
@@ -120,6 +124,8 @@ async def load_week_logs(
         log_dates=log_dates,
         case_counts=await uow.weekly_recaps.count_cases_before(user_id, week_start),
         reminders=_reminders(prefs),
+        first_name=first_name,
+        last_recap=await uow.weekly_recaps.get(user_id, week_start - timedelta(days=7)),
     )
 
 

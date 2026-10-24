@@ -13,6 +13,11 @@ _OWN_WINS_EYEBROW = frozenset({"low_data", "first_week", "comeback", "tough"})
 _FIXED_WINS_TITLE = frozenset({"first_week", "comeback", "perfect"})
 _GROW_PREFIX = {"tough": "tough.grow", "bulk": "bulk.grow"}
 _MIN_COMEBACK_STREAK = 2
+# Gentle stories whose "room to improve" cards only point out progress.
+_GOOD_TRENDS_ONLY = frozenset({"tough"})
+# Full weeks whose subtitle can name the dish the user kept coming back to.
+_DISH_SUB = frozenset({"steady", "bulk", "perfect"})
+_GO_TO_DISH_MIN = 3
 
 
 def intro(ctx: RecapContext, case_id: str) -> dict[str, Any]:
@@ -30,8 +35,8 @@ def intro(ctx: RecapContext, case_id: str) -> dict[str, Any]:
         big_unit = ctx.t("intro.big_unit.meals", n=facts.meals_expected)
     return {
         "eyebrow": eyebrow,
-        "title": ctx.t(f"{case_id}.title"),
-        "sub": ctx.t(f"{case_id}.sub"),
+        "title": _title(ctx, case_id),
+        "sub": _sub(ctx, case_id),
         "label": ctx.t(f"{case_id}.label"),
         "big": big,
         "big_unit": big_unit,
@@ -70,12 +75,34 @@ def grow(
         title = ctx.t(f"{prefix}.title_one")
     else:
         title = ctx.t(f"{prefix}.title_n", n=shown)
+    cards = [issue.card(ctx) for issue in issues]
+    if case_id in _GOOD_TRENDS_ONLY:
+        for issue_card in cards:
+            if issue_card.get("trend") and not issue_card["trend"]["good"]:
+                del issue_card["trend"]
     return {
         "eyebrow": ctx.t(f"{prefix}.eyebrow"),
         "title": title,
         "foot": None,
-        "cards": [issue.card(ctx) for issue in issues],
+        "cards": cards,
     }
+
+
+def _title(ctx: RecapContext, case_id: str) -> str:
+    """The headline, speaking to the user by name when we know it."""
+    name = ctx.stats.first_name
+    if name:
+        return ctx.t(f"{case_id}.title.named", name=name)
+    return ctx.t(f"{case_id}.title")
+
+
+def _sub(ctx: RecapContext, case_id: str) -> str:
+    """The case's line, or for a full week, the dish it kept coming back to."""
+    dishes = ctx.stats.top_dishes
+    if case_id in _DISH_SUB and dishes and dishes[0].count >= _GO_TO_DISH_MIN:
+        top = dishes[0]
+        return ctx.t(f"{case_id}.sub.dish", dish=top.name, n=top.count)
+    return ctx.t(f"{case_id}.sub")
 
 
 def _chip(ctx: RecapContext, case_id: str) -> dict[str, str] | None:
