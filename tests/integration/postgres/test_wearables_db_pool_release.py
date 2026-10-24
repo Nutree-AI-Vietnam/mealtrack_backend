@@ -17,13 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from src.api.dependencies.auth import get_current_user_id
 from src.api.routes.v1 import wearables as wearables_mod
 from src.infra.adapters.open_wearables_client import OpenWearablesClient
+from src.infra.config.settings import settings
 from src.infra.database import config_async
 from src.infra.database.models.user.user import User
 
 pytestmark = pytest.mark.integration
 
 DAY = "2026-10-24"
-AUTHORIZATION_URL = "https://connect.garmin.com/start"
+# A registered app's link carries its client id; the route refuses one without.
+AUTHORIZATION_URL = "https://connect.garmin.com/start?client_id=garmin-app"
 
 
 class _PoolCountingClient(OpenWearablesClient):
@@ -48,6 +50,10 @@ class _PoolCountingClient(OpenWearablesClient):
     async def connections(self, user_id):
         self._count("connections")
         return [{"provider": "garmin", "status": "active"}]
+
+    async def sync_states(self, user_id):
+        self._count("sync_states")
+        return {"garmin": {"sync_status": "ok", "last_synced_at": None}}
 
     async def activity_day(self, user_id, day, provider):
         self._count("activity_day")
@@ -91,6 +97,7 @@ async def _get(monkeypatch, engine, ow_client, user_id, path, params=None):
         async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False),
     )
     monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+    monkeypatch.setattr(settings, "OPEN_WEARABLES_PROVIDERS", "garmin")
     app = FastAPI()
     app.include_router(wearables_mod.router)
     app.dependency_overrides[get_current_user_id] = lambda: user_id
@@ -102,20 +109,24 @@ async def _get(monkeypatch, engine, ow_client, user_id, path, params=None):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("path", "params", "call"),
+    ("path", "params", "calls"),
     [
-        ("/v1/wearables/connections", None, "connections"),
-        ("/v1/wearables/activity", {"date": DAY, "provider": "garmin"}, "activity_day"),
+        ("/v1/wearables/connections", None, ("connections", "sync_states")),
+        (
+            "/v1/wearables/activity",
+            {"date": DAY, "provider": "garmin"},
+            ("activity_day",),
+        ),
         (
             "/v1/wearables/workouts",
             {"date": DAY, "provider": "strava"},
-            "workouts_on_day",
+            ("workouts_on_day",),
         ),
-        ("/v1/wearables/oauth/garmin/authorize", None, "authorization_url"),
+        ("/v1/wearables/oauth/garmin/authorize", None, ("authorization_url",)),
     ],
 )
 async def test_linked_user_routes_release_the_connection_first(
-    pg_session, engine, monkeypatch, path, params, call
+    pg_session, engine, monkeypatch, path, params, calls
 ):
     user_id = await _seed_user(pg_session, str(uuid4()))
     ow_client = _PoolCountingClient(engine)
@@ -123,7 +134,7 @@ async def test_linked_user_routes_release_the_connection_first(
     response = await _get(monkeypatch, engine, ow_client, user_id, path, params)
 
     assert response.status_code == 200
-    assert ow_client.checked_out == {call: 0}
+    assert ow_client.checked_out == dict.fromkeys(calls, 0)
 
 
 @pytest.mark.asyncio
