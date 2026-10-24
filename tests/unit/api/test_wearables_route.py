@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.api.base_dependencies import get_open_wearables_account_links
 from src.api.dependencies.auth import get_current_user_id
 from src.api.routes.v1 import wearables as wearables_mod
 from src.infra.adapters.open_wearables_client import (
@@ -17,7 +18,6 @@ from src.infra.adapters.open_wearables_client import (
     choose_activity_row,
 )
 from src.infra.config.settings import settings
-from src.infra.database.config_async import get_async_db
 
 
 def test_cloud_catalog_excludes_phone_sources_and_fitbit():
@@ -159,15 +159,33 @@ async def test_authorization_url_uses_api_key_header():
     assert url == "https://connect.garmin.com/start"
 
 
-def _client(ow_client: OpenWearablesClient | None = None) -> TestClient:
+class _Accounts:
+    """Stored links; a second link keeps the first stored id."""
+
+    def __init__(self, stored: str | None = None):
+        self.stored = stored
+        self.linked: list[tuple[str, str]] = []
+
+    async def linked_user_id(self, user_id):
+        return self.stored
+
+    async def link(self, user_id, open_wearables_user_id):
+        self.linked.append((user_id, open_wearables_user_id))
+        if self.stored is None:
+            self.stored = open_wearables_user_id
+        return self.stored
+
+
+def _client(
+    ow_client: OpenWearablesClient | None = None,
+    accounts: _Accounts | None = None,
+) -> TestClient:
     app = FastAPI()
     app.include_router(wearables_mod.router)
     app.dependency_overrides[get_current_user_id] = lambda: "user-1"
-
-    async def _db():
-        yield None
-
-    app.dependency_overrides[get_async_db] = _db
+    app.dependency_overrides[get_open_wearables_account_links] = lambda: (
+        accounts or _Accounts()
+    )
     if ow_client is not None:
         app.dependency_overrides[wearables_mod.open_wearables_client] = lambda: (
             ow_client
@@ -213,6 +231,56 @@ def test_sign_in_returns_through_the_link_android_opens(monkeypatch):
     assert seen == [
         ("garmin", "ow-user", "nutree://open-nutree/wearables/connected/garmin")
     ]
+
+
+def test_first_sign_in_links_the_created_user(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+    accounts = _Accounts()
+    seen: list[str] = []
+
+    class _Client(OpenWearablesClient):
+        async def create_user(self):
+            return "ow-created"
+
+        async def authorization_url(self, provider, user_id, redirect_uri):
+            seen.append(user_id)
+            return "https://connect.garmin.com/start"
+
+    response = _client(_Client("http://ow.test", "test-key"), accounts).get(
+        "/v1/wearables/oauth/garmin/authorize"
+    )
+    assert response.status_code == 200
+    assert accounts.linked == [("user-1", "ow-created")]
+    assert seen == ["ow-created"]
+
+
+def test_sign_in_race_uses_the_first_stored_user(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+
+    class _RacedAccounts(_Accounts):
+        async def linked_user_id(self, user_id):
+            return None
+
+        async def link(self, user_id, open_wearables_user_id):
+            self.linked.append((user_id, open_wearables_user_id))
+            return "ow-winner"
+
+    accounts = _RacedAccounts()
+    seen: list[str] = []
+
+    class _Client(OpenWearablesClient):
+        async def create_user(self):
+            return "ow-loser"
+
+        async def authorization_url(self, provider, user_id, redirect_uri):
+            seen.append(user_id)
+            return "https://connect.garmin.com/start"
+
+    response = _client(_Client("http://ow.test", "test-key"), accounts).get(
+        "/v1/wearables/oauth/garmin/authorize"
+    )
+    assert response.status_code == 200
+    assert seen == ["ow-winner"]
 
 
 def test_ultrahuman_steps_ignore_energy(monkeypatch):
