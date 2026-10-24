@@ -85,7 +85,33 @@ def _redirect_uri(provider: str) -> str:
 
 
 async def _linked_user_id(session: AsyncSession, user_id: str) -> str | None:
-    return await load_open_wearables_user_id(session, user_id)
+    try:
+        return await load_open_wearables_user_id(session, user_id)
+    finally:
+        await _end_transaction(session)
+
+
+async def _store_linked_user_id(
+    session: AsyncSession,
+    user_id: str,
+    open_wearables_user_id: str,
+) -> str:
+    try:
+        return await save_open_wearables_user_id(
+            session, user_id, open_wearables_user_id
+        )
+    finally:
+        await _end_transaction(session)
+
+
+async def _end_transaction(session: AsyncSession) -> None:
+    """Return the pooled connection before the route calls Open Wearables.
+
+    ``get_async_db`` keeps the session until the response is sent. Without
+    this, the connection stays checked out for the whole Open Wearables round
+    trip, and a burst of these requests drains the pool.
+    """
+    await session.rollback()
 
 
 @router.get("/oauth/{provider}/authorize")
@@ -101,7 +127,7 @@ async def authorize_wearable(
         ow_user_id = await _linked_user_id(session, user_id)
         if ow_user_id is None:
             created = await client.create_user()
-            ow_user_id = await save_open_wearables_user_id(session, user_id, created)
+            ow_user_id = await _store_linked_user_id(session, user_id, created)
         authorization_url = await client.authorization_url(
             provider,
             ow_user_id,
