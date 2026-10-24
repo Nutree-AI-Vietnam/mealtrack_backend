@@ -73,18 +73,22 @@ language says the same thing.
 
 - **Name.** The intro title greets the user by name
   (`{case}.title.named`, `weekly_recap_names.recap_first_name`). It is read
-  from `display_name`; `first_name` stands in only when the display name is
-  missing or is not a name (a handle, an e-mail), because the stored
+  from `display_name`, up to any note after it ("| Nutree", "(Tony)");
+  `first_name` stands in only when the display name is missing or is one
+  word that is not a name (a handle, an e-mail), because the stored
   `first_name` is just the display name's first word. Vietnamese names are
   written family name first ("Nguyễn Văn Linh" → Linh) or given name first
-  ("Tuan Van Nguyen" → Tuan); the middle marker (Văn/Thị) and which end is
-  a family name decide. Whenever that can't be told ("Nguyễn Lê", "Le
-  Anh", a lone family name, an honorific before a family name) there is no
-  greeting: a missing name costs less than a wrong one. Chinese, Japanese
-  and Korean names are used whole. Emoji are ignored, an all lower-case
-  name is capitalized, and initials, handles and names longer than 12
-  letters (the headline width) get no greeting. The share card never
-  carries the name, and an account's recaps are deleted with the account.
+  ("Tuan Van Nguyen" → Tuan, "Thị Lan Hoàng" → Lan); which end is the
+  surer family name decides, with the middle markers (Văn/Thị) skipped.
+  Whenever that can't be told ("Nguyễn Lê", "Le Anh", "Châu Ngọc Hà", a
+  Vietnamese name with no known family name, a lone family name, an
+  honorific before a family name, a romanized Korean, Chinese or Japanese
+  name that starts with a family name) there is no greeting: a missing name
+  costs less than a wrong one. Chinese, Japanese and Korean script names
+  are used whole. Emoji are ignored, a name in all lower or upper case is
+  capitalized, and initials, handles and names longer than 12 letters (the
+  headline width) get no greeting. The share card never carries the name,
+  and an account's recaps are deleted with the account.
 - **Go-to dish.** In `steady`, `bulk` and `perfect` weeks, a dish logged 3+
   times replaces the intro `sub` (`{case}.sub.dish`).
 - **Diet.** The protein tip names foods the profile's diet allows
@@ -110,26 +114,36 @@ language says the same thing.
   stored move at the same place, so a config change never credits advice
   the user did not see.
 - A card can carry `trend: {text, up, good}`: which way its number moved
-  since last week and whether that helps. Averages over logged days need a
-  change of at least a step (protein 5 g, fiber 2 g, pre-workout carbs
-  5 g). Counts (nights, drinks, days, workouts) need 1 and water 0.2 L,
-  and these compare only when both weeks logged the same number of days
-  that feed them, so a logging gap never reads as progress: days logged
-  live for late snacks (a meal logged a day later has no time of day),
-  days with a drink for sugary drinks, days without a drink for the water
-  average, weekend days that went over or have two meals logged, counted
-  rest days, days logged for days on budget. Win cards and `tough`
-  stories show only good trends. Day and workout counts carry their unit
-  ("Up from 4 days last week").
+  since last week and whether that helps. Averages need a change of at
+  least a step (protein 5 g, fiber 2 g, pre-workout carbs 5 g), counts
+  (nights, drinks, days, workouts) 1 and water 0.2 L.
+- Both weeks must have logged the same number of the days that feed a
+  number, so a logging gap never reads as progress. A logged day is *thin*
+  unless it has two meal types (a lunch logged as two dishes is one meal)
+  and `full_day_ratio` (70%) of its calorie target. Protein and fiber
+  averages need the same number of thin days; days on budget the same days
+  logged and thin days; weekend days over the same weekend days that went
+  over or are not thin; late snacks the same days logged live (a meal
+  logged a day later has no time of day); sugary drinks the same days with
+  a drink; the water average the same days without one; rest days under
+  the same rest days. Counts against the calorie target (days on budget,
+  weekend days over, rest days under) also need the same goal and a target
+  within 5%. A week stored before meal types were kept can't tell thin
+  days, so what needs them doesn't compare with it.
+- Win cards and `tough` stories show only good trends. Day and workout
+  counts carry their unit ("Up from 4 days last week").
 - `last_week.plan` lists the issues last week's plan took on. The first one
   that no longer holds and whose number moved a step the right way, by the
   rule above, becomes the top win card (`follow_through`, icon
-  `check_circle`): this week's number, with last week's in its trend. Its
+  `check_circle`): this week's number, with last week's in its trend. A
+  change of goal is never a follow-through: some issues only hold for one
+  goal (rest days under-eaten on a bulk). Its
   title claims the whole plan only when every move the plan showed was an
   issue that is now fixed (a reminder habit or a plan rebuilt for an older
   row never reads as done whole). A fix that is more of something (fiber,
-  water, protein, carbs) gets a share tile; otherwise the share card keeps
-  the tile of the win the card displaced.
+  water, protein, carbs) gets a share tile, and a win of the same kind
+  stays off the share card so the number shows once; otherwise the share
+  card keeps the tile of the win the card displaced.
 
 ## Configuration
 

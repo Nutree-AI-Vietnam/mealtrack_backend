@@ -14,6 +14,7 @@ from src.app.services.weekly_recap_meal_stats import (
     late_snacks,
     low_protein_meal,
     lunch_no_veg_days,
+    meal_types_by_day,
     meals_by_day,
     missed_meal,
     photo_share,
@@ -157,6 +158,18 @@ def test_meals_by_day_counts_at_most_three_a_day():
     meals = [_food(0, hour) for hour in (8, 12, 15, 19)] + [_food(3, 12)]
 
     assert meals_by_day(meals) == (3, 0, 0, 1, 0, 0, 0)
+
+
+def test_meal_types_by_day_counts_a_meal_logged_as_two_dishes_once():
+    meals = [
+        _food(0, 12, name="Cơm"),
+        _food(0, 12, 5, name="Thịt kho"),
+        _food(0, 19, meal_type="dinner"),
+        _food(5, 12, name="Cơm"),
+        _food(5, 12, 5, name="Canh chua"),
+    ]
+
+    assert meal_types_by_day(meals) == (2, 0, 0, 0, 0, 1, 0)
 
 
 def test_late_snacks_counts_nights_and_averages_kcal_per_night():

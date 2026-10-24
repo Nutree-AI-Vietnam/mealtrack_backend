@@ -8,8 +8,10 @@ stored moves (``shown_plan``).
 
 The follow-through card is shown when an issue last week's plan took on no
 longer holds this week and its number moved at least a step the right way,
-over the same days logged (see ``compare``). The first such issue, in last
-week's plan order, gets the card.
+over the same days logged (see ``compare``), with the goal unchanged: an
+issue that only some goals have (rest days under-eaten on a bulk) stops
+holding when the goal changes, which is not following the plan. The first
+such issue, in last week's plan order, gets the card.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from src.domain.services.weekly_recap.compare import (
     compared,
     improved,
     rest_days_counted,
+    thin_days,
     timed_days,
     trend,
     water_days,
@@ -133,6 +136,9 @@ def last_week_of(
         timed_days=timed_days(ctx),
         plan_moves=plan_moves,
         plan_exact=plan_exact,
+        thin_days=thin_days(ctx),
+        goal=stats.goal,
+        budget=stats.budget,
     )
 
 
@@ -152,6 +158,9 @@ _TRACKED: dict[str, tuple[str, Metric]] = {
 def _fixed(ctx: RecapContext, issue_id: str) -> tuple[float, float] | None:
     """This week's and last week's number, if the planned issue was fixed."""
     issue, tracked = _ISSUES.get(issue_id), _TRACKED.get(issue_id)
+    last = ctx.stats.last_week
+    if last is None or last.goal != ctx.stats.goal:
+        return None
     if issue is None or tracked is None or issue.cond(ctx):
         return None
     pair = compared(ctx, tracked[1])

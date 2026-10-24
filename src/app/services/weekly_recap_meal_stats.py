@@ -95,6 +95,17 @@ def meals_by_day(meals: Sequence[FoodMeal]) -> tuple[int, ...]:
     return tuple(min(_MEALS_PER_DAY_CAP, counts[day]) for day in range(7))
 
 
+def meal_types_by_day(meals: Sequence[FoodMeal]) -> tuple[int, ...]:
+    """How many meal types (breakfast, lunch, dinner, snack) each day logged.
+
+    A lunch logged as two dishes is still one meal.
+    """
+    types: dict[int, set[str]] = {}
+    for meal in meals:
+        types.setdefault(meal.day, set()).add(meal.meal_type)
+    return tuple(len(types.get(day, ())) for day in range(7))
+
+
 def late_snacks(
     meals: Sequence[FoodMeal], late_hour: int
 ) -> tuple[tuple[int, ...], int]:

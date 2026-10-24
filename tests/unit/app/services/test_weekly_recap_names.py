@@ -28,6 +28,17 @@ def _greet(display_name, first_name=None):
         ("Trần Vũ", "Vũ"),
         ("Nguyen Trinh", "Trinh"),
         ("Vu Minh Duc", "Duc"),
+        ("Hà Anh Tuấn", "Tuấn"),
+        ("Cao Thái Sơn", "Sơn"),
+        ("Mai Phương Thúy", "Thúy"),
+        ("Kiều Minh Tuấn", "Tuấn"),
+        ("Tô Minh Châu", "Châu"),
+        ("Lại Thanh Sâm", "Sâm"),
+        ("Ha Anh Tuan", "Tuan"),
+        ("Cao Thai Son", "Son"),
+        ("Chau Van Thanh", "Thanh"),
+        ("Mai Anh", "Anh"),
+        ("Nguyễn Văn Nam.", "Nam"),
         # Given name first (Apple sign-in, many Google accounts).
         ("Linh Nguyen", "Linh"),
         ("Hoàng Nguyễn", "Hoàng"),
@@ -48,14 +59,42 @@ def _greet(display_name, first_name=None):
         ("Kevin Minh Tran", "Kevin"),
         ("François Xavier Le", "François"),
         ("Céline Anne Pham", "Céline"),
+        # A family name that is often a given name, at the end.
+        ("Lan Thị Hoàng", "Lan"),
+        ("Tuấn Văn Vũ", "Tuấn"),
+        ("Long Văn Đào", "Long"),
+        ("Tuan Van Dang", "Tuan"),
+        ("Hung Van Truong", "Hung"),
+        # Apple joins given then family name, and the given name may start
+        # with a middle marker.
+        ("Thị Lan Hoàng", "Lan"),
+        ("Văn Minh Vũ", "Minh"),
+        ("Thi Lan Hoang", "Lan"),
+        ("Thị Mai", "Mai"),
+        # Written all in capitals, as on an ID card.
+        ("NGUYỄN VĂN LINH", "Linh"),
+        ("THỊ MAI NGUYỄN", "Mai"),
+        ("VAN TUAN NGUYEN", "Tuan"),
+        # A note after the name ends it.
+        ("Lê Thị Hoa – Kế toán", "Hoa"),
+        ("Nguyễn Thu Hà | Nutree", "Hà"),
+        ("Hoàng Văn Nam (Tony)", "Nam"),
         # No telling which word is the family name.
         ("Nguyễn Lê", None),
         ("Nguyễn Văn Trần", None),
         ("Hoang Duong", None),
         ("Le Anh", None),
         ("Nguyễn", None),
+        ("Châu Ngọc Hà", None),
+        ("Mai Thị Dương", None),
+        ("Thừa Dụ", None),  # Vietnamese, but neither word is a known family name
+        # Korean, Chinese and Japanese names are written either way round.
+        ("Kim Min-jun", None),
+        ("Zhang Wei", None),
+        ("Yamada Taro", None),
+        ("Min-jun Kim", "Min-jun"),
+        ("Taro Yamada", "Taro"),
         # Other names.
-        ("Mai Anh", "Mai"),
         ("Anna Schmidt", "Anna"),
         ("Dr. Anna Schmidt", "Anna"),
         ("Dr. Schmidt", None),
@@ -98,6 +137,8 @@ def test_decomposed_vietnamese_reads_like_composed():
         # The stored first name is the display name's first word, so it
         # must not stand in for a name whose order can't be told.
         ("Nguyễn Lê", "Nguyễn", None),
+        ("Hoàng Văn Nam 99x", "Hoàng", None),
+        ("🌸", "Linh", "Linh"),
         (None, None, None),
     ],
 )

@@ -54,7 +54,8 @@ class LastWeek:
     Read from that week's stored recap. ``water_avg`` is None when no water
     was logged; ``plan`` holds the issues that week's plan showed. The
     ``*_days``/``days_logged`` coverage counts say how many days fed each
-    count, so a week with fewer logged days never reads as progress.
+    count, so a week with fewer logged days never reads as progress; a
+    count is None when that week's snapshot can't tell it.
     """
 
     week_days: int
@@ -69,13 +70,16 @@ class LastWeek:
     rest_under_days: int
     days_logged: int
     water_days: int
-    weekend_days_counted: int
+    weekend_days_counted: int | None
     rest_days_counted: int
     pre_workout_carbs: float | None = None
     plan: tuple[str, ...] = ()
     timed_days: int | None = None  # days logged live; None when not known
     plan_moves: int | None = None  # how many moves the plan showed
     plan_exact: bool = True  # False when the plan was rebuilt for an old row
+    thin_days: int | None = None  # logged days that don't look fully logged
+    goal: str | None = None
+    budget: int | None = None
 
 
 @dataclass(frozen=True)
@@ -130,4 +134,5 @@ class WeekStats:
     top_sugary_drink: str | None = None
     weekend_peaks: tuple[PeakMeal, ...] = ()  # the biggest meal of Fri, Sat, Sun
     backdated_days: tuple[int, ...] | None = None  # days with a meal logged later
+    meal_types_by_day: tuple[int, ...] = ()  # meals of different types (lunch, ...)
     last_week: LastWeek | None = None

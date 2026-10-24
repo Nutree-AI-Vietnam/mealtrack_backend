@@ -152,6 +152,7 @@ def test_build_week_stats_combines_the_logs_and_the_summary_rows():
         budget=2000,
         protein_target=120.0,
         meals_by_day=(2, 2, 3, 2, 3, 1, 1),
+        meal_types_by_day=(2, 2, 3, 2, 3, 1, 1),
         kcal_by_day=KCAL,
         protein_by_day=(110.0,) * 7,
         water_by_day=(2.5,) * 7,

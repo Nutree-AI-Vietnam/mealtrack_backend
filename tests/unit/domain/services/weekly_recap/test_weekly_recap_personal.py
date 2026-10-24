@@ -461,6 +461,7 @@ def _without_weekend(stats: WeekStats) -> WeekStats:
     return replace(
         stats,
         meals_by_day=(*stats.meals_by_day[:4], 0, 0, 0),
+        meal_types_by_day=(*stats.meal_types_by_day[:4], 0, 0, 0),
         kcal_by_day=(*stats.kcal_by_day[:4], 0.0, 0.0, 0.0),
         protein_by_day=(*stats.protein_by_day[:4], 0.0, 0.0, 0.0),
         water_by_day=(*stats.water_by_day[:4], 0.0, 0.0, 0.0),
@@ -512,6 +513,91 @@ def test_a_logged_weekend_back_near_budget_is_a_fixed_weekend() -> None:
         "weekend day over budget",
     )
     assert first["trend"]["text"] == "Down from 3 last week"
+
+
+def _thin_weekend(stats: WeekStats, meal_types: int, kcal: float) -> WeekStats:
+    """``stats`` with Friday to Sunday logged as two dishes, ``kcal`` a day."""
+    return replace(
+        stats,
+        meals_by_day=(*stats.meals_by_day[:4], 2, 2, 2),
+        meal_types_by_day=(*stats.meal_types_by_day[:4], *(meal_types,) * 3),
+        kcal_by_day=(*stats.kcal_by_day[:4], kcal, kcal, kcal),
+        weekend_delta=kcal - stats.budget,
+    )
+
+
+@pytest.mark.parametrize(
+    ("meal_types", "kcal"),
+    [(1, 850.0), (2, 1000.0)],
+    ids=["lunch as two dishes", "dinner out not logged"],
+)
+def test_a_thinly_logged_weekend_is_not_a_fixed_weekend(
+    meal_types: int, kcal: float
+) -> None:
+    stats = replace(
+        _thin_weekend(sample_stats("steady"), meal_types, kcal),
+        last_week=_tough_last_week(),
+    )
+
+    payload = generate_recap(stats)
+
+    assert all(card["icon"] != "check_circle" for card in _cards(payload, "wins"))
+
+
+def test_averages_compare_only_weeks_logged_as_fully() -> None:
+    # Last week only breakfast was logged Thursday to Sunday, or it was a
+    # low-data week: its averages are low from logging, not from eating.
+    sparse = _last_week(protein_avg=60.0, thin_days=4, plan=("protein_low",))
+    low_data = last_week_of(sample_stats("low_data"), "low_data", CONFIG)
+    full = _last_week(protein_avg=60.0, plan=("protein_low",))
+
+    def first_win(last: LastWeek) -> dict[str, Any]:
+        stats = replace(sample_stats("steady"), last_week=last)
+        return generate_recap(stats)["wins"]["cards"][0]
+
+    assert first_win(sparse)["icon"] != "check_circle"
+    assert "trend" not in first_win(sparse)
+    assert "trend" not in first_win(low_data)
+    assert first_win(full)["icon"] == "check_circle"
+    assert first_win(full)["trend"]["text"] == "Up from 60g last week"
+
+
+def test_days_on_budget_compare_only_fully_logged_days() -> None:
+    # Only a breakfast logged Friday to Sunday keeps those days under budget.
+    steady = sample_stats("steady")
+    stats = replace(
+        steady,
+        meals_by_day=(*steady.meals_by_day[:4], 1, 1, 1),
+        meal_types_by_day=(*steady.meal_types_by_day[:4], 1, 1, 1),
+        kcal_by_day=(*steady.kcal_by_day[:4], 450.0, 450.0, 450.0),
+        weekend_delta=0.0,
+        last_week=_last_week(days_on_budget=4),
+    )
+    control = replace(steady, last_week=_last_week(days_on_budget=4))
+
+    assert "trend" not in _card(generate_recap(stats), "wins", "calories")
+    assert _card(generate_recap(control), "wins", "calories")["trend"]["good"]
+
+
+def test_a_goal_change_is_not_following_the_plan() -> None:
+    last = last_week_of(sample_stats("bulk"), "bulk", CONFIG)
+    assert last.plan[0] == "rest_under"
+    # On a cut no rest day is under-eaten against the new, lower target:
+    # the bulk issue stops holding with no change in what was eaten.
+    stats = replace(sample_stats("bulk"), goal="cut", under_days=(), last_week=last)
+
+    payload = generate_recap(stats)
+
+    assert all(card["icon"] != "check_circle" for card in _cards(payload, "wins"))
+
+
+def test_counts_against_the_target_need_about_the_same_target() -> None:
+    steady = sample_stats("steady")
+    moved = replace(_tough_last_week(), budget=round(steady.budget * 1.2))
+
+    payload = generate_recap(replace(steady, last_week=moved))
+
+    assert all(card["icon"] != "check_circle" for card in _cards(payload, "wins"))
 
 
 def test_unlogged_rest_days_are_not_fixed_rest_days() -> None:
@@ -610,8 +696,10 @@ def test_the_protein_and_carb_issues_show_progress() -> None:
 
 def test_what_nutree_learned_shows_only_progress() -> None:
     def protein_trend(before: float) -> dict[str, Any] | None:
+        # The first week has one thin day (Monday); so has the week before.
         stats = replace(
-            sample_stats("first_week"), last_week=_last_week(protein_avg=before)
+            sample_stats("first_week"),
+            last_week=_last_week(protein_avg=before, thin_days=1),
         )
         return _card(generate_recap(stats), "wins", "protein").get("trend")
 
@@ -652,6 +740,30 @@ def test_a_fix_that_reads_as_a_win_gets_a_share_tile() -> None:
     assert all("late-snack" not in label for _, label in snack_tiles)
 
 
+@pytest.mark.parametrize("locale", sorted(TABLES))
+def test_a_protein_follow_through_shares_its_number_once(locale: str) -> None:
+    # The wins: the protein follow-through, days on budget and fiber, which
+    # has no tile. The protein win the follow-through displaced must not
+    # bring the same number back under its own label (ja, zh).
+    steady = sample_stats("steady")
+    stats = replace(
+        steady,
+        workouts=(),
+        fiber_avg=24.0,
+        late_snack_days=(),
+        water_by_day=(2.2,) * 7,
+        last_week=_last_week(
+            protein_avg=80.0, fiber_avg=24.0, late_snack_nights=0, plan=("protein_low",)
+        ),
+    )
+
+    payload = generate_recap(stats, locale=locale)
+    values = [value for value, _ in payload["share"]["stats"]]
+
+    assert payload["wins"]["cards"][0]["icon"] == "check_circle"
+    assert len(values) == len(set(values))
+
+
 def test_the_fiber_win_names_no_days_it_did_not_hit() -> None:
     stats = replace(sample_stats("perfect"), fiber_avg=23.0, fiber_by_day=(23.0,) * 7)
 
@@ -674,8 +786,13 @@ def test_the_driest_day_is_a_day_something_was_logged() -> None:
 
 
 def test_a_tough_week_points_out_only_progress() -> None:
-    worse = replace(sample_stats("tough"), last_week=_last_week(fiber_avg=20.0))
-    better = replace(sample_stats("tough"), last_week=_last_week(fiber_avg=11.0))
+    # The tough week has one thin day (Saturday); so has the week before.
+    worse = replace(
+        sample_stats("tough"), last_week=_last_week(fiber_avg=20.0, thin_days=1)
+    )
+    better = replace(
+        sample_stats("tough"), last_week=_last_week(fiber_avg=11.0, thin_days=1)
+    )
 
     assert "trend" not in _card(generate_recap(worse), "grow", "fiber")
     assert _card(generate_recap(better), "grow", "fiber")["trend"]["good"] is True

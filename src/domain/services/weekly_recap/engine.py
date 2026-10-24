@@ -73,11 +73,22 @@ def _share_insights(
 ) -> list[Insight]:
     """The shown wins, and when the follow-through card took a slot, the
     wins it pushed off the cards, so its slot does not cost the share card
-    a real tile."""
+    a real tile.
+
+    When the follow-through card has a tile of its own, a win of the same
+    kind would repeat its number under another label, so it stays off.
+    """
     if FOLLOW_THROUGH not in shown:
         return list(shown)
     active = ranked([insight for insight in pool if insight.cond(ctx)], ctx.config)
-    return [*shown, *(insight for insight in active if insight not in shown)]
+    tiled = FOLLOW_THROUGH.stat is not None and FOLLOW_THROUGH.stat(ctx) is not None
+    kind = FOLLOW_THROUGH.card(ctx)["kind"] if tiled else None
+    backups = [
+        insight
+        for insight in active
+        if insight not in shown and (kind is None or insight.card(ctx)["kind"] != kind)
+    ]
+    return [*shown, *backups]
 
 
 def _win_cards(
