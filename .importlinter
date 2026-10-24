@@ -197,6 +197,7 @@ ignore_imports =
     src.api.base_dependencies -> src.infra.repositories.user_repository
     src.api.base_dependencies -> src.infra.services.ai.ai_model_manager
     src.api.base_dependencies -> src.infra.services.ai.schemas
+    src.api.base_dependencies -> src.infra.services.subscription_access_sync_service
     src.api.dependencies.auth -> src.infra.config.settings
     src.api.dependencies.auth -> src.infra.database.config_async
     src.api.dependencies.auth -> src.infra.database.models.user.user

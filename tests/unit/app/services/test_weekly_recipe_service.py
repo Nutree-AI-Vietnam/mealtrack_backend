@@ -165,19 +165,28 @@ async def test_slow_optional_cache_falls_back_within_one_budget_and_skips_write(
     monkeypatch,
 ):
     import asyncio
-    from time import monotonic
 
     class SlowRedis(_MockRedisClient):
+        def __init__(self):
+            super().__init__()
+            self.read_cancelled = False
+
         async def mget(self, keys):
-            await asyncio.sleep(1)
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.read_cancelled = True
+                raise
 
     redis = SlowRedis()
     catalog = _Catalog()
-    start = monotonic()
-    result = await WeeklyRecipeService(
-        lambda: _UnitOfWork(catalog), redis_client=redis
-    ).summaries(["r1"])
-    assert monotonic() - start < 0.3
+    result = await asyncio.wait_for(
+        WeeklyRecipeService(lambda: _UnitOfWork(catalog), redis_client=redis).summaries(
+            ["r1"]
+        ),
+        timeout=2,
+    )
+    assert redis.read_cancelled
     assert result[0].id == "r1"
     assert redis.mset_calls == []
 

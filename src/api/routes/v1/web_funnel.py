@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.base_dependencies import (
     get_subscription_service,
     get_web_funnel_redemption_service,
+    normalize_standard_access_facts,
 )
 from src.api.dependencies.auth import verify_firebase_token_revocation_checked
 from src.api.middleware.rate_limit import limiter
@@ -31,7 +32,6 @@ from src.app.services.web_funnel_claim_common import (
     RESEND_COOLDOWN,
     claim_conflict,
     claim_not_found,
-    standard_expires_at,
     utcnow,
 )
 from src.app.services.web_funnel_claim_completion import complete_claim, recover_claim
@@ -386,7 +386,16 @@ async def finalize_revenuecat_redemption(
     if not binding:
         raise claim_not_found()
 
-    subscriber = await service.get_subscriber_info(uid)
+    try:
+        provider_snapshot = await service.get_verified_snapshot(uid)
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription state could not be verified",
+        ) from error
+    if provider_snapshot.absent or not provider_snapshot.subscriber:
+        raise claim_not_found()
+    subscriber = {"subscriber": provider_snapshot.subscriber}
     original_app_user_id = _subscriber_original_app_user_id(subscriber)
     if (
         not original_app_user_id
@@ -426,6 +435,22 @@ async def finalize_revenuecat_redemption(
         ):
             raise claim_not_found()
 
+    try:
+        subscription_facts = normalize_standard_access_facts(
+            provider_snapshot.subscriber
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription state could not be verified",
+        ) from error
+    if (
+        subscription_facts is None
+        or subscription_facts["product_id"] != binding.product_id
+        or subscription_facts["status"] == "expired"
+    ):
+        raise claim_not_found()
+
     response.headers["Cache-Control"] = "no-store"
     return await get_web_funnel_redemption_service().finalize(
         db,
@@ -437,7 +462,9 @@ async def finalize_revenuecat_redemption(
         idempotency_key=idempotency_key,
         environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
         auth_provider=provider,
-        expires_at=standard_expires_at(subscriber),
+        expires_at=subscription_facts["expires_at"],
+        provider_snapshot_at=provider_snapshot.request_date,
+        subscription_facts=subscription_facts,
     )
 
 

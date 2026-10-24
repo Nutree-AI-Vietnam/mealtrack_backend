@@ -8,9 +8,16 @@ import hmac
 import logging
 import os
 import uuid
+from datetime import datetime
+from typing import cast
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.base_dependencies import (
+    normalize_standard_access_facts,
+    sync_revenuecat_access,
+)
 from src.api.routes.v1.webhook_lookup_parsing import (
     candidate_revenuecat_ids,
     find_user_for_revenuecat_event,
@@ -24,7 +31,6 @@ from src.api.routes.v1.webhook_referral_funnel import (
     handle_transfer,
     record_web_funnel_redemption,
     revoke_referral_on_refund,
-    sync_redeemed_target_subscription,
 )
 from src.api.routes.v1.webhook_subscription_lifecycle import (
     handle_billing_issue,
@@ -41,6 +47,8 @@ from src.bootstrap.integration_services import (
     get_integration_event_publisher,
 )
 from src.bootstrap.web_funnel_claim_dispatcher import get_web_funnel_outbox_dispatcher
+from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
+from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
 from src.observability import increment_metric
 
@@ -159,7 +167,7 @@ async def revenuecat_webhook(
                     lead_id
                 )
                 if await reconcile_revenuecat_event(
-                    web_funnel_uow.session, event, subscriber
+                    cast(AsyncSession, web_funnel_uow.session), event, subscriber
                 ):
                     await get_web_funnel_outbox_dispatcher()(lead_id=lead_id)
                     return {"status": "success"}
@@ -174,16 +182,67 @@ async def revenuecat_webhook(
     affiliate_handler = _get_affiliate_handler()
     event_publisher = _get_event_publisher()
 
-    # Get user
+    synchronized_events = {
+        "INITIAL_PURCHASE",
+        "RENEWAL",
+        "CANCELLATION",
+        "EXPIRATION",
+        "BILLING_ISSUE",
+        "PRODUCT_CHANGE",
+        "REFUND",
+        "TRANSFER",
+        "PURCHASE_REDEEMED",
+    }
+    expected_updated_at: datetime | None = None
+    provider_snapshot = None
+    lookup_user_id = None
+    firebase_uid: str | None = None
+    if event_type in synchronized_events:
+        async with AsyncUnitOfWork() as lookup_uow:
+            lookup_user = await find_user_for_revenuecat_event(lookup_uow, event)
+            if lookup_user is not None:
+                lookup_user_id = str(lookup_user.id)
+                expected_updated_at = cast(datetime, lookup_user.updated_at)
+                firebase_uid = cast(str, lookup_user.firebase_uid)
+        if lookup_user_id is not None:
+            try:
+                provider_snapshot = (
+                    await _get_subscription_service().get_verified_snapshot(
+                        firebase_uid
+                    )
+                )
+            except RevenueCatSnapshotUnavailable as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Subscription state could not be verified",
+                ) from error
+
+    # Provider requests happen before this transaction; event effects and the
+    # normalized snapshot are committed together.
     async with AsyncUnitOfWork() as uow:
         user = await find_user_for_revenuecat_event(uow, event)
+        if user is not None and lookup_user_id and str(user.id) != lookup_user_id:
+            raise HTTPException(
+                status_code=503, detail="Subscription owner changed during sync"
+            )
 
         if event_type == "TRANSFER":
             if not user:
                 logger.info("RevenueCat transfer ignored: target user not found")
                 return {"status": "ignored", "reason": "user_not_found"}
             await handle_transfer(uow, event)
-            await sync_redeemed_target_subscription(uow, user, event)
+            try:
+                await sync_revenuecat_access(
+                    cast(AsyncSession, uow.session),
+                    user,
+                    snapshot=provider_snapshot,
+                    expected_updated_at=cast(datetime, expected_updated_at),
+                )
+            except RevenueCatSnapshotUnavailable as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Subscription state could not be verified",
+                ) from error
             increment_metric(
                 "webhook.revenuecat.processed",
                 attributes={"event_type": event_type, "status": "success"},
@@ -194,7 +253,18 @@ async def revenuecat_webhook(
             if not user:
                 logger.info("RevenueCat purchase redemption target user not found")
                 raise HTTPException(status_code=404, detail="User not found")
-            await sync_redeemed_target_subscription(uow, user, event)
+            try:
+                await sync_revenuecat_access(
+                    cast(AsyncSession, uow.session),
+                    user,
+                    snapshot=provider_snapshot,
+                    expected_updated_at=cast(datetime, expected_updated_at),
+                )
+            except RevenueCatSnapshotUnavailable as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Subscription state could not be verified",
+                ) from error
             increment_metric(
                 "webhook.revenuecat.processed",
                 attributes={"event_type": event_type, "status": "success"},
@@ -213,6 +283,27 @@ async def revenuecat_webhook(
                 return {"status": "ignored", "reason": "user_not_found"}
             raise HTTPException(status_code=404, detail="User not found")
 
+        confirmed_refund = False
+        if event_type in {"REFUND", "CANCELLATION"} and provider_snapshot:
+            try:
+                facts = (
+                    normalize_standard_access_facts(
+                        provider_snapshot.subscriber, utc_now()
+                    )
+                    if provider_snapshot.subscriber
+                    else None
+                )
+                confirmed_refund = facts is None or facts["status"] == "expired"
+            except RevenueCatSnapshotUnavailable as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Subscription state could not be verified",
+                ) from error
+        if event_type == "CANCELLATION":
+            confirmed_refund = confirmed_refund and event.get("cancel_reason") == (
+                "CUSTOMER_SUPPORT"
+            )
+
         # Handle events — commit/rollback is owned by the AsyncUnitOfWork context manager
         if event_type == "INITIAL_PURCHASE":
             await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
@@ -221,9 +312,14 @@ async def revenuecat_webhook(
             await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
 
         elif event_type == "CANCELLATION":
-            await handle_cancellation(
-                uow, user, event, affiliate_handler, event_publisher
-            )
+            if confirmed_refund:
+                await handle_refund(
+                    uow, user, event, affiliate_handler, event_publisher
+                )
+            else:
+                await handle_cancellation(
+                    uow, user, event, affiliate_handler, event_publisher
+                )
 
         elif event_type == "EXPIRATION":
             await handle_expiration(
@@ -241,7 +337,25 @@ async def revenuecat_webhook(
             )
 
         elif event_type == "REFUND":
-            await handle_refund(uow, user, event, affiliate_handler, event_publisher)
+            if confirmed_refund:
+                await handle_refund(
+                    uow, user, event, affiliate_handler, event_publisher
+                )
+
+        if event_type in synchronized_events and provider_snapshot is not None:
+            try:
+                await sync_revenuecat_access(
+                    cast(AsyncSession, uow.session),
+                    user,
+                    refund_event=confirmed_refund,
+                    snapshot=provider_snapshot,
+                    expected_updated_at=cast(datetime, expected_updated_at),
+                )
+            except RevenueCatSnapshotUnavailable as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Subscription state could not be verified",
+                ) from error
 
     increment_metric(
         "webhook.revenuecat.processed",
