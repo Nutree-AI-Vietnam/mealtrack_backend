@@ -457,3 +457,89 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
         macros["protein"] * 4 + macros["carbs"] * 4 + macros["fat"] * 9
     )
     assert macros["calories"] != 2000
+
+
+@pytest.mark.parametrize(
+    ("moment", "field", "minutes"),
+    [
+        ("morning", "breakfast_time_minutes", 420),
+        ("late_night", "daily_summary_time_minutes", 1200),
+    ],
+)
+@pytest.mark.asyncio
+async def test_finalization_times_first_reminders_to_the_off_plan_moment(
+    moment, field, minutes
+):
+    from src.infra.database.models.notification.notification_preferences import (
+        NotificationPreferencesORM,
+    )
+
+    binding = _binding(
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        preflight_uid="google-user",
+        product_id="web_monthly",
+        environment="SANDBOX",
+        provider="revenuecat",
+        project="default",
+        verified_app_user_id="$RCAnonymousID:web",
+        entitlement_id="standard",
+        verified_at=utcnow(),
+    )
+    lead = _lead()
+    lead.locale = "en"
+    lead.off_plan_moment = moment
+    lead.snapshot = {
+        "gender": "female",
+        "height": 168,
+        "weight": 62,
+        "birth_year": 1995,
+        "birth_month": 4,
+        "birth_day": 20,
+        "job_type": "desk",
+        "training_days_per_week": 3,
+        "training_minutes_per_session": 45,
+        "goal": "recomp",
+    }
+
+    class Session:
+        def __init__(self):
+            # binding, user, email owner, profile, budget, subscription, preferences
+            self.scalars = iter([binding, None, None, None, None, None, None])
+            self.added = []
+
+        async def scalar(self, _statement):
+            return next(self.scalars)
+
+        async def get(self, _model, _identifier, **_kwargs):
+            return lead
+
+        def add(self, item):
+            self.added.append(item)
+
+        async def flush(self):
+            for item in self.added:
+                if isinstance(item, User):
+                    item.id = "11111111-1111-1111-1111-111111111111"
+
+        async def commit(self):
+            return None
+
+    session = Session()
+    await finalize_redemption(
+        session,
+        uid="google-user",
+        email="buyer@example.com",
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        idempotency_key="request-moment",
+        environment="SANDBOX",
+        auth_provider="google.com",
+    )
+
+    preferences = next(
+        item for item in session.added if isinstance(item, NotificationPreferencesORM)
+    )
+    assert getattr(preferences, field) == minutes
+    assert preferences.language == "en"
+    assert preferences.meal_reminders_enabled is True

@@ -278,6 +278,15 @@ class Settings(BaseSettings):
     WEB_FUNNEL_CLAIM_LINK_BASE_URL: str = Field(default="")
     WEB_FUNNEL_BFF_ORIGIN: str = Field(default="")
     WEB_FUNNEL_BFF_SHARED_SECRET: str = Field(default="")
+    # Reminder emails with a private plan link for unpaid English leads.
+    WEB_FUNNEL_PLAN_REMINDERS_ENABLED: bool = Field(default=False)
+    # e.g. https://quiz.nutreeai.com/plan ; the token travels in the fragment.
+    WEB_FUNNEL_PLAN_LINK_BASE_URL: str = Field(default="")
+    # e.g. https://quiz.nutreeai.com/unsubscribe
+    WEB_FUNNEL_UNSUBSCRIBE_BASE_URL: str = Field(default="")
+    WEB_FUNNEL_UNSUBSCRIBE_SECRET: str = Field(default="")
+    # Drain due outbox rows on a timer; webhooks alone never fire timed reminders.
+    WEB_FUNNEL_OUTBOX_WORKER_ENABLED: bool = Field(default=False)
     # Image storage provider configuration
     IMAGE_STORE_PROVIDER: str = Field(
         default="cloudflare",

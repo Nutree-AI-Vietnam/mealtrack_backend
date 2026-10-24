@@ -9,6 +9,11 @@ from src.app.services.web_funnel_claim_payment import (
     process_claim_email,
     process_revenuecat_reconcile,
 )
+from src.app.services.web_funnel_plan_reminders import (
+    REMINDER_JOB,
+    process_plan_reminder,
+    reminders_configured,
+)
 from src.infra.adapters.resend_email_adapter import ResendEmailAdapter
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.config.settings import settings
@@ -65,6 +70,16 @@ async def dispatch_web_funnel_outbox(
                     return result.success
 
                 await process_claim_email(session, row, send)
+                completed += 1
+            elif row.job_type == REMINDER_JOB and reminders_configured():
+
+                async def send_reminder(email: str, subject: str, html: str) -> bool:
+                    result = await adapter.send_email(
+                        email, subject, html, tags=["web-plan-reminder"]
+                    )
+                    return result.success
+
+                await process_plan_reminder(session, row, send_reminder)
                 completed += 1
             elif row.job_type == "revenuecat_reconcile":
                 await process_revenuecat_reconcile(session, row, RevenueCatAdapter())

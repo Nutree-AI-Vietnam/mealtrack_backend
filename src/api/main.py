@@ -261,6 +261,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("AI job worker failed to start")
 
+    from src.bootstrap.web_funnel_outbox_worker import start_web_funnel_outbox_worker
+
+    start_web_funnel_outbox_worker()
+
     # Re-probe Redis only from this task. Request handling must not ping.
     limiter.start_redis_probe()
     logger.info("MealTrack API started successfully!")
@@ -285,6 +289,10 @@ async def lifespan(app: FastAPI):
         await shutdown_ai_jobs()
     except Exception:
         logger.exception("AI job shutdown failed")
+
+    from src.bootstrap.web_funnel_outbox_worker import stop_web_funnel_outbox_worker
+
+    await stop_web_funnel_outbox_worker()
 
     # Late food-search work writes the cache and the catalog; finish it first.
     await drain_food_search_background_work()

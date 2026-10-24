@@ -1,6 +1,7 @@
 """Versioned request contracts for the paid web-funnel claim flow."""
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
@@ -46,6 +47,13 @@ class WebFunnelLeadCreateRequest(BaseModel):
 
     email: EmailStr
     payload: WebFunnelOnboardingSnapshot
+    # Display hints for reminder emails; never part of the onboarding snapshot.
+    locale: Literal["vi", "en"] | None = None
+    units: Literal["metric", "imperial"] | None = None
+    off_plan_moment: (
+        Literal["morning", "lunch", "evening", "late_night", "weekend", "eating_out"]
+        | None
+    ) = None
 
 
 class WebFunnelClaimExchangeRequest(BaseModel):
@@ -95,3 +103,20 @@ class WebFunnelRedemptionPreflightRequest(BaseModel):
     redemption_link_hash: str = Field(
         min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$"
     )
+
+
+class WebFunnelPlanLinkRedeemRequest(BaseModel):
+    """Opaque plan-link token from a reminder email, forwarded by the web BFF."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=32, max_length=512)
+
+
+class WebFunnelUnsubscribeRequest(BaseModel):
+    """Signed reminder opt-out forwarded by the web BFF."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lead_id: str = Field(min_length=36, max_length=36)
+    signature: str = Field(min_length=64, max_length=64)

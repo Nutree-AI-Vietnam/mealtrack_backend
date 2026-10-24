@@ -900,3 +900,87 @@ async def test_redemption_finalization_fills_email_from_admin_for_custom_jwt(
     assert response["access_status"] == "active"
     assert captured["email"] == "buyer@example.com"
     assert captured["auth_provider"] == "custom"
+
+
+class PlanLinkSession(FakeSession):
+    async def scalar(self, _statement):
+        return self.lead
+
+
+@pytest.mark.asyncio
+async def test_plan_link_binds_the_lead_to_the_new_browser(monkeypatch):
+    from datetime import timedelta
+
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_BFF_SHARED_SECRET", "bff-secret")
+    lead = _lead()
+    lead.plan_link_token_hash = web_funnel._hash("t" * 40)
+    lead.plan_link_expires_at = web_funnel.utcnow() + timedelta(days=1)
+    lead.locale, lead.display_units = "en", "imperial"
+    session = PlanLinkSession(lead)
+    response = await web_funnel.redeem_plan_link(
+        _request(),
+        web_funnel.WebFunnelPlanLinkRedeemRequest(token="t" * 40),
+        "n" * 32,
+        None,
+        "bff-secret",
+        session,
+    )
+    assert response["lead_id"] == "lead-1"
+    assert response["email"] == "buyer@example.com"
+    assert response["locale"] == "en"
+    assert lead.access_key_hash == web_funnel._hash("n" * 32)
+    assert session.committed
+
+
+@pytest.mark.asyncio
+async def test_expired_or_paid_plan_link_is_not_found(monkeypatch):
+    from datetime import timedelta
+
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_BFF_SHARED_SECRET", "bff-secret")
+    for status_value, expires in (("draft", -1), ("payment_verified", 1)):
+        lead = _lead()
+        lead.status = status_value
+        lead.plan_link_token_hash = web_funnel._hash("t" * 40)
+        lead.plan_link_expires_at = web_funnel.utcnow() + timedelta(days=expires)
+        with pytest.raises(HTTPException) as error:
+            await web_funnel.redeem_plan_link(
+                _request(),
+                web_funnel.WebFunnelPlanLinkRedeemRequest(token="t" * 40),
+                "n" * 32,
+                None,
+                "bff-secret",
+                PlanLinkSession(lead),
+            )
+        assert error.value.status_code == 404
+        assert lead.access_key_hash == web_funnel._hash("a" * 32)
+
+
+@pytest.mark.asyncio
+async def test_create_stores_display_hints_and_queues_english_reminders(monkeypatch):
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_BFF_SHARED_SECRET", "bff-secret")
+    monkeypatch.setattr(web_funnel, "reminders_configured", lambda: True)
+    payload = _payload().model_copy(update={"locale": "en", "units": "imperial"})
+    session = CreateSession(None)
+    await web_funnel.create_lead(_request(), payload, "a" * 32, "request-2", None, "bff-secret", session)
+    lead = next(item for item in session.added if isinstance(item, WebFunnelLead))
+    assert (lead.locale, lead.display_units) == ("en", "imperial")
+    keys = [item.idempotency_key for item in session.added if not isinstance(item, WebFunnelLead)]
+    assert keys == [f"plan_reminder:{n}:{lead.id}" for n in (1, 2, 3)]
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_requires_the_lead_signature(monkeypatch):
+    monkeypatch.setattr(web_funnel.settings, "WEB_FUNNEL_BFF_SHARED_SECRET", "bff-secret")
+    lead = _lead()
+    lead.id = "11111111-1111-1111-1111-111111111111"
+    from src.app.services.web_funnel_plan_reminders import unsubscribe_signature
+
+    with pytest.raises(HTTPException):
+        await web_funnel.unsubscribe_reminders(
+            _request(), web_funnel.WebFunnelUnsubscribeRequest(lead_id=lead.id, signature="0" * 64), None, "bff-secret", FakeSession(lead)
+        )
+    assert lead.reminders_unsubscribed_at is None
+    await web_funnel.unsubscribe_reminders(
+        _request(), web_funnel.WebFunnelUnsubscribeRequest(lead_id=lead.id, signature=unsubscribe_signature(lead.id)), None, "bff-secret", FakeSession(lead)
+    )
+    assert lead.reminders_unsubscribed_at is not None

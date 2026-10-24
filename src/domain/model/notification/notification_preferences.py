@@ -17,6 +17,15 @@ DEFAULT_MEAL_REMINDER_MINUTES = {
     "dinner": 1080,  # 6:00 PM
 }
 
+# The web funnel asks when eating goes off plan most; the first reminders meet that
+# moment a little earlier than the defaults. Weekends and eating out keep the defaults.
+OFF_PLAN_MOMENT_REMINDER_MINUTES: dict[str, dict[str, int]] = {
+    "morning": {"breakfast_time_minutes": 420},  # 7:00 AM, before the rush
+    "lunch": {"lunch_time_minutes": 660},  # 11:00 AM, before the lunch rush
+    "evening": {"dinner_time_minutes": 1050},  # 5:30 PM, before dinner
+    "late_night": {"daily_summary_time_minutes": 1200},  # 8:00 PM, before late snacking
+}
+
 # Map notification types to their corresponding preference fields
 NOTIFICATION_TYPE_TO_FIELD = {
     NotificationType.MEAL_REMINDER_BREAKFAST: "meal_reminders_enabled",

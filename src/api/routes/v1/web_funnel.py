@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import uuid
 from hmac import compare_digest
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -23,9 +24,11 @@ from src.api.schemas.request.web_funnel_claim_requests import (
     WebFunnelClaimCompleteRequest,
     WebFunnelClaimExchangeRequest,
     WebFunnelLeadCreateRequest,
+    WebFunnelPlanLinkRedeemRequest,
     WebFunnelRedemptionFinalizeRequest,
     WebFunnelRedemptionPreflightRequest,
     WebFunnelRevenueCatCorrelationRequest,
+    WebFunnelUnsubscribeRequest,
 )
 from src.app.services.web_funnel_claim_common import (
     RESEND_COOLDOWN,
@@ -37,6 +40,12 @@ from src.app.services.web_funnel_claim_common import (
 from src.app.services.web_funnel_claim_completion import complete_claim, recover_claim
 from src.app.services.web_funnel_claim_exchange import exchange_claim
 from src.app.services.web_funnel_claim_payment import next_claim_generation
+from src.app.services.web_funnel_plan_reminders import (
+    OPEN_STATUSES,
+    reminder_outbox_rows,
+    reminders_configured,
+    unsubscribe_signature_matches,
+)
 from src.app.services.web_funnel_redemption_verification import (
     RevenueCatVerificationState,
     verify_bound_web_customer,
@@ -161,6 +170,7 @@ async def create_lead(
 
     snapshot = payload.payload.model_dump(mode="json")
     lead = WebFunnelLead(
+        id=str(uuid.uuid4()),
         email=str(payload.email).lower(),
         access_key_hash=access_key_hash,
         request_id=request_id,
@@ -172,8 +182,14 @@ async def create_lead(
         status="draft",
         revision=1,
         access_sync_status="pending",
+        locale=payload.locale,
+        display_units=payload.units,
+        off_plan_moment=payload.off_plan_moment,
     )
     db.add(lead)
+    if payload.locale == "en" and reminders_configured():
+        for row in reminder_outbox_rows(lead.id, utcnow()):
+            db.add(row)
     try:
         await db.commit()
         await db.refresh(lead)
@@ -439,6 +455,68 @@ async def finalize_revenuecat_redemption(
         auth_provider=provider,
         expires_at=standard_expires_at(subscriber),
     )
+
+
+@router.post("/plan-links/redeem")
+@limiter.limit("10/minute")
+async def redeem_plan_link(
+    request: Request,
+    payload: WebFunnelPlanLinkRedeemRequest,
+    access_key: str | None = Header(default=None, alias="X-Lead-Access-Key"),
+    origin: str | None = Header(default=None, alias="Origin"),
+    bff_credential: str | None = Header(default=None, alias="X-Web-Funnel-BFF-Token"),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Open an emailed plan on any device by binding the lead to this browser.
+
+    The newest emailed link is the only one that works, and only while the lead
+    is unpaid. Binding the new access key ends the old browser's draft session.
+    """
+    _require_bff_request(origin, bff_credential)
+    access_key_hash = _require_access_key(access_key)
+    lead = await db.scalar(
+        select(WebFunnelLead)
+        .where(WebFunnelLead.plan_link_token_hash == _hash(payload.token))
+        .with_for_update()
+    )
+    if (
+        not lead
+        or lead.status not in OPEN_STATUSES
+        or lead.plan_link_expires_at is None
+        or lead.plan_link_expires_at <= utcnow()
+    ):
+        raise claim_not_found()
+    lead.access_key_hash = access_key_hash
+    await db.commit()
+    return {
+        **_projection(lead),
+        "email": lead.email,
+        "snapshot": lead.snapshot,
+        "locale": lead.locale,
+        "units": lead.display_units,
+    }
+
+
+@router.post("/unsubscribe")
+@limiter.limit("10/minute")
+async def unsubscribe_reminders(
+    request: Request,
+    payload: WebFunnelUnsubscribeRequest,
+    origin: str | None = Header(default=None, alias="Origin"),
+    bff_credential: str | None = Header(default=None, alias="X-Web-Funnel-BFF-Token"),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Stop plan reminders for one lead; the link carries a signature, not a session."""
+    _require_bff_request(origin, bff_credential)
+    if not unsubscribe_signature_matches(payload.lead_id, payload.signature):
+        raise claim_not_found()
+    lead = await db.get(WebFunnelLead, payload.lead_id, with_for_update=True)
+    if not lead:
+        raise claim_not_found()
+    if lead.reminders_unsubscribed_at is None:
+        lead.reminders_unsubscribed_at = utcnow()
+        await db.commit()
+    return {"status": "unsubscribed"}
 
 
 @router.post("/leads/{lead_id}/resend")
