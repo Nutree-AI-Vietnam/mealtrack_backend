@@ -16,9 +16,12 @@ from sqlalchemy import (
 
 from src.infra.database.base import Base
 
-# Matches the table created before this ORM existed (naive timestamps, varchar
-# token). Only rows with last_registered_at were registered by this API and are
-# safe to push to.
+# Matches the table created before this ORM existed (varchar token). Migration
+# 008 gave it naive timestamps that default to now(), but databases built by
+# create_all from the model removed in August, staging among them, have
+# timestamptz columns with no default. So the Python-side defaults put both
+# timestamps in every INSERT. Only rows with last_registered_at were registered
+# by this API and are safe to push to.
 FCM_TOKEN_MAX_LENGTH = 1024
 
 
@@ -26,9 +29,15 @@ class UserFcmTokenORM(Base):
     __tablename__ = "user_fcm_tokens"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    created_at = Column(DateTime(), nullable=False, server_default=func.now())
+    created_at = Column(
+        DateTime(), nullable=False, default=func.now(), server_default=func.now()
+    )
     updated_at = Column(
-        DateTime(), nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
     )
     user_id = Column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False

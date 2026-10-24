@@ -500,6 +500,14 @@ class Settings(BaseSettings):
     OPEN_WEARABLES_API_KEY: str = Field(default="")
     OPEN_WEARABLES_APP_ID: str = Field(default="")
     OPEN_WEARABLES_APP_SECRET: str = Field(default="")
+    OPEN_WEARABLES_PROVIDERS: str = Field(
+        default="",
+        description=(
+            "Comma-separated cloud providers whose sign-in app is registered "
+            "in Open Wearables, e.g. 'google_health,garmin'. Others are "
+            "listed as not available yet."
+        ),
+    )
 
     @field_validator("CLOUDFLARE_CUSTOM_DOMAIN", mode="before")
     @classmethod
