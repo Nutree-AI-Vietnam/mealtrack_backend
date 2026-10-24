@@ -162,9 +162,10 @@ class OpenWearablesClient:
         raise OpenWearablesError("Open Wearables answered 404 without naming the user")
 
     async def activity_day(
-        self, user_id: str, day: str, provider: str
+        self, user_id: str, bounds: tuple[str, str], provider: str
     ) -> tuple[int, float]:
         # A chosen watch can lose the daily summary contest, so read its samples.
+        start_time, end_time = bounds
         steps_samples: list[float] = []
         energy_samples: list[float] = []
         daily_steps: list[float] = []
@@ -172,8 +173,8 @@ class OpenWearablesClient:
         cursor: str | None = None
         for _ in range(20):
             params: dict[str, Any] = {
-                "start_time": f"{day}T00:00:00Z",
-                "end_time": f"{day}T23:59:59Z",
+                "start_time": start_time,
+                "end_time": end_time,
                 "types": ["steps", "active_energy"],
                 "provider": provider,
                 "limit": 1000,
@@ -215,14 +216,15 @@ class OpenWearablesClient:
         return int(round(sum(steps))), float(sum(energy))
 
     async def workouts_on_day(
-        self, user_id: str, day: str, provider: str
+        self, user_id: str, bounds: tuple[str, str], provider: str
     ) -> list[dict[str, object]]:
+        start_date, end_date = bounds
         payload = await self._request(
             "GET",
             f"/api/v1/users/{user_id}/events/workouts",
             params={
-                "start_date": f"{day}T00:00:00Z",
-                "end_date": f"{day}T23:59:59Z",
+                "start_date": start_date,
+                "end_date": end_date,
                 "provider": provider,
                 "limit": 20,
             },
