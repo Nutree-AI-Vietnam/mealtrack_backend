@@ -18,6 +18,9 @@ from src.app.events.hydration.hydration_caloric_deleted_event import (
 from src.app.events.hydration.hydration_deleted_event import (
     HydrationDeletedEvent,
 )
+from src.app.events.hydration.local_cache_invalidation import (
+    invoke_local_hydration_cache_invalidation_hook,
+)
 from src.app.events.meal.meal_events import (
     MealDeletedEvent,
     invoke_local_cache_invalidation_hook,
@@ -167,7 +170,14 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
             )
 
         if log_date is not None:
-            await invoke_local_cache_invalidation_hook(command.user_id, log_date, None)
+            if deleted_kind == "hydration":
+                await invoke_local_hydration_cache_invalidation_hook(
+                    command.user_id, log_date
+                )
+            else:
+                await invoke_local_cache_invalidation_hook(
+                    command.user_id, log_date, None
+                )
 
         return {
             "meal_id": command.meal_id,

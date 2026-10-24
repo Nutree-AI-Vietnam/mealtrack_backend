@@ -4,6 +4,9 @@ from typing import Any
 from src.api.exceptions import AuthorizationException, ResourceNotFoundException
 from src.app.commands.movement import DeleteMovementEntryCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.movement.local_cache_invalidation import (
+    invoke_local_movement_cache_invalidation_hook,
+)
 from src.app.events.movement.movement_deleted_event import MovementDeletedEvent
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
@@ -64,5 +67,6 @@ class DeleteMovementEntryCommandHandler(EventHandler[DeleteMovementEntryCommand,
             integration_event.event_id,
             integration_event.aggregate_id,
         )
+        await invoke_local_movement_cache_invalidation_hook(cmd.user_id, log_date)
 
         return {}

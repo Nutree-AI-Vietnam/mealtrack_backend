@@ -10,6 +10,7 @@ DE_STORY = {
     "intro.big_unit.meals": "/ {n} Mahlzeiten erfasst",
     "intro.big_unit.days": "/ {n} Tage",
     "low_data.title": "Eine ruhige Woche.",
+    "low_data.title.named": "Eine ruhige Woche, {name}.",
     "low_data.sub": (
         "Nur wenige Mahlzeiten wurden erfasst, daher kann Nutree noch kein "
         "vollständiges Bild zeigen."
@@ -18,17 +19,20 @@ DE_STORY = {
     "low_data.chip": "Ab {n} Mahlzeiten gibt es den vollen Rückblick",
     "first_week.eyebrow": "Deine erste Woche mit Nutree",
     "first_week.title": "Erste Woche geschafft!",
+    "first_week.title.named": "Erste Woche geschafft, {name}!",
     "first_week.sub": "Du hast den Anfang gemacht. Das hat Nutree über dich gelernt.",
     "first_week.label": "Du hast losgelegt",
     "first_week.chip": "Neues Abzeichen: Erste Woche",
     "comeback.eyebrow": "Willkommen zurück",
     "comeback.title": "Du bist zurück.",
+    "comeback.title.named": "Du bist zurück, {name}.",
     "comeback.sub": (
         "Diese Woche hast du wieder angefangen. Das allein ist schon großartig."
     ),
     "comeback.label": "Diese Woche",
     "comeback.chip": "Deine {n}-Tage-Serie läuft",
     "tough.title": "Eine harte Woche. Das ist okay.",
+    "tough.title.named": "Eine harte Woche, {name}. Das ist okay.",
     "tough.sub": (
         "Solche Wochen gehören dazu. Schauen wir, was geholfen hat und was "
         "dich gebremst hat."
@@ -36,19 +40,27 @@ DE_STORY = {
     "tough.label": "Du bist drangeblieben",
     "tough.chip": "Du hast nicht aufgegeben, und das zählt",
     "perfect.title": "Diese Woche hattest du alles im Griff.",
+    "perfect.title.named": "{name}, diese Woche hattest du alles im Griff.",
     "perfect.sub": "Jedes Ziel erreicht. Das ist selten.",
+    "perfect.sub.dish": "Jedes Ziel erreicht, mit {dish} {n}-mal auf dem Teller.",
     "perfect.label": "Du warst richtig konsequent",
     "perfect.chip.first": "Deine erste perfekte Woche",
     "perfect.chip.nth": "Perfekte Woche Nr. {n}",
     "bulk.title": "Deine Muskelaufbau-Woche im Rückblick.",
+    "bulk.title.named": "{name}, deine Muskelaufbau-Woche im Rückblick.",
     "bulk.sub": "Du legst das Fundament. Hier ist deine Woche.",
+    "bulk.sub.dish": "Angetrieben von {dish}, {n}-mal. Hier ist deine Woche.",
     "bulk.label": "Du warst richtig konsequent",
     "bulk.chip": "{n} Einheiten Krafttraining",
     "bulk.chip.one": "{n} Einheit Krafttraining",
     "bulk.chip.record": "{n} Einheiten Krafttraining, dein neuer Rekord",
     "bulk.chip.record.one": "{n} Einheit Krafttraining, dein neuer Rekord",
     "steady.title": "Deine Woche im Rückblick.",
+    "steady.title.named": "{name}, deine Woche im Rückblick.",
     "steady.sub": "Was gut lief, was nicht und was du als Nächstes probieren kannst.",
+    "steady.sub.dish": (
+        "{dish} war dein Favorit, {n}-mal. Hier ist der Rest deiner Woche."
+    ),
     "steady.label": "Du warst richtig konsequent",
     "steady.chip.streak": "{n}-Tage-Serie",
     "steady.chip.streak_record": "{n}-Tage-Serie, dein Rekord",

@@ -8,6 +8,7 @@ from src.api.routes.v1 import web_funnel_redemption_session as session_route
 from src.api.schemas.request.web_funnel_claim_requests import (
     WebFunnelRedemptionPreflightRequest,
 )
+from src.app.services.web_funnel_claim_common import utcnow
 from src.infra.database.models.user.user import User
 from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
@@ -84,7 +85,7 @@ def _binding(**extra):
         verified_app_user_id="$RCAnonymousID:x",
         entitlement_id="standard",
         product_id="web_monthly",
-        verified_at=session_route.utcnow(),
+        verified_at=utcnow(),
         redemption_link_hash="a" * 64,
         **extra,
     )

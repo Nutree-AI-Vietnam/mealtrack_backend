@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.domain.services.weekly_recap.compare import WATER, WORKOUTS, trend
 from src.domain.services.weekly_recap.context import RecapContext
 from src.domain.services.weekly_recap.types import Card, Insight
 from src.domain.services.weekly_recap.viz import card, dots
@@ -56,6 +57,7 @@ def _moving_card(ctx: RecapContext) -> Card:
             min=ctx.num(sum(workout.minutes for workout in stats.workouts)),
         ),
         viz=dots(facts.workout_days),
+        trend=trend(ctx, WORKOUTS, good_only=True),
     )
 
 
@@ -69,6 +71,7 @@ def _water_hit_card(ctx: RecapContext) -> Card:
         unit=ctx.t("card.unit.per_day_avg"),
         note=ctx.t("water_hit.note", n=facts.water_days_hit, d=facts.week_days),
         viz=dots(facts.water_hit_days),
+        trend=trend(ctx, WATER, good_only=True),
     )
 
 

@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from src.infra.adapters.open_wearables_sync_runs import summarize_sync_runs
+
 
 class OpenWearablesError(Exception):
     """Open Wearables rejected or failed a request."""
@@ -59,12 +61,24 @@ def _number(raw: object) -> float:
     return value if math.isfinite(value) else 0.0
 
 
-def choose_activity_row(rows: list[dict[str, Any]], provider: str) -> dict[str, Any] | None:
+def _names_missing_user(response: httpx.Response, user_id: str) -> bool:
+    """True for Open Wearables' own missing-user reply, which names the id."""
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        return False
+    if not isinstance(detail, str):
+        return False
+    text = detail.lower()
+    return user_id.lower() in text and "not found" in text
+
+
+def choose_activity_row(
+    rows: list[dict[str, Any]], provider: str
+) -> dict[str, Any] | None:
     """One daily row for the chosen provider. Summing sources double-counts steps."""
     matching = [
-        row
-        for row in rows
-        if (row.get("source") or {}).get("provider") == provider
+        row for row in rows if (row.get("source") or {}).get("provider") == provider
     ]
     if not matching:
         return None
@@ -102,7 +116,9 @@ class OpenWearablesClient:
         )
         url = payload.get("authorization_url")
         if not isinstance(url, str) or not url:
-            raise OpenWearablesError("Open Wearables did not return an authorization URL")
+            raise OpenWearablesError(
+                "Open Wearables did not return an authorization URL"
+            )
         return url
 
     async def connections(self, user_id: str) -> list[dict[str, str]]:
@@ -119,8 +135,37 @@ class OpenWearablesClient:
                 rows.append({"provider": provider, "status": status})
         return rows
 
-    async def activity_day(self, user_id: str, day: str, provider: str) -> tuple[int, float]:
+    async def sync_states(self, user_id: str) -> dict[str, dict[str, str | None]]:
+        """Newest sync outcome per provider over the last 24 hours."""
+        payload = await self._request(
+            "GET",
+            f"/api/v1/users/{user_id}/sync/runs",
+            params={"limit": 50},
+        )
+        return summarize_sync_runs(payload)
+
+    async def disconnect(self, user_id: str, provider: str) -> bool:
+        """Revoke the provider sign-in and delete the data synced from it.
+
+        Returns False when Open Wearables has no connection for this user and
+        provider. Any other 404 raises, as for ``delete_user``.
+        """
+        response = await self._send(
+            "DELETE",
+            f"/api/v1/users/{user_id}/connections/{provider}/data",
+            missing_ok=True,
+        )
+        if response.status_code != httpx.codes.NOT_FOUND:
+            return True
+        if _names_missing_user(response, user_id):
+            return False
+        raise OpenWearablesError("Open Wearables answered 404 without naming the user")
+
+    async def activity_day(
+        self, user_id: str, bounds: tuple[str, str], provider: str
+    ) -> tuple[int, float]:
         # A chosen watch can lose the daily summary contest, so read its samples.
+        start_time, end_time = bounds
         steps_samples: list[float] = []
         energy_samples: list[float] = []
         daily_steps: list[float] = []
@@ -128,8 +173,8 @@ class OpenWearablesClient:
         cursor: str | None = None
         for _ in range(20):
             params: dict[str, Any] = {
-                "start_time": f"{day}T00:00:00Z",
-                "end_time": f"{day}T23:59:59Z",
+                "start_time": start_time,
+                "end_time": end_time,
                 "types": ["steps", "active_energy"],
                 "provider": provider,
                 "limit": 1000,
@@ -154,23 +199,32 @@ class OpenWearablesClient:
                     (daily_steps if daily else steps_samples).append(value)
                 elif row.get("type") == "active_energy":
                     (daily_energy if daily else energy_samples).append(value)
-            pagination = payload.get("pagination") if isinstance(payload, dict) else None
-            cursor = pagination.get("next_cursor") if isinstance(pagination, dict) else None
-            if not isinstance(pagination, dict) or not pagination.get("has_more") or not cursor:
+            pagination = (
+                payload.get("pagination") if isinstance(payload, dict) else None
+            )
+            cursor = (
+                pagination.get("next_cursor") if isinstance(pagination, dict) else None
+            )
+            if (
+                not isinstance(pagination, dict)
+                or not pagination.get("has_more")
+                or not cursor
+            ):
                 break
         steps = daily_steps or steps_samples
         energy = daily_energy or energy_samples
         return int(round(sum(steps))), float(sum(energy))
 
     async def workouts_on_day(
-        self, user_id: str, day: str, provider: str
+        self, user_id: str, bounds: tuple[str, str], provider: str
     ) -> list[dict[str, object]]:
+        start_date, end_date = bounds
         payload = await self._request(
             "GET",
             f"/api/v1/users/{user_id}/events/workouts",
             params={
-                "start_date": f"{day}T00:00:00Z",
-                "end_date": f"{day}T23:59:59Z",
+                "start_date": start_date,
+                "end_date": end_date,
                 "provider": provider,
                 "limit": 20,
             },
@@ -185,6 +239,22 @@ class OpenWearablesClient:
                 workouts.append(parsed)
         return workouts
 
+    async def delete_user(self, user_id: str) -> bool:
+        """Delete the user, their synced data and provider tokens.
+
+        Returns False when Open Wearables reports that this user does not
+        exist, so a retried deletion can finish. Any other 404, such as a
+        wrong path behind a proxy, raises: it does not show the data is gone.
+        """
+        response = await self._send(
+            "DELETE", f"/api/v1/users/{user_id}", missing_ok=True
+        )
+        if response.status_code != httpx.codes.NOT_FOUND:
+            return True
+        if _names_missing_user(response, user_id):
+            return False
+        raise OpenWearablesError("Open Wearables answered 404 without naming the user")
+
     async def _request(
         self,
         method: str,
@@ -193,6 +263,21 @@ class OpenWearablesClient:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
+        response = await self._send(method, path, json=json, params=params)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise OpenWearablesError("Open Wearables returned invalid JSON") from exc
+
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        missing_ok: bool = False,
+    ) -> httpx.Response:
         try:
             async with httpx.AsyncClient(
                 transport=self._transport,
@@ -205,10 +290,8 @@ class OpenWearablesClient:
                     json=json,
                     params=params,
                 )
-                response.raise_for_status()
+                if not (missing_ok and response.status_code == httpx.codes.NOT_FOUND):
+                    response.raise_for_status()
         except httpx.HTTPError as exc:
             raise OpenWearablesError("Open Wearables request failed") from exc
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise OpenWearablesError("Open Wearables returned invalid JSON") from exc
+        return response

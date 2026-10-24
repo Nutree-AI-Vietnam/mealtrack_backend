@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +49,12 @@ class AsyncWeeklyRecapRepository(WeeklyRecapRepositoryPort):
         inserted = result.scalar_one_or_none() is not None
         await self.session.flush()
         return inserted
+
+    async def delete_for_user(self, user_id: str) -> int:
+        result = await self.session.execute(
+            delete(WeeklyRecapORM).where(WeeklyRecapORM.user_id == user_id)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def count_cases_before(self, user_id: str, before: date) -> dict[str, int]:
         result = await self.session.execute(

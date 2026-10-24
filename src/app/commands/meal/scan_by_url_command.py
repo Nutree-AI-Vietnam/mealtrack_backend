@@ -20,3 +20,5 @@ class ScanByUrlCommand(Command):
     label_crop_image_url: str | None = None
     label_crop_public_id: str | None = None
     crop_metadata: dict | None = None
+    # Set by background jobs so a retried attempt saves the same meal row.
+    meal_id: str | None = None

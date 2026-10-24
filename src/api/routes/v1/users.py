@@ -325,6 +325,9 @@ async def delete_user_account(
     - Soft deletes user in database (sets is_active=False)
     - Anonymizes user data for GDPR compliance
     - Queues Firebase token revocation and account deletion after the SQL commit
+    - Then deletes the linked Open Wearables user. If Open Wearables fails, the
+      account stays deleted and the link is kept for
+      `scripts/retry_open_wearables_deletions.py`
 
     This action cannot be undone. All user data will be anonymized and
     the account will be marked as inactive.

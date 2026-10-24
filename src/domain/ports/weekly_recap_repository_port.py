@@ -26,6 +26,15 @@ class WeeklyRecapRepositoryPort(ABC):
         pass
 
     @abstractmethod
+    async def delete_for_user(self, user_id: str) -> int:
+        """Delete every recap of the user, e.g. when the account is deleted.
+
+        Returns:
+            How many recaps were deleted.
+        """
+        pass
+
+    @abstractmethod
     async def count_cases_before(self, user_id: str, before: date) -> dict[str, int]:
         """Count the user's recaps per story for weeks starting before ``before``.
 

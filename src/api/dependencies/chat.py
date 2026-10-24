@@ -56,6 +56,7 @@ def get_chat_turn_orchestrator() -> ChatTurnOrchestrator:
         embedding = OpenAIChatEmbeddingAdapter(
             api_key=api_key,
             model=settings.CHAT_EMBEDDING_MODEL,
+            max_retries=0,
         )
     else:
         completion = _UnavailableCompletion()

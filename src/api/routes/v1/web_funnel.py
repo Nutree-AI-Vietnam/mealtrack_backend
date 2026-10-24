@@ -1,12 +1,9 @@
 """Possession-bound pre-checkout lead and claim endpoints."""
 
-import hashlib
-import json
 from hmac import compare_digest
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import (
@@ -28,34 +25,31 @@ from src.api.schemas.request.web_funnel_claim_requests import (
     WebFunnelRevenueCatCorrelationRequest,
 )
 from src.app.services.web_funnel_claim_common import (
-    RESEND_COOLDOWN,
-    claim_conflict,
     claim_not_found,
     standard_expires_at,
     utcnow,
 )
 from src.app.services.web_funnel_claim_completion import complete_claim, recover_claim
 from src.app.services.web_funnel_claim_exchange import exchange_claim
-from src.app.services.web_funnel_claim_payment import next_claim_generation
+from src.app.services.web_funnel_leads import (
+    bind_revenuecat_customer,
+    create_or_replay_lead,
+    queue_claim_resend,
+    require_access_key_hash,
+    revoke_lead,
+)
 from src.app.services.web_funnel_redemption_verification import (
     RevenueCatVerificationState,
-    verify_bound_web_customer,
     verify_redeemed_customer,
 )
 from src.infra.config.settings import settings
 from src.infra.database.config_async import get_async_db
 from src.infra.database.models.web_funnel_claim import (
-    WebFunnelClaim,
     WebFunnelLead,
-    WebFunnelOutbox,
     WebFunnelRedemption,
 )
 
 router = APIRouter(prefix="/v1/web-funnel", tags=["Web Funnel"])
-
-
-def _hash(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _masked_email(email: str) -> str:
@@ -88,14 +82,6 @@ def _require_bff_request(origin: str | None, credential: str | None) -> None:
         and origin != settings.WEB_FUNNEL_BFF_ORIGIN
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-
-
-def _require_access_key(key: str | None) -> str:
-    if not key or len(key) < 32:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
-        )
-    return _hash(key)
 
 
 def _require_fresh_token(token: dict) -> None:
@@ -145,49 +131,18 @@ async def create_lead(
 ):
     """Create/replay a lead without exposing raw email or a browser capability."""
     _require_bff_request(origin, bff_credential)
-    access_key_hash = _require_access_key(access_key)
+    access_key_hash = require_access_key_hash(access_key)
     if not request_id or len(request_id) > 128:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request"
         )
-
-    existing = await db.scalar(
-        select(WebFunnelLead).where(WebFunnelLead.request_id == request_id)
-    )
-    if existing:
-        if compare_digest(existing.access_key_hash, access_key_hash):
-            return _projection(existing)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-
-    snapshot = payload.payload.model_dump(mode="json")
-    lead = WebFunnelLead(
-        email=str(payload.email).lower(),
+    lead = await create_or_replay_lead(
+        db,
+        email=str(payload.email),
         access_key_hash=access_key_hash,
         request_id=request_id,
-        snapshot_version="web_onboarding_snapshot_v1",
-        snapshot=snapshot,
-        snapshot_hash=_hash(
-            json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
-        ),
-        status="draft",
-        revision=1,
-        access_sync_status="pending",
+        snapshot=payload.payload.model_dump(mode="json"),
     )
-    db.add(lead)
-    try:
-        await db.commit()
-        await db.refresh(lead)
-    except IntegrityError:
-        await db.rollback()
-        existing = await db.scalar(
-            select(WebFunnelLead).where(WebFunnelLead.request_id == request_id)
-        )
-        if existing and compare_digest(existing.access_key_hash, access_key_hash):
-            return _projection(existing)
-        raise claim_not_found() from None
-    except Exception:
-        await db.rollback()
-        raise
     return _projection(lead)
 
 
@@ -200,17 +155,7 @@ async def reset_lead(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Revoke the browser capability's unpaid draft without revealing ownership."""
-    lead = await db.get(WebFunnelLead, lead_id, with_for_update=True)
-    if not lead or not compare_digest(
-        lead.access_key_hash, _require_access_key(access_key)
-    ):
-        raise claim_not_found()
-    if lead.status not in {"draft", "checkout_started"}:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Lead unavailable"
-        )
-    lead.revoked_at, lead.status = utcnow(), "revoked"
-    await db.commit()
+    await revoke_lead(db, lead_id, access_key)
     return {"status": "revoked"}
 
 
@@ -223,7 +168,7 @@ async def get_lead_status(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return only a possession-bound, safe lead status projection."""
-    access_key_hash = _require_access_key(access_key)
+    access_key_hash = require_access_key_hash(access_key)
     lead = await db.get(WebFunnelLead, lead_id)
     if not lead or not compare_digest(lead.access_key_hash, access_key_hash):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
@@ -248,59 +193,15 @@ async def correlate_revenuecat_customer(
         or not settings.REVENUECAT_SECRET_API_KEY
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    lead = await db.get(WebFunnelLead, lead_id, with_for_update=True)
-    if not lead or not compare_digest(
-        lead.access_key_hash, _require_access_key(access_key)
-    ):
-        raise claim_not_found()
-    subscriber = await _get_web_funnel_subscription_service().get_subscriber_info(
-        payload.app_user_id
+    lead = await bind_revenuecat_customer(
+        db,
+        _get_web_funnel_subscription_service(),
+        lead_id,
+        access_key,
+        app_user_id=payload.app_user_id,
+        redemption_link_hash=payload.redemption_link_hash,
+        environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
     )
-    verification = verify_bound_web_customer(
-        subscriber,
-        original_app_user_id=payload.app_user_id,
-    )
-    if verification.state is not RevenueCatVerificationState.VERIFIED:
-        raise claim_not_found()
-    existing = await db.scalar(
-        select(WebFunnelRedemption)
-        .where(WebFunnelRedemption.lead_id == lead.id)
-        .with_for_update()
-    )
-    if existing:
-        if (
-            existing.original_app_user_id != payload.app_user_id
-            or existing.environment != settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT
-        ):
-            raise claim_conflict()
-    else:
-        existing = WebFunnelRedemption(
-            lead_id=lead.id,
-            provider="revenuecat",
-            environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
-            project="default",
-            original_app_user_id=payload.app_user_id,
-            verified_app_user_id=payload.app_user_id,
-            entitlement_id="standard",
-            product_id=verification.product_id or "",
-            verified_at=utcnow(),
-            redemption_link_hash=payload.redemption_link_hash,
-        )
-        db.add(existing)
-    if (
-        existing.redemption_link_hash
-        and existing.redemption_link_hash != payload.redemption_link_hash
-    ):
-        raise claim_conflict()
-    existing.redemption_link_hash = payload.redemption_link_hash
-    lead.payment_verified_at = utcnow()
-    if lead.status in {"draft", "checkout_started"}:
-        lead.status = "payment_verified"
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        raise claim_conflict() from None
     return _projection(lead)
 
 
@@ -451,51 +352,8 @@ async def resend_claim(
 ):
     """Queue a fresh link generation; old unconsumed credentials are revoked."""
     _require_legacy_claim_enabled()
-    lead = await db.get(WebFunnelLead, lead_id, with_for_update=True)
-    if not lead or not compare_digest(
-        lead.access_key_hash, _require_access_key(access_key)
-    ):
-        raise claim_not_found()
-    if lead.status not in {"payment_verified", "email_queued", "claim_reserved"}:
-        raise claim_not_found()
-    claims = (
-        await db.scalars(
-            select(WebFunnelClaim)
-            .where(WebFunnelClaim.lead_id == lead.id)
-            .order_by(WebFunnelClaim.generation.desc())
-            .with_for_update()
-        )
-    ).all()
-    latest = claims[0] if claims else None
-    if latest and latest.created_at + RESEND_COOLDOWN > utcnow():
-        return {
-            **_projection(lead),
-            "retry_after_seconds": int(
-                (latest.created_at + RESEND_COOLDOWN - utcnow()).total_seconds()
-            ),
-        }
-    for claim in claims:
-        if not claim.consumed_at and not claim.revoked_at:
-            claim.revoked_at = utcnow()
-    generation = await next_claim_generation(db, lead.id)
-    # The worker generates the raw link only in memory and persists its hash after
-    # sending. Neither this outbox nor any request payload can leak the secret.
-    db.add(
-        WebFunnelOutbox(
-            idempotency_key=f"claim-email:{lead.id}:{generation}",
-            job_type="claim_email",
-            payload={"lead_id": lead.id, "generation": generation},
-            status="pending",
-            attempts=0,
-            next_attempt_at=utcnow(),
-        )
-    )
-    lead.status = "email_queued"
-    await db.commit()
-    return {
-        **_projection(lead),
-        "retry_after_seconds": int(RESEND_COOLDOWN.total_seconds()),
-    }
+    lead, retry_after_seconds = await queue_claim_resend(db, lead_id, access_key)
+    return {**_projection(lead), "retry_after_seconds": retry_after_seconds}
 
 
 @router.post("/claims/exchange")

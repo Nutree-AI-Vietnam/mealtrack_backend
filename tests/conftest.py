@@ -267,7 +267,7 @@ class TestMealRepository:
         user_id: str,
         start_date: date,
         end_date: date,
-        limit: int = 500,
+        limit: int | None = None,
         user_timezone: str | None = None,
         projection: MealProjection = MealProjection.FULL,
     ) -> list[Meal]:
@@ -923,6 +923,31 @@ def reset_event_bus_singleton():
 
     # Reset singleton after test
     event_bus_module._configured_event_bus = None
+
+
+@pytest.fixture(autouse=True)
+def keep_rate_limiter_in_memory(monkeypatch):
+    """
+    Keep the shared rate limiter on in-memory counters during tests.
+
+    Importing src.api.main runs limiter.configure(settings.redis_url), and many
+    tests re-import it, so configure() ignores the URL here. Otherwise the
+    limiter counts requests in, and reset_limiter_counters() deletes LIMITS:*
+    keys from, whatever Redis the settings name (localhost:6379 by default,
+    where the dev Docker Redis listens). Tests that exercise Redis build their
+    own limiter with create_limiter().
+    """
+    from src.api.middleware.rate_limit import RateLimitGuard, limiter
+
+    def configure_in_memory(storage_uri, **options):
+        RateLimitGuard.configure(limiter, None, **options)
+
+    monkeypatch.setattr(limiter, "configure", configure_in_memory)
+    limiter.configure(None)
+
+    yield
+
+    limiter.configure(None)
 
 
 @pytest.fixture

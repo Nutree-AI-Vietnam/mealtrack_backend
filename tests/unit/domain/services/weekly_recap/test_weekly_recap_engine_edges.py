@@ -242,7 +242,7 @@ def test_weekend_card_averages_only_the_days_it_names() -> None:
     weekend = _card(generate_recap(stats)["grow"], "calories")
 
     assert weekend["count"] == 700
-    assert weekend["note"] == "Sat & Sun, mostly from eating out."
+    assert weekend["note"] == "Over target on Sat & Sun."
 
 
 def test_fiber_note_names_every_lunch_when_all_lacked_veggies() -> None:

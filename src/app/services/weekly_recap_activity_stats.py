@@ -11,6 +11,7 @@ from src.domain.model.hydration.hydration_entry import HydrationEntry
 from src.domain.model.movement.movement_entry import MovementEntry
 from src.domain.model.weekly_recap import Workout
 from src.domain.model.weight.weight_entry import WeightEntry
+from src.domain.services.hydration_catalog_service import find_by_id
 from src.domain.services.weekly_recap import goal_progress, monday_of
 from src.domain.utils.timezone_utils import ensure_utc
 
@@ -82,6 +83,29 @@ def sugary_drinks(
     """Drinks with at least ``min_sugar_g`` of sugar, and their total kcal."""
     sugary = [entry for entry in entries if (entry.sugar_g or 0.0) >= min_sugar_g]
     return len(sugary), round(sum(entry.calories for entry in sugary))
+
+
+def top_sugary_drink(
+    entries: Iterable[HydrationEntry], min_sugar_g: float
+) -> str | None:
+    """The sugary drink behind more than half of the week's sugary drinks.
+
+    Catalog drinks are counted by drink id and named by their catalog name,
+    which the recap translates; custom drinks by their whitespace-tidied
+    name. None without a clear favourite.
+    """
+    drinks: Counter[str] = Counter()
+    for entry in entries:
+        if (entry.sugar_g or 0.0) < min_sugar_g:
+            continue
+        catalog = find_by_id(entry.drink_id) if entry.drink_id else None
+        name = catalog.name if catalog else " ".join(entry.drink_name_snapshot.split())
+        if name:
+            drinks[name] += 1
+    if not drinks:
+        return None
+    name, count = drinks.most_common(1)[0]
+    return name if count * 2 > drinks.total() else None
 
 
 def weight_progress(

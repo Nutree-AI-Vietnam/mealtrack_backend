@@ -2,20 +2,30 @@
 Unit tests for DeleteUserCommandHandler.
 """
 
+import logging
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tests.conftest import TestUserRepository
+from tests.fixtures.fakes.fake_weekly_recap_repository import (
+    FakeWeeklyRecapRepository,
+)
 
 from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.user import DeleteUserCommand
 from src.app.handlers.command_handlers.delete_user_command_handler import (
     DeleteUserCommandHandler,
 )
+from src.domain.model.weekly_recap import WeeklyRecap
+from src.infra.adapters.open_wearables_client import OpenWearablesClient
 from src.infra.database.base import Base
 from src.infra.database.models.user import User
+
+OW_USER_ID = "7d3f0c1e-2a4b-4c5d-8e9f-0a1b2c3d4e5f"
 
 
 class AsyncSqliteBulkSession:
@@ -35,6 +45,7 @@ class AsyncSqliteUserRepository:
     """Async test double for user repository calls used by delete-user."""
 
     def __init__(self, session):
+        self._session = session
         self._repo = TestUserRepository(session)
 
     async def find_by_firebase_uid(self, *args, **kwargs):
@@ -48,6 +59,15 @@ class AsyncSqliteUserRepository:
 
     async def delete(self, *args, **kwargs):
         return self._repo.delete(*args, **kwargs)
+
+    async def find_open_wearables_user_id(self, user_id):
+        user = self._session.get(User, str(user_id))
+        return user.open_wearables_user_id if user else None
+
+    async def clear_open_wearables_user_id(self, user_id):
+        self._session.query(User).filter(User.id == str(user_id)).update(
+            {"open_wearables_user_id": None}
+        )
 
 
 class DummyUnitOfWork:
@@ -219,6 +239,33 @@ class TestDeleteUserCommandHandler:
             assert deleted_user.photo_url is None
             assert deleted_user.password_hash == "DELETED"
             assert deleted_user.firebase_uid == f"deleted:{user_id}"
+
+    @pytest.mark.asyncio
+    async def test_deletion_removes_the_users_weekly_recaps(
+        self, delete_handler, active_user, db_session
+    ):
+        """Recaps greet the user by name, so they go with the account."""
+        user_id, other = str(active_user.id), "22222222-2222-2222-2222-222222222222"
+        recaps = FakeWeeklyRecapRepository(
+            WeeklyRecap(owner, week, "steady", "en", stats={}, payload={})
+            for owner, week in (
+                (user_id, date(2026, 10, 5)),
+                (user_id, date(2026, 9, 28)),
+                (other, date(2026, 10, 5)),
+            )
+        )
+        uow = DummyUnitOfWork(db_session)
+        uow.weekly_recaps = recaps
+
+        with patch(
+            "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
+            MagicMock(return_value=uow),
+        ):
+            await delete_handler.handle(
+                DeleteUserCommand(firebase_uid=active_user.firebase_uid)
+            )
+
+        assert list(recaps.recaps) == [(other, date(2026, 10, 5))]
 
     @pytest.mark.asyncio
     async def test_delete_inactive_user_raises_not_found(
@@ -458,3 +505,169 @@ class TestDeleteUserCommandHandlerIntegration:
             db_user = db_session.query(User).filter(User.id == user.id).first()
             assert db_user.deleted_at is not None
             assert db_user.is_active is False
+
+
+MISSING_USER = {"detail": f"User with ID: {OW_USER_ID} not found."}
+
+
+def _open_wearables(
+    status_code: int, seen: list[str], body: dict | None = None
+) -> OpenWearablesClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.path}")
+        return httpx.Response(status_code, json=body or {"id": OW_USER_ID})
+
+    return OpenWearablesClient(
+        "https://wearables.example",
+        "test-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+class _CommitFailsUnitOfWork(DummyUnitOfWork):
+    async def commit(self):
+        raise RuntimeError("database unavailable")
+
+
+@pytest.fixture
+def linked_user(active_user, db_session):
+    active_user.open_wearables_user_id = OW_USER_ID
+    db_session.commit()
+    return active_user
+
+
+class TestDeleteUserOpenWearables:
+    """Account deletion commits first, then deletes the Open Wearables user."""
+
+    async def _delete(self, handler, user, db_session):
+        with patch(
+            "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
+            MagicMock(return_value=DummyUnitOfWork(db_session)),
+        ):
+            return await handler.handle(
+                DeleteUserCommand(firebase_uid=user.firebase_uid)
+            )
+
+    def _reload(self, db_session, user_id) -> User:
+        db_session.expire_all()
+        return db_session.query(User).filter(User.id == user_id).one()
+
+    @pytest.mark.asyncio
+    async def test_linked_user_is_deleted_after_the_event_and_link_cleared(
+        self, mock_publisher, linked_user, db_session
+    ):
+        calls: list[str] = []
+        mock_publisher.publish = AsyncMock(
+            side_effect=lambda *_args: calls.append("event")
+        )
+        handler = DeleteUserCommandHandler(
+            event_publisher=mock_publisher,
+            wearable_accounts=_open_wearables(200, calls),
+        )
+
+        result = await self._delete(handler, linked_user, db_session)
+
+        assert result["deleted"] is True
+        # The account is committed and the event sent before Open Wearables.
+        assert calls == ["event", f"DELETE /api/v1/users/{OW_USER_ID}"]
+        row = self._reload(db_session, linked_user.id)
+        assert row.is_active is False
+        assert row.open_wearables_user_id is None
+
+    @pytest.mark.asyncio
+    async def test_unlinked_user_skips_open_wearables(
+        self, mock_publisher, active_user, db_session
+    ):
+        wearable_accounts = MagicMock(delete_user=AsyncMock())
+        handler = DeleteUserCommandHandler(
+            event_publisher=mock_publisher,
+            wearable_accounts=wearable_accounts,
+        )
+
+        result = await self._delete(handler, active_user, db_session)
+
+        assert result["deleted"] is True
+        wearable_accounts.delete_user.assert_not_awaited()
+        assert self._reload(db_session, active_user.id).is_active is False
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_instance_deletes_account_and_keeps_link(
+        self, mock_publisher, linked_user, db_session
+    ):
+        handler = DeleteUserCommandHandler(event_publisher=mock_publisher)
+
+        result = await self._delete(handler, linked_user, db_session)
+
+        assert result["deleted"] is True
+        row = self._reload(db_session, linked_user.id)
+        assert row.is_active is False
+        # The link stays on the deleted row so the retry script can find it.
+        assert row.open_wearables_user_id == OW_USER_ID
+
+    @pytest.mark.asyncio
+    async def test_missing_open_wearables_user_counts_as_deleted(
+        self, mock_publisher, linked_user, db_session
+    ):
+        seen: list[str] = []
+        handler = DeleteUserCommandHandler(
+            event_publisher=mock_publisher,
+            wearable_accounts=_open_wearables(404, seen, MISSING_USER),
+        )
+
+        result = await self._delete(handler, linked_user, db_session)
+
+        assert result["deleted"] is True
+        assert seen == [f"DELETE /api/v1/users/{OW_USER_ID}"]
+        row = self._reload(db_session, linked_user.id)
+        assert row.is_active is False
+        assert row.open_wearables_user_id is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status_code", "body"),
+        [(503, None), (401, None), (404, {"detail": "Not Found"})],
+    )
+    async def test_open_wearables_failure_keeps_link_and_account_stays_deleted(
+        self, mock_publisher, linked_user, db_session, caplog, status_code, body
+    ):
+        seen: list[str] = []
+        handler = DeleteUserCommandHandler(
+            event_publisher=mock_publisher,
+            wearable_accounts=_open_wearables(status_code, seen, body),
+        )
+
+        with caplog.at_level(logging.ERROR):
+            result = await self._delete(handler, linked_user, db_session)
+
+        assert result["deleted"] is True
+        assert seen == [f"DELETE /api/v1/users/{OW_USER_ID}"]
+        row = self._reload(db_session, linked_user.id)
+        assert row.is_active is False
+        assert row.firebase_uid != "firebase_active_123"
+        # Kept for scripts/retry_open_wearables_deletions.py.
+        assert row.open_wearables_user_id == OW_USER_ID
+        mock_publisher.publish.assert_awaited_once()
+        assert "kept the link for retry" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_open_wearables_is_not_called_when_the_deletion_does_not_commit(
+        self, mock_publisher, linked_user, db_session
+    ):
+        wearable_accounts = MagicMock(delete_user=AsyncMock(return_value=True))
+        handler = DeleteUserCommandHandler(
+            uow=_CommitFailsUnitOfWork(db_session),
+            event_publisher=mock_publisher,
+            wearable_accounts=wearable_accounts,
+        )
+
+        with pytest.raises(Exception, match="Failed to delete user account"):
+            await handler.handle(
+                DeleteUserCommand(firebase_uid=linked_user.firebase_uid)
+            )
+
+        # The SQLite double commits inside save(), so it cannot show the
+        # rollback itself. What matters here: Open Wearables is never called.
+        wearable_accounts.delete_user.assert_not_awaited()
+        mock_publisher.publish.assert_not_awaited()
+        row = self._reload(db_session, linked_user.id)
+        assert row.open_wearables_user_id == OW_USER_ID

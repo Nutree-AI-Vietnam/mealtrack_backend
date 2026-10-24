@@ -91,3 +91,6 @@ profile*.svg
 # Git worktrees
 .worktrees/
 .agents/
+
+# Verification runs. The skill keeps these after cleanup; they are not source.
+.cursor/skills/verify-mealtrack-backend/artifacts/

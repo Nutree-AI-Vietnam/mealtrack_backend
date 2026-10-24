@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from src.api.routes.v1 import web_funnel
+from src.app.services.web_funnel_claim_common import hash_secret
 from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
     WebFunnelRedemption,
@@ -81,7 +82,7 @@ def _lead() -> WebFunnelLead:
     return WebFunnelLead(
         id="lead-1",
         email="buyer@example.com",
-        access_key_hash=web_funnel._hash("a" * 32),
+        access_key_hash=hash_secret("a" * 32),
         request_id="request-1",
         snapshot_version="web_onboarding_snapshot_v1",
         snapshot={},
@@ -562,7 +563,7 @@ async def test_correlation_binds_verified_anonymous_web_customer(monkeypatch):
     session = CorrelationSession(_lead())
     payload = web_funnel.WebFunnelRevenueCatCorrelationRequest(
         app_user_id="$RCAnonymousID:customer",
-        redemption_link_hash=web_funnel._hash("rc-example://redeem?token=opaque"),
+        redemption_link_hash=hash_secret("rc-example://redeem?token=opaque"),
     )
 
     response = await web_funnel.correlate_revenuecat_customer(
@@ -583,7 +584,7 @@ async def test_correlation_binds_verified_anonymous_web_customer(monkeypatch):
     assert binding.verified_app_user_id == "$RCAnonymousID:customer"
     assert binding.entitlement_id == "standard"
     assert binding.project == "default"
-    assert binding.redemption_link_hash == web_funnel._hash(
+    assert binding.redemption_link_hash == hash_secret(
         "rc-example://redeem?token=opaque"
     )
 
@@ -616,7 +617,7 @@ async def test_correlation_accepts_existing_binding_with_legacy_project_label(
         "lead-1",
         web_funnel.WebFunnelRevenueCatCorrelationRequest(
             app_user_id="$RCAnonymousID:customer",
-            redemption_link_hash=web_funnel._hash("rc-example://redeem?token=opaque"),
+            redemption_link_hash=hash_secret("rc-example://redeem?token=opaque"),
         ),
         "a" * 32,
         "https://web.example",
@@ -639,7 +640,7 @@ async def test_correlation_hides_unverified_customer_as_not_found(monkeypatch):
     session = CorrelationSession(_lead())
     payload = web_funnel.WebFunnelRevenueCatCorrelationRequest(
         app_user_id="$RCAnonymousID:other",
-        redemption_link_hash=web_funnel._hash("rc-example://redeem?token=opaque"),
+        redemption_link_hash=hash_secret("rc-example://redeem?token=opaque"),
     )
 
     with pytest.raises(HTTPException) as error:
@@ -670,7 +671,7 @@ async def test_correlation_creates_new_redemption_for_verified_customer(
     session = CorrelationSession(_lead())
     payload = web_funnel.WebFunnelRevenueCatCorrelationRequest(
         app_user_id="$RCAnonymousID:customer",
-        redemption_link_hash=web_funnel._hash("rc-example://redeem?token=opaque"),
+        redemption_link_hash=hash_secret("rc-example://redeem?token=opaque"),
     )
 
     response = await web_funnel.correlate_revenuecat_customer(

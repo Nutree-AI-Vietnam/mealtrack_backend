@@ -1,6 +1,7 @@
 """Chat request DTOs."""
 
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -18,6 +19,13 @@ class ChatMessageCreateRequest(BaseModel):
     intent: ChatIntent | None = None
     tool: ChatToolCallRequest | None = None
     regenerate_assistant_id: str | None = Field(default=None, max_length=64)
+    ai_job_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Client-generated job id. The reply then keeps generating if the "
+            "app closes, and a push brings the user back to it."
+        ),
+    )
 
     @field_validator("content")
     @classmethod

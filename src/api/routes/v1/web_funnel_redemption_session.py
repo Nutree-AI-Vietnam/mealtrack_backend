@@ -1,29 +1,21 @@
 """Unauthenticated hash → retryable custom token. Do not grow web_funnel.py."""
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.base_dependencies import get_web_funnel_redemption_service
 from src.api.middleware.rate_limit import get_ip_only_rate_limit_key, limiter
 from src.api.schemas.request.web_funnel_claim_requests import (
     WebFunnelRedemptionPreflightRequest,
 )
-from src.app.services.web_funnel_claim_common import claim_not_found, utcnow
+from src.app.services.web_funnel_claim_common import claim_not_found
 from src.infra.database.config_async import get_async_db
-from src.infra.database.models.user.user import User
-from src.infra.database.models.web_funnel_claim import (
-    WebFunnelLead,
-    WebFunnelRedemption,
-)
 from src.infra.services.web_funnel_redemption_identity import (
     SILENT_LOGIN_CLAIM,
-    RedemptionIdentityUnavailable,
     WebFunnelRedemptionIdentityService,
-    silent_login_uid,
 )
 
 router = APIRouter(prefix="/v1/web-funnel", tags=["Web Funnel"])
-_TERMINAL = frozenset({"refunded", "revoked", "conflict", "expired"})
 
 
 def _identity_service() -> WebFunnelRedemptionIdentityService:
@@ -46,31 +38,13 @@ async def create_redemption_session(
     db: AsyncSession = Depends(get_async_db),
     identity: WebFunnelRedemptionIdentityService = Depends(_identity_service),
 ):
-    binding = await db.scalar(
-        select(WebFunnelRedemption)
-        .where(WebFunnelRedemption.redemption_link_hash == payload.redemption_link_hash)
-        .with_for_update()
+    token = await get_web_funnel_redemption_service().start_silent_login(
+        db,
+        redemption_link_hash=payload.redemption_link_hash,
+        identity=identity,
     )
-    if not binding or binding.finalized_uid:
+    if token is None:
         raise claim_not_found()
-    lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
-    if not lead or lead.status in _TERMINAL:
-        raise claim_not_found()
-    # An existing account signs in itself. Only the account this lead created
-    # (a retry after the app synced it) may be reopened.
-    uid = silent_login_uid(lead.id)
-    owner = await db.scalar(
-        select(User).where(func.lower(User.email) == lead.email.strip().lower())
-    )
-    if owner and owner.firebase_uid != uid:
-        raise claim_not_found()
-    try:
-        token = await identity.mint_for_new_buyer(lead.email, uid=uid)
-    except RedemptionIdentityUnavailable:
-        raise claim_not_found() from None
-    binding.silent_login_minted_at = utcnow()
-    binding.silent_login_generation = (binding.silent_login_generation or 0) + 1
-    await db.commit()
     return {"version": "redemption_session_v1", "custom_token": token}
 
 

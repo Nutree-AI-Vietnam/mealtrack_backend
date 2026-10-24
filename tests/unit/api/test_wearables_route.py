@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.api.base_dependencies import get_open_wearables_account_links
 from src.api.dependencies.auth import get_current_user_id
 from src.api.routes.v1 import wearables as wearables_mod
 from src.infra.adapters.open_wearables_client import (
@@ -17,7 +18,6 @@ from src.infra.adapters.open_wearables_client import (
     choose_activity_row,
 )
 from src.infra.config.settings import settings
-from src.infra.database.config_async import get_async_db
 
 
 def test_cloud_catalog_excludes_phone_sources_and_fitbit():
@@ -29,6 +29,8 @@ def test_cloud_catalog_excludes_phone_sources_and_fitbit():
     assert "samsung" not in wearables_mod.CLOUD_WEARABLE_PROVIDERS
     assert "strava" not in wearables_mod.BALANCE_PROVIDERS
     assert "ultrahuman" in wearables_mod.STEPS_PROVIDERS
+    assert "whoop" in wearables_mod.STEPS_PROVIDERS
+    assert "whoop" not in wearables_mod.BALANCE_PROVIDERS
     assert "strava" in wearables_mod.WORKOUT_PROVIDERS
 
 
@@ -69,6 +71,8 @@ async def test_activity_day_reads_the_chosen_provider_samples():
         assert "workouts" not in request.url.path
         assert "meals" not in request.url.path
         assert request.url.params.get("provider") == "garmin"
+        assert request.url.params.get("start_time") == "2026-10-11T17:00:00Z"
+        assert request.url.params.get("end_time") == "2026-10-12T16:59:59Z"
         assert "workouts" not in request.url.params.get("types", "")
         return httpx.Response(
             200,
@@ -87,7 +91,9 @@ async def test_activity_day_reads_the_chosen_provider_samples():
         "test-key",
         transport=httpx.MockTransport(handler),
     )
-    steps, active = await client.activity_day("user-1", "2026-10-12", "garmin")
+    steps, active = await client.activity_day(
+        "user-1", ("2026-10-11T17:00:00Z", "2026-10-12T16:59:59Z"), "garmin"
+    )
     assert steps == 5000
     assert active == 180.5
     assert seen == ["/api/v1/users/user-1/timeseries"]
@@ -97,6 +103,8 @@ async def test_activity_day_reads_the_chosen_provider_samples():
 async def test_workouts_on_day_keeps_name_and_calories():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params.get("provider") == "strava"
+        assert request.url.params.get("start_date") == "2026-10-12T17:00:00Z"
+        assert request.url.params.get("end_date") == "2026-10-13T16:59:59Z"
         assert "meals" not in request.url.path
         return httpx.Response(
             200,
@@ -119,7 +127,9 @@ async def test_workouts_on_day_keeps_name_and_calories():
         "test-key",
         transport=httpx.MockTransport(handler),
     )
-    rows = await client.workouts_on_day("user-1", "2026-10-13", "strava")
+    rows = await client.workouts_on_day(
+        "user-1", ("2026-10-12T17:00:00Z", "2026-10-13T16:59:59Z"), "strava"
+    )
     assert rows == [
         {
             "id": "ride-1",
@@ -134,10 +144,16 @@ async def test_workouts_on_day_keeps_name_and_calories():
 async def test_authorization_url_uses_api_key_header():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["X-Open-Wearables-API-Key"] == "test-key"
-        assert request.url.params["redirect_uri"] == "nutree:///wearables/connected/garmin"
+        assert (
+            request.url.params["redirect_uri"]
+            == "nutree://open-nutree/wearables/connected/garmin"
+        )
         return httpx.Response(
             200,
-            json={"authorization_url": "https://connect.garmin.com/start", "state": "s"},
+            json={
+                "authorization_url": "https://connect.garmin.com/start",
+                "state": "s",
+            },
         )
 
     client = OpenWearablesClient(
@@ -148,22 +164,42 @@ async def test_authorization_url_uses_api_key_header():
     url = await client.authorization_url(
         "garmin",
         "ow-user",
-        "nutree:///wearables/connected/garmin",
+        "nutree://open-nutree/wearables/connected/garmin",
     )
     assert url == "https://connect.garmin.com/start"
 
 
-def _client(ow_client: OpenWearablesClient | None = None) -> TestClient:
+class _Accounts:
+    """Stored links; a second link keeps the first stored id."""
+
+    def __init__(self, stored: str | None = None):
+        self.stored = stored
+        self.linked: list[tuple[str, str]] = []
+
+    async def linked_user_id(self, user_id):
+        return self.stored
+
+    async def link(self, user_id, open_wearables_user_id):
+        self.linked.append((user_id, open_wearables_user_id))
+        if self.stored is None:
+            self.stored = open_wearables_user_id
+        return self.stored
+
+
+def _client(
+    ow_client: OpenWearablesClient | None = None,
+    accounts: _Accounts | None = None,
+) -> TestClient:
     app = FastAPI()
     app.include_router(wearables_mod.router)
     app.dependency_overrides[get_current_user_id] = lambda: "user-1"
-
-    async def _db():
-        yield None
-
-    app.dependency_overrides[get_async_db] = _db
+    app.dependency_overrides[get_open_wearables_account_links] = lambda: (
+        accounts or _Accounts()
+    )
     if ow_client is not None:
-        app.dependency_overrides[wearables_mod.open_wearables_client] = lambda: ow_client
+        app.dependency_overrides[wearables_mod.open_wearables_client] = lambda: (
+            ow_client
+        )
     return TestClient(app)
 
 
@@ -180,6 +216,85 @@ def test_unconfigured_sign_in_conflicts(monkeypatch):
     monkeypatch.setattr(settings, "OPEN_WEARABLES_APP_SECRET", "")
     response = _client().get("/v1/wearables/oauth/garmin/authorize")
     assert response.status_code == 409
+
+
+def test_sign_in_returns_through_the_link_android_opens(monkeypatch):
+    # Android's nutree intent filter requires the open-nutree host.
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+    monkeypatch.setattr(settings, "OPEN_WEARABLES_PROVIDERS", "garmin")
+
+    async def linked(_session, _user_id):
+        return "ow-user"
+
+    monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
+    seen: list[tuple[str, str, str]] = []
+    start = "https://connect.garmin.com/start?client_id=garmin-app"
+
+    class _Client(OpenWearablesClient):
+        async def authorization_url(self, provider, user_id, redirect_uri):
+            seen.append((provider, user_id, redirect_uri))
+            return start
+
+    response = _client(_Client("http://ow.test", "test-key")).get(
+        "/v1/wearables/oauth/garmin/authorize"
+    )
+    assert response.status_code == 200
+    assert response.json() == {"authorization_url": start}
+    assert seen == [
+        ("garmin", "ow-user", "nutree://open-nutree/wearables/connected/garmin")
+    ]
+
+
+def test_first_sign_in_links_the_created_user(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+    monkeypatch.setattr(settings, "OPEN_WEARABLES_PROVIDERS", "garmin")
+    accounts = _Accounts()
+    seen: list[str] = []
+
+    class _Client(OpenWearablesClient):
+        async def create_user(self):
+            return "ow-created"
+
+        async def authorization_url(self, provider, user_id, redirect_uri):
+            seen.append(user_id)
+            return "https://connect.garmin.com/start?client_id=garmin-app"
+
+    response = _client(_Client("http://ow.test", "test-key"), accounts).get(
+        "/v1/wearables/oauth/garmin/authorize"
+    )
+    assert response.status_code == 200
+    assert accounts.linked == [("user-1", "ow-created")]
+    assert seen == ["ow-created"]
+
+
+def test_sign_in_race_uses_the_first_stored_user(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+    monkeypatch.setattr(settings, "OPEN_WEARABLES_PROVIDERS", "garmin")
+
+    class _RacedAccounts(_Accounts):
+        async def linked_user_id(self, user_id):
+            return None
+
+        async def link(self, user_id, open_wearables_user_id):
+            self.linked.append((user_id, open_wearables_user_id))
+            return "ow-winner"
+
+    accounts = _RacedAccounts()
+    seen: list[str] = []
+
+    class _Client(OpenWearablesClient):
+        async def create_user(self):
+            return "ow-loser"
+
+        async def authorization_url(self, provider, user_id, redirect_uri):
+            seen.append(user_id)
+            return "https://connect.garmin.com/start?client_id=garmin-app"
+
+    response = _client(_Client("http://ow.test", "test-key"), accounts).get(
+        "/v1/wearables/oauth/garmin/authorize"
+    )
+    assert response.status_code == 200
+    assert seen == ["ow-winner"]
 
 
 def test_ultrahuman_steps_ignore_energy(monkeypatch):
@@ -204,6 +319,71 @@ def test_ultrahuman_steps_ignore_energy(monkeypatch):
     assert body["steps"] == 2000
     assert body["active_calories_kcal"] == 0
     assert body["connected"] is True
+
+
+def test_activity_reads_the_local_day_of_the_request_time_zone(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+
+    async def linked(_session, _user_id):
+        return "ow-user"
+
+    monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
+    seen: list[tuple[str, str]] = []
+
+    class _Client(OpenWearablesClient):
+        async def activity_day(self, user_id, bounds, provider):
+            seen.append(bounds)
+            return 6000, 250.0
+
+    client = _client(_Client("http://ow.test", "test-key"))
+    params = {"date": "2026-10-24", "provider": "google_health"}
+    local = client.get(
+        "/v1/wearables/activity",
+        params=params,
+        headers={"X-Timezone": "Asia/Ho_Chi_Minh"},
+    )
+    utc = client.get("/v1/wearables/activity", params=params)
+
+    assert local.status_code == 200
+    assert local.json()["steps"] == 6000
+    assert utc.status_code == 200
+    assert seen == [
+        ("2026-10-23T17:00:00Z", "2026-10-24T16:59:59Z"),
+        ("2026-10-24T00:00:00Z", "2026-10-24T23:59:59Z"),
+    ]
+
+
+def test_whoop_steps_ignore_energy(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+
+    async def linked(_session, _user_id):
+        return "ow-user"
+
+    monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
+
+    class _Client(OpenWearablesClient):
+        async def activity_day(self, user_id, bounds, provider):
+            assert provider == "whoop"
+            return 7400, 0.0
+
+    response = _client(_Client("http://ow.test", "test-key")).get(
+        "/v1/wearables/activity",
+        params={"date": "2026-10-24", "provider": "whoop"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["steps"] == 7400
+    assert body["active_calories_kcal"] == 0
+    assert body["connected"] is True
+
+
+def test_activity_rejects_a_malformed_date(monkeypatch):
+    monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+    response = _client().get(
+        "/v1/wearables/activity",
+        params={"date": "2026-13-45", "provider": "garmin"},
+    )
+    assert response.status_code == 422
 
 
 def test_strava_workouts_are_listed_not_applied(monkeypatch):

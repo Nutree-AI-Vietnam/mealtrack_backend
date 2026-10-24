@@ -89,7 +89,11 @@ def _days_logged_stat(ctx: RecapContext) -> list[str]:
 
 def _share_stats(ctx: RecapContext, shown: Sequence[Insight]) -> list[list[str]]:
     """The shown cards' tiles, topped up with logging tiles, no repeats."""
-    tiles = [insight.stat(ctx) for insight in shown if insight.stat is not None]
+    tiles: list[list[str]] = []
+    for insight in shown:
+        tile = insight.stat(ctx) if insight.stat is not None else None
+        if tile is not None and all(existing[1] != tile[1] for existing in tiles):
+            tiles.append(tile)
     fillers: list[Callable[[RecapContext], list[str]]] = [
         meals_stat,
         _days_logged_stat,

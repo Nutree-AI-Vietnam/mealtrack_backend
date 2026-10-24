@@ -39,6 +39,50 @@ class MissedMeal:
 
 
 @dataclass(frozen=True)
+class PeakMeal:
+    """The biggest meal logged on one day. ``day`` is 0 (Monday) .. 6."""
+
+    day: int
+    name: str
+    kcal: int
+
+
+@dataclass(frozen=True)
+class LastWeek:
+    """The week before, as this week's recap compares with it.
+
+    Read from that week's stored recap. ``water_avg`` is None when no water
+    was logged; ``plan`` holds the issues that week's plan showed. The
+    ``*_days``/``days_logged`` coverage counts say how many days fed each
+    count, so a week with fewer logged days never reads as progress; a
+    count is None when that week's snapshot can't tell it.
+    """
+
+    week_days: int
+    protein_avg: float
+    fiber_avg: float
+    water_avg: float | None
+    days_on_budget: int
+    workouts: int
+    late_snack_nights: int
+    sugary_drinks: int
+    weekend_over_days: int
+    rest_under_days: int
+    days_logged: int
+    water_days: int
+    weekend_days_counted: int | None
+    rest_days_counted: int
+    pre_workout_carbs: float | None = None
+    plan: tuple[str, ...] = ()
+    timed_days: int | None = None  # days logged live; None when not known
+    plan_moves: int | None = None  # how many moves the plan showed
+    plan_exact: bool = True  # False when the plan was rebuilt for an old row
+    thin_days: int | None = None  # logged days that don't look fully logged
+    goal: str | None = None
+    budget: int | None = None
+
+
+@dataclass(frozen=True)
 class WeekStats:
     """Everything the recap engine reads about one week."""
 
@@ -83,3 +127,12 @@ class WeekStats:
     perfect_weeks_before: int = 0
     had_first_week: bool = False
     cheat_days: tuple[int, ...] = ()
+    first_name: str | None = None
+    diet: str | None = None  # vegetarian | vegan | keto; None for no restriction
+    fiber_by_day: tuple[float, ...] = ()  # empty in snapshots stored before it
+    low_protein_meal: str | None = None  # breakfast | lunch | dinner
+    top_sugary_drink: str | None = None
+    weekend_peaks: tuple[PeakMeal, ...] = ()  # the biggest meal of Fri, Sat, Sun
+    backdated_days: tuple[int, ...] | None = None  # days with a meal logged later
+    meal_types_by_day: tuple[int, ...] = ()  # meals of different types (lunch, ...)
+    last_week: LastWeek | None = None

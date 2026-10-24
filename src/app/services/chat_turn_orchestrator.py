@@ -144,6 +144,10 @@ _RETRYABLE_PROVIDER_MARKERS = (
     "504",
 )
 
+# Embedding only sharpens retrieval; full-text search still answers without it.
+# The SDK can sleep up to 120 s on a 429 Retry-After, so cap the whole step.
+CHAT_EMBEDDING_DEADLINE_SECONDS = 3.0
+
 
 class PromptCachePolicy(Protocol):
     def request_kwargs(
@@ -1362,6 +1366,23 @@ class ChatTurnOrchestrator:
         prepared.slot_acquired = False
         self._semaphore.release()
 
+    async def abandon_turn(
+        self, prepared: PreparedChatTurn, *, error_code: str
+    ) -> None:
+        """Give up a prepared turn that will not be streamed to completion.
+
+        Frees the provider slot and fails the generating reply, so the user
+        can resend the turn instead of waiting for its lease to expire.
+        """
+        self.release_slot(prepared)
+        if prepared.claim.kind == ChatClaimKind.REPLAY:
+            return
+        await self._fail(
+            prepared.claim.assistant_message.id,
+            error_code,
+            generation_id=prepared.claim.assistant_message.generation_id,
+        )
+
     async def get_thread(
         self,
         *,
@@ -1779,7 +1800,8 @@ class ChatTurnOrchestrator:
     ) -> tuple[list[RetrievedKnowledgeChunk], list[float] | None]:
         embedding: list[float] | None = None
         try:
-            embedding = await self._embedding.embed_query(query)
+            async with asyncio.timeout(CHAT_EMBEDDING_DEADLINE_SECONDS):
+                embedding = await self._embedding.embed_query(query)
         except Exception:
             log_event(
                 "warning",

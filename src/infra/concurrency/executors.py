@@ -28,3 +28,25 @@ def shutdown_firebase_executor() -> None:
         return
     _firebase_executor.shutdown(wait=False, cancel_futures=True)
     _firebase_executor = None
+
+
+_push_executor: ThreadPoolExecutor | None = None
+
+
+def get_push_executor() -> ThreadPoolExecutor:
+    """Return the process-local FCM send pool, kept apart from token verification."""
+    global _push_executor
+    if _push_executor is None:
+        _push_executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="fcm-push"
+        )
+    return _push_executor
+
+
+def shutdown_push_executor() -> None:
+    """Stop the FCM pool without waiting for in-flight sends."""
+    global _push_executor
+    if _push_executor is None:
+        return
+    _push_executor.shutdown(wait=False, cancel_futures=True)
+    _push_executor = None
