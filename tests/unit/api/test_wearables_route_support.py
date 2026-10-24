@@ -1,10 +1,13 @@
-"""Provider allowlist parsing, return links and sign-in link checks."""
+"""Provider allowlist parsing, return links, sign-in link checks and day bounds."""
+
+from datetime import date
 
 import pytest
 
 from src.api.routes.v1.wearables_route_support import (
     connection_rows,
     has_client_id,
+    local_day_bounds,
     redirect_uri,
     signable_providers,
 )
@@ -51,3 +54,26 @@ def test_connection_rows_default_to_unknown_sync():
             "last_synced_at": None,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("timezone", "expected"),
+    [
+        # Open Wearables keys Vietnam's daily totals to 17:00 UTC the day before.
+        ("Asia/Ho_Chi_Minh", ("2026-10-23T17:00:00Z", "2026-10-24T16:59:59Z")),
+        ("Asia/Saigon", ("2026-10-23T17:00:00Z", "2026-10-24T16:59:59Z")),
+        ("America/Los_Angeles", ("2026-10-24T07:00:00Z", "2026-10-25T06:59:59Z")),
+        (None, ("2026-10-24T00:00:00Z", "2026-10-24T23:59:59Z")),
+        ("Not/AZone", ("2026-10-24T00:00:00Z", "2026-10-24T23:59:59Z")),
+    ],
+)
+def test_local_day_bounds_cover_the_local_calendar_day(timezone, expected):
+    assert local_day_bounds(date(2026, 10, 24), timezone) == expected
+
+
+def test_local_day_bounds_follow_a_daylight_saving_change():
+    # New York's clocks go back on 2026-11-01, so that day lasts 25 hours.
+    assert local_day_bounds(date(2026, 11, 1), "America/New_York") == (
+        "2026-11-01T04:00:00Z",
+        "2026-11-02T04:59:59Z",
+    )
