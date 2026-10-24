@@ -193,23 +193,25 @@ def test_unconfigured_sign_in_conflicts(monkeypatch):
 def test_sign_in_returns_through_the_link_android_opens(monkeypatch):
     # Android's nutree intent filter requires the open-nutree host.
     monkeypatch.setattr(wearables_mod, "wearable_sign_in_ready", lambda: True)
+    monkeypatch.setattr(settings, "OPEN_WEARABLES_PROVIDERS", "garmin")
 
     async def linked(_session, _user_id):
         return "ow-user"
 
     monkeypatch.setattr(wearables_mod, "_linked_user_id", linked)
     seen: list[tuple[str, str, str]] = []
+    start = "https://connect.garmin.com/start?client_id=garmin-app"
 
     class _Client(OpenWearablesClient):
         async def authorization_url(self, provider, user_id, redirect_uri):
             seen.append((provider, user_id, redirect_uri))
-            return "https://connect.garmin.com/start"
+            return start
 
     response = _client(_Client("http://ow.test", "test-key")).get(
         "/v1/wearables/oauth/garmin/authorize"
     )
     assert response.status_code == 200
-    assert response.json() == {"authorization_url": "https://connect.garmin.com/start"}
+    assert response.json() == {"authorization_url": start}
     assert seen == [
         ("garmin", "ow-user", "nutree://open-nutree/wearables/connected/garmin")
     ]

@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from src.infra.adapters.open_wearables_sync_runs import summarize_sync_runs
+
 
 class OpenWearablesError(Exception):
     """Open Wearables rejected or failed a request."""
@@ -132,6 +134,32 @@ class OpenWearablesClient:
             if isinstance(provider, str) and isinstance(status, str):
                 rows.append({"provider": provider, "status": status})
         return rows
+
+    async def sync_states(self, user_id: str) -> dict[str, dict[str, str | None]]:
+        """Newest sync outcome per provider over the last 24 hours."""
+        payload = await self._request(
+            "GET",
+            f"/api/v1/users/{user_id}/sync/runs",
+            params={"limit": 50},
+        )
+        return summarize_sync_runs(payload)
+
+    async def disconnect(self, user_id: str, provider: str) -> bool:
+        """Revoke the provider sign-in and delete the data synced from it.
+
+        Returns False when Open Wearables has no connection for this user and
+        provider. Any other 404 raises, as for ``delete_user``.
+        """
+        response = await self._send(
+            "DELETE",
+            f"/api/v1/users/{user_id}/connections/{provider}/data",
+            missing_ok=True,
+        )
+        if response.status_code != httpx.codes.NOT_FOUND:
+            return True
+        if _names_missing_user(response, user_id):
+            return False
+        raise OpenWearablesError("Open Wearables answered 404 without naming the user")
 
     async def activity_day(
         self, user_id: str, day: str, provider: str
