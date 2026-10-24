@@ -32,6 +32,7 @@ from src.domain.services.weekly_recap.compare import (
     compared,
     improved,
     rest_days_counted,
+    timed_days,
     trend,
     water_days,
     weekend_days_counted,
@@ -99,11 +100,14 @@ def last_week_of(
     case_id: str,
     config: RecapConfig,
     plan: Sequence[str] | None = None,
+    plan_moves: int | None = None,
+    plan_exact: bool = True,
 ) -> LastWeek:
     """Summarize a stored week told as ``case_id`` for the week after it.
 
-    ``plan`` is the issue ids its plan showed; rebuilt from the numbers
-    when not given.
+    ``plan`` is the issue ids its plan showed (rebuilt from the numbers
+    when not given), ``plan_moves`` how many moves it showed in all, and
+    ``plan_exact`` False when the ids were rebuilt for an older row.
     """
     facts = week_facts(stats, config)
     ctx = RecapContext(stats, facts, config, "en")
@@ -126,6 +130,9 @@ def last_week_of(
         rest_days_counted=rest_days_counted(ctx),
         pre_workout_carbs=stats.pre_workout_carbs,
         plan=tuple(plan),
+        timed_days=timed_days(ctx),
+        plan_moves=plan_moves,
+        plan_exact=plan_exact,
     )
 
 
@@ -174,19 +181,31 @@ def _follow_card(ctx: RecapContext) -> Card:
         raise ValueError("no plan item was followed through")
     issue_id, now = followed
     kind, metric = _TRACKED[issue_id]
-    plan = ctx.stats.last_week.plan if ctx.stats.last_week else ()
-    done = all(_fixed(ctx, planned) is not None for planned in plan)
     # This week's number, with last week's in the trend line beside it. The
     # title claims the whole plan only when every item of it was fixed.
     return card(
         kind,
         "check_circle",
-        ctx.t("follow.title" if done else "follow.title.item"),
+        ctx.t("follow.title" if _plan_done(ctx) else "follow.title.item"),
         value=metric.shown(ctx, now),
         unit=_unit(ctx, issue_id, metric, now),
         note=ctx.t("follow.note", goal=ctx.t(f"{issue_id}.short")),
         trend=trend(ctx, metric),
     )
+
+
+def _plan_done(ctx: RecapContext) -> bool:
+    """Whether every move of last week's plan was an issue now fixed.
+
+    A plan with a habit (a reminder) or one rebuilt for an older row can't
+    be checked whole, so it never claims to be done.
+    """
+    last = ctx.stats.last_week
+    if last is None or not last.plan_exact:
+        return False
+    if last.plan_moves is not None and last.plan_moves != len(last.plan):
+        return False
+    return all(_fixed(ctx, planned) is not None for planned in last.plan)
 
 
 def _follow_stat(ctx: RecapContext) -> list[str] | None:

@@ -20,6 +20,7 @@ from src.domain.services.weekly_recap.insights_good import GOOD
 from src.domain.services.weekly_recap.insights_learn import LEARN
 from src.domain.services.weekly_recap.issues_food import FOOD_ISSUES
 from src.domain.services.weekly_recap.issues_load import LOAD_ISSUES
+from src.domain.services.weekly_recap.last_week import FOLLOW_THROUGH
 from src.domain.services.weekly_recap.sections_plan import plan, plan_moves, share
 from src.domain.services.weekly_recap.sections_story import grow, intro, wins
 from src.domain.services.weekly_recap.strings import TABLES
@@ -50,12 +51,13 @@ def generate_recap(
     grow_issues = issues[: params.grow]
     moves = plan_moves(ctx, params, grow_issues)
     insights = [insight for insight, _ in shown]
+    share_insights = _share_insights(ctx, LEARN if params.habits else GOOD, insights)
     sections: dict[str, dict[str, Any] | None] = {
         "intro": intro(ctx, case_id),
         "wins": wins(ctx, case_id, [card for _, card in shown], params.grow),
         "grow": grow(ctx, case_id, grow_issues),
         "plan": plan(ctx, case_id, moves),
-        "share": share(ctx, case_id, insights, moves) if params.share else None,
+        "share": share(ctx, case_id, share_insights, moves) if params.share else None,
     }
     return {
         "case_id": case_id,
@@ -64,6 +66,18 @@ def generate_recap(
         "slides": [name for name, section in sections.items() if section],
         **sections,
     }
+
+
+def _share_insights(
+    ctx: RecapContext, pool: Sequence[Insight], shown: Sequence[Insight]
+) -> list[Insight]:
+    """The shown wins, and when the follow-through card took a slot, the
+    wins it pushed off the cards, so its slot does not cost the share card
+    a real tile."""
+    if FOLLOW_THROUGH not in shown:
+        return list(shown)
+    active = ranked([insight for insight in pool if insight.cond(ctx)], ctx.config)
+    return [*shown, *(insight for insight in active if insight not in shown)]
 
 
 def _win_cards(

@@ -73,6 +73,9 @@ class LastWeek:
     rest_days_counted: int
     pre_workout_carbs: float | None = None
     plan: tuple[str, ...] = ()
+    timed_days: int | None = None  # days logged live; None when not known
+    plan_moves: int | None = None  # how many moves the plan showed
+    plan_exact: bool = True  # False when the plan was rebuilt for an old row
 
 
 @dataclass(frozen=True)
@@ -126,4 +129,5 @@ class WeekStats:
     low_protein_meal: str | None = None  # breakfast | lunch | dinner
     top_sugary_drink: str | None = None
     weekend_peaks: tuple[PeakMeal, ...] = ()  # the biggest meal of Fri, Sat, Sun
+    backdated_days: tuple[int, ...] | None = None  # days with a meal logged later
     last_week: LastWeek | None = None

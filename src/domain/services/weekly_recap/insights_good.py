@@ -150,12 +150,13 @@ def _fiber_hit_note(ctx: RecapContext) -> str:
     """The days at the full target, when they back up the win.
 
     The win needs only an average near the target, so a week of 23g days
-    against 25g wins with no day hit; it says so with the average note.
+    against 25g wins with no day hit; it says so with the average note, as
+    it does when the days hit are not most of the week.
     Snapshots stored before daily fiber was kept only have the average.
     """
     stats, facts = ctx.stats, ctx.facts
     hit = sum(1 for grams in stats.fiber_by_day if grams >= stats.fiber_target)
-    if hit * 2 <= facts.days_logged:
+    if hit * 2 <= facts.week_days:
         return ctx.t("fiber_hit.note")
     return ctx.t("fiber_hit.note.days", n=hit, d=facts.week_days)
 

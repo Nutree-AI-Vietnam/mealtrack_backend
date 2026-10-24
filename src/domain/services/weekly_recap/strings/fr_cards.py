@@ -87,6 +87,7 @@ FR_CARDS = {
     "sugary.note.named": "Surtout\u202f: {drink}, environ {kcal} kcal au total.",
     "sugary.advice": "Thé au lait → thé sans sucre",
     "sugary.advice.named": "{drink} → thé sans sucre",
+    "drink.coconut": "eau de coco",
     "sugary.impact": "−{kcal} kcal / verre",
     "sugary.why": "{n} verres cette semaine",
     "sugary.why.one": "{n} verre cette semaine",

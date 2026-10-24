@@ -321,7 +321,7 @@ def test_low_protein_meal_needs_two_servings_of_two_meals():
 def test_low_protein_meal_ties_go_to_the_earlier_meal():
     meals = [
         *(_food(day, 19, meal_type="dinner", protein=20.0) for day in range(2)),
-        *(_food(day, 12, meal_type="lunch", protein=20.0) for day in range(2)),
+        *(_food(day, 12, 30, meal_type="lunch", protein=20.0) for day in range(2)),
     ]
 
     assert low_protein_meal(meals) == "lunch"
@@ -366,3 +366,14 @@ def test_low_protein_meal_needs_the_meal_on_two_days():
     ]
 
     assert low_protein_meal(meals) is None
+
+
+def test_low_protein_meal_leaves_out_meals_logged_later():
+    # Backdated meals are stamped at noon, so their "lunch" says nothing.
+    meals = [
+        *(_food(day, 12, meal_type="lunch", protein=2.0) for day in range(3)),
+        *(_food(day, 8, meal_type="breakfast", protein=20.0) for day in range(3)),
+        *(_food(day, 19, meal_type="dinner", protein=30.0) for day in range(3)),
+    ]
+
+    assert low_protein_meal(meals) == "breakfast"

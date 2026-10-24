@@ -77,13 +77,14 @@ language says the same thing.
   missing or is not a name (a handle, an e-mail), because the stored
   `first_name` is just the display name's first word. Vietnamese names are
   written family name first ("Nguyễn Văn Linh" → Linh) or given name first
-  ("Hoàng Nam Nguyễn" → Nam): the name's middle marker (Văn/Thị) and which
-  end is a family name decide, and when that can't be told ("Nguyễn Lê")
-  there is no greeting. Chinese, Japanese and Korean names are used whole.
-  Honorifics are skipped; initials, handles and names with a part longer
-  than 12 letters (it would break mid-word in the headline) get no
-  greeting. The share card never carries the name, and an account's recaps
-  are deleted with the account.
+  ("Tuan Van Nguyen" → Tuan); the middle marker (Văn/Thị) and which end is
+  a family name decide. Whenever that can't be told ("Nguyễn Lê", "Le
+  Anh", a lone family name, an honorific before a family name) there is no
+  greeting: a missing name costs less than a wrong one. Chinese, Japanese
+  and Korean names are used whole. Emoji are ignored, an all lower-case
+  name is capitalized, and initials, handles and names longer than 12
+  letters (the headline width) get no greeting. The share card never
+  carries the name, and an account's recaps are deleted with the account.
 - **Go-to dish.** In `steady`, `bulk` and `perfect` weeks, a dish logged 3+
   times replaces the intro `sub` (`{case}.sub.dish`).
 - **Diet.** The protein tip names foods the profile's diet allows
@@ -113,17 +114,22 @@ language says the same thing.
   change of at least a step (protein 5 g, fiber 2 g, pre-workout carbs
   5 g). Counts (nights, drinks, days, workouts) need 1 and water 0.2 L,
   and these compare only when both weeks logged the same number of days
-  that feed them (days logged, days with a drink, counted weekend or rest
-  days), so a logging gap never reads as progress. Win cards and `tough`
+  that feed them, so a logging gap never reads as progress: days logged
+  live for late snacks (a meal logged a day later has no time of day),
+  days with a drink for sugary drinks, days without a drink for the water
+  average, weekend days that went over or have two meals logged, counted
+  rest days, days logged for days on budget. Win cards and `tough`
   stories show only good trends. Day and workout counts carry their unit
   ("Up from 4 days last week").
 - `last_week.plan` lists the issues last week's plan took on. The first one
   that no longer holds and whose number moved a step the right way, by the
   rule above, becomes the top win card (`follow_through`, icon
   `check_circle`): this week's number, with last week's in its trend. Its
-  title claims the whole plan only when every item of it was fixed; a fix
-  that is more of something (fiber, water, protein, carbs) also gets a
-  share tile.
+  title claims the whole plan only when every move the plan showed was an
+  issue that is now fixed (a reminder habit or a plan rebuilt for an older
+  row never reads as done whole). A fix that is more of something (fiber,
+  water, protein, carbs) gets a share tile; otherwise the share card keeps
+  the tile of the win the card displaced.
 
 ## Configuration
 

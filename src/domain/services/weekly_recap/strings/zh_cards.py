@@ -78,6 +78,7 @@ ZH_CARDS = {
     "sugary.note.named": "主要是{drink}，合计约{kcal} kcal。",
     "sugary.advice": "奶茶 → 无糖茶",
     "sugary.advice.named": "把{drink}换成无糖茶",
+    "drink.coconut": "椰子水",
     "sugary.impact": "−{kcal} kcal / 杯",
     "sugary.why": "本周喝了{n}杯",
     "sugary.short": "少喝甜饮",

@@ -197,12 +197,13 @@ def low_protein_meal(meals: Sequence[FoodMeal]) -> str | None:
     """The main meal with the least protein, on the days it was eaten.
 
     A meal logged as several items (rice, soup, meat) counts as one meal:
-    its items are summed per day before averaging. Only meals eaten on at
-    least two days count, and there have to be two such meals to compare;
-    ties go to the earlier meal of the day.
+    its items are summed per day before averaging. Meals logged later are
+    left out, since their meal type may only come from the noon stamp.
+    Only meals eaten on at least two days count, and there have to be two
+    such meals to compare; ties go to the earlier meal of the day.
     """
     daily: dict[str, dict[int, float]] = {}
-    for meal in meals:
+    for meal in _timed(meals):
         if meal.meal_type in MAIN_MEALS:
             days = daily.setdefault(meal.meal_type, {})
             days[meal.day] = days.get(meal.day, 0.0) + meal.protein

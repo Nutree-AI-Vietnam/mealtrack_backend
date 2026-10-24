@@ -158,9 +158,9 @@ def test_the_sugary_card_names_the_drink() -> None:
     payload = generate_recap(stats, config)
 
     sugary = _card(payload, "grow", "fat")
-    assert sugary["note"] == "Mostly Trà sữa trân châu, about 1,100 kcal in all."
+    assert sugary["note"] == "Most often: Trà sữa trân châu, about 1,100 kcal in all."
     assert payload["plan"]["moves"][0]["title"] == (
-        "Swap Trà sữa trân châu for unsweetened tea"
+        "Trà sữa trân châu → unsweetened tea"
     )
     vi = generate_recap(stats, config, "vi")["plan"]["moves"][0]
     assert vi["title"] == "Đổi Trà sữa trân châu sang trà không đường"
@@ -289,7 +289,9 @@ def test_a_change_smaller_than_a_step_is_not_a_trend() -> None:
 def test_counts_only_compare_the_same_number_of_days_logged() -> None:
     # Last week logged five days: its days on budget and late-snack nights
     # don't compare with a seven-day week, its averages do.
-    last = _last_week(days_logged=5, days_on_budget=2, late_snack_nights=1)
+    last = _last_week(
+        days_logged=5, timed_days=5, days_on_budget=2, late_snack_nights=1
+    )
     stats = replace(sample_stats("steady"), last_week=replace(last, fiber_avg=10.0))
 
     payload = generate_recap(stats)
@@ -684,8 +686,8 @@ def test_a_tough_week_points_out_only_progress() -> None:
     [
         (
             "en",
-            "Mostly milk tea, about 1,100 kcal in all.",
-            "Swap milk tea for unsweetened tea",
+            "Most often: milk tea, about 1,100 kcal in all.",
+            "Milk tea → unsweetened tea",
         ),
         (
             "vi",
@@ -694,13 +696,13 @@ def test_a_tough_week_points_out_only_progress() -> None:
         ),
         (
             "es",
-            "Sobre todo té con leche, unas 1.100 kcal en total.",
+            "Lo que más tomaste: té con leche, unas 1.100 kcal en total.",
             "Té con leche → té sin azúcar",
         ),
         (
             "de",
-            "Vor allem Milchtee, insgesamt etwa 1.100 kcal.",
-            "Milchtee gegen ungesüßten Tee tauschen",
+            "Am häufigsten: Milchtee, insgesamt etwa 1.100 kcal.",
+            "Milchtee → ungesüßter Tee",
         ),
         ("ja", "主にミルクティーで、合計約1,100 kcal。", "ミルクティーを無糖のお茶に"),
     ],
@@ -752,3 +754,164 @@ def test_counted_follow_units_start_with_a_counter(locale, counters) -> None:
     for issue_id in ("late_snack", "sugary", "weekend_over", "rest_under"):
         unit = TABLES[locale][f"follow.unit.{issue_id}"]
         assert unit[0] in counters, (issue_id, unit)
+
+
+# --- Second review round ---------------------------------------------------
+
+
+def test_coconut_water_is_named_as_a_drink() -> None:
+    stats = replace(
+        sample_stats("steady"),
+        sugary_drinks=5,
+        sugary_kcal=1100,
+        top_sugary_drink="Coconut",
+    )
+
+    payload = generate_recap(stats, RecapConfig(priorities={"sugary": 99}))
+
+    assert _card(payload, "grow", "fat")["note"].startswith("Most often: coconut water")
+
+
+def test_late_snacks_logged_the_next_day_are_not_fewer_late_snacks() -> None:
+    # The same seven days are logged, but Thursday to Sunday a day late:
+    # those nights' snacks have no time of day, so the counts don't compare.
+    stats = replace(
+        sample_stats("steady"),
+        late_snack_days=(),
+        backdated_days=(3, 4, 5, 6),
+        last_week=_last_week(plan=("late_snack",)),
+    )
+
+    payload = generate_recap(stats)
+
+    assert all(card["icon"] != "check_circle" for card in _cards(payload, "wins"))
+
+
+def test_a_weekend_of_lone_breakfasts_is_not_a_fixed_weekend() -> None:
+    steady = sample_stats("steady")
+    stats = replace(
+        steady,
+        meals_by_day=(*steady.meals_by_day[:4], 1, 1, 1),
+        kcal_by_day=(*steady.kcal_by_day[:4], 450.0, 450.0, 450.0),
+        weekend_delta=0.0,
+        last_week=_tough_last_week(),
+    )
+
+    payload = generate_recap(stats)
+
+    assert all(card["icon"] != "check_circle" for card in _cards(payload, "wins"))
+
+
+def test_water_compares_only_with_the_same_days_without_a_drink() -> None:
+    # Last week was a four-day sign-up week with a drink every day; this
+    # week logged drinks on four of seven days, so its average has three
+    # empty days the other week doesn't.
+    steady = sample_stats("steady")
+    stats = replace(
+        steady,
+        water_by_day=(2.2, 2.2, 0.0, 2.2, 0.0, 2.2, 0.0),
+        last_week=_last_week(week_days=4, water_days=4, water_avg=2.0),
+    )
+
+    water = _card(generate_recap(stats), "grow", "water")
+
+    assert "trend" not in water
+
+
+def test_a_plan_with_a_habit_never_reads_as_done_whole() -> None:
+    stats = replace(
+        sample_stats("steady"),
+        late_snack_days=(4,),
+        last_week=_last_week(plan=("late_snack",), plan_moves=2),
+    )
+
+    first = generate_recap(stats)["wins"]["cards"][0]
+
+    assert first["title"] == "You hit one of last week's goals"
+
+
+def test_a_rebuilt_plan_never_reads_as_done_whole() -> None:
+    stats = replace(
+        sample_stats("steady"),
+        late_snack_days=(4,),
+        last_week=_last_week(plan=("late_snack",), plan_exact=False),
+    )
+
+    first = generate_recap(stats)["wins"]["cards"][0]
+
+    assert first["title"] == "You hit one of last week's goals"
+
+
+def test_the_follow_through_card_keeps_the_share_tile_it_displaced() -> None:
+    plain = generate_recap(sample_stats("perfect"))["share"]["stats"]
+    last = last_week_of(sample_stats("perfect"), "perfect", CONFIG)
+    followed = replace(
+        sample_stats("perfect"),
+        last_week=replace(last, late_snack_nights=4, plan=("late_snack",)),
+    )
+
+    tiles = generate_recap(followed)["share"]["stats"]
+
+    assert tiles == plain
+
+
+def test_the_fiber_win_names_days_only_for_most_of_the_week() -> None:
+    # Four days logged, three of them at target: not most of the week.
+    perfect = sample_stats("perfect")
+    stats = replace(
+        perfect,
+        fiber_avg=27.0,
+        fiber_by_day=(30.0, 30.0, 30.0, 20.0, 0.0, 0.0, 0.0),
+        meals_by_day=(3, 3, 3, 3, 0, 0, 0),
+    )
+
+    assert _fiber_hit_card(stats)["note"] == "A solid daily average."
+
+
+def test_a_water_fix_a_float_noisy_step_apart_counts() -> None:
+    stats = replace(
+        sample_stats("steady"),
+        water_by_day=(2.3,) * 7,
+        last_week=_last_week(water_avg=2.1, plan=("water_low",)),
+    )
+
+    first = generate_recap(stats)["wins"]["cards"][0]
+
+    assert (first["icon"], first["unit"]) == ("check_circle", "water / day")
+
+
+_MANY = RecapConfig(max_cards=8)
+
+
+@pytest.mark.parametrize(
+    ("sample", "section", "kind", "last", "expected"),
+    [
+        ("perfect", "wins", "water", {"water_avg": 3.1}, None),
+        ("perfect", "wins", "water", {"water_avg": 2.1}, "Up from 2.1 L last week"),
+        ("perfect", "wins", "fiber", {"fiber_avg": 25.0}, None),
+        ("perfect", "wins", "fiber", {"fiber_avg": 19.0}, "Up from 19g last week"),
+        ("steady", "wins", "calories", {"days_on_budget": 7}, None),
+        ("steady", "wins", "move", {"workouts": 1, "week_days": 5}, None),
+        (
+            "steady",
+            "grow",
+            "fat",
+            {"sugary_drinks": 7, "water_days": 5},
+            None,
+        ),
+    ],
+)
+def test_trend_wiring(sample, section, kind, last, expected) -> None:
+    stats = sample_stats(sample)
+    if sample == "perfect":
+        stats = replace(stats, fiber_avg=24.0, fiber_by_day=(24.0,) * 7)
+    base = last_week_of(stats, sample, CONFIG)
+    config = _MANY
+    if kind == "fat":
+        stats = replace(stats, sugary_drinks=5, sugary_kcal=1100)
+        config = RecapConfig(max_cards=8, priorities={"sugary": 99})
+    stats = replace(stats, last_week=replace(base, **last))
+
+    card = _card(generate_recap(stats, config), section, kind)
+
+    assert (card.get("trend") or {}).get("text") == expected

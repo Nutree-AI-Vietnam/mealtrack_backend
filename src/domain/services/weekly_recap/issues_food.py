@@ -20,6 +20,8 @@ from src.domain.services.weekly_recap.viz import bar, card, dots
 
 # Languages that write a drink name ("milk tea") in lower case mid-sentence.
 _LOWER_NOUNS = frozenset({"en", "vi", "es", "fr"})
+# Catalog drinks the recap names in its own words, written as mid-sentence.
+_RECAP_DRINK_NAMES = {"coconut": "drink.coconut"}
 
 
 def _fiber_low(ctx: RecapContext) -> bool:
@@ -164,8 +166,12 @@ def _drink(ctx: RecapContext) -> str | None:
     mid-sentence. Custom names are kept as the user wrote them.
     """
     raw = ctx.stats.top_sugary_drink
-    if not raw or catalog_drink_id(raw) is None:
+    drink_id = catalog_drink_id(raw)
+    if not raw or drink_id is None:
         return raw
+    if drink_id in _RECAP_DRINK_NAMES:
+        # The catalog's tile label ("Coconut") is too short for a sentence.
+        return ctx.t(_RECAP_DRINK_NAMES[drink_id])
     name = localized_name_for_catalog_name(raw, ctx.locale) or raw
     if ctx.locale in _LOWER_NOUNS and not any(char.isupper() for char in name[1:]):
         name = name[:1].lower() + name[1:]

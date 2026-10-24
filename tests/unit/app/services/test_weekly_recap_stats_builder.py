@@ -186,6 +186,7 @@ def test_build_week_stats_combines_the_logs_and_the_summary_rows():
         cheat_days=(5,),
         fiber_by_day=(20.0,) * 7,
         low_protein_meal="breakfast",
+        backdated_days=(),
         # Friday's three meals tie at 500 kcal; the earliest one wins.
         weekend_peaks=(
             PeakMeal(4, "Bánh mì", 500),
@@ -279,8 +280,10 @@ def test_build_week_stats_compares_with_the_recap_of_the_week_before():
 
     assert stats is not None
     assert stats.first_name == "Linh"
+    # The plan showed three moves, of which only late snacks was stored as
+    # an issue, so this plan can never read as done whole.
     assert stats.last_week == last_week_of(
-        sample_stats("steady"), "steady", CONFIG, plan=("late_snack",)
+        sample_stats("steady"), "steady", CONFIG, plan=("late_snack",), plan_moves=3
     )
 
 
@@ -319,6 +322,9 @@ def test_build_week_stats_names_the_drink_and_the_diet():
     drinks = (
         *(_drink("milk-tea", "Milk tea", sugar=40.0) for _ in range(3)),
         _drink("milk-tea", "Milk tea", sugar=2.0),  # unsweetened: not sugary
+        # Under the 10 g sugary threshold, though over the 4-drink issue bar.
+        _drink(None, "Coca-Cola", sugar=8.0),
+        _drink(None, "Coca-Cola", sugar=8.0),
         _drink(None, "Coca-Cola", sugar=35.0),
     )
     profile = SimpleNamespace(

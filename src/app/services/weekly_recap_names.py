@@ -4,9 +4,9 @@ The name arrives as a display name (from the user's Google or Apple
 account) and a stored first name, which is only the display name's first
 word. Word order varies: Vietnamese names are written family name first
 ("Nguyễn Văn Linh", called Linh) or, on many accounts, given name first
-("Linh Nguyễn"; Apple sign-in always joins given then family name).
-Greeting someone by their family name is worse than not greeting them, so
-when the order can't be told there is no greeting.
+("Linh Nguyễn", "Tuan Van Nguyen"; Apple sign-in always joins given then
+family name). Greeting someone by their family name is worse than not
+greeting them, so whenever the order can't be told there is no greeting.
 """
 
 from __future__ import annotations
@@ -15,11 +15,10 @@ import unicodedata
 from collections.abc import Sequence
 from typing import Any
 
-# Longest part of a name (between hyphens) that still fits one line of the
-# intro headline; a longer one would break mid-word.
-_PART_MAX = 12
-_NAME_MAX = 24
-# Chinese and Japanese names are used whole; this many characters fit.
+# Longest name that still fits one line of the intro headline at 50pt; a
+# longer one would shrink the title or break mid-word.
+_NAME_MAX = 12
+# Chinese, Japanese and Korean names are used whole; this many characters fit.
 _CJK_MAX = 6
 
 # Only ever family names, with and without diacritics.
@@ -28,11 +27,14 @@ _SURNAMES = frozenset(
     for word in (
         "Nguyễn Trần Lê Phạm Huỳnh Phan Võ Đặng Bùi Đỗ Hồ Ngô Đoàn Trịnh "
         "Trương Đinh Lương Phùng Quách Lưu Tạ "
-        "Nguyen Tran Le Pham Huynh Vo Bui Do Ho Ngo Doan Quach Luu Ta"
+        "Nguyen Tran Pham Huynh Bui Ngo Doan Quach Luu"
     ).split()
 )
-# Family names that are as often given names (unaccented, several of the
-# names above are also given names: Trinh, Truong, Dang...).
+# Unaccented family names short enough to be something else (a Western
+# given name, a word): a family name at the end of a name, but not enough on
+# their own to say a name starts with its family name.
+_SHORT_SURNAMES = frozenset({"le", "do", "ho", "vo", "ta"})
+# Family names that are as often given names.
 _ALSO_GIVEN = frozenset(
     word.casefold()
     for word in (
@@ -40,8 +42,12 @@ _ALSO_GIVEN = frozenset(
         "Hoang Vu Duong Ly Dao Vuong Dang Dinh Luong Truong Trinh Phung"
     ).split()
 )
-# Vietnamese middle-name markers: never what someone is called.
-_MIDDLE = frozenset({"văn", "thị", "van", "thi"})
+# Vietnamese middle-name markers, never what someone is called. The accented
+# forms only occur in Vietnamese names; the plain ones also start Dutch and
+# other family names ("Van Gogh"), so they count only next to a Vietnamese
+# family name.
+_MARKERS = frozenset({"Văn", "Thị"})
+_PLAIN_MARKERS = frozenset({"Van", "Thi"})
 _HONORIFICS = frozenset(
     "dr mr mrs ms mx prof sir mme mlle herr frau sr sra srta dra".split()
 )
@@ -64,10 +70,12 @@ def recap_first_name(user: Any) -> str | None:
 
 
 def _name_words(text: str) -> list[str] | None:
-    """The words of a name, without honorifics; None when it isn't a name."""
-    words = text.split()
-    while len(words) > 1 and words[0].casefold().rstrip(".") in _HONORIFICS:
-        words.pop(0)
+    """The words of a name; None when there is no name or it isn't one.
+
+    Decorations with no letters (emoji, symbols) are dropped. An all
+    lower-case name is capitalized, as a headline writes it.
+    """
+    words = [word for word in text.split() if any(char.isalpha() for char in word)]
     if not words:
         return None
     cjk = [word for word in words if all(_is_cjk(char) for char in word)]
@@ -75,34 +83,45 @@ def _name_words(text: str) -> list[str] | None:
         return ["".join(cjk)]
     if not all(_is_word(word) or _is_initial(word) for word in words):
         return None
+    if all(word.islower() for word in words):
+        words = [word[:1].upper() + word[1:] for word in words]
     return words
 
 
 def _greeting(words: Sequence[str]) -> str | None:
     """The word someone with this name is called, when it can be told."""
+    if _is_cjk(words[0][0]):
+        return words[0] if len(words[0]) <= _CJK_MAX else None
+    titled = len(words) > 1 and words[0].casefold().rstrip(".") in _HONORIFICS
+    words = list(words[1:]) if titled else list(words)
     if _is_initial(words[0]):
         return None
     words = [word for word in words if not _is_initial(word)]
-    if len(words) > 1 and words[0].casefold() in _MIDDLE:
-        words = words[1:]  # "Thị Mai Nguyễn": the given name came first
+    if titled and len(words) == 1:
+        return None  # "Dr. Schmidt": the family name
     name = _called(words)
-    return name if name is not None and _fits(name) else None
+    return name if name is not None and len(name) <= _NAME_MAX else None
 
 
 def _called(words: Sequence[str]) -> str | None:
-    if len(words) == 1:
-        return words[0]
-    if len(words) > 2 and words[1].casefold() in _MIDDLE:
-        return words[-1]  # "Nguyễn Văn Linh"
     first, last = words[0].casefold(), words[-1].casefold()
+    if len(words) == 1:
+        return None if first in _SURNAMES else words[0]
+    if len(words) > 2 and _is_marker(words[1], first, last):
+        if last in _SURNAMES or last in _SHORT_SURNAMES:
+            # "Tuan Van Nguyen": given, middle, family.
+            return None if first in _SURNAMES else words[0]
+        return words[-1]  # "Nguyễn Văn Linh", "Le Thi Hoa"
     if first in _SURNAMES and last in _SURNAMES:
         return None  # "Nguyễn Lê": no telling which is which
     if first in _SURNAMES:
         return words[-1]  # "Trần Minh Anh"
-    if last in _SURNAMES:
-        # Given name first. A Vietnamese given name goes by its last word
-        # ("Hoàng Nam Nguyễn" is Nam); other names by their first.
-        return words[-2] if _vietnamese(words) else words[0]
+    if last in _SURNAMES or last in _SHORT_SURNAMES:
+        # Given name first: its first word that isn't a middle marker.
+        given = [word for word in words[:-1] if word not in _MARKERS | _PLAIN_MARKERS]
+        return given[0] if given else words[0]
+    if first in _SHORT_SURNAMES:
+        return None  # "Le Anh" or "Ho Wei": can't tell
     if first in _ALSO_GIVEN and last in _ALSO_GIVEN:
         return None  # "Hoàng Dương"
     if first in _ALSO_GIVEN:
@@ -110,12 +129,11 @@ def _called(words: Sequence[str]) -> str | None:
     return words[0]
 
 
-def _fits(name: str) -> bool:
-    if _is_cjk(name[0]):
-        return len(name) <= _CJK_MAX
-    return len(name) <= _NAME_MAX and all(
-        len(part) <= _PART_MAX for part in name.split("-")
-    )
+def _is_marker(word: str, first: str, last: str) -> bool:
+    if word in _MARKERS:
+        return True
+    vietnamese = _SURNAMES | _SHORT_SURNAMES | _ALSO_GIVEN
+    return word in _PLAIN_MARKERS and (first in vietnamese or last in vietnamese)
 
 
 def _is_word(word: str) -> bool:
@@ -128,13 +146,6 @@ def _is_initial(word: str) -> bool:
     """ "J", "J." or "A.J."."""
     letters = word.replace(".", "")
     return letters.isalpha() and len(letters) <= 2 and (len(word) == 1 or "." in word)
-
-
-def _vietnamese(words: Sequence[str]) -> bool:
-    """Whether the name is written with Vietnamese letters."""
-    return any(
-        char in "đĐ" or unicodedata.decomposition(char) for char in "".join(words)
-    )
 
 
 def _is_cjk(char: str) -> bool:

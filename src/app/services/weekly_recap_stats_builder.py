@@ -133,6 +133,7 @@ def build_week_stats(
         low_protein_meal=low_protein_meal(meals),
         top_sugary_drink=top_sugary_drink(logs.drinks, config.sugary_min_sugar_g),
         weekend_peaks=weekend_peaks(meals),
+        backdated_days=tuple(sorted({meal.day for meal in meals if meal.backdated})),
         last_week=_last_week(logs.last_recap, config),
     )
 
@@ -158,13 +159,14 @@ def _last_week(recap: WeeklyRecap | None, config: RecapConfig) -> LastWeek | Non
         return None
     try:
         stats = week_stats_from_dict(recap.stats)
+        moves = (recap.payload.get("plan") or {}).get("moves") or []
         stored = recap.stats.get(PLAN_ISSUES_KEY)
         if isinstance(stored, list):
-            plan = tuple(str(issue_id) for issue_id in stored)
+            plan, exact = tuple(str(issue_id) for issue_id in stored), True
         else:
-            moves = (recap.payload.get("plan") or {}).get("moves") or []
             plan = shown_plan(stats, recap.case_id, config, moves, recap.locale)
-        return last_week_of(stats, recap.case_id, config, plan)
+            exact = False
+        return last_week_of(stats, recap.case_id, config, plan, len(moves), exact)
     except (AttributeError, KeyError, TypeError, ValueError):
         logger.warning(
             "Weekly recap %s for week %s has unreadable stats; not comparing",

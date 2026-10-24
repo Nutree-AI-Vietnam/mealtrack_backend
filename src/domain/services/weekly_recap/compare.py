@@ -8,7 +8,10 @@ Averages over logged days (protein, fiber, pre-workout carbs) compare
 across any two weeks. A count, or the water average, only compares when
 both weeks logged the same number of days that feed it (its coverage):
 a day nobody logged has no late snacks and no water, and fewer logged
-days must never read as progress.
+days must never read as progress. Late snacks need meals logged live (a
+meal logged a day later has no time of day); a weekend day counts once it
+went over or has at least two meals logged, so a lone breakfast never reads
+as a weekend kept on budget.
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from src.domain.services.weekly_recap.context import RecapContext
 # Float noise must not hide a change of exactly one step (2.2 L - 2.0 L).
 _EPSILON = 1e-9
 _WEEKEND = (4, 5, 6)
+# Meals a day needs before its calories say anything about the day.
+_FULL_DAY_MEALS = 2
 
 
 @dataclass(frozen=True)
@@ -53,12 +58,25 @@ def counted_days(ctx: RecapContext) -> list[int]:
 
 
 def weekend_days_counted(ctx: RecapContext) -> int:
-    """Friday to Sunday days the weekend-over count could look at."""
-    return sum(1 for day in counted_days(ctx) if day in _WEEKEND)
+    """Friday to Sunday days whose over-or-not the logs can tell.
+
+    A day that went over did, however few meals were logged; a day under
+    target needs at least two meals before it says the weekend went well.
+    """
+    meals, over = ctx.stats.meals_by_day, set(ctx.facts.weekend_over_days)
+    return sum(
+        1
+        for day in counted_days(ctx)
+        if day in _WEEKEND and (day in over or meals[day] >= _FULL_DAY_MEALS)
+    )
 
 
 def rest_days_counted(ctx: RecapContext) -> int:
-    """Counted days without a workout, which the rest-day count looks at."""
+    """Counted days without a workout, which the rest-day count looks at.
+
+    A sparsely logged rest day can only look under-eaten, never fixed, so
+    every counted day counts.
+    """
     workout_days = set(ctx.facts.workout_days)
     return sum(1 for day in counted_days(ctx) if day not in workout_days)
 
@@ -66,6 +84,18 @@ def rest_days_counted(ctx: RecapContext) -> int:
 def water_days(ctx: RecapContext) -> int:
     """Days with any drink logged."""
     return sum(1 for litres in ctx.stats.water_by_day if litres > 0)
+
+
+def timed_days(ctx: RecapContext) -> int:
+    """Days logged live, whose meals say when they were eaten.
+
+    A day with a meal logged later (stamped at noon) could hide that
+    night's snack. Weeks stored before this was kept count every day.
+    """
+    backdated = ctx.stats.backdated_days
+    if backdated is None:
+        return ctx.facts.days_logged
+    return sum(1 for day in range(7) if ctx.facts.logged[day] and day not in backdated)
 
 
 def _grams(ctx: RecapContext, value: float) -> str:
@@ -115,12 +145,17 @@ FIBER = Metric(
     _grams,
     step=2,
 )
+# The water average counts days with no drink as zero, so the two weeks
+# need the same number of such days.
 WATER = Metric(
     _water_now,
     lambda last: last.water_avg,
     _litres,
     step=0.2,
-    covered=(water_days, lambda last: last.water_days),
+    covered=(
+        lambda ctx: ctx.facts.week_days - water_days(ctx),
+        lambda last: last.week_days - last.water_days,
+    ),
 )
 ON_BUDGET = Metric(
     lambda ctx: ctx.facts.days_on_budget,
@@ -145,7 +180,10 @@ LATE_SNACKS = Metric(
     step=1,
     higher_is_better=False,
     count=True,
-    covered=_DAYS_LOGGED,
+    covered=(
+        timed_days,
+        lambda last: last.days_logged if last.timed_days is None else last.timed_days,
+    ),
 )
 SUGARY_DRINKS = Metric(
     lambda ctx: ctx.stats.sugary_drinks,
