@@ -7,11 +7,11 @@ from src.api.routes.v1.web_funnel import _require_fresh_token
 from src.app.services.web_funnel_claim_common import utcnow
 
 # _require_fresh_token accepts an iat only while its age is in [0, 600] seconds.
-# Offsets are applied when the test body runs. A collection-time future iat
-# (previously utcnow() + 60s) slips into that window once the suite has been
-# running for about a minute, and the claim is then accepted.
+# Offsets are added to utcnow() when the test runs. +60s is a small future skew
+# and must be rejected; +900s is that same rejection well outside the window.
 _STALE_OFFSET_SECONDS = -(600 + 60)
-_FUTURE_OFFSET_SECONDS = 600 + 300
+_FUTURE_OFFSET_SECONDS = 60
+_FAR_FUTURE_OFFSET_SECONDS = 600 + 300
 
 
 def test_fresh_claim_bearer_is_accepted():
@@ -20,8 +20,12 @@ def test_fresh_claim_bearer_is_accepted():
 
 @pytest.mark.parametrize(
     "offset_seconds",
-    [_STALE_OFFSET_SECONDS, _FUTURE_OFFSET_SECONDS],
-    ids=["stale", "future"],
+    [
+        _STALE_OFFSET_SECONDS,
+        _FUTURE_OFFSET_SECONDS,
+        _FAR_FUTURE_OFFSET_SECONDS,
+    ],
+    ids=["stale", "future", "far-future"],
 )
 def test_stale_or_future_claim_bearer_is_rejected(offset_seconds):
     issued_at = int(utcnow().timestamp()) + offset_seconds
