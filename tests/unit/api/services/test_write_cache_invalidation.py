@@ -90,23 +90,30 @@ async def test_meal_write_invalidation_failure_does_not_fail_the_write() -> None
 
 
 @pytest.mark.asyncio
-async def test_a_hung_redis_cannot_hold_the_write_past_the_deadline(
+async def test_a_slow_redis_releases_the_write_but_still_purges(
     monkeypatch,
 ) -> None:
+    """Day macros live a day, so a late purge must finish, not be cancelled."""
     monkeypatch.setattr(write_cache_invalidation, "PURGE_TIMEOUT_SECONDS", 0.01)
     cache = _hosted_cache()
+    redis_answers = asyncio.Event()
+    purged = asyncio.Event()
 
-    async def hang(*_args) -> None:
-        await asyncio.Event().wait()
+    async def slow_purge(*_args) -> None:
+        await redis_answers.wait()
+        purged.set()
 
-    cache.purge.side_effect = hang
+    cache.purge.side_effect = slow_purge
 
     await asyncio.wait_for(
         apply_meal_write_cache_invalidation(cache, "user-1", date(2026, 10, 25)),
         timeout=1,
     )
+    assert not purged.is_set()
 
-    cache.purge.assert_awaited_once()
+    redis_answers.set()
+    await asyncio.wait_for(purged.wait(), timeout=1)
+    assert CacheKeys.daily_macros("user-1", date(2026, 10, 25))[0] in _deleted(cache)
 
 
 @pytest.mark.asyncio
