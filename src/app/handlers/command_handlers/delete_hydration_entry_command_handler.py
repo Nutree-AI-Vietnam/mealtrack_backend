@@ -8,14 +8,14 @@ from src.app.commands.hydration.delete_hydration_entry_command import (
     DeleteHydrationEntryCommand,
 )
 from src.app.events.base import EventHandler, handles
-from src.app.events.hydration.cache_invalidation import (
-    invoke_hydration_cache_invalidation_hook,
-)
 from src.app.events.hydration.hydration_caloric_deleted_event import (
     HydrationCaloricDeletedEvent,
 )
 from src.app.events.hydration.hydration_deleted_event import (
     HydrationDeletedEvent,
+)
+from src.app.events.hydration.local_cache_invalidation import (
+    invoke_local_hydration_cache_invalidation_hook,
 )
 from src.domain.model.hydration import DrinkCategory
 from src.domain.model.meal import MealStatus
@@ -123,6 +123,6 @@ class DeleteHydrationEntryCommandHandler(
             integration_event.event_id,
             integration_event.aggregate_id,
         )
-        await invoke_hydration_cache_invalidation_hook(cmd.user_id, log_date)
+        await invoke_local_hydration_cache_invalidation_hook(cmd.user_id, log_date)
 
         return {"success": True}

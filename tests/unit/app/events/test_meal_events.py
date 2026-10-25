@@ -161,12 +161,12 @@ async def test_publish_meal_event_success(sample_meal):
 @pytest.mark.asyncio
 async def test_publish_meal_event_purges_local_daily_macros_cache(sample_meal):
     from src.app.events.meal.meal_events import (
-        register_cache_invalidation_hook,
+        register_local_cache_invalidation_hook,
     )
 
     publisher = AsyncMock()
     hook = AsyncMock()
-    register_cache_invalidation_hook(hook)
+    register_local_cache_invalidation_hook(hook)
     try:
         await publish_meal_event(
             publisher,
@@ -178,37 +178,37 @@ async def test_publish_meal_event_purges_local_daily_macros_cache(sample_meal):
         )
         hook.assert_awaited_once_with(sample_meal.user_id, date(2026, 9, 11), None)
     finally:
-        register_cache_invalidation_hook(None)
+        register_local_cache_invalidation_hook(None)
 
 
 @pytest.mark.asyncio
-async def test_invoke_cache_invalidation_hook_when_registered():
+async def test_invoke_local_cache_invalidation_hook_when_registered():
     from src.app.events.meal.meal_events import (
-        invoke_cache_invalidation_hook,
-        register_cache_invalidation_hook,
+        invoke_local_cache_invalidation_hook,
+        register_local_cache_invalidation_hook,
     )
 
     hook = AsyncMock()
-    register_cache_invalidation_hook(hook)
+    register_local_cache_invalidation_hook(hook)
     try:
-        await invoke_cache_invalidation_hook(
+        await invoke_local_cache_invalidation_hook(
             "user-1", date(2026, 9, 11), date(2026, 9, 10)
         )
         hook.assert_awaited_once_with("user-1", date(2026, 9, 11), date(2026, 9, 10))
     finally:
-        register_cache_invalidation_hook(None)
+        register_local_cache_invalidation_hook(None)
 
 
 @pytest.mark.asyncio
-async def test_invoke_cache_invalidation_hook_when_none_is_noop():
+async def test_invoke_local_cache_invalidation_hook_when_none_is_noop():
     from src.app.events.meal.meal_events import (
-        invoke_cache_invalidation_hook,
-        register_cache_invalidation_hook,
+        invoke_local_cache_invalidation_hook,
+        register_local_cache_invalidation_hook,
     )
 
-    register_cache_invalidation_hook(None)
+    register_local_cache_invalidation_hook(None)
     # Should not raise any error
-    await invoke_cache_invalidation_hook("user-1", date(2026, 9, 11), None)
+    await invoke_local_cache_invalidation_hook("user-1", date(2026, 9, 11), None)
 
 
 @pytest.mark.asyncio
