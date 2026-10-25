@@ -1,7 +1,6 @@
 """
 DeleteUserCommandHandler - Handler for deleting user accounts.
-Performs soft delete in database, emits UserDeletedEvent for async cleanup,
-then deletes the linked Open Wearables user.
+Performs soft delete in database and emits UserDeletedEvent for async cleanup.
 """
 
 import logging
@@ -12,9 +11,6 @@ from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.user import DeleteUserCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.user.user_deleted_event import UserDeletedEvent
-from src.app.services.open_wearables_account_cleanup import (
-    delete_open_wearables_user,
-)
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.cache_port import CachePort
@@ -22,7 +18,6 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
 )
-from src.domain.ports.wearable_account_port import WearableAccountPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.enums import MealStatusEnum
 
@@ -46,13 +41,11 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
         cache_service: CachePort | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
-        wearable_accounts: WearableAccountPort | None = None,
     ):
         self.uow = uow
         self.cache_service = cache_service
         self.event_publisher = event_publisher
         self.environment = environment
-        self.wearable_accounts = wearable_accounts
 
     async def handle(self, command: DeleteUserCommand) -> dict[str, Any]:
         """
@@ -60,8 +53,6 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
         - Soft delete in database (set is_active=False)
         - Anonymize user data
         - Emit UserDeletedEvent for out-of-process cleanup (nutreeai_async)
-        - Delete the linked Open Wearables user (health data, provider tokens)
-          after the commit, so an Open Wearables failure cannot undo the rest
         """
         # Use provided UoW or create default
         uow = self.uow or AsyncUnitOfWork()
@@ -78,10 +69,6 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
 
                 # Store user_id for logging
                 user_id = user.id
-
-                # The link stays on the deleted row until Open Wearables
-                # confirms the deletion after the commit.
-                ow_user_id = await uow.users.find_open_wearables_user_id(user_id)
 
                 # Step 1: Soft-delete all related user data
                 await self._soft_delete_related_data(uow, str(user_id))
@@ -134,13 +121,6 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             event.event_id,
             event.aggregate_id,
         )
-
-        # Step 5: Delete the Open Wearables user now that the account is gone.
-        # A failure keeps the link on the deleted row for the retry script.
-        if ow_user_id is not None:
-            await delete_open_wearables_user(
-                self.wearable_accounts, uow, user_id, ow_user_id
-            )
 
         return {
             "firebase_uid": command.firebase_uid,
