@@ -129,6 +129,26 @@ def test_echoing_the_shown_name_is_not_a_rename():
     assert not is_dish_rename(meal, None, "vi")
 
 
+def test_saving_a_name_another_locale_holds_is_not_a_rename():
+    """A time-only save can echo the app's cached title from another locale."""
+    meal = _meal(dish_name="Beef pho", raw={"dish_name": "Beef pho"})
+    meal.translations = {
+        language: MealTranslation(
+            meal_id=meal.meal_id,
+            language=language,
+            dish_name=name,
+            food_items=[],
+            meal_ingredients=["Ingredient"],
+        )
+        for language, name in (("vi", "Phở bò"), ("es", "Pho de res"))
+    }
+
+    assert display_dish_name(meal, "vi") == "Phở bò"
+    assert not is_dish_rename(meal, "Beef pho", "vi")
+    assert not is_dish_rename(meal, "Pho de res", "vi")
+    assert is_dish_rename(meal, "Phở bò của mẹ", "vi")
+
+
 def test_retyping_a_rename_the_translation_row_lost_repairs_it():
     meal = _meal(dish_name="Bánh mì của mẹ")
     meal.translations = _vi_translation(meal.meal_id)

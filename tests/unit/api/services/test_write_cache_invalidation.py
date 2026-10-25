@@ -1,8 +1,10 @@
+import asyncio
 from datetime import date
 from unittest.mock import AsyncMock
 
 import pytest
 
+from src.api.services import write_cache_invalidation
 from src.api.services.write_cache_invalidation import (
     apply_hydration_write_cache_invalidation,
     apply_meal_write_cache_invalidation,
@@ -83,6 +85,26 @@ async def test_meal_write_invalidation_failure_does_not_fail_the_write() -> None
     cache.purge.side_effect = ConnectionError("redis down")
 
     await apply_meal_write_cache_invalidation(cache, "user-1", date(2026, 10, 25))
+
+    cache.purge.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_hung_redis_cannot_hold_the_write_past_the_deadline(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(write_cache_invalidation, "PURGE_TIMEOUT_SECONDS", 0.01)
+    cache = _hosted_cache()
+
+    async def hang(*_args) -> None:
+        await asyncio.Event().wait()
+
+    cache.purge.side_effect = hang
+
+    await asyncio.wait_for(
+        apply_meal_write_cache_invalidation(cache, "user-1", date(2026, 10, 25)),
+        timeout=1,
+    )
 
     cache.purge.assert_awaited_once()
 

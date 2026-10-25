@@ -124,11 +124,33 @@ def display_dish_name(
 
 
 def is_dish_rename(meal: Meal, dish_name: str | None, language: str | None) -> bool:
-    """Return whether a submitted name differs from the one the user was shown."""
+    """Return whether a submitted name is new, not one the meal already holds.
+
+    The app sends its title on every save (time, meal type, Done), and that
+    title can come from its own cache in another locale. Echoing a translated
+    or AI name is therefore not a rename. The stored name is left out so that
+    retyping a rename the locale names lost still repairs them.
+    """
     typed = (dish_name or "").strip()
     if not typed:
         return False
-    return typed != (display_dish_name(meal, language) or "").strip()
+    if typed == (display_dish_name(meal, language) or "").strip():
+        return False
+    return typed not in _locale_dish_names(meal)
+
+
+def _locale_dish_names(meal: Meal) -> set[str]:
+    names = {
+        translation.dish_name
+        for translation in (meal.translations or {}).values()
+        if translation.dish_name
+    }
+    raw = parse_raw_payload(meal)
+    if isinstance(raw, dict):
+        names.update(
+            raw[key] for key in _RAW_DISH_NAME_KEYS if isinstance(raw.get(key), str)
+        )
+    return {name.strip() for name in names if name.strip()}
 
 
 def carry_dish_name_to_locales(meal: Meal) -> Meal:
