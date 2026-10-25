@@ -116,3 +116,29 @@ async def test_delete_pattern_uses_scan_not_keys():
     assert "user:abc:macros:2026-01-02" in deleted_keys
     mock_client.delete.assert_awaited_once()
     assert mock_client.keys.call_count == 0  # must NOT use blocking KEYS
+
+
+@pytest.mark.asyncio
+async def test_get_counter_reads_unset_as_zero_and_outage_as_unknown():
+    client = RedisClient(redis_url="redis://localhost:6379")
+    client.connect = AsyncMock()
+    client.client = MagicMock()
+    client.client.get = AsyncMock(side_effect=[b"7", None])
+
+    assert await client.get_counter("k") == 7
+    assert await client.get_counter("k") == 0
+
+    client.client = None
+    assert await client.get_counter("k") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_many_sends_one_command():
+    client = RedisClient(redis_url="redis://localhost:6379")
+    client.connect = AsyncMock()
+    client.client = MagicMock()
+    client.client.delete = AsyncMock(return_value=2)
+
+    assert await client.delete_many(["a", "b"]) == 2
+    client.client.delete.assert_awaited_once_with("a", "b")
+    assert await client.delete_many([]) == 0

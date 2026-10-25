@@ -187,10 +187,12 @@ async def test_cache_miss_when_auto_adjust_differs():
             "effective_start": "2026-09-01",
             "days": [{"date": "2026-09-01", "target_calories": 1850.0}],
             "target_revision": 3,
+            "intake_revision": 4,
             "weekly_auto_adjust": True,
         }
     )
     cache.set_json = AsyncMock()
+    cache.read_revision = AsyncMock(return_value=4)
     uow = _uow()
     uow.users.get_weekly_auto_adjust = AsyncMock(return_value=False)
     result = await _handle(
@@ -244,9 +246,11 @@ async def test_cache_hit_skips_compute():
         "effective_start": "2026-09-01",
         "days": [],
         "target_revision": 3,
+        "intake_revision": 4,
     }
     cache.get_json = AsyncMock(return_value=cached)
     cache.set_json = AsyncMock()
+    cache.read_revision = AsyncMock(return_value=4)
     uow = _uow()
     result = await _handle(
         uow,
@@ -261,6 +265,35 @@ async def test_cache_hit_skips_compute():
     assert result["target_revision"] == 3
     uow.meals.find_by_date_range.assert_not_awaited()
     uow.hydration_entries.sum_ml_by_date_range.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_summary_cached_before_a_meal_write_is_recomputed():
+    cache = MagicMock()
+    cache.get_json = AsyncMock(
+        return_value={
+            "effective_start": "2026-09-01",
+            "days": [],
+            "target_revision": 3,
+            "intake_revision": 4,
+        }
+    )
+    cache.set_json = AsyncMock()
+    cache.read_revision = AsyncMock(return_value=5)
+    uow = _uow()
+
+    await _handle(
+        uow,
+        GetProgressSummaryQuery(
+            user_id=USER_ID,
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 1),
+        ),
+        cache=cache,
+    )
+
+    uow.meals.find_by_date_range.assert_awaited()
+    assert cache.set_json.await_args.args[1]["intake_revision"] == 5
 
 
 @pytest.mark.asyncio

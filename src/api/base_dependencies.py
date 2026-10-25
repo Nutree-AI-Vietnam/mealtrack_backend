@@ -94,7 +94,7 @@ async def initialize_cache_layer() -> None:
         enabled=settings.CACHE_ENABLED,
     )
     _register_local_insight_hook()
-    _register_local_cache_invalidation_hook()
+    _register_write_cache_invalidation_hooks()
 
 
 async def shutdown_cache_layer() -> None:
@@ -275,16 +275,17 @@ def _register_local_insight_hook() -> None:
     )
 
 
-def _register_local_cache_invalidation_hook() -> None:
-    """Purge meal, hydration and movement write keys locally when Cloudflare Queue is not configured (development only)."""
-    if settings.ENVIRONMENT != "development":
-        return
-    from src.api.services.local_meal_cache_invalidation import (
+def _register_write_cache_invalidation_hooks() -> None:
+    """Purge meal, hydration and movement write keys before each write returns.
+
+    Registered in every environment: reads after a write must not depend on
+    the nutreeai_async Queue worker, whose purge is only a second pass.
+    """
+    from src.api.services.write_cache_invalidation import (
         apply_hydration_write_cache_invalidation,
         apply_meal_write_cache_invalidation,
         apply_movement_write_cache_invalidation,
     )
-    from src.api.services.local_meal_insight_cache import redis_url_is_local
     from src.app.events.hydration.local_cache_invalidation import (
         register_local_hydration_cache_invalidation_hook,
     )
@@ -292,9 +293,6 @@ def _register_local_cache_invalidation_hook() -> None:
     from src.app.events.movement.local_cache_invalidation import (
         register_local_movement_cache_invalidation_hook,
     )
-
-    if not redis_url_is_local(settings.redis_url):
-        return
 
     async def _invalidate(user_id, meal_date, old_meal_date=None):
         await apply_meal_write_cache_invalidation(

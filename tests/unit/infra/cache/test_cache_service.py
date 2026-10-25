@@ -133,3 +133,35 @@ async def test_invalidate_pattern_deletes_pattern(service):
 
     assert await service.invalidate_pattern("user:u:activities:*") == 3
     service.redis.delete_pattern.assert_awaited_once_with("user:u:activities:*")
+
+
+@pytest.mark.asyncio
+async def test_invalidate_many_deletes_keys_and_revisions_in_one_call(service):
+    service.redis.delete_many = AsyncMock(return_value=4)
+
+    await service.invalidate_many(["a", "b"])
+
+    service.redis.delete_many.assert_awaited_once_with(
+        ["a", "b", "a:__revision", "b:__revision"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_revision_reads_and_bumps_the_counter(service):
+    service.redis.get_counter = AsyncMock(return_value=3)
+    service.redis.incr_with_expiry = AsyncMock(return_value=4)
+
+    assert await service.read_revision("user:u1:intake_revision") == 3
+    assert await service.bump_revision("user:u1:intake_revision", 60) == 4
+    service.redis.incr_with_expiry.assert_awaited_once_with(
+        "user:u1:intake_revision", 60
+    )
+
+
+@pytest.mark.asyncio
+async def test_revision_is_unknown_when_cache_disabled():
+    service = CacheService(redis_client=AsyncMock(), enabled=False)
+
+    assert await service.read_revision("k") is None
+    assert await service.bump_revision("k", 60) is None
+    assert await service.invalidate_many(["k"]) == 0

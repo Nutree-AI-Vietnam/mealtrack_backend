@@ -339,31 +339,6 @@ class AsyncMealRepository(MealRepositoryPort):
         )
         return result.scalar_one_or_none()
 
-    async def max_updated_at_for_local_range(
-        self,
-        start_date: date,
-        end_date: date,
-        user_id: str,
-        user_timezone: str | None = None,
-    ) -> datetime | None:
-        """Newest meal write across local days ``start_date``..``end_date``."""
-        tz = get_zone_info(user_timezone) if user_timezone else UTC
-        start_dt = datetime.combine(
-            start_date, datetime.min.time(), tzinfo=tz
-        ).astimezone(UTC)
-        end_dt = (
-            datetime.combine(end_date, datetime.min.time(), tzinfo=tz)
-            + timedelta(days=1)
-        ).astimezone(UTC)
-        result = await self.session.execute(
-            select(func.max(MealORM.updated_at)).where(
-                MealORM.user_id == user_id,
-                MealORM.created_at >= start_dt,
-                MealORM.created_at < end_dt,
-            )
-        )
-        return result.scalar_one_or_none()
-
     async def find_activities_by_date(
         self,
         date_obj: date,

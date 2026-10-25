@@ -150,6 +150,24 @@ class CacheService(CachePort):
         )
         return bool(deleted)
 
+    async def invalidate_many(self, keys: list[str]) -> int:
+        """Remove several cached values and their revision fences in one call."""
+        if not self.enabled or not keys:
+            return 0
+        return await self.redis.delete_many(
+            [*keys, *(f"{key}:__revision" for key in keys)]
+        )
+
+    async def read_revision(self, key: str) -> int | None:
+        if not self.enabled:
+            return None
+        return await self.redis.get_counter(key)
+
+    async def bump_revision(self, key: str, ttl_seconds: int) -> int | None:
+        if not self.enabled:
+            return None
+        return await self.redis.incr_with_expiry(key, ttl_seconds)
+
     async def invalidate_pattern(self, pattern: str) -> int:
         """Remove all cache keys matching a glob pattern."""
         return await self.invalidate_pattern_now(pattern)

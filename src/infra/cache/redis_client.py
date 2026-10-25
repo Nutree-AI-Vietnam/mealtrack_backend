@@ -196,6 +196,16 @@ class RedisClient:
 
         return await self._with_client("DELETE", operation, False, key)
 
+    async def delete_many(self, keys: list[str]) -> int:
+        """Delete several keys in one round-trip."""
+        if not keys:
+            return 0
+
+        async def operation(client: redis.Redis) -> int:
+            return int(await client.delete(*keys))
+
+        return await self._with_client("DELETE_MANY", operation, 0, keys[0])
+
     async def delete_pattern(self, pattern: str) -> int:
         """Delete keys matching a pattern using non-blocking SCAN.
 
@@ -267,6 +277,15 @@ class RedisClient:
             return count
 
         return await self._with_client("INCR", operation, None, key)
+
+    async def get_counter(self, key: str) -> int | None:
+        """Read an integer counter: 0 when unset, None when Redis is unavailable."""
+
+        async def operation(client: redis.Redis) -> int:
+            raw = await client.get(key)
+            return int(raw) if raw is not None else 0
+
+        return await self._with_client("GET_COUNTER", operation, None, key)
 
     async def mget(self, keys: list[str]) -> list[str | None]:
         """Retrieve multiple cached values in a single round-trip."""

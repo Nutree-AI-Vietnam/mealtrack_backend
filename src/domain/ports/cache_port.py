@@ -31,3 +31,21 @@ class CachePort(ABC):
     @abstractmethod
     async def invalidate_pattern(self, pattern: str) -> int:
         """Request deletion of cache entries matching a glob pattern."""
+
+    async def invalidate_many(self, keys: list[str]) -> int:
+        """Delete several cache entries; adapters override this with one call."""
+        deleted = 0
+        for key in keys:
+            deleted += int(await self.invalidate(key))
+        return deleted
+
+    async def read_revision(self, key: str) -> int | None:
+        """Return a write counter: 0 when unset, None when it cannot be read.
+
+        None means unknown, so a cache fenced by the counter must not be served.
+        """
+        return None
+
+    async def bump_revision(self, key: str, ttl_seconds: int) -> int | None:
+        """Advance a write counter so entries built at the old value stop serving."""
+        return None

@@ -57,7 +57,7 @@ def register_local_insight_hook(hook: LocalInsightHook | None) -> None:
 def register_local_cache_invalidation_hook(
     hook: LocalCacheInvalidationHook | None,
 ) -> None:
-    """Register the process-local Redis purge used when the Queue worker is absent."""
+    """Register the Redis purge meal writes await before they return."""
     global _local_cache_invalidation_hook
     _local_cache_invalidation_hook = hook
 
@@ -67,7 +67,7 @@ async def invoke_local_cache_invalidation_hook(
     meal_date: date | datetime,
     old_meal_date: date | datetime | None = None,
 ) -> None:
-    """Invoke the process-local Redis purge when registered (development/local only)."""
+    """Purge the caches this write made stale; a no-op until the API registers it."""
     if _local_cache_invalidation_hook is not None:
         await _local_cache_invalidation_hook(user_id, meal_date, old_meal_date)
 

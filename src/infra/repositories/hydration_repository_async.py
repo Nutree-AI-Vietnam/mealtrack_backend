@@ -144,25 +144,6 @@ class AsyncHydrationRepository:
         )
         return result.scalar_one_or_none()
 
-    async def max_updated_at_for_local_range(
-        self,
-        start_date: date,
-        end_date: date,
-        user_id: str,
-        user_timezone: str | None = None,
-    ) -> datetime | None:
-        """Newest hydration write across local days ``start_date``..``end_date``."""
-        start_dt, _ = _local_day_range(start_date, user_timezone)
-        _, end_dt = _local_day_range(end_date, user_timezone)
-        result = await self.session.execute(
-            select(func.max(HydrationEntryORM.updated_at)).where(
-                HydrationEntryORM.user_id == user_id,
-                HydrationEntryORM.logged_at >= start_dt,
-                HydrationEntryORM.logged_at < end_dt,
-            )
-        )
-        return result.scalar_one_or_none()
-
     async def find_by_date_range(
         self,
         user_id: str,

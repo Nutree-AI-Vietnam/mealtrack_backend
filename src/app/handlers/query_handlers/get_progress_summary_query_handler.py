@@ -21,6 +21,7 @@ from src.app.handlers.query_handlers.progress_summary_support import (
     write_summary_cache,
 )
 from src.app.queries.progress.get_progress_summary_query import GetProgressSummaryQuery
+from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.cache_port import CachePort
@@ -64,6 +65,14 @@ class GetProgressSummaryQueryHandler(
             auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                 await uow.users.get_weekly_auto_adjust(query.user_id)
             )
+            # Read before computing: a write that lands mid-compute bumps past it.
+            intake_revision = (
+                await self.cache_service.read_revision(
+                    CacheKeys.intake_revision(query.user_id)[0]
+                )
+                if self.cache_service is not None
+                else None
+            )
             cached = await read_summary_cache(
                 self.cache_service,
                 query.user_id,
@@ -71,6 +80,7 @@ class GetProgressSummaryQueryHandler(
                 end,
                 targets[4],
                 auto_adjust,
+                intake_revision,
             )
             if cached is not None:
                 return await overlay_live_hydration(
@@ -88,7 +98,7 @@ class GetProgressSummaryQueryHandler(
                 auto_adjust,
             )
             await write_summary_cache(
-                self.cache_service, query.user_id, start, end, result
+                self.cache_service, query.user_id, start, end, result, intake_revision
             )
             return result
 

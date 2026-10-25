@@ -18,7 +18,6 @@ from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.user import MacroPreset, MacroTargets
 from src.domain.ports.cache_port import CachePort
-from src.domain.services.hydration_intake import intake_watermark
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.services.tdee_service import TdeeCalculationService
 from src.domain.services.weekly_budget_service import WeeklyBudgetService
@@ -48,10 +47,9 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
         The full response is cached under a short-TTL per-range key. The short
         TTL bounds staleness from day-rollover (the weekly summary is relative
         to "today") and from rare target changes not on the high-frequency
-        write paths. Meal/movement/hydration writes are purged by the Queue
-        worker after the write returns, so a read right after an edit can beat
-        that purge; the log fingerprint makes such a read recompute instead of
-        serving the pre-edit totals.
+        write paths. Meal/movement/hydration writes bump the user's intake
+        revision before they return, and an entry built at an older revision
+        is never served.
         """
         if (query.end_date - query.start_date).days > MAX_DATE_RANGE:
             raise ValueError(f"Date range cannot exceed {MAX_DATE_RANGE} days")
@@ -65,49 +63,28 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
         # A target-bearing cache is valid only for the current DB profile fence.
         user_targets = await self._get_user_targets(query.user_id)
         _, _, _, revision, _, _ = user_targets
-        # Read the fingerprint before computing: a write landing mid-compute
-        # then changes it, so the next read recomputes rather than trusting it.
-        logs_watermark = await self._logs_watermark(query)
+        # Read before computing: a write that lands mid-compute bumps past it.
+        intake_revision = await self.cache_service.read_revision(
+            CacheKeys.intake_revision(query.user_id)[0]
+        )
         cached = await self.cache_service.get_json(key)
         if (
             revision is not None
-            and logs_watermark is not None
+            and intake_revision is not None
             and cached
             and cached.get("target_revision") == revision
-            and cached.get("intake_watermark") == logs_watermark
+            and cached.get("intake_revision") == intake_revision
         ):
             return cached
         result = await self._compute(query, user_targets=user_targets)
-        if logs_watermark is not None:
+        if intake_revision is not None:
             await self.cache_service.set_json(
                 key,
-                {**result, "intake_watermark": logs_watermark},
+                {**result, "intake_revision": intake_revision},
                 ttl,
                 revision_field="target_revision",
             )
         return result
-
-    async def _logs_watermark(self, query: GetNutritionBulkQuery) -> str | None:
-        """None when the fingerprint cannot be read, so the cache is not trusted."""
-        try:
-            async with AsyncUnitOfWork() as uow:
-                user_tz_str = await resolve_user_timezone_async(
-                    query.user_id, uow, query.header_timezone
-                )
-                window = (query.start_date, query.end_date, query.user_id, user_tz_str)
-                meal_at = await uow.meals.max_updated_at_for_local_range(*window)
-                hydration_at = (
-                    await uow.hydration_entries.max_updated_at_for_local_range(*window)
-                )
-                movement_at = await uow.movement_entries.max_updated_at_for_local_range(
-                    *window
-                )
-        except Exception as exc:
-            logger.warning(
-                "Failed to fingerprint bulk logs for %s: %s", query.user_id, exc
-            )
-            return None
-        return intake_watermark(meal_at, hydration_at, movement_at)
 
     async def _compute(
         self,
