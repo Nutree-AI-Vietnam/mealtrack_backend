@@ -46,6 +46,10 @@ SAFE_CONTEXT_KEYS = frozenset(
         "rejection_reason",  # bounded reason for expected-but-reviewable rejects
         "translation_outcome",
         "batch_size_bucket",
+        # Chat stream safety stop. ``check`` is citation|number|sentence.
+        # ``turn_id`` stays in context only; it is too high-cardinality for a tag.
+        "check",
+        "turn_id",
     }
 )
 
@@ -75,6 +79,7 @@ SAFE_TAG_KEYS = frozenset(
         "failure_kind",
         "fallback_from",
         "fallback_to",
+        "check",
     }
 )
 
