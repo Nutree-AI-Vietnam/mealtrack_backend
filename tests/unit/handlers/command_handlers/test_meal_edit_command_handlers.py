@@ -366,22 +366,24 @@ class TestEditMealCommandHandler:
         )
         edited = meal.mark_edited(nutrition=meal.nutrition, dish_name="Bánh mì của mẹ")
 
-        renamed = handler._carry_rename_to_locales(meal, edited, command)
+        renamed = handler._carry_saved_name_to_locales(edited, command)
 
         assert renamed.translations["vi"].dish_name == "Bánh mì của mẹ"
         assert meal.translations["vi"].dish_name == "Sản phẩm thực phẩm Việt Nam"
 
-    def test_echoed_translated_name_leaves_locale_names_alone(
+    def test_saved_name_is_every_locale_name_without_a_rename_check(
         self, sample_meal_with_nutrition
     ):
+        """The name in the save is the name, even one another locale holds."""
         meal = sample_meal_with_nutrition
         meal.translations = {
-            "vi": MealTranslation(
+            language: MealTranslation(
                 meal_id=meal.meal_id,
-                language="vi",
-                dish_name="Gà nướng với cơm",
+                language=language,
+                dish_name=name,
                 food_items=[],
             )
+            for language, name in (("vi", "Gà nướng với cơm"), ("es", "Pollo asado"))
         }
         handler = EditMealCommandHandler(uow=None)
         command = EditMealCommand(
@@ -391,7 +393,24 @@ class TestEditMealCommandHandler:
             nutrition=meal.nutrition, dish_name="Gà nướng với cơm"
         )
 
-        assert handler._carry_rename_to_locales(meal, edited, command) is edited
+        saved = handler._carry_saved_name_to_locales(edited, command)
+
+        assert {t.dish_name for t in saved.translations.values()} == {
+            "Gà nướng với cơm"
+        }
+
+    @pytest.mark.parametrize("dish_name", [None, "", "   "])
+    def test_save_without_a_name_leaves_locale_names_alone(
+        self, sample_meal_with_nutrition, dish_name
+    ):
+        meal = sample_meal_with_nutrition
+        handler = EditMealCommandHandler(uow=None)
+        command = EditMealCommand(
+            meal_id=meal.meal_id, dish_name=dish_name, language="vi"
+        )
+        edited = meal.mark_edited(nutrition=meal.nutrition, dish_name=meal.dish_name)
+
+        assert handler._carry_saved_name_to_locales(edited, command) is edited
 
     def test_realigns_legacy_translation_list_after_remove(
         self, sample_meal_with_nutrition
