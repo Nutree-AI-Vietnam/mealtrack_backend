@@ -121,6 +121,19 @@ class MealRepositoryPort(ABC):
         """
         return []
 
+    async def max_updated_at_for_local_range(
+        self,
+        start_date: date,
+        end_date: date,
+        user_id: str,
+        user_timezone: str | None = None,
+    ) -> datetime | None:
+        """Newest meal write across a local date range, inclusive.
+
+        None means unknown, so a cache keyed on it must not be trusted.
+        """
+        return None
+
     async def find_recent_food_meals(
         self,
         user_id: str,
