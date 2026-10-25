@@ -39,7 +39,6 @@ from src.domain.services.chat.thread_listing import (
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
 from src.observability import reset_request_id_for_test, set_request_context
-from src.observability_connectors import filter_safe_attributes
 
 
 class _FakeRepo:
@@ -3372,8 +3371,7 @@ async def test_untraceable_calorie_blocks_stream_and_records_number_check(
     blocked_metrics = [
         attributes for name, attributes in metrics if name == "chat.turn.stream_blocked"
     ]
-    assert blocked_metrics == [payload]
-    assert filter_safe_attributes(payload) == payload
+    assert blocked_metrics == [{"check": "number"}]
 
 
 @pytest.mark.asyncio
@@ -3395,10 +3393,10 @@ async def test_invalid_citation_records_citation_check(caplog, monkeypatch):
     assert _log_payload(records[0])["check"] == "citation"
     assert rejected not in repr(_log_payload(records[0]))
     assert [
-        attributes["check"]
+        attributes
         for name, attributes in metrics
         if name == "chat.turn.stream_blocked"
-    ] == ["citation"]
+    ] == [{"check": "citation"}]
 
 
 @pytest.mark.asyncio
@@ -3421,10 +3419,10 @@ async def test_allergy_sentence_records_sentence_check(caplog, monkeypatch):
     assert rejected not in repr(_log_payload(records[0]))
     assert "peanut" not in repr(_log_payload(records[0])).casefold()
     assert [
-        attributes["check"]
+        attributes
         for name, attributes in metrics
         if name == "chat.turn.stream_blocked"
-    ] == ["sentence"]
+    ] == [{"check": "sentence"}]
 
 
 @pytest.mark.asyncio

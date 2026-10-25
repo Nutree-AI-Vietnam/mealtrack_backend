@@ -2787,7 +2787,7 @@ def _record_stream_blocked(check: str | None, *, turn_id: str | None) -> None:
     if request_id:
         attributes["request_id"] = request_id
     logger.info("chat.turn.stream_blocked", extra=attributes)
-    increment_metric("chat.turn.stream_blocked", attributes=attributes)
+    increment_metric("chat.turn.stream_blocked", attributes={"check": check})
 
 
 def _is_retryable_provider_error(exc: Exception) -> bool:
