@@ -280,6 +280,59 @@ async def test_translate_meal_retranslates_pre_cutover_cache(
     assert result.translation_version == CURRENT_MEAL_TRANSLATION_VERSION
 
 
+def _stale_row(meal, dish_name):
+    """A current-version row missing an ingredient, as after adding one."""
+    return MealTranslation(
+        meal_id=meal.meal_id,
+        language="vi",
+        dish_name=dish_name,
+        food_items=[],
+        meal_ingredients=["Ức gà"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_the_name_the_user_saved(
+    service, meal, food_items, text_translation_service, repo
+):
+    repo.get_by_meal_and_language.return_value = _stale_row(meal, "Lunch box")
+    text_translation_service.translate_texts.return_value = TranslationResult(
+        ("Hộp cơm trưa", "Ức gà", "Cơm gạo lứt"),
+        TranslationOutcome.TRANSLATED,
+        "en",
+        "vi",
+    )
+
+    result = await service.translate_meal(
+        meal, dish_name="Lunch box", food_items=food_items, target_language="vi"
+    )
+
+    assert result is not None
+    assert result.dish_name == "Lunch box"
+    assert result.meal_ingredients == ["Ức gà", "Cơm gạo lứt"]
+    repo.save.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_still_translates_a_name_the_user_did_not_save(
+    service, meal, food_items, text_translation_service, repo
+):
+    repo.get_by_meal_and_language.return_value = _stale_row(meal, "Gà nướng cũ")
+    text_translation_service.translate_texts.return_value = TranslationResult(
+        ("Gà nướng", "Ức gà", "Cơm gạo lứt"),
+        TranslationOutcome.TRANSLATED,
+        "en",
+        "vi",
+    )
+
+    result = await service.translate_meal(
+        meal, dish_name="Grilled chicken", food_items=food_items, target_language="vi"
+    )
+
+    assert result is not None
+    assert result.dish_name == "Gà nướng"
+
+
 @pytest.mark.asyncio
 async def test_translate_meal_normalizes_instruction_dicts(
     service, meal, food_items, text_translation_service

@@ -30,10 +30,7 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
 from src.domain.ports.provider_budget_port import ProviderBudgetPort
-from src.domain.services.localized_display_name import (
-    carry_dish_name_to_locales,
-    is_dish_rename,
-)
+from src.domain.services.localized_display_name import carry_dish_name_to_locales
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
 )
@@ -187,9 +184,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     created_at=updated_created_at,
                     meal_type=updated_meal_type,
                 )
-                updated_meal = self._carry_rename_to_locales(
-                    meal, updated_meal, command
-                )
+                updated_meal = self._carry_saved_name_to_locales(updated_meal, command)
 
                 # 5. Persist changes
                 saved_meal = await uow.meals.save(updated_meal)
@@ -381,9 +376,7 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                         )
                     ),
                 )
-                updated_meal = self._carry_rename_to_locales(
-                    meal, updated_meal, command
-                )
+                updated_meal = self._carry_saved_name_to_locales(updated_meal, command)
                 saved_meal = await uow.meals.save(updated_meal)
                 await self._save_realigned_translations(uow, updated_meal.translations)
                 changes_summary = self._generate_changes_summary(prepared_changes)
@@ -769,9 +762,9 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
 
         return translated_names_by_id
 
-    def _carry_rename_to_locales(self, meal, updated_meal, command):
-        """Keep a typed name from losing to the translated or AI name on read."""
-        if not is_dish_rename(meal, command.dish_name, command.language):
+    def _carry_saved_name_to_locales(self, updated_meal, command):
+        """The name a user saves is the meal's name in every locale."""
+        if not (command.dish_name or "").strip():
             return updated_meal
         return carry_dish_name_to_locales(updated_meal)
 
