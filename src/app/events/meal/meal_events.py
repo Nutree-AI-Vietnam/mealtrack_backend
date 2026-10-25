@@ -20,11 +20,11 @@ from src.domain.ports.integration_event_publisher_port import require_event_publ
 logger = logging.getLogger(__name__)
 
 LocalInsightHook = Callable[[str, dict[str, Any], datetime], None]
-LocalCacheInvalidationHook = Callable[
+CacheInvalidationHook = Callable[
     [str, date | datetime, date | datetime | None], Awaitable[None]
 ]
 _local_insight_hook: LocalInsightHook | None = None
-_local_cache_invalidation_hook: LocalCacheInvalidationHook | None = None
+_cache_invalidation_hook: CacheInvalidationHook | None = None
 
 
 class MealCreatedEvent(IntegrationEvent):
@@ -54,22 +54,22 @@ def register_local_insight_hook(hook: LocalInsightHook | None) -> None:
     _local_insight_hook = hook
 
 
-def register_local_cache_invalidation_hook(
-    hook: LocalCacheInvalidationHook | None,
+def register_cache_invalidation_hook(
+    hook: CacheInvalidationHook | None,
 ) -> None:
     """Register the Redis purge meal writes await before they return."""
-    global _local_cache_invalidation_hook
-    _local_cache_invalidation_hook = hook
+    global _cache_invalidation_hook
+    _cache_invalidation_hook = hook
 
 
-async def invoke_local_cache_invalidation_hook(
+async def invoke_cache_invalidation_hook(
     user_id: str,
     meal_date: date | datetime,
     old_meal_date: date | datetime | None = None,
 ) -> None:
     """Purge the caches this write made stale; a no-op until the API registers it."""
-    if _local_cache_invalidation_hook is not None:
-        await _local_cache_invalidation_hook(user_id, meal_date, old_meal_date)
+    if _cache_invalidation_hook is not None:
+        await _cache_invalidation_hook(user_id, meal_date, old_meal_date)
 
 
 async def _insight_user_context(
@@ -159,9 +159,7 @@ async def publish_meal_event(
         data=data,
     )
     await publisher.publish(event.to_payload())
-    await invoke_local_cache_invalidation_hook(
-        resolved_user_id, meal_date, old_meal_date
-    )
+    await invoke_cache_invalidation_hook(resolved_user_id, meal_date, old_meal_date)
     if insight is not None and _local_insight_hook is not None:
         _local_insight_hook(str(meal.meal_id), insight, occurred_at)
     return True

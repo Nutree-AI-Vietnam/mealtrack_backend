@@ -121,10 +121,10 @@ async def test_delete_meal_command_uses_user_timezone_for_meal_date():
         hook_called_args.append((u_id, m_date, old_date))
 
     from src.app.events.meal.meal_events import (
-        register_local_cache_invalidation_hook,
+        register_cache_invalidation_hook,
     )
 
-    register_local_cache_invalidation_hook(fake_hook)
+    register_cache_invalidation_hook(fake_hook)
     try:
         handler = DeleteMealCommandHandler(
             uow=uow, event_publisher=event_publisher, environment="test"
@@ -133,7 +133,7 @@ async def test_delete_meal_command_uses_user_timezone_for_meal_date():
             DeleteMealCommand(meal_id=meal_id, user_id=user_id)
         )
     finally:
-        register_local_cache_invalidation_hook(None)
+        register_cache_invalidation_hook(None)
 
     assert result["meal_id"] == meal_id
     event_publisher.publish.assert_awaited_once()

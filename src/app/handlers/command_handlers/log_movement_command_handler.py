@@ -7,8 +7,8 @@ from typing import Any
 from src.api.exceptions import ValidationException
 from src.app.commands.movement import LogMovementCommand
 from src.app.events.base import EventHandler, handles
-from src.app.events.movement.local_cache_invalidation import (
-    invoke_local_movement_cache_invalidation_hook,
+from src.app.events.movement.cache_invalidation import (
+    invoke_movement_cache_invalidation_hook,
 )
 from src.app.events.movement.movement_created_event import MovementCreatedEvent
 from src.domain.model.movement import MovementEntry, MovementIntensity
@@ -132,6 +132,6 @@ class LogMovementCommandHandler(EventHandler[LogMovementCommand, dict]):
             integration_event.event_id,
             integration_event.aggregate_id,
         )
-        await invoke_local_movement_cache_invalidation_hook(cmd.user_id, log_date)
+        await invoke_movement_cache_invalidation_hook(cmd.user_id, log_date)
 
         return _movement_response(saved)

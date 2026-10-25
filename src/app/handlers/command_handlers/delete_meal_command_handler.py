@@ -12,18 +12,18 @@ from typing import Any
 from src.api.exceptions import AuthorizationException
 from src.app.commands.meal import DeleteMealCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.hydration.cache_invalidation import (
+    invoke_hydration_cache_invalidation_hook,
+)
 from src.app.events.hydration.hydration_caloric_deleted_event import (
     HydrationCaloricDeletedEvent,
 )
 from src.app.events.hydration.hydration_deleted_event import (
     HydrationDeletedEvent,
 )
-from src.app.events.hydration.local_cache_invalidation import (
-    invoke_local_hydration_cache_invalidation_hook,
-)
 from src.app.events.meal.meal_events import (
     MealDeletedEvent,
-    invoke_local_cache_invalidation_hook,
+    invoke_cache_invalidation_hook,
 )
 from src.domain.model.hydration import DrinkCategory
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -171,13 +171,11 @@ class DeleteMealCommandHandler(EventHandler[DeleteMealCommand, dict[str, Any]]):
 
         if log_date is not None:
             if deleted_kind == "hydration":
-                await invoke_local_hydration_cache_invalidation_hook(
+                await invoke_hydration_cache_invalidation_hook(
                     command.user_id, log_date
                 )
             else:
-                await invoke_local_cache_invalidation_hook(
-                    command.user_id, log_date, None
-                )
+                await invoke_cache_invalidation_hook(command.user_id, log_date, None)
 
         return {
             "meal_id": command.meal_id,

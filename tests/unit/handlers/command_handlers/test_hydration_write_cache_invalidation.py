@@ -22,10 +22,10 @@ from src.app.commands.hydration import (
     LogHydrationCommand,
 )
 from src.app.commands.meal.delete_meal_command import DeleteMealCommand
-from src.app.events.hydration.local_cache_invalidation import (
-    register_local_hydration_cache_invalidation_hook,
+from src.app.events.hydration.cache_invalidation import (
+    register_hydration_cache_invalidation_hook,
 )
-from src.app.events.meal.meal_events import register_local_cache_invalidation_hook
+from src.app.events.meal.meal_events import register_cache_invalidation_hook
 from src.app.handlers.command_handlers.delete_hydration_entry_command_handler import (
     DeleteHydrationEntryCommandHandler,
 )
@@ -123,9 +123,9 @@ def hydration_hook(events):
         await asyncio.sleep(0)
         events.append(("invalidated", user_id, log_date))
 
-    register_local_hydration_cache_invalidation_hook(hook)
+    register_hydration_cache_invalidation_hook(hook)
     yield
-    register_local_hydration_cache_invalidation_hook(None)
+    register_hydration_cache_invalidation_hook(None)
 
 
 @pytest.mark.asyncio
@@ -202,7 +202,7 @@ async def test_meal_route_hydration_delete_uses_hydration_purge(events):
     async def meal_hook(user_id, meal_date, old_meal_date):
         events.append("meal-invalidated")
 
-    register_local_cache_invalidation_hook(meal_hook)
+    register_cache_invalidation_hook(meal_hook)
     try:
         handler = DeleteMealCommandHandler(
             uow=_Uow(events, entry=_water_entry()),
@@ -210,7 +210,7 @@ async def test_meal_route_hydration_delete_uses_hydration_purge(events):
         )
         await handler.handle(DeleteMealCommand(meal_id="hydr_water1", user_id=USER_ID))
     finally:
-        register_local_cache_invalidation_hook(None)
+        register_cache_invalidation_hook(None)
 
     assert events == ["commit", "publish", ("invalidated", USER_ID, LOG_DATE)]
 
@@ -237,14 +237,14 @@ def test_water_log_http_response_waits_for_cache_purge(events):
     app.dependency_overrides[get_current_user_id] = fake_user_id
     app.dependency_overrides[get_configured_event_bus] = lambda: _Bus()
 
-    register_local_hydration_cache_invalidation_hook(slow_hook)
+    register_hydration_cache_invalidation_hook(slow_hook)
     try:
         response = TestClient(app).post(
             "/v1/hydration/log",
             json={"drink_id": "water", "volume_ml": 250, "target_date": "2026-10-20"},
         )
     finally:
-        register_local_hydration_cache_invalidation_hook(None)
+        register_hydration_cache_invalidation_hook(None)
 
     assert response.status_code == 201
     assert events == ["commit", "publish", ("invalidated", USER_ID, LOG_DATE)]

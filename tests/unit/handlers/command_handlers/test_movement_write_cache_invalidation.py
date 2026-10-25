@@ -20,8 +20,8 @@ from src.app.commands.movement import (
     LogMovementCommand,
     UpdateMovementEntryCommand,
 )
-from src.app.events.movement.local_cache_invalidation import (
-    register_local_movement_cache_invalidation_hook,
+from src.app.events.movement.cache_invalidation import (
+    register_movement_cache_invalidation_hook,
 )
 from src.app.handlers.command_handlers import log_movement_command_handler
 from src.app.handlers.command_handlers.delete_movement_entry_command_handler import (
@@ -114,9 +114,9 @@ def movement_hook(events):
         await asyncio.sleep(0)
         events.append(("invalidated", user_id, log_date))
 
-    register_local_movement_cache_invalidation_hook(hook)
+    register_movement_cache_invalidation_hook(hook)
     yield
-    register_local_movement_cache_invalidation_hook(None)
+    register_movement_cache_invalidation_hook(None)
 
 
 @pytest.mark.asyncio
@@ -203,7 +203,7 @@ def test_movement_log_http_response_waits_for_cache_purge(events):
     app.dependency_overrides[get_current_user_id] = fake_user_id
     app.dependency_overrides[get_configured_event_bus] = lambda: _Bus()
 
-    register_local_movement_cache_invalidation_hook(slow_hook)
+    register_movement_cache_invalidation_hook(slow_hook)
     try:
         response = TestClient(app).post(
             "/v1/movement/log",
@@ -218,7 +218,7 @@ def test_movement_log_http_response_waits_for_cache_purge(events):
             },
         )
     finally:
-        register_local_movement_cache_invalidation_hook(None)
+        register_movement_cache_invalidation_hook(None)
 
     assert response.status_code == 201
     assert events == ["commit", "publish", ("invalidated", USER_ID, LOG_DATE)]
