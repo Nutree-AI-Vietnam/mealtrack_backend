@@ -15,6 +15,7 @@ from src.app.graphs.meal_analyze.quality_gate import (
 )
 from src.app.graphs.meal_analyze.runtime import AcquiredImage, MealAnalyzeRuntime
 from src.app.graphs.meal_analyze.state import MealAnalyzeGraphState
+from src.app.services.cancellation import run_to_completion
 from src.app.services.food_label_localizer import localize_food_label_display
 from src.domain.constants import MealDefaults
 from src.domain.exceptions.ai_exceptions import (
@@ -404,21 +405,28 @@ async def persist_meal(
     if not is_food_label:
         meal = persist_meal_response_localization(meal, runtime.localization)
 
-    async with runtime.uow as uow:
-        saved_meal = await uow.meals.save(meal)
-        await uow.commit()
+    async def save_and_publish() -> Meal:
+        async with runtime.uow as uow:
+            saved = await uow.meals.save(meal)
+            await uow.commit()
+        if runtime.meal_date is not None:
+            await publish_meal_event(
+                runtime.event_publisher,
+                saved,
+                event_type="created",
+                environment=runtime.environment,
+                meal_date=runtime.meal_date,
+                language=runtime.command.language,
+                event_bus=runtime.event_bus,
+                source="meal_analyze_graph",
+            )
+        return saved
 
-    if runtime.meal_date is not None:
-        await publish_meal_event(
-            runtime.event_publisher,
-            saved_meal,
-            event_type="created",
-            environment=runtime.environment,
-            meal_date=runtime.meal_date,
-            language=runtime.command.language,
-            event_bus=runtime.event_bus,
-            source="meal_analyze_graph",
-        )
+    # Saving and publishing finish together even if the caller is cancelled
+    # (a background job past its deadline), so the meal keeps its event.
+    saved_meal = await run_to_completion(
+        save_and_publish(), description=f"saving analyzed meal {meal.meal_id}"
+    )
 
     runtime.saved_meal = saved_meal
     return {

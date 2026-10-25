@@ -6,6 +6,7 @@ from src.domain.ports.affiliate_service_port import AffiliateServicePort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
+from src.domain.ports.wearable_account_port import WearableAccountPort
 from src.infra.adapters.best_effort_integration_event_publisher import (
     BestEffortIntegrationEventPublisher,
 )
@@ -67,3 +68,21 @@ def get_affiliate_service(
     from src.infra.adapters.affiliate_service_adapter import AffiliateServiceAdapter
 
     return AffiliateServiceAdapter()
+
+
+def get_wearable_account_service() -> WearableAccountPort | None:
+    """Build the Open Wearables client, or None when it is not configured.
+
+    Deletion needs only the URL and API key, so it keeps working for linked
+    users after the sign-in app credentials are removed.
+    """
+    settings = get_settings()
+    if not (settings.OPEN_WEARABLES_API_URL and settings.OPEN_WEARABLES_API_KEY):
+        return None
+
+    from src.infra.adapters.open_wearables_client import OpenWearablesClient
+
+    return OpenWearablesClient(
+        settings.OPEN_WEARABLES_API_URL,
+        settings.OPEN_WEARABLES_API_KEY,
+    )

@@ -10,6 +10,9 @@ from src.api.exceptions import (
 )
 from src.app.commands.movement import UpdateMovementEntryCommand
 from src.app.events.base import EventHandler, handles
+from src.app.events.movement.local_cache_invalidation import (
+    invoke_local_movement_cache_invalidation_hook,
+)
 from src.app.events.movement.movement_updated_event import MovementUpdatedEvent
 from src.app.handlers.command_handlers.log_movement_command_handler import (
     _movement_response,
@@ -100,5 +103,6 @@ class UpdateMovementEntryCommandHandler(
             integration_event.event_id,
             integration_event.aggregate_id,
         )
+        await invoke_local_movement_cache_invalidation_hook(cmd.user_id, log_date)
 
         return _movement_response(updated)

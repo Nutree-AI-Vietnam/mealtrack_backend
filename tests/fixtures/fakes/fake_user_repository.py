@@ -11,6 +11,7 @@ class FakeUserRepository(UserRepositoryPort):
         self.users = {}  # id -> user
         self.profiles = {}  # user_id -> profile
         self.weekly_auto_adjust = {}  # user_id str -> bool
+        self.open_wearables_user_ids = {}  # user_id str -> Open Wearables id
 
     async def save(self, user: UserDomainModel) -> UserDomainModel:
         self.users[user.id] = user
@@ -85,3 +86,16 @@ class FakeUserRepository(UserRepositoryPort):
         self, user_id: UUID, enabled: bool
     ) -> None:
         self.weekly_auto_adjust[str(user_id)] = enabled
+
+    async def find_open_wearables_user_id(self, user_id: UUID) -> Optional[str]:
+        return self.open_wearables_user_ids.get(str(user_id))
+
+    async def link_open_wearables_user_id(
+        self, user_id: UUID, open_wearables_user_id: str
+    ) -> str:
+        return self.open_wearables_user_ids.setdefault(
+            str(user_id), open_wearables_user_id
+        )
+
+    async def clear_open_wearables_user_id(self, user_id: UUID) -> None:
+        self.open_wearables_user_ids.pop(str(user_id), None)

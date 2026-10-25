@@ -7,6 +7,7 @@ design engine's Vietnamese output for it.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -18,5 +19,11 @@ SAMPLES: dict[str, dict[str, Any]] = {case["name"]: case for case in GOLDEN["cas
 
 
 def sample_stats(name: str) -> WeekStats:
-    """The sample week for one story, e.g. ``"steady"`` or ``"bulk"``."""
-    return week_stats_from_dict(SAMPLES[name]["stats"])
+    """The sample week for one story, e.g. ``"steady"`` or ``"bulk"``.
+
+    The design samples predate meal types; each of their meals is one type.
+    """
+    stats = week_stats_from_dict(SAMPLES[name]["stats"])
+    return replace(
+        stats, meal_types_by_day=stats.meal_types_by_day or stats.meals_by_day
+    )

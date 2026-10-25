@@ -11,6 +11,7 @@ FR_STORY = {
     "intro.big_unit.meals": "/ {n} repas enregistrés",
     "intro.big_unit.days": "/ {n} jours",
     "low_data.title": "Une semaine calme.",
+    "low_data.title.named": "Une semaine calme, {name}.",
     "low_data.sub": (
         "Peu de repas ont été enregistrés, Nutree ne peut donc pas encore faire "
         "un bilan complet."
@@ -19,15 +20,18 @@ FR_STORY = {
     "low_data.chip": "Enregistrez au moins {n} repas pour un bilan complet",
     "first_week.eyebrow": "Votre première semaine avec Nutree",
     "first_week.title": "Première semaine, terminée\u202f!",
+    "first_week.title.named": "Première semaine, terminée, {name}\u202f!",
     "first_week.sub": "Vous avez commencé. Voici ce que Nutree a appris sur vous.",
     "first_week.label": "C'est parti",
     "first_week.chip": "Nouveau badge\u202f: Première semaine",
     "comeback.eyebrow": "Bon retour",
     "comeback.title": "Vous revoilà.",
+    "comeback.title.named": "Vous revoilà, {name}.",
     "comeback.sub": "Vous avez repris cette semaine. C'est déjà formidable.",
     "comeback.label": "Cette semaine, vous avez enregistré",
     "comeback.chip": "Série de {n} jours en cours",
     "tough.title": "Une semaine difficile. Ce n'est pas grave.",
+    "tough.title.named": "Une semaine difficile, {name}. Ce n'est pas grave.",
     "tough.sub": (
         "Tout le monde a des semaines comme ça. Voyons ce qui a aidé et ce qui "
         "a fait obstacle."
@@ -35,19 +39,27 @@ FR_STORY = {
     "tough.label": "Vous êtes toujours là",
     "tough.chip": "Vous n'avez pas abandonné, et ça compte",
     "perfect.title": "Cette semaine, vous avez assuré.",
+    "perfect.title.named": "{name}, cette semaine, vous avez assuré.",
     "perfect.sub": "Tous les objectifs atteints. C'est rare.",
+    "perfect.sub.dish": "Tous les objectifs atteints, avec {dish} au menu {n} fois.",
     "perfect.label": "Une belle régularité",
     "perfect.chip.first": "Votre première semaine parfaite",
     "perfect.chip.nth": "Semaine parfaite n° {n}",
     "bulk.title": "Votre semaine de prise de masse en bref.",
+    "bulk.title.named": "{name}, votre semaine de prise de masse en bref.",
     "bulk.sub": "Vous construisez des bases solides. Voici votre semaine.",
+    "bulk.sub.dish": "Votre carburant\u202f: {dish}, {n} fois. Voici votre semaine.",
     "bulk.label": "Une belle régularité",
     "bulk.chip": "{n} séances de musculation",
     "bulk.chip.one": "{n} séance de musculation",
     "bulk.chip.record": "{n} séances de musculation, votre record",
     "bulk.chip.record.one": "{n} séance de musculation, votre record",
     "steady.title": "Votre semaine en bref.",
+    "steady.title.named": "{name}, votre semaine en bref.",
     "steady.sub": "Vos réussites, vos freins et quoi essayer ensuite.",
+    "steady.sub.dish": (
+        "Votre plat favori\u202f: {dish}, {n} fois. Voici le reste de votre semaine."
+    ),
     "steady.label": "Une belle régularité",
     "steady.chip.streak": "Série de {n} jours",
     "steady.chip.streak_record": "Série de {n} jours, votre record",

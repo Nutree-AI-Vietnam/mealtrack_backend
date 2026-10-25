@@ -22,6 +22,12 @@ class FakeWeeklyRecapRepository(WeeklyRecapRepositoryPort):
         self.inserted.append(recap)
         return True
 
+    async def delete_for_user(self, user_id: str) -> int:
+        mine = [key for key in self.recaps if key[0] == user_id]
+        for key in mine:
+            del self.recaps[key]
+        return len(mine)
+
     async def count_cases_before(self, user_id: str, before: date) -> dict[str, int]:
         return dict(
             Counter(

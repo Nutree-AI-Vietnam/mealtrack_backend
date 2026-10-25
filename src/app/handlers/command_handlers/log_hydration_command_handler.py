@@ -7,6 +7,9 @@ from uuid import uuid4
 from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.hydration.hydration_created_event import HydrationCreatedEvent
+from src.app.events.hydration.local_cache_invalidation import (
+    invoke_local_hydration_cache_invalidation_hook,
+)
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition.macros import Macros
@@ -135,6 +138,7 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
             integration_event.event_id,
             integration_event.aggregate_id,
         )
+        await invoke_local_hydration_cache_invalidation_hook(cmd.user_id, log_date)
 
         kcal = round(saved.nutrition.calories if saved.nutrition else 0.0, 1)
         return {

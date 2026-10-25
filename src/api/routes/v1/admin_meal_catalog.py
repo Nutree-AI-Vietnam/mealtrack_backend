@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import (
     get_admin_meal_catalog_repository,
+    get_async_db,
     get_catalog_image_generator_factory,
 )
 from src.api.dependencies.auth import require_admin_or_local
@@ -17,6 +19,7 @@ from src.api.schemas.response.admin_meal_catalog_responses import (
     AdminMealCatalogItemResponse,
     AdminMealCatalogListResponse,
 )
+from src.app.services.admin_meal_catalog_writes import set_catalog_meal_image
 from src.app.services.catalog_meal_image_prompt_service import (
     build_catalog_meal_image_prompt,
 )
@@ -61,6 +64,7 @@ async def list_admin_meal_catalog(
 async def generate_admin_meal_catalog_image(
     catalog_id: str,
     force: bool = False,
+    db: AsyncSession = Depends(get_async_db),
     repository=Depends(get_admin_meal_catalog_repository),
     generator_factory=Depends(get_catalog_image_generator_factory),
     _admin: str = Depends(require_admin_or_local),
@@ -88,12 +92,13 @@ async def generate_admin_meal_catalog_image(
             detail="Catalog meal image generation failed",
         ) from exc
 
-    if not await repository.set_image_url(catalog_id, image_url, force=force):
+    if not await set_catalog_meal_image(
+        db, repository, catalog_id, image_url, force=force
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Catalog meal already has an image_url",
         )
-    await repository.commit()
     updated = await repository.get_meal(catalog_id)
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")

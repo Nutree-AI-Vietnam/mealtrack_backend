@@ -18,6 +18,7 @@ ruff format src/ tests/ && ruff check src/ && mypy src/
 
 # Default CI-aligned tests — do not run bare unscoped `pytest` (import collisions)
 pytest tests/unit --cov=src --cov-fail-under=65
+pytest tests/architecture -q
 ```
 
 ## MUST-Follow Rules (Non-Inferable)

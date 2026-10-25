@@ -23,6 +23,11 @@ from src.api.schemas.response.admin_meal_catalog_responses import (
     AdminMealCatalogImportResponse,
     AdminMealCatalogValidationResponse,
 )
+from src.app.services.admin_meal_catalog_writes import (
+    approve_catalog_food_reference,
+    enrich_catalog_candidates,
+    finish_catalog_import,
+)
 from src.app.services.catalog_food_reference_review_service import (
     CatalogFoodReferenceReviewService,
 )
@@ -52,13 +57,14 @@ async def approve_admin_meal_catalog_food_reference(
 ) -> AdminMealCatalogApproveFoodReferenceResponse:
     """Record an admin's review before a food reference can publish catalog meals."""
 
-    approval = await reviewer.approve(request.food_reference_id)
+    approval = await approve_catalog_food_reference(
+        db, reviewer, request.food_reference_id
+    )
     if approval is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Food reference not found",
         )
-    await db.commit()
     return AdminMealCatalogApproveFoodReferenceResponse(**approval.__dict__)
 
 
@@ -95,8 +101,7 @@ async def enrich_admin_meal_catalog_candidates(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=_validation_response(validation).model_dump(),
         )
-    summary = await importer.enrich_missing_candidates(request.manifest)
-    await db.commit()
+    summary = await enrich_catalog_candidates(db, importer, request.manifest)
     return AdminMealCatalogEnrichmentResponse(
         validation=_validation_response(validation),
         attempted=summary.attempted,
@@ -134,10 +139,8 @@ async def import_admin_meal_catalog(
         return _response(validation, preview, applied=False)
 
     summary = await _run_importer(importer, request, dry_run=False)
-    if not summary.is_successful:
-        await db.rollback()
+    if not await finish_catalog_import(db, summary):
         return _response(validation, summary, applied=False)
-    await db.commit()
     get_catalog_meal_snapshot_service().invalidate()
     try:
         await prepare_catalog()

@@ -84,6 +84,7 @@ ignore_imports =
     src.app.services.web_funnel_claim_exchange -> src.infra.services.web_funnel_firebase_identity
     src.app.services.web_funnel_claim_payment -> src.infra.config.settings
     src.app.services.web_funnel_claim_payment -> src.infra.database.models.web_funnel_claim
+    src.app.services.web_funnel_leads -> src.infra.database.models.web_funnel_claim
     src.app.handlers.event_handlers.meal_analysis_event_handler -> src.infra.adapters.cloudinary_image_store
     src.app.handlers.event_handlers.meal_analysis_event_handler -> src.infra.adapters.vision_ai_service
     src.app.handlers.event_handlers.meal_analysis_event_handler -> src.infra.config.settings
@@ -289,11 +290,7 @@ ignore_imports =
     src.api.routes.v1.web_funnel -> src.infra.database.models.web_funnel_claim
     src.api.routes.v1.web_funnel_redemption_session -> src.infra.config.settings
     src.api.routes.v1.web_funnel_redemption_session -> src.infra.database.config_async
-    src.api.routes.v1.web_funnel_redemption_session -> src.infra.database.models.user.user
-    src.api.routes.v1.web_funnel_redemption_session -> src.infra.database.models.web_funnel_claim
     src.api.routes.v1.web_funnel_redemption_session -> src.infra.services.web_funnel_redemption_identity
     src.api.services.guest_parse_quota -> src.infra.database.models.ai_handshake_guest_trial_quota
     src.api.routes.v1.wearables -> src.infra.adapters.open_wearables_client
     src.api.routes.v1.wearables -> src.infra.config.settings
-    src.api.routes.v1.wearables -> src.infra.database.config_async
-    src.api.routes.v1.wearables -> src.infra.repositories.wearable_account_repository

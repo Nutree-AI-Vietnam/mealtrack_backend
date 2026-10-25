@@ -8,6 +8,9 @@ from src.app.events.base import EventHandler, handles
 from src.app.events.hydration.hydration_caloric_created_event import (
     HydrationCaloricCreatedEvent,
 )
+from src.app.events.hydration.local_cache_invalidation import (
+    invoke_local_hydration_cache_invalidation_hook,
+)
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
 from src.domain.model.nutrition.macros import Macros
 from src.domain.ports.integration_event_publisher_port import (
@@ -106,6 +109,7 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
             integration_event.event_id,
             integration_event.aggregate_id,
         )
+        await invoke_local_hydration_cache_invalidation_hook(cmd.user_id, log_date)
 
         kcal = round(
             Macros(

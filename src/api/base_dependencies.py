@@ -13,6 +13,7 @@ from src.app.services.catalog_food_reference_review_service import (
 )
 from src.app.services.catalog_meal_seed_import_service import CatalogMealSeedImporter
 from src.app.services.catalog_meal_snapshot_service import CatalogMealSnapshotService
+from src.app.services.open_wearables_account_links import OpenWearablesAccountLinks
 from src.domain.parsers.vision_response_parser import VisionResponseParser
 from src.domain.ports.food_cache_service_port import FoodCacheServicePort
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
@@ -100,13 +101,21 @@ async def shutdown_cache_layer() -> None:
     """Gracefully close Redis connections."""
     global _redis_client, _cache_service
 
+    from src.app.events.hydration.local_cache_invalidation import (
+        register_local_hydration_cache_invalidation_hook,
+    )
     from src.app.events.meal.meal_events import (
         register_local_cache_invalidation_hook,
         register_local_insight_hook,
     )
+    from src.app.events.movement.local_cache_invalidation import (
+        register_local_movement_cache_invalidation_hook,
+    )
 
     register_local_insight_hook(None)
     register_local_cache_invalidation_hook(None)
+    register_local_hydration_cache_invalidation_hook(None)
+    register_local_movement_cache_invalidation_hook(None)
     if _cache_service:
         _cache_service = None
     if _redis_client:
@@ -267,14 +276,22 @@ def _register_local_insight_hook() -> None:
 
 
 def _register_local_cache_invalidation_hook() -> None:
-    """Purge daily-macros Redis keys locally when Cloudflare Queue is not configured (development only)."""
+    """Purge meal, hydration and movement write keys locally when Cloudflare Queue is not configured (development only)."""
     if settings.ENVIRONMENT != "development":
         return
     from src.api.services.local_meal_cache_invalidation import (
+        apply_hydration_write_cache_invalidation,
         apply_meal_write_cache_invalidation,
+        apply_movement_write_cache_invalidation,
     )
     from src.api.services.local_meal_insight_cache import redis_url_is_local
+    from src.app.events.hydration.local_cache_invalidation import (
+        register_local_hydration_cache_invalidation_hook,
+    )
     from src.app.events.meal.meal_events import register_local_cache_invalidation_hook
+    from src.app.events.movement.local_cache_invalidation import (
+        register_local_movement_cache_invalidation_hook,
+    )
 
     if not redis_url_is_local(settings.redis_url):
         return
@@ -284,7 +301,19 @@ def _register_local_cache_invalidation_hook() -> None:
             get_cache_service(), user_id, meal_date, old_meal_date
         )
 
+    async def _invalidate_hydration(user_id, log_date):
+        await apply_hydration_write_cache_invalidation(
+            get_cache_service(), user_id, log_date
+        )
+
+    async def _invalidate_movement(user_id, log_date):
+        await apply_movement_write_cache_invalidation(
+            get_cache_service(), user_id, log_date
+        )
+
     register_local_cache_invalidation_hook(_invalidate)
+    register_local_hydration_cache_invalidation_hook(_invalidate_hydration)
+    register_local_movement_cache_invalidation_hook(_invalidate_movement)
 
 
 def get_cache_monitor() -> CacheMonitor:
@@ -770,6 +799,11 @@ def get_subscription_service() -> "SubscriptionServicePort":
         _subscription_service = RevenueCatAdapter(api_key=api_key)
 
     return _subscription_service
+
+
+def get_open_wearables_account_links() -> OpenWearablesAccountLinks:
+    """Read and store Open Wearables links in their own units of work."""
+    return OpenWearablesAccountLinks(AsyncUnitOfWork, AsyncUnitOfWork.read_only)
 
 
 def get_web_funnel_redemption_service():

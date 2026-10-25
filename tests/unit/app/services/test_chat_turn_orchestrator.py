@@ -1,9 +1,13 @@
 import asyncio
+import time
 
+import httpx
 import pytest
+import respx
 
 from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import (
+    CHAT_EMBEDDING_DEADLINE_SECONDS,
     ChatTurnOrchestrator,
     PreparedChatTurn,
 )
@@ -35,6 +39,7 @@ from src.domain.services.chat.thread_listing import (
     encode_thread_cursor,
 )
 from src.domain.utils.timezone_utils import utc_now
+from src.infra.adapters.openai_chat_embedding_adapter import OpenAIChatEmbeddingAdapter
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
 
 
@@ -1822,6 +1827,68 @@ async def test_free_text_still_embeds_and_retrieves():
 
     assert orchestrator.test_embedding.calls
     assert orchestrator.test_retrieval.calls
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_embedding_degrades_without_honouring_retry_after():
+    """A 429 asking for a 90 s wait falls back to full-text retrieval at once."""
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo, embedding=OpenAIChatEmbeddingAdapter(api_key="test")
+    )
+
+    with respx.mock as mock:
+        route = mock.post(path__regex=r"/embeddings$").mock(
+            return_value=httpx.Response(
+                429,
+                headers={"retry-after": "90"},
+                json={"error": {"message": "Rate limit reached", "type": "requests"}},
+            )
+        )
+        started = time.monotonic()
+        async with asyncio.timeout(CHAT_EMBEDDING_DEADLINE_SECONDS + 2):
+            events = await _stream(
+                orchestrator, intent=None, content="Cite protein guidance"
+            )
+        elapsed = time.monotonic() - started
+
+    assert route.call_count == 1
+    assert elapsed < CHAT_EMBEDDING_DEADLINE_SECONDS
+    assert orchestrator.test_retrieval.calls[0]["query_embedding"] is None
+    assert any(event.event == "message.completed" for event in events)
+
+
+class _HangingEmbedding:
+    def __init__(self):
+        self.cancelled = False
+
+    async def embed_query(self, text: str) -> list[float]:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return []
+
+
+@pytest.mark.asyncio
+async def test_slow_embedding_degrades_at_the_deadline(monkeypatch):
+    monkeypatch.setattr(
+        "src.app.services.chat_turn_orchestrator.CHAT_EMBEDDING_DEADLINE_SECONDS",
+        0.05,
+    )
+    embedding = _HangingEmbedding()
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, embedding=embedding)
+
+    async with asyncio.timeout(2):
+        events = await _stream(
+            orchestrator, intent=None, content="Cite protein guidance"
+        )
+
+    assert embedding.cancelled
+    assert orchestrator.test_retrieval.calls[0]["query_embedding"] is None
+    assert any(event.event == "message.completed" for event in events)
 
 
 @pytest.mark.asyncio

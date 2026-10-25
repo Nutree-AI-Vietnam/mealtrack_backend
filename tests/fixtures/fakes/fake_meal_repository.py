@@ -65,7 +65,7 @@ class FakeMealRepository(MealRepositoryPort):
         user_id: str,
         start_date: date,
         end_date: date,
-        limit: int = 500,
+        limit: int | None = None,
         user_timezone: Optional[str] = None,
         projection: Any = None,
     ) -> List[Meal]:

@@ -3,11 +3,18 @@
 from sqlalchemy import func, select
 
 from src.domain.utils.timezone_utils import utc_now
+from src.infra.database.models.user.user import User
 from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
     WebFunnelRedemption,
 )
 from src.infra.services.web_funnel_redemption_completion import finalize_redemption
+from src.infra.services.web_funnel_redemption_identity import (
+    RedemptionIdentityUnavailable,
+    WebFunnelRedemptionIdentityService,
+)
+
+_TERMINAL_LEAD_STATUSES = frozenset({"refunded", "revoked", "conflict", "expired"})
 
 
 class WebFunnelRedemptionService:
@@ -32,7 +39,7 @@ class WebFunnelRedemptionService:
         if binding.redeemer_uid and binding.redeemer_uid != uid:
             return False
         lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
-        if not lead or lead.status in {"refunded", "revoked", "conflict", "expired"}:
+        if not lead or lead.status in _TERMINAL_LEAD_STATUSES:
             return False
         if not lead.email.strip().lower() == email.strip().lower():
             return False
@@ -40,6 +47,42 @@ class WebFunnelRedemptionService:
         binding.preflight_at = utc_now()
         await db.commit()
         return True
+
+    async def start_silent_login(
+        self,
+        db,
+        *,
+        redemption_link_hash: str,
+        identity: WebFunnelRedemptionIdentityService,
+    ) -> str | None:
+        """Mint a retryable custom token for an unconsumed redemption link.
+
+        ``None`` hides an unknown, consumed or terminal link and an identity
+        outage behind the same not-found response. Nothing is recorded then.
+        """
+        binding = await db.scalar(
+            select(WebFunnelRedemption)
+            .where(WebFunnelRedemption.redemption_link_hash == redemption_link_hash)
+            .with_for_update()
+        )
+        if not binding or binding.finalized_uid:
+            return None
+        lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
+        if not lead or lead.status in _TERMINAL_LEAD_STATUSES:
+            return None
+        owner = await db.scalar(
+            select(User).where(func.lower(User.email) == lead.email.strip().lower())
+        )
+        try:
+            token = await identity.mint_for_email(
+                lead.email, mealtrack_uid=owner.firebase_uid if owner else None
+            )
+        except RedemptionIdentityUnavailable:
+            return None
+        binding.silent_login_minted_at = utc_now()
+        binding.silent_login_generation = (binding.silent_login_generation or 0) + 1
+        await db.commit()
+        return token
 
     async def record_webhook_redemption(self, db, event: dict) -> bool:
         if event.get("type") != "PURCHASE_REDEEMED":
