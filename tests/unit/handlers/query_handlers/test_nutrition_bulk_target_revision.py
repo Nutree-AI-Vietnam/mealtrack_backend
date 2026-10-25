@@ -7,6 +7,7 @@ from src.app.handlers.query_handlers.get_nutrition_bulk_query_handler import (
     GetNutritionBulkQueryHandler,
 )
 from src.app.queries.nutrition import GetNutritionBulkQuery
+from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.user import MacroPreset
 from src.domain.services.weekly_budget_service import (
     AdjustedDailyTargets,
@@ -17,7 +18,9 @@ from src.domain.services.weekly_budget_service import (
 @pytest.mark.asyncio
 async def test_stale_bulk_target_cache_is_recomputed():
     cache = MagicMock()
-    cache.get_json = AsyncMock(return_value={"target_revision": 1})
+    cache.get_json_with_revision = AsyncMock(
+        return_value=({"target_revision": 1, "intake_revision": 0}, 0)
+    )
     cache.set_json = AsyncMock()
     handler = GetNutritionBulkQueryHandler(cache_service=cache)
     query = GetNutritionBulkQuery(
@@ -30,6 +33,63 @@ async def test_stale_bulk_target_cache_is_recomputed():
     assert await handler.handle(query) == fresh
     handler._compute.assert_awaited_once()
     cache.set_json.assert_awaited_once()
+
+
+def _cached_bulk_handler(cached, intake_revision):
+    cache = MagicMock()
+    cache.get_json_with_revision = AsyncMock(return_value=(cached, intake_revision))
+    cache.set_json = AsyncMock()
+    handler = GetNutritionBulkQueryHandler(cache_service=cache)
+    handler._get_user_targets = AsyncMock(
+        return_value=(2000, {}, 1700, 2, MagicMock(), False)
+    )
+    return handler, cache
+
+
+BULK_QUERY = GetNutritionBulkQuery(
+    user_id="u1", start_date=date(2026, 10, 19), end_date=date(2026, 10, 25)
+)
+
+
+@pytest.mark.asyncio
+async def test_bulk_cached_before_a_meal_edit_is_recomputed():
+    """The edit bumped the intake revision; the pre-edit day total must not serve."""
+    before_edit = {"target_revision": 2, "intake_revision": 7, "dates": {}}
+    handler, cache = _cached_bulk_handler(before_edit, intake_revision=8)
+    fresh = {"target_revision": 2, "dates": {"2026-10-25": {"food_calories": 66}}}
+    handler._compute = AsyncMock(return_value=fresh)
+
+    assert await handler.handle(BULK_QUERY) == fresh
+    handler._compute.assert_awaited_once()
+    # One round-trip reads both the payload and the revision fencing it.
+    cache.get_json_with_revision.assert_awaited_once_with(
+        CacheKeys.nutrition_bulk("u1", BULK_QUERY.start_date, BULK_QUERY.end_date)[0],
+        CacheKeys.intake_revision("u1")[0],
+    )
+    stored = cache.set_json.await_args.args[1]
+    assert stored["intake_revision"] == 8
+
+
+@pytest.mark.asyncio
+async def test_bulk_cached_at_the_current_intake_revision_is_served():
+    cached = {"target_revision": 2, "intake_revision": 8, "dates": {}}
+    handler, cache = _cached_bulk_handler(cached, intake_revision=8)
+    handler._compute = AsyncMock()
+
+    assert await handler.handle(BULK_QUERY) == cached
+    handler._compute.assert_not_awaited()
+    cache.set_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_without_a_readable_intake_revision_skips_the_cache():
+    cached = {"target_revision": 2, "intake_revision": 8, "dates": {}}
+    handler, cache = _cached_bulk_handler(cached, intake_revision=None)
+    fresh = {"target_revision": 2, "dates": {}}
+    handler._compute = AsyncMock(return_value=fresh)
+
+    assert await handler.handle(BULK_QUERY) == fresh
+    cache.set_json.assert_not_awaited()
 
 
 @pytest.mark.asyncio

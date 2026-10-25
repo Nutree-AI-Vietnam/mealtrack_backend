@@ -64,7 +64,7 @@ class GetProgressSummaryQueryHandler(
             auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                 await uow.users.get_weekly_auto_adjust(query.user_id)
             )
-            cached = await read_summary_cache(
+            cached, intake_revision = await read_summary_cache(
                 self.cache_service,
                 query.user_id,
                 start,
@@ -88,7 +88,7 @@ class GetProgressSummaryQueryHandler(
                 auto_adjust,
             )
             await write_summary_cache(
-                self.cache_service, query.user_id, start, end, result
+                self.cache_service, query.user_id, start, end, result, intake_revision
             )
             return result
 

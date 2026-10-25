@@ -56,7 +56,20 @@ class CacheService(CachePort):
         if not self.enabled:
             return None
 
-        raw = await self.redis.get(key)
+        return self._decode(await self.redis.get(key))
+
+    async def get_json_with_revision(
+        self, key: str, revision_key: str
+    ) -> tuple[Any | None, int | None]:
+        if not self.enabled:
+            return None, None
+        result = await self.redis.get_with_counter(key, revision_key)
+        if result is None:
+            return None, None
+        raw, revision = result
+        return self._decode(raw), revision
+
+    def _decode(self, raw: Any) -> Any | None:
         if raw is None:
             if self.monitor:
                 self.monitor.record_miss()
@@ -149,6 +162,14 @@ class CacheService(CachePort):
             self.redis.delete(f"{key}:__revision"),
         )
         return bool(deleted)
+
+    async def purge(self, keys: list[str], revisions: dict[str, int]) -> None:
+        """Delete entries with their revision fences and bump counters at once."""
+        if not self.enabled:
+            return
+        await self.redis.purge(
+            [*keys, *(f"{key}:__revision" for key in keys)], revisions
+        )
 
     async def invalidate_pattern(self, pattern: str) -> int:
         """Remove all cache keys matching a glob pattern."""

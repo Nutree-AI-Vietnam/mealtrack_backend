@@ -1,5 +1,6 @@
 """Unit tests for meal integration events and publish_meal_event helper."""
 
+import asyncio
 from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -179,6 +180,43 @@ async def test_publish_meal_event_purges_local_daily_macros_cache(sample_meal):
         hook.assert_awaited_once_with(sample_meal.user_id, date(2026, 9, 11), None)
     finally:
         register_local_cache_invalidation_hook(None)
+
+
+@pytest.mark.asyncio
+async def test_publish_meal_event_purges_while_the_profile_loads(sample_meal):
+    """The purge's Redis round-trip overlaps the profile read, not adds to it."""
+    from src.app.events.meal.meal_events import (
+        register_local_cache_invalidation_hook,
+    )
+
+    purge_started = asyncio.Event()
+    overlapped = []
+
+    async def purge(*_args):
+        purge_started.set()
+
+    async def load_profile(_query):
+        # Sequential code would only start the purge after this returns.
+        await asyncio.wait_for(purge_started.wait(), timeout=0.5)
+        overlapped.append(True)
+        return {"profile": {"language_code": "vi"}, "tdee": {}}
+
+    event_bus = AsyncMock()
+    event_bus.send.side_effect = load_profile
+    register_local_cache_invalidation_hook(purge)
+    try:
+        await publish_meal_event(
+            AsyncMock(),
+            sample_meal,
+            event_type="updated",
+            environment="production",
+            meal_date=date(2026, 10, 25),
+            event_bus=event_bus,
+        )
+    finally:
+        register_local_cache_invalidation_hook(None)
+
+    assert overlapped == [True]
 
 
 @pytest.mark.asyncio

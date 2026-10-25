@@ -2,9 +2,13 @@
 Unit tests for meal edit command handlers.
 """
 
+import json
+from dataclasses import replace
+
 import pytest
 
 from src.api.exceptions import ResourceNotFoundException, ValidationException
+from src.api.mappers.meal_mapper import MealMapper
 from src.app.commands.meal import (
     AddCustomIngredientCommand,
     CustomNutritionData,
@@ -305,6 +309,89 @@ class TestEditMealCommandHandler:
         # Act & Assert
         with pytest.raises(ResourceNotFoundException, match="Meal not found"):
             await event_bus.send(command)
+
+    @pytest.mark.asyncio
+    async def test_rename_is_what_a_vietnamese_read_shows(
+        self, event_bus, sample_meal_with_nutrition, test_session
+    ):
+        """A rename must beat the localized name the AI stored at scan time."""
+        meal = sample_meal_with_nutrition
+        meal_row = (
+            test_session.query(MealORM).filter(MealORM.meal_id == meal.meal_id).one()
+        )
+        meal_row.dish_name = "Sản phẩm thực phẩm Việt Nam"
+        meal_row.raw_ai_response = json.dumps(
+            {
+                "dish_name": "Vietnamese food product",
+                "localized_language": "vi",
+                "localized_dish_name": "Sản phẩm thực phẩm Việt Nam",
+                "foods": [
+                    {"name": item.name, "localized_name": f"vi {item.name}"}
+                    for item in meal.nutrition.food_items
+                ],
+            },
+            ensure_ascii=False,
+        )
+        test_session.commit()
+
+        await event_bus.send(
+            EditMealCommand(
+                meal_id=meal.meal_id,
+                dish_name="Bánh mì của mẹ",
+                food_item_changes=[],
+                language="vi",
+            )
+        )
+
+        test_session.expire_all()
+        row = test_session.query(MealORM).filter(MealORM.meal_id == meal.meal_id).one()
+        saved = replace(meal, dish_name=row.dish_name, raw_gpt_json=row.raw_ai_response)
+        for language in ("vi", "en"):
+            response = MealMapper.to_detailed_response(saved, target_language=language)
+            assert response.dish_name == "Bánh mì của mẹ"
+
+    def test_rename_overwrites_stale_translation_rows(self, sample_meal_with_nutrition):
+        meal = sample_meal_with_nutrition
+        meal.translations = {
+            "vi": MealTranslation(
+                meal_id=meal.meal_id,
+                language="vi",
+                dish_name="Sản phẩm thực phẩm Việt Nam",
+                food_items=[],
+            )
+        }
+        handler = EditMealCommandHandler(uow=None)
+        command = EditMealCommand(
+            meal_id=meal.meal_id, dish_name="Bánh mì của mẹ", language="vi"
+        )
+        edited = meal.mark_edited(nutrition=meal.nutrition, dish_name="Bánh mì của mẹ")
+
+        renamed = handler._carry_rename_to_locales(meal, edited, command)
+
+        assert renamed.translations["vi"].dish_name == "Bánh mì của mẹ"
+        assert meal.translations["vi"].dish_name == "Sản phẩm thực phẩm Việt Nam"
+
+    def test_echoed_translated_name_leaves_locale_names_alone(
+        self, sample_meal_with_nutrition
+    ):
+        meal = sample_meal_with_nutrition
+        meal.translations = {
+            "vi": MealTranslation(
+                meal_id=meal.meal_id,
+                language="vi",
+                dish_name="Gà nướng với cơm",
+                food_items=[],
+            )
+        }
+        handler = EditMealCommandHandler(uow=None)
+        command = EditMealCommand(
+            meal_id=meal.meal_id, dish_name="Gà nướng với cơm", language="vi"
+        )
+        edited = meal.mark_edited(
+            nutrition=meal.nutrition, dish_name="Gà nướng với cơm"
+        )
+
+        assert handler._carry_rename_to_locales(meal, edited, command) is edited
 
     def test_realigns_legacy_translation_list_after_remove(
         self, sample_meal_with_nutrition

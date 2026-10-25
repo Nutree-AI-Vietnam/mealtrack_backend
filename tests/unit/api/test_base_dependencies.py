@@ -107,7 +107,23 @@ def test_get_allowed_image_hosts_rejects_local_custom_domains(
     )
 
 
-def test_local_hooks_not_registered_in_production(monkeypatch):
+def test_local_insight_hook_not_registered_in_production(monkeypatch):
+    import src.api.base_dependencies as dependencies
+    import src.app.events.meal.meal_events as meal_events
+
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(
+        dependencies.settings, "REDIS_URL", "rediss://default:pwd@upstash.io:6379"
+    )
+    meal_events.register_local_insight_hook(None)
+
+    dependencies._register_local_insight_hook()
+
+    assert meal_events._local_insight_hook is None
+
+
+def test_write_cache_hooks_registered_in_production_with_hosted_redis(monkeypatch):
+    """Reads after a write must not wait on the Queue worker's purge."""
     import src.api.base_dependencies as dependencies
     import src.app.events.hydration.local_cache_invalidation as hydration_cache
     import src.app.events.meal.meal_events as meal_events
@@ -117,41 +133,54 @@ def test_local_hooks_not_registered_in_production(monkeypatch):
     monkeypatch.setattr(
         dependencies.settings, "REDIS_URL", "rediss://default:pwd@upstash.io:6379"
     )
-    meal_events.register_local_insight_hook(None)
     meal_events.register_local_cache_invalidation_hook(None)
     hydration_cache.register_local_hydration_cache_invalidation_hook(None)
     movement_cache.register_local_movement_cache_invalidation_hook(None)
 
-    dependencies._register_local_insight_hook()
-    dependencies._register_local_cache_invalidation_hook()
+    try:
+        dependencies._register_write_cache_invalidation_hooks()
 
-    assert meal_events._local_insight_hook is None
-    assert meal_events._local_cache_invalidation_hook is None
-    assert hydration_cache._local_hydration_cache_invalidation_hook is None
-    assert movement_cache._local_movement_cache_invalidation_hook is None
+        assert meal_events._local_cache_invalidation_hook is not None
+        assert hydration_cache._local_hydration_cache_invalidation_hook is not None
+        assert movement_cache._local_movement_cache_invalidation_hook is not None
+    finally:
+        meal_events.register_local_cache_invalidation_hook(None)
+        hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+        movement_cache.register_local_movement_cache_invalidation_hook(None)
 
 
-def test_local_cache_hooks_not_registered_in_development_with_hosted_redis(
-    monkeypatch,
-):
+@pytest.mark.asyncio
+async def test_registered_meal_hook_purges_hosted_redis(monkeypatch):
+    from datetime import date
+    from unittest.mock import AsyncMock
+
     import src.api.base_dependencies as dependencies
     import src.app.events.hydration.local_cache_invalidation as hydration_cache
     import src.app.events.meal.meal_events as meal_events
     import src.app.events.movement.local_cache_invalidation as movement_cache
+    from src.domain.cache.cache_keys import CacheKeys
 
-    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "development")
-    monkeypatch.setattr(
-        dependencies.settings, "REDIS_URL", "rediss://default:pwd@upstash.io:6379"
+    cache = AsyncMock()
+    cache.redis = type("Redis", (), {"_redis_url": "rediss://example.upstash.io"})()
+    monkeypatch.setattr(dependencies.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(dependencies, "get_cache_service", lambda: cache)
+
+    try:
+        dependencies._register_write_cache_invalidation_hooks()
+        await meal_events.invoke_local_cache_invalidation_hook(
+            "user-1", date(2026, 10, 25)
+        )
+    finally:
+        meal_events.register_local_cache_invalidation_hook(None)
+        hydration_cache.register_local_hydration_cache_invalidation_hook(None)
+        movement_cache.register_local_movement_cache_invalidation_hook(None)
+
+    deleted_keys, revisions = cache.purge.await_args.args
+    assert CacheKeys.daily_activities("user-1", date(2026, 10, 25), "vi")[0] in (
+        deleted_keys
     )
-    meal_events.register_local_cache_invalidation_hook(None)
-    hydration_cache.register_local_hydration_cache_invalidation_hook(None)
-    movement_cache.register_local_movement_cache_invalidation_hook(None)
-
-    dependencies._register_local_cache_invalidation_hook()
-
-    assert meal_events._local_cache_invalidation_hook is None
-    assert hydration_cache._local_hydration_cache_invalidation_hook is None
-    assert movement_cache._local_movement_cache_invalidation_hook is None
+    assert revisions == dict([CacheKeys.intake_revision("user-1")])
+    cache.invalidate_pattern.assert_not_awaited()
 
 
 def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
@@ -169,7 +198,7 @@ def test_local_hooks_registered_in_development_with_local_redis(monkeypatch):
 
     try:
         dependencies._register_local_insight_hook()
-        dependencies._register_local_cache_invalidation_hook()
+        dependencies._register_write_cache_invalidation_hooks()
 
         assert meal_events._local_insight_hook is not None
         assert meal_events._local_cache_invalidation_hook is not None
@@ -200,7 +229,7 @@ async def test_registered_hydration_hook_purges_streak_on_local_redis(monkeypatc
     monkeypatch.setattr(dependencies, "get_cache_service", lambda: cache)
 
     try:
-        dependencies._register_local_cache_invalidation_hook()
+        dependencies._register_write_cache_invalidation_hooks()
         await hydration_cache.invoke_local_hydration_cache_invalidation_hook(
             "user-1", date(2026, 10, 20)
         )
@@ -209,7 +238,8 @@ async def test_registered_hydration_hook_purges_streak_on_local_redis(monkeypatc
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
         movement_cache.register_local_movement_cache_invalidation_hook(None)
 
-    cache.invalidate.assert_any_await(CacheKeys.user_streak("user-1")[0])
+    deleted_keys = set(cache.purge.await_args.args[0])
+    assert CacheKeys.user_streak("user-1")[0] in deleted_keys
 
 
 @pytest.mark.asyncio
@@ -230,7 +260,7 @@ async def test_registered_movement_hook_purges_day_totals_on_local_redis(monkeyp
     monkeypatch.setattr(dependencies, "get_cache_service", lambda: cache)
 
     try:
-        dependencies._register_local_cache_invalidation_hook()
+        dependencies._register_write_cache_invalidation_hooks()
         await movement_cache.invoke_local_movement_cache_invalidation_hook(
             "user-1", date(2026, 10, 20)
         )
@@ -239,10 +269,8 @@ async def test_registered_movement_hook_purges_day_totals_on_local_redis(monkeyp
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
         movement_cache.register_local_movement_cache_invalidation_hook(None)
 
-    cache.invalidate.assert_any_await(
-        CacheKeys.daily_macros("user-1", date(2026, 10, 20))[0]
-    )
-    deleted_keys = {call.args[0] for call in cache.invalidate.await_args_list}
+    deleted_keys = set(cache.purge.await_args.args[0])
+    assert CacheKeys.daily_macros("user-1", date(2026, 10, 20))[0] in deleted_keys
     assert CacheKeys.user_streak("user-1")[0] not in deleted_keys
 
 
