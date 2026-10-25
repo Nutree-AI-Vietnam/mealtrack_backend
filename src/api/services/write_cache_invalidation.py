@@ -8,6 +8,7 @@ pipelined Redis round-trip; the write path never SCANs the keyspace.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime
 
@@ -23,6 +24,15 @@ from src.domain.ports.cache_port import CachePort
 
 logger = logging.getLogger(__name__)
 
+# A healthy purge is one round-trip (~10 ms on Upstash). The deadline keeps a
+# slow Redis from adding its 5 s socket timeout to every write. A purge past
+# the deadline is not cancelled: day macros live a day, so it finishes in the
+# background and clears them once Redis answers.
+PURGE_TIMEOUT_SECONDS = 1.0
+
+# Strong references so a purge the write stopped waiting for is not collected.
+_purges: set[asyncio.Task[None]] = set()
+
 
 def _as_date(value: date | datetime) -> date:
     return value.date() if isinstance(value, datetime) else value
@@ -37,6 +47,27 @@ def _dedupe(operations: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 async def _apply_operations(cache: CachePort, operations: list[dict[str, str]]) -> None:
+    purge = asyncio.ensure_future(_purge(cache, operations))
+    _purges.add(purge)
+    purge.add_done_callback(_purges.discard)
+    try:
+        await asyncio.wait_for(asyncio.shield(purge), timeout=PURGE_TIMEOUT_SECONDS)
+    except TimeoutError:
+        purge.add_done_callback(_log_late_purge_failure)
+        logger.warning(
+            "write cache purge passed %.1fs; finishing in the background",
+            PURGE_TIMEOUT_SECONDS,
+        )
+
+
+def _log_late_purge_failure(purge: asyncio.Task[None]) -> None:
+    if not purge.cancelled() and purge.exception() is not None:
+        logger.warning(
+            "background write cache purge failed", exc_info=purge.exception()
+        )
+
+
+async def _purge(cache: CachePort, operations: list[dict[str, str]]) -> None:
     await cache.purge(
         [op["key"] for op in operations if op.get("op") == DELETE_KEY],
         {
