@@ -2,8 +2,8 @@
 
 Write handlers await this after commit and before they respond, in every
 environment, so the next read sees the write without waiting on the Queue
-worker. The builders name exact keys and one revision bump, so the write path
-costs two Redis round-trips and never SCANs the keyspace.
+worker. The builders name exact keys and one revision bump, sent as one
+pipelined Redis round-trip; the write path never SCANs the keyspace.
 """
 
 from __future__ import annotations
@@ -37,13 +37,14 @@ def _dedupe(operations: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 async def _apply_operations(cache: CachePort, operations: list[dict[str, str]]) -> None:
-    # Fence range-keyed caches first: it is one INCR and the deletes may fail.
-    for operation in operations:
-        if operation.get("op") == BUMP_REVISION:
-            await cache.bump_revision(operation["key"], int(operation["ttl"]))
-    keys = [op["key"] for op in operations if op.get("op") == DELETE_KEY]
-    if keys:
-        await cache.invalidate_many(keys)
+    await cache.purge(
+        [op["key"] for op in operations if op.get("op") == DELETE_KEY],
+        {
+            op["key"]: int(op["ttl"])
+            for op in operations
+            if op.get("op") == BUMP_REVISION
+        },
+    )
     for operation in operations:
         if operation.get("op") == DELETE_PATTERN:
             await cache.invalidate_pattern(operation["pattern"])

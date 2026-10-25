@@ -175,11 +175,11 @@ async def test_registered_meal_hook_purges_hosted_redis(monkeypatch):
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
         movement_cache.register_local_movement_cache_invalidation_hook(None)
 
-    deleted_keys = set(cache.invalidate_many.await_args.args[0])
+    deleted_keys, revisions = cache.purge.await_args.args
     assert CacheKeys.daily_activities("user-1", date(2026, 10, 25), "vi")[0] in (
         deleted_keys
     )
-    cache.bump_revision.assert_awaited_once_with(*CacheKeys.intake_revision("user-1"))
+    assert revisions == dict([CacheKeys.intake_revision("user-1")])
     cache.invalidate_pattern.assert_not_awaited()
 
 
@@ -238,7 +238,7 @@ async def test_registered_hydration_hook_purges_streak_on_local_redis(monkeypatc
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
         movement_cache.register_local_movement_cache_invalidation_hook(None)
 
-    deleted_keys = set(cache.invalidate_many.await_args.args[0])
+    deleted_keys = set(cache.purge.await_args.args[0])
     assert CacheKeys.user_streak("user-1")[0] in deleted_keys
 
 
@@ -269,7 +269,7 @@ async def test_registered_movement_hook_purges_day_totals_on_local_redis(monkeyp
         hydration_cache.register_local_hydration_cache_invalidation_hook(None)
         movement_cache.register_local_movement_cache_invalidation_hook(None)
 
-    deleted_keys = set(cache.invalidate_many.await_args.args[0])
+    deleted_keys = set(cache.purge.await_args.args[0])
     assert CacheKeys.daily_macros("user-1", date(2026, 10, 20))[0] in deleted_keys
     assert CacheKeys.user_streak("user-1")[0] not in deleted_keys
 

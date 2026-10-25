@@ -64,10 +64,9 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
         user_targets = await self._get_user_targets(query.user_id)
         _, _, _, revision, _, _ = user_targets
         # Read before computing: a write that lands mid-compute bumps past it.
-        intake_revision = await self.cache_service.read_revision(
-            CacheKeys.intake_revision(query.user_id)[0]
+        cached, intake_revision = await self.cache_service.get_json_with_revision(
+            key, CacheKeys.intake_revision(query.user_id)[0]
         )
-        cached = await self.cache_service.get_json(key)
         if (
             revision is not None
             and intake_revision is not None

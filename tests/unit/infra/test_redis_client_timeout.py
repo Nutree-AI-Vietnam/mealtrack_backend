@@ -118,27 +118,55 @@ async def test_delete_pattern_uses_scan_not_keys():
     assert mock_client.keys.call_count == 0  # must NOT use blocking KEYS
 
 
+class _Pipeline:
+    def __init__(self) -> None:
+        self.commands: list[tuple] = []
+        self.execute = AsyncMock(return_value=[])
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def incr(self, key):
+        self.commands.append(("INCR", key))
+
+    def expire(self, key, ttl):
+        self.commands.append(("EXPIRE", key, ttl))
+
+    def delete(self, *keys):
+        self.commands.append(("DEL", *keys))
+
+
 @pytest.mark.asyncio
-async def test_get_counter_reads_unset_as_zero_and_outage_as_unknown():
+async def test_purge_sends_every_command_in_one_pipeline():
     client = RedisClient(redis_url="redis://localhost:6379")
     client.connect = AsyncMock()
     client.client = MagicMock()
-    client.client.get = AsyncMock(side_effect=[b"7", None])
+    pipeline = _Pipeline()
+    client.client.pipeline = MagicMock(return_value=pipeline)
 
-    assert await client.get_counter("k") == 7
-    assert await client.get_counter("k") == 0
+    assert await client.purge(["a", "b"], {"rev": 60}) is True
+
+    assert pipeline.commands == [
+        ("INCR", "rev"),
+        ("EXPIRE", "rev", 60),
+        ("DEL", "a", "b"),
+    ]
+    pipeline.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_with_counter_reads_unset_as_zero_and_outage_as_unknown():
+    client = RedisClient(redis_url="redis://localhost:6379")
+    client.connect = AsyncMock()
+    client.client = MagicMock()
+    client.client.mget = AsyncMock(side_effect=[[b'{"x": 1}', b"7"], [None, None]])
+
+    assert await client.get_with_counter("k", "rev") == ('{"x": 1}', 7)
+    assert await client.get_with_counter("k", "rev") == (None, 0)
+    client.client.mget.assert_awaited_with(["k", "rev"])
 
     client.client = None
-    assert await client.get_counter("k") is None
-
-
-@pytest.mark.asyncio
-async def test_delete_many_sends_one_command():
-    client = RedisClient(redis_url="redis://localhost:6379")
-    client.connect = AsyncMock()
-    client.client = MagicMock()
-    client.client.delete = AsyncMock(return_value=2)
-
-    assert await client.delete_many(["a", "b"]) == 2
-    client.client.delete.assert_awaited_once_with("a", "b")
-    assert await client.delete_many([]) == 0
+    assert await client.get_with_counter("k", "rev") is None

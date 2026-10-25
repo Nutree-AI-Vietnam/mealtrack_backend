@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
@@ -126,7 +127,14 @@ async def publish_meal_event(
     publisher = require_event_publisher(publisher)
     logger.debug("publishing meal event source=%s", source)
     resolved_user_id = str(user_id or getattr(meal, "user_id", "") or "")
-    user_context = await _insight_user_context(event_bus, resolved_user_id)
+    # The cache purge needs only the user and dates, so its Redis round-trip
+    # runs while the profile loads instead of adding to the write's latency.
+    user_context, _ = await asyncio.gather(
+        _insight_user_context(event_bus, resolved_user_id),
+        invoke_local_cache_invalidation_hook(
+            resolved_user_id, meal_date, old_meal_date
+        ),
+    )
     preferred_language = None
     if isinstance(user_context, dict):
         preferred_language = user_context.get("language_code")
@@ -159,9 +167,6 @@ async def publish_meal_event(
         data=data,
     )
     await publisher.publish(event.to_payload())
-    await invoke_local_cache_invalidation_hook(
-        resolved_user_id, meal_date, old_meal_date
-    )
     if insight is not None and _local_insight_hook is not None:
         _local_insight_hook(str(meal.meal_id), insight, occurred_at)
     return True

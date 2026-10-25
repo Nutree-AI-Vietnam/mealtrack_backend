@@ -18,9 +18,10 @@ from src.domain.services.weekly_budget_service import (
 @pytest.mark.asyncio
 async def test_stale_bulk_target_cache_is_recomputed():
     cache = MagicMock()
-    cache.get_json = AsyncMock(return_value={"target_revision": 1, "intake_revision": 0})
+    cache.get_json_with_revision = AsyncMock(
+        return_value=({"target_revision": 1, "intake_revision": 0}, 0)
+    )
     cache.set_json = AsyncMock()
-    cache.read_revision = AsyncMock(return_value=0)
     handler = GetNutritionBulkQueryHandler(cache_service=cache)
     query = GetNutritionBulkQuery(
         user_id="u1", start_date=date(2026, 4, 1), end_date=date(2026, 4, 2)
@@ -36,9 +37,8 @@ async def test_stale_bulk_target_cache_is_recomputed():
 
 def _cached_bulk_handler(cached, intake_revision):
     cache = MagicMock()
-    cache.get_json = AsyncMock(return_value=cached)
+    cache.get_json_with_revision = AsyncMock(return_value=(cached, intake_revision))
     cache.set_json = AsyncMock()
-    cache.read_revision = AsyncMock(return_value=intake_revision)
     handler = GetNutritionBulkQueryHandler(cache_service=cache)
     handler._get_user_targets = AsyncMock(
         return_value=(2000, {}, 1700, 2, MagicMock(), False)
@@ -61,7 +61,11 @@ async def test_bulk_cached_before_a_meal_edit_is_recomputed():
 
     assert await handler.handle(BULK_QUERY) == fresh
     handler._compute.assert_awaited_once()
-    cache.read_revision.assert_awaited_once_with(CacheKeys.intake_revision("u1")[0])
+    # One round-trip reads both the payload and the revision fencing it.
+    cache.get_json_with_revision.assert_awaited_once_with(
+        CacheKeys.nutrition_bulk("u1", BULK_QUERY.start_date, BULK_QUERY.end_date)[0],
+        CacheKeys.intake_revision("u1")[0],
+    )
     stored = cache.set_json.await_args.args[1]
     assert stored["intake_revision"] == 8
 

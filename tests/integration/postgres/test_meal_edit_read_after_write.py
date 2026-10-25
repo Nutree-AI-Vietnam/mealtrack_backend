@@ -109,18 +109,18 @@ class _MemoryRedis:
     async def delete(self, key):
         return self.values.pop(key, None) is not None
 
-    async def delete_many(self, keys):
-        return sum(self.values.pop(key, None) is not None for key in keys)
+    async def purge(self, keys, counters):
+        for counter in counters:
+            self.values[counter] = str(int(self.values.get(counter, 0)) + 1)
+        for key in keys:
+            self.values.pop(key, None)
+        return True
 
     async def delete_pattern(self, pattern):
         raise AssertionError(f"write path must not SCAN: {pattern}")
 
-    async def get_counter(self, key):
-        return int(self.values.get(key, 0))
-
-    async def incr_with_expiry(self, key, ttl):
-        self.values[key] = str(int(self.values.get(key, 0)) + 1)
-        return int(self.values[key])
+    async def get_with_counter(self, key, counter):
+        return self.values.get(key), int(self.values.get(counter, 0))
 
 
 def _item(name: str, grams: float, protein: float, carbs: float, fat: float):

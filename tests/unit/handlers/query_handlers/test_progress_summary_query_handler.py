@@ -182,17 +182,19 @@ async def test_auto_adjust_off_uses_base_for_every_day():
 @pytest.mark.asyncio
 async def test_cache_miss_when_auto_adjust_differs():
     cache = MagicMock()
-    cache.get_json = AsyncMock(
-        return_value={
-            "effective_start": "2026-09-01",
-            "days": [{"date": "2026-09-01", "target_calories": 1850.0}],
-            "target_revision": 3,
-            "intake_revision": 4,
-            "weekly_auto_adjust": True,
-        }
+    cache.get_json_with_revision = AsyncMock(
+        return_value=(
+            {
+                "effective_start": "2026-09-01",
+                "days": [{"date": "2026-09-01", "target_calories": 1850.0}],
+                "target_revision": 3,
+                "intake_revision": 4,
+                "weekly_auto_adjust": True,
+            },
+            4,
+        )
     )
     cache.set_json = AsyncMock()
-    cache.read_revision = AsyncMock(return_value=4)
     uow = _uow()
     uow.users.get_weekly_auto_adjust = AsyncMock(return_value=False)
     result = await _handle(
@@ -248,9 +250,8 @@ async def test_cache_hit_skips_compute():
         "target_revision": 3,
         "intake_revision": 4,
     }
-    cache.get_json = AsyncMock(return_value=cached)
+    cache.get_json_with_revision = AsyncMock(return_value=(cached, 4))
     cache.set_json = AsyncMock()
-    cache.read_revision = AsyncMock(return_value=4)
     uow = _uow()
     result = await _handle(
         uow,
@@ -270,16 +271,18 @@ async def test_cache_hit_skips_compute():
 @pytest.mark.asyncio
 async def test_summary_cached_before_a_meal_write_is_recomputed():
     cache = MagicMock()
-    cache.get_json = AsyncMock(
-        return_value={
-            "effective_start": "2026-09-01",
-            "days": [],
-            "target_revision": 3,
-            "intake_revision": 4,
-        }
+    cache.get_json_with_revision = AsyncMock(
+        return_value=(
+            {
+                "effective_start": "2026-09-01",
+                "days": [],
+                "target_revision": 3,
+                "intake_revision": 4,
+            },
+            5,
+        )
     )
     cache.set_json = AsyncMock()
-    cache.read_revision = AsyncMock(return_value=5)
     uow = _uow()
 
     await _handle(

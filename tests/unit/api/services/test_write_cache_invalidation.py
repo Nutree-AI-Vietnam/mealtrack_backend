@@ -21,13 +21,19 @@ def _hosted_cache() -> AsyncMock:
 
 
 def _deleted(cache: AsyncMock) -> set[str]:
+    return {key for call in cache.purge.await_args_list for key in call.args[0]}
+
+
+def _bumped(cache: AsyncMock) -> dict[str, int]:
     return {
-        key for call in cache.invalidate_many.await_args_list for key in call.args[0]
+        key: ttl
+        for call in cache.purge.await_args_list
+        for key, ttl in call.args[1].items()
     }
 
 
 @pytest.mark.asyncio
-async def test_meal_write_purges_hosted_redis_without_scanning() -> None:
+async def test_meal_write_purges_hosted_redis_in_one_call_without_scanning() -> None:
     """The Queue worker may be down; the write itself must clear what it staled."""
     cache = _hosted_cache()
     user_id = "user-1"
@@ -44,13 +50,14 @@ async def test_meal_write_purges_hosted_redis_without_scanning() -> None:
     assert CacheKeys.weekly_budget(user_id, week_start, meal_date)[0] in deleted
     assert CacheKeys.daily_breakdown(user_id, week_start)[0] in deleted
     assert CacheKeys.user_streak(user_id)[0] in deleted
-    cache.invalidate_many.assert_awaited_once()
-    cache.bump_revision.assert_awaited_once_with(*CacheKeys.intake_revision(user_id))
+    # Every delete and the revision bump reach Redis as one round-trip.
+    cache.purge.assert_awaited_once()
+    assert _bumped(cache) == dict([CacheKeys.intake_revision(user_id)])
     cache.invalidate_pattern.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_meal_write_covers_moved_meal_dates_in_one_delete() -> None:
+async def test_meal_write_covers_moved_meal_dates_in_one_call() -> None:
     cache = _hosted_cache()
     user_id = "user-1"
 
@@ -64,20 +71,20 @@ async def test_meal_write_covers_moved_meal_dates_in_one_delete() -> None:
     deleted = _deleted(cache)
     assert CacheKeys.daily_macros(user_id, date(2026, 9, 11))[0] in deleted
     assert CacheKeys.daily_macros(user_id, date(2026, 9, 10))[0] in deleted
-    cache.invalidate_many.assert_awaited_once()
-    keys = cache.invalidate_many.await_args.args[0]
+    cache.purge.assert_awaited_once()
+    keys = cache.purge.await_args.args[0]
     assert len(keys) == len(set(keys))
-    cache.bump_revision.assert_awaited_once()
+    assert _bumped(cache) == dict([CacheKeys.intake_revision(user_id)])
 
 
 @pytest.mark.asyncio
 async def test_meal_write_invalidation_failure_does_not_fail_the_write() -> None:
     cache = _hosted_cache()
-    cache.invalidate_many.side_effect = ConnectionError("redis down")
+    cache.purge.side_effect = ConnectionError("redis down")
 
     await apply_meal_write_cache_invalidation(cache, "user-1", date(2026, 10, 25))
 
-    cache.bump_revision.assert_awaited_once()
+    cache.purge.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -98,18 +105,19 @@ async def test_hydration_write_purges_streak_and_hydration_keys() -> None:
     assert CacheKeys.daily_macros(user_id, log_date)[0] in deleted
     assert CacheKeys.daily_breakdown(user_id, week_start)[0] in deleted
     assert CacheKeys.weekly_budget(user_id, week_start, log_date)[0] in deleted
-    cache.bump_revision.assert_awaited_once_with(*CacheKeys.intake_revision(user_id))
+    cache.purge.assert_awaited_once()
+    assert _bumped(cache) == dict([CacheKeys.intake_revision(user_id)])
     cache.invalidate_pattern.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_hydration_write_invalidation_failure_does_not_fail_the_write() -> None:
     cache = _hosted_cache()
-    cache.invalidate_many.side_effect = ConnectionError("redis down")
+    cache.purge.side_effect = ConnectionError("redis down")
 
     await apply_hydration_write_cache_invalidation(cache, "user-1", date(2026, 10, 20))
 
-    cache.invalidate_many.assert_awaited()
+    cache.purge.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -129,15 +137,16 @@ async def test_movement_write_purges_day_keys_but_not_streak() -> None:
     assert CacheKeys.weekly_budget(user_id, week_start, log_date)[0] in deleted
     # Movement does not count toward the streak.
     assert CacheKeys.user_streak(user_id)[0] not in deleted
-    cache.bump_revision.assert_awaited_once_with(*CacheKeys.intake_revision(user_id))
+    cache.purge.assert_awaited_once()
+    assert _bumped(cache) == dict([CacheKeys.intake_revision(user_id)])
     cache.invalidate_pattern.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_movement_write_invalidation_failure_does_not_fail_the_write() -> None:
     cache = _hosted_cache()
-    cache.invalidate_many.side_effect = ConnectionError("redis down")
+    cache.purge.side_effect = ConnectionError("redis down")
 
     await apply_movement_write_cache_invalidation(cache, "user-1", date(2026, 10, 20))
 
-    cache.invalidate_many.assert_awaited()
+    cache.purge.assert_awaited()

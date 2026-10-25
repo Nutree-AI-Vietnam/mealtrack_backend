@@ -32,20 +32,21 @@ class CachePort(ABC):
     async def invalidate_pattern(self, pattern: str) -> int:
         """Request deletion of cache entries matching a glob pattern."""
 
-    async def invalidate_many(self, keys: list[str]) -> int:
-        """Delete several cache entries; adapters override this with one call."""
-        deleted = 0
-        for key in keys:
-            deleted += int(await self.invalidate(key))
-        return deleted
+    async def purge(self, keys: list[str], revisions: dict[str, int]) -> None:
+        """Delete entries and advance write counters (key -> TTL seconds).
 
-    async def read_revision(self, key: str) -> int | None:
-        """Return a write counter: 0 when unset, None when it cannot be read.
-
-        None means unknown, so a cache fenced by the counter must not be served.
+        Adapters do both in one round-trip; this fallback cannot advance
+        counters, which is safe because it also never reads one back.
         """
-        return None
+        for key in keys:
+            await self.invalidate(key)
 
-    async def bump_revision(self, key: str, ttl_seconds: int) -> int | None:
-        """Advance a write counter so entries built at the old value stop serving."""
-        return None
+    async def get_json_with_revision(
+        self, key: str, revision_key: str
+    ) -> tuple[Any | None, int | None]:
+        """Return a cached payload and the write counter that fences it.
+
+        The counter reads 0 when unset; None means unknown, so a cache fenced
+        by it must not be served.
+        """
+        return await self.get(key), None
