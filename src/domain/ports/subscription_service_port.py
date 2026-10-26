@@ -35,6 +35,17 @@ SNAPSHOT_ERROR_REASONS = frozenset(
     }
 )
 
+# Provider outages and rate limits. They come in bursts (one per webhook
+# during an incident), so they are counted and logged, not sent to Sentry;
+# the snapshot_unavailable counter carries the alert.
+SNAPSHOT_TRANSIENT_REASONS = frozenset(
+    {
+        SNAPSHOT_REASON_TRANSPORT,
+        SNAPSHOT_REASON_HTTP_429,
+        SNAPSHOT_REASON_HTTP_5XX,
+    }
+)
+
 
 class RevenueCatSnapshotUnavailable(RuntimeError):
     """Provider state could not be safely verified."""

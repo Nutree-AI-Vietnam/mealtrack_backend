@@ -277,7 +277,10 @@ async def test_older_snapshot_never_overwrites_newer_facts():
         expires_date=now - timedelta(days=1),
     )
 
-    with patch(f"{SYNC}.capture_message") as captured:
+    with (
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
         outcome = await sync_revenuecat_access(
             _SyncSession(_owner(), [row]),
             _owner(),
@@ -288,7 +291,17 @@ async def test_older_snapshot_never_overwrites_newer_facts():
 
     assert outcome.result == "stale_skipped"
     assert (row.status, row.provider_snapshot_at) == ("active", now)
-    assert captured.call_args.kwargs["context"]["result"] == "stale_skipped"
+    metric.assert_called_once_with(
+        "subscription_access.sync",
+        attributes={
+            "source": "webhook",
+            "event_type": "RENEWAL",
+            "result": "stale_skipped",
+        },
+    )
+    # Routine (a refresh that commits before the purchase webhook): counted
+    # and logged, never one Sentry event per occurrence.
+    captured.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -561,7 +574,14 @@ def test_refund_while_billing_flag_is_set_normalizes_as_expired():
 
 @pytest.mark.parametrize(
     ("reason", "capture"),
-    [("malformed", "capture_exception"), ("http_429", "capture_message")],
+    [
+        ("malformed", "capture_exception"),
+        ("identity_mismatch", "capture_message"),
+        # Outages and rate limits: the counter alerts, Sentry is not flooded.
+        ("http_429", None),
+        ("http_5xx", None),
+        ("transport", None),
+    ],
 )
 def test_snapshot_failures_are_logged_counted_and_reported(reason, capture, caplog):
     error = RevenueCatSnapshotUnavailable("RevenueCat failed", reason=reason)
@@ -581,11 +601,15 @@ def test_snapshot_failures_are_logged_counted_and_reported(reason, capture, capl
         )
 
     reported = {"capture_exception": exception, "capture_message": message}
-    reported[capture].assert_called_once()
-    context = reported[capture].call_args.kwargs["context"]
-    assert context["user_id"] == "user-1"
-    assert context["event_id"] == "evt-1"
-    assert context["failure_kind"] == reason
+    for name, capture_mock in reported.items():
+        if name != capture:
+            capture_mock.assert_not_called()
+    if capture is not None:
+        reported[capture].assert_called_once()
+        context = reported[capture].call_args.kwargs["context"]
+        assert context["user_id"] == "user-1"
+        assert context["event_id"] == "evt-1"
+        assert context["failure_kind"] == reason
     metric.assert_called_once_with(
         "subscription_access.snapshot_unavailable",
         attributes={

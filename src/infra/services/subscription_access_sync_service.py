@@ -22,6 +22,7 @@ from src.domain.ports.subscription_service_port import (
     SNAPSHOT_REASON_OWNER_CHANGED,
     SNAPSHOT_REASON_UNKNOWN,
     SNAPSHOT_REASON_UNSUPPORTED_STORE,
+    SNAPSHOT_TRANSIENT_REASONS,
     RevenueCatSnapshot,
     RevenueCatSnapshotUnavailable,
 )
@@ -712,6 +713,10 @@ def record_snapshot_unavailable(
     if reason in SNAPSHOT_ERROR_REASONS:
         # Contract or configuration bug: needs engineering attention now.
         capture_exception(error, context=context)
+    elif reason in SNAPSHOT_TRANSIENT_REASONS:
+        # A RevenueCat outage would send one Sentry event per webhook; the
+        # counter above carries the alert instead.
+        pass
     else:
         capture_message(
             "RevenueCat snapshot unavailable", level="warning", context=context
@@ -740,6 +745,9 @@ def _record_sync_outcome(
         **attributes,
     }
     if outcome.result == "stale_skipped":
+        # Routine: the app's refresh right after a purchase often reads later
+        # but commits before the purchase webhook. Logged and counted (the
+        # subscription_access.sync counter above), not sent to Sentry.
         logger.warning(
             "RevenueCat snapshot older than stored facts skipped: user_id=%s "
             "source=%s event_type=%s event_id=%s",
@@ -747,11 +755,6 @@ def _record_sync_outcome(
             source,
             event_type,
             event_id,
-        )
-        capture_message(
-            "RevenueCat snapshot older than stored facts skipped",
-            level="warning",
-            context=context,
         )
         return
     if outcome.standard_missing:

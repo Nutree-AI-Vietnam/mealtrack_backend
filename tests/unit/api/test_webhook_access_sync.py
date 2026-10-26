@@ -265,7 +265,7 @@ def _annual(expires_in: timedelta = timedelta(days=365)) -> dict:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("flag", ["true", "false"])
 async def test_snapshot_failure_keeps_legacy_effects_and_leaves_access_unresolved(
-    monkeypatch, flag
+    monkeypatch, flag, caplog
 ):
     """RevenueCat down: the purchase, referral credit and lifecycle event still
     happen, the webhook ACKs, and access is left unresolved for repair."""
@@ -290,6 +290,7 @@ async def test_snapshot_failure_keeps_legacy_effects_and_leaves_access_unresolve
         _revenuecat({"uid-u": _fails(503)}) as revenuecat,
         patch(f"{SYNC}.capture_message") as captured,
         patch(f"{SYNC}.increment_metric") as metric,
+        caplog.at_level("WARNING", logger=SYNC),
     ):
         result = await _deliver(monkeypatch, event, database, referrals, publisher)
 
@@ -306,16 +307,14 @@ async def test_snapshot_failure_keeps_legacy_effects_and_leaves_access_unresolve
     )
     with pytest.raises(SubscriptionAccessUnavailable):
         evaluate_subscription_access(database.rows_of(user))
-    context = captured.call_args.kwargs["context"]
-    assert (context["user_id"], context["event_id"], context["failure_kind"]) == (
-        "user-u",
-        "evt-initial_purchase",
-        "http_5xx",
-    )
-    assert any(
-        call.args[0] == "subscription_access.snapshot_unavailable"
-        for call in metric.call_args_list
-    )
+    # An outage is logged per event and alerted on the counter; it is not
+    # sent to Sentry once per webhook.
+    assert "user_id=user-u" in caplog.text
+    assert "event_id=evt-initial_purchase" in caplog.text
+    assert "reason=http_5xx" in caplog.text
+    (unavailable,) = _metrics(metric, "subscription_access.snapshot_unavailable")
+    assert unavailable.kwargs["attributes"]["failure_kind"] == "http_5xx"
+    captured.assert_not_called()
 
 
 @pytest.mark.asyncio
