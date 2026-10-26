@@ -1,9 +1,9 @@
 """Pure subscription access evaluation over normalized provider facts."""
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class SubscriptionFacts(Protocol):
@@ -22,6 +22,29 @@ class SubscriptionAccess:
     has_access: bool
     status: str
     expires_at: datetime | None
+    # The granting row with the latest deadline (a lifetime grant wins); None
+    # when access is denied. Lets callers describe the subscription (product,
+    # provider, renewal) without re-deciding access.
+    source: Any = field(default=None, compare=False, repr=False)
+
+
+# Providers whose grants are auto-renewing subscriptions. Anything else (a
+# fixed-term pass, a manual grant) never renews on its own.
+RENEWING_PROVIDERS = frozenset({"revenuecat"})
+
+
+def subscription_will_renew(record: Any) -> bool:
+    """Whether the subscription behind a grant is set to renew.
+
+    Mirrors RevenueCat's EntitlementInfo.willRenew: false once an
+    unsubscribe ('cancelled') or a billing issue is detected, and for a
+    lifetime grant, which has nothing to renew.
+    """
+    if getattr(record, "provider", None) not in RENEWING_PROVIDERS:
+        return False
+    if record.expires_at is None:
+        return False
+    return record.status == "active"
 
 
 def _utc(value: datetime) -> datetime:
@@ -34,7 +57,7 @@ def evaluate_subscription_access(
     """Return access only from provider-verified, unexpired normalized facts."""
     instant = _utc(now or datetime.now(UTC))
     records = list(subscriptions)
-    grants: list[tuple[str, datetime | None]] = []
+    grants: list[tuple[str, datetime | None, SubscriptionFacts]] = []
     unresolved = False
 
     for record in records:
@@ -58,30 +81,31 @@ def evaluate_subscription_access(
         if record.status == "billing_issue":
             if expiry and expiry > instant:
                 status = "trial" if record.period_type == "trial" else "active"
-                grants.append((status, expiry))
+                grants.append((status, expiry, record))
             elif grace and grace > instant:
-                grants.append(("grace_period", grace))
+                grants.append(("grace_period", grace, record))
             continue
 
         if expiry is None:
-            grants.append(("active", None))
+            grants.append(("active", None, record))
         elif expiry > instant:
             status = "trial" if record.period_type == "trial" else "active"
-            grants.append((status, expiry))
+            grants.append((status, expiry, record))
 
     if grants:
-        # An explicitly verified lifetime entitlement has no deadline.
-        if any(deadline is None for _, deadline in grants):
-            expiry = None
-        else:
-            expiry = max(deadline for _, deadline in grants if deadline is not None)
-        if any(status == "active" for status, _ in grants):
+        # An explicitly verified lifetime entitlement has no deadline, so it
+        # wins; otherwise the grant that lasts longest. Ties keep row order.
+        _, expiry, source = max(
+            grants,
+            key=lambda grant: (grant[1] is None, grant[1] or instant),
+        )
+        if any(status == "active" for status, _, _ in grants):
             public_status = "active"
-        elif any(status == "trial" for status, _ in grants):
+        elif any(status == "trial" for status, _, _ in grants):
             public_status = "trial"
         else:
             public_status = "grace_period"
-        return SubscriptionAccess(True, public_status, expiry)
+        return SubscriptionAccess(True, public_status, expiry, source)
 
     if unresolved:
         raise SubscriptionAccessUnavailable("Subscription state is unverified")

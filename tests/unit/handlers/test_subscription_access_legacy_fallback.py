@@ -130,6 +130,14 @@ async def test_users_sync_still_uses_policy_when_it_can_decide():
     )
     await _user_with_rows(uow, verified)
 
+    shorter = _unreconciled(
+        user_id=verified.user_id,
+        product_id="standard_weekly",
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+        provider_snapshot_at=datetime.now(UTC),
+    )
+    await uow.subscriptions.save(shorter)
+
     result = await SyncUserCommandHandler(uow=uow).handle(
         SyncUserCommand(
             firebase_uid="firebase-unreconciled",
@@ -139,6 +147,8 @@ async def test_users_sync_still_uses_policy_when_it_can_decide():
     )
 
     assert result["user"]["has_subscription"] is True
+    # Describes the granting row with the latest deadline.
+    assert result["user"]["subscription"]["product_id"] == "standard_monthly"
 
 
 @pytest.mark.asyncio

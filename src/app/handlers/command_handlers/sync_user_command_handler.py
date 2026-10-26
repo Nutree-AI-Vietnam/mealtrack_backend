@@ -204,15 +204,9 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
             except SubscriptionAccessUnavailable:
                 record_legacy_access_fallback(source="users_sync", user_id=user_id)
             else:
-                active_subscription = None
-                for subscription in subscriptions:
-                    try:
-                        if evaluate_subscription_access([subscription]).has_access:
-                            active_subscription = subscription
-                            break
-                    except SubscriptionAccessUnavailable:
-                        continue
-                return active_subscription, access.has_access
+                # The granting row with the latest deadline, as the
+                # entitlements endpoint describes it.
+                return access.source, access.has_access
         active_subscription = await uow.subscriptions.find_active_by_user_id(user_id)
         return active_subscription, active_subscription is not None
 

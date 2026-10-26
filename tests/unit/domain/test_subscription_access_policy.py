@@ -100,3 +100,101 @@ def test_verified_grant_from_another_row_still_wins_over_a_pending_row():
     verified = Facts(expires_at=now + timedelta(days=3))
 
     assert evaluate_subscription_access([pending, verified], now).has_access is True
+
+
+@dataclass
+class Row(Facts):
+    product_id: str = "standard_monthly"
+    provider: str | None = "revenuecat"
+
+
+def test_source_is_the_grant_with_the_latest_deadline():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    short = Row(product_id="standard_monthly", expires_at=now + timedelta(days=3))
+    long = Row(product_id="standard_yearly", expires_at=now + timedelta(days=300))
+    denied = Row(product_id="old", status="expired", expires_at=now)
+
+    access = evaluate_subscription_access([short, denied, long], now)
+
+    assert access.source is long
+    assert access.expires_at == long.expires_at
+
+
+def test_lifetime_grant_is_the_source_over_any_dated_grant():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    dated = Row(product_id="standard_yearly", expires_at=now + timedelta(days=300))
+    lifetime = Row(product_id="standard_lifetime", expires_at=None)
+
+    access = evaluate_subscription_access([dated, lifetime], now)
+
+    assert access.source is lifetime
+    assert access.expires_at is None
+
+
+def test_source_crosses_providers_and_covers_grace_grants():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    store_grace = Row(
+        status="billing_issue",
+        expires_at=now - timedelta(days=1),
+        grace_period_expires_at=now + timedelta(days=2),
+    )
+    pass_row = Row(
+        product_id="momo_pass_30d",
+        provider="momo",
+        expires_at=now + timedelta(days=20),
+    )
+
+    access = evaluate_subscription_access([store_grace, pass_row], now)
+
+    assert access.source is pass_row
+    assert access.status == "active"
+
+
+def test_denied_and_empty_decisions_have_no_source():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    assert evaluate_subscription_access([], now).source is None
+    expired = Row(status="expired", expires_at=now - timedelta(days=1))
+    assert evaluate_subscription_access([expired], now).source is None
+
+
+def test_source_does_not_change_decision_equality():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    first = evaluate_subscription_access([Row(expires_at=now + timedelta(days=1))], now)
+    second = evaluate_subscription_access(
+        [Row(product_id="other", expires_at=now + timedelta(days=1))], now
+    )
+    assert first == second
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        (Row(status="active", expires_at=datetime(2027, 1, 1, tzinfo=UTC)), True),
+        (Row(status="cancelled", expires_at=datetime(2027, 1, 1, tzinfo=UTC)), False),
+        (
+            Row(status="billing_issue", expires_at=datetime(2027, 1, 1, tzinfo=UTC)),
+            False,
+        ),
+        (Row(status="active", expires_at=None), False),
+        (
+            Row(
+                status="active",
+                provider="momo",
+                expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+            ),
+            False,
+        ),
+        (
+            Row(
+                status="active",
+                provider=None,
+                expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+            ),
+            False,
+        ),
+    ],
+)
+def test_will_renew_mirrors_revenuecat_and_is_false_for_non_renewing(row, expected):
+    from src.domain.model.subscription_access import subscription_will_renew
+
+    assert subscription_will_renew(row) is expected
