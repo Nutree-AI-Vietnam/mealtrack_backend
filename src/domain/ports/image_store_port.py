@@ -106,6 +106,17 @@ class ImageStorePort(ABC):
         """Async version of generate_upload_signature."""
         pass
 
+    def verify_upload_ticket(
+        self, image_id: str, expires_at: int, signature: str
+    ) -> str:
+        """Check the ticket a signed upload URL carries; return its image id.
+
+        Local and cheap, so a caller can run it before reading the upload body.
+        """
+        raise NotImplementedError(
+            "This image store does not accept signed client uploads"
+        )
+
     async def store_signed_upload(
         self,
         image_id: str,
