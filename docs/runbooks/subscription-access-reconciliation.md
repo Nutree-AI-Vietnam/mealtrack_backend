@@ -50,15 +50,19 @@ tombstone).
   `not_read`), `downgrade` (policy: granted before, denied after),
   `loses_current_access` (`legacy_before` granted, denied after), row
   counts. No emails, Firebase uids or provider payloads. Downgrades
-  (`downgrade`), current-access losses (`loses_access`) and unresolved users
-  are also printed. The files are created `0600`; keep them off tickets and
+  (`downgrade`), current-access losses (`loses_access`), unresolved users and
+  failed users (`failed`) are also printed. The files are created `0600`; keep them off tickets and
   repositories and delete them after the review. On `--resume` the file is
   appended to; the last record per user wins.
 - **Summary and exit code:** the last line is
   `RESULT: GO|NO-GO|INCOMPLETE mode=... users=... granted=... denied=...
   unresolved=... downgraded=... loses_current_access=... failed=...
-  skipped=...`. Exit `0` = GO (no user left unresolved), `1` = NO-GO (only
-  ever a verdict), `2` = usage or configuration error (including a refused
+  skipped=...`. `failed` counts live users whose customer could not be read
+  (after the retries for transient failures) or whose snapshot could not be
+  applied: the run did not verify them, even when their stored decision
+  reads granted or denied. Exit `0` = GO (no user left unresolved and none
+  failed), `1` = NO-GO (unresolved or failed users remain; only ever a
+  verdict), `2` = usage or configuration error (including a refused
   checkpoint), `3` = incomplete: stopped early (RevenueCat asked to wait
   longer than `--max-wait-seconds`, five provider failures in a row, an
   interrupt) or crashed anywhere (database, checkpoint or output file, the
@@ -77,7 +81,8 @@ tombstone).
 | `owner_changed`, `conflicting_facts` | The user or RevenueCat changed during the read | Re-run `--user-id <id>`; escalate if it persists |
 | `transport`, `http_429`, `http_5xx` | RevenueCat unavailable | `--resume` later |
 | `malformed`, `unsupported_store`, `http_4xx`, `api_key_missing` | Contract or configuration problem | Engineering; also reported to Sentry by the app |
-| `user_inactive`, `user_missing`, `no_firebase_uid` | Only with `--user-id` | None |
+| `user_inactive`, `user_missing` | The account is deleted or gone (only with `--user-id`, or deleted during the run); nothing to verify, not counted as failed | None |
+| `no_firebase_uid` | A live user with no Firebase uid cannot be read; counted as failed | Engineering: find how the account lost its uid |
 
 ## Cutover checklist (in order)
 
@@ -186,8 +191,8 @@ python -m scripts.reconcile_subscription_access --apply \
 ```
 
 - [ ] Exit `3`: run the same command with `--resume` (within 24 hours).
-- [ ] Exit `1`: work through the unresolved users, then
-      `--user-id <id> --apply` for each.
+- [ ] Exit `1`: work through the unresolved and failed users (reason table
+      above), then `--user-id <id> --apply` for each.
 
 ### 6. SQL go/no-go gate
 
@@ -333,8 +338,9 @@ cd /app && python -m scripts.reconcile_subscription_access --repair --apply \
   --expiring-within-hours 24
 ```
 
-- Exit `1` (users left unresolved) or `3` (stopped early) should alert; the
-  stdout lists the unresolved internal user ids.
+- Exit `1` (users left unresolved, or reads that failed) or `3` (stopped
+  early) should alert; the stdout lists the unresolved and failed internal
+  user ids with their reasons.
 - Keep one pass well inside the interval: candidates x one second. Lower
   `--expiring-within-hours` if it grows. Overlapping passes are safe (writers
   for one user serialise on the user row) but waste RevenueCat quota.
@@ -369,4 +375,4 @@ observability facade:
 | Metric `subscription_access.sync` (`source`, `event_type`, `result`) | Every applied snapshot | Volume drops to zero (webhooks not arriving) |
 | Metric `webhook.revenuecat.processed` (`event_type`, `status`, `result`) | Webhook outcomes; `result=access_unresolved` means the rows were marked for repair, `result=account_deleted` an event for a deleted account (legacy effects only, nothing synced) | Rate of `access_unresolved`, and webhook HTTP 5xx at Render (RevenueCat stops retrying after about 5 attempts) |
 | Metric `subscription_access.enforcement_denied` | A paid route answered `402` | A spike right after step 9: turn enforcement off |
-| Scheduled repair exit code | `1` users left unresolved, `3` stopped early | Any failed run |
+| Scheduled repair exit code | `1` users left unresolved or reads that failed, `3` stopped early | Any failed run |

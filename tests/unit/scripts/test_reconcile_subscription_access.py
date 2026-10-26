@@ -621,21 +621,93 @@ async def test_unreadable_customer_keeps_the_stored_decision():
     assert summary.counts["granted"] == 1
     assert summary.counts["unresolved"] == 1
     assert summary.counts["failed"] == 2
+    assert summary.exit_code == rec.EXIT_NO_GO
     assert database.commits == 0
 
 
 @pytest.mark.asyncio
-async def test_users_without_a_readable_identity_are_reported_not_read():
+@pytest.mark.parametrize(
+    ("adapter_error", "sync_error"),
+    [
+        # A revoked or rotated key: never retried.
+        (RevenueCatSnapshotUnavailable("bad key", reason="http_4xx"), None),
+        (RevenueCatSnapshotUnavailable("bad body", reason="malformed"), None),
+        # Readable, but the snapshot cannot be applied.
+        (None, RevenueCatSnapshotUnavailable("amazon", reason="unsupported_store")),
+        # Retryable, its retries used up (not enough in a row to stop the pass).
+        (RevenueCatSnapshotUnavailable("down", reason="http_5xx"), None),
+    ],
+    ids=["http_4xx", "malformed", "unsupported_store", "http_5xx_exhausted"],
+)
+async def test_a_failed_read_fails_the_verdict_even_when_the_stored_decision_resolves(
+    adapter_error, sync_error
+):
+    """The stored decision of a verified user reads granted or denied, so the
+    failure is not "unresolved"; the run still did not verify them."""
+    database = FakeDatabase()
+    database.add_user("verified", [_row(snapshot_at=NOW)])
+    database.add_user("ok", [_row(snapshot_at=NOW)])
+    stdout = StringIO()
+    adapter = FakeAdapter({"fb-verified": adapter_error} if adapter_error else {})
+    sync = FakeSync(
+        {
+            "verified": sync_error
+            or SubscriptionSyncOutcome("applied", "granted", "granted"),
+            "ok": SubscriptionSyncOutcome("unchanged", "granted", "granted"),
+        }
+    )
+
+    summary = await _run(
+        database,
+        ["verified", "ok"],
+        adapter=adapter,
+        sync=sync,
+        stdout=stdout,
+        max_attempts=2,
+    )
+
+    reason = (adapter_error or sync_error).reason
+    assert (summary.counts["granted"], summary.counts["unresolved"]) == (2, 0)
+    assert summary.counts["failed"] == 1
+    assert summary.exit_code == rec.EXIT_NO_GO
+    assert summary.line().startswith("RESULT: NO-GO")
+    assert "failed=1" in summary.line()
+    assert f"failed user_id=verified reason={reason}" in stdout.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_users_without_a_readable_identity_are_reported_not_read(tmp_path):
     database = FakeDatabase()
     database.add_user("deleted", [_row()], deleted=True)
     adapter = FakeAdapter()
+    checkpoint = rec.Checkpoint.start(
+        tmp_path / "c.jsonl", mode="dry-run", population=SUBSCRIBERS, now=NOW
+    )
 
-    summary = await _run(database, ["deleted", "missing"], adapter=adapter)
+    summary = await _run(
+        database, ["deleted", "missing"], adapter=adapter, checkpoint=checkpoint
+    )
+    checkpoint.close()
 
     assert adapter.calls == []
     assert summary.counts["users"] == 2
     assert summary.counts["unresolved"] == 1  # the deleted user's legacy row
     assert summary.counts["denied"] == 1  # no rows at all
+    # Nothing is left to verify for an account that is gone: not a failure,
+    # and nothing for --resume to read again.
+    assert summary.counts["failed"] == 0
+    assert checkpoint.completed == {"deleted", "missing"}
+
+
+@pytest.mark.asyncio
+async def test_a_live_user_without_a_firebase_uid_is_a_failure():
+    database = FakeDatabase()
+    database.add_user("no-uid", [_row(snapshot_at=NOW)], firebase_uid="")
+
+    summary = await _run(database, ["no-uid"])
+
+    assert summary.counts["failed"] == 1
+    assert summary.exit_code == rec.EXIT_NO_GO
 
 
 # --- RevenueCat pacing (Retry-After / 429) ----------------------------------

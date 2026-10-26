@@ -31,8 +31,8 @@ Output: one JSONL record per user in --output (internal user id, decision,
 reason, snapshot status, previous decision under the access policy
 (``before``) and under the legacy check users get while the flag is off
 (``legacy_before``), ``downgrade``, ``loses_current_access``; no emails,
-Firebase uids or provider payloads), downgrades, current-access losses and
-unresolved users on stdout, and a final summary line:
+Firebase uids or provider payloads), downgrades, current-access losses,
+unresolved users and failed users on stdout, and a final summary line:
 
   RESULT: GO|NO-GO|INCOMPLETE mode=... users=... granted=... denied=...
           unresolved=... downgraded=... loses_current_access=... failed=...
@@ -43,11 +43,18 @@ every legacy grant is still unverified (``before`` = unresolved), so a payer
 denied by RevenueCat shows only in ``loses_current_access``: granted by
 today's legacy check, denied after the run. Review those before --apply.
 
-Exit codes: 0 GO (no user left unresolved), 1 NO-GO (unresolved users remain),
-2 usage or configuration error, 3 incomplete: stopped early (RevenueCat asked
-to wait longer than --max-wait-seconds, kept failing, or the run was
-interrupted) or crashed anywhere (database, checkpoint or output file, gate
-query, a bug); continue with --resume. 1 is only ever a verdict.
+``failed`` counts live users whose customer could not be read (after the
+retries for transient failures) or whose snapshot could not be applied. The
+run did not verify them, whatever their stored decision says, so they fail
+the verdict like unresolved users do. A deleted, deactivated or vanished
+account is not read and not a failure: there is no access left to verify.
+
+Exit codes: 0 GO (every user verified and resolved), 1 NO-GO (unresolved or
+failed users remain), 2 usage or configuration error, 3 incomplete: stopped
+early (RevenueCat asked to wait longer than --max-wait-seconds, kept failing,
+or the run was interrupted) or crashed anywhere (database, checkpoint or
+output file, gate query, a bug); continue with --resume. 1 is only ever a
+verdict.
 
 --gate runs only the SQL go/no-go check (GO_NO_GO_SQL; no RevenueCat reads):
 exit 0 when no active user holds an unverified RevenueCat grant or a row left
@@ -134,6 +141,10 @@ RETRYABLE_REASONS = frozenset(
 )
 # Stop instead of marking every remaining user failed during an outage.
 MAX_CONSECUTIVE_PROVIDER_FAILURES = 5
+# Sync results: the customer was read and its snapshot applied (or current).
+SYNCED_REASONS = frozenset({"applied", "unchanged", "stale_skipped", "absent"})
+# Not read because the account is gone: nothing left to verify, not a failure.
+ACCOUNT_GONE_REASONS = frozenset({"user_missing", "user_inactive"})
 
 POPULATION_SUBSCRIBERS = "subscribers"
 POPULATION_USER = "user"
@@ -333,13 +344,14 @@ class UserResult:
 
     @property
     def failed(self) -> bool:
-        """The customer could not be read or its snapshot was not applied."""
-        return self.snapshot in {"unavailable", "not_read"} or self.reason not in {
-            "applied",
-            "unchanged",
-            "stale_skipped",
-            "absent",
-        }
+        """A live user this run could not verify: the customer could not be
+        read, or its snapshot was not applied. Fails the verdict."""
+        if self.reason in ACCOUNT_GONE_REASONS:
+            return False
+        return (
+            self.snapshot in {"unavailable", "not_read"}
+            or self.reason not in SYNCED_REASONS
+        )
 
 
 def _is_live(user: Any) -> bool:
@@ -609,7 +621,11 @@ class Summary:
     def exit_code(self) -> int:
         if self.stopped:
             return EXIT_INCOMPLETE
-        return EXIT_NO_GO if self.counts[ACCESS_UNRESOLVED] else EXIT_GO
+        # A failed read keeps the stored decision, which may read granted or
+        # denied: the user is still unverified, so it is no GO either.
+        if self.counts[ACCESS_UNRESOLVED] or self.counts["failed"]:
+            return EXIT_NO_GO
+        return EXIT_GO
 
     def line(self) -> str:
         verdict = {EXIT_GO: "GO", EXIT_NO_GO: "NO-GO"}.get(self.exit_code, "INCOMPLETE")
@@ -666,6 +682,8 @@ async def run_pass(
                 if result.loses_current_access
                 else "unresolved"
                 if result.decision == ACCESS_UNRESOLVED
+                else "failed"
+                if result.failed
                 else None
             )
             if label is not None:
