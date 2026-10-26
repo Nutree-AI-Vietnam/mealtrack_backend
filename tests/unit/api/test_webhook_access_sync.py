@@ -74,6 +74,7 @@ class _Database:
         self.users = {user.id: user for user in users}
         self.rows: list[Subscription] = list(rows or [])
         self.pending: list[Subscription] = []
+        self.purges: list[Any] = []
 
     def _params(self, statement) -> dict[str, Any]:
         return statement.compile().params
@@ -88,8 +89,9 @@ class _Database:
             ]
         return [user for user in self.users.values() if user.id == params["id_1"]]
 
-    async def execute(self, statement):
+    async def execute(self, statement, params=None):
         if isinstance(statement, TextClause):  # trial-push purge
+            self.purges.append(params)
             return _Result([])
         return _Result(self._users_for(statement))
 
@@ -597,3 +599,123 @@ async def test_a_late_event_with_a_stale_snapshot_keeps_the_verified_facts(
         verified_at,
     )
     assert stored.provider_sync_required_at is None
+
+
+def _metrics(metric: MagicMock, name: str) -> list[Any]:
+    return [call for call in metric.call_args_list if call.args[0] == name]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "fields", "revoked"),
+    [
+        ("EXPIRATION", {}, "expired"),
+        ("CANCELLATION", {"cancel_reason": "CUSTOMER_SUPPORT"}, "refunded"),
+    ],
+)
+async def test_expected_downgrade_is_measured_from_the_access_before_the_event(
+    monkeypatch, event_type, fields, revoked
+):
+    """The legacy handler already wrote 'expired'/'refunded' when the sync
+    runs; the downgrade must still be counted against the verified grant."""
+    user = _user("user-u", "uid-u")
+    stored = _row(user)  # verified, paid for 65 more days
+    database = _Database([user], [stored])
+
+    with (
+        _revenuecat({"uid-u": _ok(_annual(expires_in=timedelta(days=-1)))}),
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
+        result = await _deliver(
+            monkeypatch, _event(event_type, "uid-u", **fields), database
+        )
+
+    assert result == {"status": "success"}
+    assert stored.status == revoked
+    (downgrade,) = _metrics(metric, "subscription_access.downgrade")
+    assert downgrade.kwargs["attributes"] == {
+        "source": "webhook",
+        "event_type": event_type,
+        "result": "applied",
+        "expected": "true",
+    }
+    captured.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_late_renewal_for_a_user_without_access_is_not_a_downgrade(
+    monkeypatch,
+):
+    """handle_renewal sets the row active before the sync; the user never had
+    access, so RevenueCat confirming the expiry removes nothing."""
+    user = _user("user-u", "uid-u")
+    lapsed_at = datetime.now(UTC) - timedelta(days=2)
+    stored = _row(user, status="expired", expires_at=lapsed_at)
+    database = _Database([user], [stored])
+
+    with (
+        _revenuecat({"uid-u": _ok(_annual(expires_in=timedelta(days=-2)))}),
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
+        await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
+
+    assert (stored.status, stored.expires_at) == ("expired", lapsed_at)
+    assert evaluate_subscription_access([stored]).has_access is False
+    assert _metrics(metric, "subscription_access.downgrade") == []
+    captured.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_downgrade_through_the_handlers_is_alerted(monkeypatch):
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+
+    with (
+        _revenuecat({"uid-u": _ok(_annual(expires_in=timedelta(days=-1)))}),
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
+        await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
+
+    (downgrade,) = _metrics(metric, "subscription_access.downgrade")
+    assert downgrade.kwargs["attributes"]["expected"] == "false"
+    assert [call.args[0] for call in captured.call_args_list] == [
+        "RevenueCat sync removed access on an unexpected event"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "fields"),
+    [("EXPIRATION", {}), ("CANCELLATION", {"cancel_reason": "CUSTOMER_SUPPORT"})],
+)
+async def test_empty_customer_never_resolves_a_verified_grant_to_no_access(
+    monkeypatch, event_type, fields
+):
+    """The absence guard judges the verified grant, not the legacy handler's
+    'expired'/'refunded' write, so the user is left unresolved for repair.
+    The event's own write stands, as when RevenueCat cannot be read, so the
+    flag-off legacy check answers as it did before this change."""
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+
+    with (
+        _revenuecat({"uid-u": _ok(empty_customer_response(app_user_id="uid-u"))}),
+        patch(f"{SYNC}.capture_message") as captured,
+    ):
+        result = await _deliver(
+            monkeypatch, _event(event_type, "uid-u", **fields), database
+        )
+
+    assert result == {"status": "success"}
+    assert stored.provider_sync_required_at is not None
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access([stored])
+    assert captured.call_args.kwargs["context"]["failure_kind"] == (
+        "absent_with_history"
+    )
+    assert stored.is_active() is False  # flag off: the event's write, as before

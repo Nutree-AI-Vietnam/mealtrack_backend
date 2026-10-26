@@ -3,6 +3,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -193,9 +194,9 @@ class SubscriptionSyncOutcome:
         )
 
 
-def _access_label(rows: list[Subscription]) -> str:
+def _access_label(rows: list[Any]) -> str:
     try:
-        granted = evaluate_subscription_access(rows).has_access  # type: ignore[arg-type]
+        granted = evaluate_subscription_access(rows).has_access
     except SubscriptionAccessUnavailable:
         return ACCESS_UNRESOLVED
     return ACCESS_GRANTED if granted else ACCESS_DENIED
@@ -281,10 +282,36 @@ async def capture_access_facts(
     }
 
 
+def _access_before_event(
+    rows: list[Subscription], facts_before_event: dict[str, dict[str, Any]] | None
+) -> str:
+    """The user's access before this event's legacy handler touched the rows.
+
+    A webhook runs its legacy handler (EXPIRATION -> 'expired', RENEWAL ->
+    'active', ...) in the same transaction before the sync, so the rows no
+    longer show what the user had. The captured facts do; rows the handler
+    created did not exist yet.
+    """
+    if facts_before_event is None:
+        return _access_label(rows)
+    return _access_label(
+        [SimpleNamespace(**facts) for facts in facts_before_event.values()]
+    )
+
+
+# (row, column, value the legacy handler wrote) for each restored column.
+LegacyWrites = list[tuple[Subscription, str, Any]]
+
+
 def _restore_verified_facts(
     rows: list[Subscription], facts_before_event: dict[str, dict[str, Any]] | None
-) -> int:
-    restored = 0
+) -> LegacyWrites:
+    """Undo legacy handler writes on rows a verified snapshot owned.
+
+    Returns what was overwritten, so the writes can be put back when the
+    snapshot turns out not to be applicable.
+    """
+    overwritten: LegacyWrites = []
     for row in rows:
         before = (facts_before_event or {}).get(str(row.id))
         if (
@@ -293,13 +320,17 @@ def _restore_verified_facts(
             or before["provider_sync_required_at"] is not None
         ):
             continue  # not a row a verified snapshot owned
-        changed = False
         for column, value in before.items():
-            if getattr(row, column) != value:
+            current = getattr(row, column)
+            if current != value:
+                overwritten.append((row, column, current))
                 setattr(row, column, value)
-                changed = True
-        restored += changed
-    return restored
+    return overwritten
+
+
+def _put_back(legacy_writes: LegacyWrites) -> None:
+    for row, column, value in legacy_writes:
+        setattr(row, column, value)
 
 
 def _same_snapshot_consistent(
@@ -318,6 +349,88 @@ def _same_snapshot_consistent(
             if not (key == "store_transaction_id" and value is None)
         )
     return all(row.status in {revoked, "expired", "refunded"} for row in matching)
+
+
+@dataclass(frozen=True)
+class _SyncPlan:
+    """What a snapshot will do, decided before any row changes."""
+
+    result: str  # apply | absent | stale_skipped | unchanged
+    snapshot_at: datetime = datetime.min.replace(tzinfo=UTC)
+    facts: dict | None = None
+    standard_missing: bool = False
+
+
+def _plan_sync(
+    existing: list[Subscription],
+    snapshot: RevenueCatSnapshot,
+    request_date: datetime | None,
+    *,
+    revoked_status: str,
+    absence_is_authoritative: bool,
+) -> _SyncPlan:
+    """Decide what the snapshot does; raise when it cannot be applied safely.
+
+    Reads ``existing`` (with verified facts already restored) and never
+    changes it.
+    """
+    authoritative_absence = (
+        absence_is_authoritative
+        and snapshot.subscriber is not None
+        and request_date is not None
+    )
+    if snapshot.absent and not authoritative_absence:
+        if any(row.status in GRANTING_STATUSES for row in existing):
+            # RevenueCat holds no purchases under this Firebase uid, yet the
+            # database holds a possible grant: it came from another identity
+            # (fallback match, manual grant). Never expire it on absence.
+            raise RevenueCatSnapshotUnavailable(
+                "RevenueCat absence cannot verify existing subscription history",
+                reason=SNAPSHOT_REASON_ABSENT_WITH_HISTORY,
+            )
+        return _SyncPlan("absent")
+
+    if snapshot.subscriber is None or request_date is None:
+        raise RevenueCatSnapshotUnavailable(
+            "RevenueCat snapshot is incomplete", reason=SNAPSHOT_REASON_MALFORMED
+        )
+    entitlements = snapshot.subscriber.get("entitlements") or {}
+    facts = normalize_standard_access_facts(snapshot.subscriber)
+    standard_missing = "standard" not in entitlements and bool(entitlements)
+    if facts and facts["status"] == "expired":
+        facts = None
+    latest_snapshot = max(
+        (
+            _utc(row.provider_snapshot_at)
+            for row in existing
+            if row.provider_snapshot_at is not None
+        ),
+        default=datetime.min.replace(tzinfo=UTC),
+    )
+    if request_date < latest_snapshot:
+        return _SyncPlan("stale_skipped")
+    if request_date == latest_snapshot:
+        # The same RevenueCat read applied twice (e.g. two deliveries that
+        # queued on the lock).
+        if not _same_snapshot_consistent(
+            existing, facts, latest_snapshot, revoked_status
+        ):
+            raise RevenueCatSnapshotUnavailable(
+                "RevenueCat returned conflicting facts at the same snapshot time",
+                reason=SNAPSHOT_REASON_CONFLICTING_FACTS,
+            )
+        if all(
+            row.provider_snapshot_at is not None
+            and row.provider_sync_required_at is None
+            for row in existing
+        ):
+            return _SyncPlan("unchanged")
+    return _SyncPlan(
+        "apply",
+        snapshot_at=request_date,
+        facts=facts,
+        standard_missing=standard_missing,
+    )
 
 
 async def sync_revenuecat_access(
@@ -349,6 +462,8 @@ async def sync_revenuecat_access(
     ``facts_before_event`` (from capture_access_facts) undoes legacy handler
     writes on rows a verified snapshot already owned, so only snapshots
     change verified facts -- also when this snapshot is too old to apply.
+    It is also the "before" of the outcome: what the user had before the
+    event, not what the event's legacy handler wrote.
     """
     if snapshot is None:
         if adapter is None:
@@ -368,23 +483,37 @@ async def sync_revenuecat_access(
             reason=SNAPSHOT_REASON_OWNER_CHANGED,
         )
     existing = await _locked_revenuecat_rows(session, locked_user.id)
-    access_before = _access_label(existing)
+    access_before = _access_before_event(existing, facts_before_event)
     request_date = _utc(snapshot.request_date) if snapshot.request_date else None
+    revoked_status = "refunded" if refund_event else "expired"
 
-    authoritative_absence = (
-        absence_is_authoritative
-        and snapshot.subscriber is not None
-        and request_date is not None
-    )
-    if snapshot.absent and not authoritative_absence:
-        if any(row.status in GRANTING_STATUSES for row in existing):
-            # RevenueCat holds no purchases under this Firebase uid, yet the
-            # database holds a possible grant: it came from another identity
-            # (fallback match, manual grant). Never expire it on absence.
-            raise RevenueCatSnapshotUnavailable(
-                "RevenueCat absence cannot verify existing subscription history",
-                reason=SNAPSHOT_REASON_ABSENT_WITH_HISTORY,
-            )
+    # Judge the snapshot against the verified facts, not against what this
+    # event's legacy handler just wrote on them. If the snapshot cannot be
+    # applied, the event's own writes stand (the caller then leaves the rows
+    # unresolved), exactly as when RevenueCat could not be read at all.
+    legacy_writes = _restore_verified_facts(existing, facts_before_event)
+    try:
+        plan = _plan_sync(
+            existing,
+            snapshot,
+            request_date,
+            revoked_status=revoked_status,
+            absence_is_authoritative=absence_is_authoritative,
+        )
+    except Exception:
+        _put_back(legacy_writes)
+        raise
+
+    if plan.result in {"stale_skipped", "unchanged"}:
+        outcome = SubscriptionSyncOutcome(
+            plan.result, access_before, _access_label(existing)
+        )
+        _record_sync_outcome(
+            outcome, locked_user, source, event_type, event_id, refund_event
+        )
+        return outcome
+
+    if plan.result == "absent":
         markers_cleared = _clear_markers(existing, request_date)
         outcome = SubscriptionSyncOutcome(
             "absent",
@@ -397,58 +526,10 @@ async def sync_revenuecat_access(
         )
         return outcome
 
-    if snapshot.subscriber is None or request_date is None:
-        raise RevenueCatSnapshotUnavailable(
-            "RevenueCat snapshot is incomplete", reason=SNAPSHOT_REASON_MALFORMED
-        )
-    entitlements = snapshot.subscriber.get("entitlements") or {}
-    facts = normalize_standard_access_facts(snapshot.subscriber)
-    standard_missing = "standard" not in entitlements and bool(entitlements)
-    if facts and facts["status"] == "expired":
-        facts = None
-    revoked_status = "refunded" if refund_event else "expired"
-    latest_snapshot = max(
-        (
-            _utc(row.provider_snapshot_at)
-            for row in existing
-            if row.provider_snapshot_at is not None
-        ),
-        default=datetime.min.replace(tzinfo=UTC),
-    )
-    if request_date < latest_snapshot:
-        _restore_verified_facts(existing, facts_before_event)
-        outcome = SubscriptionSyncOutcome(
-            "stale_skipped", access_before, _access_label(existing)
-        )
-        _record_sync_outcome(
-            outcome, locked_user, source, event_type, event_id, refund_event
-        )
-        return outcome
-    if request_date == latest_snapshot:
-        # The same RevenueCat read applied twice (e.g. two deliveries that
-        # queued on the lock): compare against the verified facts, not what
-        # this event's legacy handler just wrote.
-        _restore_verified_facts(existing, facts_before_event)
-        if not _same_snapshot_consistent(
-            existing, facts, latest_snapshot, revoked_status
-        ):
-            raise RevenueCatSnapshotUnavailable(
-                "RevenueCat returned conflicting facts at the same snapshot time",
-                reason=SNAPSHOT_REASON_CONFLICTING_FACTS,
-            )
-        if all(
-            row.provider_snapshot_at is not None
-            and row.provider_sync_required_at is None
-            for row in existing
-        ):
-            outcome = SubscriptionSyncOutcome("unchanged", access_before, access_before)
-            _record_sync_outcome(
-                outcome, locked_user, source, event_type, event_id, refund_event
-            )
-            return outcome
-
     # Everything below mutates; nothing below raises.
-    _restore_verified_facts(existing, facts_before_event)
+    request_date = plan.snapshot_at
+    facts = plan.facts
+    standard_missing = plan.standard_missing
     target_row = (
         next((row for row in existing if row.product_id == facts["product_id"]), None)
         if facts
@@ -654,12 +735,15 @@ def _record_sync_outcome(
             context=context,
         )
     if outcome.downgraded:
+        expected = refund_event or event_type in EXPECTED_DOWNGRADE_EVENTS
         increment_metric(
             "subscription_access.downgrade",
             value=max(outcome.rows_revoked, 1),
-            attributes=attributes,
+            # A refund is a CANCELLATION too: only this attribute tells it
+            # from an unexpected loss of access on the same event type.
+            attributes={**attributes, "expected": "true" if expected else "false"},
         )
-        if refund_event or event_type in EXPECTED_DOWNGRADE_EVENTS:
+        if expected:
             logger.info(
                 "RevenueCat sync removed access: user_id=%s source=%s "
                 "event_type=%s event_id=%s rows_revoked=%d",
