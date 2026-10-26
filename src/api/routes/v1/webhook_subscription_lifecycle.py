@@ -92,36 +92,43 @@ async def _notify_affiliate(
 async def handle_purchase(
     uow, user, event, affiliate_handler=None, event_publisher=None
 ):
-    """Handle initial purchase."""
-    logger.info(f"Creating subscription for user {user.id}")
+    """Handle an initial purchase (INITIAL_PURCHASE, or a missed one).
 
-    # Check if subscription already exists
+    The event, not the absence of a row, makes this the first purchase: a
+    POST /v1/me/entitlements/refresh right after the purchase, an earlier
+    synced event, a reconcile repair or an unresolved placeholder can all
+    create the row before this webhook lands. The referral credit (pending
+    -> converted only) and the lifecycle event (its id derives from the
+    RevenueCat event id) are idempotent, so they always run.
+    """
     existing = await get_subscription_by_revenuecat_id(
         uow, event.get("app_user_id"), str(user.id)
     )
 
     if existing:
-        logger.warning(f"Subscription already exists for {user.id}, updating instead")
-        await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
-        return
-
-    # Create new subscription record
-    subscription = Subscription(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        provider="revenuecat",
-        revenuecat_subscriber_id=event.get("app_user_id") or user.firebase_uid,
-        product_id=event.get("product_id"),
-        platform=parse_platform(event.get("store")),
-        status="active",
-        purchased_at=parse_timestamp(event.get("purchased_at_ms")) or utc_now(),
-        expires_at=parse_timestamp(event.get("expiration_at_ms")),
-        store_transaction_id=event.get("transaction_id"),
-        is_sandbox=event.get("environment") == "SANDBOX",
-    )
-
-    uow.session.add(subscription)
-    logger.info(f"User {user.id} purchased {subscription.product_id}")
+        logger.info(
+            "Subscription row already exists for user %s; applying the purchase",
+            user.id,
+        )
+        existing.expires_at = parse_timestamp(event.get("expiration_at_ms"))
+        existing.status = "active"
+        existing.updated_at = utc_now()
+    else:
+        subscription = Subscription(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            provider="revenuecat",
+            revenuecat_subscriber_id=event.get("app_user_id") or user.firebase_uid,
+            product_id=event.get("product_id"),
+            platform=parse_platform(event.get("store")),
+            status="active",
+            purchased_at=parse_timestamp(event.get("purchased_at_ms")) or utc_now(),
+            expires_at=parse_timestamp(event.get("expiration_at_ms")),
+            store_transaction_id=event.get("transaction_id"),
+            is_sandbox=event.get("environment") == "SANDBOX",
+        )
+        uow.session.add(subscription)
+        logger.info(f"User {user.id} purchased {subscription.product_id}")
 
     # Credit referrer if this user has a pending referral conversion
     await credit_referral_on_purchase(uow, str(user.id))

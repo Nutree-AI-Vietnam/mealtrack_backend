@@ -31,6 +31,9 @@ from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.referral.referral_conversion import ReferralConversion
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
+from src.infra.services.subscription_access_sync_service import (
+    sync_revenuecat_access,
+)
 
 SYNC = "src.infra.services.subscription_access_sync_service"
 
@@ -719,3 +722,101 @@ async def test_empty_customer_never_resolves_a_verified_grant_to_no_access(
         "absent_with_history"
     )
     assert stored.is_active() is False  # flag off: the event's write, as before
+
+
+def _pending_referral() -> _Referrals:
+    return _Referrals(
+        ReferralConversion(
+            referrer_user_id="referrer-1",
+            referred_user_id="user-u",
+            code_used="ABC123",
+            status="pending",
+            commission_amount=2.0,
+            commission_currency="USD",
+            commission_amount_vnd=50000,
+        )
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["true", "false"])
+async def test_initial_purchase_after_a_refresh_still_credits_the_referral(
+    monkeypatch, flag
+):
+    """The app refreshes right after buying, so the row often exists before
+    the INITIAL_PURCHASE webhook lands. It is still the first purchase."""
+    monkeypatch.setenv("SUBSCRIPTION_ACCESS_ENABLED", flag)
+    user = _user("user-u", "uid-u")
+    database = _Database([user])
+    referrals = _pending_referral()
+    publisher = MagicMock(publish=AsyncMock())
+    body = _annual()
+
+    # POST /v1/me/entitlements/refresh applies the snapshot first, exactly as
+    # RevenueCatAccessRefreshService does.
+    with _revenuecat({"uid-u": _ok(body)}):
+        snapshot = await RevenueCatAdapter(api_key="k").get_verified_snapshot("uid-u")
+    await sync_revenuecat_access(database, user, snapshot=snapshot, source="refresh")
+    await database.flush()
+
+    with _revenuecat({"uid-u": _ok(body)}):
+        result = await _deliver(
+            monkeypatch,
+            _event("INITIAL_PURCHASE", "uid-u"),
+            database,
+            referrals,
+            publisher,
+        )
+
+    assert result == {"status": "success"}
+    assert (referrals.conversion.status, referrals.balance) == ("converted", 50000)
+    (published,) = publisher.publish.await_args_list
+    assert published.args[0]["data"]["lifecycle_type"] == (
+        "subscription_initial_purchase"
+    )
+    assert database.purges == []  # a purchase is not a renewal
+    (row,) = database.rows_of(user)
+    assert evaluate_subscription_access([row]).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_initial_purchase_over_an_unresolved_placeholder_credits_and_resolves(
+    monkeypatch,
+):
+    """An earlier event whose read failed left a placeholder row."""
+    user = _user("user-u", "uid-u")
+    database = _Database([user])
+    referrals = _pending_referral()
+    publisher = MagicMock(publish=AsyncMock())
+    earlier = _event("TEMPORARY_ENTITLEMENT_GRANT", "uid-u")
+
+    with (
+        _revenuecat({"uid-u": _fails(503)}),
+        patch(f"{SYNC}.capture_message"),
+    ):
+        await _deliver(monkeypatch, earlier, database)
+    await database.flush()
+    (placeholder,) = database.rows_of(user)
+    assert placeholder.provider_sync_required_at is not None
+
+    read_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+    body = standard_annual_response(
+        request_date=read_at, expires_date=read_at + timedelta(days=365)
+    )
+    with _revenuecat({"uid-u": _ok(body)}):
+        await _deliver(
+            monkeypatch,
+            _event("INITIAL_PURCHASE", "uid-u"),
+            database,
+            referrals,
+            publisher,
+        )
+
+    assert (referrals.conversion.status, referrals.balance) == ("converted", 50000)
+    (published,) = publisher.publish.await_args_list
+    assert published.args[0]["data"]["lifecycle_type"] == (
+        "subscription_initial_purchase"
+    )
+    (row,) = database.rows_of(user)
+    assert row.provider_sync_required_at is None
+    assert evaluate_subscription_access([row]).has_access is True
