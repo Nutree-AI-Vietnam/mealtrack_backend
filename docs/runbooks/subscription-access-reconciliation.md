@@ -299,7 +299,12 @@ stamping rows.
 **Image rollback (to a build before this change).** The old webhook handlers
 insert rows without a snapshot stamp (a first purchase becomes `active` with
 `provider_snapshot_at` NULL) and change verified rows without touching
-`provider_snapshot_at`, the grace deadline or the period type.
+`provider_snapshot_at`, the grace deadline or the period type. They also
+answer `200` to `UNCANCELLATION`, `SUBSCRIPTION_EXTENDED`,
+`TEMPORARY_ENTITLEMENT_GRANT`, `NON_RENEWING_PURCHASE`, `REFUND_REVERSED`,
+`SUBSCRIPTION_PAUSED` and any newer type without writing anything:
+RevenueCat counts those delivered and never resends them, and they leave no
+trace in the database.
 
 An image before this change has no `/v1/me/entitlements` routes: it answers
 `404 {"detail": "Not Found"}`, never `503 ENTITLEMENTS_DISABLED`. Once the
@@ -312,14 +317,32 @@ routes and use the flag alone.
 1. Turn `SUBSCRIPTION_ACCESS_ENABLED` (and enforcement) off first and note
    the UTC time.
 2. Roll back the image. Keep the schema; the old image runs on it.
-3. After rolling forward, run the repair above with `--modified-since` set to
-   the rollback start, without reusing an older checkpoint (the script
-   refuses one older than 24 hours). It selects every row the old image
-   inserted or changed.
+3. After rolling forward, run a full pass over every RevenueCat subscriber,
+   not the `--modified-since` repair: `updated_at` shows the rows the old
+   image inserted or changed, but not the users whose events it
+   acknowledged without writing. Start fresh (no older checkpoint; the
+   script refuses one older than 24 hours):
+
+   ```bash
+   python -m scripts.reconcile_subscription_access --subscribers --apply \
+     --output ~/reconcile/rollforward.jsonl \
+     --checkpoint ~/reconcile/rollforward.checkpoint
+   ```
+
+   It reads every user holding a RevenueCat row (about one second each).
+   A buyer with no row at all whose only event in the window was one of
+   the types above is not in it; the app's refresh after purchase or
+   restore, their next webhook, or an `--all-users` pass repairs them.
 4. Pass the step 6 gate, then turn the flag on and repeat step 7.
 
 Downgrade the migrations only after no running image reads the columns, and
-know that the schema downgrade loses row ownership. Downgrading
+know what each downgrade loses. Downgrading `20261026080322454705` drops
+`provider_sync_required_at`: rows a failed webhook read marked for repair
+lose the marker, so after rolling forward the facts that event's handler
+wrote read as verified on a row an earlier snapshot stamped. Before downgrading it, run
+`--repair --apply` until `--gate` shows `sync_required=0`, or accept the
+loss and run the full `--subscribers --apply` pass above after rolling
+forward. The schema downgrade also loses row ownership. Downgrading
 `20261026085224333692` fills every NULL `revenuecat_subscriber_id` (rows of
 other providers) with the owner's Firebase uid; downgrading
 `20261022125800304190` drops `provider`. After both, a MoMo row reads as a

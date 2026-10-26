@@ -14,7 +14,9 @@ Populations (pick one; the default is --subscribers):
                   left unresolved (provider_sync_required_at set), rows whose
                   expiry or grace deadline is within --expiring-within-hours of
                   now (either side), and, with --modified-since, rows changed
-                  since then (e.g. by an image rolled back past this code).
+                  since then. It cannot find events that wrote nothing (an
+                  image rolled back past this code acknowledges several
+                  types without writing): use --subscribers for those.
                   Meant to be scheduled (hourly) with --apply.
   --all-users     every active user. Opt-in only: it creates an empty
                   RevenueCat customer for every user who never bought.
