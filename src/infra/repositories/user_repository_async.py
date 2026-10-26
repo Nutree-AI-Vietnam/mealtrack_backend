@@ -12,8 +12,10 @@ from sqlalchemy.orm import selectinload
 from src.domain.exceptions.firebase_identity_exceptions import (
     FirebaseIdentityConflictError,
 )
+from src.domain.exceptions.user_exceptions import UserNotFoundError
 from src.domain.model.user import UserDomainModel, UserProfileDomainModel
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
+from src.domain.model.user.user_avatar import UserAvatar
 from src.domain.ports.user_repository_port import UserRepositoryPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.user.profile import UserProfile
@@ -32,6 +34,9 @@ _USER_LOADS = (
     selectinload(User.subscriptions),
 )
 
+# Columns save() copies from the in-memory model. Columns with their own setter
+# (language_code, weekly_auto_adjust, the avatar_* columns) stay out, so a stale
+# model saved by sync, onboarding or deletion cannot overwrite them.
 _USER_SAVE_COLUMNS = (
     "firebase_uid",
     "email",
@@ -304,3 +309,27 @@ class AsyncUserRepository(UserRepositoryPort):
             .where(User.id == str(user_id))
             .values(weekly_auto_adjust=enabled)
         )
+
+    async def update_user_avatar(
+        self, user_id: UUID | str, avatar: UserAvatar
+    ) -> str | None:
+        result = await self.session.execute(
+            select(User.avatar_image_id)
+            .where(User.id == str(user_id), User.is_active.is_(True))
+            .with_for_update()
+        )
+        row = result.first()
+        if row is None:
+            raise UserNotFoundError(f"No active user {user_id}")
+        await self.session.execute(
+            update(User)
+            .where(User.id == str(user_id))
+            .values(
+                avatar_kind=avatar.kind.value,
+                avatar_image_id=avatar.image_id,
+                avatar_image_url=avatar.image_url,
+                avatar_character=avatar.character,
+                avatar_color=avatar.color,
+            )
+        )
+        return row.avatar_image_id

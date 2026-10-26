@@ -3,10 +3,11 @@ User management request schemas for Firebase integration.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
+from src.domain.model.user.user_avatar import AVATAR_COLOR_COUNT, UserAvatar
 from src.domain.utils.timezone_utils import utc_now
 from ..common.auth_enums import AuthProviderEnum
 
@@ -64,3 +65,28 @@ class UserCreateRequest(BaseModel):
     provider: AuthProviderEnum = Field(
         default=AuthProviderEnum.GOOGLE, description="Authentication provider"
     )
+
+
+class UpdateAvatarRequest(BaseModel):
+    """Choose an avatar that needs no upload. Photos use POST /avatar/photo."""
+
+    kind: Literal["auto", "character", "initials"] = Field(
+        ..., description="auto, character or initials"
+    )
+    character: str | None = Field(
+        None,
+        max_length=32,
+        description="Nutree character id; required for, and only for, character",
+    )
+    color: int | None = Field(
+        None,
+        ge=0,
+        le=AVATAR_COLOR_COUNT - 1,
+        description="Initials palette index 0-7; required for, and only for, initials",
+    )
+
+    @model_validator(mode="after")
+    def _matches_kind(self) -> "UpdateAvatarRequest":
+        # The domain rule names the missing or extra field, or the unknown id.
+        UserAvatar.chosen(self.kind, character=self.character, color=self.color)
+        return self
