@@ -89,8 +89,9 @@ class Subscription(Base, BaseMixin):
             self.provider_snapshot_at is None
             or self.provider_sync_required_at is not None
         ):
-            return self.status == "active" and (
-                self.expires_at is None or utc_now() < self.expires_at
+            return bool(
+                self.status == "active"
+                and (self.expires_at is None or utc_now() < self.expires_at)
             )
         try:
             return evaluate_subscription_access([self]).has_access

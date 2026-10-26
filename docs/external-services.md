@@ -18,7 +18,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Firebase Auth | **Required** | Fail fast (401) |
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
-| RevenueCat | **Payment facts** | Strict webhook/reconciliation sync updates PostgreSQL; the database policy owns runtime access. Provider failures preserve the last verified state and retry |
+| RevenueCat | **Payment facts** | Webhook/reconciliation sync updates PostgreSQL; the database policy owns runtime access. A provider failure never blocks webhook side effects: the user's rows are left unresolved (entitlements answer 503) and reported for repair |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
@@ -69,7 +69,7 @@ durable.
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
-| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; normalized writes in `src/infra/services/subscription_access_sync_service.py`; webhook entry in `src/api/routes/v1/webhooks.py` |
+| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; normalized writes in `src/infra/services/subscription_access_sync_service.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_access_sync.py`, `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
@@ -213,12 +213,37 @@ optional caches.
 
 - RevenueCat verifies purchase facts. Runtime access is evaluated from verified
   `subscriptions` rows; `GET /v1/me/entitlements` never calls RevenueCat.
-- A failed or malformed provider fetch is retryable and must not erase a
-  previously verified row. Use the guarded reconciliation command described in
+- A failed or malformed provider fetch must not erase a previously verified
+  row. Use the guarded reconciliation command described in
   `docs/runbooks/subscription-access-reconciliation.md` before enabling reads.
-- Webhooks use the current subscriber snapshot to update local rows; signature
-  verification is constant-time. Web redemption retains its existing identity
-  binding and idempotency checks.
+- Webhooks (signature verification is constant-time):
+  - Every event type whose user resolves is re-read from RevenueCat
+    (`GET /v1/subscribers/{firebase_uid}`, only when the event names that
+    uid) and applied to `provider='revenuecat'` rows; only `TEST`,
+    `EXPERIMENT_ENROLLMENT`, `INVOICE_ISSUANCE` and
+    `VIRTUAL_CURRENCY_TRANSACTION` are skipped. New event types sync by
+    default.
+  - The legacy handlers (rows, referral credit and clawback, lifecycle and
+    affiliate events) always run, whatever `SUBSCRIPTION_ACCESS_ENABLED` is.
+    If the customer cannot be read or applied, the webhook still answers 200;
+    the user's RevenueCat rows get `provider_sync_required_at` (RevenueCat's
+    event time), which the access policy treats as unresolved, and the failure
+    is logged, counted (`subscription_access.snapshot_unavailable`) and sent to
+    Sentry. Only a snapshot taken at or after that time clears it (next event,
+    refresh or reconciliation).
+  - Writers for one user serialise on `SELECT ... FOR UPDATE` of the user row;
+    an older snapshot never overwrites a newer one (`provider_snapshot_at`).
+  - RevenueCat has no `REFUND` event: a refund is a `CANCELLATION` with
+    `cancel_reason=CUSTOMER_SUPPORT` or a negative price. The refund side
+    effects run from the event; access follows the snapshot (a refund does not
+    always end the subscription).
+  - `TRANSFER` re-reads every local source and target user from its own
+    customer; nothing is re-pointed or expired blindly.
+  - `GET /v1/subscribers` is "get or create": an unseen id answers 200 with an
+    empty customer, which is treated as "no purchases". It never expires a
+    row that could still grant access (except for a transfer source).
+- Web redemption retains its existing identity binding and idempotency
+  checks; it only matches and updates `provider='revenuecat'` rows.
 - Canonical handoff (`/v1/web-funnel/*`):
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).

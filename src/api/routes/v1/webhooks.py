@@ -13,12 +13,20 @@ from typing import cast
 from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.base_dependencies import (
-    normalize_standard_access_facts,
-    sync_revenuecat_access,
+from src.api.base_dependencies import lock_subscription_owner
+from src.api.routes.v1.webhook_access_sync import (
+    ACCESS_NOT_SYNCED,
+    ACCESS_SYNCED,
+    ACCESS_UNRESOLVED,
+    AccessRead,
+    apply_access,
+    event_syncs_access,
+    is_refund_event,
+    read_access,
 )
 from src.api.routes.v1.webhook_lookup_parsing import (
     candidate_revenuecat_ids,
+    find_transfer_parties,
     find_user_for_revenuecat_event,
     is_anonymous_event,
     parse_platform,
@@ -27,7 +35,6 @@ from src.api.routes.v1.webhook_lookup_parsing import (
 from src.api.routes.v1.webhook_referral_funnel import (
     _get_subscription_service,
     credit_referral_on_purchase,
-    handle_transfer,
     record_web_funnel_redemption,
     revoke_referral_on_refund,
 )
@@ -46,8 +53,6 @@ from src.bootstrap.integration_services import (
     get_integration_event_publisher,
 )
 from src.bootstrap.web_funnel_claim_dispatcher import get_web_funnel_outbox_dispatcher
-from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
-from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
 from src.observability import increment_metric
 
@@ -60,7 +65,6 @@ NON_RETRYABLE_USERLESS_EVENTS = {
     "EXPIRATION",
     "BILLING_ISSUE",
     "PRODUCT_CHANGE",
-    "REFUND",
 }
 
 # Backward-compatible aliases for tests and external imports
@@ -82,7 +86,6 @@ __all__ = [
     "handle_billing_issue",
     "handle_product_change",
     "handle_refund",
-    "handle_transfer",
     "parse_platform",
     "parse_timestamp",
 ]
@@ -177,96 +180,35 @@ async def revenuecat_webhook(
         event.get("environment"),
     )
 
+    if event_type == "TRANSFER":
+        return await _process_transfer(event)
+
     # Resolve shared dependencies for affiliate delivery
     affiliate_handler = _get_affiliate_handler()
     event_publisher = _get_event_publisher()
 
-    synchronized_events = {
-        "INITIAL_PURCHASE",
-        "RENEWAL",
-        "CANCELLATION",
-        "EXPIRATION",
-        "BILLING_ISSUE",
-        "PRODUCT_CHANGE",
-        "REFUND",
-        "TRANSFER",
-        "PURCHASE_REDEEMED",
-    }
-    provider_snapshot = None
-    lookup_user_id = None
-    firebase_uid: str | None = None
-    if event_type in synchronized_events:
+    # The RevenueCat read happens before the transaction: no row lock is held
+    # across the HTTP call.
+    access_read: AccessRead | None = None
+    if event_syncs_access(event_type):
         async with AsyncUnitOfWork() as lookup_uow:
             lookup_user = await find_user_for_revenuecat_event(lookup_uow, event)
-            if lookup_user is not None:
-                lookup_user_id = str(lookup_user.id)
-                firebase_uid = cast(str, lookup_user.firebase_uid)
-        if lookup_user_id is not None:
-            try:
-                provider_snapshot = (
-                    await _get_subscription_service().get_verified_snapshot(
-                        firebase_uid
-                    )
-                )
-            except RevenueCatSnapshotUnavailable as error:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Subscription state could not be verified",
-                ) from error
+        if lookup_user is not None:
+            access_read = await read_access(
+                _get_subscription_service(),
+                lookup_user,
+                candidate_revenuecat_ids(event),
+            )
 
-    # Provider requests happen before this transaction; event effects and the
-    # normalized snapshot are committed together.
+    access_result = ACCESS_NOT_SYNCED
     async with AsyncUnitOfWork() as uow:
+        session = cast(AsyncSession, uow.session)
         user = await find_user_for_revenuecat_event(uow, event)
-        if user is not None and lookup_user_id and str(user.id) != lookup_user_id:
-            raise HTTPException(
-                status_code=503, detail="Subscription owner changed during sync"
-            )
-
-        if event_type == "TRANSFER":
-            if not user:
-                logger.info("RevenueCat transfer ignored: target user not found")
-                return {"status": "ignored", "reason": "user_not_found"}
-            await handle_transfer(uow, event)
-            try:
-                await sync_revenuecat_access(
-                    cast(AsyncSession, uow.session),
-                    user,
-                    snapshot=provider_snapshot,
-                )
-            except RevenueCatSnapshotUnavailable as error:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Subscription state could not be verified",
-                ) from error
-            increment_metric(
-                "webhook.revenuecat.processed",
-                attributes={"event_type": event_type, "status": "success"},
-            )
-            return {"status": "success"}
-
-        if event_type == "PURCHASE_REDEEMED":
-            if not user:
-                logger.info("RevenueCat purchase redemption target user not found")
-                raise HTTPException(status_code=404, detail="User not found")
-            try:
-                await sync_revenuecat_access(
-                    cast(AsyncSession, uow.session),
-                    user,
-                    snapshot=provider_snapshot,
-                )
-            except RevenueCatSnapshotUnavailable as error:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Subscription state could not be verified",
-                ) from error
-            increment_metric(
-                "webhook.revenuecat.processed",
-                attributes={"event_type": event_type, "status": "success"},
-            )
-            return {"status": "success"}
 
         if not user:
+            if event_type == "PURCHASE_REDEEMED":
+                logger.info("RevenueCat purchase redemption target user not found")
+                raise HTTPException(status_code=404, detail="User not found")
             logger.error(
                 "RevenueCat webhook: user not found — event_type=%s "
                 "environment=%s id_candidates=%s",
@@ -274,32 +216,21 @@ async def revenuecat_webhook(
                 event.get("environment"),
                 len(candidate_revenuecat_ids(event)),
             )
-            if event_type in NON_RETRYABLE_USERLESS_EVENTS or is_anonymous_event(event):
+            if (
+                event_type in NON_RETRYABLE_USERLESS_EVENTS
+                or not event_syncs_access(event_type)
+                or is_anonymous_event(event)
+            ):
                 return {"status": "ignored", "reason": "user_not_found"}
             raise HTTPException(status_code=404, detail="User not found")
 
-        confirmed_refund = False
-        if event_type in {"REFUND", "CANCELLATION"} and provider_snapshot:
-            try:
-                facts = (
-                    normalize_standard_access_facts(
-                        provider_snapshot.subscriber, utc_now()
-                    )
-                    if provider_snapshot.subscriber
-                    else None
-                )
-                confirmed_refund = facts is None or facts["status"] == "expired"
-            except RevenueCatSnapshotUnavailable as error:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Subscription state could not be verified",
-                ) from error
-        if event_type == "CANCELLATION":
-            confirmed_refund = confirmed_refund and event.get("cancel_reason") == (
-                "CUSTOMER_SUPPORT"
-            )
+        # Serialise every delivery for this user on the user row, so the
+        # legacy handlers and the access sync of concurrent webhooks queue
+        # instead of interleaving.
+        await lock_subscription_owner(session, user.id)
 
-        # Handle events — commit/rollback is owned by the AsyncUnitOfWork context manager
+        refund_event = is_refund_event(event)
+        # Legacy event effects -- commit/rollback is owned by the unit of work.
         if event_type == "INITIAL_PURCHASE":
             await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
 
@@ -307,7 +238,7 @@ async def revenuecat_webhook(
             await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
 
         elif event_type == "CANCELLATION":
-            if confirmed_refund:
+            if refund_event:
                 await handle_refund(
                     uow, user, event, affiliate_handler, event_publisher
                 )
@@ -331,29 +262,77 @@ async def revenuecat_webhook(
                 uow, user, event, affiliate_handler, event_publisher
             )
 
-        elif event_type == "REFUND":
-            if confirmed_refund:
-                await handle_refund(
-                    uow, user, event, affiliate_handler, event_publisher
-                )
-
-        if event_type in synchronized_events and provider_snapshot is not None:
-            try:
-                await sync_revenuecat_access(
-                    cast(AsyncSession, uow.session),
-                    user,
-                    refund_event=confirmed_refund,
-                    snapshot=provider_snapshot,
-                )
-            except RevenueCatSnapshotUnavailable as error:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Subscription state could not be verified",
-                ) from error
+        if event_syncs_access(event_type):
+            access_result = await apply_access(
+                session, user, event, access_read, refund_event=refund_event
+            )
 
     increment_metric(
         "webhook.revenuecat.processed",
-        attributes={"event_type": event_type or "unknown", "status": "success"},
+        attributes={
+            "event_type": event_type or "unknown",
+            "status": "success",
+            "result": access_result,
+        },
+    )
+    return {"status": "success"}
+
+
+async def _process_transfer(event: dict) -> dict:
+    """Re-read every local party of a TRANSFER from its own RevenueCat customer.
+
+    RevenueCat moved purchases between app user ids. Nothing is moved or
+    expired blindly: each resolvable source and target user is synced from
+    its own verified customer, so a source keeps whatever RevenueCat still
+    holds for it (another store's subscription, a web purchase) and loses
+    only what RevenueCat moved. Only provider='revenuecat' rows are touched.
+    A party whose customer cannot be read is left unresolved for repair.
+    """
+    transfer_ids = [
+        identity
+        for key in ("transferred_from", "transferred_to")
+        for identity in event.get(key) or []
+        if isinstance(identity, str) and identity
+    ]
+    async with AsyncUnitOfWork() as lookup_uow:
+        parties = await find_transfer_parties(lookup_uow, event)
+    if not parties:
+        logger.info("RevenueCat transfer ignored: no local user for transfer ids")
+        return {"status": "ignored", "reason": "user_not_found"}
+
+    subscription_service = _get_subscription_service()
+    reads = {
+        party.user_id: await read_access(
+            subscription_service,
+            party.user,
+            transfer_ids,
+            absence_is_authoritative=party.is_source_only,
+        )
+        for party in parties
+    }
+    results = []
+    async with AsyncUnitOfWork() as uow:
+        session = cast(AsyncSession, uow.session)
+        # A fixed lock order keeps concurrent A->B and B->A transfers apart.
+        for user_id in sorted(reads):
+            user = await lock_subscription_owner(session, user_id)
+            if user is None:
+                continue
+            results.append(await apply_access(session, user, event, reads[user_id]))
+    logger.info(
+        "RevenueCat transfer applied: parties=%d results=%s",
+        len(parties),
+        ",".join(results),
+    )
+    increment_metric(
+        "webhook.revenuecat.processed",
+        attributes={
+            "event_type": "TRANSFER",
+            "status": "success",
+            "result": (
+                ACCESS_UNRESOLVED if ACCESS_UNRESOLVED in results else ACCESS_SYNCED
+            ),
+        },
     )
     return {"status": "success"}
 

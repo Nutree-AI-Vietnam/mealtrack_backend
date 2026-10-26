@@ -45,7 +45,10 @@ RevenueCat identities manually before cutover.
 
 Enable `SUBSCRIPTION_ACCESS_ENABLED=true` only after all potentially entitled
 active accounts are reconciled and no ownership conflicts or unverified legacy
-grants remain. Check the authenticated endpoint against provider state, then
+grants remain. Rows with `provider_sync_required_at` set are webhooks whose
+RevenueCat read failed; they read as unresolved (503) until a newer snapshot
+is applied, so reconcile those users too (the webhook logs and the
+`subscription_access.snapshot_unavailable` metric name them). Check the authenticated endpoint against provider state, then
 confirm reads continue while RevenueCat is unreachable. A 503
 `ENTITLEMENTS_UNAVAILABLE` must not be treated as a denial by clients.
 

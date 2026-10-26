@@ -20,6 +20,7 @@ SNAPSHOT_REASON_OWNER_CHANGED = "owner_changed"
 SNAPSHOT_REASON_CONFLICTING_FACTS = "conflicting_facts"
 SNAPSHOT_REASON_ABSENT_WITH_HISTORY = "absent_with_history"
 SNAPSHOT_REASON_IDENTITY_MISMATCH = "identity_mismatch"
+SNAPSHOT_REASON_UNEXPECTED = "unexpected"
 SNAPSHOT_REASON_UNKNOWN = "unknown"
 
 # Reasons that point at a contract or configuration bug rather than a
@@ -29,6 +30,7 @@ SNAPSHOT_ERROR_REASONS = frozenset(
         SNAPSHOT_REASON_API_KEY_MISSING,
         SNAPSHOT_REASON_HTTP_4XX,
         SNAPSHOT_REASON_MALFORMED,
+        SNAPSHOT_REASON_UNEXPECTED,
         SNAPSHOT_REASON_UNSUPPORTED_STORE,
     }
 )

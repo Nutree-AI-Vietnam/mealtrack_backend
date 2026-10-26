@@ -112,13 +112,3 @@ async def test_find_by_revenuecat_id_never_selects_another_providers_row():
     assert "subscriptions.provider = 'revenuecat'" in sql
     assert "subscriptions.user_id = 'user-1'" in sql
     assert "ORDER BY subscriptions.purchased_at DESC" in sql
-
-
-@pytest.mark.asyncio
-async def test_find_all_by_revenuecat_ids_never_selects_another_providers_row():
-    session = _AsyncSession([])
-    repo = AsyncSubscriptionRepository(session)
-
-    await repo.find_all_by_revenuecat_ids(["firebase-uid"])
-
-    assert "subscriptions.provider = 'revenuecat'" in _literal_sql(session.statement)

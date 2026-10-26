@@ -277,6 +277,7 @@ async def sync_revenuecat_access(
     source: str = "unknown",
     event_type: str | None = None,
     event_id: str | None = None,
+    absence_is_authoritative: bool = False,
 ) -> SubscriptionSyncOutcome:
     """Apply one verified provider snapshot to the user's RevenueCat rows.
 
@@ -285,6 +286,11 @@ async def sync_revenuecat_access(
     RevenueCatSnapshotUnavailable (with a reason) before mutating anything
     when the snapshot cannot be applied safely; callers then leave the rows
     unresolved with mark_revenuecat_access_unresolved.
+
+    An empty RevenueCat customer normally proves nothing about rows that
+    could still grant access. ``absence_is_authoritative`` is for callers
+    that know why it is empty -- the source of a TRANSFER, whose purchases
+    RevenueCat just moved away -- and applies it as "no purchases".
     """
     if snapshot is None:
         if adapter is None:
@@ -307,7 +313,12 @@ async def sync_revenuecat_access(
     access_before = _access_label(existing)
     request_date = _utc(snapshot.request_date) if snapshot.request_date else None
 
-    if snapshot.absent:
+    authoritative_absence = (
+        absence_is_authoritative
+        and snapshot.subscriber is not None
+        and request_date is not None
+    )
+    if snapshot.absent and not authoritative_absence:
         if any(row.status in GRANTING_STATUSES for row in existing):
             # RevenueCat holds no purchases under this Firebase uid, yet the
             # database holds a possible grant: it came from another identity
