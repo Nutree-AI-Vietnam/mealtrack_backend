@@ -112,9 +112,15 @@ ENTITLEMENTS_DISABLED` is the kill switch:
   `error_code`s above (a gateway `502` or `504`, a proxy `500`): as for
   `ENTITLEMENTS_UNAVAILABLE`, not as for `ENTITLEMENTS_DISABLED`. The last
   known decision comes before RevenueCat, so a grant only the database
-  holds (a `momo` web pass, which RevenueCat cannot see) outlives an outage
-  or an image rollback while the app's stored decision lasts (the
-  rollback step in `docs/runbooks/subscription-access-reconciliation.md`).
+  holds (a `momo` web pass, which RevenueCat cannot see) survives an outage
+  while the app's stored decision from the last `200` still grants
+  (unexpired, at most 72 hours old). An image rollback is not such an
+  outage: its first step turns `SUBSCRIPTION_ACCESS_ENABLED` off, and
+  `503 ENTITLEMENTS_DISABLED` hands the decision to RevenueCat, which denies
+  that grant until the old image serves traffic. Its `404` then lets the
+  stored decision grant again until it ages out, which can also undo a
+  revocation RevenueCat showed meanwhile (sequence and consequences: "Image
+  rollback" in `docs/runbooks/subscription-access-reconciliation.md`).
 - A timeout or no connection: as for `ENTITLEMENTS_UNAVAILABLE`.
 - `401`: the app's auth handling refreshes the Firebase token and retries.
 

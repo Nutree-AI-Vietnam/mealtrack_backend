@@ -318,12 +318,34 @@ step 8 mobile build is live, such a rollback relies on the app treating a
 `ENTITLEMENTS_UNAVAILABLE`, never as a denial (`docs/api-endpoints.md`): a
 purchase it just made, else its last backend decision for that user while
 that still grants (unexpired, read at most 72 hours ago), else RevenueCat,
-else access unknown. No `200` decision reaches the app once step 1 below
-takes effect, so a grant only the database holds (a `momo` web pass) lasts
-at most 72 hours from then; after that RevenueCat, which cannot see it,
-decides, as under the flag alone. Confirm the released build behaves this
-way (the app's `docs/contracts.md`, "Subscription access"); otherwise roll
-back only to an image that still serves the routes and use the flag alone.
+else access unknown. Confirm the released build behaves this way (the app's
+`docs/contracts.md`, "Subscription access"); otherwise roll back only to an
+image that still serves the routes and use the flag alone.
+
+No `200` decision reaches the app once step 1 below takes effect. For a
+grant only the database holds (a `momo` web pass, or any other grant
+RevenueCat cannot see), the rollback runs like this:
+
+- From step 1 taking effect until the old image serves traffic, the routes
+  answer `503 ENTITLEMENTS_DISABLED`: RevenueCat decides, so the grant is
+  denied. The app keeps its stored decision from the last `200`; the kill
+  switch does not replace it.
+- After step 2 the old image answers `404`, which the app reads as
+  unavailable. That stored decision (read before step 1) grants again while
+  it is unexpired and at most 72 hours old, then ages out. RevenueCat then
+  denies the grant again, as under the flag alone, until the image is rolled
+  forward and the flag is back on. A device without such a decision is
+  denied throughout.
+- The same stored decision can undo a revocation RevenueCat showed during
+  the flag-off window (a refund before `expires_at`, say): after step 2 that
+  user is granted again until the decision ages out.
+
+So avoid an image rollback while `momo` or other database-only grants
+exist, or accept the gap: those users lose access from step 1, may get it
+back after step 2 for what remains of the 72 hours since their last `200`,
+and lose it again until the flag is back on after rolling forward. The flag
+alone denies them too while it is off, but without the return after step 2
+or the undone revocations.
 
 1. Turn `SUBSCRIPTION_ACCESS_ENABLED` (and enforcement) off first and note
    the UTC time.
