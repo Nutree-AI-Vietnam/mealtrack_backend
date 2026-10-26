@@ -46,6 +46,7 @@ from src.app.commands.meal_suggestion import (
 )
 from src.app.commands.movement import (
     DeleteMovementEntryCommand,
+    DescribeMovementCommand,
     LogMovementCommand,
     UpdateMovementEntryCommand,
 )
@@ -90,6 +91,7 @@ from src.app.handlers.command_handlers import (
     DeleteMovementEntryCommandHandler,
     DeleteSavedSuggestionCommandHandler,
     DeleteUserCommandHandler,
+    DescribeMovementCommandHandler,
     DiscoverMealsCommandHandler,
     EditMealCommandHandler,
     FavoriteMealCommandHandler,
@@ -848,6 +850,16 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
     event_bus.register_handler(
+        DescribeMovementCommand,
+        DescribeMovementCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            meal_generation_service=meal_generation_service,
+            environment=settings.ENVIRONMENT,
+            event_publisher=queue_publisher,
+            ai_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
+        ),
+    )
+    event_bus.register_handler(
         DeleteMovementEntryCommand,
         DeleteMovementEntryCommandHandler(
             uow_factory=AsyncUnitOfWork,
@@ -1215,11 +1227,13 @@ def get_configured_event_bus() -> EventBus:
     # Register hydration handlers
     from src.app.commands.hydration import (
         DeleteHydrationEntryCommand,
+        DescribeHydrationCommand,
         LogCaloricDrinkCommand,
         LogHydrationCommand,
     )
     from src.app.handlers.command_handlers import (
         DeleteHydrationEntryCommandHandler,
+        DescribeHydrationCommandHandler,
         LogCaloricDrinkCommandHandler,
         LogHydrationCommandHandler,
     )
@@ -1248,6 +1262,16 @@ def get_configured_event_bus() -> EventBus:
             uow_factory=AsyncUnitOfWork,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
+        ),
+    )
+    event_bus.register_handler(
+        DescribeHydrationCommand,
+        DescribeHydrationCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            meal_generation_service=meal_generation_service,
+            environment=settings.ENVIRONMENT,
+            event_publisher=queue_publisher,
+            ai_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
         ),
     )
     event_bus.register_handler(

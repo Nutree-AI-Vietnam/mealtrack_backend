@@ -188,6 +188,16 @@ class Settings(BaseSettings):
         le=120,
         description="Total parse-text request deadline, including correction and references.",
     )
+    # Ghi nhanh: one sentence logs several drinks or activities (Premium only).
+    DESCRIBE_LOG_ENABLED: bool = Field(
+        default=False,
+        description="Accept POST /v1/hydration/describe and /v1/movement/describe.",
+    )
+    DESCRIBE_LOG_DAILY_LIMIT: int = Field(
+        default=60,
+        ge=1,
+        description="Describe sentences per user per local day, across both routes.",
+    )
     OPENAI_TRANSLATION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
     OPENAI_REQUEST_TIMEOUT_SECONDS: int = Field(default=20)

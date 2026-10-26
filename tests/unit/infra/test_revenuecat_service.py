@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import httpx
 import pytest
 
+from src.domain.ports.subscription_service_port import EntitlementCheck
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 
 
@@ -162,6 +163,58 @@ class TestRevenueCatAdapter:
         with patch.object(service, "get_subscriber_info", return_value=None):
             result = await service.has_active_subscription("user_123")
             assert result is False
+
+    @staticmethod
+    def _client_returning(mock_client, response=None, error=None):
+        get = AsyncMock(return_value=response, side_effect=error)
+        mock_client.return_value.__aenter__.return_value.get = get
+        return get
+
+    async def test_check_entitlement_entitled_uses_short_timeout(
+        self, service, mock_subscriber_response
+    ):
+        response = httpx.Response(
+            200,
+            json=mock_subscriber_response,
+            request=httpx.Request("GET", "https://api.revenuecat.com"),
+        )
+        with patch("httpx.AsyncClient") as mock_client:
+            get = self._client_returning(mock_client, response)
+
+            result = await service.check_entitlement("user_123", timeout_seconds=3.0)
+
+        assert result is EntitlementCheck.ENTITLED
+        assert get.await_args.kwargs["timeout"] == 3.0
+
+    async def test_check_entitlement_unknown_subscriber_is_not_entitled(self, service):
+        response = httpx.Response(
+            404, request=httpx.Request("GET", "https://api.revenuecat.com")
+        )
+        with patch("httpx.AsyncClient") as mock_client:
+            self._client_returning(mock_client, response)
+
+            result = await service.check_entitlement("user_123")
+
+        assert result is EntitlementCheck.NOT_ENTITLED
+
+    async def test_check_entitlement_server_error_is_unavailable(self, service):
+        response = httpx.Response(
+            500, request=httpx.Request("GET", "https://api.revenuecat.com")
+        )
+        with patch("httpx.AsyncClient") as mock_client:
+            self._client_returning(mock_client, response)
+
+            result = await service.check_entitlement("user_123")
+
+        assert result is EntitlementCheck.UNAVAILABLE
+
+    async def test_check_entitlement_timeout_is_unavailable(self, service):
+        with patch("httpx.AsyncClient") as mock_client:
+            self._client_returning(mock_client, error=httpx.ReadTimeout("slow"))
+
+            result = await service.check_entitlement("user_123")
+
+        assert result is EntitlementCheck.UNAVAILABLE
 
     async def test_get_subscription_info_with_active_subscription(
         self, service, mock_subscriber_response

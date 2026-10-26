@@ -4,7 +4,20 @@ Enables subscription checking without depending on specific implementations.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict
+from enum import StrEnum
+from typing import Dict, Optional
+
+
+class EntitlementCheck(StrEnum):
+    """Answer of the subscription provider for one user.
+
+    ``UNAVAILABLE`` means the provider could not answer; callers must not
+    treat it as "not subscribed".
+    """
+
+    ENTITLED = "entitled"
+    NOT_ENTITLED = "not_entitled"
+    UNAVAILABLE = "unavailable"
 
 
 class SubscriptionServicePort(ABC):
@@ -33,6 +46,23 @@ class SubscriptionServicePort(ABC):
 
         Returns:
             True if user has active subscription, False otherwise
+        """
+        pass
+
+    @abstractmethod
+    async def check_entitlement(
+        self, app_user_id: str, *, timeout_seconds: float = 3.0
+    ) -> EntitlementCheck:
+        """
+        Check the standard entitlement, keeping provider failures apart.
+
+        Args:
+            app_user_id: Your user ID
+            timeout_seconds: Upper bound for the provider call
+
+        Returns:
+            ENTITLED or NOT_ENTITLED, or UNAVAILABLE when the provider
+            errored or timed out
         """
         pass
 

@@ -93,7 +93,8 @@ def get_zone_info(timezone_str: str) -> ZoneInfo:
 
     try:
         return ZoneInfo(normalize_timezone(timezone_str))
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError):
+        # ValueError: path-like keys such as "../etc/passwd" from a header.
         logger.warning(f"Invalid timezone '{timezone_str}', falling back to UTC")
         return ZoneInfo(DEFAULT_TIMEZONE)
 
@@ -130,7 +131,7 @@ def is_valid_timezone(timezone_str: str) -> bool:
     try:
         ZoneInfo(normalize_timezone(timezone_str))
         return True
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError):
         return False
 
 

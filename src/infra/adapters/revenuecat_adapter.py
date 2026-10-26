@@ -11,9 +11,40 @@ from datetime import datetime
 
 import httpx
 
-from src.domain.ports.subscription_service_port import SubscriptionServicePort
+from src.domain.ports.subscription_service_port import (
+    EntitlementCheck,
+    SubscriptionServicePort,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _standard_entitlement_active(subscriber_info: dict | None) -> bool:
+    """Whether the "standard" entitlement is unexpired (null expiry = lifetime)."""
+    if not subscriber_info:
+        return False
+
+    subscriber = subscriber_info.get("subscriber", {})
+    entitlements = subscriber.get("entitlements", {})
+
+    # Check if "standard" entitlement exists and is active
+    if "standard" not in entitlements:
+        return False
+
+    standard = entitlements["standard"]
+    expires_date_str = standard.get("expires_date")
+
+    # NULL expires_date means lifetime access
+    if expires_date_str is None:
+        return True
+
+    # Check if not expired
+    try:
+        expires_date = datetime.fromisoformat(expires_date_str.replace("Z", "+00:00"))
+        return datetime.now(expires_date.tzinfo) < expires_date
+    except Exception as e:
+        logger.error(f"Error parsing expires_date: {e}")
+        return False
 
 
 class RevenueCatAdapter(SubscriptionServicePort):
@@ -28,6 +59,23 @@ class RevenueCatAdapter(SubscriptionServicePort):
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.getenv("REVENUECAT_SECRET_API_KEY", "")
 
+    async def _fetch_subscriber(self, app_user_id: str, timeout: float) -> dict | None:
+        """GET the subscriber; None when unknown. Raises httpx.HTTPError on failure."""
+        url = f"{self.BASE_URL}/subscribers/{app_user_id}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=timeout)
+
+            if response.status_code == 404:
+                logger.info(f"Subscriber not found in RevenueCat: {app_user_id}")
+                return None
+
+            response.raise_for_status()
+            return response.json()
+
     async def get_subscriber_info(self, app_user_id: str) -> dict | None:
         """
         Get subscriber info from RevenueCat.
@@ -38,23 +86,8 @@ class RevenueCatAdapter(SubscriptionServicePort):
         Returns:
             Subscriber data including entitlements and subscriptions
         """
-        url = f"{self.BASE_URL}/subscribers/{app_user_id}"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers, timeout=10.0)
-
-                if response.status_code == 404:
-                    logger.info(f"Subscriber not found in RevenueCat: {app_user_id}")
-                    return None
-
-                response.raise_for_status()
-                return response.json()
-
+            return await self._fetch_subscriber(app_user_id, timeout=10.0)
         except httpx.HTTPError as e:
             logger.error(f"RevenueCat API error: {e}")
             return None
@@ -65,34 +98,24 @@ class RevenueCatAdapter(SubscriptionServicePort):
 
         This is the source of truth for subscription status.
         """
-        subscriber_info = await self.get_subscriber_info(app_user_id)
+        return _standard_entitlement_active(await self.get_subscriber_info(app_user_id))
 
-        if not subscriber_info:
-            return False
-
-        subscriber = subscriber_info.get("subscriber", {})
-        entitlements = subscriber.get("entitlements", {})
-
-        # Check if "standard" entitlement exists and is active
-        if "standard" not in entitlements:
-            return False
-
-        standard = entitlements["standard"]
-        expires_date_str = standard.get("expires_date")
-
-        # NULL expires_date means lifetime access
-        if expires_date_str is None:
-            return True
-
-        # Check if not expired
+    async def check_entitlement(
+        self, app_user_id: str, *, timeout_seconds: float = 3.0
+    ) -> EntitlementCheck:
+        """Answer entitled or not, or UNAVAILABLE when RevenueCat cannot answer."""
         try:
-            expires_date = datetime.fromisoformat(
-                expires_date_str.replace("Z", "+00:00")
+            subscriber_info = await self._fetch_subscriber(
+                app_user_id, timeout=timeout_seconds
             )
-            return datetime.now(expires_date.tzinfo) < expires_date
-        except Exception as e:
-            logger.error(f"Error parsing expires_date: {e}")
-            return False
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning(
+                "RevenueCat entitlement check unavailable: %s", type(e).__name__
+            )
+            return EntitlementCheck.UNAVAILABLE
+        if _standard_entitlement_active(subscriber_info):
+            return EntitlementCheck.ENTITLED
+        return EntitlementCheck.NOT_ENTITLED
 
     async def get_subscription_info(self, app_user_id: str) -> dict | None:
         """
