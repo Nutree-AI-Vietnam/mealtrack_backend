@@ -20,6 +20,13 @@ from src.app.events.hydration.local_cache_invalidation import (
 from src.app.events.integration_event import IntegrationEvent
 from src.app.services.describe_hydration_items import DescribedDrink, normalize_drinks
 from src.app.services.describe_log_parser import parse_describe_sentence
+from src.app.services.describe_log_replay import (
+    HYDRATION_DESCRIBE_OPERATION,
+    complete,
+    describe_key,
+    lease_seconds_for,
+    run_once,
+)
 from src.app.services.hydration_entry_factory import (
     catalog_macros,
     water_macros,
@@ -64,6 +71,18 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
         self.ai_timeout_seconds = ai_timeout_seconds
 
     async def handle(self, cmd: DescribeHydrationCommand) -> dict:
+        key = describe_key(
+            HYDRATION_DESCRIBE_OPERATION, cmd.idempotency_key, cmd.request_fingerprint
+        )
+        return await run_once(
+            self.uow_factory,
+            cmd.user_id,
+            key,
+            lease_seconds=lease_seconds_for(self.ai_timeout_seconds),
+            log=lambda reservation: self._log(cmd, reservation),
+        )
+
+    async def _log(self, cmd: DescribeHydrationCommand, reservation: Any) -> dict:
         started = time.monotonic()
         log_date, log_dt = await self._log_moment(cmd)
         parse = await parse_describe_sentence(
@@ -87,6 +106,15 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
                 saved.append(
                     await self._save(uow, cmd.user_id, drink, log_dt, log_date)
                 )
+            response = {
+                "entries": [
+                    _entry_response(entry, meal_id, cmd.language)
+                    for entry, meal_id, _ in saved
+                ]
+            }
+            if reservation is not None:
+                # Same transaction as the entries: saved ⇔ reply stored.
+                await complete(uow, reservation, response)
 
         await self._after_commit(cmd.user_id, log_date, [event for *_, event in saved])
         logger.info(
@@ -98,12 +126,7 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
             described.overflow,
             (time.monotonic() - started) * 1000,
         )
-        return {
-            "entries": [
-                _entry_response(entry, meal_id, cmd.language)
-                for entry, meal_id, _ in saved
-            ]
-        }
+        return response
 
     async def _log_moment(self, cmd: DescribeHydrationCommand) -> tuple[date, datetime]:
         """The day and instant every entry is logged at, checked before the model runs."""

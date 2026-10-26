@@ -18,6 +18,13 @@ from src.app.handlers.command_handlers.log_movement_command_handler import (
     _validate_log_movement,
 )
 from src.app.services.describe_log_parser import clamp, parse_describe_sentence
+from src.app.services.describe_log_replay import (
+    MOVEMENT_DESCRIBE_OPERATION,
+    complete,
+    describe_key,
+    lease_seconds_for,
+    run_once,
+)
 from src.app.services.describe_movement_items import (
     DescribedActivity,
     normalize_activities,
@@ -65,6 +72,18 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
         self.ai_timeout_seconds = ai_timeout_seconds
 
     async def handle(self, cmd: DescribeMovementCommand) -> dict:
+        key = describe_key(
+            MOVEMENT_DESCRIBE_OPERATION, cmd.idempotency_key, cmd.request_fingerprint
+        )
+        return await run_once(
+            self.uow_factory,
+            cmd.user_id,
+            key,
+            lease_seconds=lease_seconds_for(self.ai_timeout_seconds),
+            log=lambda reservation: self._log(cmd, reservation),
+        )
+
+    async def _log(self, cmd: DescribeMovementCommand, reservation: Any) -> dict:
         started = time.monotonic()
         log_date, logged_at, weight_kg = await self._prepare(cmd)
         parse = await parse_describe_sentence(
@@ -92,6 +111,10 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
                 await uow.movement_entries.add(_entry(command, logged_at))
                 for command in commands
             ]
+            response = {"entries": [_movement_response(entry) for entry in saved]}
+            if reservation is not None:
+                # Same transaction as the entries: saved ⇔ reply stored.
+                await complete(uow, reservation, response)
 
         await self._after_commit(cmd.user_id, log_date, saved)
         logger.info(
@@ -103,7 +126,7 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
             described.overflow,
             (time.monotonic() - started) * 1000,
         )
-        return {"entries": [_movement_response(entry) for entry in saved]}
+        return response
 
     async def _prepare(
         self, cmd: DescribeMovementCommand

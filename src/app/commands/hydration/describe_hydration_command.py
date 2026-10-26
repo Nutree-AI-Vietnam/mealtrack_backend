@@ -13,3 +13,6 @@ class DescribeHydrationCommand(Command):
     target_date: date | None = None
     header_timezone: str | None = None
     language: str = "en"
+    # Idempotency-Key claim; None skips it (internal callers and tests).
+    idempotency_key: str | None = None
+    request_fingerprint: str | None = None

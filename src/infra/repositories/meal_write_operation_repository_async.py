@@ -183,7 +183,7 @@ class AsyncMealWriteOperationRepository:
         self,
         reservation: MealWriteReservation,
         *,
-        target_meal_id: str,
+        target_meal_id: str | None,
         response: dict | None = None,
     ) -> None:
         row = await self._locked_row(reservation.operation_id)

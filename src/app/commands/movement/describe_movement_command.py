@@ -13,3 +13,6 @@ class DescribeMovementCommand(Command):
     target_date: date | None = None
     weight_kg: float | None = None  # the weight the app prices activities with
     header_timezone: str | None = None
+    # Idempotency-Key claim; None skips it (internal callers and tests).
+    idempotency_key: str | None = None
+    request_fingerprint: str | None = None

@@ -1,11 +1,14 @@
 """Hydration API endpoints."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 
-from src.api.base_dependencies import get_describe_log_guard
+from src.api.base_dependencies import (
+    get_describe_log_guard,
+    get_read_only_uow_factory,
+)
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import ValidationException
@@ -30,7 +33,10 @@ from src.app.queries.hydration import (
     GetWeeklyHydrationQuery,
 )
 from src.app.services.describe_log_guard import DescribeLogGuard
-from src.bootstrap.describe_log import HYDRATION_DESCRIBE_ACTION
+from src.app.services.describe_log_replay import (
+    HYDRATION_DESCRIBE_OPERATION,
+    DescribeKey,
+)
 from src.infra.event_bus import EventBus
 
 router = APIRouter(prefix="/v1/hydration", tags=["Hydration"])
@@ -111,6 +117,7 @@ async def describe_hydration(
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
     guard: DescribeLogGuard = Depends(get_describe_log_guard),
+    replay_uow_factory: Any = Depends(get_read_only_uow_factory),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> DescribeHydrationResponse:
     """Log every drink in one sentence (Ghi nhanh, Premium)."""
@@ -124,7 +131,7 @@ async def describe_hydration(
     header_timezone = request.headers.get("X-Timezone")
     language = get_request_language(request)
 
-    async def send(sentence: str) -> dict:
+    async def send(sentence: str, key: DescribeKey) -> dict:
         return await event_bus.send(
             DescribeHydrationCommand(
                 user_id=user_id,
@@ -132,6 +139,8 @@ async def describe_hydration(
                 target_date=target_date,
                 header_timezone=header_timezone,
                 language=language,
+                idempotency_key=key.idempotency_key,
+                request_fingerprint=key.request_fingerprint,
             )
         )
 
@@ -140,9 +149,10 @@ async def describe_hydration(
         text=body.text,
         timezone=header_timezone,
         idempotency_key=idempotency_key,
-        action=HYDRATION_DESCRIBE_ACTION,
+        operation=HYDRATION_DESCRIBE_OPERATION,
         fingerprint={"target_date": body.target_date},
         guard=guard,
+        replay_uow_factory=replay_uow_factory,
         send=send,
         response_model=DescribeHydrationResponse,
     )

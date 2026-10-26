@@ -1,11 +1,14 @@
 """Movement API endpoints."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
-from src.api.base_dependencies import get_describe_log_guard
+from src.api.base_dependencies import (
+    get_describe_log_guard,
+    get_read_only_uow_factory,
+)
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import ValidationException
@@ -25,7 +28,10 @@ from src.app.commands.movement import (
 )
 from src.app.queries.movement import GetDailyMovementQuery, GetMovementCatalogQuery
 from src.app.services.describe_log_guard import DescribeLogGuard
-from src.bootstrap.describe_log import MOVEMENT_DESCRIBE_ACTION
+from src.app.services.describe_log_replay import (
+    MOVEMENT_DESCRIBE_OPERATION,
+    DescribeKey,
+)
 from src.infra.event_bus import EventBus
 
 router = APIRouter(prefix="/v1/movement", tags=["Movement"])
@@ -77,13 +83,14 @@ async def describe_movement(
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
     guard: DescribeLogGuard = Depends(get_describe_log_guard),
+    replay_uow_factory: Any = Depends(get_read_only_uow_factory),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> DescribeMovementResponse:
     """Log every activity in one sentence (Ghi nhanh, Premium)."""
     target_date = _parse_date(body.target_date)
     header_timezone = request.headers.get("X-Timezone")
 
-    async def send(sentence: str) -> dict:
+    async def send(sentence: str, key: DescribeKey) -> dict:
         return await event_bus.send(
             DescribeMovementCommand(
                 user_id=user_id,
@@ -91,17 +98,22 @@ async def describe_movement(
                 target_date=target_date,
                 weight_kg=body.weight_kg,
                 header_timezone=header_timezone,
+                idempotency_key=key.idempotency_key,
+                request_fingerprint=key.request_fingerprint,
             )
         )
 
+    # The weight is left out: a resend priced with a newer weight is still
+    # the same sentence and replays the stored reply.
     return await run_describe(
         user_id=user_id,
         text=body.text,
         timezone=header_timezone,
         idempotency_key=idempotency_key,
-        action=MOVEMENT_DESCRIBE_ACTION,
-        fingerprint={"target_date": body.target_date, "weight_kg": body.weight_kg},
+        operation=MOVEMENT_DESCRIBE_OPERATION,
+        fingerprint={"target_date": body.target_date},
         guard=guard,
+        replay_uow_factory=replay_uow_factory,
         send=send,
         response_model=DescribeMovementResponse,
     )
