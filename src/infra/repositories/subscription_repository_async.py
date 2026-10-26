@@ -90,12 +90,15 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
         )
         if user_id is not None:
             statement = statement.where(Subscription.user_id == user_id)
-        ordering = [Subscription.purchased_at.desc(), Subscription.created_at.desc()]
         if product_id:
-            ordering.insert(
-                0, case((Subscription.product_id == product_id, 0), else_=1)
+            statement = statement.order_by(
+                case((Subscription.product_id == product_id, 0), else_=1)
             )
-        result = await self.session.execute(statement.order_by(*ordering))
+        result = await self.session.execute(
+            statement.order_by(
+                Subscription.purchased_at.desc(), Subscription.created_at.desc()
+            )
+        )
         return result.scalars().first()
 
     async def find_expiring_soon(
