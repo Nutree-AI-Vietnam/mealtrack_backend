@@ -313,7 +313,17 @@ A writer for any provider other than RevenueCat must:
   `will_renew` reads `false`), with `status='active'`, and move the row to
   `expired` or `refunded` itself; leave `provider_sync_required_at` NULL;
 - write in one transaction under `lock_subscription_owner` (`SELECT ... FOR
-  UPDATE` on the user row), like the RevenueCat writers.
+  UPDATE` on the user row), like the RevenueCat writers;
+- run the post-purchase side effects itself. The access row only grants
+  access; everything else a purchase sets off runs today only from the
+  RevenueCat webhook handlers (`src/api/routes/v1/webhook_subscription_lifecycle.py`):
+  the referral credit on a first purchase (`credit_referral_on_purchase`) and
+  the clawback on a refund (`revoke_referral_on_refund`), the
+  `subscription_*` lifecycle events published to the integration queue
+  (affiliate commission and lifecycle messaging consume them), and the
+  purge of stale trial-expiry pushes on a renewal. A MoMo payment, renewal
+  or refund that only writes its row credits no referrer and tells no
+  consumer.
 
 RevenueCat handlers never read, expire, re-point or take over such rows:
 webhooks, transfers, refresh, reconciliation and web finalize all filter on
