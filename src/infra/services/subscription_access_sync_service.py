@@ -711,7 +711,11 @@ def record_snapshot_unavailable(
     event_type: str | None = None,
     event_id: str | None = None,
 ) -> None:
-    """Log, count and report a provider state that could not be verified."""
+    """Log and count a provider state that could not be verified.
+
+    Also reported to Sentry, except a provider outage or rate limit
+    (SNAPSHOT_TRANSIENT_REASONS): the counter carries that alert.
+    """
     reason = getattr(error, "reason", SNAPSHOT_REASON_UNKNOWN)
     context = {
         "component": "subscription_access",

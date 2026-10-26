@@ -245,8 +245,11 @@ optional caches.
     If the customer cannot be read or applied, the webhook still answers 200;
     the user's RevenueCat rows get `provider_sync_required_at` (RevenueCat's
     event time), which the access policy treats as unresolved, and the failure
-    is logged, counted (`subscription_access.snapshot_unavailable`) and sent to
-    Sentry. Only a snapshot taken at or after that time clears it (next event,
+    is logged and counted (`subscription_access.snapshot_unavailable`, by
+    `failure_kind`). It also goes to Sentry, except a RevenueCat outage or
+    rate limit (`transport`, `http_429`, `http_5xx`), which would send one
+    event per webhook; the counter carries that alert (runbook, Monitoring).
+    Only a snapshot taken at or after that time clears it (next event,
     refresh or reconciliation).
   - Writers for one user serialise on `SELECT ... FOR UPDATE` of the user row;
     an older snapshot never overwrites a newer one (`provider_snapshot_at`).
