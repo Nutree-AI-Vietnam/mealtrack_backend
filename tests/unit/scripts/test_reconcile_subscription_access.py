@@ -484,6 +484,7 @@ async def test_each_user_gets_one_private_jsonl_record_without_pii(tmp_path):
         "denied": 1,
         "unresolved": 1,
         "downgraded": 0,
+        "loses_current_access": 0,
         "failed": 1,
         "skipped": 0,
     }
@@ -528,6 +529,48 @@ async def test_gate_is_go_when_every_user_resolves_and_reports_downgrades():
     assert summary.line().startswith("RESULT: GO")
     assert summary.counts["downgraded"] == 1
     assert "downgrade user_id=lapsed" in stdout.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_payer_denied_at_the_first_cutover_is_reported_as_losing_access(
+    tmp_path,
+):
+    """Every legacy grant is unverified at the first cutover, so the policy's
+    "before" is unresolved and a payer RevenueCat now denies is no policy
+    downgrade. Today's (flag-off, legacy) check grants them: report the loss."""
+    database = FakeDatabase()
+    database.add_user("payer", [_row()])  # active, unexpired, never verified
+    database.add_user("churned", [_row(status="expired")])
+    stdout = StringIO()
+    sync = FakeSync(
+        {
+            "payer": SubscriptionSyncOutcome("applied", "unresolved", "denied"),
+            "churned": SubscriptionSyncOutcome("applied", "denied", "denied"),
+        }
+    )
+    path = tmp_path / "results.jsonl"
+    output = rec._private_append(path, truncate=True)
+
+    summary = await _run(
+        database, ["payer", "churned"], sync=sync, stdout=stdout, output=output
+    )
+    output.close()
+
+    records = {
+        record["user_id"]: record
+        for record in map(json.loads, path.read_text().splitlines())
+    }
+    assert (
+        records["payer"]["legacy_before"],
+        records["payer"]["downgrade"],
+        records["payer"]["loses_current_access"],
+    ) == ("granted", False, True)
+    assert records["churned"]["loses_current_access"] is False
+    assert summary.counts["loses_current_access"] == 1
+    assert summary.counts["downgraded"] == 0
+    assert "loses_access user_id=payer" in stdout.getvalue()
+    assert "user_id=churned" not in stdout.getvalue()
+    assert "loses_current_access=1" in summary.line()
 
 
 @pytest.mark.asyncio

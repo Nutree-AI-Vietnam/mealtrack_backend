@@ -28,12 +28,20 @@ is applied with sync_revenuecat_access inside one transaction: committed with
 exactly and writes nothing.
 
 Output: one JSONL record per user in --output (internal user id, decision,
-reason, snapshot status, previous decision; no emails, Firebase uids or
-provider payloads), unresolved users and downgrades on stdout, and a final
-summary line:
+reason, snapshot status, previous decision under the access policy
+(``before``) and under the legacy check users get while the flag is off
+(``legacy_before``), ``downgrade``, ``loses_current_access``; no emails,
+Firebase uids or provider payloads), downgrades, current-access losses and
+unresolved users on stdout, and a final summary line:
 
   RESULT: GO|NO-GO|INCOMPLETE mode=... users=... granted=... denied=...
-          unresolved=... downgraded=... failed=... skipped=...
+          unresolved=... downgraded=... loses_current_access=... failed=...
+          skipped=...
+
+``downgraded`` counts policy grants turned into denials. At the first cutover
+every legacy grant is still unverified (``before`` = unresolved), so a payer
+denied by RevenueCat shows only in ``loses_current_access``: granted by
+today's legacy check, denied after the run. Review those before --apply.
 
 Exit codes: 0 GO (no user left unresolved), 1 NO-GO (unresolved users remain),
 2 usage or configuration error, 3 stopped early (RevenueCat asked to wait
@@ -299,14 +307,28 @@ class UserResult:
     user_id: str
     mode: str
     decision: str  # granted | denied | unresolved, after this run
-    before: str  # the stored decision before this run
+    before: str  # the access policy's stored decision before this run
     reason: str  # sync result, or the failure reason code
     snapshot: str  # ok | absent | unavailable | not_read
-    downgrade: bool = False
+    downgrade: bool = False  # policy: granted before, denied after
     rows_revoked: int = 0
     row_created: bool = False
     markers_cleared: int = 0
     standard_missing: bool = False
+    # The decision users get today, while the flag is off: the legacy row
+    # check sign-in uses (User.has_active_subscription). At the first
+    # cutover every legacy grant is unverified, so ``before`` reads
+    # "unresolved" for it and ``downgrade`` cannot see it being lost.
+    legacy_before: str = ACCESS_DENIED
+
+    @property
+    def loses_current_access(self) -> bool:
+        """Granted by today's (legacy) check, denied after this run."""
+        return self.legacy_before == ACCESS_GRANTED and self.decision == ACCESS_DENIED
+
+    def record(self) -> dict[str, Any]:
+        """The --output JSONL record."""
+        return asdict(self) | {"loses_current_access": self.loses_current_access}
 
     @property
     def failed(self) -> bool:
@@ -321,6 +343,12 @@ class UserResult:
 
 def _is_live(user: Any) -> bool:
     return bool(user.is_active) and user.deleted_at is None
+
+
+def legacy_decision(rows: Iterable[Any]) -> str:
+    """The flag-off decision: any row passing the legacy Subscription check."""
+    granted = any(Subscription.is_active(row) for row in rows)
+    return ACCESS_GRANTED if granted else ACCESS_DENIED
 
 
 def stored_decision(rows: Iterable[Any]) -> str:
@@ -359,6 +387,7 @@ async def reconcile_user(
     async with session_factory() as session:
         user, rows = await _load_user(session, user_id)
         before = stored_decision(rows)
+        legacy_before = legacy_decision(rows)
         firebase_uid = getattr(user, "firebase_uid", None)
         inactive = user is not None and not _is_live(user)
     if user is None or inactive or not firebase_uid:
@@ -367,7 +396,15 @@ async def reconcile_user(
         reason = "user_missing" if user is None else "user_inactive"
         if user is not None and not inactive:
             reason = "no_firebase_uid"
-        return UserResult(user_id, mode, before, before, reason, "not_read")
+        return UserResult(
+            user_id,
+            mode,
+            before,
+            before,
+            reason,
+            "not_read",
+            legacy_before=legacy_before,
+        )
 
     # No transaction (and no row lock) is open across the HTTP call.
     try:
@@ -380,7 +417,15 @@ async def reconcile_user(
         )
     except RevenueCatSnapshotUnavailable as error:
         reason = getattr(error, "reason", None) or "unknown"
-        return UserResult(user_id, mode, before, before, reason, "unavailable")
+        return UserResult(
+            user_id,
+            mode,
+            before,
+            before,
+            reason,
+            "unavailable",
+            legacy_before=legacy_before,
+        )
 
     snapshot_status = "absent" if snapshot.absent else "ok"
     async with session_factory() as session:
@@ -401,7 +446,15 @@ async def reconcile_user(
             # absence over a possible grant): the rows stay as they were.
             await session.rollback()
             reason = getattr(error, "reason", None) or "unknown"
-            return UserResult(user_id, mode, before, before, reason, snapshot_status)
+            return UserResult(
+                user_id,
+                mode,
+                before,
+                before,
+                reason,
+                snapshot_status,
+                legacy_before=legacy_before,
+            )
         if apply:
             await session.commit()
         else:
@@ -418,6 +471,7 @@ async def reconcile_user(
         row_created=outcome.row_created,
         markers_cleared=outcome.markers_cleared,
         standard_missing=outcome.standard_missing,
+        legacy_before=legacy_before,
     )
 
 
@@ -536,6 +590,7 @@ class Summary:
             ACCESS_DENIED: 0,
             ACCESS_UNRESOLVED: 0,
             "downgraded": 0,
+            "loses_current_access": 0,
             "failed": 0,
             "skipped": 0,
         }
@@ -546,6 +601,7 @@ class Summary:
         self.counts["users"] += 1
         self.counts[result.decision] += 1
         self.counts["downgraded"] += result.downgrade
+        self.counts["loses_current_access"] += result.loses_current_access
         self.counts["failed"] += result.failed
 
     @property
@@ -601,13 +657,21 @@ async def run_pass(
             )
             summary.add(result)
             if output is not None:
-                _json_line(output, asdict(result))
-            if result.decision == ACCESS_UNRESOLVED or result.downgrade:
-                label = "unresolved" if not result.downgrade else "downgrade"
+                _json_line(output, result.record())
+            label = (
+                "downgrade"
+                if result.downgrade
+                else "loses_access"
+                if result.loses_current_access
+                else "unresolved"
+                if result.decision == ACCESS_UNRESOLVED
+                else None
+            )
+            if label is not None:
                 print(
                     f"{label} user_id={result.user_id} reason={result.reason} "
-                    f"snapshot={result.snapshot} before={result.before} "
-                    f"after={result.decision}",
+                    f"snapshot={result.snapshot} legacy_before={result.legacy_before} "
+                    f"before={result.before} after={result.decision}",
                     file=stdout,
                 )
             if result.snapshot == "unavailable" and result.reason in RETRYABLE_REASONS:
