@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 
+from src.app.services.meal_insight_recovery import MealInsightRecovery
 from src.domain.ports.affiliate_service_port import AffiliateServicePort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
@@ -29,6 +30,13 @@ def get_integration_event_publisher() -> IntegrationEventPublisherPort:
             CloudflareQueuePublisher.from_settings()
         )
     return _publisher
+
+
+def get_meal_insight_recovery() -> MealInsightRecovery:
+    """Re-request overdue meal insights through the same Queue publisher."""
+    return MealInsightRecovery(
+        get_integration_event_publisher(), get_settings().ENVIRONMENT
+    )
 
 
 async def drain_integration_event_publisher() -> None:
