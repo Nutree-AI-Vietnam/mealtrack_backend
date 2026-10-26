@@ -458,12 +458,20 @@ def test_app_limits_every_form_route_with_the_innermost_middleware():
 
 
 def test_app_gives_every_catalog_manifest_route_the_manifest_limit():
+    # Manifest routes read their body themselves, so find them by the body their
+    # OpenAPI entry documents, whether inline or as a component reference.
+    def takes_manifest(operation: dict) -> bool:
+        content = operation.get("requestBody", {}).get("content", {})
+        schema = content.get("application/json", {}).get("schema", {})
+        name = AdminMealCatalogImportRequest.__name__
+        return schema.get("title") == name or schema.get("$ref", "").endswith(
+            f"/{name}"
+        )
+
     manifest_paths = {
-        route.path
-        for route in mealtrack_app.routes
-        if isinstance(route, APIRoute)
-        and route.body_field is not None
-        and route.body_field.field_info.annotation is AdminMealCatalogImportRequest
+        path
+        for path, operations in mealtrack_app.openapi()["paths"].items()
+        if any(takes_manifest(operation) for operation in operations.values())
     }
     assert RESOLVE_PATH in manifest_paths
     assert {BODY_LIMITS.get(path) for path in manifest_paths} == {

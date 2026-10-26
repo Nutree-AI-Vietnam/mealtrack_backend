@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import (
@@ -23,6 +23,7 @@ from src.api.schemas.response.admin_meal_catalog_responses import (
     AdminMealCatalogImportResponse,
     AdminMealCatalogValidationResponse,
 )
+from src.api.utils.json_body import json_body_openapi, read_json_body
 from src.app.services.admin_meal_catalog_writes import (
     approve_catalog_food_reference,
     enrich_catalog_candidates,
@@ -41,6 +42,10 @@ from src.domain.services.meal_recommendation.catalog_recipe_seed_validator impor
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/admin/meal-catalog", tags=["Admin Meal Catalog"])
+
+# Manifests can run to megabytes, so these routes read them only after the
+# admin check: a body parameter would be read and decoded before it.
+_MANIFEST_BODY = json_body_openapi(AdminMealCatalogImportRequest)
 
 
 @router.post(
@@ -68,15 +73,20 @@ async def approve_admin_meal_catalog_food_reference(
     return AdminMealCatalogApproveFoodReferenceResponse(**approval.__dict__)
 
 
-@router.post("/resolve", response_model=AdminMealCatalogImportResponse)
+@router.post(
+    "/resolve",
+    response_model=AdminMealCatalogImportResponse,
+    openapi_extra=_MANIFEST_BODY,
+)
 async def resolve_admin_meal_catalog_ingredients(
-    request: AdminMealCatalogImportRequest,
+    http_request: Request,
+    _admin: str = Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_async_db),
     importer: CatalogMealSeedImporter = Depends(get_catalog_meal_seed_importer),
-    _admin: str = Depends(require_admin_or_local),
 ) -> AdminMealCatalogImportResponse:
     """Validate and resolve a manifest without changing the catalog."""
 
+    request = await read_json_body(http_request, AdminMealCatalogImportRequest)
     validation = _validate_manifest(request)
     if validation.errors:
         return _response(
@@ -86,15 +96,20 @@ async def resolve_admin_meal_catalog_ingredients(
     return _response(validation, summary, applied=False)
 
 
-@router.post("/enrich", response_model=AdminMealCatalogEnrichmentResponse)
+@router.post(
+    "/enrich",
+    response_model=AdminMealCatalogEnrichmentResponse,
+    openapi_extra=_MANIFEST_BODY,
+)
 async def enrich_admin_meal_catalog_candidates(
-    request: AdminMealCatalogImportRequest,
+    http_request: Request,
+    _admin: str = Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_async_db),
     importer: CatalogMealSeedImporter = Depends(get_catalog_meal_seed_importer),
-    _admin: str = Depends(require_admin_or_local),
 ) -> AdminMealCatalogEnrichmentResponse:
     """Cache unverified FatSecret candidates without publishing catalog recipes."""
 
+    request = await read_json_body(http_request, AdminMealCatalogImportRequest)
     validation = _validate_manifest(request)
     if validation.errors:
         raise HTTPException(
@@ -110,19 +125,24 @@ async def enrich_admin_meal_catalog_candidates(
     )
 
 
-@router.post("/import", response_model=AdminMealCatalogImportResponse)
+@router.post(
+    "/import",
+    response_model=AdminMealCatalogImportResponse,
+    openapi_extra=_MANIFEST_BODY,
+)
 async def import_admin_meal_catalog(
-    request: AdminMealCatalogImportRequest,
+    http_request: Request,
+    _admin: str = Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_async_db),
     importer: CatalogMealSeedImporter = Depends(get_catalog_meal_seed_importer),
     prepare_catalog=Depends(get_catalog_preparer),
-    _admin: str = Depends(require_admin_or_local),
 ) -> AdminMealCatalogImportResponse:
     """Import a validated manifest, or preview it when ``dry_run`` is true.
 
     Applied imports translate and enrich the new recipes before responding.
     """
 
+    request = await read_json_body(http_request, AdminMealCatalogImportRequest)
     validation = _validate_manifest(request)
     if validation.errors:
         raise HTTPException(
