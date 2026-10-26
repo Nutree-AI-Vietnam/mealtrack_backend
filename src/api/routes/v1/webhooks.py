@@ -337,10 +337,16 @@ async def revenuecat_webhook(
             )
 
         elif event_type == "REFUND":
-            if confirmed_refund:
-                await handle_refund(
-                    uow, user, event, affiliate_handler, event_publisher
-                )
+            # A refund always revokes referral credit and notifies the affiliate;
+            # access ends only when the provider confirms it is gone.
+            await handle_refund(
+                uow,
+                user,
+                event,
+                affiliate_handler,
+                event_publisher,
+                mark_refunded=confirmed_refund,
+            )
 
         if event_type in synchronized_events and provider_snapshot is not None:
             try:

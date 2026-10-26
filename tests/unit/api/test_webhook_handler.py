@@ -730,6 +730,32 @@ class TestWebhookHandler:
         assert subscription.updated_at is not None
         revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
 
+    async def test_handle_refund_keeps_status_when_access_remains(self, mock_uow):
+        """A refund the provider has not ended access for keeps the subscription
+        as it is, but still revokes referral credit and notifies the affiliate."""
+        user = MagicMock(id="user_123")
+        event = {"app_user_id": "user_123", "transaction_id": "tx_1"}
+        publisher = MagicMock(publish=AsyncMock())
+
+        with (
+            patch(
+                "src.api.routes.v1.webhook_subscription_lifecycle.get_or_create_subscription",
+                new_callable=AsyncMock,
+            ) as subscription_mock,
+            patch(
+                "src.api.routes.v1.webhook_subscription_lifecycle.revoke_referral_on_refund",
+                new_callable=AsyncMock,
+            ) as revoke_mock,
+        ):
+            await handle_refund(
+                mock_uow, user, event, event_publisher=publisher, mark_refunded=False
+            )
+
+        subscription_mock.assert_not_awaited()
+        revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
+        payload = publisher.publish.await_args.args[0]
+        assert "subscription_refund" in str(payload)
+
     async def test_credit_referral_on_purchase_credits_wallet_for_real(self):
         """REAL money movement: pending conversion → converted + wallet credited
         by the exact commission_amount_vnd. Uses a fake repo that performs the
@@ -960,6 +986,62 @@ class TestWebhookHandler:
         assert result == {"status": "success"}
         assert subscription.status == "refunded"
         revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
+
+    async def test_webhook_refund_with_access_left_revokes_referral_only(
+        self, mock_request, mock_event_publisher, mock_verified_access_sync
+    ):
+        """REFUND while the provider still reports access (another product is
+        active): referral credit is revoked, the subscription keeps its status
+        and the access sync is not told it was a refund."""
+        mock_request.json.return_value = {
+            "event": {
+                "type": "REFUND",
+                "app_user_id": "user_123",
+                "transaction_id": "tx_1",
+                "environment": "PRODUCTION",
+            }
+        }
+        mock_user = MagicMock(id="user_123")
+
+        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
+            with (
+                patch(
+                    "src.api.routes.v1.webhooks._get_event_publisher",
+                    return_value=mock_event_publisher,
+                ),
+                patch(
+                    "src.api.routes.v1.webhooks.normalize_standard_access_facts",
+                    return_value={"status": "active"},
+                ),
+                patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class,
+            ):
+                mock_uow = MagicMock()
+                mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
+                mock_uow.__aexit__ = AsyncMock(return_value=False)
+                mock_result = MagicMock()
+                mock_result.scalars.return_value.first.return_value = mock_user
+                mock_uow.session.execute = AsyncMock(return_value=mock_result)
+                mock_uow_class.return_value = mock_uow
+
+                with (
+                    patch(
+                        "src.api.routes.v1.webhook_subscription_lifecycle.get_or_create_subscription",
+                        new_callable=AsyncMock,
+                    ) as subscription_mock,
+                    patch(
+                        "src.api.routes.v1.webhook_subscription_lifecycle.revoke_referral_on_refund",
+                        new_callable=AsyncMock,
+                    ) as revoke_mock,
+                ):
+                    result = await revenuecat_webhook(
+                        mock_request, authorization="test_secret"
+                    )
+
+        assert result == {"status": "success"}
+        subscription_mock.assert_not_awaited()
+        revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
+        sync_access = mock_verified_access_sync[1]
+        assert sync_access.await_args.kwargs["refund_event"] is False
 
     async def test_webhook_product_change_user_not_found_is_ignored(self, mock_request):
         """PRODUCT_CHANGE is in NON_RETRYABLE_USERLESS_EVENTS: ACK (not 404) when
