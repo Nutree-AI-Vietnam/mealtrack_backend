@@ -1,14 +1,17 @@
 """Possession and safe-projection tests for the dark web-funnel lead API."""
 
+from datetime import UTC, datetime
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 from starlette.responses import Response
+from tests.fixtures.revenuecat_samples import patched_revenuecat_http
 
 from src.api.routes.v1 import web_funnel
 from src.app.services.web_funnel_claim_common import hash_secret
-from src.domain.ports.subscription_service_port import RevenueCatSnapshot
+from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
     WebFunnelRedemption,
@@ -253,11 +256,27 @@ def _configure_redemption(monkeypatch):
     monkeypatch.setattr(web_funnel.settings, "REVENUECAT_SECRET_API_KEY", "secret")
 
 
+async def _snapshot_through_adapter(payload: dict, app_user_id: str):
+    """Parse a v1 GET /subscribers body with the real RevenueCat adapter."""
+    with patched_revenuecat_http(payload):
+        return await RevenueCatAdapter(api_key="test-key").get_verified_snapshot(
+            app_user_id
+        )
+
+
 class VerifiedSubscriberService:
+    def _response(self, app_user_id="$RCAnonymousID:customer"):
+        # RevenueCat v1 puts the request time at the response root, next to
+        # "subscriber" -- never inside it.
+        return {
+            "request_date": "2026-10-22T00:00:00Z",
+            "request_date_ms": 1792627200000,
+            "subscriber": self._subscriber(app_user_id),
+        }
+
     def _subscriber(self, app_user_id="$RCAnonymousID:customer"):
         return {
             "original_app_user_id": app_user_id,
-            "request_date_ms": 1792700000000,
             "entitlements": {
                 "standard": {
                     "product_identifier": "web_monthly",
@@ -274,12 +293,8 @@ class VerifiedSubscriberService:
             },
         }
 
-    async def get_verified_snapshot(self, _app_user_id):
-        from datetime import UTC, datetime
-
-        return RevenueCatSnapshot(
-            self._subscriber(), datetime(2026, 10, 22, tzinfo=UTC)
-        )
+    async def get_verified_snapshot(self, app_user_id):
+        return await _snapshot_through_adapter(self._response(), app_user_id)
 
     async def get_subscriber_info(self, _app_user_id):
         return {"subscriber": self._subscriber()}
@@ -348,6 +363,8 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
     )
 
     assert response["version"] == "redemption_result_v1"
+    # The snapshot time comes from the RevenueCat response root.
+    assert captured["provider_snapshot_at"] == datetime(2026, 10, 22, tzinfo=UTC)
     assert {
         key: captured[key]
         for key in (
@@ -386,11 +403,10 @@ async def test_redemption_finalization_verifies_unknown_canonical_alias_from_che
     captured = {}
 
     class AliasedSubscriberService:
-        async def get_verified_snapshot(self, _app_user_id):
-            from datetime import UTC, datetime
-
-            subscriber = VerifiedSubscriberService()._subscriber(canonical_id)
-            return RevenueCatSnapshot(subscriber, datetime(2026, 10, 22, tzinfo=UTC))
+        async def get_verified_snapshot(self, app_user_id):
+            return await _snapshot_through_adapter(
+                VerifiedSubscriberService()._response(canonical_id), app_user_id
+            )
 
         async def get_subscriber_info(self, app_user_id):
             provider_lookups.append(app_user_id)
@@ -445,14 +461,10 @@ async def test_redemption_finalization_rejects_unrelated_canonical_customer(
     captured = {}
 
     class UnrelatedSubscriberService:
-        async def get_verified_snapshot(self, _app_user_id):
-            from datetime import UTC, datetime
-
-            return RevenueCatSnapshot(
-                VerifiedSubscriberService()._subscriber(
-                    "$RCAnonymousID:mobile-original"
-                ),
-                datetime(2026, 10, 22, tzinfo=UTC),
+        async def get_verified_snapshot(self, app_user_id):
+            return await _snapshot_through_adapter(
+                VerifiedSubscriberService()._response("$RCAnonymousID:mobile-original"),
+                app_user_id,
             )
 
         async def get_subscriber_info(self, _app_user_id):
