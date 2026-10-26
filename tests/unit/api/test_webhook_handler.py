@@ -3,14 +3,18 @@ Unit tests for RevenueCat webhook handler.
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import HTTPException
 
+from src.api.routes.v1.webhook_lookup_parsing import (
+    get_subscription_by_revenuecat_id,
+)
 from src.api.routes.v1.webhook_subscription_lifecycle import (
     _notify_affiliate,
     _publish_subscription_event,
+    get_or_create_subscription,
 )
 from src.api.routes.v1.webhooks import (
     _credit_referral_on_purchase,
@@ -23,7 +27,6 @@ from src.api.routes.v1.webhooks import (
     handle_purchase,
     handle_refund,
     handle_renewal,
-    handle_transfer,
     parse_platform,
     parse_timestamp,
     revenuecat_webhook,
@@ -155,11 +158,24 @@ class TestWebhookHandler:
                 return_value=service,
             ),
             patch(
-                "src.api.routes.v1.webhooks.sync_revenuecat_access",
+                "src.api.routes.v1.webhook_access_sync.sync_revenuecat_access",
                 new_callable=AsyncMock,
             ) as sync_access,
+            patch(
+                "src.api.routes.v1.webhook_access_sync.mark_revenuecat_access_unresolved",
+                new_callable=AsyncMock,
+            ),
+            patch("src.api.routes.v1.webhook_access_sync.record_snapshot_unavailable"),
+            patch(
+                "src.api.routes.v1.webhook_access_sync.capture_access_facts",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.api.routes.v1.webhooks.lock_subscription_owner",
+                new_callable=AsyncMock,
+            ) as lock_owner,
         ):
-            yield service, sync_access
+            yield service, sync_access, lock_owner
 
     @pytest.fixture
     def mock_request(self):
@@ -310,9 +326,6 @@ class TestWebhookHandler:
                 mock_uow.commit = AsyncMock()
                 mock_uow.rollback = AsyncMock()
                 mock_uow.subscriptions = MagicMock()
-                mock_uow.subscriptions.find_all_by_revenuecat_ids = AsyncMock(
-                    return_value=[]
-                )
                 mock_uow_class.return_value = mock_uow
 
                 # Mock user not found for all lookup strategies
@@ -464,6 +477,7 @@ class TestWebhookHandler:
             }
         }
         target_user = MagicMock(id="user_123", firebase_uid="firebase_uid_123")
+        mock_verified_access_sync[2].return_value = target_user
 
         with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
             with patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class:
@@ -471,9 +485,6 @@ class TestWebhookHandler:
                 mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
                 mock_uow.__aexit__ = AsyncMock(return_value=False)
                 mock_uow.subscriptions = MagicMock()
-                mock_uow.subscriptions.find_all_by_revenuecat_ids = AsyncMock(
-                    return_value=[]
-                )
                 found_user = MagicMock()
                 found_user.scalars.return_value.first.return_value = target_user
                 mock_uow.session.execute = AsyncMock(return_value=found_user)
@@ -484,7 +495,14 @@ class TestWebhookHandler:
                 )
 
         assert result == {"status": "success"}
+        mock_verified_access_sync[0].get_verified_snapshot.assert_awaited_once_with(
+            "firebase_uid_123"
+        )
         mock_verified_access_sync[1].assert_awaited_once()
+        # The target also appears as a transfer source here, so its empty
+        # customer is not taken as proof of "no purchases".
+        sync_kwargs = mock_verified_access_sync[1].await_args.kwargs
+        assert sync_kwargs["absence_is_authoritative"] is False
 
     async def test_webhook_purchase_redemption_syncs_redeemer_cache(
         self, mock_request, mock_verified_access_sync
@@ -587,6 +605,32 @@ class TestWebhookHandler:
         assert added_subscription.user_id == "user_123"
         assert added_subscription.product_id == "premium_monthly"
         assert added_subscription.status == "active"
+        # RevenueCat writers name their provider: the column has no ORM default.
+        assert added_subscription.provider == "revenuecat"
+        assert added_subscription.revenuecat_subscriber_id == "user_123"
+
+    async def test_revenuecat_rows_keep_an_id_when_the_event_has_none(self, mock_uow):
+        """revenuecat_subscriber_id is nullable for other providers; a RevenueCat
+        row still carries the Firebase uid RevenueCat knows the user by."""
+        user = MagicMock(id="user_123", firebase_uid="firebase-uid")
+        event = {"product_id": "premium_monthly", "store": "APP_STORE"}
+        mock_uow.subscriptions = MagicMock()
+        mock_uow.subscriptions.find_by_revenuecat_id = AsyncMock(return_value=None)
+        mock_uow.session.flush = AsyncMock()
+
+        with patch(
+            "src.api.routes.v1.webhook_subscription_lifecycle.credit_referral_on_purchase",
+            new_callable=AsyncMock,
+        ):
+            await handle_purchase(
+                mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
+            )
+        created = await get_or_create_subscription(mock_uow, user, event)
+
+        purchased = mock_uow.session.add.call_args_list[0].args[0]
+        for row in (purchased, created):
+            assert row.provider == "revenuecat"
+            assert row.revenuecat_subscriber_id == "firebase-uid"
 
     async def test_handle_renewal(self, mock_uow):
         """Test handling renewal event."""
@@ -663,25 +707,24 @@ class TestWebhookHandler:
         payload = publisher.publish.await_args.args[0]
         assert payload["data"]["lifecycle_type"] == "subscription_billing_issue"
 
-    async def test_handle_transfer_updates_known_subscription(self, mock_uow):
-        """Transfer revokes every source row and remaps source identities."""
-        subscriptions = [MagicMock(), MagicMock()]
-        event = {
-            "transferred_from": ["$RCAnonymousID:old"],
-            "transferred_to": ["firebase_uid_123", "$RCAnonymousID:new"],
-        }
+    async def test_legacy_row_lookups_are_scoped_to_the_event_user(self, mock_uow):
+        """A RevenueCat event never selects another user's or provider's row."""
         mock_uow.subscriptions = MagicMock()
-        mock_uow.subscriptions.find_all_by_revenuecat_ids = AsyncMock(
-            return_value=subscriptions
+        mock_uow.subscriptions.find_by_revenuecat_id = AsyncMock(
+            return_value=MagicMock()
         )
 
-        await handle_transfer(mock_uow, event)
+        await get_or_create_subscription(
+            mock_uow,
+            MagicMock(id="user-1"),
+            {"app_user_id": "firebase-uid", "product_id": "onemonth"},
+        )
+        await get_subscription_by_revenuecat_id(mock_uow, "firebase-uid", "user-1")
 
-        for subscription in subscriptions:
-            assert subscription.revenuecat_subscriber_id == "firebase_uid_123"
-            assert subscription.status == "expired"
-            assert subscription.grace_period_expires_at is None
-            assert subscription.updated_at is not None
+        assert mock_uow.subscriptions.find_by_revenuecat_id.await_args_list == [
+            call("firebase-uid", user_id="user-1", product_id="onemonth"),
+            call("firebase-uid", user_id="user-1", product_id=None),
+        ]
 
     async def test_handle_product_change(self, mock_uow):
         """Test handling product change event (e.g., monthly to yearly)."""
@@ -729,32 +772,6 @@ class TestWebhookHandler:
         assert subscription.status == "refunded"
         assert subscription.updated_at is not None
         revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
-
-    async def test_handle_refund_keeps_status_when_access_remains(self, mock_uow):
-        """A refund the provider has not ended access for keeps the subscription
-        as it is, but still revokes referral credit and notifies the affiliate."""
-        user = MagicMock(id="user_123")
-        event = {"app_user_id": "user_123", "transaction_id": "tx_1"}
-        publisher = MagicMock(publish=AsyncMock())
-
-        with (
-            patch(
-                "src.api.routes.v1.webhook_subscription_lifecycle.get_or_create_subscription",
-                new_callable=AsyncMock,
-            ) as subscription_mock,
-            patch(
-                "src.api.routes.v1.webhook_subscription_lifecycle.revoke_referral_on_refund",
-                new_callable=AsyncMock,
-            ) as revoke_mock,
-        ):
-            await handle_refund(
-                mock_uow, user, event, event_publisher=publisher, mark_refunded=False
-            )
-
-        subscription_mock.assert_not_awaited()
-        revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
-        payload = publisher.publish.await_args.args[0]
-        assert "subscription_refund" in str(payload)
 
     async def test_credit_referral_on_purchase_credits_wallet_for_real(self):
         """REAL money movement: pending conversion → converted + wallet credited
@@ -936,20 +953,38 @@ class TestWebhookHandler:
         assert subscription.product_id == "premium_yearly"
 
     async def test_webhook_refund_end_to_end_returns_success(
-        self, mock_request, mock_event_publisher
+        self, mock_request, mock_event_publisher, mock_verified_access_sync
     ):
-        """Full webhook path for REFUND: documents current 200/success semantics
-        and confirms referral revocation runs inside the same webhook flow.
+        """A refund arrives as CANCELLATION/CUSTOMER_SUPPORT. Its clawback runs
+        from the event even while the snapshot still shows the entitlement
+        (refunds do not always end the subscription).
         """
         mock_request.json.return_value = {
             "event": {
-                "type": "REFUND",
-                "app_user_id": "user_123",
+                "type": "CANCELLATION",
+                "cancel_reason": "CUSTOMER_SUPPORT",
+                "app_user_id": "firebase_uid_123",
                 "transaction_id": "tx_1",
                 "environment": "PRODUCTION",
             }
         }
-        mock_user = MagicMock(id="user_123")
+        now = datetime.now(UTC)
+        mock_verified_access_sync[
+            0
+        ].get_verified_snapshot.return_value = RevenueCatSnapshot(
+            subscriber={
+                "entitlements": {
+                    "standard": {
+                        "product_identifier": "annual",
+                        "expires_date": "2099-01-01T00:00:00Z",
+                    }
+                },
+                "subscriptions": {},
+            },
+            request_date=now,
+            app_user_id="firebase_uid_123",
+        )
+        mock_user = MagicMock(id="user_123", firebase_uid="firebase_uid_123")
         subscription = MagicMock()
 
         with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
@@ -986,62 +1021,10 @@ class TestWebhookHandler:
         assert result == {"status": "success"}
         assert subscription.status == "refunded"
         revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
-
-    async def test_webhook_refund_with_access_left_revokes_referral_only(
-        self, mock_request, mock_event_publisher, mock_verified_access_sync
-    ):
-        """REFUND while the provider still reports access (another product is
-        active): referral credit is revoked, the subscription keeps its status
-        and the access sync is not told it was a refund."""
-        mock_request.json.return_value = {
-            "event": {
-                "type": "REFUND",
-                "app_user_id": "user_123",
-                "transaction_id": "tx_1",
-                "environment": "PRODUCTION",
-            }
-        }
-        mock_user = MagicMock(id="user_123")
-
-        with patch("src.api.routes.v1.webhooks.os.getenv", return_value="test_secret"):
-            with (
-                patch(
-                    "src.api.routes.v1.webhooks._get_event_publisher",
-                    return_value=mock_event_publisher,
-                ),
-                patch(
-                    "src.api.routes.v1.webhooks.normalize_standard_access_facts",
-                    return_value={"status": "active"},
-                ),
-                patch("src.api.routes.v1.webhooks.AsyncUnitOfWork") as mock_uow_class,
-            ):
-                mock_uow = MagicMock()
-                mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
-                mock_uow.__aexit__ = AsyncMock(return_value=False)
-                mock_result = MagicMock()
-                mock_result.scalars.return_value.first.return_value = mock_user
-                mock_uow.session.execute = AsyncMock(return_value=mock_result)
-                mock_uow_class.return_value = mock_uow
-
-                with (
-                    patch(
-                        "src.api.routes.v1.webhook_subscription_lifecycle.get_or_create_subscription",
-                        new_callable=AsyncMock,
-                    ) as subscription_mock,
-                    patch(
-                        "src.api.routes.v1.webhook_subscription_lifecycle.revoke_referral_on_refund",
-                        new_callable=AsyncMock,
-                    ) as revoke_mock,
-                ):
-                    result = await revenuecat_webhook(
-                        mock_request, authorization="test_secret"
-                    )
-
-        assert result == {"status": "success"}
-        subscription_mock.assert_not_awaited()
-        revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
-        sync_access = mock_verified_access_sync[1]
-        assert sync_access.await_args.kwargs["refund_event"] is False
+        payload = mock_event_publisher.publish.await_args.args[0]
+        assert payload["data"]["lifecycle_type"] == "subscription_refund"
+        # Access itself still comes from the snapshot, labelled as a refund.
+        assert mock_verified_access_sync[1].await_args.kwargs["refund_event"] is True
 
     async def test_webhook_product_change_user_not_found_is_ignored(self, mock_request):
         """PRODUCT_CHANGE is in NON_RETRYABLE_USERLESS_EVENTS: ACK (not 404) when
@@ -1076,12 +1059,13 @@ class TestWebhookHandler:
         assert result == {"status": "ignored", "reason": "user_not_found"}
 
     async def test_webhook_refund_user_not_found_is_ignored(self, mock_request):
-        """REFUND is in NON_RETRYABLE_USERLESS_EVENTS: ACK (not 404) when no
-        local user matches.
+        """A refund (CANCELLATION) is in NON_RETRYABLE_USERLESS_EVENTS: ACK
+        (not 404) when no local user matches.
         """
         mock_request.json.return_value = {
             "event": {
-                "type": "REFUND",
+                "type": "CANCELLATION",
+                "cancel_reason": "CUSTOMER_SUPPORT",
                 "app_user_id": "$RCAnonymousID:missing",
                 "transaction_id": "tx_1",
             }

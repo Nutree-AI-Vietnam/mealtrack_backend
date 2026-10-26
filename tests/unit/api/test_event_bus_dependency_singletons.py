@@ -358,6 +358,21 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     assert scan_handler.meal_analyze_graph_enabled is True
     workflow = upload_handler.meal_analyze_workflow
     assert workflow is scan_handler.meal_analyze_workflow
+
+    # The entitlements refresh is wired to the RevenueCat refresher, which
+    # resolves the RevenueCat adapter when it runs, not at bus build time.
+    from src.app.handlers.command_handlers import RefreshMyEntitlementsCommandHandler
+    from src.infra.services.subscription_access_refresh_service import (
+        RevenueCatAccessRefreshService,
+    )
+
+    refresh_handler = bus.handlers[mod.RefreshMyEntitlementsCommand]
+    assert isinstance(refresh_handler, RefreshMyEntitlementsCommandHandler)
+    refresher = refresh_handler.access_refresher
+    assert isinstance(refresher, RevenueCatAccessRefreshService)
+    adapter = object()
+    monkeypatch.setattr(deps, "get_subscription_service", lambda: adapter)
+    assert refresher._subscription_service_factory() is adapter
     assert workflow._fatsecret_validation_enabled is True
     assert workflow._food_reference_validation_service is not None
     assert workflow._graph_version == "test-v2"

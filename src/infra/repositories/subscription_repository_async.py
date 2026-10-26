@@ -2,13 +2,14 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.domain.model.subscription import Subscription as DomainSubscription
 from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
+
+REVENUECAT_PROVIDER = "revenuecat"
 
 
 class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
@@ -62,28 +63,43 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
         return result.scalars().first()
 
     async def find_by_revenuecat_id(
-        self, revenuecat_subscriber_id: str
+        self,
+        revenuecat_subscriber_id: str | None,
+        *,
+        user_id: str | None = None,
+        product_id: str | None = None,
     ) -> Subscription | None:
-        """Find a subscription by RevenueCat subscriber ID."""
+        """Find the newest RevenueCat-provided row for a RevenueCat subscriber ID.
+
+        Rows written by another provider (for example MoMo) leave
+        ``revenuecat_subscriber_id`` NULL or may share the Firebase uid in it;
+        RevenueCat events must never select them. ``user_id`` scopes the match
+        to one owner. A missing id matches nothing (``== None`` would compile
+        to ``IS NULL``).
+
+        ``product_id`` (the event's product) prefers that product's row, so
+        an event for a product the user moved away from (an EXPIRATION for
+        the old monthly plan after an upgrade to annual) never lands on the
+        newer product's row. Without a row for it, the newest row is used.
+        """
+        if not revenuecat_subscriber_id:
+            return None
+        statement = select(Subscription).where(
+            Subscription.revenuecat_subscriber_id == revenuecat_subscriber_id,
+            Subscription.provider == REVENUECAT_PROVIDER,
+        )
+        if user_id is not None:
+            statement = statement.where(Subscription.user_id == user_id)
+        if product_id:
+            statement = statement.order_by(
+                case((Subscription.product_id == product_id, 0), else_=1)
+            )
         result = await self.session.execute(
-            select(Subscription).where(
-                Subscription.revenuecat_subscriber_id == revenuecat_subscriber_id
+            statement.order_by(
+                Subscription.purchased_at.desc(), Subscription.created_at.desc()
             )
         )
         return result.scalars().first()
-
-    async def find_all_by_revenuecat_ids(
-        self, revenuecat_subscriber_ids: list[str]
-    ) -> list[DomainSubscription]:
-        """Find all rows linked to source aliases before transferring access."""
-        if not revenuecat_subscriber_ids:
-            return []
-        result = await self.session.execute(
-            select(Subscription)
-            .where(Subscription.revenuecat_subscriber_id.in_(revenuecat_subscriber_ids))
-            .with_for_update()
-        )
-        return list(result.scalars().all())  # type: ignore[return-value]
 
     async def find_expiring_soon(
         self, days_until_expiry: int = 7

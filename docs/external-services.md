@@ -18,7 +18,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Firebase Auth | **Required** | Fail fast (401) |
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
-| RevenueCat | **Payment facts** | Strict webhook/reconciliation sync updates PostgreSQL; the database policy owns runtime access. Provider failures preserve the last verified state and retry |
+| RevenueCat | **Payment facts** | Webhook/reconciliation sync updates PostgreSQL; the database policy owns runtime access. A provider failure never blocks webhook side effects: the user's rows are left unresolved (entitlements answer 503) and reported for repair |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
@@ -69,7 +69,7 @@ durable.
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
-| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; normalized writes in `src/infra/services/subscription_access_sync_service.py`; webhook entry in `src/api/routes/v1/webhooks.py` |
+| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; normalized writes in `src/infra/services/subscription_access_sync_service.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_access_sync.py`, `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
@@ -211,14 +211,64 @@ optional caches.
 
 ### RevenueCat and web redemption
 
+- RevenueCat is the purchase rail for the App Store and Google Play: the app
+  buys and restores through the RevenueCat SDK logged in as the Firebase uid,
+  and renewals, billing issues, refunds and expirations reach the backend only
+  through RevenueCat webhooks and snapshots. The backend has no direct App
+  Store or Google Play verification (no receipt or purchase-token endpoint, no
+  App Store Server Notifications or Play RTDN); dropping RevenueCat would need
+  that whole store lifecycle stack first.
 - RevenueCat verifies purchase facts. Runtime access is evaluated from verified
   `subscriptions` rows; `GET /v1/me/entitlements` never calls RevenueCat.
-- A failed or malformed provider fetch is retryable and must not erase a
-  previously verified row. Use the guarded reconciliation command described in
-  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads.
-- Webhooks use the current subscriber snapshot to update local rows; signature
-  verification is constant-time. Web redemption retains its existing identity
-  binding and idempotency checks.
+  `POST /v1/me/entitlements/refresh` is the per-user self-heal: it reads the
+  caller's RevenueCat customer and applies it like a webhook would (contract
+  and rate limit in `docs/api-endpoints.md`).
+- `subscriptions.provider` names the row's owner; RevenueCat code reads and
+  writes only `provider='revenuecat'` rows (rules for other providers below).
+- `SUBSCRIPTION_ENFORCEMENT_ENABLED` (with `SUBSCRIPTION_ACCESS_ENABLED`) makes
+  the paid AI routes answer 402 `SUBSCRIPTION_REQUIRED`; the route list is in
+  `docs/api-endpoints.md`.
+- A failed or malformed provider fetch must not erase a previously verified
+  row. Use the guarded reconciliation command described in
+  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads,
+  and schedule its `--repair` mode (the runbook explains how; no job is
+  defined in `render.yaml`).
+- Webhooks (signature verification is constant-time):
+  - Every event type whose user resolves is re-read from RevenueCat
+    (`GET /v1/subscribers/{firebase_uid}`, only when the event names that
+    uid) and applied to `provider='revenuecat'` rows; only `TEST`,
+    `EXPERIMENT_ENROLLMENT`, `INVOICE_ISSUANCE` and
+    `VIRTUAL_CURRENCY_TRANSACTION` are skipped. New event types sync by
+    default.
+  - The legacy handlers (rows, referral credit and clawback, lifecycle and
+    affiliate events) always run, whatever `SUBSCRIPTION_ACCESS_ENABLED` is.
+    If the customer cannot be read or applied, the webhook still answers 200;
+    the user's RevenueCat rows get `provider_sync_required_at` (RevenueCat's
+    event time), which the access policy treats as unresolved, and the failure
+    is logged and counted (`subscription_access.snapshot_unavailable`, by
+    `failure_kind`). It also goes to Sentry, except a RevenueCat outage or
+    rate limit (`transport`, `http_429`, `http_5xx`), which would send one
+    event per webhook; the counter carries that alert (runbook, Monitoring).
+    Only a snapshot taken at or after that time clears it (next event,
+    refresh or reconciliation).
+  - Writers for one user serialise on `SELECT ... FOR UPDATE` of the user row;
+    an older snapshot never overwrites a newer one (`provider_snapshot_at`).
+  - RevenueCat has no `REFUND` event: a refund is a `CANCELLATION` with
+    `cancel_reason=CUSTOMER_SUPPORT` or a negative price. The refund side
+    effects run from the event; access follows the snapshot (a refund does not
+    always end the subscription).
+  - `TRANSFER` re-reads every local source and target user from its own
+    customer; nothing is re-pointed or expired blindly.
+  - A deleted account (`users.is_active` false, tombstoned uid) is never
+    synced. Its kept RevenueCat rows still resolve events for the old uid (a
+    store subscription outlives the account), so the legacy handlers run, but
+    nothing is read, marked or reported (`webhook.revenuecat.processed`
+    `result=account_deleted`); a `TRANSFER` party that is deleted is skipped.
+  - `GET /v1/subscribers` is "get or create": an unseen id answers 200 with an
+    empty customer, which is treated as "no purchases". It never expires a
+    row that could still grant access (except for a transfer source).
+- Web redemption retains its existing identity binding and idempotency
+  checks; it only matches and updates `provider='revenuecat'` rows.
 - Canonical handoff (`/v1/web-funnel/*`):
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).
@@ -240,7 +290,63 @@ optional caches.
     webhook reconcile does not enqueue `claim_email`, and claim routes/dispatch
     stay off).
 - Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
-- Premium feature gates are planned, not enforced on routes.
+- Paid AI routes are enforced on the server only while
+  `SUBSCRIPTION_ENFORCEMENT_ENABLED` and `SUBSCRIPTION_ACCESS_ENABLED` are both
+  on (default off); otherwise the mobile app's gates are the only ones.
+
+### Subscription providers (`subscriptions.provider`)
+
+The access policy evaluates every row of a user together, whatever its
+provider: the grant with the latest deadline wins (a lifetime grant beats
+any), and a row it cannot verify makes the decision "unresolved" only when
+nothing else grants. Each row has exactly one owner:
+
+| `provider` | Written by | Identity |
+|---|---|---|
+| `revenuecat` | RevenueCat snapshots only: webhooks, `POST /v1/me/entitlements/refresh`, the reconcile script, web-funnel finalize | `revenuecat_subscriber_id` = Firebase uid |
+| `momo` | The MoMo web checkout and its IPN handler (separate change) | `revenuecat_subscriber_id` NULL |
+
+A writer for any provider other than RevenueCat must:
+
+- set `provider` explicitly (`'momo'` for MoMo; an ORM insert without one
+  raises), leave `revenuecat_subscriber_id` NULL, and use `platform='web'`;
+- set `provider_snapshot_at` to when the provider confirmed the payment (the
+  verified IPN), or the policy treats a granting row as unverified;
+- set `expires_at` to the end of the paid period (a fixed-term pass, so
+  `will_renew` reads `false`), with `status='active'`, and move the row to
+  `expired` or `refunded` itself; leave `provider_sync_required_at` NULL;
+- write in one transaction under `lock_subscription_owner` (`SELECT ... FOR
+  UPDATE` on the user row), like the RevenueCat writers;
+- run the post-purchase side effects itself. The access row only grants
+  access; everything else a purchase sets off runs today only from the
+  RevenueCat webhook handlers (`src/api/routes/v1/webhook_subscription_lifecycle.py`):
+  the referral credit on a first purchase (`credit_referral_on_purchase`) and
+  the clawback on a refund (`revoke_referral_on_refund`), the
+  `subscription_*` lifecycle events published to the integration queue
+  (affiliate commission and lifecycle messaging consume them), and the
+  purge of stale trial-expiry pushes on a renewal. A MoMo payment, renewal
+  or refund that only writes its row credits no referrer and tells no
+  consumer.
+
+RevenueCat handlers never read, expire, re-point or take over such rows:
+webhooks, transfers, refresh, reconciliation and web finalize all filter on
+`provider='revenuecat'`, and an empty RevenueCat customer never expires a
+row from another provider.
+
+### Store policy (MoMo channel)
+
+MoMo is a **web checkout channel**, not an in-app payment method. In the
+Vietnam storefronts the iOS and Android apps keep selling subscriptions
+through App Store and Google Play billing (via RevenueCat) and must not show
+MoMo buttons, links, prices or other calls to action that point to buying
+elsewhere (App Store Review Guidelines 3.1.1 and 3.1.3; Google Play Payments
+policy). A buyer pays with MoMo on the web while signed in with the same
+Firebase account, and the app unlocks access by signing in with that account
+(Apple guideline 3.1.3(b), multiplatform services). In-app wording stays
+neutral ("Already subscribed? Sign in"), and the same subscription must stay
+on sale as in-app purchase in both apps. Have legal confirm this before the
+MoMo channel launches, and re-check Google's alternative-billing programs
+for Vietnam before changing anything on Android.
 
 ### Sentry ownership
 

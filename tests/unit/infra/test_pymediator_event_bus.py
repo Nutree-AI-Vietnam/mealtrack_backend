@@ -194,3 +194,73 @@ async def test_unexpected_exception_is_logged_as_error(caplog):
         and "Error handling _CrashingQuery" in record.message
         for record in caplog.records
     )
+
+
+@dataclass
+class _UnresolvedAccessQuery(Query):
+    user_id: str
+
+
+class _UnresolvedAccessHandler(EventHandler[_UnresolvedAccessQuery, None]):
+    async def handle(self, event: _UnresolvedAccessQuery) -> None:
+        from src.domain.model.subscription_access import (
+            SubscriptionAccessUnavailable,
+        )
+
+        raise SubscriptionAccessUnavailable("Subscription state is unverified")
+
+
+@dataclass
+class _UnreadableCustomerQuery(Query):
+    user_id: str
+
+
+class _UnreadableCustomerHandler(EventHandler[_UnreadableCustomerQuery, None]):
+    async def handle(self, event: _UnreadableCustomerQuery) -> None:
+        from src.domain.ports.subscription_service_port import (
+            RevenueCatSnapshotUnavailable,
+        )
+
+        raise RevenueCatSnapshotUnavailable("RevenueCat timed out", reason="transport")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "handler", "error_name"),
+    [
+        (
+            _UnresolvedAccessQuery("u1"),
+            _UnresolvedAccessHandler(),
+            "SubscriptionAccessUnavailable",
+        ),
+        (
+            _UnreadableCustomerQuery("u1"),
+            _UnreadableCustomerHandler(),
+            "RevenueCatSnapshotUnavailable",
+        ),
+    ],
+)
+async def test_subscription_access_outcomes_are_not_logged_as_error(
+    caplog, query, handler, error_name
+):
+    """An unreconciled user or a RevenueCat outage is an expected 503.
+
+    Logging it at ERROR made Sentry's LoggingIntegration open an issue for
+    every entitlements read of an unreconciled user.
+    """
+    bus = PyMediatorEventBus()
+    bus.register_handler(type(query), handler)
+
+    with caplog.at_level(
+        logging.DEBUG,
+        logger="src.infra.event_bus.pymediator_event_bus",
+    ):
+        with pytest.raises(Exception) as raised:
+            await bus.send(query)
+
+    assert type(raised.value).__name__ == error_name
+    assert not [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.ERROR and "Error handling" in record.message
+    ]

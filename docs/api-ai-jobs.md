@@ -54,6 +54,7 @@ Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text", "input": {…
 | `202` | Job created |
 | `200` | This id was already queued with the same input; the existing job is returned |
 | `409 AI_JOB_CONFLICT` | This id belongs to a different type, input or user |
+| `402 SUBSCRIPTION_REQUIRED` | No subscription access, only while server enforcement is on (`docs/api-endpoints.md`, "Paid routes enforced on the server"); nothing is queued |
 
 - The client makes the id, so resending the request never creates a second
   job.
@@ -146,8 +147,10 @@ opens the job's failure view.
 
 - `POST /v1/ai-jobs/{id}/retry` runs a failed job once more, with no new
   automatic retries. It works only when `error.retryable` is true. Anything
-  else is `409 AI_JOB_NOT_RETRYABLE`, including cancelled jobs. A chat turn
-  can also be retried by resending the same message (below).
+  else is `409 AI_JOB_NOT_RETRYABLE`, including cancelled jobs. Like
+  queueing, it answers `402 SUBSCRIPTION_REQUIRED` without subscription
+  access while server enforcement is on. A chat turn can also be retried by
+  resending the same message (below).
 - `POST /v1/ai-jobs/{id}/cancel`:
   - a `queued` job is cancelled at once;
   - a running `parse_text` or `chat` attempt stops within a heartbeat

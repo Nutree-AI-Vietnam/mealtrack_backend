@@ -18,6 +18,7 @@ from src.api.base_dependencies import (
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.dependencies.subscription_access import require_active_subscription
 from src.api.exceptions import ValidationException, handle_exception
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
@@ -130,6 +131,7 @@ async def _analyze_uploaded_image(
     "/image/analyze",
     status_code=status.HTTP_200_OK,
     response_model=DetailedMealResponse,
+    dependencies=[Depends(require_active_subscription)],
 )
 @limiter.limit("10/minute")
 async def analyze_meal_image_immediate(

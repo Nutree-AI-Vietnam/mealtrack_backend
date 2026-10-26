@@ -56,6 +56,7 @@ from src.app.commands.saved_suggestion import (
     DeleteSavedSuggestionCommand,
     SaveSuggestionCommand,
 )
+from src.app.commands.subscription_access import RefreshMyEntitlementsCommand
 from src.app.commands.user import (
     CompleteOnboardingCommand,
     DeleteUserCommand,
@@ -97,6 +98,7 @@ from src.app.handlers.command_handlers import (
     LogMovementCommandHandler,
     ParseMealTextHandler,
     RecognizeIngredientCommandHandler,
+    RefreshMyEntitlementsCommandHandler,
     RepeatMealCommandHandler,
     SaveBodyFatVisualProfileCommandHandler,
     SaveMealSuggestionCommandHandler,
@@ -150,6 +152,7 @@ from src.app.handlers.command_handlers.unmark_cheat_day_command_handler import (
 
 # Import all query handlers from module
 from src.app.handlers.query_handlers import (
+    CheckSubscriptionAccessQueryHandler,
     GetBodyFatVisualProfileQueryHandler,
     GetBulkActivitiesQueryHandler,
     GetDailyActivitiesQueryHandler,
@@ -254,7 +257,10 @@ from src.app.queries.progress import (
     GetProgressSummaryQuery,
 )
 from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
-from src.app.queries.subscription_access import GetMyEntitlementsQuery
+from src.app.queries.subscription_access import (
+    CheckSubscriptionAccessQuery,
+    GetMyEntitlementsQuery,
+)
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
     GetBodyFatVisualProfileQuery,
@@ -281,6 +287,9 @@ from src.app.services.meal_recommendation_history_projector import (
     MealRecommendationHistoryProjector,
 )
 from src.bootstrap.integration_services import get_integration_event_publisher
+from src.bootstrap.subscription_access_refresh import (
+    build_subscription_access_refresher,
+)
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
 )
@@ -311,6 +320,13 @@ _integrity_context_memo: tuple[float, dict[str, int | str]] | None = None
 # Food names repeat across searches and users; both buses share one cache of
 # their translations, rebuilt only if the translator itself is replaced.
 _food_search_translation: tuple[object, CachedTextTranslation] | None = None
+
+
+def _subscription_service():
+    """RevenueCat adapter for the access refresh, resolved per call."""
+    from src.api.base_dependencies import get_subscription_service
+
+    return get_subscription_service()
 
 
 def _build_provider_budget(cache_service):
@@ -1107,6 +1123,16 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         GetMyEntitlementsQuery,
         GetMyEntitlementsQueryHandler(uow_factory=AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        CheckSubscriptionAccessQuery,
+        CheckSubscriptionAccessQueryHandler(uow_factory=AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        RefreshMyEntitlementsCommand,
+        RefreshMyEntitlementsCommandHandler(
+            access_refresher=build_subscription_access_refresher(_subscription_service)
+        ),
     )
     event_bus.register_handler(
         GetUserOnboardingStatusQuery, GetUserOnboardingStatusQueryHandler()

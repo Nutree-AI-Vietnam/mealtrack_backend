@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -80,9 +81,47 @@ async def find_user_for_revenuecat_event(uow, event: dict) -> User | None:
     return None
 
 
-async def get_subscription_by_revenuecat_id(uow, revenuecat_id: str):
-    """Get subscription by RevenueCat subscriber ID."""
-    return await uow.subscriptions.find_by_revenuecat_id(revenuecat_id)
+@dataclass(frozen=True)
+class TransferParty:
+    """A local user named on either side of a RevenueCat TRANSFER."""
+
+    user: User
+    # Named only in transferred_from: RevenueCat moved purchases away from it.
+    is_source_only: bool
+
+    @property
+    def user_id(self) -> str:
+        return str(self.user.id)
+
+
+async def find_transfer_parties(uow, event: dict) -> list[TransferParty]:
+    """Resolve every local user behind a TRANSFER's source and target ids."""
+    found: dict[str, tuple[User, set[str]]] = {}
+    for side in ("transferred_from", "transferred_to"):
+        for identity in event.get(side) or []:
+            if not isinstance(identity, str) or not identity:
+                continue
+            user = await find_user_for_revenuecat_event(uow, {"app_user_id": identity})
+            if user is None:
+                continue
+            found.setdefault(str(user.id), (user, set()))[1].add(side)
+    return [
+        TransferParty(user, sides == {"transferred_from"})
+        for user, sides in found.values()
+    ]
+
+
+async def get_subscription_by_revenuecat_id(
+    uow, revenuecat_id: str, user_id: str | None = None, product_id: str | None = None
+):
+    """Get the user's RevenueCat-provided row for a RevenueCat subscriber ID.
+
+    With ``product_id``, that product's row is preferred over a newer row of
+    another product the user also holds.
+    """
+    return await uow.subscriptions.find_by_revenuecat_id(
+        revenuecat_id, user_id=user_id, product_id=product_id
+    )
 
 
 def parse_platform(store: str) -> str:
@@ -110,29 +149,3 @@ def parse_timestamp(ms: int | None) -> datetime | None:
     except Exception as e:
         logger.error(f"Error parsing timestamp {ms}: {e}")
         return None
-
-
-def parse_revenuecat_expiry(value: object) -> datetime | None:
-    """Normalize the existing subscription-service expiry response to a datetime."""
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            logger.warning("RevenueCat transfer returned an invalid expiry timestamp")
-    return None
-
-
-def preferred_transfer_target(transferred_to: list[str]) -> str | None:
-    """Prefer a custom app user ID over RevenueCat anonymous IDs."""
-    for candidate in transferred_to:
-        if (
-            isinstance(candidate, str)
-            and candidate
-            and not candidate.startswith("$RCAnonymousID:")
-        ):
-            return candidate
-    return next(
-        (item for item in transferred_to if isinstance(item, str) and item), None
-    )

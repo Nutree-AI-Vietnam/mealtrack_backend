@@ -1,14 +1,19 @@
 """Possession and safe-projection tests for the dark web-funnel lead API."""
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
+
+import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 from starlette.responses import Response
+from tests.fixtures.revenuecat_samples import patched_revenuecat_http
 
 from src.api.routes.v1 import web_funnel
 from src.app.services.web_funnel_claim_common import hash_secret
-from src.domain.ports.subscription_service_port import RevenueCatSnapshot
+from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
     WebFunnelRedemption,
@@ -253,11 +258,27 @@ def _configure_redemption(monkeypatch):
     monkeypatch.setattr(web_funnel.settings, "REVENUECAT_SECRET_API_KEY", "secret")
 
 
+async def _snapshot_through_adapter(payload: dict, app_user_id: str):
+    """Parse a v1 GET /subscribers body with the real RevenueCat adapter."""
+    with patched_revenuecat_http(payload):
+        return await RevenueCatAdapter(api_key="test-key").get_verified_snapshot(
+            app_user_id
+        )
+
+
 class VerifiedSubscriberService:
+    def _response(self, app_user_id="$RCAnonymousID:customer"):
+        # RevenueCat v1 puts the request time at the response root, next to
+        # "subscriber" -- never inside it.
+        return {
+            "request_date": "2026-10-22T00:00:00Z",
+            "request_date_ms": 1792627200000,
+            "subscriber": self._subscriber(app_user_id),
+        }
+
     def _subscriber(self, app_user_id="$RCAnonymousID:customer"):
         return {
             "original_app_user_id": app_user_id,
-            "request_date_ms": 1792700000000,
             "entitlements": {
                 "standard": {
                     "product_identifier": "web_monthly",
@@ -274,12 +295,8 @@ class VerifiedSubscriberService:
             },
         }
 
-    async def get_verified_snapshot(self, _app_user_id):
-        from datetime import UTC, datetime
-
-        return RevenueCatSnapshot(
-            self._subscriber(), datetime(2026, 10, 22, tzinfo=UTC)
-        )
+    async def get_verified_snapshot(self, app_user_id):
+        return await _snapshot_through_adapter(self._response(), app_user_id)
 
     async def get_subscriber_info(self, _app_user_id):
         return {"subscriber": self._subscriber()}
@@ -348,6 +365,8 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
     )
 
     assert response["version"] == "redemption_result_v1"
+    # The snapshot time comes from the RevenueCat response root.
+    assert captured["provider_snapshot_at"] == datetime(2026, 10, 22, tzinfo=UTC)
     assert {
         key: captured[key]
         for key in (
@@ -386,11 +405,10 @@ async def test_redemption_finalization_verifies_unknown_canonical_alias_from_che
     captured = {}
 
     class AliasedSubscriberService:
-        async def get_verified_snapshot(self, _app_user_id):
-            from datetime import UTC, datetime
-
-            subscriber = VerifiedSubscriberService()._subscriber(canonical_id)
-            return RevenueCatSnapshot(subscriber, datetime(2026, 10, 22, tzinfo=UTC))
+        async def get_verified_snapshot(self, app_user_id):
+            return await _snapshot_through_adapter(
+                VerifiedSubscriberService()._response(canonical_id), app_user_id
+            )
 
         async def get_subscriber_info(self, app_user_id):
             provider_lookups.append(app_user_id)
@@ -445,14 +463,10 @@ async def test_redemption_finalization_rejects_unrelated_canonical_customer(
     captured = {}
 
     class UnrelatedSubscriberService:
-        async def get_verified_snapshot(self, _app_user_id):
-            from datetime import UTC, datetime
-
-            return RevenueCatSnapshot(
-                VerifiedSubscriberService()._subscriber(
-                    "$RCAnonymousID:mobile-original"
-                ),
-                datetime(2026, 10, 22, tzinfo=UTC),
+        async def get_verified_snapshot(self, app_user_id):
+            return await _snapshot_through_adapter(
+                VerifiedSubscriberService()._response("$RCAnonymousID:mobile-original"),
+                app_user_id,
             )
 
         async def get_subscriber_info(self, _app_user_id):
@@ -930,3 +944,147 @@ async def test_redemption_finalization_fills_email_from_admin_for_custom_jwt(
     assert response["access_status"] == "active"
     assert captured["email"] == "buyer@example.com"
     assert captured["auth_provider"] == "custom"
+
+
+def _finalize_token():
+    return {
+        "uid": "firebase-uid",
+        "email": "buyer@example.com",
+        "email_verified": True,
+        "iat": int(web_funnel.utcnow().timestamp()),
+        "firebase": {"sign_in_provider": "google.com"},
+    }
+
+
+async def _finalize(session):
+    return await web_funnel.finalize_revenuecat_redemption(
+        _request(),
+        web_funnel.WebFunnelRedemptionFinalizeRequest(
+            confirm_apply_purchase=True,
+            redemption_link_hash="a" * 64,
+        ),
+        Response(),
+        "x" * 16,
+        _finalize_token(),
+        session,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "reason", "answer"),
+    [
+        # Transient: the 404 app builds in the stores retry with a backoff.
+        (429, "http_429", 404),
+        (503, "http_5xx", 404),
+        # Will not clear on a retry.
+        (401, "http_4xx", 503),
+    ],
+)
+async def test_redemption_finalization_reports_unreadable_revenuecat(
+    monkeypatch, status_code, reason, answer
+):
+    _configure_redemption(monkeypatch)
+
+    class UnreadableService:
+        async def get_verified_snapshot(self, app_user_id):
+            with patched_revenuecat_http(None, status_code=status_code):
+                return await RevenueCatAdapter(
+                    api_key="test-key"
+                ).get_verified_snapshot(app_user_id)
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", UnreadableService
+    )
+    recorded = []
+    monkeypatch.setattr(
+        web_funnel,
+        "record_snapshot_unavailable",
+        lambda error, **kwargs: recorded.append((error.reason, kwargs)),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _finalize(FinalizationSession())
+
+    assert error.value.status_code == answer
+    assert recorded == [(reason, {"source": "web_funnel"})]
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_retries_a_revenuecat_timeout_as_not_found(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+
+    class TimingOutService:
+        async def get_verified_snapshot(self, app_user_id):
+            with patch("httpx.AsyncClient") as client:
+                client.return_value.__aenter__.return_value.get = AsyncMock(
+                    side_effect=httpx.ReadTimeout("timed out")
+                )
+                return await RevenueCatAdapter(
+                    api_key="test-key"
+                ).get_verified_snapshot(app_user_id)
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", TimingOutService
+    )
+    recorded = []
+    monkeypatch.setattr(
+        web_funnel,
+        "record_snapshot_unavailable",
+        lambda error, **kwargs: recorded.append(error.reason),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _finalize(FinalizationSession())
+
+    assert error.value.status_code == 404
+    assert recorded == ["transport"]
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_reports_a_malformed_customer_as_unavailable(
+    monkeypatch,
+):
+    """A customer the access facts cannot be read from will not clear on a
+    retry: 503, recorded for paging."""
+    _configure_redemption(monkeypatch)
+
+    class MalformedService(VerifiedSubscriberService):
+        def _subscriber(self, app_user_id="$RCAnonymousID:customer"):
+            subscriber = super()._subscriber(app_user_id)
+            del subscriber["subscriptions"]["web_monthly"]["is_sandbox"]
+            return subscriber
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", MalformedService
+    )
+    recorded = []
+    monkeypatch.setattr(
+        web_funnel,
+        "record_snapshot_unavailable",
+        lambda error, **kwargs: recorded.append(error.reason),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _finalize(FinalizationSession())
+
+    assert error.value.status_code == 503
+    assert recorded == ["malformed"]
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_does_not_hide_bugs_as_unavailable(monkeypatch):
+    _configure_redemption(monkeypatch)
+
+    class BrokenService:
+        async def get_verified_snapshot(self, _app_user_id):
+            raise KeyError("bug")
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", BrokenService
+    )
+
+    with pytest.raises(KeyError):
+        await _finalize(FinalizationSession())

@@ -19,6 +19,7 @@ from src.infra.database.models.web_funnel_claim import (
     WebFunnelRedemption,
 )
 from src.infra.database.models.weekly.weekly_macro_budget import WeeklyMacroBudgetORM
+from src.infra.services.subscription_access_sync_service import clear_sync_markers
 
 
 def utcnow():
@@ -67,6 +68,19 @@ def _auth_provider(firebase_provider: str | None) -> AuthProvider:
     if firebase_provider == "custom":
         return AuthProvider.EMAIL_LINK
     return AuthProvider.GOOGLE
+
+
+def _stored_facts_are_newer(subscription: Subscription, snapshot_at) -> bool:
+    stored_at = subscription.provider_snapshot_at
+    if stored_at is None or snapshot_at is None:
+        return False
+    return _aware(stored_at) > _aware(snapshot_at)
+
+
+def _aware(value):
+    from datetime import UTC
+
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def _week_start(today):
@@ -267,6 +281,8 @@ async def finalize_redemption(
             Subscription.user_id == user.id,
             Subscription.revenuecat_subscriber_id == uid,
             Subscription.product_id == binding.product_id,
+            # A row another provider owns is never taken over by RevenueCat.
+            Subscription.provider == "revenuecat",
         )
         .with_for_update()
     )
@@ -293,6 +309,10 @@ async def finalize_redemption(
                 is_sandbox=(subscription_facts or {}).get("is_sandbox", False),
             )
         )
+    elif _stored_facts_are_newer(subscription, provider_snapshot_at):
+        # RevenueCat was read before this transaction; a webhook or refresh
+        # committed a newer snapshot for this row in between. Keep it.
+        pass
     else:
         subscription.status = (subscription_facts or {}).get("status", "active")
         subscription.platform = (subscription_facts or {}).get(
@@ -302,17 +322,19 @@ async def finalize_redemption(
             "purchased_at", subscription.purchased_at
         )
         subscription.expires_at = expires_at
-        subscription.provider = "revenuecat"
         subscription.provider_snapshot_at = provider_snapshot_at
         subscription.grace_period_expires_at = (subscription_facts or {}).get(
             "grace_period_expires_at"
         )
         subscription.period_type = (subscription_facts or {}).get("period_type")
         subscription.cancelled_at = (subscription_facts or {}).get("cancelled_at")
-        subscription.store_transaction_id = (subscription_facts or {}).get(
-            "store_transaction_id"
-        )
+        store_transaction_id = (subscription_facts or {}).get("store_transaction_id")
+        if store_transaction_id is not None:
+            subscription.store_transaction_id = store_transaction_id
         subscription.is_sandbox = (subscription_facts or {}).get("is_sandbox", False)
+        # A webhook whose RevenueCat read failed may have marked this row
+        # unresolved; the snapshot just applied answers that marker.
+        clear_sync_markers([subscription], provider_snapshot_at)
     binding.provider_app_user_ids = sorted(
         aliases | verified_aliases | {original_app_user_id, uid}
     )
