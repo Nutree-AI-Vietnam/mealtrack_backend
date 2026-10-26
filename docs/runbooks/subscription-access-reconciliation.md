@@ -269,7 +269,9 @@ WHERE s.provider = 'revenuecat'
       (logged in as the Firebase uid), calls `POST /v1/me/entitlements/refresh`
       after a purchase or restore, and never treats a `503` as a denial
       (`ENTITLEMENTS_DISABLED` → RevenueCat decision; `ENTITLEMENTS_UNAVAILABLE`
-      → retry, last known decision, or RevenueCat).
+      → retry, last known decision, or RevenueCat). A `404` or any other
+      non-`200` without a known `error_code` reads like
+      `ENTITLEMENTS_UNAVAILABLE`; the image rollback below relies on it.
 
 ### 9. Enforcement, later and separately
 
@@ -313,9 +315,15 @@ An image before this change has no `/v1/me/entitlements` routes: it answers
 `404 {"detail": "Not Found"}`, never `503 ENTITLEMENTS_DISABLED`. Once the
 step 8 mobile build is live, such a rollback relies on the app treating a
 `404` (or any non-`200` without a known `error_code`) like
-`ENTITLEMENTS_DISABLED` (`docs/api-endpoints.md`). Confirm the released
-build does; otherwise roll back only to an image that still serves the
-routes and use the flag alone.
+`ENTITLEMENTS_UNAVAILABLE`, never as a denial (`docs/api-endpoints.md`): a
+purchase it just made, else its last backend decision for that user while
+that still grants (unexpired, read at most 72 hours ago), else RevenueCat,
+else access unknown. No `200` decision reaches the app once step 1 below
+takes effect, so a grant only the database holds (a `momo` web pass) lasts
+at most 72 hours from then; after that RevenueCat, which cannot see it,
+decides, as under the flag alone. Confirm the released build behaves this
+way (the app's `docs/contracts.md`, "Subscription access"); otherwise roll
+back only to an image that still serves the routes and use the flag alone.
 
 1. Turn `SUBSCRIPTION_ACCESS_ENABLED` (and enforcement) off first and note
    the UTC time.

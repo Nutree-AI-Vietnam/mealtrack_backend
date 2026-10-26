@@ -104,12 +104,17 @@ The body is FastAPI's `HTTPException` envelope:
 {"detail": {"error_code": "ENTITLEMENTS_UNAVAILABLE", "message": "Subscription access cannot be decided right now."}}
 ```
 
-Any other answer is not a denial either:
+Any other answer is not a denial either, and only `503
+ENTITLEMENTS_DISABLED` is the kill switch:
 
 - `404` (an image older than these routes, e.g. after an image rollback:
   `{"detail": "Not Found"}`) or any other non-`200` without one of the
-  `error_code`s above (a gateway `502` or `504`, a proxy `500`): use the
-  RevenueCat client decision, as for `ENTITLEMENTS_DISABLED`.
+  `error_code`s above (a gateway `502` or `504`, a proxy `500`): as for
+  `ENTITLEMENTS_UNAVAILABLE`, not as for `ENTITLEMENTS_DISABLED`. The last
+  known decision comes before RevenueCat, so a grant only the database
+  holds (a `momo` web pass, which RevenueCat cannot see) outlives an outage
+  or an image rollback while the app's stored decision lasts (the
+  rollback step in `docs/runbooks/subscription-access-reconciliation.md`).
 - A timeout or no connection: as for `ENTITLEMENTS_UNAVAILABLE`.
 - `401`: the app's auth handling refreshes the Firebase token and retries.
 
