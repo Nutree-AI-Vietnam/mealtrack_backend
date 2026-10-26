@@ -436,6 +436,88 @@ async def test_sync_marker_is_cleared_only_by_a_snapshot_taken_after_it():
     assert row.provider_snapshot_at == now
 
 
+def _several_revenuecat_rows(now):
+    return [
+        _granting_row(now, id="row-annual"),
+        # Granting under another product: the snapshot's apply revokes it.
+        _granting_row(now, id="row-monthly", product_id="onemonth"),
+        _revenuecat_row(
+            id="row-weekly",
+            product_id="oneweek",
+            status="expired",
+            expires_at=now - timedelta(days=200),
+            provider_snapshot_at=now - timedelta(days=200),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_same_read_applied_twice_is_unchanged_for_several_rows():
+    """Two deliveries can apply one RevenueCat read (they queue on the lock;
+    RevenueCat can serve the same read twice). The first apply stamps every
+    row; the second must recognise that, not call it conflicting facts."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    rows = _several_revenuecat_rows(now)
+    session = _SyncSession(_owner(), rows)
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=365)
+    )
+
+    first = await sync_revenuecat_access(
+        session, _owner(), snapshot=_snapshot(body, now)
+    )
+    second = await sync_revenuecat_access(
+        session, _owner(), snapshot=_snapshot(body, now)
+    )
+
+    assert (first.result, first.rows_revoked) == ("applied", 1)
+    assert (second.result, second.access_after) == ("unchanged", "granted")
+    assert [row.status for row in rows] == ["active", "expired", "expired"]
+    assert evaluate_subscription_access(rows).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_the_same_no_access_read_applied_twice_is_unchanged():
+    now = datetime.now(UTC).replace(microsecond=0)
+    rows = _several_revenuecat_rows(now)
+    session = _SyncSession(_owner(), rows)
+    body = standard_annual_response(
+        request_date=now, expires_date=now - timedelta(days=1)
+    )
+
+    await sync_revenuecat_access(
+        session, _owner(), snapshot=_snapshot(body, now), refund_event=True
+    )
+    second = await sync_revenuecat_access(
+        session, _owner(), snapshot=_snapshot(body, now)
+    )
+
+    assert (second.result, second.access_after) == ("unchanged", "denied")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "other_expiry", [timedelta(days=30), timedelta(days=-1)], ids=["grant", "none"]
+)
+async def test_another_read_at_the_same_time_is_refused_as_conflicting(
+    other_expiry,
+):
+    now = datetime.now(UTC).replace(microsecond=0)
+    rows = _several_revenuecat_rows(now)
+    session = _SyncSession(_owner(), rows)
+    applied = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=365)
+    )
+    other = standard_annual_response(request_date=now, expires_date=now + other_expiry)
+    await sync_revenuecat_access(session, _owner(), snapshot=_snapshot(applied, now))
+
+    with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+        await sync_revenuecat_access(session, _owner(), snapshot=_snapshot(other, now))
+
+    assert error.value.reason == "conflicting_facts"
+    assert rows[0].expires_at == now + timedelta(days=365)
+
+
 @pytest.mark.asyncio
 async def test_unexpected_downgrade_and_missing_standard_are_reported():
     now = datetime.now(UTC)

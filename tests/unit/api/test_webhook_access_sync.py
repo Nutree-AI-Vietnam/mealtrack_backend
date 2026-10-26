@@ -899,6 +899,38 @@ async def test_unexpected_sync_error_keeps_the_event_write_and_acks(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_two_deliveries_with_the_same_read_leave_several_rows_resolved(
+    monkeypatch,
+):
+    """The second apply of one RevenueCat read is not conflicting facts, so a
+    user with several RevenueCat rows is never left unresolved by it."""
+    user = _user("user-u", "uid-u")
+    annual = _row(user, id="u-annual")
+    monthly = _row(
+        user,
+        id="u-monthly",
+        product_id="onemonth",
+        status="expired",
+        expires_at=datetime.now(UTC) - timedelta(days=200),
+        purchased_at=datetime.now(UTC) - timedelta(days=400),
+    )
+    database = _Database([user], [annual, monthly])
+    body = _annual()
+
+    with (
+        _revenuecat({"uid-u": _ok(body)}),
+        patch(f"{SYNC}.capture_message") as captured,
+    ):
+        for _ in range(2):
+            result = await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
+            assert result == {"status": "success"}
+
+    assert [row.provider_sync_required_at for row in (annual, monthly)] == [None, None]
+    assert evaluate_subscription_access([annual, monthly]).has_access is True
+    captured.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_unexpected_read_error_keeps_the_purchase_effects_and_acks(
     monkeypatch,
 ):

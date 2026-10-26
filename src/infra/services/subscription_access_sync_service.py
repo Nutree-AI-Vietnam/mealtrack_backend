@@ -356,21 +356,35 @@ def _could_still_grant(row: Subscription, instant: datetime) -> bool:
 
 
 def _same_snapshot_consistent(
-    existing: list[Subscription], facts: dict | None, latest: datetime, revoked: str
+    existing: list[Subscription], facts: dict | None, latest: datetime
 ) -> bool:
-    matching = [
+    """Whether the rows stamped at ``latest`` are what applying ``facts`` wrote.
+
+    Applying a snapshot stamps every RevenueCat row with its time: the row
+    for the entitled product carries its facts and every other row is left
+    non-granting. A different read with the same time cannot be ordered
+    against the one applied.
+    """
+    stamped = [
         row
         for row in existing
         if row.provider_snapshot_at is not None
         and _utc(row.provider_snapshot_at) == latest
     ]
-    if facts:
-        return len(matching) == 1 and all(
-            getattr(matching[0], key) == value
+    holders = [
+        row
+        for row in stamped
+        if facts
+        and all(
+            getattr(row, key) == value
             for key, value in facts.items()
             if not (key == "store_transaction_id" and value is None)
         )
-    return all(row.status in {revoked, "expired", "refunded"} for row in matching)
+    ]
+    others = [row for row in stamped if all(row is not held for held in holders)]
+    return len(holders) == (1 if facts else 0) and all(
+        row.status not in GRANTING_STATUSES for row in others
+    )
 
 
 @dataclass(frozen=True)
@@ -435,9 +449,7 @@ def _plan_sync(
     if request_date == latest_snapshot:
         # The same RevenueCat read applied twice (e.g. two deliveries that
         # queued on the lock).
-        if not _same_snapshot_consistent(
-            existing, facts, latest_snapshot, revoked_status
-        ):
+        if not _same_snapshot_consistent(existing, facts, latest_snapshot):
             raise RevenueCatSnapshotUnavailable(
                 "RevenueCat returned conflicting facts at the same snapshot time",
                 reason=SNAPSHOT_REASON_CONFLICTING_FACTS,
