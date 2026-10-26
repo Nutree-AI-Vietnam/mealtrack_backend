@@ -57,7 +57,11 @@ from .meal_recommendation import (
 from .meal_write_operation import MealWriteOperationORM
 
 # Notification models
-from .notification import NotificationPreferencesORM, UserFcmTokenORM
+from .notification import (
+    NotificationOutboxORM,
+    NotificationPreferencesORM,
+    UserFcmTokenORM,
+)
 from .nutrition.food_item import FoodItemORM
 
 # Nutrition models
@@ -181,6 +185,7 @@ __all__ = [
     "FoodItemTranslationORM",
     # Test models
     # Notification models
+    "NotificationOutboxORM",
     "NotificationPreferencesORM",
     "UserFcmTokenORM",
     # Feature flags

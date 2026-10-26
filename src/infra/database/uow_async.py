@@ -26,6 +26,9 @@ from src.infra.repositories.cheat_day_repository_async import AsyncCheatDayRepos
 from src.infra.repositories.daily_target_snapshot_repository_async import (
     AsyncDailyTargetSnapshotRepository,
 )
+from src.infra.repositories.engagement_push_repository import (
+    AsyncEngagementPushRepository,
+)
 from src.infra.repositories.favorite_meal_repository_async import (
     AsyncFavoriteMealRepository,
 )
@@ -175,6 +178,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.chat = AsyncChatRepository(session)
         self.ai_jobs = AsyncAiJobRepository(session)
         self.push_tokens = AsyncPushTokenRepository(session)
+        self.engagement_pushes = AsyncEngagementPushRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         session = self.session

@@ -260,6 +260,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("AI job worker failed to start")
 
+    # Sends the payment-failed push only when ENGAGEMENT_PUSH_ENABLED is set.
+    try:
+        from src.bootstrap.engagement_push import start_engagement_push_dispatcher
+
+        start_engagement_push_dispatcher()
+    except Exception:
+        logger.exception("Engagement push dispatcher failed to start")
+
     # Re-probe Redis only from this task. Request handling must not ping.
     limiter.start_redis_probe()
     logger.info("MealTrack API started successfully!")
@@ -275,10 +283,17 @@ async def lifespan(app: FastAPI):
     # their outcome on the way out.
     from src.api.dependencies.ai_jobs import shutdown_ai_jobs
     from src.api.dependencies.event_bus import drain_food_search_background_work
+    from src.bootstrap.engagement_push import stop_engagement_push_dispatcher
     from src.bootstrap.integration_services import (
         drain_integration_event_publisher,
         shutdown_firebase_executor,
     )
+
+    # Before the AI job shutdown, which closes the shared FCM send pool.
+    try:
+        await stop_engagement_push_dispatcher()
+    except Exception:
+        logger.exception("Engagement push dispatcher shutdown failed")
 
     try:
         await shutdown_ai_jobs()

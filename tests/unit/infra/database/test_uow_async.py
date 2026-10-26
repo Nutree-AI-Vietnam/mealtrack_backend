@@ -54,6 +54,7 @@ async def test_async_uow_exposes_repos():
             assert hasattr(uow, "hydration_entries")
             assert hasattr(uow, "subscriptions")
             assert hasattr(uow, "notifications")
+            assert hasattr(uow, "engagement_pushes")
             assert hasattr(uow, "saved_suggestions")
             assert hasattr(uow, "food_references")
             assert hasattr(uow, "catalog_recipes")

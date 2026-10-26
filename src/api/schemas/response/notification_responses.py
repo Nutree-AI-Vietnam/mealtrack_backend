@@ -24,6 +24,19 @@ class NotificationPreferencesResponse(BaseModel):
     hydration_reminders_enabled: bool = Field(
         True, description="Whether hydration reminder notifications are enabled"
     )
+    streak_reminders_enabled: bool = Field(
+        True, description="Whether streak alerts (streak saver, win the day) are on"
+    )
+    reengagement_enabled: bool = Field(
+        True, description="Whether comeback nudges are on"
+    )
+    progress_updates_enabled: bool = Field(
+        True, description="Whether progress notes and recaps are on"
+    )
+    offers_enabled: bool = Field(
+        False,
+        description="Whether the user opted in to offers and new-feature news",
+    )
 
     # Meal timing (minutes from midnight: 0-1439)
     breakfast_time_minutes: Optional[int] = Field(
