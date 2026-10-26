@@ -9,6 +9,9 @@ from typing import Any
 
 from src.app.commands.user.sync_user_command import SyncUserCommand
 from src.app.events.base import EventHandler, handles
+from src.app.services.subscription_access_fallback import (
+    record_legacy_access_fallback,
+)
 from src.app.services.subscription_access_flags import (
     database_subscription_access_enabled,
 )
@@ -119,25 +122,10 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
 
                 # Get subscription info from UoW
                 subscription_info = None
-                if database_subscription_access_enabled():
-                    subscriptions = await uow.subscriptions.find_by_user_id(
-                        str(user.id)
-                    )
-                    access = evaluate_subscription_access(subscriptions)
-                    has_subscription = access.has_access
-                    active_subscription = None
-                    for subscription in subscriptions:
-                        try:
-                            if evaluate_subscription_access([subscription]).has_access:
-                                active_subscription = subscription
-                                break
-                        except SubscriptionAccessUnavailable:
-                            continue
-                else:
-                    active_subscription = (
-                        await uow.subscriptions.find_active_by_user_id(str(user.id))
-                    )
-                    has_subscription = active_subscription is not None
+                (
+                    active_subscription,
+                    has_subscription,
+                ) = await self._subscription_access(uow, str(user.id))
 
                 if active_subscription:
                     subscription_info = {
@@ -198,6 +186,35 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
             except Exception:
                 await uow.rollback()
                 raise
+
+    @staticmethod
+    async def _subscription_access(
+        uow: AsyncUnitOfWorkPort, user_id: str
+    ) -> tuple[Any | None, bool]:
+        """Return the subscription row to describe and has_subscription.
+
+        has_subscription is informational here, so sync never fails on it:
+        when the stored facts cannot decide access (an unreconciled row),
+        the legacy decision answers and the fallback is logged.
+        """
+        if database_subscription_access_enabled():
+            subscriptions = await uow.subscriptions.find_by_user_id(user_id)
+            try:
+                access = evaluate_subscription_access(subscriptions)
+            except SubscriptionAccessUnavailable:
+                record_legacy_access_fallback(source="users_sync", user_id=user_id)
+            else:
+                active_subscription = None
+                for subscription in subscriptions:
+                    try:
+                        if evaluate_subscription_access([subscription]).has_access:
+                            active_subscription = subscription
+                            break
+                    except SubscriptionAccessUnavailable:
+                        continue
+                return active_subscription, access.has_access
+        active_subscription = await uow.subscriptions.find_active_by_user_id(user_id)
+        return active_subscription, active_subscription is not None
 
     @staticmethod
     def _supported_language_code(language_code: str | None) -> str | None:
