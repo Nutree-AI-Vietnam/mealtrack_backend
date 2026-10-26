@@ -163,7 +163,6 @@ from src.app.handlers.query_handlers import (
     GetMealByIdQueryHandler,
     GetMealsByDateQueryHandler,
     GetMovementCatalogQueryHandler,
-    GetMyEntitlementsQueryHandler,
     GetNotificationPreferencesQueryHandler,
     GetPopularStaplesQueryHandler,
     GetProgressSummaryQueryHandler,
@@ -254,7 +253,6 @@ from src.app.queries.progress import (
     GetProgressSummaryQuery,
 )
 from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
-from src.app.queries.subscription_access import GetMyEntitlementsQuery
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
     GetBodyFatVisualProfileQuery,
@@ -1103,10 +1101,6 @@ def get_configured_event_bus() -> EventBus:
     )
     event_bus.register_handler(
         GetUserByFirebaseUidQuery, GetUserByFirebaseUidQueryHandler()
-    )
-    event_bus.register_handler(
-        GetMyEntitlementsQuery,
-        GetMyEntitlementsQueryHandler(uow_factory=AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetUserOnboardingStatusQuery, GetUserOnboardingStatusQueryHandler()
