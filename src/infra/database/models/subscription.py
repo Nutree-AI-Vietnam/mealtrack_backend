@@ -59,6 +59,10 @@ class Subscription(Base, BaseMixin):
     grace_period_expires_at = Column(DateTime(timezone=True), nullable=True)
     period_type = Column(String(16), nullable=True)
     provider_snapshot_at = Column(DateTime(timezone=True), nullable=True)
+    # RevenueCat time of an event applied without a verified snapshot. While
+    # set, the access policy treats the row as unresolved; the next snapshot
+    # taken at or after this time clears it.
+    provider_sync_required_at = Column(DateTime(timezone=True), nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
 
     # Store metadata
@@ -76,8 +80,15 @@ class Subscription(Base, BaseMixin):
     )
 
     def is_active(self) -> bool:
-        """Legacy active-row check retained until the database policy is enabled."""
-        if self.provider_snapshot_at is None:
+        """Legacy active-row check retained until the database policy is enabled.
+
+        Rows never verified, or changed by an event whose snapshot could not
+        be read, keep the pre-policy behaviour while the flag is off.
+        """
+        if (
+            self.provider_snapshot_at is None
+            or self.provider_sync_required_at is not None
+        ):
             return self.status == "active" and (
                 self.expires_at is None or utc_now() < self.expires_at
             )

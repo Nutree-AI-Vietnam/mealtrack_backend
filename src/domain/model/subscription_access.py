@@ -12,6 +12,9 @@ class SubscriptionFacts(Protocol):
     grace_period_expires_at: datetime | None
     period_type: str | None
     provider_snapshot_at: datetime | None
+    # Set when a provider event changed this row but its verified snapshot
+    # could not be read; cleared by the next snapshot taken at or after it.
+    provider_sync_required_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,11 @@ def evaluate_subscription_access(
     unresolved = False
 
     for record in records:
+        if getattr(record, "provider_sync_required_at", None) is not None:
+            # A provider event was applied without a verified snapshot, so
+            # this row's facts are unverified whatever its status says.
+            unresolved = True
+            continue
         if record.status not in {"active", "cancelled", "billing_issue"}:
             continue
         if record.provider_snapshot_at is None:

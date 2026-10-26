@@ -21,6 +21,7 @@ from src.infra.database.config_async import AsyncSessionLocal
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
 from src.infra.services.subscription_access_sync_service import (
+    GRANTING_STATUSES,
     normalize_standard_access_facts,
     sync_revenuecat_access,
 )
@@ -67,7 +68,7 @@ async def _load_candidate(user_id: str):
                 )
             ).all()
         )
-        return user.id, user.firebase_uid, user.updated_at, rows
+        return user.id, user.firebase_uid, rows
 
 
 async def _fetch_with_retry(
@@ -90,9 +91,13 @@ async def _fetch_with_retry(
 
 def _dry_run_result(snapshot, rows) -> str:
     if snapshot.absent:
+        # Mirrors sync_revenuecat_access: absence only blocks a possible grant.
         return (
             "unverified"
-            if any(row.provider == "revenuecat" for row in rows)
+            if any(
+                row.provider == "revenuecat" and row.status in GRANTING_STATUSES
+                for row in rows
+            )
             else "deny"
         )
     facts = normalize_standard_access_facts(snapshot.subscriber, datetime.now(UTC))
@@ -105,6 +110,7 @@ def _dry_run_result(snapshot, rows) -> str:
                 grace_period_expires_at=facts["grace_period_expires_at"],
                 period_type=facts["period_type"],
                 provider_snapshot_at=snapshot.request_date,
+                provider_sync_required_at=None,
             )
         ]
     try:
@@ -136,7 +142,7 @@ async def _run() -> int:
         if candidate is None:
             counts["unverified"] += 1
             continue
-        database_id, firebase_uid, updated_at, rows = candidate
+        database_id, firebase_uid, rows = candidate
         try:
             snapshot = await _fetch_with_retry(adapter, firebase_uid, last_call)
             outcome = _dry_run_result(snapshot, rows)
@@ -153,7 +159,7 @@ async def _run() -> int:
                         user,
                         adapter=adapter,
                         snapshot=snapshot,
-                        expected_updated_at=updated_at,
+                        source="reconcile",
                     )
                     await session.commit()
             completed.add(user_id)

@@ -18,6 +18,7 @@ class Facts:
     grace_period_expires_at: datetime | None = None
     period_type: str | None = None
     provider_snapshot_at: datetime | None = datetime(2026, 1, 1, tzinfo=UTC)
+    provider_sync_required_at: datetime | None = None
 
 
 def test_active_paid_through_cancelled_and_trial_are_accessible():
@@ -77,3 +78,25 @@ def test_refund_and_expired_status_do_not_grant_from_future_expiry():
         result = evaluate_subscription_access([Facts(status=status, expires_at=future)])
         assert result.has_access is False
         assert result.status == "expired"
+
+
+@pytest.mark.parametrize("status", ["active", "expired", "refunded"])
+def test_row_awaiting_a_provider_sync_is_unresolved_whatever_its_status(status):
+    """An event applied without its snapshot must not read as a decision."""
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    pending = Facts(
+        status=status,
+        expires_at=now + timedelta(days=30),
+        provider_sync_required_at=now,
+    )
+
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access([pending], now)
+
+
+def test_verified_grant_from_another_row_still_wins_over_a_pending_row():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    pending = Facts(status="expired", provider_sync_required_at=now)
+    verified = Facts(expires_at=now + timedelta(days=3))
+
+    assert evaluate_subscription_access([pending, verified], now).has_access is True

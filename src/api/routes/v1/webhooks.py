@@ -8,7 +8,6 @@ import hmac
 import logging
 import os
 import uuid
-from datetime import datetime
 from typing import cast
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -193,7 +192,6 @@ async def revenuecat_webhook(
         "TRANSFER",
         "PURCHASE_REDEEMED",
     }
-    expected_updated_at: datetime | None = None
     provider_snapshot = None
     lookup_user_id = None
     firebase_uid: str | None = None
@@ -202,7 +200,6 @@ async def revenuecat_webhook(
             lookup_user = await find_user_for_revenuecat_event(lookup_uow, event)
             if lookup_user is not None:
                 lookup_user_id = str(lookup_user.id)
-                expected_updated_at = cast(datetime, lookup_user.updated_at)
                 firebase_uid = cast(str, lookup_user.firebase_uid)
         if lookup_user_id is not None:
             try:
@@ -236,7 +233,6 @@ async def revenuecat_webhook(
                     cast(AsyncSession, uow.session),
                     user,
                     snapshot=provider_snapshot,
-                    expected_updated_at=cast(datetime, expected_updated_at),
                 )
             except RevenueCatSnapshotUnavailable as error:
                 raise HTTPException(
@@ -258,7 +254,6 @@ async def revenuecat_webhook(
                     cast(AsyncSession, uow.session),
                     user,
                     snapshot=provider_snapshot,
-                    expected_updated_at=cast(datetime, expected_updated_at),
                 )
             except RevenueCatSnapshotUnavailable as error:
                 raise HTTPException(
@@ -349,7 +344,6 @@ async def revenuecat_webhook(
                     user,
                     refund_event=confirmed_refund,
                     snapshot=provider_snapshot,
-                    expected_updated_at=cast(datetime, expected_updated_at),
                 )
             except RevenueCatSnapshotUnavailable as error:
                 raise HTTPException(

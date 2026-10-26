@@ -21,9 +21,13 @@ class Subscription(BaseDomainModel):
     grace_period_expires_at: datetime | None = None
     period_type: str | None = None
     provider_snapshot_at: datetime | None = None
+    provider_sync_required_at: datetime | None = None
 
     def is_active(self) -> bool:
-        if self.provider_snapshot_at is None:
+        if (
+            self.provider_snapshot_at is None
+            or self.provider_sync_required_at is not None
+        ):
             return self.status == "active" and (
                 self.expires_at is None or self.expires_at > utc_now()
             )

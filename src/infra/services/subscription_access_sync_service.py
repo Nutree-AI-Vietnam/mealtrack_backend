@@ -1,31 +1,56 @@
 """Normalize verified RevenueCat snapshots into database access facts."""
 
-from datetime import UTC, datetime, timedelta
+import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domain.model.subscription_access import (
+    SubscriptionAccessUnavailable,
+    evaluate_subscription_access,
+)
 from src.domain.ports.subscription_service_port import (
+    SNAPSHOT_ERROR_REASONS,
+    SNAPSHOT_REASON_ABSENT_WITH_HISTORY,
+    SNAPSHOT_REASON_CONFLICTING_FACTS,
+    SNAPSHOT_REASON_MALFORMED,
+    SNAPSHOT_REASON_OWNER_CHANGED,
+    SNAPSHOT_REASON_UNKNOWN,
+    SNAPSHOT_REASON_UNSUPPORTED_STORE,
     RevenueCatSnapshot,
     RevenueCatSnapshotUnavailable,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
+from src.observability import capture_exception, capture_message, increment_metric
+
+logger = logging.getLogger(__name__)
+
+REVENUECAT_PROVIDER = "revenuecat"
+# Statuses the access policy can turn into a grant.
+GRANTING_STATUSES = frozenset({"active", "cancelled", "billing_issue"})
+# Events whose whole point is to remove access; a downgrade on them is normal
+# (so is one on a refund, which arrives as a CANCELLATION).
+EXPECTED_DOWNGRADE_EVENTS = frozenset({"EXPIRATION"})
 
 
 def _date(value: Any, *, field: str, optional: bool = False) -> datetime | None:
     if value is None and optional:
         return None
     if not isinstance(value, str) or not value:
-        raise RevenueCatSnapshotUnavailable(f"RevenueCat {field} is malformed")
+        raise RevenueCatSnapshotUnavailable(
+            f"RevenueCat {field} is malformed", reason=SNAPSHOT_REASON_MALFORMED
+        )
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise RevenueCatSnapshotUnavailable(
-            f"RevenueCat {field} is malformed"
+            f"RevenueCat {field} is malformed", reason=SNAPSHOT_REASON_MALFORMED
         ) from error
     return (
         parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
@@ -40,13 +65,8 @@ def _platform(store: Any) -> str:
         return "android"
     if value in {"PADDLE", "STRIPE", "PROMOTIONAL", "RC_BILLING"}:
         return "web"
-    raise RevenueCatSnapshotUnavailable("RevenueCat store is unsupported")
-
-
-def _advance_updated_at(user: User) -> None:
-    previous = _utc(user.updated_at)
-    setattr(  # noqa: B010 - SQLAlchemy model attributes are typed as Column descriptors
-        user, "updated_at", max(utc_now(), previous + timedelta(microseconds=1))
+    raise RevenueCatSnapshotUnavailable(
+        "RevenueCat store is unsupported", reason=SNAPSHOT_REASON_UNSUPPORTED_STORE
     )
 
 
@@ -60,12 +80,15 @@ def normalize_standard_access_facts(
         return None
     if not isinstance(standard, dict):
         raise RevenueCatSnapshotUnavailable(
-            "RevenueCat standard entitlement is malformed"
+            "RevenueCat standard entitlement is malformed",
+            reason=SNAPSHOT_REASON_MALFORMED,
         )
 
     product_id = standard.get("product_identifier")
     if not isinstance(product_id, str) or not product_id:
-        raise RevenueCatSnapshotUnavailable("RevenueCat product is missing")
+        raise RevenueCatSnapshotUnavailable(
+            "RevenueCat product is missing", reason=SNAPSHOT_REASON_MALFORMED
+        )
     subscription = subscriber["subscriptions"].get(product_id)
     if not isinstance(subscription, dict):
         non_subscriptions = subscriber.get("non_subscriptions", {})
@@ -78,10 +101,14 @@ def normalize_standard_access_facts(
             (item for item in purchases if isinstance(item, dict)), None
         )
     if not isinstance(subscription, dict):
-        raise RevenueCatSnapshotUnavailable("RevenueCat purchase metadata is missing")
+        raise RevenueCatSnapshotUnavailable(
+            "RevenueCat purchase metadata is missing", reason=SNAPSHOT_REASON_MALFORMED
+        )
 
     if "expires_date" not in standard:
-        raise RevenueCatSnapshotUnavailable("RevenueCat expiry is missing")
+        raise RevenueCatSnapshotUnavailable(
+            "RevenueCat expiry is missing", reason=SNAPSHOT_REASON_MALFORMED
+        )
     expires_at = _date(standard["expires_date"], field="expiry", optional=True)
     purchase_value = subscription.get("purchase_date") or standard.get("purchase_date")
     purchased_at = _date(purchase_value, field="purchase date")
@@ -92,11 +119,16 @@ def normalize_standard_access_facts(
     )
     is_sandbox = subscription.get("is_sandbox")
     if not isinstance(is_sandbox, bool):
-        raise RevenueCatSnapshotUnavailable("RevenueCat environment is missing")
+        raise RevenueCatSnapshotUnavailable(
+            "RevenueCat environment is missing", reason=SNAPSHOT_REASON_MALFORMED
+        )
 
-    if subscription.get("billing_issues_detected_at"):
+    paid_through = expires_at is None or expires_at > now
+    in_grace = grace is not None and grace > now
+    if subscription.get("billing_issues_detected_at") and (paid_through or in_grace):
         status = "billing_issue"
-    elif expires_at is not None and expires_at <= now:
+    elif not paid_through:
+        # Includes a refund that lands while a billing flag is still set.
         status = "expired"
     elif subscription.get("unsubscribe_detected_at"):
         status = "cancelled"
@@ -137,6 +169,104 @@ def _utc(value: Any) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+ACCESS_GRANTED = "granted"
+ACCESS_DENIED = "denied"
+ACCESS_UNRESOLVED = "unresolved"
+
+
+@dataclass(frozen=True)
+class SubscriptionSyncOutcome:
+    """What one snapshot did to a user's RevenueCat access rows."""
+
+    result: str  # applied | unchanged | stale_skipped | absent
+    access_before: str
+    access_after: str
+    rows_revoked: int = 0
+    row_created: bool = False
+    markers_cleared: int = 0
+    standard_missing: bool = False
+
+    @property
+    def downgraded(self) -> bool:
+        return (
+            self.access_before == ACCESS_GRANTED and self.access_after == ACCESS_DENIED
+        )
+
+
+def _access_label(rows: list[Subscription]) -> str:
+    try:
+        granted = evaluate_subscription_access(rows).has_access  # type: ignore[arg-type]
+    except SubscriptionAccessUnavailable:
+        return ACCESS_UNRESOLVED
+    return ACCESS_GRANTED if granted else ACCESS_DENIED
+
+
+async def lock_subscription_owner(session: AsyncSession, user_id: Any) -> User | None:
+    """Serialise every RevenueCat access write for one user on the user row.
+
+    Concurrent webhooks, refreshes and reconcile runs for the same user queue
+    behind this lock instead of failing an optimistic check; ordinary writes
+    to the users row (last_accessed, onboarding, ...) never conflict with it.
+    """
+    # populate_existing refreshes the identity-mapped user; flush first so no
+    # pending change on it is discarded.
+    await session.flush()
+    return await session.scalar(
+        select(User)
+        .where(User.id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+
+async def _locked_revenuecat_rows(
+    session: AsyncSession, user_id: Any
+) -> list[Subscription]:
+    # The session does not autoflush: make rows a legacy handler just added
+    # or changed in this transaction visible to the SELECT below.
+    await session.flush()
+    rows = await session.scalars(
+        select(Subscription)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.provider == REVENUECAT_PROVIDER,
+        )
+        .with_for_update()
+    )
+    return list(rows.all())
+
+
+def _clear_markers(rows: list[Subscription], request_date: datetime | None) -> int:
+    """Clear sync-required markers this snapshot is new enough to resolve."""
+    if request_date is None:
+        return 0
+    cleared = 0
+    for row in rows:
+        marker = row.provider_sync_required_at
+        if marker is not None and _utc(marker) <= request_date:
+            setattr(row, "provider_sync_required_at", None)  # noqa: B010
+            cleared += 1
+    return cleared
+
+
+def _same_snapshot_consistent(
+    existing: list[Subscription], facts: dict | None, latest: datetime, revoked: str
+) -> bool:
+    matching = [
+        row
+        for row in existing
+        if row.provider_snapshot_at is not None
+        and _utc(row.provider_snapshot_at) == latest
+    ]
+    if facts:
+        return len(matching) == 1 and all(
+            getattr(matching[0], key) == value
+            for key, value in facts.items()
+            if not (key == "store_transaction_id" and value is None)
+        )
+    return all(row.status in {revoked, "expired", "refunded"} for row in matching)
+
+
 async def sync_revenuecat_access(
     session: AsyncSession,
     user: User,
@@ -144,97 +274,125 @@ async def sync_revenuecat_access(
     adapter: Any | None = None,
     refund_event: bool = False,
     snapshot: RevenueCatSnapshot | None = None,
-    expected_updated_at: datetime | None = None,
-) -> None:
-    """Apply one current provider snapshot, preserving state on ambiguity/errors."""
-    expected_updated_at = _utc(expected_updated_at or user.updated_at)  # type: ignore[arg-type]
+    source: str = "unknown",
+    event_type: str | None = None,
+    event_id: str | None = None,
+) -> SubscriptionSyncOutcome:
+    """Apply one verified provider snapshot to the user's RevenueCat rows.
+
+    Must run inside the caller's unit of work: it locks the user row, so
+    writers for one user are serialised, and never commits. Raises
+    RevenueCatSnapshotUnavailable (with a reason) before mutating anything
+    when the snapshot cannot be applied safely; callers then leave the rows
+    unresolved with mark_revenuecat_access_unresolved.
+    """
     if snapshot is None:
         if adapter is None:
             raise RevenueCatSnapshotUnavailable("RevenueCat adapter is required")
         snapshot = await adapter.get_verified_snapshot(user.firebase_uid)
-    locked_user = await session.scalar(
-        select(User)
-        .where(User.id == user.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
+    locked_user = await lock_subscription_owner(session, user.id)
     if locked_user is None:
-        raise RevenueCatSnapshotUnavailable("Subscription owner disappeared")
-    if _utc(locked_user.updated_at) != expected_updated_at:  # type: ignore[arg-type]
-        raise RevenueCatSnapshotUnavailable("Subscription owner changed during sync")
-    existing = list(
-        (
-            await session.scalars(
-                select(Subscription)
-                .where(
-                    Subscription.user_id == user.id,
-                    Subscription.provider == "revenuecat",
-                )
-                .with_for_update()
-            )
-        ).all()
-    )
+        raise RevenueCatSnapshotUnavailable(
+            "Subscription owner disappeared", reason=SNAPSHOT_REASON_OWNER_CHANGED
+        )
+    if (
+        snapshot.app_user_id is not None
+        and snapshot.app_user_id != locked_user.firebase_uid
+    ):
+        raise RevenueCatSnapshotUnavailable(
+            "Subscription owner changed during sync",
+            reason=SNAPSHOT_REASON_OWNER_CHANGED,
+        )
+    existing = await _locked_revenuecat_rows(session, locked_user.id)
+    access_before = _access_label(existing)
+    request_date = _utc(snapshot.request_date) if snapshot.request_date else None
 
     if snapshot.absent:
-        if existing:
+        if any(row.status in GRANTING_STATUSES for row in existing):
+            # RevenueCat holds no purchases under this Firebase uid, yet the
+            # database holds a possible grant: it came from another identity
+            # (fallback match, manual grant). Never expire it on absence.
             raise RevenueCatSnapshotUnavailable(
-                "RevenueCat absence cannot verify existing subscription history"
+                "RevenueCat absence cannot verify existing subscription history",
+                reason=SNAPSHOT_REASON_ABSENT_WITH_HISTORY,
             )
-        _advance_updated_at(locked_user)
-        return
+        markers_cleared = _clear_markers(existing, request_date)
+        outcome = SubscriptionSyncOutcome(
+            "absent",
+            access_before,
+            _access_label(existing),
+            markers_cleared=markers_cleared,
+        )
+        _record_sync_outcome(
+            outcome, locked_user, source, event_type, event_id, refund_event
+        )
+        return outcome
 
-    if snapshot.subscriber is None or snapshot.request_date is None:
-        raise RevenueCatSnapshotUnavailable("RevenueCat snapshot is incomplete")
+    if snapshot.subscriber is None or request_date is None:
+        raise RevenueCatSnapshotUnavailable(
+            "RevenueCat snapshot is incomplete", reason=SNAPSHOT_REASON_MALFORMED
+        )
+    entitlements = snapshot.subscriber.get("entitlements") or {}
     facts = normalize_standard_access_facts(snapshot.subscriber)
+    standard_missing = "standard" not in entitlements and bool(entitlements)
     if facts and facts["status"] == "expired":
         facts = None
+    revoked_status = "refunded" if refund_event else "expired"
     latest_snapshot = max(
         (
-            _utc(row.provider_snapshot_at)  # type: ignore[arg-type]
+            _utc(row.provider_snapshot_at)
             for row in existing
-            if row.provider_snapshot_at
+            if row.provider_snapshot_at is not None
         ),
         default=datetime.min.replace(tzinfo=UTC),
     )
-    if snapshot.request_date < latest_snapshot:
-        return
-    if snapshot.request_date == latest_snapshot:
-        matching = [
-            row
-            for row in existing
-            if _utc(row.provider_snapshot_at) == latest_snapshot  # type: ignore[arg-type]
-        ]
-        if facts and len(matching) == 1:
-            row = matching[0]
-            if all(
-                getattr(row, key) == value
-                for key, value in facts.items()
-                if not (key == "store_transaction_id" and value is None)
-            ):
-                return
-        elif not facts and all(
-            row.status == ("refunded" if refund_event else "expired")
-            for row in matching
+    if request_date < latest_snapshot:
+        outcome = SubscriptionSyncOutcome("stale_skipped", access_before, access_before)
+        _record_sync_outcome(
+            outcome, locked_user, source, event_type, event_id, refund_event
+        )
+        return outcome
+    if request_date == latest_snapshot:
+        if not _same_snapshot_consistent(
+            existing, facts, latest_snapshot, revoked_status
         ):
-            return
-        raise RevenueCatSnapshotUnavailable(
-            "RevenueCat returned conflicting facts at the same snapshot time"
-        )
+            raise RevenueCatSnapshotUnavailable(
+                "RevenueCat returned conflicting facts at the same snapshot time",
+                reason=SNAPSHOT_REASON_CONFLICTING_FACTS,
+            )
+        if all(
+            row.provider_snapshot_at is not None
+            and row.provider_sync_required_at is None
+            for row in existing
+        ):
+            outcome = SubscriptionSyncOutcome("unchanged", access_before, access_before)
+            _record_sync_outcome(
+                outcome, locked_user, source, event_type, event_id, refund_event
+            )
+            return outcome
 
+    # Everything below mutates; nothing below raises.
+    target_row = (
+        next((row for row in existing if row.product_id == facts["product_id"]), None)
+        if facts
+        else None
+    )
+    rows_revoked = 0
     for row in existing:
-        setattr(row, "status", "refunded" if refund_event else "expired")  # noqa: B010
-        setattr(row, "grace_period_expires_at", None)  # noqa: B010
-        setattr(row, "provider_snapshot_at", snapshot.request_date)  # noqa: B010
+        if row is not target_row and row.status in GRANTING_STATUSES:
+            setattr(row, "status", revoked_status)  # noqa: B010
+            rows_revoked += 1
+        if row is not target_row:
+            setattr(row, "grace_period_expires_at", None)  # noqa: B010
+        setattr(row, "provider_snapshot_at", request_date)  # noqa: B010
 
-    if facts and facts["status"] != "expired":
-        target_row = next(
-            (item for item in existing if item.product_id == facts["product_id"]), None
-        )
+    row_created = False
+    if facts:
         if target_row is None:
             target_row = Subscription(
                 id=str(uuid4()),
-                user_id=user.id,
-                revenuecat_subscriber_id=user.firebase_uid,
+                user_id=locked_user.id,
+                revenuecat_subscriber_id=locked_user.firebase_uid,
                 product_id=facts["product_id"],
                 platform=facts["platform"],
                 purchased_at=facts["purchased_at"],
@@ -242,12 +400,225 @@ async def sync_revenuecat_access(
                 is_sandbox=facts["is_sandbox"],
             )
             session.add(target_row)
+            existing.append(target_row)
+            row_created = True
         for key, value in facts.items():
             if key == "store_transaction_id" and value is None:
                 # Never blank an id a purchase webhook already stored.
                 continue
             setattr(target_row, key, value)
-        setattr(target_row, "provider", "revenuecat")  # noqa: B010
-        setattr(target_row, "revenuecat_subscriber_id", user.firebase_uid)  # noqa: B010
-        setattr(target_row, "provider_snapshot_at", snapshot.request_date)  # noqa: B010
-    _advance_updated_at(locked_user)
+        setattr(target_row, "provider", REVENUECAT_PROVIDER)  # noqa: B010
+        setattr(  # noqa: B010
+            target_row, "revenuecat_subscriber_id", locked_user.firebase_uid
+        )
+        setattr(target_row, "provider_snapshot_at", request_date)  # noqa: B010
+
+    markers_cleared = _clear_markers(existing, request_date)
+    outcome = SubscriptionSyncOutcome(
+        "applied",
+        access_before,
+        _access_label(existing),
+        rows_revoked=rows_revoked,
+        row_created=row_created,
+        markers_cleared=markers_cleared,
+        standard_missing=standard_missing,
+    )
+    _record_sync_outcome(
+        outcome, locked_user, source, event_type, event_id, refund_event
+    )
+    return outcome
+
+
+async def mark_revenuecat_access_unresolved(
+    session: AsyncSession,
+    user: User,
+    *,
+    since: datetime | None,
+    product_id: str | None = None,
+    platform: str | None = None,
+    is_sandbox: bool = False,
+) -> int:
+    """Leave the user's RevenueCat access unresolved until a snapshot repairs it.
+
+    Used when a provider event was applied (or may have changed access) but
+    its verified snapshot could not be read. ``since`` is RevenueCat's time
+    for the event (``event_timestamp_ms``): only a snapshot taken at or after
+    it clears the marker, so an older snapshot racing in cannot. A user with
+    no RevenueCat row gets a non-granting placeholder row carrying the
+    marker, so the policy answers "unresolved" instead of "none".
+    Returns the number of rows marked.
+    """
+    locked_user = await lock_subscription_owner(session, user.id)
+    if locked_user is None:
+        return 0
+    rows = await _locked_revenuecat_rows(session, locked_user.id)
+    marker = _utc(since) if since is not None else utc_now()
+    if not rows:
+        placeholder = Subscription(
+            id=str(uuid4()),
+            user_id=locked_user.id,
+            revenuecat_subscriber_id=locked_user.firebase_uid,
+            provider=REVENUECAT_PROVIDER,
+            product_id=product_id or "unknown",
+            platform=platform or "ios",
+            # Non-granting for the legacy (flag-off) check; the marker makes
+            # the access policy treat it as unresolved.
+            status="expired",
+            purchased_at=marker,
+            is_sandbox=is_sandbox,
+        )
+        session.add(placeholder)
+        rows = [placeholder]
+    for row in rows:
+        current = row.provider_sync_required_at
+        setattr(  # noqa: B010
+            row,
+            "provider_sync_required_at",
+            marker if current is None else max(_utc(current), marker),
+        )
+    return len(rows)
+
+
+def record_snapshot_unavailable(
+    error: RevenueCatSnapshotUnavailable,
+    *,
+    source: str,
+    user_id: Any = None,
+    event_type: str | None = None,
+    event_id: str | None = None,
+) -> None:
+    """Log, count and report a provider state that could not be verified."""
+    reason = getattr(error, "reason", SNAPSHOT_REASON_UNKNOWN)
+    context = {
+        "component": "subscription_access",
+        "operation": "revenuecat_snapshot",
+        "source": source,
+        "user_id": str(user_id) if user_id is not None else None,
+        "event_type": event_type,
+        "event_id": event_id,
+        "failure_kind": reason,
+        "result": "access_unresolved",
+    }
+    logger.warning(
+        "RevenueCat snapshot unavailable; access left unresolved for repair: "
+        "user_id=%s source=%s event_type=%s event_id=%s reason=%s error=%s",
+        user_id,
+        source,
+        event_type,
+        event_id,
+        reason,
+        error,
+    )
+    increment_metric(
+        "subscription_access.snapshot_unavailable",
+        attributes={
+            "source": source,
+            "failure_kind": reason,
+            "event_type": event_type or "none",
+        },
+    )
+    if reason in SNAPSHOT_ERROR_REASONS:
+        # Contract or configuration bug: needs engineering attention now.
+        capture_exception(error, context=context)
+    else:
+        capture_message(
+            "RevenueCat snapshot unavailable", level="warning", context=context
+        )
+
+
+def _record_sync_outcome(
+    outcome: SubscriptionSyncOutcome,
+    user: User,
+    source: str,
+    event_type: str | None,
+    event_id: str | None,
+    refund_event: bool,
+) -> None:
+    attributes = {
+        "source": source,
+        "event_type": event_type or "none",
+        "result": outcome.result,
+    }
+    increment_metric("subscription_access.sync", attributes=attributes)
+    context = {
+        "component": "subscription_access",
+        "operation": "revenuecat_sync",
+        "user_id": str(user.id),
+        "event_id": event_id,
+        **attributes,
+    }
+    if outcome.result == "stale_skipped":
+        logger.warning(
+            "RevenueCat snapshot older than stored facts skipped: user_id=%s "
+            "source=%s event_type=%s event_id=%s",
+            user.id,
+            source,
+            event_type,
+            event_id,
+        )
+        capture_message(
+            "RevenueCat snapshot older than stored facts skipped",
+            level="warning",
+            context=context,
+        )
+        return
+    if outcome.standard_missing:
+        logger.warning(
+            "RevenueCat customer has entitlements but no 'standard': user_id=%s "
+            "source=%s event_type=%s",
+            user.id,
+            source,
+            event_type,
+        )
+        capture_message(
+            "RevenueCat customer has entitlements but no 'standard'",
+            level="warning",
+            context=context,
+        )
+    if outcome.downgraded:
+        increment_metric(
+            "subscription_access.downgrade",
+            value=max(outcome.rows_revoked, 1),
+            attributes=attributes,
+        )
+        if refund_event or event_type in EXPECTED_DOWNGRADE_EVENTS:
+            logger.info(
+                "RevenueCat sync removed access: user_id=%s source=%s "
+                "event_type=%s event_id=%s rows_revoked=%d",
+                user.id,
+                source,
+                event_type,
+                event_id,
+                outcome.rows_revoked,
+            )
+        else:
+            logger.warning(
+                "RevenueCat sync removed access on an unexpected event: "
+                "user_id=%s source=%s event_type=%s event_id=%s rows_revoked=%d",
+                user.id,
+                source,
+                event_type,
+                event_id,
+                outcome.rows_revoked,
+            )
+            capture_message(
+                "RevenueCat sync removed access on an unexpected event",
+                level="warning",
+                context=context,
+            )
+        return
+    logger.info(
+        "RevenueCat access synced: user_id=%s source=%s event_type=%s "
+        "event_id=%s result=%s before=%s after=%s rows_revoked=%d "
+        "row_created=%s markers_cleared=%d",
+        user.id,
+        source,
+        event_type,
+        event_id,
+        outcome.result,
+        outcome.access_before,
+        outcome.access_after,
+        outcome.rows_revoked,
+        outcome.row_created,
+        outcome.markers_cleared,
+    )
