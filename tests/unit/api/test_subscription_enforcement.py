@@ -41,6 +41,8 @@ GATED_ROUTES = {
     ("POST", "/v1/ingredients/recognize"),
     ("POST", "/v1/meal-plans/generate"),
     ("POST", "/v1/meal-plans/{plan_id}/ai-prompt"),
+    ("POST", "/v1/ai-jobs"),
+    ("POST", "/v1/ai-jobs/{job_id}/retry"),
 }
 
 
@@ -142,6 +144,41 @@ def test_gated_route_refuses_before_its_handler_runs(monkeypatch):
     assert response.status_code == 402
     assert response.json()["detail"]["error_code"] == "SUBSCRIPTION_REQUIRED"
     assert route_bus.sent == []
+
+
+def test_ai_job_enqueue_refuses_before_any_job_is_queued(monkeypatch):
+    """POST /v1/ai-jobs runs the same paid AI as the gated scan and parse
+    routes; turning AI_JOBS_ENABLED on must not open it past enforcement."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.api.dependencies.ai_jobs import get_ai_job_service
+    from src.api.middleware.rate_limit import limiter
+    from src.api.routes.v1.ai_jobs import router
+
+    _flags(monkeypatch, access="true", enforcement_flag="true")
+    monkeypatch.setattr(enforcement, "_event_bus", lambda: _Bus(has_access=False))
+    service = MagicMock(enqueue=AsyncMock(), retry=AsyncMock())
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.include_router(router)
+    app.dependency_overrides[get_current_user_id] = lambda: "db-user-id"
+    app.dependency_overrides[get_ai_job_service] = lambda: service
+    client = TestClient(app)
+
+    created = client.post(
+        "/v1/ai-jobs",
+        json={
+            "id": "8f0c6f3e-6f1b-4a43-9b52-2f3f8f1f2a10",
+            "type": "parse_text",
+            "input": {"description": "pho bo"},
+        },
+    )
+    retried = client.post("/v1/ai-jobs/8f0c6f3e-6f1b-4a43-9b52-2f3f8f1f2a10/retry")
+
+    assert (created.status_code, retried.status_code) == (402, 402)
+    assert created.json()["detail"]["error_code"] == "SUBSCRIPTION_REQUIRED"
+    service.enqueue.assert_not_awaited()
+    service.retry.assert_not_awaited()
 
 
 def _dependency_calls(dependant):

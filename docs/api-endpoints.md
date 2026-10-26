@@ -160,6 +160,7 @@ Gated: the AI routes behind features the mobile app hard-gates with
 | `POST /v1/meal-suggestions/discover`, `POST /v1/meal-suggestions/recipes` | Meal suggestions |
 | `POST /v1/ingredients/recognize` | Meal suggestions (ingredient photo) |
 | `POST /v1/meal-plans/generate`, `POST /v1/meal-plans/{plan_id}/ai-prompt` | Weekly meal planner |
+| `POST /v1/ai-jobs`, `POST /v1/ai-jobs/{job_id}/retry` | Background meal scan and text parse (`AI_JOBS_ENABLED`; no mobile caller yet, gated so the flag cannot open paid AI) |
 
 Not gated on purpose: anything behind `requireLapsedLifestyleAccess`
 (hydration, movement, weight) or free features; reading or deleting a
@@ -167,8 +168,8 @@ user's own data (meals, chat history, plans, recipes); non-AI food logging
 writes (`POST /v1/meals/manual`, repeat, catalog and plan-slot logs, food
 search and barcode), which the app also hard-gates but whose offline
 durable-write replays must not start failing after a lapse; the guest trial
-`POST /v1/meals/parse-text/guest-trial`; and `/v1/ai-jobs` (no mobile
-caller yet).
+`POST /v1/meals/parse-text/guest-trial`; and the `/v1/ai-jobs` routes that
+only observe or stop a job (list, get, seen, cancel).
 
 ### Offline / agent dump
 

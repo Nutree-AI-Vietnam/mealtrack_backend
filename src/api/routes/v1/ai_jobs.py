@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.api.dependencies.ai_jobs import get_ai_job_service
 from src.api.dependencies.auth import get_current_user_id
+from src.api.dependencies.subscription_access import require_active_subscription
 from src.api.exceptions import (
     ConflictException,
     ExternalServiceException,
@@ -93,6 +94,8 @@ def _job_errors() -> Iterator[None]:
     status_code=status.HTTP_202_ACCEPTED,
     response_model=AiJobResponse,
     responses={200: {"model": AiJobResponse, "description": "Job already exists"}},
+    # The same paid AI as the gated meal scan and parse-text routes.
+    dependencies=[Depends(require_active_subscription)],
 )
 @limiter.limit(AI_JOB_ENQUEUE_RATE_LIMIT)
 async def create_ai_job(
@@ -175,7 +178,11 @@ async def get_ai_job(
     return AiJobResponse.from_domain(job)
 
 
-@router.post("/{job_id}/retry", response_model=AiJobResponse)
+@router.post(
+    "/{job_id}/retry",
+    response_model=AiJobResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
 @limiter.limit(AI_JOB_ENQUEUE_RATE_LIMIT)
 async def retry_ai_job(
     request: Request,
