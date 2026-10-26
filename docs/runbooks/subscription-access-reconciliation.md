@@ -377,13 +377,15 @@ cd /app && python -m scripts.reconcile_subscription_access --repair --apply \
   above), or a scheduled GitHub Actions workflow on an Environment holding
   `APP_DATABASE_URL` and `REVENUECAT_SECRET_API_KEY`. Get approval for the
   cost first.
-- Until it exists, nothing in the backend clears a `provider_sync_required_at`
-  marker on its own. The repair is client-driven: the app calls
-  `POST /v1/me/entitlements/refresh` after a purchase or restore and on
-  `ENTITLEMENTS_UNAVAILABLE`, which resolves the marker for that user; users
-  who do not open the app stay unresolved (sign-in and paid routes use the
-  legacy decision meanwhile). Run the repair above by hand after any
-  RevenueCat incident, and check the step 6 gate before each flag change.
+- Until it exists, a `provider_sync_required_at` marker clears only when a
+  RevenueCat snapshot taken at or after it is applied for that user: on the
+  user's next webhook whose RevenueCat read succeeds, on the app's
+  `POST /v1/me/entitlements/refresh` (after a purchase or restore and on
+  `ENTITLEMENTS_UNAVAILABLE`), or on a reconcile or repair run. Users with
+  neither a later RevenueCat event nor an app open stay unresolved (sign-in
+  and paid routes use the legacy decision meanwhile). Run the repair above by
+  hand after any RevenueCat incident, and check the step 6 gate before each
+  flag change.
 
 ## Monitoring
 
