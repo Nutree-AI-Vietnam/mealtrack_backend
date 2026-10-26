@@ -1,7 +1,8 @@
 """ASGI request-body limits that apply before FastAPI reads a body.
 
 FastAPI reads the whole body, spooling multipart files to disk, before a
-route's own size check can run, so these limits sit in front of it.
+route's own size check can run, so these limits sit in front of it. Every
+HTTP request gets one: its route's entry in BODY_LIMITS, or the default.
 """
 
 from __future__ import annotations
@@ -18,22 +19,33 @@ MIB = 1024 * KIB
 # Room for multipart boundaries and part headers on top of a file's own cap.
 MULTIPART_OVERHEAD_BYTES = 64 * KIB
 
+# Routes missing from BODY_LIMITS take small JSON bodies: a 50-item manual meal
+# with serving units and nutrition snapshots is about 220 KiB.
+DEFAULT_BODY_MAX_BYTES = MIB
+
 PREVIEW_BODY_MAX_BYTES = 8 * KIB
 # The meal photo routes accept files up to 10 MiB.
 MEAL_PHOTO_BODY_MAX_BYTES = 10 * MIB + MULTIPART_OVERHEAD_BYTES
 # Ingredient photos arrive as up to 7 MiB of base64 inside a JSON body.
 INGREDIENT_PHOTO_BODY_MAX_BYTES = 8 * MIB
+# Admin catalog manifests carry every recipe's ingredients and steps. A
+# 720-recipe manifest, the largest the import scripts have produced, is about
+# 3 to 6 MiB of JSON at typical recipe lengths.
+CATALOG_MANIFEST_BODY_MAX_BYTES = 8 * MIB
 
 # Largest body each route accepts, keyed by route path in router syntax, so
-# "{image_id}" matches one path segment. Every route that takes a photo or
-# another upload needs an entry; a unit test checks the app's form and file
-# routes against this map.
+# "{image_id}" matches one path segment. Routes missing here get
+# DEFAULT_BODY_MAX_BYTES, so any route whose bodies can be larger needs an
+# entry; unit tests check the app's upload and manifest routes against this map.
 BODY_LIMITS: dict[str, int] = {
     "/v1/tdee/preview": PREVIEW_BODY_MAX_BYTES,
     "/api/v1/tdee/preview": PREVIEW_BODY_MAX_BYTES,
     "/v1/meals/image/analyze": MEAL_PHOTO_BODY_MAX_BYTES,
     "/v1/meals/direct-upload/{image_id}": MEAL_PHOTO_BODY_MAX_BYTES,
     "/v1/ingredients/recognize": INGREDIENT_PHOTO_BODY_MAX_BYTES,
+    "/v1/admin/meal-catalog/import": CATALOG_MANIFEST_BODY_MAX_BYTES,
+    "/v1/admin/meal-catalog/resolve": CATALOG_MANIFEST_BODY_MAX_BYTES,
+    "/v1/admin/meal-catalog/enrich": CATALOG_MANIFEST_BODY_MAX_BYTES,
 }
 
 
@@ -117,7 +129,7 @@ class BodyLimitMiddleware:
         for pattern, max_bytes in self.limits:
             if pattern.match(path):
                 return max_bytes
-        return None
+        return DEFAULT_BODY_MAX_BYTES
 
 
 def _route_path(scope: Scope) -> str:
