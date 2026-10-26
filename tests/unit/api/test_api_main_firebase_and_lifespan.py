@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.middleware.rate_limit import RateLimitGuard
+
 
 def _reload_main():
     """Fresh import so initialize_firebase is the real function (not stubbed by other tests)."""
@@ -207,6 +209,9 @@ async def test_warm_database_connection_uses_async_engine(monkeypatch):
 
 def test_lifespan_cancels_the_redis_probe(fresh_main, monkeypatch):
     guard = fresh_main.limiter
+    # tests/conftest.py keeps this limiter in memory, where no probe starts.
+    # Nothing listens on port 1, and the probe sleeps 30 s before its first ping.
+    RateLimitGuard.configure(guard, "redis://127.0.0.1:1/0")
     started: dict[str, object] = {}
     original_start = guard.start_redis_probe
     original_stop = guard.stop_redis_probe

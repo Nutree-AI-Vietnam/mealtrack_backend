@@ -14,7 +14,11 @@ from src.app.handlers.query_handlers.get_progress_summary_query_handler import (
     GetProgressSummaryQueryHandler,
 )
 from src.app.queries.progress import GetLatestWeeklyRecapQuery, GetProgressSummaryQuery
-from src.app.services.weekly_recap_stats_builder import build_week_stats
+from src.app.services.weekly_recap_names import recap_first_name
+from src.app.services.weekly_recap_stats_builder import (
+    PLAN_ISSUES_KEY,
+    build_week_stats,
+)
 from src.app.services.weekly_recap_week_logs import load_week_logs
 from src.domain.model.weekly_recap import (
     WeeklyRecap,
@@ -27,6 +31,7 @@ from src.domain.services.weekly_recap import (
     generate_recap,
     latest_week_start,
 )
+from src.domain.services.weekly_recap.last_week import planned_issue_ids
 from src.domain.utils.timezone_utils import (
     ensure_utc,
     get_zone_info,
@@ -88,6 +93,7 @@ class GetLatestWeeklyRecapQueryHandler(
                 tz_name,
                 user.created_at,
                 self.config.min_week_days,
+                first_name=recap_first_name(user),
             )
         if logs is None:
             return None
@@ -103,12 +109,14 @@ class GetLatestWeeklyRecapQueryHandler(
         if stats is None:
             return None
         payload = generate_recap(stats, self.config, query.locale)
+        # Next week's recap reads which issues this plan showed from here.
+        plan = planned_issue_ids(stats, payload["case_id"], self.config)
         recap = WeeklyRecap(
             user_id=query.user_id,
             week_start=week_start,
             case_id=payload["case_id"],
             locale=query.locale,
-            stats=week_stats_to_dict(stats),
+            stats=week_stats_to_dict(stats) | {PLAN_ISSUES_KEY: list(plan)},
             payload=payload,
         )
         async with self.uow_factory() as uow:

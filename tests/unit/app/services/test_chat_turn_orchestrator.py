@@ -1,9 +1,14 @@
 import asyncio
+import logging
+import time
 
+import httpx
 import pytest
+import respx
 
 from src.app.services.chat_next_meal_candidates import NextMealCandidateResult
 from src.app.services.chat_turn_orchestrator import (
+    CHAT_EMBEDDING_DEADLINE_SECONDS,
     ChatTurnOrchestrator,
     PreparedChatTurn,
 )
@@ -30,12 +35,15 @@ from src.domain.model.chat import (
     ChatUsage,
     ChatUserContext,
 )
+from src.domain.services.chat.next_meal_intro import next_meal_intro
 from src.domain.services.chat.thread_listing import (
     decode_thread_cursor,
     encode_thread_cursor,
 )
 from src.domain.utils.timezone_utils import utc_now
+from src.infra.adapters.openai_chat_embedding_adapter import OpenAIChatEmbeddingAdapter
 from src.infra.services.chat_concurrency import reset_chat_concurrency_for_tests
+from src.observability import reset_request_id_for_test, set_request_context
 
 
 class _FakeRepo:
@@ -1825,6 +1833,68 @@ async def test_free_text_still_embeds_and_retrieves():
 
 
 @pytest.mark.asyncio
+async def test_rate_limited_embedding_degrades_without_honouring_retry_after():
+    """A 429 asking for a 90 s wait falls back to full-text retrieval at once."""
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(
+        repo, embedding=OpenAIChatEmbeddingAdapter(api_key="test")
+    )
+
+    with respx.mock as mock:
+        route = mock.post(path__regex=r"/embeddings$").mock(
+            return_value=httpx.Response(
+                429,
+                headers={"retry-after": "90"},
+                json={"error": {"message": "Rate limit reached", "type": "requests"}},
+            )
+        )
+        started = time.monotonic()
+        async with asyncio.timeout(CHAT_EMBEDDING_DEADLINE_SECONDS + 2):
+            events = await _stream(
+                orchestrator, intent=None, content="Cite protein guidance"
+            )
+        elapsed = time.monotonic() - started
+
+    assert route.call_count == 1
+    assert elapsed < CHAT_EMBEDDING_DEADLINE_SECONDS
+    assert orchestrator.test_retrieval.calls[0]["query_embedding"] is None
+    assert any(event.event == "message.completed" for event in events)
+
+
+class _HangingEmbedding:
+    def __init__(self):
+        self.cancelled = False
+
+    async def embed_query(self, text: str) -> list[float]:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return []
+
+
+@pytest.mark.asyncio
+async def test_slow_embedding_degrades_at_the_deadline(monkeypatch):
+    monkeypatch.setattr(
+        "src.app.services.chat_turn_orchestrator.CHAT_EMBEDDING_DEADLINE_SECONDS",
+        0.05,
+    )
+    embedding = _HangingEmbedding()
+    repo = _FakeRepo(claim=_claim())
+    orchestrator = _orchestrator(repo, embedding=embedding)
+
+    async with asyncio.timeout(2):
+        events = await _stream(
+            orchestrator, intent=None, content="Cite protein guidance"
+        )
+
+    assert embedding.cancelled
+    assert orchestrator.test_retrieval.calls[0]["query_embedding"] is None
+    assert any(event.event == "message.completed" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_meal_recommendation_generates_upfront_with_intent_chip():
     """A next-meal chip keeps the template when the model does not name the card."""
     cards = _three_cards()
@@ -3214,6 +3284,212 @@ async def test_blocked_chunk_closes_the_provider_stream():
     assert stream.consumed == 1
     assert repo.completed is not None
     assert "peanut" not in repo.completed["content"].casefold()
+
+
+_LOG_RECORD_FIELDS = frozenset(
+    {
+        "name",
+        "msg",
+        "args",
+        "levelname",
+        "levelno",
+        "pathname",
+        "filename",
+        "module",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "lineno",
+        "funcName",
+        "created",
+        "msecs",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "processName",
+        "process",
+        "message",
+        "asctime",
+        "taskName",
+    }
+)
+
+
+def _watch_stream_blocks(monkeypatch):
+    """Capture the blocked flag as the validated stream closes, before fallback."""
+    blocked: list[bool] = []
+    metrics: list[tuple[str, dict | None]] = []
+    original = ChatTurnOrchestrator._iter_validated_sentences
+
+    def _wrapped(self, *args, **kwargs):
+        generation = kwargs["generation"]
+        inner = original(self, *args, **kwargs)
+
+        async def _proxy():
+            try:
+                async for item in inner:
+                    yield item
+            finally:
+                blocked.append(bool(generation.get("blocked")))
+
+        return _proxy()
+
+    def _metric(name, value=1.0, *, unit=None, attributes=None):
+        del value, unit
+        metrics.append((name, attributes))
+
+    monkeypatch.setattr(ChatTurnOrchestrator, "_iter_validated_sentences", _wrapped)
+    monkeypatch.setattr(
+        "src.app.services.chat_turn_orchestrator.increment_metric", _metric
+    )
+    return blocked, metrics
+
+
+def _stream_blocked_records(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.getMessage() == "chat.turn.stream_blocked"
+    ]
+
+
+def _log_payload(record) -> dict:
+    return {
+        key: value
+        for key, value in record.__dict__.items()
+        if key not in _LOG_RECORD_FIELDS
+    }
+
+
+async def _next_meal_block(chunks: list[str]):
+    cards = _three_cards()
+    completion = _TrackedCompletion(
+        [
+            [ChatCompletionDelta(text=chunk) for chunk in chunks]
+            + [
+                ChatCompletionDelta(
+                    text="Trailing text the safety stop must not read. ",
+                    done=True,
+                    usage=ChatUsage(
+                        input_tokens=4, output_tokens=8, model="gpt-5.6-luna"
+                    ),
+                )
+            ]
+        ]
+    )
+    repo = _FakeRepo(claim=_claim())
+    next_meals = _FakeNextMeals(
+        NextMealCandidateResult(
+            suggestions=cards, session_id="sess-9", meal_slot="breakfast"
+        )
+    )
+    orchestrator = _orchestrator(repo, completion=completion, next_meals=next_meals)
+    events = await _stream(orchestrator, content="What should I eat next?")
+    return cards, completion, repo, events
+
+
+@pytest.mark.asyncio
+async def test_untraceable_calorie_blocks_stream_and_records_number_check(
+    caplog, monkeypatch
+):
+    user_text = "What should I eat next?"
+    kept = "Egg rice bowl is a fit. "
+    rejected = "This plate is 999 kcal. "
+    blocked, metrics = _watch_stream_blocks(monkeypatch)
+    set_request_context(request_id="req-block", method="POST", path="/v1/chat/messages")
+    try:
+        with caplog.at_level(logging.INFO):
+            cards, completion, repo, _events = await _next_meal_block([kept, rejected])
+    finally:
+        reset_request_id_for_test()
+
+    stream = completion.streams[0]
+    assert stream.closed
+    assert stream.consumed == 2
+    assert blocked == [True]
+    intro = next_meal_intro(
+        cards,
+        locale="en",
+        slot="breakfast",
+        user_text=user_text,
+        eaten_today=None,
+        remaining_protein_g=50,
+        remaining_carbs_g=80,
+        remaining_fat_g=20,
+    )
+    assert repo.completed is not None
+    assert repo.completed["content"] == intro
+    assert "999" not in repo.completed["content"]
+    assert kept.strip() not in repo.completed["content"]
+
+    records = _stream_blocked_records(caplog)
+    assert len(records) == 1
+    payload = _log_payload(records[0])
+    assert payload == {
+        "check": "number",
+        "turn_id": "m-asst",
+        "request_id": "req-block",
+    }
+    rendered = repr(payload)
+    assert user_text not in rendered
+    assert kept not in rendered
+    assert rejected not in rendered
+    assert "999" not in rendered
+    blocked_metrics = [
+        attributes for name, attributes in metrics if name == "chat.turn.stream_blocked"
+    ]
+    assert blocked_metrics == [{"check": "number"}]
+
+
+@pytest.mark.asyncio
+async def test_invalid_citation_records_citation_check(caplog, monkeypatch):
+    blocked, metrics = _watch_stream_blocks(monkeypatch)
+    rejected = "See [K9] for this breakfast. "
+    with caplog.at_level(logging.INFO):
+        _cards, completion, repo, _events = await _next_meal_block(
+            ["Egg rice bowl is a fit. ", rejected]
+        )
+
+    assert completion.streams[0].closed
+    assert completion.streams[0].consumed == 2
+    assert blocked == [True]
+    assert repo.completed is not None
+    assert "[K9]" not in repo.completed["content"]
+    records = _stream_blocked_records(caplog)
+    assert len(records) == 1
+    assert _log_payload(records[0])["check"] == "citation"
+    assert rejected not in repr(_log_payload(records[0]))
+    assert [
+        attributes
+        for name, attributes in metrics
+        if name == "chat.turn.stream_blocked"
+    ] == [{"check": "citation"}]
+
+
+@pytest.mark.asyncio
+async def test_allergy_sentence_records_sentence_check(caplog, monkeypatch):
+    blocked, metrics = _watch_stream_blocks(monkeypatch)
+    rejected = "Try a peanut snack. "
+    with caplog.at_level(logging.INFO):
+        _cards, completion, repo, _events = await _next_meal_block(
+            ["Egg rice bowl is a fit. ", rejected]
+        )
+
+    assert completion.streams[0].closed
+    assert completion.streams[0].consumed == 2
+    assert blocked == [True]
+    assert repo.completed is not None
+    assert "peanut" not in repo.completed["content"].casefold()
+    records = _stream_blocked_records(caplog)
+    assert len(records) == 1
+    assert _log_payload(records[0])["check"] == "sentence"
+    assert rejected not in repr(_log_payload(records[0]))
+    assert "peanut" not in repr(_log_payload(records[0])).casefold()
+    assert [
+        attributes
+        for name, attributes in metrics
+        if name == "chat.turn.stream_blocked"
+    ] == [{"check": "sentence"}]
 
 
 @pytest.mark.asyncio

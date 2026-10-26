@@ -57,7 +57,7 @@ from .meal_recommendation import (
 from .meal_write_operation import MealWriteOperationORM
 
 # Notification models
-from .notification import NotificationPreferencesORM
+from .notification import NotificationPreferencesORM, UserFcmTokenORM
 from .nutrition.food_item import FoodItemORM
 
 # Nutrition models
@@ -99,6 +99,9 @@ from src.infra.database.models.meal_recommendation.catalog_projection import (
 )
 
 from .ai_handshake_guest_trial_quota import AiHandshakeGuestTrialQuota
+
+# Background AI jobs
+from .ai_job import AiJobORM
 
 # Chat coach
 from .chat import (
@@ -179,6 +182,7 @@ __all__ = [
     # Test models
     # Notification models
     "NotificationPreferencesORM",
+    "UserFcmTokenORM",
     # Feature flags
     "FeatureFlag",
     # Saved suggestions
@@ -235,6 +239,7 @@ __all__ = [
     "PromoCodeRedemption",
     # AI Handshake guest trial quota
     "AiHandshakeGuestTrialQuota",
+    "AiJobORM",
     "WebFunnelLead",
     "ChatThreadORM",
     "ChatMessageORM",

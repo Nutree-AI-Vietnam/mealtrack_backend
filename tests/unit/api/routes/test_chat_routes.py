@@ -1,6 +1,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -665,7 +666,8 @@ def test_message_routes_share_one_rate_limit():
     assert statuses[10] == 429
 
 
-def test_client_disconnect_acloses_prepared_stream():
+@pytest.mark.asyncio
+async def test_client_disconnect_acloses_prepared_stream():
     class _Body:
         def __init__(self) -> None:
             self.closed = False
@@ -696,17 +698,51 @@ def test_client_disconnect_acloses_prepared_stream():
             return self.body
 
     orchestrator = _Orchestrator()
-    client = TestClient(_app(orchestrator))
-    with client.stream(
-        "POST",
-        "/v1/chat/messages",
-        json={"content": "Hello"},
-        headers={"Idempotency-Key": "k-close"},
-    ) as response:
-        assert response.status_code == 200
-        for line in response.iter_lines():
-            if line.strip():
-                break
+    request_body = b'{"content": "Hello"}'
+    first_event_sent = asyncio.Event()
+    sent: list[dict] = []
+    received = 0
+
+    async def receive() -> dict:
+        nonlocal received
+        received += 1
+        if received == 1:
+            return {"type": "http.request", "body": request_body, "more_body": False}
+        # Uvicorn reports a client that hangs up mid-stream as http.disconnect.
+        # TestClient before Starlette 1.9 sends it only once the body ends.
+        await first_event_sent.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+        if message["type"] == "http.response.body" and message.get("body"):
+            first_event_sent.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/chat/messages",
+        "raw_path": b"/v1/chat/messages",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(request_body)).encode()),
+            (b"idempotency-key", b"k-close"),
+        ],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    with anyio.fail_after(5):
+        await _app(orchestrator)(scope, receive, send)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 200
+    assert b"event: message.started" in sent[1]["body"]
     # Do not gc.collect(): disconnect must aclose the orchestrator stream.
     assert orchestrator.body.closed is True
 

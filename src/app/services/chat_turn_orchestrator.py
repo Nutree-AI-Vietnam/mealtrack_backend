@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
@@ -110,7 +110,12 @@ from src.domain.services.chat.thread_listing import (
 )
 from src.domain.services.chat.welcome import coach_welcome
 from src.domain.utils.timezone_utils import utc_now
-from src.observability import distribution_metric, increment_metric, log_event
+from src.observability import (
+    current_request_id,
+    distribution_metric,
+    increment_metric,
+    log_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +148,10 @@ _RETRYABLE_PROVIDER_MARKERS = (
     "503",
     "504",
 )
+
+# Embedding only sharpens retrieval; full-text search still answers without it.
+# The SDK can sleep up to 120 s on a 429 Retry-After, so cap the whole step.
+CHAT_EMBEDDING_DEADLINE_SECONDS = 3.0
 
 
 class PromptCachePolicy(Protocol):
@@ -699,6 +708,7 @@ class ChatTurnOrchestrator:
                         suggestions=suggestions,
                         history_messages=history_messages,
                         earlier=earlier,
+                        turn_id=claim.assistant_message.id,
                     )
                 ) as meal_deltas:
                     async for delta_text, replace in meal_deltas:
@@ -849,6 +859,7 @@ class ChatTurnOrchestrator:
                                 suggestions, history_messages
                             ),
                             earlier=earlier,
+                            turn_id=claim.assistant_message.id,
                         )
                     ) as sentence_stream:
                         async for delta_text in sentence_stream:
@@ -981,6 +992,7 @@ class ChatTurnOrchestrator:
                                     self._max_output_tokens * 2,
                                     CHAT_OUTPUT_TOKEN_CEILING,
                                 ),
+                                turn_id=claim.assistant_message.id,
                             )
                         ) as sentence_stream:
                             async for delta_text in sentence_stream:
@@ -1361,6 +1373,23 @@ class ChatTurnOrchestrator:
             return
         prepared.slot_acquired = False
         self._semaphore.release()
+
+    async def abandon_turn(
+        self, prepared: PreparedChatTurn, *, error_code: str
+    ) -> None:
+        """Give up a prepared turn that will not be streamed to completion.
+
+        Frees the provider slot and fails the generating reply, so the user
+        can resend the turn instead of waiting for its lease to expire.
+        """
+        self.release_slot(prepared)
+        if prepared.claim.kind == ChatClaimKind.REPLAY:
+            return
+        await self._fail(
+            prepared.claim.assistant_message.id,
+            error_code,
+            generation_id=prepared.claim.assistant_message.generation_id,
+        )
 
     async def get_thread(
         self,
@@ -1779,7 +1808,8 @@ class ChatTurnOrchestrator:
     ) -> tuple[list[RetrievedKnowledgeChunk], list[float] | None]:
         embedding: list[float] | None = None
         try:
-            embedding = await self._embedding.embed_query(query)
+            async with asyncio.timeout(CHAT_EMBEDDING_DEADLINE_SECONDS):
+                embedding = await self._embedding.embed_query(query)
         except Exception:
             log_event(
                 "warning",
@@ -1829,6 +1859,7 @@ class ChatTurnOrchestrator:
         suggestions: list[dict[str, Any]],
         history_messages: list[ChatMessage],
         earlier: str | None,
+        turn_id: str | None = None,
     ) -> AsyncIterator[tuple[str, bool]]:
         """Stream a next-meal sentence. The first chunk replaces the acknowledgement."""
         generation["tools"] = None
@@ -1846,6 +1877,7 @@ class ChatTurnOrchestrator:
                     meal_candidates=suggestions,
                     traceable_meals=_traceable_meals(suggestions, history_messages),
                     earlier=earlier,
+                    turn_id=turn_id,
                 )
             ) as sentence_stream:
                 async for delta in sentence_stream:
@@ -1869,6 +1901,7 @@ class ChatTurnOrchestrator:
         traceable_meals: list[dict[str, Any]] | None = None,
         earlier: str | None = None,
         output_token_budget: int | None = None,
+        turn_id: str | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
@@ -1935,7 +1968,7 @@ class ChatTurnOrchestrator:
                                     (first_token_at - started) * 1000,
                                     unit="millisecond",
                                 )
-                            next_pending = _accept_stream_chunk(
+                            accepted = _accept_stream_chunk(
                                 emitted="".join(kept),
                                 pending=pending,
                                 chunk=delta.text,
@@ -1947,11 +1980,12 @@ class ChatTurnOrchestrator:
                                 else meal_candidates,
                                 user_text=stated_user_text,
                             )
-                            if next_pending is None:
+                            if accepted.pending is None:
                                 generation["blocked"] = True
+                                _record_stream_blocked(accepted.check, turn_id=turn_id)
                                 break
                             kept.append(delta.text)
-                            pending = next_pending
+                            pending = accepted.pending
                             for sentence in buffer.push(delta.text):
                                 yielded_any = True
                                 yield sentence
@@ -2711,6 +2745,21 @@ def _should_retry_output_limit(
     return finished_assistant_text(text) != text
 
 
+class _StreamChunkResult(NamedTuple):
+    """Accept/reject result for one streamed chunk.
+
+    ``pending`` is the unfinished sentence when the chunk may stream, and
+    ``None`` when it must not. ``check`` names the rejecting check and is
+    set only together with ``pending is None``.
+    """
+
+    pending: str | None
+    check: str | None
+
+
+_STREAM_BLOCK_CHECKS = frozenset({"citation", "number", "sentence"})
+
+
 def _accept_stream_chunk(
     *,
     emitted: str,
@@ -2721,11 +2770,15 @@ def _accept_stream_chunk(
     context: ChatUserContext,
     meal_candidates: list[dict[str, Any]] | None,
     user_text: str = "",
-) -> str | None:
-    """Return the new unfinished sentence if `chunk` is safe to stream."""
+) -> _StreamChunkResult:
+    """Return the new unfinished sentence if `chunk` is safe to stream.
+
+    A rejection is still ``pending is None``. ``check`` reports which check
+    rejected the text: ``citation``, ``number``, or ``sentence``.
+    """
     tentative = emitted + chunk
     if not citations_are_valid(tentative, chunks):
-        return None
+        return _StreamChunkResult(None, "citation")
     if not nutrition_numbers_are_traceable(
         tentative,
         context=context,
@@ -2733,16 +2786,30 @@ def _accept_stream_chunk(
         meal_candidates=meal_candidates,
         user_text=user_text,
     ):
-        return None
+        return _StreamChunkResult(None, "number")
     splitter = SentenceBuffer()
     completed = splitter.push(pending + chunk)
     leftover = splitter.flush()
     for sentence in completed:
         if not inspect_sentence(sentence, allergies=allergies).allowed:
-            return None
+            return _StreamChunkResult(None, "sentence")
     if leftover and not inspect_sentence(leftover, allergies=allergies).allowed:
-        return None
-    return leftover
+        return _StreamChunkResult(None, "sentence")
+    return _StreamChunkResult(leftover, None)
+
+
+def _record_stream_blocked(check: str | None, *, turn_id: str | None) -> None:
+    """Count a safety stop. Never attach user text, model text, or its numbers."""
+    if check not in _STREAM_BLOCK_CHECKS:
+        return
+    attributes: dict[str, str] = {"check": check}
+    if turn_id:
+        attributes["turn_id"] = turn_id
+    request_id = current_request_id()
+    if request_id:
+        attributes["request_id"] = request_id
+    logger.info("chat.turn.stream_blocked", extra=attributes)
+    increment_metric("chat.turn.stream_blocked", attributes={"check": check})
 
 
 def _is_retryable_provider_error(exc: Exception) -> bool:

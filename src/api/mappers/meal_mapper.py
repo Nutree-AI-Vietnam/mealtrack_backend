@@ -37,7 +37,11 @@ from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
-from src.domain.services.localized_display_name import keep_stored_display_name
+from src.domain.services.localized_display_name import (
+    display_dish_name,
+    has_persisted_image_display_names,
+    keep_stored_display_name,
+)
 from src.domain.services.meal_calorie_service import (
     effective_food_item_calories,
     effective_meal_calories,
@@ -167,7 +171,7 @@ class MealMapper:
         )
         display_projections = display_name_by_food_reference or {}
         tracked_food_reference_ids = set(display_projections.keys())
-        canonical_dish_name, canonical_food_names = MealMapper._raw_response_canonical(
+        _, canonical_food_names = MealMapper._raw_response_canonical(
             meal,
             expected_food_count=(
                 len(meal.nutrition.food_items or []) if meal.nutrition else 0
@@ -305,19 +309,15 @@ class MealMapper:
 
         # Stored names are authoritative for scanner meals. The requested
         # locale must not rewrite those names later.
-        dish_name = meal.dish_name
+        dish_name = display_dish_name(
+            meal, requested_language, parsed_raw=parsed_raw_gpt
+        )
         persisted_image_names = MealMapper.has_persisted_image_display_names(meal)
         translation_language = (
             MealMapper._raw_response_localization_language(meal)
             if persisted_image_names
             else None
         )
-        if (
-            not persisted_image_names
-            and requested_language == "en"
-            and canonical_dish_name
-        ):
-            dish_name = canonical_dish_name
         instructions = MealMapper._normalize_instructions(
             getattr(meal, "instructions", None)
         )
@@ -343,7 +343,6 @@ class MealMapper:
                 food_item.display_name = canonical_name
         elif not persisted_image_names and direct_localization:
             translation_language = direct_localization.language
-            dish_name = direct_localization.dish_name
             for food_item, localized_name in zip(
                 food_items,
                 direct_localization.food_item_names,
@@ -364,12 +363,6 @@ class MealMapper:
                 translation_language = requested_language
                 # Apply each translated field independently if it exists
                 # (lenient check - scanned meals may not have instructions)
-                if tr.dish_name and not keep_stored_display_name(
-                    stored=dish_name,
-                    translated=tr.dish_name,
-                    language=requested_language,
-                ):
-                    dish_name = tr.dish_name
                 if tr.meal_instruction:
                     instructions = tr.meal_instruction
                 translated_names_by_id = {
@@ -543,10 +536,7 @@ class MealMapper:
     @staticmethod
     def has_persisted_image_display_names(meal: Meal) -> bool:
         """Return whether an image meal can trust its stored display names."""
-        return getattr(meal, "source", None) in {
-            "scanner",
-            "food_label",
-        } and not getattr(meal, "translations", None)
+        return has_persisted_image_display_names(meal)
 
     @staticmethod
     def _raw_response_localization_language(meal: Meal) -> str | None:
