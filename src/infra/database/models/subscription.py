@@ -2,7 +2,17 @@
 Subscription model for tracking user subscriptions.
 """
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Index, String, text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    event,
+    text,
+)
 from sqlalchemy.orm import relationship
 
 from src.domain.model.subscription_access import (
@@ -16,9 +26,12 @@ from src.infra.database.models.base import BaseMixin
 
 class Subscription(Base, BaseMixin):
     """
-    Stores subscription records synced from RevenueCat.
+    Access rows from every payment provider (``provider``).
 
-    RevenueCat is the source of truth - this table caches key data.
+    RevenueCat rows (provider='revenuecat') are written from RevenueCat
+    snapshots and webhooks and carry the RevenueCat app_user_id in
+    ``revenuecat_subscriber_id``. Rows from other providers (MoMo, ...)
+    leave that column NULL and are never read or written by RevenueCat code.
     """
 
     __tablename__ = "subscriptions"
@@ -28,12 +41,14 @@ class Subscription(Base, BaseMixin):
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
 
-    # RevenueCat data
-    revenuecat_subscriber_id = Column(String(255), nullable=False, index=True)
+    # RevenueCat app_user_id; NULL on rows another provider owns.
+    revenuecat_subscriber_id = Column(String(255), nullable=True, index=True)
+    # Every ORM writer names its provider (enforced on insert below). The
+    # server default only serves writers that predate the column -- an
+    # image rolled back past it, or manual SQL -- which are all RevenueCat.
     provider = Column(
         String(32),
         nullable=False,
-        default="revenuecat",
         server_default=text("'revenuecat'"),
     )
     product_id = Column(
@@ -107,3 +122,12 @@ class Subscription(Base, BaseMixin):
         return (
             "yearly" in self.product_id.lower() or "annual" in self.product_id.lower()
         )
+
+
+@event.listens_for(Subscription, "before_insert")
+def _require_explicit_provider(mapper, connection, target: Subscription) -> None:
+    """A row inserted without a provider would read as RevenueCat's, and the
+    next RevenueCat snapshot would expire it. New writers must say whose it is.
+    """
+    if not target.provider:
+        raise ValueError("Subscription.provider must be set explicitly on insert")

@@ -63,14 +63,18 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
         return result.scalars().first()
 
     async def find_by_revenuecat_id(
-        self, revenuecat_subscriber_id: str, *, user_id: str | None = None
+        self, revenuecat_subscriber_id: str | None, *, user_id: str | None = None
     ) -> Subscription | None:
         """Find the newest RevenueCat-provided row for a RevenueCat subscriber ID.
 
-        Rows written by another provider (for example MoMo) can share the
-        Firebase uid in ``revenuecat_subscriber_id``; RevenueCat events must
-        never select them. ``user_id`` scopes the match to one owner.
+        Rows written by another provider (for example MoMo) leave
+        ``revenuecat_subscriber_id`` NULL or may share the Firebase uid in it;
+        RevenueCat events must never select them. ``user_id`` scopes the match
+        to one owner. A missing id matches nothing (``== None`` would compile
+        to ``IS NULL``).
         """
+        if not revenuecat_subscriber_id:
+            return None
         statement = select(Subscription).where(
             Subscription.revenuecat_subscriber_id == revenuecat_subscriber_id,
             Subscription.provider == REVENUECAT_PROVIDER,

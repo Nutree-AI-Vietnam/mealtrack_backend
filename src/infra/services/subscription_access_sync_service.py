@@ -469,6 +469,7 @@ async def sync_revenuecat_access(
             target_row = Subscription(
                 id=str(uuid4()),
                 user_id=locked_user.id,
+                provider=REVENUECAT_PROVIDER,
                 revenuecat_subscriber_id=locked_user.firebase_uid,
                 product_id=facts["product_id"],
                 platform=facts["platform"],

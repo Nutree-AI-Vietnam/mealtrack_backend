@@ -605,6 +605,32 @@ class TestWebhookHandler:
         assert added_subscription.user_id == "user_123"
         assert added_subscription.product_id == "premium_monthly"
         assert added_subscription.status == "active"
+        # RevenueCat writers name their provider: the column has no ORM default.
+        assert added_subscription.provider == "revenuecat"
+        assert added_subscription.revenuecat_subscriber_id == "user_123"
+
+    async def test_revenuecat_rows_keep_an_id_when_the_event_has_none(self, mock_uow):
+        """revenuecat_subscriber_id is nullable for other providers; a RevenueCat
+        row still carries the Firebase uid RevenueCat knows the user by."""
+        user = MagicMock(id="user_123", firebase_uid="firebase-uid")
+        event = {"product_id": "premium_monthly", "store": "APP_STORE"}
+        mock_uow.subscriptions = MagicMock()
+        mock_uow.subscriptions.find_by_revenuecat_id = AsyncMock(return_value=None)
+        mock_uow.session.flush = AsyncMock()
+
+        with patch(
+            "src.api.routes.v1.webhook_subscription_lifecycle.credit_referral_on_purchase",
+            new_callable=AsyncMock,
+        ):
+            await handle_purchase(
+                mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
+            )
+        created = await get_or_create_subscription(mock_uow, user, event)
+
+        purchased = mock_uow.session.add.call_args_list[0].args[0]
+        for row in (purchased, created):
+            assert row.provider == "revenuecat"
+            assert row.revenuecat_subscriber_id == "firebase-uid"
 
     async def test_handle_renewal(self, mock_uow):
         """Test handling renewal event."""

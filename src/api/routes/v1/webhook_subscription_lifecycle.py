@@ -109,7 +109,8 @@ async def handle_purchase(
     subscription = Subscription(
         id=str(uuid.uuid4()),
         user_id=user.id,
-        revenuecat_subscriber_id=event.get("app_user_id"),
+        provider="revenuecat",
+        revenuecat_subscriber_id=event.get("app_user_id") or user.firebase_uid,
         product_id=event.get("product_id"),
         platform=parse_platform(event.get("store")),
         status="active",
@@ -354,7 +355,8 @@ async def get_or_create_subscription(uow, user, event):
         subscription = Subscription(
             id=str(uuid.uuid4()),
             user_id=user.id,
-            revenuecat_subscriber_id=event.get("app_user_id"),
+            provider="revenuecat",
+            revenuecat_subscriber_id=event.get("app_user_id") or user.firebase_uid,
             product_id=event.get("product_id") or "unknown",
             platform=parse_platform(event.get("store")),
             status="active",

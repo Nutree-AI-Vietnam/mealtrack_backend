@@ -112,3 +112,48 @@ async def test_find_by_revenuecat_id_never_selects_another_providers_row():
     assert "subscriptions.provider = 'revenuecat'" in sql
     assert "subscriptions.user_id = 'user-1'" in sql
     assert "ORDER BY subscriptions.purchased_at DESC" in sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", [None, ""])
+async def test_find_by_revenuecat_id_without_an_id_matches_nothing(missing):
+    """`column == None` compiles to IS NULL, which would select rows another
+    provider wrote with no RevenueCat id."""
+    session = _AsyncSession([MagicMock(id="momo-row")])
+    repo = AsyncSubscriptionRepository(session)
+
+    assert await repo.find_by_revenuecat_id(missing, user_id="user-1") is None
+    assert session.statement is None
+
+
+def test_subscription_model_allows_rows_without_a_revenuecat_id():
+    from src.infra.database.models.subscription import Subscription
+
+    column = Subscription.__table__.c.revenuecat_subscriber_id
+    assert column.nullable is True
+    provider = Subscription.__table__.c.provider
+    # No ORM-side default: every writer names its provider.
+    assert provider.default is None
+    assert provider.server_default is not None
+
+
+@pytest.mark.parametrize("provider", [None, ""])
+def test_insert_without_a_provider_is_refused(provider):
+    from src.infra.database.models.subscription import (
+        Subscription,
+        _require_explicit_provider,
+    )
+
+    row = Subscription(user_id="user-1", product_id="momo_pass_30d", provider=provider)
+    with pytest.raises(ValueError, match="provider must be set explicitly"):
+        _require_explicit_provider(None, None, row)
+
+
+def test_insert_with_a_provider_is_allowed():
+    from src.infra.database.models.subscription import (
+        Subscription,
+        _require_explicit_provider,
+    )
+
+    row = Subscription(user_id="user-1", product_id="momo_pass_30d", provider="momo")
+    _require_explicit_provider(None, None, row)
