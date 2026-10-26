@@ -104,6 +104,15 @@ The body is FastAPI's `HTTPException` envelope:
 {"detail": {"error_code": "ENTITLEMENTS_UNAVAILABLE", "message": "Subscription access cannot be decided right now."}}
 ```
 
+Any other answer is not a denial either:
+
+- `404` (an image older than these routes, e.g. after an image rollback:
+  `{"detail": "Not Found"}`) or any other non-`200` without one of the
+  `error_code`s above (a gateway `502` or `504`, a proxy `500`): use the
+  RevenueCat client decision, as for `ENTITLEMENTS_DISABLED`.
+- A timeout or no connection: as for `ENTITLEMENTS_UNAVAILABLE`.
+- `401`: the app's auth handling refreshes the Firebase token and retries.
+
 **`POST /v1/me/entitlements/refresh`** (no body) re-reads the caller's
 RevenueCat customer (`app_user_id` = Firebase uid), applies it to the
 database in one unit of work and commits, then answers exactly like the GET
@@ -122,6 +131,9 @@ when a user the app last saw as granted reads as expired.
   no RevenueCat purchases while the database holds a possible grant from
   elsewhere): nothing is written, the failure is logged, and the answer is
   the current database decision.
+- `404` (an image older than this route) or any non-`200` without a known
+  `error_code` other than the `429` below: a no-op; keep the current
+  decision (GET's rules above) and do not retry in a loop.
 - Rate limit: 6 calls per minute per Firebase uid (the app's shared SlowAPI
   limiter, keyed on the bearer token). Over the limit the call never reaches
   RevenueCat or the database and answers `429` with `Retry-After: 60` and

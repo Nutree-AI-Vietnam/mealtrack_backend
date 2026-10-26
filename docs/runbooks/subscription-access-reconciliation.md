@@ -43,20 +43,26 @@ tombstone).
   RevenueCat request per second) plus retry waits; 5,000 subscribers take
   about 85 minutes. The first output line prints `candidates=N`.
 - **Output:** `--output` gets one JSONL record per user: internal `user_id`,
-  `decision` (`granted`, `denied`, `unresolved` after the run), `before`,
-  `reason`, `snapshot` (`ok`, `absent`, `unavailable`, `not_read`),
-  `downgrade`, row counts. No emails, Firebase uids or provider payloads.
-  Unresolved users and downgrades are also printed. The files are created
-  `0600`; keep them off tickets and repositories and delete them after the
-  review. On `--resume` the file is appended to; the last record per user
-  wins.
+  `decision` (`granted`, `denied`, `unresolved` after the run), `before`
+  (the access policy's decision before the run), `legacy_before` (the
+  decision users get today while the flag is off: the legacy row check
+  sign-in uses), `reason`, `snapshot` (`ok`, `absent`, `unavailable`,
+  `not_read`), `downgrade` (policy: granted before, denied after),
+  `loses_current_access` (`legacy_before` granted, denied after), row
+  counts. No emails, Firebase uids or provider payloads. Downgrades
+  (`downgrade`), current-access losses (`loses_access`) and unresolved users
+  are also printed. The files are created `0600`; keep them off tickets and
+  repositories and delete them after the review. On `--resume` the file is
+  appended to; the last record per user wins.
 - **Summary and exit code:** the last line is
   `RESULT: GO|NO-GO|INCOMPLETE mode=... users=... granted=... denied=...
-  unresolved=... downgraded=... failed=... skipped=...`. Exit `0` = GO (no
-  user left unresolved), `1` = NO-GO, `2` = usage or configuration error
-  (including a refused checkpoint), `3` = stopped early (RevenueCat asked to
-  wait longer than `--max-wait-seconds`, five provider failures in a row, an
-  interrupt or a crash); continue with `--resume`.
+  unresolved=... downgraded=... loses_current_access=... failed=...
+  skipped=...`. Exit `0` = GO (no user left unresolved), `1` = NO-GO (only
+  ever a verdict), `2` = usage or configuration error (including a refused
+  checkpoint), `3` = incomplete: stopped early (RevenueCat asked to wait
+  longer than `--max-wait-seconds`, five provider failures in a row, an
+  interrupt) or crashed anywhere (database, checkpoint or output file, the
+  `--gate` query, a bug); continue with `--resume`.
 - **Checkpoint:** `--checkpoint PATH` records the mode, the population and
   the start time. `--resume` refuses a checkpoint from the other mode, from
   another population, or older than 24 hours; start a fresh pass instead.
@@ -87,14 +93,19 @@ the new columns whatever the flags say. Against an unmigrated database,
 RevenueCat webhooks fail with `UndefinedColumn`, while `/health` stays green
 and Render shifts traffic anyway.
 
-- [ ] Actions → **Migrate Database** → the environment, `dry_run=true`.
-      The pending revisions include `20261022125800304190` (access
-      metadata), `20261026080322454705` (sync marker) and
-      `20261026085224333692` (nullable RevenueCat id).
+- [ ] Actions → **Migrate Database** → "Use workflow from" the branch or
+      tag that contains these migrations (the release ref you deploy; the
+      workflow runs the migrations of the ref it is dispatched from) → the
+      environment, `dry_run=true`. The pending revisions include
+      `20261022125800304190` (access metadata), `20261026080322454705` (sync
+      marker) and `20261026085224333692` (nullable RevenueCat id).
 - [ ] Run again with `dry_run=false` (production needs Environment
       approval).
-- [ ] Run `dry_run=true` once more: the head is `20261026085224333692` (or
-      a later revision).
+- [ ] Run `dry_run=true` once more and read the **database** line: it must
+      show `Current revision: 20261026085224333692` (or a later revision)
+      followed by `Database is up to date`. `Head revision:` comes from the
+      checked-out code and reads the same whether or not the upgrade ran, so
+      it proves nothing.
 - [ ] Preprod (`render-preprod.yml`) runs with the production environment,
       database included: do not deploy this image to preprod before
       production is migrated.
@@ -149,13 +160,19 @@ the apply will reach. Review the per-user file:
 ```bash
 jq -r '.reason' ~/reconcile/dry-run.jsonl | sort | uniq -c
 jq -c 'select(.decision == "unresolved")' ~/reconcile/dry-run.jsonl
-jq -c 'select(.downgrade)' ~/reconcile/dry-run.jsonl
+jq -c 'select(.loses_current_access or .downgrade)' ~/reconcile/dry-run.jsonl
 ```
 
 - [ ] Every `unresolved` user has a plan (reason table above).
-- [ ] Downgrades (granted by the stored rows, denied by RevenueCat) are
-      mostly churned users whose `EXPIRATION` was missed: spot-check a
-      sample in the RevenueCat dashboard before applying.
+- [ ] Users losing access (`loses_current_access`: granted by today's
+      legacy check, denied by RevenueCat; `downgrade`: the same under the
+      policy for rows already verified) are mostly churned users whose
+      `EXPIRATION` was missed: spot-check a sample in the RevenueCat
+      dashboard before applying. At the first cutover every legacy grant is
+      unverified, so these users show up only as `loses_current_access`
+      (`before` reads `unresolved`). A large count, or paying users among
+      them, points at a product or entitlement mapping problem: stop and
+      investigate instead of applying.
 - [ ] Buyers with no row at all (a lost `INITIAL_PURCHASE`) are not in this
       population; the app's refresh after purchase or restore, their next
       webhook, or an explicit `--all-users` pass repairs them.
@@ -252,13 +269,17 @@ WHERE s.provider = 'revenuecat'
       rollout is complete and the database decisions have matched RevenueCat
       for a sustained period. It makes the paid AI routes answer `402`
       (list in `docs/api-endpoints.md`); a wrong database row then blocks a
-      paying user server-side. Turning it off takes effect at once.
+      paying user server-side. Both flags are read from the service's
+      environment, so turning one off takes effect when Render redeploys
+      after the env change (a few minutes), not at once.
 
 ## Rollback
 
-**Flag off (any time).** Set `SUBSCRIPTION_ACCESS_ENABLED=false`. The app
-falls back to RevenueCat on `503 ENTITLEMENTS_DISABLED`, enforcement stops
-with it, and webhooks keep stamping rows.
+**Flag off (any time).** Set `SUBSCRIPTION_ACCESS_ENABLED=false`. It takes
+effect when Render redeploys after the env change (a few minutes); until
+then the old value keeps serving. The app then falls back to RevenueCat on
+`503 ENTITLEMENTS_DISABLED`, enforcement stops with it, and webhooks keep
+stamping rows.
 
 1. Note the UTC time the flag went off.
 2. Before turning it back on, repair the window it was off, then pass the
@@ -275,6 +296,14 @@ insert rows without a snapshot stamp (a first purchase becomes `active` with
 `provider_snapshot_at` NULL) and change verified rows without touching
 `provider_snapshot_at`, the grace deadline or the period type.
 
+An image before this change has no `/v1/me/entitlements` routes: it answers
+`404 {"detail": "Not Found"}`, never `503 ENTITLEMENTS_DISABLED`. Once the
+step 8 mobile build is live, such a rollback relies on the app treating a
+`404` (or any non-`200` without a known `error_code`) like
+`ENTITLEMENTS_DISABLED` (`docs/api-endpoints.md`). Confirm the released
+build does; otherwise roll back only to an image that still serves the
+routes and use the flag alone.
+
 1. Turn `SUBSCRIPTION_ACCESS_ENABLED` (and enforcement) off first and note
    the UTC time.
 2. Roll back the image. Keep the schema; the old image runs on it.
@@ -284,7 +313,14 @@ insert rows without a snapshot stamp (a first purchase becomes `active` with
    inserted or changed.
 4. Pass the step 6 gate, then turn the flag on and repeat step 7.
 
-Downgrade the migrations only after no running image reads the columns.
+Downgrade the migrations only after no running image reads the columns, and
+know that the schema downgrade loses row ownership. Downgrading
+`20261026085224333692` fills every NULL `revenuecat_subscriber_id` (rows of
+other providers) with the owner's Firebase uid; downgrading
+`20261022125800304190` drops `provider`. After both, a MoMo row reads as a
+RevenueCat row that RevenueCat code may expire or re-point. Once
+`provider='momo'` rows exist, do not downgrade past `20261022125800304190`
+(or export those rows first and restore them after rolling forward).
 
 ## Scheduled repair (recommended)
 
@@ -302,12 +338,20 @@ cd /app && python -m scripts.reconcile_subscription_access --repair --apply \
 - Keep one pass well inside the interval: candidates x one second. Lower
   `--expiring-within-hours` if it grows. Overlapping passes are safe (writers
   for one user serialise on the user row) but waste RevenueCat quota.
-- This repository does not define the job, because it is new paid
+- **Open decision (owner: backend lead), not yet scheduled.** This
+  repository does not define the job, because it is new paid
   infrastructure. Either add a Render Cron Job on the same image and
   environment as `mealtrack-backend` (schedule `0 * * * *`, the command
   above), or a scheduled GitHub Actions workflow on an Environment holding
   `APP_DATABASE_URL` and `REVENUECAT_SECRET_API_KEY`. Get approval for the
   cost first.
+- Until it exists, nothing in the backend clears a `provider_sync_required_at`
+  marker on its own. The repair is client-driven: the app calls
+  `POST /v1/me/entitlements/refresh` after a purchase or restore and on
+  `ENTITLEMENTS_UNAVAILABLE`, which resolves the marker for that user; users
+  who do not open the app stay unresolved (sign-in and paid routes use the
+  legacy decision meanwhile). Run the repair above by hand after any
+  RevenueCat incident, and check the step 6 gate before each flag change.
 
 ## Monitoring
 
@@ -316,12 +360,12 @@ observability facade:
 
 | Signal | Meaning | Alert on |
 |---|---|---|
-| Metric `subscription_access.snapshot_unavailable` (`source`, `failure_kind`, `event_type`), WARNING `RevenueCat snapshot unavailable; access left unresolved for repair` | A webhook, refresh or reconcile could not read or apply a RevenueCat customer; the rows are marked for repair | Any `failure_kind` in `malformed`, `unsupported_store`, `http_4xx`, `api_key_missing`, `unexpected` (also a Sentry exception): page. Transient kinds: a sustained rate (e.g. more than 20 in 15 minutes) |
+| Metric `subscription_access.snapshot_unavailable` (`source`, `failure_kind`, `event_type`), WARNING `RevenueCat snapshot unavailable; access left unresolved for repair` | A webhook (`source=webhook`), refresh or web finalize (`source=web_funnel`) could not read or apply a RevenueCat customer. Only webhooks mark rows for repair; a refresh or finalize writes nothing. The reconcile script emits nothing here: its failures are its exit code and stdout | Any `failure_kind` in `malformed`, `unsupported_store`, `http_4xx`, `api_key_missing`, `unexpected` (also a Sentry exception): page. Transient kinds (`transport`, `http_429`, `http_5xx`) are not sent to Sentry; alert on a sustained rate of this counter (e.g. more than 20 in 15 minutes) |
 | Metric `subscription_access.entitlements_unavailable` (`operation`, `failure_kind`) | `GET` or refresh answered `503 ENTITLEMENTS_UNAVAILABLE` | `failure_kind=unexpected` (logged with `logger.exception` and sent to Sentry): page on any. `unresolved`: users on unrepaired rows; should be near zero after cutover |
 | Metric `subscription_access.legacy_fallback` (`source`), WARNING `Subscription access is unresolved in the database; using the legacy decision` | Sign-in, profile or a paid route fell back to the legacy row check | Should trend to zero after step 6; investigate if it persists |
-| Metric `subscription_access.downgrade`, Sentry `RevenueCat sync removed access on an unexpected event` | A sync removed access on an event other than an expiration or refund | More than 5 per hour (entitlement or product misconfiguration in RevenueCat) |
+| Metric `subscription_access.downgrade` (`source`, `event_type`, `result`, `expected`), Sentry `RevenueCat sync removed access on an unexpected event` | A sync removed access the user had before the event. `expected=true` on an `EXPIRATION` or a refund (a `CANCELLATION` too, so only this attribute separates the two); `expected=false` otherwise, also reported to Sentry | `expected=false` more than 5 per hour (entitlement or product misconfiguration in RevenueCat) |
 | Sentry `RevenueCat customer has entitlements but no 'standard'` | RevenueCat entitlement configuration drift | Page |
-| Sentry `RevenueCat snapshot older than stored facts skipped` | Out-of-order reads | Spikes only |
+| WARNING `RevenueCat snapshot older than stored facts skipped`, metric `subscription_access.sync` with `result=stale_skipped` | Out-of-order reads; routine when the app's refresh after a purchase commits before the purchase webhook. Not sent to Sentry | Spikes only |
 | Metric `subscription_access.sync` (`source`, `event_type`, `result`) | Every applied snapshot | Volume drops to zero (webhooks not arriving) |
 | Metric `webhook.revenuecat.processed` (`event_type`, `status`, `result`) | Webhook outcomes; `result=access_unresolved` means the rows were marked for repair | Rate of `access_unresolved`, and webhook HTTP 5xx at Render (RevenueCat stops retrying after about 5 attempts) |
 | Metric `subscription_access.enforcement_denied` | A paid route answered `402` | A spike right after step 9: turn enforcement off |
