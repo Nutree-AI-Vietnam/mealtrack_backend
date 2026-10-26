@@ -16,6 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.sql.elements import TextClause
 from tests.fixtures.revenuecat_samples import (
     empty_customer_response,
@@ -819,3 +820,92 @@ async def test_initial_purchase_over_an_unresolved_placeholder_credits_and_resol
     (row,) = database.rows_of(user)
     assert row.provider_sync_required_at is None
     assert evaluate_subscription_access([row]).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_unsupported_store_in_the_snapshot_keeps_the_purchase_effects(
+    monkeypatch,
+):
+    """The read succeeds but the sync refuses the customer: the referral
+    credit, row and lifecycle event stand, the webhook ACKs, access is left
+    unresolved and the contract problem goes to Sentry."""
+    user = _user("user-u", "uid-u")
+    database = _Database([user])
+    referrals = _pending_referral()
+    publisher = MagicMock(publish=AsyncMock())
+    body = _annual()
+    body["subscriber"]["subscriptions"]["annual"]["store"] = "amazon"
+
+    with (
+        _revenuecat({"uid-u": _ok(body)}),
+        patch(f"{SYNC}.capture_exception") as reported,
+    ):
+        result = await _deliver(
+            monkeypatch,
+            _event("INITIAL_PURCHASE", "uid-u"),
+            database,
+            referrals,
+            publisher,
+        )
+
+    assert result == {"status": "success"}
+    assert (referrals.conversion.status, referrals.balance) == ("converted", 50000)
+    (published,) = publisher.publish.await_args_list
+    assert published.args[0]["data"]["lifecycle_type"] == (
+        "subscription_initial_purchase"
+    )
+    (row,) = database.rows_of(user)
+    assert row.provider_sync_required_at is not None
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access([row])
+    assert reported.call_args.kwargs["context"]["failure_kind"] == ("unsupported_store")
+
+
+@pytest.mark.asyncio
+async def test_unexpected_sync_error_keeps_the_event_write_and_acks(monkeypatch):
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+    event = _event("RENEWAL", "uid-u")
+    publisher = MagicMock(publish=AsyncMock())
+
+    with (
+        _revenuecat({"uid-u": _ok(_annual())}),
+        patch(f"{SYNC}.normalize_standard_access_facts", side_effect=TypeError("boom")),
+        patch(f"{SYNC}.capture_exception") as reported,
+    ):
+        result = await _deliver(monkeypatch, event, database, publisher=publisher)
+
+    assert result == {"status": "success"}
+    # The renewal's own write stands, as when RevenueCat cannot be read.
+    assert stored.expires_at == datetime.fromtimestamp(
+        event["expiration_at_ms"] / 1000, UTC
+    )
+    assert stored.provider_sync_required_at is not None
+    (published,) = publisher.publish.await_args_list
+    assert published.args[0]["data"]["lifecycle_type"] == "subscription_renewal"
+    error = reported.call_args.args[0]
+    assert reported.call_args.kwargs["context"]["failure_kind"] == "unexpected"
+    assert isinstance(error.__cause__, TypeError)
+
+
+@pytest.mark.asyncio
+async def test_database_error_in_the_sync_fails_the_delivery_for_a_retry(
+    monkeypatch,
+):
+    """A broken transaction cannot keep anything; RevenueCat must redeliver."""
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+
+    with (
+        _revenuecat({"uid-u": _ok(_annual())}),
+        patch(
+            "src.api.routes.v1.webhook_access_sync.sync_revenuecat_access",
+            AsyncMock(side_effect=OperationalError("UPDATE", {}, Exception("gone"))),
+        ),
+        pytest.raises(SQLAlchemyError),
+    ):
+        await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
+
+    assert stored.provider_sync_required_at is None
