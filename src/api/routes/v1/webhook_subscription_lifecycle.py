@@ -181,16 +181,19 @@ async def handle_renewal(
 
     # Purge stale trial-expiry pushes so we don't send a
     # "your trial ends tomorrow" push for a sub that just auto-renewed.
+    # The savepoint keeps a failed purge from aborting the webhook's
+    # transaction (PostgreSQL refuses every later statement otherwise).
     try:
-        await uow.session.execute(
-            text("""
-                DELETE FROM notifications
-                WHERE user_id = :uid
-                  AND notification_type LIKE 'trial_expiry%'
-                  AND status = 'pending'
-                """),
-            {"uid": user.id},
-        )
+        async with uow.session.begin_nested():
+            await uow.session.execute(
+                text("""
+                    DELETE FROM notifications
+                    WHERE user_id = :uid
+                      AND notification_type LIKE 'trial_expiry%'
+                      AND status = 'pending'
+                    """),
+                {"uid": user.id},
+            )
     except Exception:
         # Do not raise — webhook MUST still ACK so RevenueCat doesn't retry.
         logger.exception(
