@@ -5,19 +5,12 @@ Auto-extracted for better maintainability.
 
 import logging
 import os
-from typing import Any
+from typing import Dict, Any
 
 from src.api.exceptions import ResourceNotFoundException
 from src.app.events.base import EventHandler, handles
 from src.app.queries.user.get_user_by_firebase_uid_query import (
     GetUserByFirebaseUidQuery,
-)
-from src.app.services.subscription_access_flags import (
-    database_subscription_access_enabled,
-)
-from src.domain.model.subscription import (
-    SubscriptionAccessUnavailable,
-    evaluate_subscription_access,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -26,11 +19,11 @@ logger = logging.getLogger(__name__)
 
 @handles(GetUserByFirebaseUidQuery)
 class GetUserByFirebaseUidQueryHandler(
-    EventHandler[GetUserByFirebaseUidQuery, dict[str, Any]]
+    EventHandler[GetUserByFirebaseUidQuery, Dict[str, Any]]
 ):
     """Handler for getting user by Firebase UID."""
 
-    async def handle(self, query: GetUserByFirebaseUidQuery) -> dict[str, Any]:
+    async def handle(self, query: GetUserByFirebaseUidQuery) -> Dict[str, Any]:
         """Get user by Firebase UID."""
         async with AsyncUnitOfWork() as uow:
             # Get user by firebase_uid
@@ -41,21 +34,8 @@ class GetUserByFirebaseUidQueryHandler(
                     f"User with Firebase UID {query.firebase_uid} not found"
                 )
 
-            # Preserve existing behavior until reconciled state is explicitly enabled.
-            if database_subscription_access_enabled():
-                subscriptions = await uow.subscriptions.find_by_user_id(user.id)
-                try:
-                    has_subscription_value = evaluate_subscription_access(
-                        subscriptions
-                    ).has_access
-                except SubscriptionAccessUnavailable:
-                    # Unreconciled rows: the profile still loads, without access,
-                    # as in every other caller of the policy.
-                    logger.warning(
-                        "Subscription access unverified for user %s", user.id
-                    )
-                    has_subscription_value = False
-            elif os.getenv("ENVIRONMENT") == "development":
+            # In development, avoid touching subscriptions table (may not exist yet)
+            if os.getenv("ENVIRONMENT") == "development":
                 has_subscription_value = True
             else:
                 try:
