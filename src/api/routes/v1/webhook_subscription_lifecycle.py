@@ -311,13 +311,27 @@ async def handle_product_change(
     )
 
 
-async def handle_refund(uow, user, event, affiliate_handler=None, event_publisher=None):
-    """Handle refund — update subscription status and revoke referral credit."""
-    subscription = await get_or_create_subscription(uow, user, event)
-    if subscription:
-        subscription.status = "refunded"
-        subscription.updated_at = utc_now()
-        logger.info(f"User {user.id} subscription refunded")
+async def handle_refund(
+    uow,
+    user,
+    event,
+    affiliate_handler=None,
+    event_publisher=None,
+    *,
+    mark_refunded: bool = True,
+):
+    """Handle refund — update subscription status and revoke referral credit.
+
+    [mark_refunded] is False when the provider still reports access (another
+    product is active): the refund still notifies the affiliate and revokes
+    referral credit, but the subscription keeps its status.
+    """
+    if mark_refunded:
+        subscription = await get_or_create_subscription(uow, user, event)
+        if subscription:
+            subscription.status = "refunded"
+            subscription.updated_at = utc_now()
+            logger.info(f"User {user.id} subscription refunded")
 
     await _notify_affiliate(
         affiliate_handler,

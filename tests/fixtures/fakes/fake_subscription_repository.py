@@ -25,6 +25,16 @@ class FakeSubscriptionRepository(SubscriptionRepositoryPort):
         """Find all subscriptions for a user."""
         return [sub for sub in self._subscriptions.values() if sub.user_id == user_id]
 
+    async def find_all_by_revenuecat_ids(
+        self, revenuecat_subscriber_ids: list[str]
+    ) -> list[Subscription]:
+        """Find all subscriptions attached to transferred RevenueCat identities."""
+        return [
+            sub
+            for sub in self._subscriptions.values()
+            if sub.revenuecat_subscriber_id in revenuecat_subscriber_ids
+        ]
+
     async def find_active_by_user_id(self, user_id: str) -> Subscription | None:
         """Find active subscription for a user."""
         for sub in self._subscriptions.values():

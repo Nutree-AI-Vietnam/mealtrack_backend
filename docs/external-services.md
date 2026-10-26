@@ -18,7 +18,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Firebase Auth | **Required** | Fail fast (401) |
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
-| RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Premium route gates are not enforced yet |
+| RevenueCat | **Payment facts** | Strict webhook/reconciliation sync updates PostgreSQL; the database policy owns runtime access. Provider failures preserve the last verified state and retry |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
@@ -69,7 +69,7 @@ durable.
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
-| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
+| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; normalized writes in `src/infra/services/subscription_access_sync_service.py`; webhook entry in `src/api/routes/v1/webhooks.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
@@ -211,7 +211,14 @@ optional caches.
 
 ### RevenueCat and web redemption
 
-- Webhooks update local `subscriptions`; signature verification is constant-time.
+- RevenueCat verifies purchase facts. Runtime access is evaluated from verified
+  `subscriptions` rows; `GET /v1/me/entitlements` never calls RevenueCat.
+- A failed or malformed provider fetch is retryable and must not erase a
+  previously verified row. Use the guarded reconciliation command described in
+  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads.
+- Webhooks use the current subscriber snapshot to update local rows; signature
+  verification is constant-time. Web redemption retains its existing identity
+  binding and idempotency checks.
 - Canonical handoff (`/v1/web-funnel/*`):
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).

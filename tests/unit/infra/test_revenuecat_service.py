@@ -3,11 +3,12 @@ Unit tests for RevenueCat adapter.
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 
 
@@ -46,6 +47,34 @@ class TestRevenueCatAdapter:
                 },
             }
         }
+
+    async def test_verified_snapshot_keeps_absence_distinct_from_errors(self, service):
+        with patch("httpx.AsyncClient") as mock_client:
+            response = MagicMock(status_code=404)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=response
+            )
+            result = await service.get_verified_snapshot("firebase-uid")
+            assert result.absent is True
+            assert result.request_date is None
+
+            response.status_code = 429
+            response.headers = {"Retry-After": "7"}
+            with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+                await service.get_verified_snapshot("firebase-uid")
+            assert error.value.retry_after_seconds == 7
+
+    async def test_verified_snapshot_requires_timestamp_and_normalized_fields(
+        self, service
+    ):
+        with patch("httpx.AsyncClient") as mock_client:
+            response = MagicMock(status_code=200)
+            response.json.return_value = {"subscriber": {"entitlements": {}}}
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=response
+            )
+            with pytest.raises(RevenueCatSnapshotUnavailable):
+                await service.get_verified_snapshot("firebase-uid")
 
     async def test_get_subscriber_info_success(self, service, mock_subscriber_response):
         """Test successful retrieval of subscriber info."""

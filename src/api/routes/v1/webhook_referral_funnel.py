@@ -44,13 +44,10 @@ async def handle_transfer(uow, event):
         logger.info("RevenueCat transfer ignored: missing transfer IDs")
         return
 
-    subscription = None
-    for source_id in transferred_from:
-        subscription = await uow.subscriptions.find_by_revenuecat_id(source_id)
-        if subscription:
-            break
-
-    if not subscription:
+    subscriptions = await uow.subscriptions.find_all_by_revenuecat_ids(
+        [source_id for source_id in transferred_from if isinstance(source_id, str)]
+    )
+    if not subscriptions:
         logger.info(
             "RevenueCat transfer ignored: no local subscription matched transferred_from=%s",
             transferred_from,
@@ -62,11 +59,16 @@ async def handle_transfer(uow, event):
         logger.info("RevenueCat transfer ignored: no valid transferred_to ID")
         return
 
-    subscription.revenuecat_subscriber_id = target_id
-    subscription.updated_at = utc_now()
+    for subscription in subscriptions:
+        subscription.revenuecat_subscriber_id = target_id
+        # RevenueCat has moved these purchases away from the source subscriber.
+        # Revoke every cached source grant before the target snapshot is applied.
+        subscription.status = "expired"
+        subscription.grace_period_expires_at = None
+        subscription.updated_at = utc_now()
     logger.info(
-        "RevenueCat transfer updated subscription %s to subscriber_id=%s",
-        subscription.id,
+        "RevenueCat transfer revoked %s source rows for subscriber_id=%s",
+        len(subscriptions),
         target_id,
     )
 

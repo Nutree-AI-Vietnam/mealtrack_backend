@@ -42,6 +42,17 @@ does not duplicate paths or DTO fields.
   `ENVIRONMENT=development` and `ENABLE_DEV_AUTH_BYPASS=1`, clients may send
   `X-Dev-User-Id` instead (middleware + auth dependency).
 
+### Subscription access
+
+- Mobile reads the signed-in user's database-owned decision from
+  `GET /v1/me/entitlements`. It accepts no user ID or provider parameter and
+  performs no RevenueCat request or write.
+- A 503 `ENTITLEMENTS_UNAVAILABLE` means the database cannot confirm a safe
+  decision, including when the access feature flag is off. Clients must not
+  turn this response into a paywall denial.
+- Responses use `Cache-Control: private, no-store`. OpenAPI owns the exact
+  response shape and status values.
+
 ### Offline / agent dump
 
 When the process is not running, dump the same schema FastAPI would serve:
