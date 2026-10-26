@@ -44,13 +44,14 @@ denied by RevenueCat shows only in ``loses_current_access``: granted by
 today's legacy check, denied after the run. Review those before --apply.
 
 Exit codes: 0 GO (no user left unresolved), 1 NO-GO (unresolved users remain),
-2 usage or configuration error, 3 stopped early (RevenueCat asked to wait
-longer than --max-wait-seconds, kept failing, or the run was interrupted);
-continue with --resume.
+2 usage or configuration error, 3 incomplete: stopped early (RevenueCat asked
+to wait longer than --max-wait-seconds, kept failing, or the run was
+interrupted) or crashed anywhere (database, checkpoint or output file, gate
+query, a bug); continue with --resume. 1 is only ever a verdict.
 
 --gate runs only the SQL go/no-go check (GO_NO_GO_SQL; no RevenueCat reads):
 exit 0 when no active user holds an unverified RevenueCat grant or a row left
-unresolved by a failed webhook read, else 1.
+unresolved by a failed webhook read, 1 when one does, 3 when the query fails.
 """
 
 from __future__ import annotations
@@ -795,6 +796,28 @@ def population_from_args(args: argparse.Namespace) -> Population:
 
 async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    try:
+        return await _run_cli(args)
+    except UsageError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_USAGE
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("RESULT: INCOMPLETE stopped='interrupted'", flush=True)
+        return EXIT_INCOMPLETE
+    except Exception as error:
+        # A bug or a database/file failure anywhere in the run (population
+        # query, checkpoint or output file, gate query, the pass itself): not
+        # a NO-GO verdict, an unfinished run. The checkpoint keeps the users
+        # done so far.
+        traceback.print_exc()
+        print(
+            f"RESULT: INCOMPLETE stopped='crashed: {type(error).__name__}'",
+            flush=True,
+        )
+        return EXIT_INCOMPLETE
+
+
+async def _run_cli(args: argparse.Namespace) -> int:
     population = population_from_args(args)
     mode = "apply" if args.apply else "dry-run"
     now = datetime.now(UTC)
@@ -832,35 +855,19 @@ async def main(argv: list[str] | None = None) -> int:
             f"min_interval={args.min_interval_seconds:g}s",
             flush=True,
         )
-        try:
-            summary = await run_pass(
-                user_ids,
-                apply=args.apply,
-                population=population,
-                session_factory=AsyncSessionLocal,
-                adapter=adapter,
-                pacer=Pacer(args.min_interval_seconds),
-                checkpoint=checkpoint,
-                output=output,
-                sync=sync_revenuecat_access,
-                max_attempts=args.max_attempts,
-                max_wait_seconds=args.max_wait_seconds,
-            )
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            print("RESULT: INCOMPLETE stopped='interrupted'", flush=True)
-            return EXIT_INCOMPLETE
-        except Exception as error:
-            # A bug or a database failure: not a NO-GO verdict, an unfinished
-            # pass. The checkpoint keeps the users done so far.
-            traceback.print_exc()
-            print(
-                f"RESULT: INCOMPLETE stopped='crashed: {type(error).__name__}'",
-                flush=True,
-            )
-            return EXIT_INCOMPLETE
-    except UsageError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return EXIT_USAGE
+        summary = await run_pass(
+            user_ids,
+            apply=args.apply,
+            population=population,
+            session_factory=AsyncSessionLocal,
+            adapter=adapter,
+            pacer=Pacer(args.min_interval_seconds),
+            checkpoint=checkpoint,
+            output=output,
+            sync=sync_revenuecat_access,
+            max_attempts=args.max_attempts,
+            max_wait_seconds=args.max_wait_seconds,
+        )
     finally:
         if checkpoint is not None:
             checkpoint.close()

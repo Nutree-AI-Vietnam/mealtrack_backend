@@ -412,6 +412,37 @@ async def test_cli_crash_is_incomplete_not_a_no_go_verdict(monkeypatch, capsys):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failing", ["candidate_ids", "gate_counts", "checkpoint"])
+async def test_cli_failure_before_the_pass_is_incomplete_not_no_go(
+    tmp_path, monkeypatch, capsys, failing
+):
+    """Exit 1 means unresolved users exist; a database or file failure before
+    the pass (population query, gate query, checkpoint) must not look like it."""
+    database = FakeDatabase()
+    _cli(monkeypatch, database, FakeAdapter(), FakeSync())
+
+    async def broken(*_args, **_kwargs):
+        raise ConnectionRefusedError("database is down")
+
+    argv = ["--min-interval-seconds", "0"]
+    if failing == "checkpoint":
+        blocker = tmp_path / "not-a-directory"
+        blocker.write_text("")
+        argv += ["--checkpoint", str(blocker / "checkpoint.jsonl")]
+    else:
+        monkeypatch.setattr(rec, failing, broken)
+        if failing == "gate_counts":
+            argv = ["--gate"]
+
+    code = await rec.main(argv)
+
+    assert code == rec.EXIT_INCOMPLETE
+    captured = capsys.readouterr()
+    assert "RESULT: INCOMPLETE stopped='crashed: " in captured.out
+    assert "Traceback" in captured.err
+
+
+@pytest.mark.asyncio
 async def test_cli_gate_reports_the_sql_counts(monkeypatch, capsys):
     async def counts(_factory):
         return {"unverified_grants": 0, "sync_required": 2}
