@@ -16,6 +16,7 @@ from src.app.services.subscription_access_flags import (
     database_subscription_access_enabled,
 )
 from src.domain.model.subscription import (
+    SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
@@ -43,9 +44,17 @@ class GetUserByFirebaseUidQueryHandler(
             # Preserve existing behavior until reconciled state is explicitly enabled.
             if database_subscription_access_enabled():
                 subscriptions = await uow.subscriptions.find_by_user_id(user.id)
-                has_subscription_value = evaluate_subscription_access(
-                    subscriptions
-                ).has_access
+                try:
+                    has_subscription_value = evaluate_subscription_access(
+                        subscriptions
+                    ).has_access
+                except SubscriptionAccessUnavailable:
+                    # Unreconciled rows: the profile still loads, without access,
+                    # as in every other caller of the policy.
+                    logger.warning(
+                        "Subscription access unverified for user %s", user.id
+                    )
+                    has_subscription_value = False
             elif os.getenv("ENVIRONMENT") == "development":
                 has_subscription_value = True
             else:
