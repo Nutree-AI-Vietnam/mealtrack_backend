@@ -36,8 +36,6 @@ def client() -> TestClient:
         (b'{"name": "rice", "count": 2}', "application/vnd.api+json"),
         (b'{"name": "rice", "count": -1}', "application/json"),
         (b'{"name": "rice", "tags": {"a": "x"}}', "application/json"),
-        (b'{"name": "rice", "count": 2}', "text/plain"),
-        (b'{"name": "rice", "count": 2}', None),
         (b"", "application/json"),
     ],
 )
@@ -52,9 +50,30 @@ def test_read_body_answers_like_a_body_parameter(client, content, content_type):
 
 
 @pytest.mark.parametrize(
+    ("content", "content_type", "error_type"),
+    [
+        (b'{"name": "rice", "count": 2}', "text/plain", "model_attributes_type"),
+        (b'{"name": "rice", "count": 2}', None, "model_attributes_type"),
+        (b"\xff\xfe", "text/plain", "model_attributes_type"),
+        (b'{"name": ', "application/json", "json_invalid"),
+        (b'{"name": "\xff", "count": 2}', "application/json", "json_invalid"),
+    ],
+)
+def test_errors_about_the_raw_body_leave_it_out(
+    client, content, content_type, error_type
+):
+    headers = {"content-type": content_type} if content_type else {}
+
+    response = client.post("/read", content=content, headers=headers)
+
+    assert response.status_code == 422
+    [error] = response.json()["detail"]
+    assert (error["type"], error["loc"], error["input"]) == (error_type, ["body"], {})
+
+
+@pytest.mark.parametrize(
     ("content", "error_type", "loc"),
     [
-        (b'{"name": ', "json_invalid", ["body"]),
         (b'["rice"]', "model_type", ["body"]),
         (b'{"name": "rice", "count": 2, "tags": []}', "dict_type", ["body", "tags"]),
     ],

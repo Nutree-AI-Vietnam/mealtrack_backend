@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
+from pydantic_core import ErrorDetails
 
 
 async def read_json_body[ModelT: BaseModel](
@@ -39,12 +40,19 @@ async def read_json_body[ModelT: BaseModel](
         return model.model_validate(body, from_attributes=True)
     except ValidationError as error:
         raise RequestValidationError(
-            [
-                {**detail, "loc": ("body", *detail["loc"])}
-                for detail in error.errors(include_url=False)
-            ],
+            [_body_error(detail) for detail in error.errors(include_url=False)],
             body=body,
         ) from None
+
+
+def _body_error(detail: ErrorDetails) -> dict[str, Any]:
+    error: dict[str, Any] = {**detail, "loc": ("body", *detail["loc"])}
+    if isinstance(error["input"], bytes):
+        # The error is about the raw body. Leave the body out, as FastAPI does
+        # for a JSON decode error: it can run to megabytes, and bytes that are
+        # not UTF-8 would fail the 422 response's own encoding.
+        error["input"] = {}
+    return error
 
 
 def json_body_openapi(model: type[BaseModel]) -> dict[str, Any]:
