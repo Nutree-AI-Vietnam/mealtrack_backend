@@ -10,6 +10,7 @@ from src.api.base_dependencies import (
     get_subscription_service,
     get_web_funnel_redemption_service,
     normalize_standard_access_facts,
+    record_snapshot_unavailable,
 )
 from src.api.dependencies.auth import verify_firebase_token_revocation_checked
 from src.api.middleware.rate_limit import limiter
@@ -42,6 +43,7 @@ from src.app.services.web_funnel_redemption_verification import (
     RevenueCatVerificationState,
     verify_redeemed_customer,
 )
+from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 from src.infra.config.settings import settings
 from src.infra.database.config_async import get_async_db
 from src.infra.database.models.web_funnel_claim import (
@@ -289,7 +291,9 @@ async def finalize_revenuecat_redemption(
 
     try:
         provider_snapshot = await service.get_verified_snapshot(uid)
-    except Exception as error:
+    except RevenueCatSnapshotUnavailable as error:
+        # Firebase uids stay out of logs; the reason code identifies the cause.
+        record_snapshot_unavailable(error, source="web_funnel")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Subscription state could not be verified",
@@ -340,7 +344,8 @@ async def finalize_revenuecat_redemption(
         subscription_facts = normalize_standard_access_facts(
             provider_snapshot.subscriber
         )
-    except Exception as error:
+    except RevenueCatSnapshotUnavailable as error:
+        record_snapshot_unavailable(error, source="web_funnel")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Subscription state could not be verified",

@@ -942,3 +942,71 @@ async def test_redemption_finalization_fills_email_from_admin_for_custom_jwt(
     assert response["access_status"] == "active"
     assert captured["email"] == "buyer@example.com"
     assert captured["auth_provider"] == "custom"
+
+
+def _finalize_token():
+    return {
+        "uid": "firebase-uid",
+        "email": "buyer@example.com",
+        "email_verified": True,
+        "iat": int(web_funnel.utcnow().timestamp()),
+        "firebase": {"sign_in_provider": "google.com"},
+    }
+
+
+async def _finalize(session):
+    return await web_funnel.finalize_revenuecat_redemption(
+        _request(),
+        web_funnel.WebFunnelRedemptionFinalizeRequest(
+            confirm_apply_purchase=True,
+            redemption_link_hash="a" * 64,
+        ),
+        Response(),
+        "x" * 16,
+        _finalize_token(),
+        session,
+    )
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_reports_unreadable_revenuecat(monkeypatch):
+    _configure_redemption(monkeypatch)
+
+    class RateLimitedService:
+        async def get_verified_snapshot(self, app_user_id):
+            with patched_revenuecat_http(None, status_code=429):
+                return await RevenueCatAdapter(
+                    api_key="test-key"
+                ).get_verified_snapshot(app_user_id)
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", RateLimitedService
+    )
+    recorded = []
+    monkeypatch.setattr(
+        web_funnel,
+        "record_snapshot_unavailable",
+        lambda error, **kwargs: recorded.append((error.reason, kwargs)),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _finalize(FinalizationSession())
+
+    assert error.value.status_code == 503
+    assert recorded == [("http_429", {"source": "web_funnel"})]
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_does_not_hide_bugs_as_unavailable(monkeypatch):
+    _configure_redemption(monkeypatch)
+
+    class BrokenService:
+        async def get_verified_snapshot(self, _app_user_id):
+            raise KeyError("bug")
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", BrokenService
+    )
+
+    with pytest.raises(KeyError):
+        await _finalize(FinalizationSession())
