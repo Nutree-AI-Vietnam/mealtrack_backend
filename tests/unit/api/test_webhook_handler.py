@@ -3,14 +3,18 @@ Unit tests for RevenueCat webhook handler.
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import HTTPException
 
+from src.api.routes.v1.webhook_lookup_parsing import (
+    get_subscription_by_revenuecat_id,
+)
 from src.api.routes.v1.webhook_subscription_lifecycle import (
     _notify_affiliate,
     _publish_subscription_event,
+    get_or_create_subscription,
 )
 from src.api.routes.v1.webhooks import (
     _credit_referral_on_purchase,
@@ -682,6 +686,23 @@ class TestWebhookHandler:
             assert subscription.status == "expired"
             assert subscription.grace_period_expires_at is None
             assert subscription.updated_at is not None
+
+    async def test_legacy_row_lookups_are_scoped_to_the_event_user(self, mock_uow):
+        """A RevenueCat event never selects another user's or provider's row."""
+        mock_uow.subscriptions = MagicMock()
+        mock_uow.subscriptions.find_by_revenuecat_id = AsyncMock(
+            return_value=MagicMock()
+        )
+
+        await get_or_create_subscription(
+            mock_uow, MagicMock(id="user-1"), {"app_user_id": "firebase-uid"}
+        )
+        await get_subscription_by_revenuecat_id(mock_uow, "firebase-uid", "user-1")
+
+        assert mock_uow.subscriptions.find_by_revenuecat_id.await_args_list == [
+            call("firebase-uid", user_id="user-1"),
+            call("firebase-uid", user_id="user-1"),
+        ]
 
     async def test_handle_product_change(self, mock_uow):
         """Test handling product change event (e.g., monthly to yearly)."""

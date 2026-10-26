@@ -267,6 +267,8 @@ async def finalize_redemption(
             Subscription.user_id == user.id,
             Subscription.revenuecat_subscriber_id == uid,
             Subscription.product_id == binding.product_id,
+            # A row another provider owns is never taken over by RevenueCat.
+            Subscription.provider == "revenuecat",
         )
         .with_for_update()
     )
@@ -302,16 +304,15 @@ async def finalize_redemption(
             "purchased_at", subscription.purchased_at
         )
         subscription.expires_at = expires_at
-        subscription.provider = "revenuecat"
         subscription.provider_snapshot_at = provider_snapshot_at
         subscription.grace_period_expires_at = (subscription_facts or {}).get(
             "grace_period_expires_at"
         )
         subscription.period_type = (subscription_facts or {}).get("period_type")
         subscription.cancelled_at = (subscription_facts or {}).get("cancelled_at")
-        subscription.store_transaction_id = (subscription_facts or {}).get(
-            "store_transaction_id"
-        )
+        store_transaction_id = (subscription_facts or {}).get("store_transaction_id")
+        if store_transaction_id is not None:
+            subscription.store_transaction_id = store_transaction_id
         subscription.is_sandbox = (subscription_facts or {}).get("is_sandbox", False)
     binding.provider_app_user_ids = sorted(
         aliases | verified_aliases | {original_app_user_id, uid}

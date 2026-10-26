@@ -121,9 +121,16 @@ def normalize_standard_access_facts(
             optional=True,
         ),
         "is_sandbox": is_sandbox,
-        "store_transaction_id": subscription.get("transaction_id")
-        or subscription.get("original_transaction_id"),
+        "store_transaction_id": _store_transaction_id(subscription),
     }
+
+
+def _store_transaction_id(purchase: dict) -> str | None:
+    """RevenueCat v1 names it store_transaction_id; App Store ids may be numbers."""
+    value = purchase.get("store_transaction_id")
+    if value is None or isinstance(value, bool) or value == "":
+        return None
+    return str(value)
 
 
 def _utc(value: Any) -> datetime:
@@ -199,7 +206,11 @@ async def sync_revenuecat_access(
         ]
         if facts and len(matching) == 1:
             row = matching[0]
-            if all(getattr(row, key) == value for key, value in facts.items()):
+            if all(
+                getattr(row, key) == value
+                for key, value in facts.items()
+                if not (key == "store_transaction_id" and value is None)
+            ):
                 return
         elif not facts and all(
             row.status == ("refunded" if refund_event else "expired")
@@ -232,6 +243,9 @@ async def sync_revenuecat_access(
             )
             session.add(target_row)
         for key, value in facts.items():
+            if key == "store_transaction_id" and value is None:
+                # Never blank an id a purchase webhook already stored.
+                continue
             setattr(target_row, key, value)
         setattr(target_row, "provider", "revenuecat")  # noqa: B010
         setattr(target_row, "revenuecat_subscriber_id", user.firebase_uid)  # noqa: B010

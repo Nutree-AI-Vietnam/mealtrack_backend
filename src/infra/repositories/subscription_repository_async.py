@@ -10,6 +10,8 @@ from src.domain.ports.subscription_repository_port import SubscriptionRepository
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
 
+REVENUECAT_PROVIDER = "revenuecat"
+
 
 class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
     """Async repository for subscription data. Never calls session.commit()."""
@@ -62,12 +64,23 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
         return result.scalars().first()
 
     async def find_by_revenuecat_id(
-        self, revenuecat_subscriber_id: str
+        self, revenuecat_subscriber_id: str, *, user_id: str | None = None
     ) -> Subscription | None:
-        """Find a subscription by RevenueCat subscriber ID."""
+        """Find the newest RevenueCat-provided row for a RevenueCat subscriber ID.
+
+        Rows written by another provider (for example MoMo) can share the
+        Firebase uid in ``revenuecat_subscriber_id``; RevenueCat events must
+        never select them. ``user_id`` scopes the match to one owner.
+        """
+        statement = select(Subscription).where(
+            Subscription.revenuecat_subscriber_id == revenuecat_subscriber_id,
+            Subscription.provider == REVENUECAT_PROVIDER,
+        )
+        if user_id is not None:
+            statement = statement.where(Subscription.user_id == user_id)
         result = await self.session.execute(
-            select(Subscription).where(
-                Subscription.revenuecat_subscriber_id == revenuecat_subscriber_id
+            statement.order_by(
+                Subscription.purchased_at.desc(), Subscription.created_at.desc()
             )
         )
         return result.scalars().first()
@@ -75,12 +88,15 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
     async def find_all_by_revenuecat_ids(
         self, revenuecat_subscriber_ids: list[str]
     ) -> list[DomainSubscription]:
-        """Find all rows linked to source aliases before transferring access."""
+        """Find all RevenueCat-provided rows linked to RevenueCat subscriber IDs."""
         if not revenuecat_subscriber_ids:
             return []
         result = await self.session.execute(
             select(Subscription)
-            .where(Subscription.revenuecat_subscriber_id.in_(revenuecat_subscriber_ids))
+            .where(
+                Subscription.revenuecat_subscriber_id.in_(revenuecat_subscriber_ids),
+                Subscription.provider == REVENUECAT_PROVIDER,
+            )
             .with_for_update()
         )
         return list(result.scalars().all())  # type: ignore[return-value]

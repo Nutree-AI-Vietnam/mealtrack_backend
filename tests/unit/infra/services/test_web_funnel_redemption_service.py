@@ -457,3 +457,87 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
         macros["protein"] * 4 + macros["carbs"] * 4 + macros["fat"] * 9
     )
     assert macros["calories"] != 2000
+
+
+@pytest.mark.asyncio
+async def test_finalization_only_matches_revenuecat_rows_and_keeps_transaction_id():
+    from datetime import UTC, datetime, timedelta
+
+    binding = _binding(
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        preflight_uid="google-user",
+        product_id="web_monthly",
+        environment="SANDBOX",
+        verified_app_user_id="$RCAnonymousID:web",
+        verified_at=utcnow(),
+    )
+    lead = _lead()
+    lead.snapshot = _snapshot()
+    owner = User(
+        id="user-1",
+        firebase_uid="google-user",
+        email="buyer@example.com",
+    )
+    existing = Subscription(
+        user_id="user-1",
+        revenuecat_subscriber_id="google-user",
+        product_id="web_monthly",
+        platform="web",
+        status="active",
+        provider="revenuecat",
+        store_transaction_id="sub_stripe_1",
+        purchased_at=datetime.now(UTC) - timedelta(days=1),
+    )
+
+    class Session:
+        def __init__(self):
+            self.results = iter([binding, owner, owner, object(), object(), existing])
+            self.statements = []
+
+        async def scalar(self, statement):
+            self.statements.append(statement)
+            return next(self.results)
+
+        async def get(self, _model, _identifier, **_kwargs):
+            return lead
+
+        def add(self, item):
+            raise AssertionError(f"unexpected insert of {type(item).__name__}")
+
+        async def commit(self):
+            return None
+
+    snapshot_at = datetime.now(UTC)
+    session = Session()
+    await finalize_redemption(
+        session,
+        uid="google-user",
+        email="buyer@example.com",
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        idempotency_key="request-existing-row",
+        environment="SANDBOX",
+        expires_at=snapshot_at + timedelta(days=30),
+        provider_snapshot_at=snapshot_at,
+        subscription_facts={
+            "product_id": "web_monthly",
+            "platform": "web",
+            "status": "active",
+            "purchased_at": snapshot_at - timedelta(days=1),
+            "grace_period_expires_at": None,
+            "period_type": "normal",
+            "cancelled_at": None,
+            "is_sandbox": True,
+            "store_transaction_id": None,
+        },
+    )
+
+    subscription_sql = str(
+        session.statements[-1].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "subscriptions.provider = 'revenuecat'" in subscription_sql
+    assert existing.provider_snapshot_at == snapshot_at
+    assert existing.store_transaction_id == "sub_stripe_1"

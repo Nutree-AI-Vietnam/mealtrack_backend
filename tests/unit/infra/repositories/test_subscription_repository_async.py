@@ -67,3 +67,58 @@ async def test_find_expiring_soon_returns_active_future_rows():
     assert "subscriptions.status" in compiled
     assert "subscriptions.expires_at <= " in compiled
     assert "subscriptions.expires_at > " in compiled
+
+
+class _FirstResult:
+    def __init__(self, row):
+        self._row = row
+
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self._row
+
+
+class _FirstSession:
+    def __init__(self, row):
+        self.row = row
+        self.statement = None
+
+    async def execute(self, statement):
+        self.statement = statement
+        return _FirstResult(self.row)
+
+
+def _literal_sql(statement) -> str:
+    from sqlalchemy.dialects import postgresql
+
+    return str(
+        statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_find_by_revenuecat_id_never_selects_another_providers_row():
+    session = _FirstSession(MagicMock(id="sub-3"))
+    repo = AsyncSubscriptionRepository(session)
+
+    await repo.find_by_revenuecat_id("firebase-uid", user_id="user-1")
+
+    sql = _literal_sql(session.statement)
+    assert "subscriptions.revenuecat_subscriber_id = 'firebase-uid'" in sql
+    assert "subscriptions.provider = 'revenuecat'" in sql
+    assert "subscriptions.user_id = 'user-1'" in sql
+    assert "ORDER BY subscriptions.purchased_at DESC" in sql
+
+
+@pytest.mark.asyncio
+async def test_find_all_by_revenuecat_ids_never_selects_another_providers_row():
+    session = _AsyncSession([])
+    repo = AsyncSubscriptionRepository(session)
+
+    await repo.find_all_by_revenuecat_ids(["firebase-uid"])
+
+    assert "subscriptions.provider = 'revenuecat'" in _literal_sql(session.statement)

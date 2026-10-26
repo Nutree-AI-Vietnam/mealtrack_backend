@@ -96,7 +96,9 @@ async def handle_purchase(
     logger.info(f"Creating subscription for user {user.id}")
 
     # Check if subscription already exists
-    existing = await get_subscription_by_revenuecat_id(uow, event.get("app_user_id"))
+    existing = await get_subscription_by_revenuecat_id(
+        uow, event.get("app_user_id"), str(user.id)
+    )
 
     if existing:
         logger.warning(f"Subscription already exists for {user.id}, updating instead")
@@ -146,7 +148,7 @@ async def handle_renewal(
 ):
     """Handle subscription renewal."""
     subscription = await get_subscription_by_revenuecat_id(
-        uow, event.get("app_user_id")
+        uow, event.get("app_user_id"), str(user.id)
     )
 
     if subscription:
@@ -339,7 +341,7 @@ async def handle_refund(uow, user, event, affiliate_handler=None, event_publishe
 async def get_or_create_subscription(uow, user, event):
     """Get existing subscription or create one if missing (handles missed INITIAL_PURCHASE)."""
     subscription = await uow.subscriptions.find_by_revenuecat_id(
-        event.get("app_user_id")
+        event.get("app_user_id"), user_id=str(user.id)
     )
 
     if not subscription:

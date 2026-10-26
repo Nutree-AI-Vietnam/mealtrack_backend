@@ -80,9 +80,11 @@ async def find_user_for_revenuecat_event(uow, event: dict) -> User | None:
     return None
 
 
-async def get_subscription_by_revenuecat_id(uow, revenuecat_id: str):
-    """Get subscription by RevenueCat subscriber ID."""
-    return await uow.subscriptions.find_by_revenuecat_id(revenuecat_id)
+async def get_subscription_by_revenuecat_id(
+    uow, revenuecat_id: str, user_id: str | None = None
+):
+    """Get the user's RevenueCat-provided row for a RevenueCat subscriber ID."""
+    return await uow.subscriptions.find_by_revenuecat_id(revenuecat_id, user_id=user_id)
 
 
 def parse_platform(store: str) -> str:
