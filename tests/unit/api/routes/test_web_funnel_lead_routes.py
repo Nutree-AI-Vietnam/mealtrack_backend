@@ -1,7 +1,9 @@
 """Possession and safe-projection tests for the dark web-funnel lead API."""
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -969,18 +971,30 @@ async def _finalize(session):
 
 
 @pytest.mark.asyncio
-async def test_redemption_finalization_reports_unreadable_revenuecat(monkeypatch):
+@pytest.mark.parametrize(
+    ("status_code", "reason", "answer"),
+    [
+        # Transient: the 404 app builds in the stores retry with a backoff.
+        (429, "http_429", 404),
+        (503, "http_5xx", 404),
+        # Will not clear on a retry.
+        (401, "http_4xx", 503),
+    ],
+)
+async def test_redemption_finalization_reports_unreadable_revenuecat(
+    monkeypatch, status_code, reason, answer
+):
     _configure_redemption(monkeypatch)
 
-    class RateLimitedService:
+    class UnreadableService:
         async def get_verified_snapshot(self, app_user_id):
-            with patched_revenuecat_http(None, status_code=429):
+            with patched_revenuecat_http(None, status_code=status_code):
                 return await RevenueCatAdapter(
                     api_key="test-key"
                 ).get_verified_snapshot(app_user_id)
 
     monkeypatch.setattr(
-        web_funnel, "_get_web_funnel_subscription_service", RateLimitedService
+        web_funnel, "_get_web_funnel_subscription_service", UnreadableService
     )
     recorded = []
     monkeypatch.setattr(
@@ -992,8 +1006,72 @@ async def test_redemption_finalization_reports_unreadable_revenuecat(monkeypatch
     with pytest.raises(HTTPException) as error:
         await _finalize(FinalizationSession())
 
+    assert error.value.status_code == answer
+    assert recorded == [(reason, {"source": "web_funnel"})]
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_retries_a_revenuecat_timeout_as_not_found(
+    monkeypatch,
+):
+    _configure_redemption(monkeypatch)
+
+    class TimingOutService:
+        async def get_verified_snapshot(self, app_user_id):
+            with patch("httpx.AsyncClient") as client:
+                client.return_value.__aenter__.return_value.get = AsyncMock(
+                    side_effect=httpx.ReadTimeout("timed out")
+                )
+                return await RevenueCatAdapter(
+                    api_key="test-key"
+                ).get_verified_snapshot(app_user_id)
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", TimingOutService
+    )
+    recorded = []
+    monkeypatch.setattr(
+        web_funnel,
+        "record_snapshot_unavailable",
+        lambda error, **kwargs: recorded.append(error.reason),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _finalize(FinalizationSession())
+
+    assert error.value.status_code == 404
+    assert recorded == ["transport"]
+
+
+@pytest.mark.asyncio
+async def test_redemption_finalization_reports_a_malformed_customer_as_unavailable(
+    monkeypatch,
+):
+    """A customer the access facts cannot be read from will not clear on a
+    retry: 503, recorded for paging."""
+    _configure_redemption(monkeypatch)
+
+    class MalformedService(VerifiedSubscriberService):
+        def _subscriber(self, app_user_id="$RCAnonymousID:customer"):
+            subscriber = super()._subscriber(app_user_id)
+            del subscriber["subscriptions"]["web_monthly"]["is_sandbox"]
+            return subscriber
+
+    monkeypatch.setattr(
+        web_funnel, "_get_web_funnel_subscription_service", MalformedService
+    )
+    recorded = []
+    monkeypatch.setattr(
+        web_funnel,
+        "record_snapshot_unavailable",
+        lambda error, **kwargs: recorded.append(error.reason),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _finalize(FinalizationSession())
+
     assert error.value.status_code == 503
-    assert recorded == [("http_429", {"source": "web_funnel"})]
+    assert recorded == ["malformed"]
 
 
 @pytest.mark.asyncio

@@ -524,6 +524,13 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Preflight/finalize require verified email and
   `sign_in_provider` in `{google.com, apple.com, password}` or `custom` with
   claim `wf_silent_login`.
+- Finalize answers `404` while RevenueCat has not caught up with the
+  redemption, and also when RevenueCat cannot be read for a transient reason
+  (outage, timeout, rate limit): app builds already in the stores retry only a
+  `404`, with a bounded backoff. `503` means the RevenueCat customer could not
+  be verified for a reason a retry will not clear (malformed or unsupported
+  customer, rejected API key). Finalize writes nothing on either, so retrying
+  both is safe.
 - Legacy magic-claim routes remain gated by `WEB_FUNNEL_LEGACY_CLAIM_ENABLED`
   and are not the active flow.
 
