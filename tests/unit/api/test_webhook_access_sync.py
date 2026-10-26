@@ -211,6 +211,15 @@ def _fails(status_code: int = 503) -> Callable[[], tuple[int, Any]]:
     return lambda: (status_code, None)
 
 
+def _raises(error: Exception) -> Callable[[], tuple[int, Any]]:
+    """A transport failure the adapter does not translate (not an httpx error)."""
+
+    def answer() -> tuple[int, Any]:
+        raise error
+
+    return answer
+
+
 async def _deliver(
     monkeypatch,
     event: dict,
@@ -887,6 +896,72 @@ async def test_unexpected_sync_error_keeps_the_event_write_and_acks(monkeypatch)
     error = reported.call_args.args[0]
     assert reported.call_args.kwargs["context"]["failure_kind"] == "unexpected"
     assert isinstance(error.__cause__, TypeError)
+
+
+@pytest.mark.asyncio
+async def test_unexpected_read_error_keeps_the_purchase_effects_and_acks(
+    monkeypatch,
+):
+    """The read runs before the legacy handlers: an error the adapter does not
+    translate must not fail every delivery before they run (event loss)."""
+    user = _user("user-u", "uid-u")
+    database = _Database([user])
+    referrals = _pending_referral()
+    publisher = MagicMock(publish=AsyncMock())
+
+    with (
+        _revenuecat({"uid-u": _raises(RuntimeError("event loop is closed"))}),
+        patch(f"{SYNC}.capture_exception") as reported,
+    ):
+        result = await _deliver(
+            monkeypatch,
+            _event("INITIAL_PURCHASE", "uid-u"),
+            database,
+            referrals,
+            publisher,
+        )
+
+    assert result == {"status": "success"}
+    assert (referrals.conversion.status, referrals.balance) == ("converted", 50000)
+    (published,) = publisher.publish.await_args_list
+    assert published.args[0]["data"]["lifecycle_type"] == (
+        "subscription_initial_purchase"
+    )
+    (row,) = database.rows_of(user)
+    assert row.provider_sync_required_at is not None
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access([row])
+    error = reported.call_args.args[0]
+    assert reported.call_args.kwargs["context"]["failure_kind"] == "unexpected"
+    assert isinstance(error.__cause__, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_transfer_with_an_unexpected_read_error_still_syncs_the_other_party(
+    monkeypatch,
+):
+    source = _user("user-a", "uid-a")
+    target = _user("user-b", "uid-b")
+    store_row = _row(source)
+    database = _Database([source, target], [store_row])
+
+    with (
+        _revenuecat(
+            {
+                "uid-a": _raises(RuntimeError("event loop is closed")),
+                "uid-b": _ok(_annual()),
+            }
+        ),
+        patch(f"{SYNC}.capture_exception") as reported,
+    ):
+        result = await _deliver(monkeypatch, _transfer("uid-a", "uid-b"), database)
+
+    assert result == {"status": "success"}
+    assert store_row.status == "active"
+    assert store_row.provider_sync_required_at is not None
+    (target_row,) = database.rows_of(target)
+    assert evaluate_subscription_access([target_row]).has_access is True
+    assert reported.call_args.kwargs["context"]["failure_kind"] == "unexpected"
 
 
 @pytest.mark.asyncio

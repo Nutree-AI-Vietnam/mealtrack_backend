@@ -9,9 +9,10 @@ across the HTTP call. The legacy event handlers (rows, referral credit and
 revocation, lifecycle and affiliate events) always run. When the customer
 cannot be read or applied, the user's RevenueCat rows are left unresolved
 (the access policy then answers "unavailable", and mobile falls back to its
-RevenueCat client decision), the failure is logged, counted and reported,
-and the webhook still succeeds: a repeated delivery could not do better, and
-answering 5xx after the side effects would only replay them.
+RevenueCat client decision), the failure is logged and counted (and sent to
+Sentry unless it is a provider outage or rate limit), and the webhook still
+succeeds: a repeated delivery could not do better, and answering 5xx after
+the side effects would only replay them.
 """
 
 import logging
@@ -114,6 +115,10 @@ async def read_access(
     Only when the event itself names that uid: reading another id would
     make RevenueCat create an empty customer for it ("get or create") and
     would describe a different customer than the one the event is about.
+
+    Never raises: it runs before the legacy handlers, so any failure here
+    becomes an unresolved read instead of a failed delivery that would
+    never reach them.
     """
     user_id = str(user.id)
     firebase_uid = user.firebase_uid
@@ -129,6 +134,11 @@ async def read_access(
         snapshot = await subscription_service.get_verified_snapshot(firebase_uid)
     except RevenueCatSnapshotUnavailable as error:
         return AccessRead(user_id, error=error)
+    except Exception as unexpected:  # never lose the event's side effects
+        return AccessRead(
+            user_id,
+            error=_unexpected("RevenueCat customer could not be read", unexpected),
+        )
     return AccessRead(
         user_id, snapshot=snapshot, absence_is_authoritative=absence_is_authoritative
     )
@@ -208,13 +218,15 @@ async def _sync(
         # retries it from scratch.
         raise
     except Exception as unexpected:  # never lose the event's side effects
-        wrapped = RevenueCatSnapshotUnavailable(
-            "RevenueCat customer could not be applied",
-            reason=SNAPSHOT_REASON_UNEXPECTED,
-        )
-        wrapped.__cause__ = unexpected
-        return wrapped
+        return _unexpected("RevenueCat customer could not be applied", unexpected)
     return None
+
+
+def _unexpected(message: str, cause: Exception) -> RevenueCatSnapshotUnavailable:
+    """Report an unforeseen failure as an unresolved read, keeping its cause."""
+    wrapped = RevenueCatSnapshotUnavailable(message, reason=SNAPSHOT_REASON_UNEXPECTED)
+    wrapped.__cause__ = cause
+    return wrapped
 
 
 async def capture_facts_for(
