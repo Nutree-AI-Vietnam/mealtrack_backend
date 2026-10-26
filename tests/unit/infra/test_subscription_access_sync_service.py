@@ -247,6 +247,8 @@ async def test_sync_serialises_on_a_row_lock_not_on_users_updated_at():
     )
     assert "subscriptions.provider = 'revenuecat'" in rows_sql
     assert "FOR UPDATE" in rows_sql
+    # Rows loaded before the lock must show what is locked, not stale values.
+    assert session.statements[1].get_execution_options()["populate_existing"]
     assert locked.updated_at == caller_copy.updated_at + timedelta(seconds=3)
 
 

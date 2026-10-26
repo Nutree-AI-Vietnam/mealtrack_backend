@@ -235,6 +235,11 @@ async def _locked_revenuecat_rows(
             Subscription.provider == REVENUECAT_PROVIDER,
         )
         .with_for_update()
+        # A row loaded before the lock (the webhook's user lookup can match
+        # through a subscription row) keeps its pre-lock values in the
+        # identity map otherwise, hiding what a concurrent writer committed.
+        # The flush above means no pending change of ours is discarded.
+        .execution_options(populate_existing=True)
     )
     return list(rows.all())
 

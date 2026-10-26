@@ -26,6 +26,7 @@ from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )
+from src.domain.ports.subscription_service_port import RevenueCatSnapshot
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.referral.referral_conversion import ReferralConversion
 from src.infra.database.models.referral.referral_wallet import ReferralWallet
@@ -33,6 +34,9 @@ from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
 from src.infra.services.subscription_access_refresh_service import (
     RevenueCatAccessRefreshService,
+)
+from src.infra.services.subscription_access_sync_service import (
+    sync_revenuecat_access,
 )
 
 pytestmark = pytest.mark.integration
@@ -260,6 +264,64 @@ async def test_an_older_snapshot_never_overwrites_a_newer_one(app_sessions):
 
     (row,) = await _rows(app_sessions, user)
     assert row.provider_snapshot_at == newer
+    assert row.expires_at == newer + timedelta(days=365)
+
+
+@pytest.mark.asyncio
+async def test_sync_sees_what_another_writer_committed_before_the_lock(app_sessions):
+    """The webhook's user lookup can load a subscription row before the lock.
+    The locked re-select must replace its stale values; otherwise an older
+    read passes the stale check and overwrites newer committed facts."""
+    user = await _user(app_sessions, "buyer")
+    older = datetime.now(UTC).replace(microsecond=0)
+    newer = older + timedelta(minutes=5)
+    async with app_sessions() as session:
+        session.add(
+            Subscription(
+                user_id=user.id,
+                revenuecat_subscriber_id=user.firebase_uid,
+                provider="revenuecat",
+                product_id="annual",
+                platform="ios",
+                status="active",
+                purchased_at=older - timedelta(days=10),
+                expires_at=older + timedelta(days=30),
+                period_type="normal",
+                provider_snapshot_at=older - timedelta(days=1),
+                is_sandbox=False,
+            )
+        )
+        await session.commit()
+
+    async with app_sessions() as session:
+        # Loaded unlocked, as find_user_for_revenuecat_event's fallback does.
+        (loaded,) = (
+            await session.scalars(
+                select(Subscription).where(Subscription.user_id == user.id)
+            )
+        ).all()
+        async with app_sessions() as writer:  # a delivery that committed first
+            await writer.execute(
+                update(Subscription)
+                .where(Subscription.id == loaded.id)
+                .values(
+                    provider_snapshot_at=newer, expires_at=newer + timedelta(days=365)
+                )
+            )
+            await writer.commit()
+        lapsed = _annual(older, timedelta(days=-1))
+        outcome = await sync_revenuecat_access(
+            session,
+            await session.get(User, user.id),
+            snapshot=RevenueCatSnapshot(
+                lapsed["subscriber"], older, app_user_id=user.firebase_uid
+            ),
+        )
+        await session.commit()
+
+    assert outcome.result == "stale_skipped"
+    (row,) = await _rows(app_sessions, user)
+    assert (row.status, row.provider_snapshot_at) == ("active", newer)
     assert row.expires_at == newer + timedelta(days=365)
 
 
