@@ -56,6 +56,7 @@ ACCESS_NEUTRAL_EVENTS = frozenset(
 ACCESS_SYNCED = "synced"
 ACCESS_UNRESOLVED = "access_unresolved"
 ACCESS_NOT_SYNCED = "not_synced"
+ACCESS_ACCOUNT_DELETED = "account_deleted"
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,18 @@ class AccessRead:
 
 def event_syncs_access(event_type: str | None) -> bool:
     return event_type not in ACCESS_NEUTRAL_EVENTS
+
+
+def account_is_deleted(user: Any) -> bool:
+    """Whether the user deleted their account (the only writer of is_active).
+
+    Deletion tombstones users.firebase_uid but keeps the RevenueCat rows,
+    whose revenuecat_subscriber_id still resolves the user for events of the
+    old uid (a store subscription outlives the account). There is no access
+    left to sync: reading RevenueCat under the tombstone is impossible and
+    marking the rows would only report every such event as a failure.
+    """
+    return getattr(user, "is_active", True) is False
 
 
 def is_refund_event(event: dict) -> bool:

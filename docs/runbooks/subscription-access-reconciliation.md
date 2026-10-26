@@ -367,6 +367,6 @@ observability facade:
 | Sentry `RevenueCat customer has entitlements but no 'standard'` | RevenueCat entitlement configuration drift | Page |
 | WARNING `RevenueCat snapshot older than stored facts skipped`, metric `subscription_access.sync` with `result=stale_skipped` | Out-of-order reads; routine when the app's refresh after a purchase commits before the purchase webhook. Not sent to Sentry | Spikes only |
 | Metric `subscription_access.sync` (`source`, `event_type`, `result`) | Every applied snapshot | Volume drops to zero (webhooks not arriving) |
-| Metric `webhook.revenuecat.processed` (`event_type`, `status`, `result`) | Webhook outcomes; `result=access_unresolved` means the rows were marked for repair | Rate of `access_unresolved`, and webhook HTTP 5xx at Render (RevenueCat stops retrying after about 5 attempts) |
+| Metric `webhook.revenuecat.processed` (`event_type`, `status`, `result`) | Webhook outcomes; `result=access_unresolved` means the rows were marked for repair, `result=account_deleted` an event for a deleted account (legacy effects only, nothing synced) | Rate of `access_unresolved`, and webhook HTTP 5xx at Render (RevenueCat stops retrying after about 5 attempts) |
 | Metric `subscription_access.enforcement_denied` | A paid route answered `402` | A spike right after step 9: turn enforcement off |
 | Scheduled repair exit code | `1` users left unresolved, `3` stopped early | Any failed run |

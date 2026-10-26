@@ -256,6 +256,11 @@ optional caches.
     always end the subscription).
   - `TRANSFER` re-reads every local source and target user from its own
     customer; nothing is re-pointed or expired blindly.
+  - A deleted account (`users.is_active` false, tombstoned uid) is never
+    synced. Its kept RevenueCat rows still resolve events for the old uid (a
+    store subscription outlives the account), so the legacy handlers run, but
+    nothing is read, marked or reported (`webhook.revenuecat.processed`
+    `result=account_deleted`); a `TRANSFER` party that is deleted is skipped.
   - `GET /v1/subscribers` is "get or create": an unseen id answers 200 with an
     empty customer, which is treated as "no purchases". It never expires a
     row that could still grant access (except for a transfer source).

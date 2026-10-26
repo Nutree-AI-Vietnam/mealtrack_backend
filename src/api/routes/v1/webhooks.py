@@ -15,10 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import lock_subscription_owner
 from src.api.routes.v1.webhook_access_sync import (
+    ACCESS_ACCOUNT_DELETED,
     ACCESS_NOT_SYNCED,
     ACCESS_SYNCED,
     ACCESS_UNRESOLVED,
     AccessRead,
+    account_is_deleted,
     apply_access,
     capture_facts_for,
     event_syncs_access,
@@ -194,7 +196,7 @@ async def revenuecat_webhook(
     if event_syncs_access(event_type):
         async with AsyncUnitOfWork() as lookup_uow:
             lookup_user = await find_user_for_revenuecat_event(lookup_uow, event)
-        if lookup_user is not None:
+        if lookup_user is not None and not account_is_deleted(lookup_user):
             access_read = await read_access(
                 _get_subscription_service(),
                 lookup_user,
@@ -264,7 +266,17 @@ async def revenuecat_webhook(
                 uow, user, event, affiliate_handler, event_publisher
             )
 
-        if event_syncs_access(event_type):
+        if event_syncs_access(event_type) and account_is_deleted(user):
+            # The legacy effects above still run (a refund still claws back
+            # the referrer's credit); there is no access left to sync.
+            logger.info(
+                "RevenueCat event for a deleted account: access not synced — "
+                "user_id=%s event_type=%s",
+                user.id,
+                event_type,
+            )
+            access_result = ACCESS_ACCOUNT_DELETED
+        elif event_syncs_access(event_type):
             access_result = await apply_access(
                 session,
                 user,
@@ -302,10 +314,16 @@ async def _process_transfer(event: dict) -> dict:
         if isinstance(identity, str) and identity
     ]
     async with AsyncUnitOfWork() as lookup_uow:
-        parties = await find_transfer_parties(lookup_uow, event)
-    if not parties:
+        found = await find_transfer_parties(lookup_uow, event)
+    if not found:
         logger.info("RevenueCat transfer ignored: no local user for transfer ids")
         return {"status": "ignored", "reason": "user_not_found"}
+    # A deleted account (often the source: the user deleted it, signed up
+    # again and restored) has no access left to sync.
+    parties = [party for party in found if not account_is_deleted(party.user)]
+    if not parties:
+        logger.info("RevenueCat transfer ignored: only deleted accounts involved")
+        return {"status": "ignored", "reason": "account_deleted"}
 
     sources = {party.user_id for party in parties if party.is_source_only}
     subscription_service = _get_subscription_service()

@@ -967,6 +967,83 @@ async def test_two_deliveries_with_the_same_read_leave_several_rows_resolved(
     captured.assert_not_called()
 
 
+def _deleted_account(user_id: str, old_uid: str) -> tuple[User, Subscription]:
+    """What account deletion leaves: a tombstoned uid, the RevenueCat row kept."""
+    user = User(id=user_id, firebase_uid=f"deleted:{user_id}", is_active=False)
+    return user, _row(user, revenuecat_subscriber_id=old_uid)
+
+
+@pytest.mark.asyncio
+async def test_event_for_a_deleted_account_keeps_legacy_effects_but_is_not_synced(
+    monkeypatch,
+):
+    """The store subscription outlives the account: its events still resolve
+    the deleted user through the kept row, but there is no access to sync
+    and nothing to report."""
+    user, row = _deleted_account("user-gone", "uid-gone")
+    database = _Database([user], [row])
+    referrals = _Referrals(
+        ReferralConversion(
+            referrer_user_id="referrer-1",
+            referred_user_id="user-gone",
+            code_used="ABC123",
+            status="converted",
+            commission_amount=2.0,
+            commission_currency="USD",
+            commission_amount_vnd=50000,
+        )
+    )
+    referrals.balance = 80000
+
+    with (
+        _revenuecat({}) as revenuecat,
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.capture_exception") as reported,
+        patch.object(webhooks, "increment_metric") as processed,
+    ):
+        result = await _deliver(
+            monkeypatch,
+            _event("CANCELLATION", "uid-gone", cancel_reason="CUSTOMER_SUPPORT"),
+            database,
+            referrals,
+        )
+
+    assert result == {"status": "success"}
+    revenuecat.assert_not_awaited()
+    assert row.provider_sync_required_at is None
+    captured.assert_not_called()
+    reported.assert_not_called()
+    # The referrer's clawback is a legacy effect and still runs.
+    assert (referrals.conversion.status, referrals.balance) == ("revoked", 30000)
+    assert processed.call_args.kwargs["attributes"]["result"] == "account_deleted"
+
+
+@pytest.mark.asyncio
+async def test_transfer_from_a_deleted_account_syncs_only_the_live_target(
+    monkeypatch,
+):
+    """Delete the account, sign up again, restore: RevenueCat transfers the
+    purchase from the old uid to the new one."""
+    source, source_row = _deleted_account("user-gone", "uid-gone")
+    target = _user("user-b", "uid-b")
+    database = _Database([source, target], [source_row])
+
+    with (
+        _revenuecat({"uid-b": _ok(_annual())}) as revenuecat,
+        patch(f"{SYNC}.capture_message") as captured,
+    ):
+        result = await _deliver(monkeypatch, _transfer("uid-gone", "uid-b"), database)
+
+    assert result == {"status": "success"}
+    assert [call.args[0].rsplit("/", 1)[-1] for call in revenuecat.await_args_list] == [
+        "uid-b"
+    ]
+    assert source_row.provider_sync_required_at is None
+    (target_row,) = database.rows_of(target)
+    assert evaluate_subscription_access([target_row]).has_access is True
+    captured.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_unexpected_read_error_keeps_the_purchase_effects_and_acks(
     monkeypatch,
