@@ -180,8 +180,15 @@ user's own data (meals, chat history, plans, recipes); non-AI food logging
 writes (`POST /v1/meals/manual`, repeat, catalog and plan-slot logs, food
 search and barcode), which the app also hard-gates but whose offline
 durable-write replays must not start failing after a lapse; the guest trial
-`POST /v1/meals/parse-text/guest-trial`; and the `/v1/ai-jobs` routes that
-only observe or stop a job (list, get, seen, cancel).
+`POST /v1/meals/parse-text/guest-trial`; the `/v1/ai-jobs` routes that only
+observe or stop a job (list, get, seen, cancel); and the Progress recap
+(`GET` and `POST /v1/progress/recap`). The app keeps Progress a free route
+and generates the recap automatically when Progress opens, with no tap gate,
+so a `402` here would only swap a non-subscriber's recap for the app's
+template. `POST` is an LLM call, cached per user and window (`force=true`
+regenerates). Moving the recap behind the subscription is a product
+decision (owner: backend lead with product): gate `POST /v1/progress/recap`
+here and the app's recap generation in the same release.
 
 ### Offline / agent dump
 

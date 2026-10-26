@@ -203,7 +203,9 @@ def test_exactly_the_documented_paid_routes_are_gated():
 
 def test_lapsed_and_free_routes_are_never_gated():
     """Hydration, movement and weight stay open to lapsed users; reading or
-    logging food, entitlements and sign-in are never gated here."""
+    logging food, entitlements and sign-in are never gated here. Progress,
+    its AI recap included, is a free route in the app, which generates the
+    recap on view without a tap gate (docs/api-endpoints.md)."""
     from src.api.main import app
 
     open_prefixes = (
@@ -214,6 +216,7 @@ def test_lapsed_and_free_routes_are_never_gated():
         "/v1/me/",
         "/v1/meals/parse-text/guest-trial",
         "/v1/webhooks",
+        "/v1/progress",
     )
     for route in app.routes:
         if isinstance(route, APIRoute) and route.path.startswith(open_prefixes):
