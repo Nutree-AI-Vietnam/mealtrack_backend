@@ -96,7 +96,7 @@ class FakeSession:
     async def __aexit__(self, *_exc):
         return False
 
-    async def get(self, _model, user_id):
+    async def get(self, _model, user_id, **_options):
         self._user_id = user_id
         return self.database.users.get(user_id)
 
@@ -518,6 +518,7 @@ async def test_each_user_gets_one_private_jsonl_record_without_pii(tmp_path):
         "loses_current_access": 0,
         "failed": 1,
         "skipped": 0,
+        "gone": 0,
     }
 
 
@@ -634,10 +635,18 @@ async def test_unreadable_customer_keeps_the_stored_decision():
         (RevenueCatSnapshotUnavailable("bad body", reason="malformed"), None),
         # Readable, but the snapshot cannot be applied.
         (None, RevenueCatSnapshotUnavailable("amazon", reason="unsupported_store")),
+        # A live account whose identity changed under the read.
+        (None, RevenueCatSnapshotUnavailable("moved", reason="owner_changed")),
         # Retryable, its retries used up (not enough in a row to stop the pass).
         (RevenueCatSnapshotUnavailable("down", reason="http_5xx"), None),
     ],
-    ids=["http_4xx", "malformed", "unsupported_store", "http_5xx_exhausted"],
+    ids=[
+        "http_4xx",
+        "malformed",
+        "unsupported_store",
+        "owner_changed",
+        "http_5xx_exhausted",
+    ],
 )
 async def test_a_failed_read_fails_the_verdict_even_when_the_stored_decision_resolves(
     adapter_error, sync_error
@@ -676,27 +685,130 @@ async def test_a_failed_read_fails_the_verdict_even_when_the_stored_decision_res
 
 
 @pytest.mark.asyncio
-async def test_users_without_a_readable_identity_are_reported_not_read(tmp_path):
+async def test_gone_accounts_stay_out_of_the_verdict(tmp_path):
+    """A deleted or vanished account has no access left to verify: like the
+    --gate SQL, the verdict ignores it, whatever its stored rows say."""
     database = FakeDatabase()
-    database.add_user("deleted", [_row()], deleted=True)
+    database.add_user("deleted", [_row()], deleted=True)  # legacy: unresolved
     adapter = FakeAdapter()
+    stdout = StringIO()
     checkpoint = rec.Checkpoint.start(
         tmp_path / "c.jsonl", mode="dry-run", population=SUBSCRIBERS, now=NOW
     )
 
     summary = await _run(
-        database, ["deleted", "missing"], adapter=adapter, checkpoint=checkpoint
+        database,
+        ["deleted", "missing"],
+        adapter=adapter,
+        checkpoint=checkpoint,
+        stdout=stdout,
     )
     checkpoint.close()
 
     assert adapter.calls == []
     assert summary.counts["users"] == 2
-    assert summary.counts["unresolved"] == 1  # the deleted user's legacy row
-    assert summary.counts["denied"] == 1  # no rows at all
-    # Nothing is left to verify for an account that is gone: not a failure,
-    # and nothing for --resume to read again.
-    assert summary.counts["failed"] == 0
+    assert summary.counts["gone"] == 2
+    assert (
+        summary.counts["granted"],
+        summary.counts["denied"],
+        summary.counts["unresolved"],
+        summary.counts["failed"],
+    ) == (0, 0, 0, 0)
+    assert summary.exit_code == rec.EXIT_GO
+    assert summary.line().startswith("RESULT: GO")
+    assert "gone=2" in summary.line()
+    assert stdout.getvalue() == ""
+    # Nothing for --resume to read again.
     assert checkpoint.completed == {"deleted", "missing"}
+
+
+@pytest.mark.asyncio
+async def test_a_single_user_run_for_a_deleted_account_is_a_go():
+    database = FakeDatabase()
+    database.add_user("deleted", [_row()], deleted=True)
+
+    summary = await _run(
+        database,
+        ["deleted"],
+        population=rec.Population(rec.POPULATION_USER, user_id="deleted"),
+    )
+
+    assert summary.counts["gone"] == 1
+    assert summary.exit_code == rec.EXIT_GO
+
+
+class _DeletingAdapter(FakeAdapter):
+    """Deletes (or removes) the account while its customer is being read."""
+
+    def __init__(self, database, *, vanish=False):
+        super().__init__()
+        self.database = database
+        self.vanish = vanish
+
+    async def get_verified_snapshot(self, firebase_uid):
+        user_id = firebase_uid.removeprefix("fb-")
+        if self.vanish:
+            del self.database.users[user_id]
+        else:
+            user = self.database.users[user_id]
+            user.is_active, user.deleted_at = False, NOW
+        return await super().get_verified_snapshot(firebase_uid)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("vanish", "reason"), [(False, "user_inactive"), (True, "user_missing")]
+)
+async def test_an_account_deleted_between_the_read_and_the_apply_is_gone(
+    vanish, reason
+):
+    database = FakeDatabase()
+    database.add_user("leaving", [_row()])
+    sync = FakeSync()
+    output = StringIO()
+
+    summary = await _run(
+        database,
+        ["leaving"],
+        apply=True,
+        adapter=_DeletingAdapter(database, vanish=vanish),
+        sync=sync,
+        output=output,
+    )
+
+    assert sync.calls == []
+    assert json.loads(output.getvalue())["reason"] == reason
+    assert (summary.counts["gone"], summary.counts["failed"]) == (1, 0)
+    assert summary.exit_code == rec.EXIT_GO
+    assert database.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_an_account_deleted_while_its_snapshot_is_applied_is_gone():
+    """Deletion tombstones the Firebase uid, so a deletion that lands after
+    the apply's liveness check fails the sync as an owner change."""
+    database = FakeDatabase()
+    database.add_user("leaving", [_row()])
+    output = StringIO()
+
+    class DeletedDuringSync(FakeSync):
+        async def __call__(self, session, user, *, snapshot, source):
+            database.users["leaving"].is_active = False
+            database.users["leaving"].deleted_at = NOW
+            raise RevenueCatSnapshotUnavailable("moved", reason="owner_changed")
+
+    summary = await _run(
+        database,
+        ["leaving"],
+        apply=True,
+        sync=DeletedDuringSync(),
+        output=output,
+    )
+
+    assert json.loads(output.getvalue())["reason"] == "user_inactive"
+    assert (summary.counts["gone"], summary.counts["failed"]) == (1, 0)
+    assert summary.exit_code == rec.EXIT_GO
+    assert database.commits == 0
 
 
 @pytest.mark.asyncio

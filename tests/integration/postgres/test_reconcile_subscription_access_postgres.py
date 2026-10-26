@@ -21,16 +21,20 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tests.fixtures.revenuecat_samples import (
     empty_customer_response,
     standard_annual_response,
 )
 
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
+from src.infra.services.subscription_access_sync_service import (
+    sync_revenuecat_access,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -330,3 +334,52 @@ async def test_dry_run_reports_a_payer_revenuecat_now_denies(sessions, tmp_path)
     assert f"loses_access user_id={payer.id}" in stdout.getvalue()
     (row,) = await _rows(sessions, payer)
     assert (row.status, row.provider_snapshot_at) == ("active", None)  # dry run
+
+
+@pytest.mark.asyncio
+async def test_an_account_deleted_while_its_snapshot_is_applied_is_gone(sessions):
+    """Deletion tombstones the Firebase uid. One that commits after the
+    apply's liveness check makes the locked sync see an owner change; the
+    account is gone, not a failed read, and nothing is applied."""
+    now = datetime.now(UTC)
+    user = await _user(sessions)
+    await _row(sessions, user)
+    bodies = {
+        user.firebase_uid: standard_annual_response(
+            request_date=now, expires_date=now + timedelta(days=200)
+        )
+    }
+
+    async def delete_then_sync(session, locked_user, **kwargs):
+        async with sessions() as other:
+            await other.execute(
+                update(User)
+                .where(User.id == user.id)
+                .values(
+                    firebase_uid=tombstone_firebase_uid(user.id),
+                    is_active=False,
+                    deleted_at=now,
+                )
+            )
+            await other.commit()
+        return await sync_revenuecat_access(session, locked_user, **kwargs)
+
+    output = StringIO()
+    with _revenuecat(bodies):
+        summary = await rec.run_pass(
+            [user.id],
+            apply=True,
+            population=rec.Population(rec.POPULATION_USER, user_id=user.id),
+            session_factory=sessions,
+            adapter=RevenueCatAdapter(api_key="test-key"),
+            pacer=rec.Pacer(0),
+            sync=delete_then_sync,
+            output=output,
+            stdout=StringIO(),
+        )
+
+    assert json.loads(output.getvalue())["reason"] == "user_inactive"
+    assert (summary.counts["gone"], summary.counts["failed"]) == (1, 0)
+    assert summary.exit_code == rec.EXIT_GO
+    (row,) = await _rows(sessions, user)
+    assert row.provider_snapshot_at is None

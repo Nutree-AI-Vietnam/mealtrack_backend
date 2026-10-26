@@ -57,10 +57,13 @@ tombstone).
 - **Summary and exit code:** the last line is
   `RESULT: GO|NO-GO|INCOMPLETE mode=... users=... granted=... denied=...
   unresolved=... downgraded=... loses_current_access=... failed=...
-  skipped=...`. `failed` counts live users whose customer could not be read
-  (after the retries for transient failures) or whose snapshot could not be
-  applied: the run did not verify them, even when their stored decision
-  reads granted or denied. Exit `0` = GO (no user left unresolved and none
+  skipped=... gone=...`. `failed` counts live users whose customer could not
+  be read (after the retries for transient failures) or whose snapshot could
+  not be applied: the run did not verify them, even when their stored
+  decision reads granted or denied. `gone` counts deleted, deactivated or
+  vanished accounts (also one deleted during the run): only there, never in
+  `granted`/`denied`/`unresolved`, and outside the verdict, as the `--gate`
+  SQL ignores them too. Exit `0` = GO (no user left unresolved and none
   failed), `1` = NO-GO (unresolved or failed users remain; only ever a
   verdict), `2` = usage or configuration error (including a refused
   checkpoint), `3` = incomplete: stopped early (RevenueCat asked to wait
@@ -81,7 +84,7 @@ tombstone).
 | `owner_changed`, `conflicting_facts` | The user or RevenueCat changed during the read | Re-run `--user-id <id>`; escalate if it persists |
 | `transport`, `http_429`, `http_5xx` | RevenueCat unavailable | `--resume` later |
 | `malformed`, `unsupported_store`, `http_4xx`, `api_key_missing` | Contract or configuration problem | Engineering; also reported to Sentry by the app |
-| `user_inactive`, `user_missing` | The account is deleted or gone (only with `--user-id`, or deleted during the run); nothing to verify, not counted as failed | None |
+| `user_inactive`, `user_missing` | The account is deleted or gone (only with `--user-id`, or deleted during the run, also between its read and the apply); nothing to verify. Counted in `gone` only, never as unresolved or failed | None |
 | `no_firebase_uid` | A live user with no Firebase uid cannot be read; counted as failed | Engineering: find how the account lost its uid |
 
 ## Cutover checklist (in order)

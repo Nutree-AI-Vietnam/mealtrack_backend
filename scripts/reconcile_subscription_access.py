@@ -38,7 +38,7 @@ unresolved users and failed users on stdout, and a final summary line:
 
   RESULT: GO|NO-GO|INCOMPLETE mode=... users=... granted=... denied=...
           unresolved=... downgraded=... loses_current_access=... failed=...
-          skipped=...
+          skipped=... gone=...
 
 ``downgraded`` counts policy grants turned into denials. At the first cutover
 every legacy grant is still unverified (``before`` = unresolved), so a payer
@@ -49,7 +49,10 @@ today's legacy check, denied after the run. Review those before --apply.
 retries for transient failures) or whose snapshot could not be applied. The
 run did not verify them, whatever their stored decision says, so they fail
 the verdict like unresolved users do. A deleted, deactivated or vanished
-account is not read and not a failure: there is no access left to verify.
+account (also one deleted between its read and the apply) is not applied and
+not a failure: there is no access left to verify. It counts only in ``gone``,
+never in granted/denied/unresolved, matching --gate, which ignores such
+accounts.
 
 Exit codes: 0 GO (every user verified and resolved), 1 NO-GO (unresolved or
 failed users remain), 2 usage or configuration error, 3 incomplete: stopped
@@ -345,10 +348,15 @@ class UserResult:
         return asdict(self) | {"loses_current_access": self.loses_current_access}
 
     @property
+    def account_gone(self) -> bool:
+        """Deleted, deactivated or vanished: nothing left to verify."""
+        return self.reason in ACCOUNT_GONE_REASONS
+
+    @property
     def failed(self) -> bool:
         """A live user this run could not verify: the customer could not be
         read, or its snapshot was not applied. Fails the verdict."""
-        if self.reason in ACCOUNT_GONE_REASONS:
+        if self.account_gone:
             return False
         return (
             self.snapshot in {"unavailable", "not_read"}
@@ -358,6 +366,15 @@ class UserResult:
 
 def _is_live(user: Any) -> bool:
     return bool(user.is_active) and user.deleted_at is None
+
+
+def _gone_reason(user: Any) -> str | None:
+    """Why an account has no access left to verify; None for a live one."""
+    if user is None:
+        return "user_missing"
+    if not _is_live(user):
+        return "user_inactive"
+    return None
 
 
 def legacy_decision(rows: Iterable[Any]) -> str:
@@ -404,19 +421,16 @@ async def reconcile_user(
         before = stored_decision(rows)
         legacy_before = legacy_decision(rows)
         firebase_uid = getattr(user, "firebase_uid", None)
-        inactive = user is not None and not _is_live(user)
-    if user is None or inactive or not firebase_uid:
+        gone = _gone_reason(user)
+    if gone is not None or not firebase_uid:
         # A deleted or deactivated account carries a tombstoned Firebase uid:
         # reading it would only create an empty RevenueCat customer.
-        reason = "user_missing" if user is None else "user_inactive"
-        if user is not None and not inactive:
-            reason = "no_firebase_uid"
         return UserResult(
             user_id,
             mode,
             before,
             before,
-            reason,
+            gone or "no_firebase_uid",
             "not_read",
             legacy_before=legacy_before,
         )
@@ -445,11 +459,19 @@ async def reconcile_user(
     snapshot_status = "absent" if snapshot.absent else "ok"
     async with session_factory() as session:
         user = await session.get(User, user_id)
+        gone = _gone_reason(user)
+        if gone is not None:
+            # Deleted or deactivated after the read: nothing left to apply.
+            return UserResult(
+                user_id,
+                mode,
+                before,
+                before,
+                gone,
+                snapshot_status,
+                legacy_before=legacy_before,
+            )
         try:
-            if user is None:
-                raise RevenueCatSnapshotUnavailable(
-                    "Reconciled user disappeared", reason=SNAPSHOT_REASON_OWNER_CHANGED
-                )
             outcome = await sync(
                 session,
                 user,
@@ -461,6 +483,11 @@ async def reconcile_user(
             # absence over a possible grant): the rows stay as they were.
             await session.rollback()
             reason = getattr(error, "reason", None) or "unknown"
+            if reason == SNAPSHOT_REASON_OWNER_CHANGED:
+                # Deletion tombstones the Firebase uid, so an account deleted
+                # after the check above reaches the sync as an owner change.
+                current = await session.get(User, user_id, populate_existing=True)
+                reason = _gone_reason(current) or reason
             return UserResult(
                 user_id,
                 mode,
@@ -608,12 +635,18 @@ class Summary:
             "loses_current_access": 0,
             "failed": 0,
             "skipped": 0,
+            # Deleted, deactivated or vanished: outside the verdict, as
+            # GO_NO_GO_SQL ignores them.
+            "gone": 0,
         }
     )
     stopped: str | None = None
 
     def add(self, result: UserResult) -> None:
         self.counts["users"] += 1
+        if result.account_gone:
+            self.counts["gone"] += 1
+            return
         self.counts[result.decision] += 1
         self.counts["downgraded"] += result.downgrade
         self.counts["loses_current_access"] += result.loses_current_access
@@ -678,7 +711,9 @@ async def run_pass(
             if output is not None:
                 _json_line(output, result.record())
             label = (
-                "downgrade"
+                None
+                if result.account_gone
+                else "downgrade"
                 if result.downgrade
                 else "loses_access"
                 if result.loses_current_access
