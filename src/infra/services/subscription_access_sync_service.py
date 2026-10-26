@@ -333,6 +333,23 @@ def _put_back(legacy_writes: LegacyWrites) -> None:
         setattr(row, column, value)
 
 
+def _could_still_grant(row: Subscription, instant: datetime) -> bool:
+    """Whether a row could grant access at ``instant`` if its facts held.
+
+    A granting status alone is not enough: a 'cancelled' row whose paid
+    period ended long ago (an unreconciled legacy row) can never grant.
+    """
+    if row.status not in GRANTING_STATUSES:
+        return False
+    expires_at = row.expires_at
+    grace = row.grace_period_expires_at
+    return (
+        expires_at is None
+        or _utc(expires_at) > instant
+        or (grace is not None and _utc(grace) > instant)
+    )
+
+
 def _same_snapshot_consistent(
     existing: list[Subscription], facts: dict | None, latest: datetime, revoked: str
 ) -> bool:
@@ -380,7 +397,8 @@ def _plan_sync(
         and request_date is not None
     )
     if snapshot.absent and not authoritative_absence:
-        if any(row.status in GRANTING_STATUSES for row in existing):
+        instant = request_date or utc_now()
+        if any(_could_still_grant(row, instant) for row in existing):
             # RevenueCat holds no purchases under this Firebase uid, yet the
             # database holds a possible grant: it came from another identity
             # (fallback match, manual grant). Never expire it on absence.
@@ -514,11 +532,26 @@ async def sync_revenuecat_access(
         return outcome
 
     if plan.result == "absent":
+        # Nothing under this uid, and no row that could still grant: rows
+        # whose paid period is over (unreconciled legacy rows, typically)
+        # resolve to "no access" instead of staying unresolved forever.
+        rows_revoked = 0
+        for row in existing:
+            stamped = row.provider_snapshot_at
+            if request_date is None or (
+                stamped is not None and _utc(stamped) >= request_date
+            ):
+                continue  # never move verified facts back in time
+            if row.status in GRANTING_STATUSES:
+                setattr(row, "status", "expired")  # noqa: B010
+                rows_revoked += 1
+            setattr(row, "provider_snapshot_at", request_date)  # noqa: B010
         markers_cleared = _clear_markers(existing, request_date)
         outcome = SubscriptionSyncOutcome(
             "absent",
             access_before,
             _access_label(existing),
+            rows_revoked=rows_revoked,
             markers_cleared=markers_cleared,
         )
         _record_sync_outcome(

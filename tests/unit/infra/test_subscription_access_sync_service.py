@@ -326,6 +326,74 @@ async def test_absence_with_only_terminal_rows_resolves_to_no_access():
 
 
 @pytest.mark.asyncio
+async def test_absence_resolves_a_long_expired_unverified_row_to_no_access():
+    """An unreconciled 'cancelled' row that lapsed in 2025 can never grant.
+    Without this, an absent customer left the user unresolved for good: GET
+    and refresh kept answering 503 and the cutover gate stayed NO-GO."""
+    now = datetime.now(UTC)
+    row = _revenuecat_row(
+        status="cancelled",
+        expires_at=datetime(2025, 1, 1, tzinfo=UTC),
+        provider_snapshot_at=None,
+    )
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access([row], now)
+
+    outcome = await sync_revenuecat_access(
+        _SyncSession(_owner(), [row]),
+        _owner(),
+        snapshot=_snapshot(empty_customer_response(), now, absent=True),
+        source="refresh",
+    )
+
+    assert outcome.result == "absent"
+    assert (outcome.access_before, outcome.access_after) == ("unresolved", "denied")
+    assert (row.status, row.provider_snapshot_at) == ("expired", now)
+    assert evaluate_subscription_access([row], now).has_access is False
+
+
+@pytest.mark.asyncio
+async def test_absence_never_expires_a_row_still_in_its_grace_period():
+    now = datetime.now(UTC)
+    row = _revenuecat_row(
+        status="billing_issue",
+        expires_at=now - timedelta(days=1),
+        grace_period_expires_at=now + timedelta(days=2),
+        provider_snapshot_at=None,
+    )
+
+    with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+        await sync_revenuecat_access(
+            _SyncSession(_owner(), [row]),
+            _owner(),
+            snapshot=_snapshot(empty_customer_response(), now, absent=True),
+        )
+
+    assert error.value.reason == "absent_with_history"
+    assert (row.status, row.provider_snapshot_at) == ("billing_issue", None)
+
+
+@pytest.mark.asyncio
+async def test_an_older_absent_snapshot_never_moves_verified_facts_back():
+    now = datetime.now(UTC)
+    row = _revenuecat_row(
+        status="cancelled",
+        expires_at=now - timedelta(days=3),
+        provider_snapshot_at=now,
+    )
+
+    await sync_revenuecat_access(
+        _SyncSession(_owner(), [row]),
+        _owner(),
+        snapshot=_snapshot(
+            empty_customer_response(), now - timedelta(minutes=1), absent=True
+        ),
+    )
+
+    assert (row.status, row.provider_snapshot_at) == ("cancelled", now)
+
+
+@pytest.mark.asyncio
 async def test_sync_marker_is_cleared_only_by_a_snapshot_taken_after_it():
     now = datetime.now(UTC)
     marker = now - timedelta(seconds=10)
