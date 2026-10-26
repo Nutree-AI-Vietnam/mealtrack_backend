@@ -249,6 +249,59 @@ def _clear_markers(rows: list[Subscription], request_date: datetime | None) -> i
     return cleared
 
 
+# Columns a legacy event handler may write on a row the snapshot sync owns.
+ACCESS_FACT_COLUMNS = (
+    "product_id",
+    "platform",
+    "status",
+    "purchased_at",
+    "expires_at",
+    "grace_period_expires_at",
+    "period_type",
+    "cancelled_at",
+    "store_transaction_id",
+    "provider_snapshot_at",
+    "provider_sync_required_at",
+)
+
+
+async def capture_access_facts(
+    session: AsyncSession, user_id: Any
+) -> dict[str, dict[str, Any]]:
+    """Record the user's RevenueCat row facts before legacy handlers run.
+
+    Passed back to sync_revenuecat_access, it lets the sync undo what a
+    legacy event handler wrote on rows a verified snapshot already owned
+    (a late or stale event must not overwrite verified facts).
+    """
+    rows = await _locked_revenuecat_rows(session, user_id)
+    return {
+        str(row.id): {column: getattr(row, column) for column in ACCESS_FACT_COLUMNS}
+        for row in rows
+    }
+
+
+def _restore_verified_facts(
+    rows: list[Subscription], facts_before_event: dict[str, dict[str, Any]] | None
+) -> int:
+    restored = 0
+    for row in rows:
+        before = (facts_before_event or {}).get(str(row.id))
+        if (
+            before is None
+            or before["provider_snapshot_at"] is None
+            or before["provider_sync_required_at"] is not None
+        ):
+            continue  # not a row a verified snapshot owned
+        changed = False
+        for column, value in before.items():
+            if getattr(row, column) != value:
+                setattr(row, column, value)
+                changed = True
+        restored += changed
+    return restored
+
+
 def _same_snapshot_consistent(
     existing: list[Subscription], facts: dict | None, latest: datetime, revoked: str
 ) -> bool:
@@ -278,6 +331,7 @@ async def sync_revenuecat_access(
     event_type: str | None = None,
     event_id: str | None = None,
     absence_is_authoritative: bool = False,
+    facts_before_event: dict[str, dict[str, Any]] | None = None,
 ) -> SubscriptionSyncOutcome:
     """Apply one verified provider snapshot to the user's RevenueCat rows.
 
@@ -291,6 +345,10 @@ async def sync_revenuecat_access(
     could still grant access. ``absence_is_authoritative`` is for callers
     that know why it is empty -- the source of a TRANSFER, whose purchases
     RevenueCat just moved away -- and applies it as "no purchases".
+
+    ``facts_before_event`` (from capture_access_facts) undoes legacy handler
+    writes on rows a verified snapshot already owned, so only snapshots
+    change verified facts -- also when this snapshot is too old to apply.
     """
     if snapshot is None:
         if adapter is None:
@@ -358,12 +416,19 @@ async def sync_revenuecat_access(
         default=datetime.min.replace(tzinfo=UTC),
     )
     if request_date < latest_snapshot:
-        outcome = SubscriptionSyncOutcome("stale_skipped", access_before, access_before)
+        _restore_verified_facts(existing, facts_before_event)
+        outcome = SubscriptionSyncOutcome(
+            "stale_skipped", access_before, _access_label(existing)
+        )
         _record_sync_outcome(
             outcome, locked_user, source, event_type, event_id, refund_event
         )
         return outcome
     if request_date == latest_snapshot:
+        # The same RevenueCat read applied twice (e.g. two deliveries that
+        # queued on the lock): compare against the verified facts, not what
+        # this event's legacy handler just wrote.
+        _restore_verified_facts(existing, facts_before_event)
         if not _same_snapshot_consistent(
             existing, facts, latest_snapshot, revoked_status
         ):
@@ -383,6 +448,7 @@ async def sync_revenuecat_access(
             return outcome
 
     # Everything below mutates; nothing below raises.
+    _restore_verified_facts(existing, facts_before_event)
     target_row = (
         next((row for row in existing if row.product_id == facts["product_id"]), None)
         if facts

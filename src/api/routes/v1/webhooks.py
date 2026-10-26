@@ -20,6 +20,7 @@ from src.api.routes.v1.webhook_access_sync import (
     ACCESS_UNRESOLVED,
     AccessRead,
     apply_access,
+    capture_facts_for,
     event_syncs_access,
     is_refund_event,
     read_access,
@@ -228,6 +229,7 @@ async def revenuecat_webhook(
         # legacy handlers and the access sync of concurrent webhooks queue
         # instead of interleaving.
         await lock_subscription_owner(session, user.id)
+        facts_before_event = await capture_facts_for(session, user, access_read)
 
         refund_event = is_refund_event(event)
         # Legacy event effects -- commit/rollback is owned by the unit of work.
@@ -264,7 +266,12 @@ async def revenuecat_webhook(
 
         if event_syncs_access(event_type):
             access_result = await apply_access(
-                session, user, event, access_read, refund_event=refund_event
+                session,
+                user,
+                event,
+                access_read,
+                refund_event=refund_event,
+                facts_before_event=facts_before_event,
             )
 
     increment_metric(

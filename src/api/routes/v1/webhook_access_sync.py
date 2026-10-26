@@ -24,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import (
+    capture_access_facts,
     mark_revenuecat_access_unresolved,
     record_snapshot_unavailable,
     sync_revenuecat_access,
@@ -140,6 +141,7 @@ async def apply_access(
     read: AccessRead | None,
     *,
     refund_event: bool = False,
+    facts_before_event: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """Apply the read customer, or leave the user's access unresolved."""
     event_type = event.get("type")
@@ -153,7 +155,7 @@ async def apply_access(
         error = read.error
     else:
         sync_error = await _sync(
-            session, user, read, refund_event, event_type, event_id
+            session, user, read, refund_event, event_type, event_id, facts_before_event
         )
         if sync_error is None:
             return ACCESS_SYNCED
@@ -185,6 +187,7 @@ async def _sync(
     refund_event: bool,
     event_type: str | None,
     event_id: str | None,
+    facts_before_event: dict[str, dict[str, Any]] | None,
 ) -> RevenueCatSnapshotUnavailable | None:
     try:
         await sync_revenuecat_access(
@@ -196,6 +199,7 @@ async def _sync(
             source="webhook",
             event_type=event_type,
             event_id=event_id,
+            facts_before_event=facts_before_event,
         )
     except RevenueCatSnapshotUnavailable as unavailable:
         return unavailable
@@ -211,3 +215,12 @@ async def _sync(
         wrapped.__cause__ = unexpected
         return wrapped
     return None
+
+
+async def capture_facts_for(
+    session: AsyncSession, user: Any, read: AccessRead | None
+) -> dict[str, dict[str, Any]] | None:
+    """Capture row facts before the legacy handlers when a snapshot will apply."""
+    if read is None or read.snapshot is None or read.user_id != str(user.id):
+        return None
+    return await capture_access_facts(session, user.id)

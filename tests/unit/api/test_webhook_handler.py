@@ -167,6 +167,10 @@ class TestWebhookHandler:
             ),
             patch("src.api.routes.v1.webhook_access_sync.record_snapshot_unavailable"),
             patch(
+                "src.api.routes.v1.webhook_access_sync.capture_access_facts",
+                new_callable=AsyncMock,
+            ),
+            patch(
                 "src.api.routes.v1.webhooks.lock_subscription_owner",
                 new_callable=AsyncMock,
             ) as lock_owner,

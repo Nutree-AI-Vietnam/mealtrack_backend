@@ -10,7 +10,7 @@ sync and the access policy all run for real.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -110,6 +110,10 @@ class _Database:
     def add(self, row):
         if isinstance(row, Subscription):
             self.pending.append(row)
+
+    @asynccontextmanager
+    async def begin_nested(self):
+        yield
 
     async def flush(self):
         for row in self.pending:
@@ -567,3 +571,29 @@ async def test_transfer_never_expires_a_source_it_could_not_read(monkeypatch):
         evaluate_subscription_access([store_row])
     (target_row,) = database.rows_of(target)
     assert evaluate_subscription_access([target_row]).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_a_late_event_with_a_stale_snapshot_keeps_the_verified_facts(
+    monkeypatch,
+):
+    """A late RENEWAL's legacy write must not overwrite newer verified facts."""
+    user = _user("user-u", "uid-u")
+    verified_at = datetime.now(UTC).replace(microsecond=0)
+    verified_expiry = verified_at + timedelta(days=365)
+    stored = _row(user, expires_at=verified_expiry, provider_snapshot_at=verified_at)
+    database = _Database([user], [stored])
+    stale = standard_annual_response(
+        request_date=verified_at - timedelta(minutes=5),
+        expires_date=verified_at + timedelta(days=30),
+    )
+
+    with _revenuecat({"uid-u": _ok(stale)}):
+        result = await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
+
+    assert result == {"status": "success"}
+    assert (stored.expires_at, stored.provider_snapshot_at) == (
+        verified_expiry,
+        verified_at,
+    )
+    assert stored.provider_sync_required_at is None

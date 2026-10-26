@@ -45,6 +45,7 @@ from src.infra.repositories.food_reference_repository_async import (
     AsyncFoodReferenceRepository,
 )
 from src.infra.services.subscription_access_sync_service import (
+    capture_access_facts,  # noqa: F401 - exposed to API routes
     lock_subscription_owner,  # noqa: F401 - exposed to API routes
     mark_revenuecat_access_unresolved,  # noqa: F401 - exposed to API routes
     normalize_standard_access_facts,  # noqa: F401 - exposed to API routes
