@@ -4,6 +4,7 @@ Notifications API endpoints for user notification preferences management.
 
 from fastapi import APIRouter, Depends
 
+from src.api.dependencies.ai_jobs import get_push_token_service
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.schemas.request.notification_requests import (
@@ -20,6 +21,8 @@ from src.app.commands.notification import (
     UpdateNotificationPreferencesCommand,
 )
 from src.app.queries.notification import GetNotificationPreferencesQuery
+from src.app.services.ai_jobs import PushTokenService
+from src.domain.model.notification import DeviceType
 from src.infra.event_bus import EventBus
 
 router = APIRouter(prefix="/v1/notifications", tags=["Notifications"])
@@ -29,22 +32,31 @@ router = APIRouter(prefix="/v1/notifications", tags=["Notifications"])
 async def register_fcm_token(
     request: FcmTokenRegisterRequest,
     user_id: str = Depends(get_current_user_id),
+    tokens: PushTokenService = Depends(get_push_token_service),
 ):
-    """Accept a device token so local clients do not 404 on register.
+    """Store the device token that receives AI job results.
 
-    Push delivery is still owned by the notification worker; this endpoint
-    acknowledges the token so boot is not treated as a missing API.
+    Succeeds before token storage is migrated, so app boot never treats the
+    endpoint as missing; the app registers again on its next launch.
     """
-    del request, user_id
-    return FcmTokenActionResponse(success=True, message="Token registered")
+    stored = await tokens.register(
+        user_id=user_id,
+        token=request.fcm_token,
+        device_type=DeviceType(request.device_type),
+    )
+    return FcmTokenActionResponse(
+        success=True, message="Token registered" if stored else "Token not stored"
+    )
 
 
 @router.delete("/tokens", response_model=FcmTokenActionResponse)
 async def delete_fcm_token(
     request: FcmTokenDeleteRequest,
     user_id: str = Depends(get_current_user_id),
+    tokens: PushTokenService = Depends(get_push_token_service),
 ):
-    del request, user_id
+    """Stop pushing to this device, e.g. when the user signs out."""
+    await tokens.unregister(user_id=user_id, token=request.fcm_token)
     return FcmTokenActionResponse(success=True, message="Token deleted")
 
 

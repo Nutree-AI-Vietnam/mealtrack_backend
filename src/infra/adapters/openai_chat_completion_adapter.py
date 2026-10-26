@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -137,23 +138,24 @@ class OpenAIChatCompletionAdapter(
         full_chunk = None
         truncated = False
 
-        async for chunk in llm.astream(messages, **invocation):
-            if full_chunk is None:
-                full_chunk = chunk
-            else:
-                full_chunk += chunk
+        async with aclosing(llm.astream(messages, **invocation)) as provider_chunks:
+            async for chunk in provider_chunks:
+                if full_chunk is None:
+                    full_chunk = chunk
+                else:
+                    full_chunk += chunk
 
-            text = _chunk_text(chunk)
-            provider_response_id = _response_id(chunk) or provider_response_id
-            chunk_usage = _chunk_usage(chunk, model)
-            if chunk_usage is not None:
-                usage = chunk_usage
-            truncated = truncated or _response_truncated(chunk)
-            if text:
-                yield ChatCompletionDelta(
-                    text=text,
-                    provider_response_id=provider_response_id,
-                )
+                text = _chunk_text(chunk)
+                provider_response_id = _response_id(chunk) or provider_response_id
+                chunk_usage = _chunk_usage(chunk, model)
+                if chunk_usage is not None:
+                    usage = chunk_usage
+                truncated = truncated or _response_truncated(chunk)
+                if text:
+                    yield ChatCompletionDelta(
+                        text=text,
+                        provider_response_id=provider_response_id,
+                    )
 
         # At the very end, yield the accumulated tool calls if any
         tool_calls = getattr(full_chunk, "tool_calls", None)

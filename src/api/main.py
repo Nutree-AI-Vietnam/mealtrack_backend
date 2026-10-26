@@ -48,12 +48,12 @@ from src.api.routes.v1.admin_meal_catalog import router as admin_meal_catalog_ro
 from src.api.routes.v1.admin_meal_catalog_import import (
     router as admin_meal_catalog_import_router,
 )
+from src.api.routes.v1.ai_jobs import router as ai_jobs_router
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.api.routes.v1.chat import router as chat_router
 from src.api.routes.v1.cheat_days import router as cheat_days_router
 from src.api.routes.v1.codes import router as codes_router
 from src.api.routes.v1.feature_flags import router as feature_flags_router
-from src.api.routes.v1.wearables import router as wearables_router
 from src.api.routes.v1.foods import router as foods_router
 from src.api.routes.v1.health import root_router as root_health_router
 from src.api.routes.v1.health import router as health_router
@@ -90,6 +90,10 @@ from src.infra.config.settings import settings
 from src.infra.database.config_async import async_engine
 
 load_dotenv()
+
+# Routes already decorated this singleton. Hand it the Redis URL here so the
+# limiter module does not read settings itself.
+limiter.configure(settings.redis_url)
 
 # Initialize observability before creating the FastAPI app so provider integrations
 # can patch framework middleware.
@@ -248,17 +252,38 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Event bus eager init failed (non-fatal): %s", e)
 
+    # Runs the AI job worker only when AI_JOBS_WORKER_ENABLED is set.
+    try:
+        from src.api.dependencies.ai_jobs import start_ai_jobs_worker
+
+        await start_ai_jobs_worker()
+    except Exception:
+        logger.exception("AI job worker failed to start")
+
+    # Re-probe Redis only from this task. Request handling must not ping.
+    limiter.start_redis_probe()
     logger.info("MealTrack API started successfully!")
-    yield
+    try:
+        yield
+    finally:
+        await limiter.stop_redis_probe()
 
     # Shutdown
     logger.info("Shutting down MealTrack API...")
 
+    # First, while the database and cache are still up: running jobs record
+    # their outcome on the way out.
+    from src.api.dependencies.ai_jobs import shutdown_ai_jobs
     from src.api.dependencies.event_bus import drain_food_search_background_work
     from src.bootstrap.integration_services import (
         drain_integration_event_publisher,
         shutdown_firebase_executor,
     )
+
+    try:
+        await shutdown_ai_jobs()
+    except Exception:
+        logger.exception("AI job shutdown failed")
 
     # Late food-search work writes the cache and the catalog; finish it first.
     await drain_food_search_background_work()
@@ -326,8 +351,8 @@ app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)
 app.include_router(feature_flags_router)
-app.include_router(wearables_router)
 app.include_router(capabilities_router)
+app.include_router(ai_jobs_router)
 app.include_router(chat_router)
 app.include_router(meal_suggestions_router)
 app.include_router(meal_recommendations_router)

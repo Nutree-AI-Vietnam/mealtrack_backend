@@ -1,10 +1,13 @@
 """Cover src.api.main: Firebase init branches and lifespan error paths."""
+
 import importlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+from src.api.middleware.rate_limit import RateLimitGuard
 
 
 def _reload_main():
@@ -133,9 +136,7 @@ def test_initialize_firebase_from_json_string(monkeypatch):
     with patch.object(main.credentials, "Certificate", cert):
         main.initialize_firebase()
     init.assert_called_once()
-    cert.assert_called_once_with(
-        {"type": "service_account", "project_id": "p"}
-    )
+    cert.assert_called_once_with({"type": "service_account", "project_id": "p"})
 
 
 def test_initialize_firebase_invalid_json_string(monkeypatch):
@@ -155,7 +156,9 @@ def test_initialize_firebase_from_credentials_file(monkeypatch, tmp_path):
     main = _reload_main()
 
     cred_path = tmp_path / "sa.json"
-    cred_path.write_text('{"type":"service_account","project_id":"x"}', encoding="utf-8")
+    cred_path.write_text(
+        '{"type":"service_account","project_id":"x"}', encoding="utf-8"
+    )
 
     def _not_init():
         raise ValueError("not init")
@@ -202,6 +205,35 @@ async def test_warm_database_connection_uses_async_engine(monkeypatch):
 
     engine.context.connection.execute.assert_awaited_once()
     engine.context.connection.commit.assert_awaited_once()
+
+
+def test_lifespan_cancels_the_redis_probe(fresh_main, monkeypatch):
+    guard = fresh_main.limiter
+    # tests/conftest.py keeps this limiter in memory, where no probe starts.
+    # Nothing listens on port 1, and the probe sleeps 30 s before its first ping.
+    RateLimitGuard.configure(guard, "redis://127.0.0.1:1/0")
+    started: dict[str, object] = {}
+    original_start = guard.start_redis_probe
+    original_stop = guard.stop_redis_probe
+
+    def start(*args, **kwargs):
+        kwargs.setdefault("interval", 30)
+        task = original_start(*args, **kwargs)
+        started["task"] = task
+        return task
+
+    async def stop():
+        await original_stop()
+
+    monkeypatch.setattr(guard, "start_redis_probe", start)
+    monkeypatch.setattr(guard, "stop_redis_probe", stop)
+
+    with TestClient(fresh_main.app):
+        task = started["task"]
+        assert task is not None
+        assert not task.done()
+
+    assert task.cancelled()
 
 
 def test_development_static_uploads_mount(tmp_path, monkeypatch):

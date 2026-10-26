@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
+from contextvars import ContextVar
 from typing import Any
 
 from src.observability_connectors import (
@@ -11,6 +12,9 @@ from src.observability_connectors import (
 )
 
 _connector: ObservabilityConnector = NoopObservabilityConnector()
+# Set by request middleware via set_request_context. Chat instrumentation reads
+# it back; there is no other request-id handle on the orchestrator.
+_request_id: ContextVar[str | None] = ContextVar("mealtrack_request_id", default=None)
 
 
 def get_observability_connector() -> ObservabilityConnector:
@@ -134,12 +138,26 @@ def set_request_context(
     user_id: str | None = None,
 ) -> None:
     """Attach safe request context to later provider events."""
+    _request_id.set(request_id or None)
     get_observability_connector().set_request_context(
         request_id=request_id,
         method=method,
         path=path,
         user_id=user_id,
     )
+
+
+def current_request_id() -> str | None:
+    """Return the request id bound by ``set_request_context``, if any."""
+    request_id = _request_id.get()
+    if not isinstance(request_id, str) or not request_id.strip():
+        return None
+    return request_id
+
+
+def reset_request_id_for_test() -> None:
+    """Clear the bound request id in tests."""
+    _request_id.set(None)
 
 
 def start_span(

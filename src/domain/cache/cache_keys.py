@@ -92,8 +92,8 @@ class CacheKeys:
         The cached response embeds a weekly summary computed relative to the
         current day, so the TTL is deliberately short to bound day-rollover
         drift and any target change (weight/metrics) not on the high-frequency
-        write paths. Meal/movement/hydration/custom-macro writes purge these
-        keys synchronously (see CacheInvalidationService) for instant freshness.
+        write paths. Ranges cannot be enumerated per write, so an entry is
+        served only while its stored ``intake_revision`` is current.
         """
         return (
             f"user:{user_id}:nutrition_bulk:{start_date.isoformat()}:{end_date.isoformat()}",
@@ -101,13 +101,23 @@ class CacheKeys:
         )
 
     @staticmethod
+    def intake_revision(user_id: str) -> tuple[str, int]:
+        """Counter every meal, drink and workout write advances. 7 day TTL.
+
+        Range-keyed caches (nutrition bulk, progress summary) store the value
+        they were built at, so a write fences them without a SCAN. The TTL
+        only has to outlive those 5 minute entries.
+        """
+        return (f"user:{user_id}:intake_revision", CacheKeys.TTL_7_DAYS)
+
+    @staticmethod
     def progress_summary(
         user_id: str, start_date: date, end_date: date
     ) -> tuple[str, int]:
         """Cache key for a progress-summary date range. 5 min TTL.
 
-        Meal/movement/hydration/profile/cheat-day writes purge
-        `user:{id}:progress_summary:*` (see cache_invalidation_operations).
+        Meal/movement/hydration writes fence it through ``intake_revision``;
+        target changes through ``target_revision``.
         """
         return (
             f"user:{user_id}:progress_summary:{start_date.isoformat()}:{end_date.isoformat()}",

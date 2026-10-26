@@ -8,9 +8,10 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from src.app.services.chat_next_meal_candidates import (
     ChatNextMealCandidates,
@@ -109,7 +110,12 @@ from src.domain.services.chat.thread_listing import (
 )
 from src.domain.services.chat.welcome import coach_welcome
 from src.domain.utils.timezone_utils import utc_now
-from src.observability import distribution_metric, increment_metric, log_event
+from src.observability import (
+    current_request_id,
+    distribution_metric,
+    increment_metric,
+    log_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +148,10 @@ _RETRYABLE_PROVIDER_MARKERS = (
     "503",
     "504",
 )
+
+# Embedding only sharpens retrieval; full-text search still answers without it.
+# The SDK can sleep up to 120 s on a 429 Retry-After, so cap the whole step.
+CHAT_EMBEDDING_DEADLINE_SECONDS = 3.0
 
 
 class PromptCachePolicy(Protocol):
@@ -245,6 +255,7 @@ class ChatTurnOrchestrator:
         self._circuit = circuit_breaker
         self._next_meals = next_meals
         self._follow_ups = follow_ups
+        self._abandoned_close_tasks: set[asyncio.Task[None]] = set()
 
     async def prepare_turn(
         self,
@@ -427,6 +438,7 @@ class ChatTurnOrchestrator:
         lease_task: asyncio.Task[None] | None = None
         lease_stop = asyncio.Event()
         reply_saved = False
+        generator_closed = False
         meal_photo_task: asyncio.Task[list[dict[str, Any]]] | None = None
         meal_photo_cards: list[dict[str, Any]] | None = None
         photos_saved = asyncio.Event()
@@ -444,8 +456,9 @@ class ChatTurnOrchestrator:
 
         try:
             if claim.kind == ChatClaimKind.REPLAY:
-                async for event in self._replay(claim):
-                    yield event
+                async with aclosing(self._replay(claim)) as replayed:
+                    async for event in replayed:
+                        yield event
                 distribution_metric(
                     "chat.turn.latency_ms",
                     (time.perf_counter() - started) * 1000,
@@ -684,26 +697,30 @@ class ChatTurnOrchestrator:
                 # Cards are already chosen. Stream the model's sentence, and
                 # replace it with the template when that sentence is not usable.
                 streamed: list[str] = []
-                async for delta_text, replace in self._iter_meal_reply_deltas(
-                    context=context,
-                    chunks=chunks,
-                    history=history,
-                    user_message=current_user_message,
-                    generation=generation,
-                    intent=intent,
-                    suggestions=suggestions,
-                    history_messages=history_messages,
-                    earlier=earlier,
-                ):
-                    streamed.append(delta_text)
-                    yield ChatSseEvent(
-                        event="message.delta",
-                        data={
-                            "assistant_message_id": claim.assistant_message.id,
-                            "delta": delta_text,
-                            "replace": replace,
-                        },
+                async with aclosing(
+                    self._iter_meal_reply_deltas(
+                        context=context,
+                        chunks=chunks,
+                        history=history,
+                        user_message=current_user_message,
+                        generation=generation,
+                        intent=intent,
+                        suggestions=suggestions,
+                        history_messages=history_messages,
+                        earlier=earlier,
+                        turn_id=claim.assistant_message.id,
                     )
+                ) as meal_deltas:
+                    async for delta_text, replace in meal_deltas:
+                        streamed.append(delta_text)
+                        yield ChatSseEvent(
+                            event="message.delta",
+                            data={
+                                "assistant_message_id": claim.assistant_message.id,
+                                "delta": delta_text,
+                                "replace": replace,
+                            },
+                        )
                 meal_reply = (
                     "" if generation.get("blocked") else "".join(streamed).strip()
                 )
@@ -829,27 +846,33 @@ class ChatTurnOrchestrator:
                 iteration = 0
                 while iteration < max_tool_iterations:
                     iteration += 1
-                    async for delta_text in self._iter_validated_sentences(
-                        context=context,
-                        chunks=chunks,
-                        history=history,
-                        user_message=current_user_message,
-                        generation=generation,
-                        intent=intent,
-                        meal_candidates=suggestions,
-                        traceable_meals=_traceable_meals(suggestions, history_messages),
-                        earlier=earlier,
-                    ):
-                        if not delta_text:
-                            continue
-                        sentences.append(delta_text)
-                        yield ChatSseEvent(
-                            event="message.delta",
-                            data={
-                                "assistant_message_id": claim.assistant_message.id,
-                                "delta": delta_text,
-                            },
+                    async with aclosing(
+                        self._iter_validated_sentences(
+                            context=context,
+                            chunks=chunks,
+                            history=history,
+                            user_message=current_user_message,
+                            generation=generation,
+                            intent=intent,
+                            meal_candidates=suggestions,
+                            traceable_meals=_traceable_meals(
+                                suggestions, history_messages
+                            ),
+                            earlier=earlier,
+                            turn_id=claim.assistant_message.id,
                         )
+                    ) as sentence_stream:
+                        async for delta_text in sentence_stream:
+                            if not delta_text:
+                                continue
+                            sentences.append(delta_text)
+                            yield ChatSseEvent(
+                                event="message.delta",
+                                data={
+                                    "assistant_message_id": claim.assistant_message.id,
+                                    "delta": delta_text,
+                                },
+                            )
 
                     tool_calls = generation.get("tool_calls")
                     # A how/why question about the cards stays a written answer.
@@ -952,35 +975,42 @@ class ChatTurnOrchestrator:
                     )
                     first_retry_delta = True
                     try:
-                        async for delta_text in self._iter_validated_sentences(
-                            context=context,
-                            chunks=chunks,
-                            history=history,
-                            user_message=current_user_message,
-                            generation=generation,
-                            intent=intent,
-                            meal_candidates=suggestions,
-                            traceable_meals=_traceable_meals(
-                                suggestions, history_messages
-                            ),
-                            earlier=earlier,
-                            output_token_budget=min(
-                                self._max_output_tokens * 2,
-                                CHAT_OUTPUT_TOKEN_CEILING,
-                            ),
-                        ):
-                            if not delta_text:
-                                continue
-                            sentences.append(delta_text)
-                            yield ChatSseEvent(
-                                event="message.delta",
-                                data={
-                                    "assistant_message_id": claim.assistant_message.id,
-                                    "delta": delta_text,
-                                    "replace": already_streamed and first_retry_delta,
-                                },
+                        async with aclosing(
+                            self._iter_validated_sentences(
+                                context=context,
+                                chunks=chunks,
+                                history=history,
+                                user_message=current_user_message,
+                                generation=generation,
+                                intent=intent,
+                                meal_candidates=suggestions,
+                                traceable_meals=_traceable_meals(
+                                    suggestions, history_messages
+                                ),
+                                earlier=earlier,
+                                output_token_budget=min(
+                                    self._max_output_tokens * 2,
+                                    CHAT_OUTPUT_TOKEN_CEILING,
+                                ),
+                                turn_id=claim.assistant_message.id,
                             )
-                            first_retry_delta = False
+                        ) as sentence_stream:
+                            async for delta_text in sentence_stream:
+                                if not delta_text:
+                                    continue
+                                sentences.append(delta_text)
+                                yield ChatSseEvent(
+                                    event="message.delta",
+                                    data={
+                                        "assistant_message_id": (
+                                            claim.assistant_message.id
+                                        ),
+                                        "delta": delta_text,
+                                        "replace": already_streamed
+                                        and first_retry_delta,
+                                    },
+                                )
+                                first_retry_delta = False
                     except BaseException:
                         if sentences:
                             # The client already replaced the stump with this
@@ -1199,39 +1229,23 @@ class ChatTurnOrchestrator:
                     ),
                 },
             )
+        except GeneratorExit:
+            # Outer aclose() injects GeneratorExit at the yield. Yielding again
+            # raises RuntimeError. Awaiting during aclose is fine; only a
+            # further yield is forbidden. The terminal write is scheduled from
+            # finally so this handler can re-raise without yielding.
+            generator_closed = True
+            raise
         except asyncio.CancelledError:
-            if reply_saved:
-                raise
-            partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
-            if partial:
-                try:
-                    await self._complete(
-                        claim.assistant_message,
-                        content=partial,
-                        usage=generation["usage"],
-                        citations=[],
-                        provider_response_id=generation.get("provider_response_id"),
-                        reply_payload=_reply_payload(
-                            suggestions=suggestions,
-                            follow_ups=[],
-                            discover_session_id=discover_session_id,
-                            intent=intent,
-                        ),
-                    )
-                except Exception:
-                    await self._fail(
-                        claim.assistant_message.id,
-                        "CHAT_CANCELLED",
-                        generation_id=claim.assistant_message.generation_id,
-                        content=partial,
-                    )
-            else:
-                await self._fail(
-                    claim.assistant_message.id,
-                    "CHAT_CANCELLED",
-                    generation_id=claim.assistant_message.generation_id,
+            if not reply_saved:
+                await self._persist_cancelled_turn(
+                    claim,
+                    sentences=sentences,
+                    generation=generation,
+                    suggestions=suggestions,
+                    discover_session_id=discover_session_id,
+                    intent=intent,
                 )
-            increment_metric("chat.turn.cancelled")
             raise
         except ChatProviderUnavailableError as exc:
             await self._save_partial_or_fail(
@@ -1286,6 +1300,15 @@ class ChatTurnOrchestrator:
                 "chat.turn.failed", attributes={"code": "CHAT_TURN_FAILED"}
             )
         finally:
+            if generator_closed and not reply_saved:
+                self._schedule_abandoned_turn(
+                    claim,
+                    sentences=sentences,
+                    generation=generation,
+                    suggestions=suggestions,
+                    discover_session_id=discover_session_id,
+                    intent=intent,
+                )
             lease_stop.set()
             if lease_task is not None and not lease_task.done():
                 lease_task.cancel()
@@ -1350,6 +1373,23 @@ class ChatTurnOrchestrator:
             return
         prepared.slot_acquired = False
         self._semaphore.release()
+
+    async def abandon_turn(
+        self, prepared: PreparedChatTurn, *, error_code: str
+    ) -> None:
+        """Give up a prepared turn that will not be streamed to completion.
+
+        Frees the provider slot and fails the generating reply, so the user
+        can resend the turn instead of waiting for its lease to expire.
+        """
+        self.release_slot(prepared)
+        if prepared.claim.kind == ChatClaimKind.REPLAY:
+            return
+        await self._fail(
+            prepared.claim.assistant_message.id,
+            error_code,
+            generation_id=prepared.claim.assistant_message.generation_id,
+        )
 
     async def get_thread(
         self,
@@ -1768,7 +1808,8 @@ class ChatTurnOrchestrator:
     ) -> tuple[list[RetrievedKnowledgeChunk], list[float] | None]:
         embedding: list[float] | None = None
         try:
-            embedding = await self._embedding.embed_query(query)
+            async with asyncio.timeout(CHAT_EMBEDDING_DEADLINE_SECONDS):
+                embedding = await self._embedding.embed_query(query)
         except Exception:
             log_event(
                 "warning",
@@ -1818,27 +1859,32 @@ class ChatTurnOrchestrator:
         suggestions: list[dict[str, Any]],
         history_messages: list[ChatMessage],
         earlier: str | None,
+        turn_id: str | None = None,
     ) -> AsyncIterator[tuple[str, bool]]:
         """Stream a next-meal sentence. The first chunk replaces the acknowledgement."""
         generation["tools"] = None
         generation["tool_calls"] = None
         first = True
         try:
-            async for delta in self._iter_validated_sentences(
-                context=context,
-                chunks=chunks,
-                history=history,
-                user_message=user_message,
-                generation=generation,
-                intent=intent,
-                meal_candidates=suggestions,
-                traceable_meals=_traceable_meals(suggestions, history_messages),
-                earlier=earlier,
-            ):
-                if not delta:
-                    continue
-                yield delta, first
-                first = False
+            async with aclosing(
+                self._iter_validated_sentences(
+                    context=context,
+                    chunks=chunks,
+                    history=history,
+                    user_message=user_message,
+                    generation=generation,
+                    intent=intent,
+                    meal_candidates=suggestions,
+                    traceable_meals=_traceable_meals(suggestions, history_messages),
+                    earlier=earlier,
+                    turn_id=turn_id,
+                )
+            ) as sentence_stream:
+                async for delta in sentence_stream:
+                    if not delta:
+                        continue
+                    yield delta, first
+                    first = False
         except ChatProviderUnavailableError:
             return
 
@@ -1855,6 +1901,7 @@ class ChatTurnOrchestrator:
         traceable_meals: list[dict[str, Any]] | None = None,
         earlier: str | None = None,
         output_token_budget: int | None = None,
+        turn_id: str | None = None,
     ) -> AsyncIterator[str]:
         if self._circuit_is_open():
             raise ChatProviderUnavailableError(retry_after_seconds=30)
@@ -1890,56 +1937,62 @@ class ChatTurnOrchestrator:
             generation["blocked"] = False
             generation["truncated"] = False
             try:
-                async for delta in self._completion.stream(
-                    model=self._model,
-                    system_instructions=instructions,
-                    grounding_message=grounding,
-                    history=history,
-                    user_message=user_message,
-                    max_output_tokens=budget,
-                    cache_kwargs=cache_kwargs,
-                    tools=generation.get("tools"),
-                ):
-                    if delta.provider_response_id:
-                        generation["provider_response_id"] = delta.provider_response_id
-                    if delta.usage is not None:
-                        generation["usage"] = delta.usage
-                    if delta.truncated:
-                        generation["truncated"] = True
-                    if delta.tool_calls is not None:
-                        generation["tool_calls"] = delta.tool_calls
-                    if delta.text:
-                        if first_token_at is None:
-                            first_token_at = time.perf_counter()
-                            distribution_metric(
-                                "chat.turn.ttft_ms",
-                                (first_token_at - started) * 1000,
-                                unit="millisecond",
+                async with aclosing(
+                    self._completion.stream(
+                        model=self._model,
+                        system_instructions=instructions,
+                        grounding_message=grounding,
+                        history=history,
+                        user_message=user_message,
+                        max_output_tokens=budget,
+                        cache_kwargs=cache_kwargs,
+                        tools=generation.get("tools"),
+                    )
+                ) as provider_stream:
+                    async for delta in provider_stream:
+                        if delta.provider_response_id:
+                            generation["provider_response_id"] = (
+                                delta.provider_response_id
                             )
-                        next_pending = _accept_stream_chunk(
-                            emitted="".join(kept),
-                            pending=pending,
-                            chunk=delta.text,
-                            allergies=allergies,
-                            chunks=chunks,
-                            context=context,
-                            meal_candidates=traceable_meals
-                            if traceable_meals is not None
-                            else meal_candidates,
-                            user_text=stated_user_text,
-                        )
-                        if next_pending is None:
-                            generation["blocked"] = True
-                            break
-                        kept.append(delta.text)
-                        pending = next_pending
-                        for sentence in buffer.push(delta.text):
-                            yielded_any = True
-                            yield sentence
-                        prefix = buffer.take_streamable_prefix()
-                        if prefix:
-                            yielded_any = True
-                            yield prefix
+                        if delta.usage is not None:
+                            generation["usage"] = delta.usage
+                        if delta.truncated:
+                            generation["truncated"] = True
+                        if delta.tool_calls is not None:
+                            generation["tool_calls"] = delta.tool_calls
+                        if delta.text:
+                            if first_token_at is None:
+                                first_token_at = time.perf_counter()
+                                distribution_metric(
+                                    "chat.turn.ttft_ms",
+                                    (first_token_at - started) * 1000,
+                                    unit="millisecond",
+                                )
+                            accepted = _accept_stream_chunk(
+                                emitted="".join(kept),
+                                pending=pending,
+                                chunk=delta.text,
+                                allergies=allergies,
+                                chunks=chunks,
+                                context=context,
+                                meal_candidates=traceable_meals
+                                if traceable_meals is not None
+                                else meal_candidates,
+                                user_text=stated_user_text,
+                            )
+                            if accepted.pending is None:
+                                generation["blocked"] = True
+                                _record_stream_blocked(accepted.check, turn_id=turn_id)
+                                break
+                            kept.append(delta.text)
+                            pending = accepted.pending
+                            for sentence in buffer.push(delta.text):
+                                yielded_any = True
+                                yield sentence
+                            prefix = buffer.take_streamable_prefix()
+                            if prefix:
+                                yielded_any = True
+                                yield prefix
                 leftover = buffer.flush()
                 if leftover:
                     yielded_any = True
@@ -2220,6 +2273,87 @@ class ChatTurnOrchestrator:
             error_code,
             generation_id=claim.assistant_message.generation_id,
         )
+
+    async def _persist_cancelled_turn(
+        self,
+        claim: ChatTurnClaim,
+        *,
+        sentences: list[str],
+        generation: dict[str, Any],
+        suggestions: list[dict[str, Any]],
+        discover_session_id: str | None,
+        intent: str | None,
+    ) -> None:
+        """Save text the client already saw, or mark the turn CHAT_CANCELLED."""
+        partial = sanitize_incomplete_assistant_text("".join(sentences).strip())
+        if partial:
+            try:
+                await self._complete(
+                    claim.assistant_message,
+                    content=partial,
+                    usage=generation["usage"],
+                    citations=[],
+                    provider_response_id=generation.get("provider_response_id"),
+                    reply_payload=_reply_payload(
+                        suggestions=suggestions,
+                        follow_ups=[],
+                        discover_session_id=discover_session_id,
+                        intent=intent,
+                    ),
+                )
+            except Exception:
+                await self._fail(
+                    claim.assistant_message.id,
+                    "CHAT_CANCELLED",
+                    generation_id=claim.assistant_message.generation_id,
+                    content=partial,
+                )
+        else:
+            await self._fail(
+                claim.assistant_message.id,
+                "CHAT_CANCELLED",
+                generation_id=claim.assistant_message.generation_id,
+            )
+        increment_metric("chat.turn.cancelled")
+
+    def _schedule_abandoned_turn(
+        self,
+        claim: ChatTurnClaim,
+        *,
+        sentences: list[str],
+        generation: dict[str, Any],
+        suggestions: list[dict[str, Any]],
+        discover_session_id: str | None,
+        intent: str | None,
+    ) -> None:
+        """Schedule the terminal write from an aclose() finally.
+
+        Awaiting during aclose is allowed. Only yielding is forbidden, so
+        this method does not yield: it schedules the write and returns.
+        """
+        task = asyncio.create_task(
+            self._persist_cancelled_turn(
+                claim,
+                sentences=list(sentences),
+                generation={
+                    "usage": generation.get("usage") or ChatUsage(model=self._model),
+                    "provider_response_id": generation.get("provider_response_id"),
+                },
+                suggestions=list(suggestions),
+                discover_session_id=discover_session_id,
+                intent=intent,
+            )
+        )
+        self._abandoned_close_tasks.add(task)
+        task.add_done_callback(self._on_abandoned_close_done)
+
+    def _on_abandoned_close_done(self, task: asyncio.Task[None]) -> None:
+        self._abandoned_close_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning("chat abandoned generation close failed", exc_info=error)
 
     async def _fail(
         self,
@@ -2611,6 +2745,21 @@ def _should_retry_output_limit(
     return finished_assistant_text(text) != text
 
 
+class _StreamChunkResult(NamedTuple):
+    """Accept/reject result for one streamed chunk.
+
+    ``pending`` is the unfinished sentence when the chunk may stream, and
+    ``None`` when it must not. ``check`` names the rejecting check and is
+    set only together with ``pending is None``.
+    """
+
+    pending: str | None
+    check: str | None
+
+
+_STREAM_BLOCK_CHECKS = frozenset({"citation", "number", "sentence"})
+
+
 def _accept_stream_chunk(
     *,
     emitted: str,
@@ -2621,11 +2770,15 @@ def _accept_stream_chunk(
     context: ChatUserContext,
     meal_candidates: list[dict[str, Any]] | None,
     user_text: str = "",
-) -> str | None:
-    """Return the new unfinished sentence if `chunk` is safe to stream."""
+) -> _StreamChunkResult:
+    """Return the new unfinished sentence if `chunk` is safe to stream.
+
+    A rejection is still ``pending is None``. ``check`` reports which check
+    rejected the text: ``citation``, ``number``, or ``sentence``.
+    """
     tentative = emitted + chunk
     if not citations_are_valid(tentative, chunks):
-        return None
+        return _StreamChunkResult(None, "citation")
     if not nutrition_numbers_are_traceable(
         tentative,
         context=context,
@@ -2633,16 +2786,30 @@ def _accept_stream_chunk(
         meal_candidates=meal_candidates,
         user_text=user_text,
     ):
-        return None
+        return _StreamChunkResult(None, "number")
     splitter = SentenceBuffer()
     completed = splitter.push(pending + chunk)
     leftover = splitter.flush()
     for sentence in completed:
         if not inspect_sentence(sentence, allergies=allergies).allowed:
-            return None
+            return _StreamChunkResult(None, "sentence")
     if leftover and not inspect_sentence(leftover, allergies=allergies).allowed:
-        return None
-    return leftover
+        return _StreamChunkResult(None, "sentence")
+    return _StreamChunkResult(leftover, None)
+
+
+def _record_stream_blocked(check: str | None, *, turn_id: str | None) -> None:
+    """Count a safety stop. Never attach user text, model text, or its numbers."""
+    if check not in _STREAM_BLOCK_CHECKS:
+        return
+    attributes: dict[str, str] = {"check": check}
+    if turn_id:
+        attributes["turn_id"] = turn_id
+    request_id = current_request_id()
+    if request_id:
+        attributes["request_id"] = request_id
+    logger.info("chat.turn.stream_blocked", extra=attributes)
+    increment_metric("chat.turn.stream_blocked", attributes={"check": check})
 
 
 def _is_retryable_provider_error(exc: Exception) -> bool:

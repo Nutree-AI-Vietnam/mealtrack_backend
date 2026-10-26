@@ -1,5 +1,7 @@
+import asyncio
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -8,7 +10,7 @@ from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.chat import get_chat_turn_orchestrator
 from src.api.exception_handlers import register_exception_handlers
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
-from src.api.middleware.rate_limit import limiter
+from src.api.middleware.rate_limit import limiter, reset_limiter_counters
 from src.api.routes.v1 import chat as chat_mod
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.app.services.chat_turn_orchestrator import PreparedChatTurn
@@ -34,9 +36,9 @@ from src.domain.utils.timezone_utils import utc_now
 @pytest.fixture(autouse=True)
 def _reset_rate_limits():
     # Both message routes share one per-user bucket across this module.
-    limiter._storage.reset()
+    reset_limiter_counters()
     yield
-    limiter._storage.reset()
+    reset_limiter_counters()
 
 
 class _StubOrchestrator:
@@ -662,6 +664,87 @@ def test_message_routes_share_one_rate_limit():
         statuses.append(response.status_code)
     assert statuses[:10] == [200] * 10
     assert statuses[10] == 429
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_acloses_prepared_stream():
+    class _Body:
+        def __init__(self) -> None:
+            self.closed = False
+            self._sent = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._sent:
+                await asyncio.Event().wait()
+            self._sent = True
+            return ChatSseEvent(
+                event="message.started",
+                data={"thread_id": "t1", "assistant_message_id": "m-asst"},
+            )
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    class _Orchestrator(_StubOrchestrator):
+        def __init__(self) -> None:
+            super().__init__()
+            self.body = _Body()
+
+        def stream_prepared(self, **kwargs):
+            del kwargs
+            return self.body
+
+    orchestrator = _Orchestrator()
+    request_body = b'{"content": "Hello"}'
+    first_event_sent = asyncio.Event()
+    sent: list[dict] = []
+    received = 0
+
+    async def receive() -> dict:
+        nonlocal received
+        received += 1
+        if received == 1:
+            return {"type": "http.request", "body": request_body, "more_body": False}
+        # Uvicorn reports a client that hangs up mid-stream as http.disconnect.
+        # TestClient before Starlette 1.9 sends it only once the body ends.
+        await first_event_sent.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+        if message["type"] == "http.response.body" and message.get("body"):
+            first_event_sent.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/chat/messages",
+        "raw_path": b"/v1/chat/messages",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(request_body)).encode()),
+            (b"idempotency-key", b"k-close"),
+        ],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    with anyio.fail_after(5):
+        await _app(orchestrator)(scope, receive, send)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 200
+    assert b"event: message.started" in sent[1]["body"]
+    # Do not gc.collect(): disconnect must aclose the orchestrator stream.
+    assert orchestrator.body.closed is True
 
 
 def test_list_threads_rejects_unknown_cursor():

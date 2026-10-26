@@ -9,18 +9,25 @@ after new fields are added.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from datetime import date
 from typing import Any
 
 from src.domain.model.weekly_recap.week_stats import (
     DishCount,
+    LastWeek,
     MissedMeal,
+    PeakMeal,
     WeekStats,
     Workout,
 )
 
-_NESTED: dict[str, type[Any]] = {"workouts": Workout, "top_dishes": DishCount}
+_NESTED: dict[str, type[Any]] = {
+    "workouts": Workout,
+    "top_dishes": DishCount,
+    "weekend_peaks": PeakMeal,
+}
+_RECORDS = (Workout, DishCount, MissedMeal, PeakMeal, LastWeek)
 
 
 def week_stats_to_dict(stats: WeekStats) -> dict[str, Any]:
@@ -41,8 +48,8 @@ def week_stats_from_dict(data: Mapping[str, Any]) -> WeekStats:
 def _plain(value: Any) -> Any:
     if isinstance(value, date):
         return value.isoformat()
-    if isinstance(value, Workout | DishCount | MissedMeal):
-        return asdict(value)
+    if isinstance(value, _RECORDS):
+        return {key: _plain(item) for key, item in asdict(value).items()}
     if isinstance(value, tuple):
         return [_plain(item) for item in value]
     return value
@@ -55,6 +62,9 @@ def _decode(name: str, value: Any) -> Any:
         return date.fromisoformat(value)
     if name == "missed_meal":
         return _build(MissedMeal, value)
+    if name == "last_week":
+        last = _build(LastWeek, value)
+        return replace(last, plan=tuple(last.plan))
     if name in _NESTED:
         return tuple(_build(_NESTED[name], item) for item in value)
     if isinstance(value, list):

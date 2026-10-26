@@ -8,7 +8,11 @@ from slowapi.errors import RateLimitExceeded
 
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.middleware.preview_body_limit import PreviewBodyLimitMiddleware
-from src.api.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from src.api.middleware.rate_limit import (
+    limiter,
+    rate_limit_exceeded_handler,
+    reset_limiter_counters,
+)
 from src.api.routes.v1 import tdee as tdee_routes
 from src.api.schemas.request.tdee_requests import TdeeCalculationRequest
 from src.app.handlers.query_handlers.preview_tdee_query_handler import (
@@ -66,9 +70,9 @@ def preview_client(monkeypatch):
     )()
     app.dependency_overrides[get_configured_event_bus] = lambda: event_bus
     monkeypatch.setattr(tdee_routes, "get_configured_event_bus", lambda: event_bus)
-    limiter._storage.reset()
+    reset_limiter_counters()
     yield TestClient(app)
-    limiter._storage.reset()
+    reset_limiter_counters()
 
 
 def test_preview_route_accepts_real_request_and_uses_ip_quota(preview_client):

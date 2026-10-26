@@ -196,6 +196,27 @@ class RedisClient:
 
         return await self._with_client("DELETE", operation, False, key)
 
+    async def purge(self, keys: list[str], counters: dict[str, int]) -> bool:
+        """Delete keys and advance counters in one pipelined round-trip.
+
+        Each counter's TTL is refreshed so it outlives the entries it fences.
+        """
+        if not keys and not counters:
+            return True
+
+        async def operation(client: redis.Redis) -> bool:
+            async with client.pipeline(transaction=False) as pipe:
+                for counter, ttl in counters.items():
+                    pipe.incr(counter)
+                    pipe.expire(counter, ttl)
+                if keys:
+                    pipe.delete(*keys)
+                await pipe.execute()
+            return True
+
+        log_key = next(iter(counters), None) or keys[0]
+        return await self._with_client("PURGE", operation, False, log_key)
+
     async def delete_pattern(self, pattern: str) -> int:
         """Delete keys matching a pattern using non-blocking SCAN.
 
@@ -267,6 +288,22 @@ class RedisClient:
             return count
 
         return await self._with_client("INCR", operation, None, key)
+
+    async def get_with_counter(
+        self, key: str, counter: str
+    ) -> tuple[str | None, int] | None:
+        """Read a value and an integer counter in one round-trip.
+
+        An unset counter reads as 0; None means Redis was unavailable.
+        """
+
+        async def operation(client: redis.Redis) -> tuple[str | None, int]:
+            raw, count = await client.mget([key, counter])
+            if isinstance(raw, bytes):
+                raw = raw.decode()
+            return raw, int(count) if count is not None else 0
+
+        return await self._with_client("GET_WITH_COUNTER", operation, None, key)
 
     async def mget(self, keys: list[str]) -> list[str | None]:
         """Retrieve multiple cached values in a single round-trip."""
