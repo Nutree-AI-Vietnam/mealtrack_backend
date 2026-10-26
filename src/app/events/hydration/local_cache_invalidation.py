@@ -1,8 +1,7 @@
-"""Process-local Redis purge after hydration writes (development/local only).
+"""Redis purge every hydration write awaits before it returns.
 
-Hosted Redis is purged by the Queue worker that consumes hydration events. Docker
-Redis has no worker, so the API registers this hook at startup and hydration
-write handlers await it before they return.
+The API registers this hook at startup in every environment, so a read after
+the write never waits on the Queue worker that consumes hydration events.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ _local_hydration_cache_invalidation_hook: LocalHydrationCacheInvalidationHook | 
 def register_local_hydration_cache_invalidation_hook(
     hook: LocalHydrationCacheInvalidationHook | None,
 ) -> None:
-    """Register the process-local Redis purge used when the Queue worker is absent."""
+    """Register the Redis purge hydration writes await before they return."""
     global _local_hydration_cache_invalidation_hook
     _local_hydration_cache_invalidation_hook = hook
 
@@ -27,6 +26,6 @@ def register_local_hydration_cache_invalidation_hook(
 async def invoke_local_hydration_cache_invalidation_hook(
     user_id: str, log_date: date
 ) -> None:
-    """Invoke the process-local Redis purge when registered (development/local only)."""
+    """Purge the caches this write made stale; a no-op until the API registers it."""
     if _local_hydration_cache_invalidation_hook is not None:
         await _local_hydration_cache_invalidation_hook(user_id, log_date)

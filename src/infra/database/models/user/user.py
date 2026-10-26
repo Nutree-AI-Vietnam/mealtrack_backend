@@ -20,7 +20,8 @@ class User(Base, BaseMixin):
     # Soft-delete must tombstone this value before another account can reuse it.
     firebase_uid = Column(String(128), unique=True, nullable=False, index=True)
     revenuecat_customer_id = Column(String(255), unique=True, nullable=True)
-    # Open Wearables user UUID. Data calls require this id, not the Nutree user id.
+    # From the retired Open Wearables integration; nothing reads or writes it.
+    # Kept until a migration drops the column.
     open_wearables_user_id = Column(String(36), unique=True, nullable=True)
 
     # Basic Information

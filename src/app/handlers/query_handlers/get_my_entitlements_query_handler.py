@@ -5,7 +5,7 @@ from collections.abc import Callable
 from src.app.events.base import EventHandler, handles
 from src.app.queries.subscription_access import GetMyEntitlementsQuery
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription import (
     evaluate_subscription_access,
 )
 

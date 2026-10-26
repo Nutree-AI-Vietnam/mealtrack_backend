@@ -15,7 +15,7 @@ from src.app.queries.user.get_user_by_firebase_uid_query import (
 from src.app.services.subscription_access_flags import (
     database_subscription_access_enabled,
 )
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription import (
     evaluate_subscription_access,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork

@@ -35,6 +35,8 @@ class RecapConfig:
     # Calorie bands, as a share of the day's target.
     on_budget_tolerance: float = 1.05
     under_ratio: float = 0.9
+    # A day looks fully logged with two meal types and this share of its target.
+    full_day_ratio: float = 0.7
     # Wins.
     protein_hit_days: int = 5
     protein_over_ratio: float = 1.03

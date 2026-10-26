@@ -20,7 +20,7 @@ from src.domain.model.notification import NotificationPreferences
 from src.domain.model.user import UserDomainModel
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )

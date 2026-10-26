@@ -16,7 +16,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 
 from src.domain.constants.meal_constants import MealDefaults
 from src.domain.model.meal import Meal, MealStatus
-from src.domain.model.weekly_recap import DishCount, MissedMeal
+from src.domain.model.weekly_recap import DishCount, MissedMeal, PeakMeal
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
@@ -37,6 +37,8 @@ _TOP_DISHES = 3
 _MIN_DISH_REPEATS = 2
 _MIN_HOUR_MEALS = 2
 _MIN_MISSED_DAYS = 3
+_MIN_PROTEIN_MEALS = 2
+_WEEKEND = (4, 5, 6)
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,7 @@ class FoodMeal:
     carbs: float
     fiber: float
     source: str | None = None
+    protein: float = 0.0
 
     @property
     def backdated(self) -> bool:
@@ -80,6 +83,7 @@ def food_meals(meals: Iterable[Meal], week_start: date, tz: tzinfo) -> list[Food
                 carbs=float(macros.carbs or 0.0),
                 fiber=float(macros.fiber or 0.0),
                 source=meal.source,
+                protein=float(macros.protein or 0.0),
             )
         )
     return sorted(out, key=lambda meal: meal.logged_at)
@@ -89,6 +93,17 @@ def meals_by_day(meals: Sequence[FoodMeal]) -> tuple[int, ...]:
     """Meals per day, counting at most three a day."""
     counts = Counter(meal.day for meal in meals)
     return tuple(min(_MEALS_PER_DAY_CAP, counts[day]) for day in range(7))
+
+
+def meal_types_by_day(meals: Sequence[FoodMeal]) -> tuple[int, ...]:
+    """How many meal types (breakfast, lunch, dinner, snack) each day logged.
+
+    A lunch logged as two dishes is still one meal.
+    """
+    types: dict[int, set[str]] = {}
+    for meal in meals:
+        types.setdefault(meal.day, set()).add(meal.meal_type)
+    return tuple(len(types.get(day, ())) for day in range(7))
 
 
 def late_snacks(
@@ -187,6 +202,53 @@ def missed_meal(
                 remind_at=reminders.get(meal_type),
             )
     return worst
+
+
+def low_protein_meal(meals: Sequence[FoodMeal]) -> str | None:
+    """The main meal with the least protein, on the days it was eaten.
+
+    A meal logged as several items (rice, soup, meat) counts as one meal:
+    its items are summed per day before averaging. Meals logged later are
+    left out, since their meal type may only come from the noon stamp.
+    Only meals eaten on at least two days count, and there have to be two
+    such meals to compare; ties go to the earlier meal of the day.
+    """
+    daily: dict[str, dict[int, float]] = {}
+    for meal in _timed(meals):
+        if meal.meal_type in MAIN_MEALS:
+            days = daily.setdefault(meal.meal_type, {})
+            days[meal.day] = days.get(meal.day, 0.0) + meal.protein
+    averages = {
+        meal_type: sum(days.values()) / len(days)
+        for meal_type, days in daily.items()
+        if len(days) >= _MIN_PROTEIN_MEALS
+    }
+    if len(averages) < 2:
+        return None
+    return min(averages, key=lambda item: (averages[item], MAIN_MEALS.index(item)))
+
+
+def weekend_peaks(meals: Sequence[FoodMeal]) -> tuple[PeakMeal, ...]:
+    """The biggest meal of each weekend day (Friday to Sunday).
+
+    A biggest meal without a real name (an unnamed label scan) keeps an
+    empty name, so the recap never calls a smaller named meal the biggest.
+    """
+    peaks: dict[int, FoodMeal] = {}
+    for meal in meals:
+        if meal.day not in _WEEKEND:
+            continue
+        if meal.day not in peaks or meal.kcal > peaks[meal.day].kcal:
+            peaks[meal.day] = meal
+    return tuple(
+        PeakMeal(day=day, name=_dish_name(peaks[day]), kcal=round(peaks[day].kcal))
+        for day in sorted(peaks)
+    )
+
+
+def _dish_name(meal: FoodMeal) -> str:
+    """The meal's name, or "" for a placeholder."""
+    return "" if meal.name.casefold() in _PLACEHOLDER_NAMES else meal.name
 
 
 def photo_share(meals: Sequence[FoodMeal]) -> float:

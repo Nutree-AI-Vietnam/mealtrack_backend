@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )
