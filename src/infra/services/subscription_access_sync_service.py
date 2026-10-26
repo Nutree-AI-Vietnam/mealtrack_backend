@@ -238,8 +238,12 @@ async def _locked_revenuecat_rows(
     return list(rows.all())
 
 
-def _clear_markers(rows: list[Subscription], request_date: datetime | None) -> int:
-    """Clear sync-required markers this snapshot is new enough to resolve."""
+def clear_sync_markers(rows: list[Subscription], request_date: datetime | None) -> int:
+    """Clear sync-required markers a snapshot taken at ``request_date`` resolves.
+
+    Only for rows that snapshot was applied to: a marker set for an event at
+    or before the snapshot time is answered by it.
+    """
     if request_date is None:
         return 0
     cleared = 0
@@ -547,7 +551,7 @@ async def sync_revenuecat_access(
                 setattr(row, "status", "expired")  # noqa: B010
                 rows_revoked += 1
             setattr(row, "provider_snapshot_at", request_date)  # noqa: B010
-        markers_cleared = _clear_markers(existing, request_date)
+        markers_cleared = clear_sync_markers(existing, request_date)
         outcome = SubscriptionSyncOutcome(
             "absent",
             access_before,
@@ -606,7 +610,7 @@ async def sync_revenuecat_access(
         )
         setattr(target_row, "provider_snapshot_at", request_date)  # noqa: B010
 
-    markers_cleared = _clear_markers(existing, request_date)
+    markers_cleared = clear_sync_markers(existing, request_date)
     outcome = SubscriptionSyncOutcome(
         "applied",
         access_before,

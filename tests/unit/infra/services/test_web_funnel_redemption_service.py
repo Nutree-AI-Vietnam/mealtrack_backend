@@ -719,3 +719,130 @@ async def test_finalization_overwrites_stale_facts_on_an_existing_row():
         "store_transaction_id",
     ):
         assert getattr(existing, column) == facts[column], column
+
+
+def _session_finalizing_over(binding, lead, owner, row):
+    """Finalize session double whose subscription lookup returns ``row``."""
+
+    class Session:
+        def __init__(self):
+            self.results = iter([binding, owner, owner, object(), object(), row])
+
+        async def scalar(self, _statement):
+            return next(self.results)
+
+        async def get(self, _model, _identifier, **_kwargs):
+            return lead
+
+        def add(self, item):
+            raise AssertionError(f"unexpected insert of {type(item).__name__}")
+
+        async def commit(self):
+            return None
+
+    return Session()
+
+
+def _finalize_binding():
+    return _binding(
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        preflight_uid="google-user",
+        product_id="web_monthly",
+        environment="SANDBOX",
+        verified_app_user_id="$RCAnonymousID:web",
+        verified_at=utcnow(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalization_resolves_the_marker_a_failed_webhook_read_left():
+    """PURCHASE_REDEEMED could not read RevenueCat and left a placeholder;
+    finalize's newer snapshot answers it, so entitlements stop answering 503."""
+    from datetime import UTC, datetime, timedelta
+
+    from src.domain.model.subscription_access import evaluate_subscription_access
+
+    binding = _finalize_binding()
+    lead = _lead()
+    lead.snapshot = _snapshot()
+    owner = User(id="user-1", firebase_uid="google-user", email="buyer@example.com")
+    event_time = datetime.now(UTC) - timedelta(minutes=1)
+    placeholder = Subscription(
+        user_id="user-1",
+        revenuecat_subscriber_id="google-user",
+        product_id="web_monthly",
+        platform="web",
+        status="expired",
+        provider="revenuecat",
+        purchased_at=event_time,
+        provider_sync_required_at=event_time,
+        is_sandbox=True,
+    )
+    now = datetime.now(UTC)
+    facts = _web_facts(now, status="active", grace_period_expires_at=None)
+
+    await finalize_redemption(
+        _session_finalizing_over(binding, lead, owner, placeholder),
+        uid="google-user",
+        email="buyer@example.com",
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        idempotency_key="request-marked-row",
+        environment="SANDBOX",
+        expires_at=facts["expires_at"],
+        provider_snapshot_at=now,
+        subscription_facts=facts,
+    )
+
+    assert placeholder.provider_sync_required_at is None
+    assert evaluate_subscription_access([placeholder], now).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_finalization_keeps_newer_verified_facts_committed_meanwhile():
+    """A refresh or webhook committed a newer snapshot between finalize's
+    RevenueCat read and its transaction; finalize must not roll it back."""
+    from datetime import UTC, datetime, timedelta
+
+    binding = _finalize_binding()
+    lead = _lead()
+    lead.snapshot = _snapshot()
+    owner = User(id="user-1", firebase_uid="google-user", email="buyer@example.com")
+    now = datetime.now(UTC)
+    newer_expiry = now + timedelta(days=60)
+    row = Subscription(
+        user_id="user-1",
+        revenuecat_subscriber_id="google-user",
+        product_id="web_monthly",
+        platform="web",
+        status="cancelled",
+        provider="revenuecat",
+        purchased_at=now - timedelta(days=1),
+        expires_at=newer_expiry,
+        period_type="normal",
+        provider_snapshot_at=now,
+        is_sandbox=True,
+    )
+    older_read = now - timedelta(seconds=5)
+    facts = _web_facts(older_read, status="active", grace_period_expires_at=None)
+
+    await finalize_redemption(
+        _session_finalizing_over(binding, lead, owner, row),
+        uid="google-user",
+        email="buyer@example.com",
+        original_app_user_id="$RCAnonymousID:web",
+        redemption_link_hash=_link_hash(),
+        idempotency_key="request-older-read",
+        environment="SANDBOX",
+        expires_at=facts["expires_at"],
+        provider_snapshot_at=older_read,
+        subscription_facts=facts,
+    )
+
+    assert (row.status, row.expires_at, row.provider_snapshot_at) == (
+        "cancelled",
+        newer_expiry,
+        now,
+    )
+    assert binding.finalized_uid == "google-user"
