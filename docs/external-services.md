@@ -211,20 +211,28 @@ optional caches.
 
 ### RevenueCat and web redemption
 
+- RevenueCat is the purchase rail for the App Store and Google Play: the app
+  buys and restores through the RevenueCat SDK logged in as the Firebase uid,
+  and renewals, billing issues, refunds and expirations reach the backend only
+  through RevenueCat webhooks and snapshots. The backend has no direct App
+  Store or Google Play verification (no receipt or purchase-token endpoint, no
+  App Store Server Notifications or Play RTDN); dropping RevenueCat would need
+  that whole store lifecycle stack first.
 - RevenueCat verifies purchase facts. Runtime access is evaluated from verified
   `subscriptions` rows; `GET /v1/me/entitlements` never calls RevenueCat.
   `POST /v1/me/entitlements/refresh` is the per-user self-heal: it reads the
   caller's RevenueCat customer and applies it like a webhook would (contract
   and rate limit in `docs/api-endpoints.md`).
 - `subscriptions.provider` names the row's owner; RevenueCat code reads and
-  writes only `provider='revenuecat'` rows. Rows from other providers leave
-  `revenuecat_subscriber_id` NULL, and every ORM insert must set `provider`.
+  writes only `provider='revenuecat'` rows (rules for other providers below).
 - `SUBSCRIPTION_ENFORCEMENT_ENABLED` (with `SUBSCRIPTION_ACCESS_ENABLED`) makes
   the paid AI routes answer 402 `SUBSCRIPTION_REQUIRED`; the route list is in
   `docs/api-endpoints.md`.
 - A failed or malformed provider fetch must not erase a previously verified
   row. Use the guarded reconciliation command described in
-  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads.
+  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads,
+  and schedule its `--repair` mode (the runbook explains how; no job is
+  defined in `render.yaml`).
 - Webhooks (signature verification is constant-time):
   - Every event type whose user resolves is re-read from RevenueCat
     (`GET /v1/subscribers/{firebase_uid}`, only when the event names that
@@ -274,7 +282,53 @@ optional caches.
     webhook reconcile does not enqueue `claim_email`, and claim routes/dispatch
     stay off).
 - Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
-- Premium feature gates are planned, not enforced on routes.
+- Paid AI routes are enforced on the server only while
+  `SUBSCRIPTION_ENFORCEMENT_ENABLED` and `SUBSCRIPTION_ACCESS_ENABLED` are both
+  on (default off); otherwise the mobile app's gates are the only ones.
+
+### Subscription providers (`subscriptions.provider`)
+
+The access policy evaluates every row of a user together, whatever its
+provider: the grant with the latest deadline wins (a lifetime grant beats
+any), and a row it cannot verify makes the decision "unresolved" only when
+nothing else grants. Each row has exactly one owner:
+
+| `provider` | Written by | Identity |
+|---|---|---|
+| `revenuecat` | RevenueCat snapshots only: webhooks, `POST /v1/me/entitlements/refresh`, the reconcile script, web-funnel finalize | `revenuecat_subscriber_id` = Firebase uid |
+| `momo` | The MoMo web checkout and its IPN handler (separate change) | `revenuecat_subscriber_id` NULL |
+
+A writer for any provider other than RevenueCat must:
+
+- set `provider` explicitly (`'momo'` for MoMo; an ORM insert without one
+  raises), leave `revenuecat_subscriber_id` NULL, and use `platform='web'`;
+- set `provider_snapshot_at` to when the provider confirmed the payment (the
+  verified IPN), or the policy treats a granting row as unverified;
+- set `expires_at` to the end of the paid period (a fixed-term pass, so
+  `will_renew` reads `false`), with `status='active'`, and move the row to
+  `expired` or `refunded` itself; leave `provider_sync_required_at` NULL;
+- write in one transaction under `lock_subscription_owner` (`SELECT ... FOR
+  UPDATE` on the user row), like the RevenueCat writers.
+
+RevenueCat handlers never read, expire, re-point or take over such rows:
+webhooks, transfers, refresh, reconciliation and web finalize all filter on
+`provider='revenuecat'`, and an empty RevenueCat customer never expires a
+row from another provider.
+
+### Store policy (MoMo channel)
+
+MoMo is a **web checkout channel**, not an in-app payment method. In the
+Vietnam storefronts the iOS and Android apps keep selling subscriptions
+through App Store and Google Play billing (via RevenueCat) and must not show
+MoMo buttons, links, prices or other calls to action that point to buying
+elsewhere (App Store Review Guidelines 3.1.1 and 3.1.3; Google Play Payments
+policy). A buyer pays with MoMo on the web while signed in with the same
+Firebase account, and the app unlocks access by signing in with that account
+(Apple guideline 3.1.3(b), multiplatform services). In-app wording stays
+neutral ("Already subscribed? Sign in"), and the same subscription must stay
+on sale as in-app purchase in both apps. Have legal confirm this before the
+MoMo channel launches, and re-check Google's alternative-billing programs
+for Vietnam before changing anything on Android.
 
 ### Sentry ownership
 

@@ -44,13 +44,20 @@ does not duplicate paths or DTO fields.
 
 ### Subscription access (shared contract with the mobile app)
 
-RevenueCat stays the purchase rail for the App Store and Google Play (the app
-buys and restores through the RevenueCat SDK, logged in as the Firebase uid).
+RevenueCat stays the purchase rail for the App Store and Google Play: the app
+buys and restores through the RevenueCat SDK after
+`Purchases.logIn(<Firebase uid>)`. Refresh and reconciliation read RevenueCat
+by Firebase uid (`app_user_id`), so they cannot repair a purchase left on an
+anonymous RevenueCat id. There is no `/v1/me/subscriptions/verify` endpoint
+and no direct App Store or Google Play verification.
+
 The backend database is the access authority behind
-`SUBSCRIPTION_ACCESS_ENABLED`; other providers (MoMo) write into the same
-`subscriptions` table. Both routes below take the Firebase bearer token
-(`get_current_user_id`) and no user id or provider parameter, and every
-response, errors included, carries `Cache-Control: private, no-store`.
+`SUBSCRIPTION_ACCESS_ENABLED`; other providers (MoMo web checkout) write into
+the same `subscriptions` table (provider model and store policy:
+`docs/external-services.md`). Both routes below take the Firebase bearer
+token (`get_current_user_id`) and no user id or provider parameter. Their
+`200` and `503` responses carry `Cache-Control: private, no-store`; the `429`
+from the shared rate limiter carries only `Retry-After`.
 
 **`GET /v1/me/entitlements`** reads the database decision only.
 
@@ -77,6 +84,9 @@ response, errors included, carries `Cache-Control: private, no-store`.
   `false` once an unsubscribe (status `active` but cancelled) or a billing
   issue is detected, for a lifetime grant, and for providers that sell
   fixed-term passes (anything but `revenuecat`).
+- `provider` is the row owner: `revenuecat` (App Store, Google Play and
+  RevenueCat Web purchases) or `momo` (web checkout). Treat other values as
+  opaque; `has_access` stays the only authority.
 
 `503` responses are never a paywall denial:
 
@@ -99,18 +109,25 @@ database in one unit of work and commits, then answers exactly like the GET
 when a user the app last saw as granted reads as expired.
 
 - Flag off: the refresh still runs (it only writes verified RevenueCat
-  facts), then answers `503 ENTITLEMENTS_DISABLED`.
-- RevenueCat unreadable (timeout, 5xx, 429, missing key): `503
+  facts), then answers `503 ENTITLEMENTS_DISABLED`, whatever RevenueCat
+  answered.
+- Flag on, RevenueCat unreadable (timeout, 5xx, 429, missing key): `503
   ENTITLEMENTS_UNAVAILABLE`, with `Retry-After: <seconds>` when RevenueCat
   sent one. Nothing is written.
+- Flag on, unexpected error: `503 ENTITLEMENTS_UNAVAILABLE`, logged with
+  `logger.exception` and reported to Sentry first.
 - RevenueCat readable but unsafe to apply (owner changed, conflicting facts,
   no RevenueCat purchases while the database holds a possible grant from
   elsewhere): nothing is written, the failure is logged, and the answer is
   the current database decision.
-- Rate limit: 6 calls per minute per Firebase uid (the app's shared limiter,
-  keyed on the bearer token). Over the limit:
-  `429 {"error": "rate_limit_exceeded", "code": "preview_rate_limited"}` with
-  `Retry-After: 60`.
+- Rate limit: 6 calls per minute per Firebase uid (the app's shared SlowAPI
+  limiter, keyed on the bearer token). Over the limit the call never reaches
+  RevenueCat or the database and answers `429` with `Retry-After: 60` and
+  this body (the limiter's envelope, not `detail`):
+
+  ```json
+  {"error": "rate_limit_exceeded", "code": "preview_rate_limited"}
+  ```
 
 ### Paid routes enforced on the server
 
