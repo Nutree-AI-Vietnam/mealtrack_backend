@@ -31,18 +31,26 @@ class SubscriptionAccess:
 # Providers whose grants are auto-renewing subscriptions. Anything else (a
 # fixed-term pass, a manual grant) never renews on its own.
 RENEWING_PROVIDERS = frozenset({"revenuecat"})
+# RevenueCat names the product of a promotional (support- or API-granted)
+# entitlement rc_promo_<entitlement>_<duration>, store 'promotional'. It is a
+# fixed-term grant: RevenueCat reports willRenew false for it.
+REVENUECAT_PROMOTIONAL_PRODUCT_PREFIX = "rc_promo_"
 
 
 def subscription_will_renew(record: Any) -> bool:
     """Whether the subscription behind a grant is set to renew.
 
     Mirrors RevenueCat's EntitlementInfo.willRenew: false once an
-    unsubscribe ('cancelled') or a billing issue is detected, and for a
-    lifetime grant, which has nothing to renew.
+    unsubscribe ('cancelled') or a billing issue is detected, for a
+    promotional grant, and for a lifetime grant, which has nothing to renew.
     """
     if getattr(record, "provider", None) not in RENEWING_PROVIDERS:
         return False
     if record.expires_at is None:
+        return False
+    if str(getattr(record, "product_id", "") or "").startswith(
+        REVENUECAT_PROMOTIONAL_PRODUCT_PREFIX
+    ):
         return False
     return record.status == "active"
 

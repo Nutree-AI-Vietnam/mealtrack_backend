@@ -82,8 +82,10 @@ from the shared rate limiter carries only `Retry-After`.
   the latest deadline (a lifetime grant wins). All three are `null` when
   `has_access` is `false`. `will_renew` follows RevenueCat's `willRenew`:
   `false` once an unsubscribe (status `active` but cancelled) or a billing
-  issue is detected, for a lifetime grant, and for providers that sell
-  fixed-term passes (anything but `revenuecat`).
+  issue is detected, for a lifetime grant, for a RevenueCat promotional
+  grant (product `rc_promo_<entitlement>_<duration>`, e.g. a support-granted
+  month), and for providers that sell fixed-term passes (anything but
+  `revenuecat`).
 - `provider` is the row owner: `revenuecat` (App Store, Google Play and
   RevenueCat Web purchases) or `momo` (web checkout). Treat other values as
   opaque; `has_access` stays the only authority.

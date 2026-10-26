@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.fixtures.revenuecat_samples import verbatim_subscriber_response
 
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
@@ -17,6 +18,11 @@ from src.app.handlers.query_handlers.get_my_entitlements_query_handler import (
 )
 from src.app.queries.subscription_access import GetMyEntitlementsQuery
 from src.domain.model.subscription_access import SubscriptionAccessUnavailable
+from src.domain.ports.subscription_service_port import RevenueCatSnapshot
+from src.infra.database.models.user.user import User
+from src.infra.services.subscription_access_sync_service import (
+    sync_revenuecat_access,
+)
 
 NOW = datetime.now(UTC)
 
@@ -287,3 +293,68 @@ async def test_handler_denied_access_has_null_subscription_fields():
 async def test_handler_raises_unavailable_for_unreconciled_rows():
     with pytest.raises(SubscriptionAccessUnavailable):
         await _read([_Row("standard_monthly", provider_snapshot_at=None)])
+
+
+def _promotional_monthly_customer(read_at: datetime) -> dict:
+    """The documented sample's promotional grant, as a 'standard' month."""
+    body = verbatim_subscriber_response()
+    body["request_date_ms"] = int(read_at.timestamp() * 1000)
+    subscriber = body["subscriber"]
+    promo = subscriber["subscriptions"].pop("rc_promo_pro_cat_monthly")
+    expires = (read_at + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    purchased = (read_at - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    promo.update({"expires_date": expires, "purchase_date": purchased})
+    subscriber["subscriptions"] = {"rc_promo_standard_monthly": promo}
+    subscriber["non_subscriptions"] = {}
+    subscriber["entitlements"] = {
+        "standard": {
+            "expires_date": expires,
+            "grace_period_expires_date": None,
+            "product_identifier": "rc_promo_standard_monthly",
+            "purchase_date": purchased,
+        }
+    }
+    return body
+
+
+class _SyncSession:
+    def __init__(self, user):
+        self.user = user
+        self.rows: list = []
+
+    async def flush(self):
+        return None
+
+    async def scalar(self, _statement):
+        return self.user
+
+    async def scalars(self, _statement):
+        rows = list(self.rows)
+        return MagicMock(all=lambda: rows)
+
+    def add(self, row):
+        self.rows.append(row)
+
+
+@pytest.mark.asyncio
+async def test_handler_promotional_grant_does_not_renew():
+    """RevenueCat reports willRenew false for a promotional entitlement (e.g.
+    a support-granted month); the contract must not promise a renewal."""
+    read_at = datetime.now(UTC).replace(microsecond=0)
+    user = User(id="db-user-id", firebase_uid="firebase-uid")
+    session = _SyncSession(user)
+    snapshot = RevenueCatSnapshot(
+        _promotional_monthly_customer(read_at)["subscriber"],
+        read_at,
+        app_user_id="firebase-uid",
+    )
+    await sync_revenuecat_access(session, user, snapshot=snapshot)
+
+    result = await _read(session.rows)
+
+    assert (result["has_access"], result["status"]) == (True, "active")
+    assert (result["product_id"], result["provider"]) == (
+        "rc_promo_standard_monthly",
+        "revenuecat",
+    )
+    assert result["will_renew"] is False
