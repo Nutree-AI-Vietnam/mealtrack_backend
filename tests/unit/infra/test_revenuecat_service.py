@@ -2,7 +2,7 @@
 Unit tests for RevenueCat adapter.
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -75,6 +75,27 @@ class TestRevenueCatAdapter:
             )
             with pytest.raises(RevenueCatSnapshotUnavailable):
                 await service.get_verified_snapshot("firebase-uid")
+
+    async def test_verified_snapshot_reads_request_date_beside_subscriber(
+        self, service
+    ):
+        """RevenueCat's v1 subscriber response puts request_date_ms at the top
+        level, next to "subscriber"."""
+        subscriber = {"entitlements": {}, "subscriptions": {}}
+        with patch("httpx.AsyncClient") as mock_client:
+            response = MagicMock(status_code=200)
+            response.json.return_value = {
+                "request_date": "2026-10-22T00:00:00Z",
+                "request_date_ms": 1792627200000,
+                "subscriber": subscriber,
+            }
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=response
+            )
+            result = await service.get_verified_snapshot("firebase-uid")
+
+        assert result.subscriber == subscriber
+        assert result.request_date == datetime(2026, 10, 22, tzinfo=UTC)
 
     async def test_get_subscriber_info_success(self, service, mock_subscriber_response):
         """Test successful retrieval of subscriber info."""

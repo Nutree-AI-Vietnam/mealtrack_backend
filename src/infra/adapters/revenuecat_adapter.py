@@ -94,7 +94,8 @@ class RevenueCatAdapter(SubscriptionServicePort):
         try:
             payload = response.json()
             subscriber = payload["subscriber"]
-            request_ms = subscriber["request_date_ms"]
+            # The request time sits beside "subscriber", not inside it.
+            request_ms = payload["request_date_ms"]
             if not isinstance(subscriber, dict):
                 raise ValueError("subscriber is not an object")
             if not isinstance(subscriber.get("entitlements"), dict):
