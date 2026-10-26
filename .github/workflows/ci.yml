@@ -41,6 +41,11 @@ jobs:
         env:
           PYTHONPATH: .
 
+      - name: 🏛️ Architecture Tests
+        run: pytest tests/architecture -q
+        env:
+          PYTHONPATH: .
+
       - name: 🧪 Run Unit Tests
         run: |
           pytest \

@@ -23,8 +23,12 @@ def card(
     unit: str = "",
     note: str = "",
     viz: dict[str, Any] | None = None,
+    trend: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """A stat card. ``value`` replaces the animated ``count`` when set."""
+    """A stat card. ``value`` replaces the animated ``count`` when set.
+
+    ``trend`` compares the card's number with last week (see ``compare``).
+    """
     payload: dict[str, Any] = {"kind": kind, "icon": icon, "title": title}
     optional = {"count": count, "prefix": prefix, "suffix": suffix, "value": value}
     payload.update({key: item for key, item in optional.items() if item is not None})
@@ -32,6 +36,8 @@ def card(
     payload["note"] = note
     if viz is not None:
         payload["viz"] = viz
+    if trend is not None:
+        payload["trend"] = trend
     return payload
 
 

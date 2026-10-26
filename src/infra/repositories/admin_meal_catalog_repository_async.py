@@ -124,9 +124,6 @@ class AsyncAdminMealCatalogRepository:
     async def set_missing_image_url(self, catalog_id: str, image_url: str) -> bool:
         return await self.set_image_url(catalog_id, image_url, force=False)
 
-    async def commit(self) -> None:
-        await self._session.commit()
-
 
 def _catalog_filters(
     *,
