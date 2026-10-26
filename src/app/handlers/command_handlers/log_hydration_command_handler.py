@@ -2,7 +2,6 @@
 
 import logging
 from typing import Any
-from uuid import uuid4
 
 from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
 from src.app.events.base import EventHandler, handles
@@ -10,10 +9,8 @@ from src.app.events.hydration.hydration_created_event import HydrationCreatedEve
 from src.app.events.hydration.local_cache_invalidation import (
     invoke_local_hydration_cache_invalidation_hook,
 )
+from src.app.services.hydration_entry_factory import water_macros, water_meal_for
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
-from src.domain.model.meal import Meal, MealImage, MealStatus
-from src.domain.model.nutrition.macros import Macros
-from src.domain.model.nutrition.nutrition import Nutrition
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
@@ -68,46 +65,13 @@ class LogHydrationCommandHandler(EventHandler[LogHydrationCommand, dict]):
                 log_date = log_dt.astimezone(tz).date()
 
             credited_ml = drink.credited_ml_for_volume(cmd.volume_ml)
-            if drink.kcal_per_100ml > 0:
-                fat_100ml = max(
-                    0.0, (drink.kcal_per_100ml - drink.sugar_per_100ml * 4) / 9
-                )
-                carbs_100ml = max(0.0, (drink.kcal_per_100ml - fat_100ml * 9) / 4)
-                volume_factor = cmd.volume_ml / 100.0
-                nutrition = Nutrition(
-                    macros=Macros(
-                        protein=0.0,
-                        carbs=round(carbs_100ml * volume_factor, 1),
-                        fat=round(fat_100ml * volume_factor, 1),
-                        fiber=0.0,
-                        sugar=round(drink.sugar_per_100ml * volume_factor, 1),
-                    ),
-                    food_items=None,
-                )
-            else:
-                nutrition = Nutrition(
-                    macros=Macros(
-                        protein=0.0, carbs=0.0, fat=0.0, fiber=0.0, sugar=0.0
-                    ),
-                    food_items=None,
-                )
-            meal = Meal(
-                meal_id=str(uuid4()),
-                user_id=cmd.user_id,
-                status=MealStatus.READY,
-                created_at=log_dt,
-                ready_at=log_dt,
-                image=MealImage(
-                    image_id=str(uuid4()), format="jpeg", size_bytes=1, url=None
-                ),
-                dish_name=drink.name,
-                meal_type="hydration",
-                source="hydration",
-                quantity=credited_ml,
-                nutrition=nutrition,
-            )
+            meal = water_meal_for(drink, cmd.volume_ml, log_dt, cmd.user_id)
             saved = await uow.meals.save(meal)
-            macros = saved.nutrition.macros if saved.nutrition else nutrition.macros
+            macros = (
+                saved.nutrition.macros
+                if saved.nutrition
+                else water_macros(drink, cmd.volume_ml)
+            )
             hydration_entry = await uow.hydration_entries.add(
                 HydrationEntry(
                     user_id=cmd.user_id,

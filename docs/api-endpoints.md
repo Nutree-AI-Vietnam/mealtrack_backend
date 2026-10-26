@@ -333,6 +333,39 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Staged candidate resolution is gated by
   `PARSE_TEXT_STRUCTURED_REFERENCE_ENABLED` (default off outside staged eval).
 
+### Ghi nhanh (`POST /v1/hydration/describe`, `POST /v1/movement/describe`)
+
+- One sentence logs every drink or activity in it. Premium only, and off
+  unless `DESCRIBE_LOG_ENABLED` is true.
+- Order after the 20/minute limiter: switch (503 `FEATURE_DISABLED`), Premium
+  (402 `SUBSCRIPTION_REQUIRED`, or 503 `SUBSCRIPTION_CHECK_UNAVAILABLE` when
+  RevenueCat cannot answer), daily quota (429 `DESCRIBE_DAILY_LIMIT`;
+  `DESCRIBE_LOG_DAILY_LIMIT` per user per local day, shared by both routes),
+  then the sentence (400 `DESCRIBE_TEXT_REJECTED`).
+- Premium means an active or billing_issue subscription row that is unexpired
+  (sandbox rows don't count in production), else RevenueCat's `standard`
+  entitlement within 3 s. Cancelled rows always go to RevenueCat, because a
+  store refund also arrives as a `CANCELLATION` webhook. Both answers are
+  cached for 60 s per user.
+- `Idempotency-Key` is required (400 `IDEMPOTENCY_KEY_INVALID`). The same key
+  and body replay the stored reply; another body gives 409
+  `IDEMPOTENCY_KEY_CONFLICT`. Replies live in `durable_write_records`, like
+  manual meal creation. A failure before the save frees the key for a retry;
+  any other failure keeps it, and the same key then gets 409
+  `IDEMPOTENCY_KEY_IN_PROGRESS`, so send a new key after that.
+- The model only reads the sentence. Listed drinks get the catalog serving and
+  macros a tapped entry gets; activities get
+  `(MET − 1) × 3.5 × kg × min / 200`, unrounded, with the sent `weight_kg`, else
+  the profile weight, else 62 kg; weights are clamped to 30–300 kg. Out-of-range values are clamped, bad items
+  dropped, and at most 8 saved. Nothing recognised gives 422
+  `DESCRIBE_NOTHING_RECOGNIZED` with nothing saved.
+- Drinks outside the catalog are stored with `drink_id = "other"`, which the
+  catalog deliberately does not define, so every feed titles them with the
+  person's words. Activities outside the catalog have no `activity_id`.
+- `target_date` may be at most tomorrow (400 `INVALID_DATE`). All entries save
+  in one unit of work; events and the cache purge follow, and their failures
+  are logged, not returned.
+
 ### GET meal food item display names
 
 - `Accept-Language: en` (or English primary) → live `food_reference.name`.

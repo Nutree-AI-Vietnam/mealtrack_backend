@@ -275,3 +275,20 @@ class TestResolveUserTimezone:
             header_timezone="Asia/Tokyo",
         )
         assert tz == "America/New_York"
+
+
+@pytest.mark.parametrize("header", ["../etc/passwd", "/etc/localtime", ""])
+def test_path_like_timezone_falls_back_instead_of_raising(header):
+    """A header such as "../etc/passwd" makes ZoneInfo raise ValueError."""
+    assert get_zone_info(header) == ZoneInfo(DEFAULT_TIMEZONE)
+    assert is_valid_timezone(header) is False
+
+
+@pytest.mark.asyncio
+async def test_async_resolution_ignores_a_path_like_header():
+    uow = MagicMock()
+    uow.users.get_user_timezone = AsyncMock(return_value=None)
+
+    tz = await resolve_user_timezone_async("user-123", uow, "../etc/passwd")
+
+    assert tz == "UTC"

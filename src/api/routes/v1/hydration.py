@@ -3,18 +3,24 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
+from src.api.base_dependencies import get_describe_log_guard
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import ValidationException
 from src.api.middleware.accept_language import get_request_language
+from src.api.middleware.rate_limit import limiter
 from src.api.schemas.request.hydration_requests import (
+    DescribeHydrationRequest,
     LogCaloricDrinkRequest,
     LogHydrationRequest,
 )
+from src.api.schemas.response.describe_log_responses import DescribeHydrationResponse
+from src.api.services.describe_log_requests import run_describe
 from src.app.commands.hydration import (
     DeleteHydrationEntryCommand,
+    DescribeHydrationCommand,
     LogCaloricDrinkCommand,
     LogHydrationCommand,
 )
@@ -23,6 +29,8 @@ from src.app.queries.hydration import (
     GetDrinkCatalogQuery,
     GetWeeklyHydrationQuery,
 )
+from src.app.services.describe_log_guard import DescribeLogGuard
+from src.bootstrap.describe_log import HYDRATION_DESCRIBE_ACTION
 from src.infra.event_bus import EventBus
 
 router = APIRouter(prefix="/v1/hydration", tags=["Hydration"])
@@ -93,6 +101,51 @@ async def log_caloric_drink(
         language=language,
     )
     return await event_bus.send(command)
+
+
+@router.post("/describe", response_model=DescribeHydrationResponse)
+@limiter.limit("20/minute")
+async def describe_hydration(
+    request: Request,
+    body: DescribeHydrationRequest,
+    user_id: str = Depends(get_current_user_id),
+    event_bus: EventBus = Depends(get_configured_event_bus),
+    guard: DescribeLogGuard = Depends(get_describe_log_guard),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> DescribeHydrationResponse:
+    """Log every drink in one sentence (Ghi nhanh, Premium)."""
+    target_date = None
+    if body.target_date:
+        try:
+            target_date = datetime.strptime(body.target_date, "%Y-%m-%d").date()
+        except ValueError as e:
+            raise ValidationException("Invalid date format. Use YYYY-MM-DD") from e
+
+    header_timezone = request.headers.get("X-Timezone")
+    language = get_request_language(request)
+
+    async def send(sentence: str) -> dict:
+        return await event_bus.send(
+            DescribeHydrationCommand(
+                user_id=user_id,
+                text=sentence,
+                target_date=target_date,
+                header_timezone=header_timezone,
+                language=language,
+            )
+        )
+
+    return await run_describe(
+        user_id=user_id,
+        text=body.text,
+        timezone=header_timezone,
+        idempotency_key=idempotency_key,
+        action=HYDRATION_DESCRIBE_ACTION,
+        fingerprint={"target_date": body.target_date},
+        guard=guard,
+        send=send,
+        response_model=DescribeHydrationResponse,
+    )
 
 
 @router.get("/daily", response_model=None)

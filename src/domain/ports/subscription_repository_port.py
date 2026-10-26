@@ -32,6 +32,13 @@ class SubscriptionRepositoryPort(ABC):
         pass
 
     @abstractmethod
+    async def has_entitled_subscription(
+        self, user_id: str, *, exclude_sandbox: bool
+    ) -> bool:
+        """Whether an active or billing_issue row exists that has not expired."""
+        pass
+
+    @abstractmethod
     async def find_expiring_soon(self, days_until_expiry: int = 7) -> list[Subscription]:
         """Find subscriptions expiring within specified days."""
         pass

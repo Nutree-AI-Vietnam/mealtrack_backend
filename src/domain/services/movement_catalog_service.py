@@ -263,3 +263,38 @@ def get_met(activity_id: str | None, intensity: str) -> float | None:
         return None
     value = item["met"].get(intensity)
     return float(value) if value is not None else None
+
+
+# Minutes the app preselects: the middle duration chip, chips[len ~/ 2], of each
+# activity in the app's activity_catalog.dart. Kept apart from _ACTIVITIES so the
+# catalog payload does not change. Ghi nhanh uses it when no time is said.
+_DEFAULT_DURATION_MIN: dict[str, int] = {
+    "walking": 30,
+    "running": 30,
+    "cycling": 45,
+    "gym_strength": 60,
+    "cardio_hiit": 20,
+    "yoga_stretching": 30,
+    "swimming": 45,
+    "badminton": 60,
+    "tennis": 60,
+    "pickleball": 60,
+    "football": 60,
+    "basketball": 60,
+    "volleyball": 60,
+}
+
+
+def default_duration_min(activity_id: str | None) -> int | None:
+    return _DEFAULT_DURATION_MIN.get(activity_id or "")
+
+
+def active_kcal(met: float, weight_kg: float, duration_min: float) -> float:
+    """Active calories, (MET - 1) x 3.5 x kg x minutes / 200, unrounded, never negative.
+
+    The same formula as the app's movement detail screen
+    (ActivityDefinition.estimateActiveKcal), so both price an activity alike.
+    """
+    if weight_kg <= 0 or duration_min <= 0:
+        return 0.0
+    return max(0.0, (met - 1.0) * 3.5 * weight_kg * duration_min / 200)

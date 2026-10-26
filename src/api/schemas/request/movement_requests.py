@@ -20,3 +20,14 @@ class LogMovementRequest(BaseModel):
     intensity: str
     include_in_balance: bool
     target_date: Optional[str] = None
+
+
+class DescribeMovementRequest(BaseModel):
+    """One sentence listing the activities to log (Ghi nhanh)."""
+
+    text: str = Field(..., min_length=1, max_length=300)
+    target_date: str | None = None
+    weight_kg: float | None = Field(
+        None,
+        description="The weight the app prices activities with; clamped to 30-300 kg",
+    )

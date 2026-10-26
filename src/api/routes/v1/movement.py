@@ -3,14 +3,29 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
+from src.api.base_dependencies import get_describe_log_guard
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import ValidationException
-from src.api.schemas.request.movement_requests import LogMovementRequest, UpdateMovementRequest
-from src.app.commands.movement import DeleteMovementEntryCommand, LogMovementCommand, UpdateMovementEntryCommand
+from src.api.middleware.rate_limit import limiter
+from src.api.schemas.request.movement_requests import (
+    DescribeMovementRequest,
+    LogMovementRequest,
+    UpdateMovementRequest,
+)
+from src.api.schemas.response.describe_log_responses import DescribeMovementResponse
+from src.api.services.describe_log_requests import run_describe
+from src.app.commands.movement import (
+    DeleteMovementEntryCommand,
+    DescribeMovementCommand,
+    LogMovementCommand,
+    UpdateMovementEntryCommand,
+)
 from src.app.queries.movement import GetDailyMovementQuery, GetMovementCatalogQuery
+from src.app.services.describe_log_guard import DescribeLogGuard
+from src.bootstrap.describe_log import MOVEMENT_DESCRIBE_ACTION
 from src.infra.event_bus import EventBus
 
 router = APIRouter(prefix="/v1/movement", tags=["Movement"])
@@ -52,6 +67,44 @@ async def log_movement(
         header_timezone=request.headers.get("X-Timezone"),
     )
     return await event_bus.send(command)
+
+
+@router.post("/describe", response_model=DescribeMovementResponse)
+@limiter.limit("20/minute")
+async def describe_movement(
+    request: Request,
+    body: DescribeMovementRequest,
+    user_id: str = Depends(get_current_user_id),
+    event_bus: EventBus = Depends(get_configured_event_bus),
+    guard: DescribeLogGuard = Depends(get_describe_log_guard),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> DescribeMovementResponse:
+    """Log every activity in one sentence (Ghi nhanh, Premium)."""
+    target_date = _parse_date(body.target_date)
+    header_timezone = request.headers.get("X-Timezone")
+
+    async def send(sentence: str) -> dict:
+        return await event_bus.send(
+            DescribeMovementCommand(
+                user_id=user_id,
+                text=sentence,
+                target_date=target_date,
+                weight_kg=body.weight_kg,
+                header_timezone=header_timezone,
+            )
+        )
+
+    return await run_describe(
+        user_id=user_id,
+        text=body.text,
+        timezone=header_timezone,
+        idempotency_key=idempotency_key,
+        action=MOVEMENT_DESCRIBE_ACTION,
+        fingerprint={"target_date": body.target_date, "weight_kg": body.weight_kg},
+        guard=guard,
+        send=send,
+        response_model=DescribeMovementResponse,
+    )
 
 
 @router.get("/daily")
