@@ -3,6 +3,10 @@ query_handlers - Individual handler files.
 Each handler is in its own file for better maintainability.
 """
 
+from .check_subscription_access_query_handler import (
+    CheckSubscriptionAccessQueryHandler,
+)
+
 # Activity handlers
 from .get_body_fat_visual_profile_query_handler import (
     GetBodyFatVisualProfileQueryHandler,
@@ -65,6 +69,7 @@ __all__ = [
     # TDEE
     "GetUserTdeeQueryHandler",
     "GetMyEntitlementsQueryHandler",
+    "CheckSubscriptionAccessQueryHandler",
     "PreviewTdeeQueryHandler",
     # Food
     "SearchFoodsQueryHandler",

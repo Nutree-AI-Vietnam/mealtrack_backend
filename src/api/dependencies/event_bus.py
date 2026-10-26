@@ -152,6 +152,7 @@ from src.app.handlers.command_handlers.unmark_cheat_day_command_handler import (
 
 # Import all query handlers from module
 from src.app.handlers.query_handlers import (
+    CheckSubscriptionAccessQueryHandler,
     GetBodyFatVisualProfileQueryHandler,
     GetBulkActivitiesQueryHandler,
     GetDailyActivitiesQueryHandler,
@@ -256,7 +257,10 @@ from src.app.queries.progress import (
     GetProgressSummaryQuery,
 )
 from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
-from src.app.queries.subscription_access import GetMyEntitlementsQuery
+from src.app.queries.subscription_access import (
+    CheckSubscriptionAccessQuery,
+    GetMyEntitlementsQuery,
+)
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
     GetBodyFatVisualProfileQuery,
@@ -1119,6 +1123,10 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         GetMyEntitlementsQuery,
         GetMyEntitlementsQueryHandler(uow_factory=AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        CheckSubscriptionAccessQuery,
+        CheckSubscriptionAccessQueryHandler(uow_factory=AsyncUnitOfWork),
     )
     event_bus.register_handler(
         RefreshMyEntitlementsCommand,

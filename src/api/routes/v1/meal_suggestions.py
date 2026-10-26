@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from src.api.base_dependencies import get_async_food_reference_repository
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.dependencies.subscription_access import require_active_subscription
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
@@ -62,7 +63,11 @@ async def _fetch_images_parallel(
 router = APIRouter(prefix="/v1/meal-suggestions", tags=["Meal Suggestions"])
 
 
-@router.post("/discover", response_model=DiscoveryBatchResponse)
+@router.post(
+    "/discover",
+    response_model=DiscoveryBatchResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
 @limiter.limit("5/minute")
 async def discover_meals(
     request: Request,
@@ -190,7 +195,11 @@ async def discover_meals(
     )
 
 
-@router.post("/recipes", response_model=RecipeBatchResponse)
+@router.post(
+    "/recipes",
+    response_model=RecipeBatchResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
 @limiter.limit("5/minute")
 async def generate_recipes(
     request: Request,

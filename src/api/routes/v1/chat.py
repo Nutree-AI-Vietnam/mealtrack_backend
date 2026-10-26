@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from src.api.dependencies.ai_jobs import get_ai_job_service, get_chat_job_runner
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.chat import get_chat_turn_orchestrator
+from src.api.dependencies.subscription_access import require_active_subscription
 from src.api.exceptions import ValidationException
 from src.api.middleware.accept_language import get_request_language
 from src.api.middleware.rate_limit import limiter
@@ -101,7 +102,11 @@ async def clear_chat_thread(
     return ChatClearResponse.model_validate(payload)
 
 
-@router.post("/messages", response_model=None)
+@router.post(
+    "/messages",
+    response_model=None,
+    dependencies=[Depends(require_active_subscription)],
+)
 @limiter.shared_limit(_MESSAGE_RATE_LIMIT, scope="chat_messages")
 async def post_chat_message(
     request: Request,
@@ -214,6 +219,7 @@ async def clear_chat_thread_by_id(
     "/threads/{thread_id}/messages",
     response_model=None,
     responses={404: {"description": "CHAT_THREAD_NOT_FOUND"}},
+    dependencies=[Depends(require_active_subscription)],
 )
 @limiter.shared_limit(_MESSAGE_RATE_LIMIT, scope="chat_messages")
 async def post_chat_thread_message(

@@ -25,6 +25,7 @@ from src.api.base_dependencies import (
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.dependencies.subscription_access import require_active_subscription
 from src.api.exceptions import create_http_exception, handle_exception
 from src.api.mappers.food_reference_display_name import (
     resolve_grocery_proposal_display_name,
@@ -181,6 +182,7 @@ async def get_current_weekly_plan(
     "/v1/meal-plans/generate",
     response_model=WeeklyMealPlanResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_active_subscription)],
 )
 @limiter.limit("10/minute")
 async def generate_weekly_plan(
@@ -414,7 +416,9 @@ def _bounded_ai_request(function):
 
 
 @router.post(
-    "/v1/meal-plans/{plan_id}/ai-prompt", response_model=WeeklyAiProposalResponse
+    "/v1/meal-plans/{plan_id}/ai-prompt",
+    response_model=WeeklyAiProposalResponse,
+    dependencies=[Depends(require_active_subscription)],
 )
 @limiter.limit("10/minute")
 @_bounded_ai_request

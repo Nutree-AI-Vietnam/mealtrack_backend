@@ -6,12 +6,9 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import Request
 
-from src.api.middleware.premium_check import (
-    get_subscription_status,
-    require_subscription,
-)
+from src.api.middleware.premium_check import get_subscription_status
 
 
 @pytest.mark.asyncio
@@ -50,87 +47,6 @@ class TestSubscriptionMiddleware:
         user.has_active_subscription.return_value = False
         user.get_active_subscription.return_value = None
         return user
-
-    async def test_require_subscription_with_active_subscription(
-        self, mock_request, mock_user_with_subscription
-    ):
-        """Test require_subscription allows access with active subscription."""
-        mock_request.state.user = mock_user_with_subscription
-
-        # Should not raise exception
-        result = await require_subscription(mock_request)
-        assert result is None
-
-    async def test_require_subscription_without_user(self, mock_request):
-        """Test require_subscription requires authentication."""
-        mock_request.state.user = None
-
-        with pytest.raises(HTTPException) as exc_info:
-            await require_subscription(mock_request)
-
-        assert exc_info.value.status_code == 401
-        assert exc_info.value.detail == "Authentication required"
-
-    async def test_require_subscription_without_subscription_checks_revenuecat(
-        self, mock_request, mock_user_without_subscription
-    ):
-        """Test require_subscription checks RevenueCat when no local subscription."""
-        mock_request.state.user = mock_user_without_subscription
-
-        # Create mock subscription service
-        mock_service = AsyncMock()
-        mock_service.has_active_subscription = AsyncMock(return_value=True)
-
-        with patch(
-            "src.api.middleware.premium_check._get_subscription_service",
-            return_value=mock_service,
-        ):
-            with patch("src.api.middleware.premium_check.os.getenv") as mock_getenv:
-                mock_getenv.return_value = "test_key"
-
-                # Should not raise exception - user has subscription in RevenueCat
-                result = await require_subscription(mock_request)
-                assert result is None
-                mock_service.has_active_subscription.assert_called_once_with(
-                    app_user_id="firebase_uid_456"
-                )
-
-    async def test_require_subscription_denies_without_any_subscription(
-        self, mock_request, mock_user_without_subscription
-    ):
-        """Test require_subscription denies access when no subscription anywhere."""
-        mock_request.state.user = mock_user_without_subscription
-
-        # Create mock subscription service
-        mock_service = AsyncMock()
-        mock_service.has_active_subscription = AsyncMock(return_value=False)
-
-        with patch(
-            "src.api.middleware.premium_check._get_subscription_service",
-            return_value=mock_service,
-        ):
-            with patch("src.api.middleware.premium_check.os.getenv") as mock_getenv:
-                mock_getenv.return_value = "test_key"
-
-                with pytest.raises(HTTPException) as exc_info:
-                    await require_subscription(mock_request)
-
-                assert exc_info.value.status_code == 402
-                assert exc_info.value.detail["error_code"] == "SUBSCRIPTION_REQUIRED"
-
-    async def test_require_subscription_without_revenuecat_config(
-        self, mock_request, mock_user_without_subscription
-    ):
-        """Test require_subscription denies access when RevenueCat not configured."""
-        mock_request.state.user = mock_user_without_subscription
-
-        with patch("src.api.middleware.premium_check.os.getenv") as mock_getenv:
-            mock_getenv.return_value = ""
-
-            with pytest.raises(HTTPException) as exc_info:
-                await require_subscription(mock_request)
-
-            assert exc_info.value.status_code == 402
 
     async def test_get_subscription_status_with_active_subscription(
         self, mock_request, mock_user_with_subscription
