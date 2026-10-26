@@ -27,8 +27,13 @@ from src.domain.model.subscription_access import (
     evaluate_subscription_access,
 )
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
+from src.infra.database.models.referral.referral_conversion import ReferralConversion
+from src.infra.database.models.referral.referral_wallet import ReferralWallet
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
+from src.infra.services.subscription_access_refresh_service import (
+    RevenueCatAccessRefreshService,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -313,3 +318,60 @@ async def test_transfer_moves_only_what_revenuecat_moved_and_never_touches_momo(
     (moved,) = await _rows(app_sessions, target)
     assert (moved.product_id, moved.status) == ("annual", "active")
     assert evaluate_subscription_access([moved]).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_initial_purchase_after_the_apps_refresh_credits_the_referral(
+    app_sessions,
+):
+    """The app refreshes right after buying, so the row exists before the
+    INITIAL_PURCHASE webhook. The purchase is still the first one: the
+    referrer is credited and the lifecycle event says so."""
+    referrer = await _user(app_sessions, "referrer")
+    buyer = await _user(app_sessions, "buyer")
+    async with app_sessions() as session:
+        session.add(
+            ReferralConversion(
+                referrer_user_id=referrer.id,
+                referred_user_id=buyer.id,
+                code_used="ABC123",
+                status="pending",
+                commission_amount=2.0,
+                commission_currency="USD",
+                commission_amount_vnd=50000,
+            )
+        )
+        await session.commit()
+    read_at = datetime.now(UTC).replace(microsecond=0)
+    answers = {buyer.firebase_uid: _ok(_annual(read_at, timedelta(days=365)))}
+
+    with _revenuecat(answers):
+        refreshed = await RevenueCatAccessRefreshService(
+            lambda: RevenueCatAdapter(api_key="test-key")
+        ).refresh(buyer.id)
+    assert refreshed.result == "applied"
+
+    publisher = MagicMock(publish=AsyncMock())
+    with (
+        _revenuecat(answers),
+        patch.object(webhooks, "_get_event_publisher", return_value=publisher),
+    ):
+        result = await _deliver(_event("INITIAL_PURCHASE", buyer.firebase_uid))
+
+    assert result == {"status": "success"}
+    async with app_sessions() as session:
+        conversion = await session.scalar(
+            select(ReferralConversion).where(
+                ReferralConversion.referred_user_id == buyer.id
+            )
+        )
+        wallet = await session.get(ReferralWallet, referrer.id)
+    assert conversion.status == "converted"
+    assert wallet.balance == 50000
+    (published,) = publisher.publish.await_args_list
+    assert published.args[0]["data"]["lifecycle_type"] == (
+        "subscription_initial_purchase"
+    )
+    (row,) = await _rows(app_sessions, buyer)
+    assert row.provider_snapshot_at == read_at
+    assert evaluate_subscription_access([row]).has_access is True
