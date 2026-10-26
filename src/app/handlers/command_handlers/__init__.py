@@ -14,6 +14,8 @@ from .delete_meal_command_handler import DeleteMealCommandHandler
 from .delete_meal_photo_command_handler import DeleteMealPhotoCommandHandler
 from .delete_movement_entry_command_handler import DeleteMovementEntryCommandHandler
 from .delete_user_command_handler import DeleteUserCommandHandler
+from .describe_hydration_command_handler import DescribeHydrationCommandHandler
+from .describe_movement_command_handler import DescribeMovementCommandHandler
 
 # Meal handlers (already extracted)
 from .edit_meal_command_handler import EditMealCommandHandler
@@ -114,8 +116,10 @@ __all__ = [
     "LogHydrationCommandHandler",
     "LogCaloricDrinkCommandHandler",
     "DeleteHydrationEntryCommandHandler",
+    "DescribeHydrationCommandHandler",
     # Movement handlers
     "LogMovementCommandHandler",
+    "DescribeMovementCommandHandler",
     "DeleteMovementEntryCommandHandler",
     "UpdateMovementEntryCommandHandler",
 ]

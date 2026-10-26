@@ -11,8 +11,8 @@ from src.app.events.hydration.hydration_caloric_created_event import (
 from src.app.events.hydration.local_cache_invalidation import (
     invoke_local_hydration_cache_invalidation_hook,
 )
+from src.app.services.hydration_entry_factory import catalog_macros
 from src.domain.model.hydration import DrinkCategory, HydrationEntry
-from src.domain.model.nutrition.macros import Macros
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
@@ -66,15 +66,8 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
                 tz = get_zone_info(user_tz)
                 log_date = log_dt.astimezone(tz).date()
 
-            # Scale macros from per-100ml catalog values
-            fat_100ml = max(0.0, (drink.kcal_per_100ml - drink.sugar_per_100ml * 4) / 9)
-            carbs_100ml = max(0.0, (drink.kcal_per_100ml - fat_100ml * 9) / 4)
-            volume_factor = cmd.volume_ml / 100.0
             credited_ml = drink.credited_ml_for_volume(cmd.volume_ml)
-
-            carbs = round(carbs_100ml * volume_factor, 1)
-            fat = round(fat_100ml * volume_factor, 1)
-            sugar = round(drink.sugar_per_100ml * volume_factor, 1)
+            macros = catalog_macros(drink, cmd.volume_ml)
 
             hydration_entry = await uow.hydration_entries.add(
                 HydrationEntry(
@@ -83,11 +76,11 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
                     drink_name_snapshot=drink.name,
                     volume_ml=cmd.volume_ml,
                     credited_ml=credited_ml,
-                    protein_g=0.0,
-                    carbs_g=carbs,
-                    fat_g=fat,
-                    fiber_g=0.0,
-                    sugar_g=sugar,
+                    protein_g=macros.protein,
+                    carbs_g=macros.carbs,
+                    fat_g=macros.fat,
+                    fiber_g=macros.fiber,
+                    sugar_g=macros.sugar,
                     logged_at=log_dt,
                     source="hydration",
                 )
@@ -111,12 +104,7 @@ class LogCaloricDrinkCommandHandler(EventHandler[LogCaloricDrinkCommand, dict]):
         )
         await invoke_local_hydration_cache_invalidation_hook(cmd.user_id, log_date)
 
-        kcal = round(
-            Macros(
-                protein=0.0, carbs=carbs, fat=fat, fiber=0.0, sugar=sugar
-            ).total_calories,
-            1,
-        )
+        kcal = round(macros.total_calories, 1)
         return {
             "id": hydration_entry.id,
             "drink_id": cmd.drink_id,

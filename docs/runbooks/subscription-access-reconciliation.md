@@ -9,7 +9,7 @@ read at request time, default off):
 | Flag | On | Off |
 |---|---|---|
 | `SUBSCRIPTION_ACCESS_ENABLED` | `GET /v1/me/entitlements` answers from the database | The mobile kill switch: the endpoint answers `503 ENTITLEMENTS_DISABLED` and the app uses its RevenueCat client decision |
-| `SUBSCRIPTION_ENFORCEMENT_ENABLED` | Paid AI routes answer `402 SUBSCRIPTION_REQUIRED` without access (needs the flag above too) | No server-side gate |
+| `SUBSCRIPTION_ENFORCEMENT_ENABLED` | Paid AI routes answer `402 SUBSCRIPTION_REQUIRED` without access (needs the flag above too) | No server-side gate from this flag. The Ghi nhanh describe routes keep their own always-on Premium check, which reads neither flag (`docs/api-endpoints.md`) |
 
 Webhooks, `POST /v1/me/entitlements/refresh` and this runbook's script write
 verified RevenueCat facts whatever the flags say. MoMo (web checkout, a

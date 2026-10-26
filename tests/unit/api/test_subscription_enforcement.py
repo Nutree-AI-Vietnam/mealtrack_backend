@@ -205,7 +205,9 @@ def test_lapsed_and_free_routes_are_never_gated():
     """Hydration, movement and weight stay open to lapsed users; reading or
     logging food, entitlements and sign-in are never gated here. Progress,
     its AI recap included, is a free route in the app, which generates the
-    recap on view without a tap gate (docs/api-endpoints.md)."""
+    recap on view without a tap gate (docs/api-endpoints.md). The Ghi nhanh
+    describe routes check Premium with their own always-on
+    premium_check.require_subscription, not with this dependency."""
     from src.api.main import app
 
     open_prefixes = (

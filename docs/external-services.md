@@ -227,7 +227,11 @@ optional caches.
   writes only `provider='revenuecat'` rows (rules for other providers below).
 - `SUBSCRIPTION_ENFORCEMENT_ENABLED` (with `SUBSCRIPTION_ACCESS_ENABLED`) makes
   the paid AI routes answer 402 `SUBSCRIPTION_REQUIRED`; the route list is in
-  `docs/api-endpoints.md`.
+  `docs/api-endpoints.md`. The Ghi nhanh describe routes
+  (`POST /v1/hydration/describe`, `POST /v1/movement/describe`) are separate:
+  their own Premium check (`premium_check.require_subscription`: an unexpired
+  `active` or `billing_issue` row of any provider, else RevenueCat within 3 s)
+  is always on and reads neither flag.
 - A failed or malformed provider fetch must not erase a previously verified
   row. Use the guarded reconciliation command described in
   `docs/runbooks/subscription-access-reconciliation.md` before enabling reads,
@@ -292,7 +296,9 @@ optional caches.
 - Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
 - Paid AI routes are enforced on the server only while
   `SUBSCRIPTION_ENFORCEMENT_ENABLED` and `SUBSCRIPTION_ACCESS_ENABLED` are both
-  on (default off); otherwise the mobile app's gates are the only ones.
+  on (default off); otherwise the mobile app's gates are the only ones. The
+  Ghi nhanh describe routes are the exception: their Premium check is always
+  on (`docs/api-endpoints.md`).
 
 ### Subscription providers (`subscriptions.provider`)
 
