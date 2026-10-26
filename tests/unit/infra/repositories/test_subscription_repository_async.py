@@ -115,6 +115,24 @@ async def test_find_by_revenuecat_id_never_selects_another_providers_row():
 
 
 @pytest.mark.asyncio
+async def test_find_by_revenuecat_id_prefers_the_events_product_over_a_newer_row():
+    """An event for the old product after an upgrade selects the old row; the
+    newest row is only the fallback."""
+    session = _FirstSession(MagicMock(id="sub-3"))
+    repo = AsyncSubscriptionRepository(session)
+
+    await repo.find_by_revenuecat_id(
+        "firebase-uid", user_id="user-1", product_id="onemonth"
+    )
+
+    sql = _literal_sql(session.statement)
+    assert (
+        "ORDER BY CASE WHEN (subscriptions.product_id = 'onemonth') THEN 0 ELSE 1 END, "
+        "subscriptions.purchased_at DESC, subscriptions.created_at DESC"
+    ) in sql
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("missing", [None, ""])
 async def test_find_by_revenuecat_id_without_an_id_matches_nothing(missing):
     """`column == None` compiles to IS NULL, which would select rows another

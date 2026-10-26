@@ -24,6 +24,10 @@ from tests.fixtures.revenuecat_samples import (
 )
 
 from src.api.routes.v1 import webhooks
+from src.app.handlers.query_handlers.check_subscription_access_query_handler import (
+    CheckSubscriptionAccessQueryHandler,
+)
+from src.app.queries.subscription_access import CheckSubscriptionAccessQuery
 from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
@@ -136,7 +140,8 @@ class _Subscriptions:
     def __init__(self, database: _Database):
         self.database = database
 
-    async def find_by_revenuecat_id(self, revenuecat_id, user_id=None):
+    async def find_by_revenuecat_id(self, revenuecat_id, user_id=None, product_id=None):
+        """The repository's order: the event's product first, then newest."""
         matches = [
             row
             for row in self.database.rows
@@ -144,7 +149,17 @@ class _Subscriptions:
             and row.provider == "revenuecat"
             and (user_id is None or row.user_id == user_id)
         ]
-        return max(matches, key=lambda row: row.purchased_at, default=None)
+        return max(
+            matches,
+            key=lambda row: (
+                bool(product_id) and row.product_id == product_id,
+                row.purchased_at,
+            ),
+            default=None,
+        )
+
+    async def find_by_user_id(self, user_id):
+        return self.database.rows_of(self.database.users[user_id])
 
 
 class _UnitOfWork:
@@ -342,6 +357,56 @@ async def test_initial_purchase_leaves_exactly_one_reconciled_row(monkeypatch):
     )
     assert row.provider_sync_required_at is None
     assert evaluate_subscription_access([row]).has_access is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["EXPIRATION", "CANCELLATION", "BILLING_ISSUE"])
+async def test_an_old_products_event_never_lands_on_the_newer_products_row(
+    monkeypatch, event_type
+):
+    """Upgrade monthly -> annual, then the monthly product's event arrives
+    while RevenueCat is down. Nothing can undo a legacy write on the annual
+    row then: it must go to the monthly row, so the legacy fallback still
+    grants the paying user while the markers wait for repair."""
+    monkeypatch.setenv("SUBSCRIPTION_ACCESS_ENABLED", "true")
+    user = _user("user-u", "uid-u")
+    now = datetime.now(UTC)
+    monthly = _row(
+        user,
+        id="u-monthly",
+        product_id="onemonth",
+        status="expired",
+        purchased_at=now - timedelta(days=400),
+        expires_at=now - timedelta(days=2),
+        created_at=now - timedelta(days=400),
+    )
+    annual = _row(
+        user,
+        id="u-annual",
+        product_id="annual",
+        purchased_at=now - timedelta(days=2),
+        expires_at=now + timedelta(days=363),
+        created_at=now - timedelta(days=2),
+    )
+    database = _Database([user], [monthly, annual])
+
+    with _revenuecat({"uid-u": _fails(503)}):
+        result = await _deliver(
+            monkeypatch, _event(event_type, "uid-u", product_id="onemonth"), database
+        )
+
+    assert result == {"status": "success"}
+    assert (annual.status, annual.product_id) == ("active", "annual")
+    assert annual.expires_at == now + timedelta(days=363)
+    assert monthly.status != "active"
+    assert monthly.provider_sync_required_at is not None
+    assert annual.provider_sync_required_at is not None
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access(database.rows_of(user))
+    enforcement = CheckSubscriptionAccessQueryHandler(
+        uow_factory=lambda: _UnitOfWork(database, _Referrals())
+    )
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(user.id)) is True
 
 
 @pytest.mark.asyncio

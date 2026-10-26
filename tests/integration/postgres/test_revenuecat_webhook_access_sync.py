@@ -22,6 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tests.fixtures.revenuecat_samples import standard_annual_response
 
 from src.api.routes.v1 import webhooks
+from src.app.handlers.query_handlers.check_subscription_access_query_handler import (
+    CheckSubscriptionAccessQueryHandler,
+)
+from src.app.queries.subscription_access import CheckSubscriptionAccessQuery
 from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
@@ -32,6 +36,7 @@ from src.infra.database.models.referral.referral_conversion import ReferralConve
 from src.infra.database.models.referral.referral_wallet import ReferralWallet
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
+from src.infra.database.uow_async import AsyncUnitOfWork
 from src.infra.services.subscription_access_refresh_service import (
     RevenueCatAccessRefreshService,
 )
@@ -323,6 +328,57 @@ async def test_sync_sees_what_another_writer_committed_before_the_lock(app_sessi
     (row,) = await _rows(app_sessions, user)
     assert (row.status, row.provider_snapshot_at) == ("active", newer)
     assert row.expires_at == newer + timedelta(days=365)
+
+
+@pytest.mark.asyncio
+async def test_an_old_products_expiration_during_an_outage_keeps_the_upgrade(
+    app_sessions,
+):
+    """Upgrade monthly -> annual, then the monthly EXPIRATION arrives while
+    RevenueCat is down. It lands on the monthly row, so the paying user keeps
+    access through the legacy fallback until a snapshot repairs the markers."""
+    user = await _user(app_sessions, "upgrader")
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with app_sessions() as session:
+        for product_id, status, purchased_days_ago, expires_in_days in (
+            ("onemonth", "expired", 400, -2),
+            ("annual", "active", 2, 363),
+        ):
+            session.add(
+                Subscription(
+                    user_id=user.id,
+                    revenuecat_subscriber_id=user.firebase_uid,
+                    provider="revenuecat",
+                    product_id=product_id,
+                    platform="ios",
+                    status=status,
+                    purchased_at=now - timedelta(days=purchased_days_ago),
+                    expires_at=now + timedelta(days=expires_in_days),
+                    period_type="normal",
+                    provider_snapshot_at=now - timedelta(days=1),
+                    is_sandbox=False,
+                )
+            )
+        await session.commit()
+
+    async def down():
+        return 503, None
+
+    with _revenuecat({user.firebase_uid: down}):
+        result = await _deliver(
+            _event("EXPIRATION", user.firebase_uid, product_id="onemonth")
+        )
+
+    assert result == {"status": "success"}
+    rows = {row.product_id: row for row in await _rows(app_sessions, user)}
+    assert rows["annual"].status == "active"
+    assert rows["annual"].expires_at == now + timedelta(days=363)
+    assert rows["onemonth"].status == "expired"
+    assert all(row.provider_sync_required_at for row in rows.values())
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access(list(rows.values()))
+    enforcement = CheckSubscriptionAccessQueryHandler(uow_factory=AsyncUnitOfWork)
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(user.id)) is True
 
 
 @pytest.mark.asyncio

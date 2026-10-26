@@ -715,13 +715,15 @@ class TestWebhookHandler:
         )
 
         await get_or_create_subscription(
-            mock_uow, MagicMock(id="user-1"), {"app_user_id": "firebase-uid"}
+            mock_uow,
+            MagicMock(id="user-1"),
+            {"app_user_id": "firebase-uid", "product_id": "onemonth"},
         )
         await get_subscription_by_revenuecat_id(mock_uow, "firebase-uid", "user-1")
 
         assert mock_uow.subscriptions.find_by_revenuecat_id.await_args_list == [
-            call("firebase-uid", user_id="user-1"),
-            call("firebase-uid", user_id="user-1"),
+            call("firebase-uid", user_id="user-1", product_id="onemonth"),
+            call("firebase-uid", user_id="user-1", product_id=None),
         ]
 
     async def test_handle_product_change(self, mock_uow):

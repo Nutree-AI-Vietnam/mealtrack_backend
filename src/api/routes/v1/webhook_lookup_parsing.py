@@ -112,10 +112,16 @@ async def find_transfer_parties(uow, event: dict) -> list[TransferParty]:
 
 
 async def get_subscription_by_revenuecat_id(
-    uow, revenuecat_id: str, user_id: str | None = None
+    uow, revenuecat_id: str, user_id: str | None = None, product_id: str | None = None
 ):
-    """Get the user's RevenueCat-provided row for a RevenueCat subscriber ID."""
-    return await uow.subscriptions.find_by_revenuecat_id(revenuecat_id, user_id=user_id)
+    """Get the user's RevenueCat-provided row for a RevenueCat subscriber ID.
+
+    With ``product_id``, that product's row is preferred over a newer row of
+    another product the user also holds.
+    """
+    return await uow.subscriptions.find_by_revenuecat_id(
+        revenuecat_id, user_id=user_id, product_id=product_id
+    )
 
 
 def parse_platform(store: str) -> str:

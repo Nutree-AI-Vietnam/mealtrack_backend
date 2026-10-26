@@ -102,7 +102,7 @@ async def handle_purchase(
     RevenueCat event id) are idempotent, so they always run.
     """
     existing = await get_subscription_by_revenuecat_id(
-        uow, event.get("app_user_id"), str(user.id)
+        uow, event.get("app_user_id"), str(user.id), event.get("product_id")
     )
 
     if existing:
@@ -156,7 +156,7 @@ async def handle_renewal(
 ):
     """Handle subscription renewal."""
     subscription = await get_subscription_by_revenuecat_id(
-        uow, event.get("app_user_id"), str(user.id)
+        uow, event.get("app_user_id"), str(user.id), event.get("product_id")
     )
 
     if subscription:
@@ -350,9 +350,17 @@ async def handle_refund(uow, user, event, affiliate_handler=None, event_publishe
 
 
 async def get_or_create_subscription(uow, user, event):
-    """Get existing subscription or create one if missing (handles missed INITIAL_PURCHASE)."""
+    """Get existing subscription or create one if missing (handles missed INITIAL_PURCHASE).
+
+    The row of the event's product is preferred: a user who upgraded holds a
+    row per product, and an EXPIRATION, CANCELLATION or BILLING_ISSUE for the
+    old product must not land on the newer product's row (when RevenueCat
+    cannot be read to undo it, that write would deny a paying user).
+    """
     subscription = await uow.subscriptions.find_by_revenuecat_id(
-        event.get("app_user_id"), user_id=str(user.id)
+        event.get("app_user_id"),
+        user_id=str(user.id),
+        product_id=event.get("product_id"),
     )
 
     if not subscription:
