@@ -8,6 +8,7 @@ the documented v1 response shape.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
@@ -286,3 +287,46 @@ async def test_dry_run_writes_nothing_apply_stamps_rows_and_the_gate_opens(
         "GATE: GO unverified_grants=0 sync_required=0",
         rec.EXIT_GO,
     )
+
+
+@pytest.mark.asyncio
+async def test_dry_run_reports_a_payer_revenuecat_now_denies(sessions, tmp_path):
+    """First cutover: the legacy row grants today (flag off) but was never
+    verified, so the policy calls it unresolved and the loss is no policy
+    downgrade. The dry run must still name the user before --apply."""
+    now = datetime.now(UTC)
+    payer = await _user(sessions)
+    await _row(sessions, payer)  # active, 60 days left, never verified
+    bodies = {
+        payer.firebase_uid: standard_annual_response(
+            request_date=now, expires_date=now - timedelta(days=2)
+        )
+    }
+    output_path = tmp_path / "dry.jsonl"
+    output = rec._private_append(output_path, truncate=True)
+    stdout = StringIO()
+
+    with _revenuecat(bodies):
+        summary = await rec.run_pass(
+            [payer.id],
+            apply=False,
+            population=rec.Population(rec.POPULATION_SUBSCRIBERS),
+            session_factory=sessions,
+            adapter=RevenueCatAdapter(api_key="test-key"),
+            pacer=rec.Pacer(0),
+            output=output,
+            stdout=stdout,
+        )
+    output.close()
+
+    (record,) = [json.loads(line) for line in output_path.open()]
+    assert (record["legacy_before"], record["before"], record["decision"]) == (
+        "granted",
+        "unresolved",
+        "denied",
+    )
+    assert (record["downgrade"], record["loses_current_access"]) == (False, True)
+    assert summary.counts["loses_current_access"] == 1
+    assert f"loses_access user_id={payer.id}" in stdout.getvalue()
+    (row,) = await _rows(sessions, payer)
+    assert (row.status, row.provider_snapshot_at) == ("active", None)  # dry run
