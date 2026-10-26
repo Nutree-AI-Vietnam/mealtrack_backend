@@ -741,3 +741,36 @@ def test_invalid_argument_combinations_exit_2(argv):
     with pytest.raises(SystemExit) as raised:
         rec.parse_args(argv)
     assert raised.value.code == rec.EXIT_USAGE
+
+
+# --- Runbook stays in sync with the script ----------------------------------
+
+RUNBOOK = (
+    Path(__file__).resolve().parents[3]
+    / "docs"
+    / "runbooks"
+    / "subscription-access-reconciliation.md"
+)
+
+
+def test_runbook_quotes_the_go_no_go_sql_verbatim():
+    assert rec.GO_NO_GO_SQL in RUNBOOK.read_text(encoding="utf-8")
+
+
+def test_every_runbook_command_parses():
+    import re
+    import shlex
+
+    text = RUNBOOK.read_text(encoding="utf-8").replace("\\\n", " ")
+    commands = [
+        line.split("python -m scripts.reconcile_subscription_access", 1)[1]
+        for line in text.splitlines()
+        if "python -m scripts.reconcile_subscription_access" in line
+        and not line.strip().startswith("`")
+    ]
+
+    assert len(commands) >= 5
+    for command in commands:
+        argv = shlex.split(re.sub(r"<[^>]+>", "2026-10-26T00:00:00Z", command))
+        argv = [arg.rstrip("`") for arg in argv if arg != "`"]
+        rec.parse_args(argv)
