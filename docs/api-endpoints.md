@@ -42,16 +42,114 @@ does not duplicate paths or DTO fields.
   `ENVIRONMENT=development` and `ENABLE_DEV_AUTH_BYPASS=1`, clients may send
   `X-Dev-User-Id` instead (middleware + auth dependency).
 
-### Subscription access
+### Subscription access (shared contract with the mobile app)
 
-- Mobile reads the signed-in user's database-owned decision from
-  `GET /v1/me/entitlements`. It accepts no user ID or provider parameter and
-  performs no RevenueCat request or write.
-- A 503 `ENTITLEMENTS_UNAVAILABLE` means the database cannot confirm a safe
-  decision, including when the access feature flag is off. Clients must not
-  turn this response into a paywall denial.
-- Responses use `Cache-Control: private, no-store`. OpenAPI owns the exact
-  response shape and status values.
+RevenueCat stays the purchase rail for the App Store and Google Play (the app
+buys and restores through the RevenueCat SDK, logged in as the Firebase uid).
+The backend database is the access authority behind
+`SUBSCRIPTION_ACCESS_ENABLED`; other providers (MoMo) write into the same
+`subscriptions` table. Both routes below take the Firebase bearer token
+(`get_current_user_id`) and no user id or provider parameter, and every
+response, errors included, carries `Cache-Control: private, no-store`.
+
+**`GET /v1/me/entitlements`** reads the database decision only.
+
+`200` body (`expires_at` is ISO-8601 UTC, e.g. `"2026-11-22T00:00:00Z"`):
+
+```json
+{
+  "has_access": true,
+  "status": "active",
+  "expires_at": "2026-11-22T00:00:00Z",
+  "product_id": "standard_monthly",
+  "will_renew": true,
+  "provider": "revenuecat"
+}
+```
+
+- `status` is one of `none`, `trial`, `active`, `grace_period`, `expired`
+  (`none`: no rows; `expired`: rows, none granting).
+- `expires_at` is the latest deadline over all granting rows; `null` for a
+  lifetime grant (and when access is denied).
+- `product_id`, `will_renew` and `provider` describe the granting row with
+  the latest deadline (a lifetime grant wins). All three are `null` when
+  `has_access` is `false`. `will_renew` follows RevenueCat's `willRenew`:
+  `false` once an unsubscribe (status `active` but cancelled) or a billing
+  issue is detected, for a lifetime grant, and for providers that sell
+  fixed-term passes (anything but `revenuecat`).
+
+`503` responses are never a paywall denial:
+
+| `error_code` | When | Client action |
+|---|---|---|
+| `ENTITLEMENTS_DISABLED` | `SUBSCRIPTION_ACCESS_ENABLED` is off (kill switch) | Use the RevenueCat client decision |
+| `ENTITLEMENTS_UNAVAILABLE` | Cannot decide safely now: an unreconciled row and no other grant, a database failure, an unexpected error (logged with `logger.exception` and reported to Sentry first) | Retry / `POST .../refresh`; keep the last known decision or fall back to RevenueCat |
+
+The body is FastAPI's `HTTPException` envelope:
+
+```json
+{"detail": {"error_code": "ENTITLEMENTS_DISABLED", "message": "Database subscription access is turned off."}}
+{"detail": {"error_code": "ENTITLEMENTS_UNAVAILABLE", "message": "Subscription access cannot be decided right now."}}
+```
+
+**`POST /v1/me/entitlements/refresh`** (no body) re-reads the caller's
+RevenueCat customer (`app_user_id` = Firebase uid), applies it to the
+database in one unit of work and commits, then answers exactly like the GET
+(same `200` body and `503` codes). Call it after a purchase or restore, and
+when a user the app last saw as granted reads as expired.
+
+- Flag off: the refresh still runs (it only writes verified RevenueCat
+  facts), then answers `503 ENTITLEMENTS_DISABLED`.
+- RevenueCat unreadable (timeout, 5xx, 429, missing key): `503
+  ENTITLEMENTS_UNAVAILABLE`, with `Retry-After: <seconds>` when RevenueCat
+  sent one. Nothing is written.
+- RevenueCat readable but unsafe to apply (owner changed, conflicting facts,
+  no RevenueCat purchases while the database holds a possible grant from
+  elsewhere): nothing is written, the failure is logged, and the answer is
+  the current database decision.
+- Rate limit: 6 calls per minute per Firebase uid (the app's shared limiter,
+  keyed on the bearer token). Over the limit:
+  `429 {"error": "rate_limit_exceeded", "code": "preview_rate_limited"}` with
+  `Retry-After: 60`.
+
+### Paid routes enforced on the server
+
+`require_active_subscription` (`src/api/dependencies/subscription_access.py`)
+answers `402` with
+
+```json
+{"detail": {"error_code": "SUBSCRIPTION_REQUIRED", "message": "Standard subscription required"}}
+```
+
+when the caller has no subscription access. It is a no-op unless
+`SUBSCRIPTION_ENFORCEMENT_ENABLED` **and** `SUBSCRIPTION_ACCESS_ENABLED` are
+both on (default off, so deploying changes nothing; the kill switch also
+stops enforcement). The decision is the database policy; when it cannot
+decide (an unreconciled row), the legacy row check decides (an `active`,
+unexpired row grants) and the fallback is logged.
+
+Gated: the AI routes behind features the mobile app hard-gates with
+`requireSubscriptionAccess` (tests pin this exact list in
+`tests/unit/api/test_subscription_enforcement.py`):
+
+| Route | Mobile feature |
+|---|---|
+| `POST /v1/chat/messages`, `POST /v1/chat/threads/{thread_id}/messages` | Ask Coach |
+| `POST /v1/meals/image/analyze` | Camera / gallery food scan |
+| `POST /v1/meals/scan-by-url`, `POST /v1/meals/food-label/scan-by-url` | Food photo and Nutrition Facts scan |
+| `POST /v1/meals/parse-text` | Describe food |
+| `POST /v1/meal-suggestions/discover`, `POST /v1/meal-suggestions/recipes` | Meal suggestions |
+| `POST /v1/ingredients/recognize` | Meal suggestions (ingredient photo) |
+| `POST /v1/meal-plans/generate`, `POST /v1/meal-plans/{plan_id}/ai-prompt` | Weekly meal planner |
+
+Not gated on purpose: anything behind `requireLapsedLifestyleAccess`
+(hydration, movement, weight) or free features; reading or deleting a
+user's own data (meals, chat history, plans, recipes); non-AI food logging
+writes (`POST /v1/meals/manual`, repeat, catalog and plan-slot logs, food
+search and barcode), which the app also hard-gates but whose offline
+durable-write replays must not start failing after a lapse; the guest trial
+`POST /v1/meals/parse-text/guest-trial`; and `/v1/ai-jobs` (no mobile
+caller yet).
 
 ### Offline / agent dump
 

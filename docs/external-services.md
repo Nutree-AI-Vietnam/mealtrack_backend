@@ -213,6 +213,15 @@ optional caches.
 
 - RevenueCat verifies purchase facts. Runtime access is evaluated from verified
   `subscriptions` rows; `GET /v1/me/entitlements` never calls RevenueCat.
+  `POST /v1/me/entitlements/refresh` is the per-user self-heal: it reads the
+  caller's RevenueCat customer and applies it like a webhook would (contract
+  and rate limit in `docs/api-endpoints.md`).
+- `subscriptions.provider` names the row's owner; RevenueCat code reads and
+  writes only `provider='revenuecat'` rows. Rows from other providers leave
+  `revenuecat_subscriber_id` NULL, and every ORM insert must set `provider`.
+- `SUBSCRIPTION_ENFORCEMENT_ENABLED` (with `SUBSCRIPTION_ACCESS_ENABLED`) makes
+  the paid AI routes answer 402 `SUBSCRIPTION_REQUIRED`; the route list is in
+  `docs/api-endpoints.md`.
 - A failed or malformed provider fetch must not erase a previously verified
   row. Use the guarded reconciliation command described in
   `docs/runbooks/subscription-access-reconciliation.md` before enabling reads.
