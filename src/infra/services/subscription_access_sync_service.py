@@ -37,7 +37,8 @@ REVENUECAT_PROVIDER = "revenuecat"
 # Statuses the access policy can turn into a grant.
 GRANTING_STATUSES = frozenset({"active", "cancelled", "billing_issue"})
 # Events whose whole point is to remove access; a downgrade on them is normal
-# (so is one on a refund, which arrives as a CANCELLATION).
+# (so is one on a refund, which arrives as a CANCELLATION, and one on the
+# source of a TRANSFER: callers say so with ``downgrade_expected``).
 EXPECTED_DOWNGRADE_EVENTS = frozenset({"EXPIRATION"})
 
 
@@ -480,6 +481,7 @@ async def sync_revenuecat_access(
     event_id: str | None = None,
     absence_is_authoritative: bool = False,
     facts_before_event: dict[str, dict[str, Any]] | None = None,
+    downgrade_expected: bool = False,
 ) -> SubscriptionSyncOutcome:
     """Apply one verified provider snapshot to the user's RevenueCat rows.
 
@@ -499,7 +501,15 @@ async def sync_revenuecat_access(
     change verified facts -- also when this snapshot is too old to apply.
     It is also the "before" of the outcome: what the user had before the
     event, not what the event's legacy handler wrote.
+
+    A sync that removes access is reported as unexpected unless it comes
+    from an EXPIRATION, a refund, or a caller that passes
+    ``downgrade_expected`` (the source of a TRANSFER loses what RevenueCat
+    moved away).
     """
+    downgrade_expected = (
+        downgrade_expected or refund_event or event_type in EXPECTED_DOWNGRADE_EVENTS
+    )
     if snapshot is None:
         if adapter is None:
             raise RevenueCatSnapshotUnavailable("RevenueCat adapter is required")
@@ -544,7 +554,7 @@ async def sync_revenuecat_access(
             plan.result, access_before, _access_label(existing)
         )
         _record_sync_outcome(
-            outcome, locked_user, source, event_type, event_id, refund_event
+            outcome, locked_user, source, event_type, event_id, downgrade_expected
         )
         return outcome
 
@@ -572,7 +582,7 @@ async def sync_revenuecat_access(
             markers_cleared=markers_cleared,
         )
         _record_sync_outcome(
-            outcome, locked_user, source, event_type, event_id, refund_event
+            outcome, locked_user, source, event_type, event_id, downgrade_expected
         )
         return outcome
 
@@ -633,7 +643,7 @@ async def sync_revenuecat_access(
         standard_missing=standard_missing,
     )
     _record_sync_outcome(
-        outcome, locked_user, source, event_type, event_id, refund_event
+        outcome, locked_user, source, event_type, event_id, downgrade_expected
     )
     return outcome
 
@@ -745,7 +755,7 @@ def _record_sync_outcome(
     source: str,
     event_type: str | None,
     event_id: str | None,
-    refund_event: bool,
+    downgrade_expected: bool,
 ) -> None:
     attributes = {
         "source": source,
@@ -787,15 +797,17 @@ def _record_sync_outcome(
             context=context,
         )
     if outcome.downgraded:
-        expected = refund_event or event_type in EXPECTED_DOWNGRADE_EVENTS
         increment_metric(
             "subscription_access.downgrade",
             value=max(outcome.rows_revoked, 1),
             # A refund is a CANCELLATION too: only this attribute tells it
             # from an unexpected loss of access on the same event type.
-            attributes={**attributes, "expected": "true" if expected else "false"},
+            attributes={
+                **attributes,
+                "expected": "true" if downgrade_expected else "false",
+            },
         )
-        if expected:
+        if downgrade_expected:
             logger.info(
                 "RevenueCat sync removed access: user_id=%s source=%s "
                 "event_type=%s event_id=%s rows_revoked=%d",

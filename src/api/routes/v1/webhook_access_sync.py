@@ -152,8 +152,13 @@ async def apply_access(
     *,
     refund_event: bool = False,
     facts_before_event: dict[str, dict[str, Any]] | None = None,
+    downgrade_expected: bool = False,
 ) -> str:
-    """Apply the read customer, or leave the user's access unresolved."""
+    """Apply the read customer, or leave the user's access unresolved.
+
+    ``downgrade_expected`` marks a loss of access as the event's purpose
+    (the source of a TRANSFER), so it is not reported as unexpected.
+    """
     event_type = event.get("type")
     event_id = event.get("id")
     if read is None or read.user_id != str(user.id):
@@ -165,7 +170,14 @@ async def apply_access(
         error = read.error
     else:
         sync_error = await _sync(
-            session, user, read, refund_event, event_type, event_id, facts_before_event
+            session,
+            user,
+            read,
+            refund_event,
+            event_type,
+            event_id,
+            facts_before_event,
+            downgrade_expected,
         )
         if sync_error is None:
             return ACCESS_SYNCED
@@ -198,6 +210,7 @@ async def _sync(
     event_type: str | None,
     event_id: str | None,
     facts_before_event: dict[str, dict[str, Any]] | None,
+    downgrade_expected: bool,
 ) -> RevenueCatSnapshotUnavailable | None:
     try:
         await sync_revenuecat_access(
@@ -210,6 +223,7 @@ async def _sync(
             event_type=event_type,
             event_id=event_id,
             facts_before_event=facts_before_event,
+            downgrade_expected=downgrade_expected,
         )
     except RevenueCatSnapshotUnavailable as unavailable:
         return unavailable

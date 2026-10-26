@@ -560,12 +560,49 @@ async def test_transfer_source_emptied_by_revenuecat_loses_access(monkeypatch):
     database = _Database([source, target], [store_row])
     empty = empty_customer_response(app_user_id="uid-a")
 
-    with _revenuecat({"uid-a": _ok(empty), "uid-b": _ok(_annual())}):
+    with (
+        _revenuecat({"uid-a": _ok(empty), "uid-b": _ok(_annual())}),
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
         await _deliver(monkeypatch, _transfer("uid-a", "uid-b"), database)
 
     assert store_row.status == "expired"
     assert store_row.provider_sync_required_at is None
     assert evaluate_subscription_access([store_row]).has_access is False
+    # Losing what RevenueCat moved away is the transfer itself: counted as
+    # expected, never paged on or sent to Sentry as an unexpected downgrade.
+    (downgrade,) = _metrics(metric, "subscription_access.downgrade")
+    assert downgrade.kwargs["attributes"] == {
+        "source": "webhook",
+        "event_type": "TRANSFER",
+        "result": "applied",
+        "expected": "true",
+    }
+    captured.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_transfer_target_losing_access_is_still_unexpected(monkeypatch):
+    source = _user("user-a", "uid-a")
+    target = _user("user-b", "uid-b")
+    target_row = _row(target)
+    database = _Database([source, target], [target_row])
+    lapsed = _annual(expires_in=timedelta(days=-1))
+
+    with (
+        _revenuecat({"uid-a": _ok(_web_only_customer()), "uid-b": _ok(lapsed)}),
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
+        await _deliver(monkeypatch, _transfer("uid-a", "uid-b"), database)
+
+    assert target_row.status == "expired"
+    (downgrade,) = _metrics(metric, "subscription_access.downgrade")
+    assert downgrade.kwargs["attributes"]["expected"] == "false"
+    assert [call.args[0] for call in captured.call_args_list] == [
+        "RevenueCat sync removed access on an unexpected event"
+    ]
 
 
 @pytest.mark.asyncio

@@ -307,6 +307,7 @@ async def _process_transfer(event: dict) -> dict:
         logger.info("RevenueCat transfer ignored: no local user for transfer ids")
         return {"status": "ignored", "reason": "user_not_found"}
 
+    sources = {party.user_id for party in parties if party.is_source_only}
     subscription_service = _get_subscription_service()
     reads = {
         party.user_id: await read_access(
@@ -325,7 +326,17 @@ async def _process_transfer(event: dict) -> dict:
             user = await lock_subscription_owner(session, user_id)
             if user is None:
                 continue
-            results.append(await apply_access(session, user, event, reads[user_id]))
+            # A source losing what RevenueCat moved away is the transfer
+            # itself, not an unexpected downgrade.
+            results.append(
+                await apply_access(
+                    session,
+                    user,
+                    event,
+                    reads[user_id],
+                    downgrade_expected=user_id in sources,
+                )
+            )
     logger.info(
         "RevenueCat transfer applied: parties=%d results=%s",
         len(parties),
