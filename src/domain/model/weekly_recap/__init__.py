@@ -2,7 +2,9 @@
 
 from src.domain.model.weekly_recap.week_stats import (
     DishCount,
+    LastWeek,
     MissedMeal,
+    PeakMeal,
     WeekStats,
     Workout,
 )
@@ -14,7 +16,9 @@ from src.domain.model.weekly_recap.weekly_recap import WeeklyRecap
 
 __all__ = [
     "DishCount",
+    "LastWeek",
     "MissedMeal",
+    "PeakMeal",
     "WeekStats",
     "WeeklyRecap",
     "Workout",

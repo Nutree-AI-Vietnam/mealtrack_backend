@@ -42,13 +42,14 @@ class Move:
 
 @dataclass(frozen=True)
 class Insight:
-    """A win card. ``stat`` gives its share-card tile, if it has one."""
+    """A win card. ``stat`` gives its share-card tile, if it has one (it may
+    also return None for a week whose card has no tile)."""
 
     id: str
     pri: int
     cond: Callable[[RecapContext], bool]
     card: Callable[[RecapContext], Card]
-    stat: Callable[[RecapContext], list[str]] | None = None
+    stat: Callable[[RecapContext], list[str] | None] | None = None
 
 
 @dataclass(frozen=True)

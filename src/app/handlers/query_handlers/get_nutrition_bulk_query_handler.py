@@ -47,8 +47,9 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
         The full response is cached under a short-TTL per-range key. The short
         TTL bounds staleness from day-rollover (the weekly summary is relative
         to "today") and from rare target changes not on the high-frequency
-        write paths; meal/movement/hydration/custom-macro writes purge this key
-        synchronously (CacheInvalidationService) for instant freshness.
+        write paths. Meal/movement/hydration writes bump the user's intake
+        revision before they return, and an entry built at an older revision
+        is never served.
         """
         if (query.end_date - query.start_date).days > MAX_DATE_RANGE:
             raise ValueError(f"Date range cannot exceed {MAX_DATE_RANGE} days")
@@ -62,17 +63,26 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
         # A target-bearing cache is valid only for the current DB profile fence.
         user_targets = await self._get_user_targets(query.user_id)
         _, _, _, revision, _, _ = user_targets
-        cached = await self.cache_service.get_json(key)
+        # Read before computing: a write that lands mid-compute bumps past it.
+        cached, intake_revision = await self.cache_service.get_json_with_revision(
+            key, CacheKeys.intake_revision(query.user_id)[0]
+        )
         if (
             revision is not None
+            and intake_revision is not None
             and cached
             and cached.get("target_revision") == revision
+            and cached.get("intake_revision") == intake_revision
         ):
             return cached
         result = await self._compute(query, user_targets=user_targets)
-        await self.cache_service.set_json(
-            key, result, ttl, revision_field="target_revision"
-        )
+        if intake_revision is not None:
+            await self.cache_service.set_json(
+                key,
+                {**result, "intake_revision": intake_revision},
+                ttl,
+                revision_field="target_revision",
+            )
         return result
 
     async def _compute(

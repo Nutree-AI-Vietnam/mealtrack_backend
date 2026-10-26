@@ -77,6 +77,15 @@ class MealTranslationService:
                 )
                 return existing
 
+            # A row that already holds the stored name keeps it: that is the
+            # name the user saved, so refreshing ingredients must not
+            # translate it again.
+            keep_dish_name = bool(
+                existing
+                and dish_name.strip()
+                and (existing.dish_name or "").strip() == dish_name.strip()
+            )
+
             # --- Normalise instructions to List[dict] ---
             normalised_steps: list[dict] = []
             if instructions:
@@ -122,7 +131,7 @@ class MealTranslationService:
             )
 
             # --- Unpack results ---
-            translated_dish_name = translated[0]
+            translated_dish_name = dish_name if keep_dish_name else translated[0]
 
             n = len(ingredient_names)
             translated_ingredients = translated[1 : 1 + n]

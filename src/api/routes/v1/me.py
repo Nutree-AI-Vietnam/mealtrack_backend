@@ -9,7 +9,7 @@ from src.app.queries.subscription_access import GetMyEntitlementsQuery
 from src.app.services.subscription_access_flags import (
     database_subscription_access_enabled,
 )
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
 )
 

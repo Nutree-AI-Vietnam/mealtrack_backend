@@ -11,11 +11,11 @@ from types import SimpleNamespace
 
 from sqlalchemy import or_, select
 
-from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )
+from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.config_async import AsyncSessionLocal
 from src.infra.database.models.subscription import Subscription

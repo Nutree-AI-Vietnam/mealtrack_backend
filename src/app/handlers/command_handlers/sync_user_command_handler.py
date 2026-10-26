@@ -17,13 +17,13 @@ from src.domain.exceptions.firebase_identity_exceptions import (
 )
 from src.domain.model.auth.auth_provider import AuthProvider
 from src.domain.model.notification import NotificationPreferences
-from src.domain.model.user import UserDomainModel
-from src.domain.model.user.firebase_identity import tombstone_firebase_uid
-from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )
+from src.domain.model.user import UserDomainModel
+from src.domain.model.user.firebase_identity import tombstone_firebase_uid
+from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.uow_async import AsyncUnitOfWork
 

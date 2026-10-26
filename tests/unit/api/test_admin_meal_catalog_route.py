@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from src.api.base_dependencies import (
     get_admin_meal_catalog_repository,
+    get_async_db,
     get_catalog_image_generator_factory,
 )
 from src.api.dependencies.auth import require_admin_or_local
@@ -79,6 +80,7 @@ def test_generate_image_updates_missing_image_meal(monkeypatch):
     assert payload["item"]["image_url"] == "https://img.test/pho.jpg"
     assert repository.saved_image_url == "https://img.test/pho.jpg"
     generator.generate_url.assert_awaited_once()
+    repository.db.commit.assert_awaited_once()
 
 
 def test_generate_image_rejects_when_another_request_wrote_first(monkeypatch):
@@ -93,6 +95,7 @@ def test_generate_image_rejects_when_another_request_wrote_first(monkeypatch):
     assert response.status_code == 409
     assert repository.saved_image_url is None
     generator.generate_url.assert_awaited_once()
+    repository.db.commit.assert_not_awaited()
 
 
 def test_generate_image_rejects_unknown_catalog_id(monkeypatch):
@@ -126,7 +129,7 @@ def test_generate_image_overwrites_existing_image_when_force_true(monkeypatch):
     assert response.json()["image_url"] == "https://img.test/pho-new.jpg"
     assert repository.saved_image_url == "https://img.test/pho-new.jpg"
     generator.generate_url.assert_awaited_once()
-    repository.commit.assert_awaited_once()
+    repository.db.commit.assert_awaited_once()
 
 
 def test_admin_gate_is_required_for_catalog_view(monkeypatch):
@@ -166,7 +169,8 @@ class _Repository:
         self.write_succeeds = write_succeeds
         self.list_kwargs = {}
         self.saved_image_url = None
-        self.commit = AsyncMock()
+        # The request session the repository shares; the write commits on it.
+        self.db = AsyncMock()
 
     async def list_meals(self, **kwargs):
         self.list_kwargs = kwargs
@@ -194,6 +198,7 @@ def _client(repository, *, generator=None, use_route_auth=False):
     app = FastAPI()
     app.include_router(route_mod.router)
     app.dependency_overrides[get_admin_meal_catalog_repository] = lambda: repository
+    app.dependency_overrides[get_async_db] = lambda: repository.db
     if not use_route_auth:
         app.dependency_overrides[require_admin_or_local] = lambda: "admin@nutree.ai"
     if generator is not None:

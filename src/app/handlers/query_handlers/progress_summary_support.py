@@ -156,21 +156,31 @@ async def read_summary_cache(
     end: date,
     revision: int | None,
     auto_adjust: bool = True,
-) -> dict[str, Any] | None:
-    if cache is None or revision is None:
-        return None
+) -> tuple[dict[str, Any] | None, int | None]:
+    """Return the cached summary when still current, and the intake revision.
+
+    Pass the revision on to ``write_summary_cache``: it is read before the
+    summary is computed, so a write landing mid-compute bumps past it.
+    """
+    if cache is None:
+        return None, None
     key, _ = CacheKeys.progress_summary(user_id, start, end)
-    cached = await cache.get_json(key)
+    cached, intake_revision = await cache.get_json_with_revision(
+        key, CacheKeys.intake_revision(user_id)[0]
+    )
     if (
-        cached
+        revision is not None
+        and intake_revision is not None
+        and cached
         and cached.get("target_revision") == revision
+        and cached.get("intake_revision") == intake_revision
         and WeeklyBudgetService.auto_adjust_enabled(
             cached.get("weekly_auto_adjust", True)
         )
         == auto_adjust
     ):
-        return cached
-    return None
+        return cached, intake_revision
+    return None, intake_revision
 
 
 async def write_summary_cache(
@@ -179,11 +189,17 @@ async def write_summary_cache(
     start: date,
     end: date,
     payload: dict[str, Any],
+    intake_revision: int | None = None,
 ) -> None:
-    if cache is None:
+    if cache is None or intake_revision is None:
         return
     key, ttl = CacheKeys.progress_summary(user_id, start, end)
-    await cache.set_json(key, payload, ttl, revision_field="target_revision")
+    await cache.set_json(
+        key,
+        {**payload, "intake_revision": intake_revision},
+        ttl,
+        revision_field="target_revision",
+    )
 
 
 def local_meal_date(created_at: Any, user_tz: Any) -> date | None:

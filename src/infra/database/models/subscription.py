@@ -5,7 +5,7 @@ Subscription model for tracking user subscriptions.
 from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.orm import relationship
 
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )

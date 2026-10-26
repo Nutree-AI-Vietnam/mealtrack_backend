@@ -133,3 +133,47 @@ async def test_invalidate_pattern_deletes_pattern(service):
 
     assert await service.invalidate_pattern("user:u:activities:*") == 3
     service.redis.delete_pattern.assert_awaited_once_with("user:u:activities:*")
+
+
+@pytest.mark.asyncio
+async def test_purge_deletes_keys_with_fences_and_bumps_in_one_call(service):
+    service.redis.purge = AsyncMock(return_value=True)
+
+    await service.purge(["a", "b"], {"user:u1:intake_revision": 60})
+
+    service.redis.purge.assert_awaited_once_with(
+        ["a", "b", "a:__revision", "b:__revision"],
+        {"user:u1:intake_revision": 60},
+    )
+
+
+@pytest.mark.asyncio
+async def test_payload_and_revision_come_back_from_one_read(service):
+    service.redis.get_with_counter = AsyncMock(return_value=('{"total": 66}', 3))
+
+    payload, revision = await service.get_json_with_revision(
+        "user:u1:nutrition_bulk:a:b", "user:u1:intake_revision"
+    )
+
+    assert payload == {"total": 66}
+    assert revision == 3
+    service.redis.get_with_counter.assert_awaited_once_with(
+        "user:u1:nutrition_bulk:a:b", "user:u1:intake_revision"
+    )
+
+
+@pytest.mark.asyncio
+async def test_revision_is_unknown_when_redis_is_unavailable(service):
+    service.redis.get_with_counter = AsyncMock(return_value=None)
+
+    assert await service.get_json_with_revision("k", "r") == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_revision_is_unknown_when_cache_disabled():
+    redis = AsyncMock()
+    service = CacheService(redis_client=redis, enabled=False)
+
+    assert await service.get_json_with_revision("k", "r") == (None, None)
+    await service.purge(["k"], {"r": 60})
+    redis.purge.assert_not_awaited()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.domain.services.weekly_recap.compare import PROTEIN, trend
 from src.domain.services.weekly_recap.context import RecapContext
 from src.domain.services.weekly_recap.format import js_round
 from src.domain.services.weekly_recap.insights_good import protein_stat
@@ -57,6 +58,7 @@ def _learn_protein_card(ctx: RecapContext) -> Card:
         unit=ctx.t("card.unit.per_day_avg"),
         note=ctx.t(key, t=ctx.num(target)),
         viz=bar(average, target),
+        trend=trend(ctx, PROTEIN, good_only=True),
     )
 
 

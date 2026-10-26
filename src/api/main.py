@@ -79,7 +79,6 @@ from src.api.routes.v1.saved_suggestions import router as saved_suggestions_rout
 from src.api.routes.v1.tdee import router as tdee_router
 from src.api.routes.v1.user_profiles import router as user_profiles_router
 from src.api.routes.v1.users import router as users_router
-from src.api.routes.v1.wearables import router as wearables_router
 from src.api.routes.v1.web_funnel import router as web_funnel_router
 from src.api.routes.v1.web_funnel_redemption_session import (
     router as web_funnel_session_router,
@@ -353,7 +352,6 @@ app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)
 app.include_router(feature_flags_router)
-app.include_router(wearables_router)
 app.include_router(capabilities_router)
 app.include_router(ai_jobs_router)
 app.include_router(chat_router)

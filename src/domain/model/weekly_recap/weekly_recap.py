@@ -12,7 +12,9 @@ class WeeklyRecap:
     """One user's recap for one Monday-to-Sunday week. Written once.
 
     ``stats`` is the WeekStats snapshot (see ``week_stats_codec``) so the
-    recap can be re-rendered in another language with the same numbers.
+    recap can be re-rendered in another language with the same numbers. It
+    also holds ``plan_issues``, the issue ids the plan showed, which the
+    next week's recap compares with.
     ``payload`` is the story in ``locale``, exactly as the app receives it.
     """
 

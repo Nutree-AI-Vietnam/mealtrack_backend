@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from src.domain.model.base import BaseDomainModel
-from src.domain.services.subscription_access_policy import (
+from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )
