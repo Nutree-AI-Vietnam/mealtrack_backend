@@ -185,7 +185,7 @@ class TestRequireSubscription:
 
         assert access.uow.subscriptions.calls == [(USER_ID, False)]
 
-    async def test_both_answers_are_cached_per_user(self, access):
+    async def test_access_is_cached_per_user(self, access):
         access.uow = _Uow(entitled=True)
         await require_subscription(USER_ID)
         access.uow = _Uow()
@@ -197,12 +197,22 @@ class TestRequireSubscription:
             "subscription_access:user_456": EntitlementCheck.ENTITLED.value
         }
 
-        access.cache.values.clear()
+    async def test_purchase_after_402_counts_on_next_request(self, access):
         with pytest.raises(HTTPException):
             await require_subscription(USER_ID)
-        assert access.cache.values == {
-            "subscription_access:user_456": EntitlementCheck.NOT_ENTITLED.value
-        }
+        assert access.cache.values == {}
+
+        access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
+
+        assert await require_subscription(USER_ID) is None
+
+    async def test_402_cached_before_the_fix_is_ignored(self, access):
+        access.cache.values["subscription_access:user_456"] = (
+            EntitlementCheck.NOT_ENTITLED.value
+        )
+        access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
+
+        assert await require_subscription(USER_ID) is None
 
     async def test_cache_outage_still_checks(self, access):
         access.cache.get = AsyncMock(side_effect=ConnectionError("redis down"))
