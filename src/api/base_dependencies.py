@@ -46,6 +46,7 @@ from src.infra.repositories.food_reference_repository_async import (
 )
 
 if TYPE_CHECKING:
+    from src.app.services.describe_log_guard import DescribeLogGuard
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
 
 # Note: Old handler imports removed - using event-driven architecture now
@@ -774,6 +775,31 @@ def get_nutrition_lookup_service():
             cache_service=get_cache_service(),
         )
     return _nutrition_lookup_service
+
+
+def get_describe_log_guard() -> "DescribeLogGuard":
+    """Pre-flight checks for the Ghi nhanh routes: switch, Premium, quota, text."""
+    from src.api.middleware.premium_check import require_subscription
+    from src.app.services.describe_log_guard import DescribeLogGuard
+
+    return DescribeLogGuard(
+        enabled=settings.DESCRIBE_LOG_ENABLED,
+        daily_limit=settings.DESCRIBE_LOG_DAILY_LIMIT,
+        require_subscription=require_subscription,
+        increment_counter=_increment_counter_with_expiry,
+    )
+
+
+async def _increment_counter_with_expiry(key: str, ttl_seconds: int) -> int | None:
+    """Count in Redis; None when Redis is not configured or unreachable."""
+    if _redis_client is None:
+        return None
+    return await _redis_client.incr_with_expiry(key, ttl_seconds)
+
+
+def get_read_only_uow_factory() -> Callable[[], AsyncUnitOfWork]:
+    """Read-only unit of work factory for API-layer checks that only read."""
+    return AsyncUnitOfWork.read_only
 
 
 # Singleton subscription service instance

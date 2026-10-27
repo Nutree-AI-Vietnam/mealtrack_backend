@@ -110,7 +110,7 @@ async def _analyze_uploaded_image(
         )
 
     image_url = None
-    if meal.image:
+    if meal.image and not meal.image.is_placeholder:
         image_url = meal.image.url or await image_store.get_url_async(
             meal.image.image_id
         )

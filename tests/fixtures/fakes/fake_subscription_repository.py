@@ -36,6 +36,18 @@ class FakeSubscriptionRepository(SubscriptionRepositoryPort):
                 return sub
         return None
 
+    async def has_entitled_subscription(
+        self, user_id: str, *, exclude_sandbox: bool
+    ) -> bool:
+        """Whether an active or billing_issue, unexpired subscription exists."""
+        return any(
+            sub.user_id == user_id
+            and sub.status in ("active", "billing_issue")
+            and sub.expires_at is not None
+            and sub.expires_at > datetime.now()
+            for sub in self._subscriptions.values()
+        )
+
     async def find_expiring_soon(
         self, days_until_expiry: int = 7
     ) -> list[Subscription]:

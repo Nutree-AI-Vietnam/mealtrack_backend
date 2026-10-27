@@ -61,6 +61,7 @@ def test_repository_ports_are_async_contracts():
             "find_by_id",
             "find_by_user_id",
             "find_active_by_user_id",
+            "has_entitled_subscription",
             "find_expiring_soon",
             "find_expiring_in_window",
             "cancel",

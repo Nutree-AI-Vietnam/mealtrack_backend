@@ -50,6 +50,16 @@ class MealImage:
         if self.height is not None and self.height <= 0:
             raise ValueError(f"Height must be positive: {self.height}")
 
+    @property
+    def is_placeholder(self) -> bool:
+        """True for the stand-in row of a meal logged without a photo.
+
+        Text, manual, hydration and suggestion meals store a 1-byte image
+        with no URL. It has no delivery URL to build: clients must see no
+        photo rather than one that never loads.
+        """
+        return not self.url and self.size_bytes <= 1
+
     def to_dict(self) -> dict:
         """Convert to dictionary format."""
         result = {

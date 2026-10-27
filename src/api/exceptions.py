@@ -93,6 +93,12 @@ class AuthorizationException(MealTrackException):
     pass
 
 
+class TooManyRequestsException(MealTrackException):
+    """Raised when a per-user quota is used up (not the per-minute limiter)."""
+
+    pass
+
+
 class ImageDownloadRejected(MealTrackException):
     """Photo host refused the object.
 
@@ -115,6 +121,7 @@ def create_http_exception(exc: MealTrackException) -> HTTPException:
         AuthenticationException: status.HTTP_401_UNAUTHORIZED,
         AuthorizationException: status.HTTP_403_FORBIDDEN,
         ConflictException: status.HTTP_409_CONFLICT,
+        TooManyRequestsException: status.HTTP_429_TOO_MANY_REQUESTS,
         ImageDownloadRejected: status.HTTP_422_UNPROCESSABLE_ENTITY,
     }
 

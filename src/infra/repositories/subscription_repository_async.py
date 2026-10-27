@@ -9,6 +9,11 @@ from src.domain.ports.subscription_repository_port import SubscriptionRepository
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
 
+# Statuses whose row alone proves access until expires_at. "cancelled" is left
+# to RevenueCat: a store refund arrives as a CANCELLATION webhook too, so a
+# cancelled row can't tell "paid until expiry" from "refunded".
+ENTITLED_SUBSCRIPTION_STATUSES = ("active", "billing_issue")
+
 
 class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
     """Async repository for subscription data. Never calls session.commit()."""
@@ -59,6 +64,26 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
             )
         )
         return result.scalars().first()
+
+    async def has_entitled_subscription(
+        self, user_id: str, *, exclude_sandbox: bool
+    ) -> bool:
+        """Whether an active or billing-issue row is still unexpired.
+
+        Cancelled rows and a null ``expires_at`` don't count here, so the
+        caller asks RevenueCat for those users.
+        """
+        conditions = [
+            Subscription.user_id == user_id,
+            Subscription.status.in_(ENTITLED_SUBSCRIPTION_STATUSES),
+            Subscription.expires_at > utc_now(),
+        ]
+        if exclude_sandbox:
+            conditions.append(Subscription.is_sandbox.is_(False))
+        result = await self.session.execute(
+            select(Subscription.id).where(and_(*conditions)).limit(1)
+        )
+        return result.scalars().first() is not None
 
     async def find_by_revenuecat_id(
         self, revenuecat_subscriber_id: str

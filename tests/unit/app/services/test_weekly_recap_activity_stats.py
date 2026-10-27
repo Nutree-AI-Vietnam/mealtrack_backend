@@ -172,6 +172,17 @@ def test_top_sugary_drink_counts_a_catalog_drink_by_id_under_its_catalog_name():
     assert top_sugary_drink(drinks, 10.0) == "Milk tea"
 
 
+def test_top_sugary_drink_names_an_unlisted_drink_by_the_persons_words():
+    # Ghi nhanh stores drinks outside the catalog under the id "other".
+    drinks = [
+        _drink(40, 45, "nước mía", "other"),
+        _drink(40, 45, "nước  mía", "other"),
+        _drink(30, 35, "Coca-Cola"),
+    ]
+
+    assert top_sugary_drink(drinks, 10.0) == "nước mía"
+
+
 def test_weight_progress_from_the_weeks_average_weigh_in():
     progress, delta = weight_progress(
         "cut",

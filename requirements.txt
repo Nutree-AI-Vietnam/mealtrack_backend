@@ -50,6 +50,7 @@ redis[hiredis]==8.0.0
 
 # Rate limiting
 slowapi==0.1.10
+limits>=5
 
 # Error monitoring
 sentry-sdk[fastapi]==2.62.0

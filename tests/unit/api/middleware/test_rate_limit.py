@@ -417,15 +417,57 @@ def test_761_rightmost_public_on_the_cloudflare_chain_is_the_edge():
     assert get_ip_only_rate_limit_key(request) == visitor
 
 
-def test_direct_onrender_traffic_is_unchanged_from_761():
-    # Render recorded the visitor. There is no Cloudflare hop, so a
-    # CF-Connecting-IP header does not replace the #761 address.
-    forwarded = "1.1.1.1, 93.184.216.9"
-    direct = _Req(None, "10.9.9.9", forwarded)
-    with_header = _Req(None, "10.9.9.9", forwarded, cf_connecting_ip="8.8.8.8")
-    assert _rightmost_public_or_peer(direct) == "93.184.216.9"
-    assert get_client_ip(direct) == "93.184.216.9"
-    assert get_client_ip(with_header) == "93.184.216.9"
+def test_direct_onrender_traffic_arrives_on_renders_cloudflare_edge():
+    """client -> Render's Cloudflare -> Render proxy -> uvicorn.
+
+    *.onrender.com is proxied by Cloudflare. Cloudflare appends the visitor
+    to X-Forwarded-For and sets CF-Connecting-IP. Render's proxy appends the
+    Cloudflare edge it saw. #761's right-most public hop is that edge.
+    """
+    visitor = "93.184.216.9"
+    render_edge = "104.16.8.1"  # inside vendored 104.16.0.0/13
+    forwarded = f"1.1.1.1, {visitor}, {render_edge}"
+    without_header = _Req(None, "10.9.9.9", forwarded)
+    request = _Req(None, "10.9.9.9", forwarded, cf_connecting_ip=visitor)
+
+    assert _rightmost_public_or_peer(request) == render_edge
+    assert get_client_ip(without_header) == render_edge
+    assert get_client_ip(request) == visitor
+    assert get_ip_only_rate_limit_key(request) == visitor
+
+
+def test_ipv4_mapped_cf_connecting_ip_collapses_to_ipv4():
+    edge = "104.18.1.1"
+    plain = _Req(
+        None,
+        "10.9.9.9",
+        f"8.8.8.8, {edge}",
+        cf_connecting_ip="93.184.216.9",
+    )
+    mapped = _Req(
+        None,
+        "10.9.9.9",
+        f"8.8.8.8, {edge}",
+        cf_connecting_ip="::ffff:93.184.216.9",
+    )
+    assert get_client_ip(mapped) == "93.184.216.9"
+    assert get_ip_only_rate_limit_key(mapped) == get_ip_only_rate_limit_key(plain)
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["10.1.2.3", "203.0.113.5", "::ffff:10.1.2.3", "fd00::1"],
+)
+def test_non_global_cf_connecting_ip_falls_back_to_761(header):
+    edge = "172.64.1.1"  # inside vendored 172.64.0.0/13
+    request = _Req(
+        None,
+        "10.9.9.9",
+        f"93.184.216.9, {edge}",
+        cf_connecting_ip=header,
+    )
+    assert _rightmost_public_or_peer(request) == edge
+    assert get_client_ip(request) == edge
 
 
 def test_ipv6_cloudflare_range_uses_cf_connecting_ip():
@@ -578,6 +620,128 @@ async def test_failed_reprobe_stays_on_memory(monkeypatch, caplog):
     assert all(
         "s3cret-token" not in message and "redis://" not in message
         for message in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_ping_logs_exception_type_at_debug(monkeypatch, caplog):
+    async def ping(self):
+        raise ConnectionError("redis://:s3cret-token@127.0.0.1:1/0 refused")
+
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+
+    with caplog.at_level(logging.DEBUG):
+        await _request_until_fallback(limited)
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            deadline = time.perf_counter() + 1.0
+            while time.perf_counter() < deadline:
+                if any(
+                    record.levelname == "DEBUG"
+                    and "Redis probe failed (ConnectionError)" in record.message
+                    for record in caplog.records
+                    if record.name == "src.api.middleware.rate_limit"
+                ):
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            await limited.stop_redis_probe()
+
+    probe_logs = [
+        record
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+        and "Redis probe failed" in record.message
+    ]
+    assert task is not None
+    assert probe_logs
+    assert limited.backend == "memory"
+    assert {record.levelname for record in probe_logs} == {"DEBUG"}
+    assert {record.message for record in probe_logs} == {
+        "Rate limiter Redis probe failed (ConnectionError)"
+    }
+    assert all(record.exc_info is None for record in probe_logs)
+    assert all(
+        "s3cret-token" not in record.message and "redis://" not in record.message
+        for record in probe_logs
+    )
+    assert all(
+        "s3cret-token" not in str(record.args) and "redis://" not in str(record.args)
+        for record in probe_logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_error_does_not_flip_back_to_memory(monkeypatch, caplog):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def hit(self, item, *identifiers, cost=1):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await release.wait()
+            raise ConnectionError("redis://:s3cret-token@127.0.0.1:1/0 stale")
+        if calls == 2:
+            raise ConnectionError("current failure")
+        if calls == 3:
+            return True
+        raise TimeoutError("fresh client")
+
+    async def ping(self):
+        return True
+
+    monkeypatch.setattr(rate_limit_mod.FixedWindowRateLimiter, "hit", hit)
+    monkeypatch.setattr(rate_limit_mod.RedisStorage, "check", ping)
+    limited = create_limiter(_SECRET_REDIS_URL, socket_timeout=0.2)
+    item = rate_limit_mod.parse_many("10/minute")[0]
+
+    with caplog.at_level(logging.INFO):
+        first = asyncio.create_task(limited._hit(item, "user", "/limited", 1))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert await limited._hit(item, "user", "/limited", 1) is True
+        assert calls == 2
+        assert limited.backend == "memory"
+
+        task = limited.start_redis_probe(interval=0.05)
+        try:
+            await _wait_for_backend(limited, "redis")
+            release.set()
+            assert await first is True
+            await asyncio.sleep(0)
+            assert calls == 2
+            assert limited.backend == "redis"
+
+            assert await limited._hit(item, "user", "/limited", 1) is True
+            assert calls == 3
+            assert limited.backend == "redis"
+
+            assert await limited._hit(item, "other", "/limited", 1) is True
+            assert calls == 4
+            assert limited.backend == "memory"
+        finally:
+            release.set()
+            if not first.done():
+                await first
+            await limited.stop_redis_probe()
+
+    switches = [
+        record.message
+        for record in caplog.records
+        if record.name == "src.api.middleware.rate_limit"
+        and "Redis to memory" in record.message
+    ]
+    assert task is not None
+    assert switches == [
+        "Rate limiter switched from Redis to memory (ConnectionError)",
+        "Rate limiter switched from Redis to memory (TimeoutError)",
+    ]
+    assert all(
+        "s3cret-token" not in message and "redis://" not in message
+        for message in _our_log_messages(caplog)
     )
 
 
