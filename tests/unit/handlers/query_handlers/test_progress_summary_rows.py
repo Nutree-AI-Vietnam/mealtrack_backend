@@ -121,7 +121,45 @@ def test_drink_macros_add_when_no_legacy_hydration_meal():
     assert row["fiber_g"] == 2.0
     assert row["calories"] == drinks.total_calories
     assert row["meal_count"] == 1
+    assert row["food_meal_count"] == 0
     assert row["logged_status"] == "partial"
+
+
+def test_food_meal_count_leaves_out_hydration_meals():
+    row = build_progress_day_row(
+        date(2026, 9, 1),
+        meals=[
+            _meal(10.0, 20.0, 5.0),
+            _meal(0.0, 0.0, 0.0, meal_type="hydration"),
+            _meal(0.0, 0.0, 0.0, meal_type="hydration"),
+        ],
+        burned_calories=0.0,
+        hydration_ml=500,
+        hydration_goal_ml=2000,
+        protein_target_g=140.0,
+        target_calories=2000.0,
+        target_source="base",
+        is_cheat_day=False,
+    )
+    assert row["meal_count"] == 3
+    assert row["food_meal_count"] == 1
+
+
+def test_water_only_day_has_no_food_meal():
+    row = build_progress_day_row(
+        date(2026, 9, 1),
+        meals=[_meal(0.0, 0.0, 0.0, meal_type="hydration")],
+        burned_calories=0.0,
+        hydration_ml=250,
+        hydration_goal_ml=2000,
+        protein_target_g=140.0,
+        target_calories=2000.0,
+        target_source="base",
+        is_cheat_day=False,
+    )
+    assert row["meal_count"] == 1
+    assert row["logged_status"] == "partial"
+    assert row["food_meal_count"] == 0
 
 
 def test_legacy_hydration_meal_still_adds_unrepresented_drink_macros():
