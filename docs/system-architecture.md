@@ -99,8 +99,12 @@ generic compatibility cache path. Meal value insights use the same committed
 event contains its bounded `data.insight` snapshot, the Worker fans it out to
 the cache invalidation handler and the meal insight business handler. The
 business handler owns AI generation and writes the validated result to
-`meal_insight:{meal_id}` before ACK, while the backend insight reader remains
-cache-only.
+`meal_insight:{meal_id}` before ACK, while the backend insight reader never
+calls AI. When `GET /v1/meals/{meal_id}/value-insights` misses for a READY meal
+logged 2 minutes to 7 days ago, it re-publishes the meal's `meal.updated.v1`
+event once per 10 minutes (`src/app/services/meal_insight_recovery.py`), so a
+lost publish or an event past Queue retention does not leave the meal without
+insights.
 
 ### Repository Pattern
 Async SQLAlchemy repositories are accessed through `AsyncUnitOfWork`. The UoW owns commit/rollback boundaries; repositories flush only when generated IDs or relationship state are needed.
@@ -332,7 +336,7 @@ the [catalog rollout runbook](./runbooks/meal-catalog-release.md#weekly-planner-
 4. Handler uploads to Cloudinary, runs `VisionAIService`, parses nutrition, and persists a READY `Meal(source="scanner")` with **no hydration side effects**.
 5. If `AI_MEAL_ANALYZE_GRAPH_ENABLED=true`, the handler enters `MealAnalyzeWorkflow`; the app-layer graph owns image acquisition, vision parsing, persistence, generic cache invalidation publication, and Worker insight-event publication.
 6. If `AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED=true`, optional reference validation may run after meal creation. Provider timeout or mismatch keeps the original meal result.
-7. Meal value insight publication is best-effort after persistence. The Worker generates and caches the result under `meal_insight:{meal_id}`; the backend only reads that cache and never blocks the READY meal response on AI completion.
+7. Meal value insight publication is best-effort after persistence. The Worker generates and caches the result under `meal_insight:{meal_id}`; the backend only reads that cache, re-requests an overdue insight from the status endpoint, and never blocks the READY meal response on AI completion.
 8. Handler returns `DetailedMealResponse` synchronously.
 
 `POST /v1/meals/scan-by-url` follows the same synchronous workflow after
