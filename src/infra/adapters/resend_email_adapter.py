@@ -29,6 +29,7 @@ class ResendEmailAdapter:
         settings = get_settings()
         self._api_key = settings.RESEND_API_KEY
         self._from_email = settings.EMAIL_FROM
+        self._reply_to = settings.EMAIL_REPLY_TO
         self._enabled = settings.EMAIL_ENABLED
 
         if self._api_key:
@@ -50,17 +51,18 @@ class ResendEmailAdapter:
             logger.warning("RESEND_API_KEY not configured")
             return EmailResult(success=False, error="API key not configured")
 
+        params: resend.Emails.SendParams = {
+            "from": self._from_email,
+            "to": [to],
+            "subject": subject,
+            "html": html_body,
+            "tags": [{"name": tag, "value": "true"} for tag in (tags or [])],
+        }
+        if self._reply_to:
+            params["reply_to"] = self._reply_to
+
         try:
-            result = await asyncio.to_thread(
-                resend.Emails.send,
-                {
-                    "from": self._from_email,
-                    "to": [to],
-                    "subject": subject,
-                    "html": html_body,
-                    "tags": [{"name": tag, "value": "true"} for tag in (tags or [])],
-                },
-            )
+            result = await asyncio.to_thread(resend.Emails.send, params)
             message_id = result.get("id") if isinstance(result, dict) else str(result)
             if not message_id:
                 logger.warning("Email sent but no message_id returned")
