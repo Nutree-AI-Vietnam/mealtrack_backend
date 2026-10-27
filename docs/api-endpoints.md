@@ -152,6 +152,11 @@ handler/schema when implementing; the bullets below are the durable WHY.
   body passes the limit.
 - A route whose legitimate bodies can pass 1 MiB, such as photo uploads and
   admin catalog manifests, needs its own `BODY_LIMITS` entry.
+- Such a JSON route also reads its body only after auth: it takes the `Request`
+  and calls `read_json_body` (`src/api/utils/json_body.py`) in the endpoint,
+  with `openapi_extra=json_body_openapi(Model)` so OpenAPI still shows the
+  body. The admin catalog manifest routes and `/v1/ingredients/recognize` work
+  this way.
 
 ### Calories and nutrition presentation
 
