@@ -462,15 +462,10 @@ class CloudflareImageStore(ImageStorePort):
         """Local signature. No network call."""
         return self.generate_upload_signature(image_id, ttl)
 
-    async def store_signed_upload(
-        self,
-        image_id: str,
-        expires_at: int,
-        signature: str,
-        content_type: str,
-        body: bytes,
+    def verify_upload_ticket(
+        self, image_id: str, expires_at: int, signature: str
     ) -> str:
-        """Store the photo the current app posts to upload_url."""
+        """Check the exp and sig that upload_url carries. Returns the UUID."""
         self._ensure_r2_upload_configured()
         try:
             parsed_id = str(uuid.UUID(image_id))
@@ -482,6 +477,8 @@ class CloudflareImageStore(ImageStorePort):
         if (
             expires_at < now
             or expires_at > now + _UPLOAD_TICKET_MAX_TTL_SECONDS
+            # compare_digest raises TypeError on a non-ASCII str.
+            or not signature.isascii()
             or not hmac.compare_digest(
                 _upload_ticket_signature(
                     self._r2_secret_access_key, parsed_id, expires_at
@@ -493,6 +490,18 @@ class CloudflareImageStore(ImageStorePort):
                 "Upload link is invalid or expired",
                 "INVALID_UPLOAD_TICKET",
             )
+        return parsed_id
+
+    async def store_signed_upload(
+        self,
+        image_id: str,
+        expires_at: int,
+        signature: str,
+        content_type: str,
+        body: bytes,
+    ) -> str:
+        """Store the photo the current app posts to upload_url."""
+        parsed_id = self.verify_upload_ticket(image_id, expires_at, signature)
         normalized_type = _CLIENT_UPLOAD_TYPES.get(
             content_type.split(";")[0].strip().lower()
         )
