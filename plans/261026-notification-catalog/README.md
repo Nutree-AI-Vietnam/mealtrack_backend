@@ -60,12 +60,12 @@ Times are local. "Slot" means the user's meal-reminder time.
 
 | Kind | Signal → message | Frequency |
 |---|---|---|
-| `lapse_comeback` (D3) | Last logged dish and time ("Cơm tấm at 12:10 was your last log") | Once per lapse |
+| `lapse_comeback` (D3) | Last logged dish and its time ("Cơm tấm at 12:10 was your last log"). A drink logged later does not change the time. If the last meal is older than the last logged day, the copy names no dish | Once per lapse |
 | `lapse_type_it` (D5) | Lower the friction: "just type it", using the last dish as the example | Once per lapse |
 | `lapse_best_streak` (D14) | Best streak ≥3: "your 12-day record is still yours" | Once per lapse |
 | Badge-day eve (copy overlay) | Logging today reaches a streak medal (3/10/50/100/365/1000) or a new personal best | Replaces the first slot's copy |
 | Comeback day 2 (copy overlay) | Yesterday was the first log after a gap of 3+ days | Once per comeback |
-| First-week journey (copy overlay) | Days 1–7 after the first log: one lesson a day (scan, text log, water, streak, coach, recap) | 7 total |
+| First-week journey (copy overlay) | Days 2–7 after the first log: one lesson a day (streak, text log, scan, water, coach, recap). Only for users the device saw before their first log. The day-2 and day-7 lessons ask for the day's first log, so they skip a day that is already logged | 6 total |
 | `weekly_recap` | Monday 08:15 if the recap flag is on and the user logged in the last 7 days | 1/week |
 | `hydration` with pace | Remaining litres and glasses in the copy | (same as hydration) |
 | `protein_gap` | 16:30, user has logged today and protein is under 45% of target | ≤2/week |
@@ -96,7 +96,7 @@ Times are local. "Slot" means the user's meal-reminder time.
 | Copy pools (≈190 variants per language) | `.../engagement/copy/engagement_copy_{en,vi,es,fr,de,ja,zh}.dart` | Done; EN is the master, a parity test checks the other languages |
 | Memory (history, anchors) | `.../engagement/engagement_memory.dart`, `data/engagement_memory_store.dart` | Done; stored in SharedPreferences and cleared on sign-out |
 | Scheduler (one-shots, diff, legacy cleanup) | `application/notification_scheduler_service.dart` | Done |
-| Android receivers | `android/app/src/main/AndroidManifest.xml` | Done. Caveat: a reminder missed while the phone was off fires once at boot |
+| Android receivers | `android/app/src/main/AndroidManifest.xml`, `MainApplication.kt` | Done. At startup, before the boot/update receiver re-arms the plugin's cache, `ScheduledNotificationCacheCleaner` drops the old daily reminders (ids 1001–1007, alarms included) and one-shots more than 15 minutes past. An update or a reboot therefore does not fire a burst of stale reminders |
 | Channels / iOS levels / tap routing / analytics | `notification_channels.dart`, `notification_display_service.dart`, `app_router_wrapper.dart`, `fcm_message_handler.dart` | Done; `engagement_notification_opened` (kind, template) |
 | Settings toggles | `settings/presentation/widgets/notification_settings.dart` + ARB keys | Done |
 | Backend toggles + migration | `20261026185557393061_add_engagement_notification_toggles.py` | Done |
