@@ -141,6 +141,18 @@ types — discover from handlers and exception modules, not a hand list here.
 These rules are easy to get wrong from OpenAPI alone. Prefer loading the owning
 handler/schema when implementing; the bullets below are the durable WHY.
 
+### Request body limits
+
+- FastAPI reads and decodes a whole body before dependencies such as auth run,
+  so `BodyLimitMiddleware` caps every body in front of it. Per-route limits live
+  in `BODY_LIMITS` (`src/api/middleware/body_limit.py`); routes not listed there
+  accept up to 1 MiB.
+- A body over its limit gets `413` with `{"detail": {"code": "request_too_large"}}`,
+  from its `Content-Length` before any of it is read, or as soon as a streamed
+  body passes the limit.
+- A route whose legitimate bodies can pass 1 MiB, such as photo uploads and
+  admin catalog manifests, needs its own `BODY_LIMITS` entry.
+
 ### Calories and nutrition presentation
 
 - Backend remains the calorie source of truth. Clients must not re-derive

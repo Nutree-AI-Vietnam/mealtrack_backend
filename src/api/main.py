@@ -305,7 +305,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Cap preview and upload bodies before FastAPI buffers, spools or decodes them.
+# Cap every request body before FastAPI buffers, spools or decodes it.
 # Register this first so CORS and observability middleware still see its 413 response.
 app.add_middleware(BodyLimitMiddleware)
 
