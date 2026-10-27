@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from slowapi.errors import RateLimitExceeded
 
 from src.api.dependencies.event_bus import get_configured_event_bus
-from src.api.middleware.preview_body_limit import PreviewBodyLimitMiddleware
+from src.api.middleware.body_limit import BodyLimitMiddleware
 from src.api.middleware.rate_limit import (
     limiter,
     rate_limit_exceeded_handler,
@@ -41,7 +41,7 @@ def preview_payload(**overrides):
 @pytest.fixture
 def preview_client(monkeypatch):
     app = FastAPI()
-    app.add_middleware(PreviewBodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
     app.include_router(tdee_routes.router)
@@ -135,6 +135,14 @@ def test_preview_quota_is_per_client_behind_the_proxy(preview_client):
 
 def test_preview_route_returns_stable_413_for_oversized_body(preview_client):
     response = preview_client.post("/v1/tdee/preview", content=b"x" * 8_193)
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": {"code": "request_too_large"}}
+
+
+def test_preview_route_returns_stable_413_for_oversized_chunked_body(preview_client):
+    # An iterator is sent chunked, without a Content-Length.
+    response = preview_client.post("/v1/tdee/preview", content=iter([b"x" * 8_193]))
 
     assert response.status_code == 413
     assert response.json() == {"detail": {"code": "request_too_large"}}
