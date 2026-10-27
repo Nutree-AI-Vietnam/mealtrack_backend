@@ -92,6 +92,8 @@ class ProgressSummaryDay(BaseModel):
     hydration_goal_ml: int
     protein_target_g: float
     meal_count: int
+    # meal_count without drinks; None on a row cached before the field existed.
+    food_meal_count: int | None = None
     logged_status: str  # full | partial | none
     is_cheat_day: bool
     nrf_quality: float = 0.0
