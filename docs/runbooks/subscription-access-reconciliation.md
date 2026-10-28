@@ -106,14 +106,34 @@ and Render shifts traffic anyway.
       workflow runs the migrations of the ref it is dispatched from) → the
       environment, `dry_run=true`. The pending revisions include
       `20261022125800304190` (access metadata), `20261026080322454705` (sync
-      marker) and `20261026085224333692` (nullable RevenueCat id).
+      marker), `20261026085224333692` (nullable RevenueCat id),
+      `20261028084517715547` (merge with delivery's scan-feedback head, no
+      schema change) and `20261028085152877654` (`refunded` status value).
 - [ ] Run again with `dry_run=false` (production needs Environment
       approval).
 - [ ] Run `dry_run=true` once more and read the **database** line: it must
-      show `Current revision: 20261026085224333692` (or a later revision)
+      show `Current revision: 20261028085152877654` (or a later revision)
       followed by `Database is up to date`. `Head revision:` comes from the
       checked-out code and reads the same whether or not the upgrade ran, so
       it proves nothing.
+- [ ] Check that `subscriptions.status` accepts `refunded`, which refund
+      syncs write. A database built from the models (`create_all`, as
+      production's was) has a `VARCHAR` column; one built by the Alembic
+      chain has the native enum migration 007 created, which only
+      `20261028085152877654` extends. Against a native enum without the value,
+      every refund webhook answers `500` and rolls back.
+
+  ```sql
+  SELECT data_type, udt_name
+  FROM information_schema.columns
+  WHERE table_schema = current_schema()
+    AND table_name = 'subscriptions' AND column_name = 'status';
+  -- Only when udt_name is subscription_status_enum:
+  SELECT enum_range(NULL::subscription_status_enum);
+  ```
+
+  Go when the first query returns `character varying`, or the second lists
+  `refunded`. Otherwise stop: the migration did not run on this database.
 - [ ] Preprod (`render-preprod.yml`) runs with the production environment,
       database included: do not deploy this image to preprod before
       production is migrated.
