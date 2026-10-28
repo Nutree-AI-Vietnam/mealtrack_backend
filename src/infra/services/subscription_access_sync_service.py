@@ -369,7 +369,7 @@ def _row_for_product(rows: list[Subscription], product_id: str) -> Subscription 
     ranked = [
         (rank, index, row)
         for index, row in enumerate(rows)
-        if (rank := product_match_rank(row.product_id, product_id)) < 2
+        if (rank := product_match_rank(str(row.product_id), product_id)) < 2
     ]
     return min(ranked, key=lambda item: item[:2])[2] if ranked else None
 
