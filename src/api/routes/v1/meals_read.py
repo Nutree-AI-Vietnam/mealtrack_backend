@@ -37,6 +37,8 @@ from src.app.queries.meal import (
     GetMealByIdQuery,
     GetStreakQuery,
 )
+from src.app.services.meal_insight_recovery import MealInsightRecovery
+from src.bootstrap.integration_services import get_meal_insight_recovery
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.meal_value_insight_service import MealValueInsightService
 from src.infra.event_bus import EventBus
@@ -156,7 +158,7 @@ async def get_meal(
     meal = await event_bus.send(query)
 
     image_url = None
-    if meal.image:
+    if meal.image and not meal.image.is_placeholder:
         image_url = meal.image.url or await image_store.get_url_async(
             meal.image.image_id
         )
@@ -198,8 +200,13 @@ async def get_meal_value_insights(
     user_id: str = Depends(get_current_user_id),
     event_bus: EventBus = Depends(get_configured_event_bus),
     cache_service: CachePort | None = Depends(get_cache_service),
+    insight_recovery: MealInsightRecovery = Depends(get_meal_insight_recovery),
 ):
-    """Return current value-insight cache status for a meal."""
+    """Return current value-insight cache status for a meal.
+
+    An overdue miss re-requests the insight from the Worker, so a lost Queue
+    event does not leave the meal without a review for good.
+    """
     meal = await event_bus.send(GetMealByIdQuery(meal_id=meal_id, user_id=user_id))
     insight_service = MealValueInsightService()
     version = insight_service.cache_version_for_meal(meal.meal_id)
@@ -215,6 +222,12 @@ async def get_meal_value_insights(
         cache_service=cache_service,
     )
     if value_insights is None:
+        await insight_recovery.request_if_missing(
+            meal=meal,
+            cache_service=cache_service,
+            language=get_request_language(request),
+            event_bus=event_bus,
+        )
         return MealValueInsightsStatusResponse(
             status="generating",
             value_insights=None,

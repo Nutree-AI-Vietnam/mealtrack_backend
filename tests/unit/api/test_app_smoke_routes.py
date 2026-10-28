@@ -444,6 +444,72 @@ def test_meals_get_by_id_read_group(client: TestClient):
     assert r.json()["meal_id"] == meal_id
 
 
+def _meal_with_image(image):
+    from datetime import datetime
+    from uuid import uuid4
+
+    from src.domain.model.meal import Meal, MealStatus
+    from src.domain.model.nutrition import Macros, Nutrition
+
+    return Meal(
+        meal_id=str(uuid4()),
+        user_id=str(uuid4()),
+        status=MealStatus.READY,
+        created_at=datetime(2026, 10, 26, 12, 45),
+        ready_at=datetime(2026, 10, 26, 12, 45),
+        image=image,
+        dish_name="Fried rice",
+        source="prompt",
+        nutrition=Nutrition(macros=Macros(protein=69.1, carbs=121.8, fat=38.2)),
+    )
+
+
+def test_meals_get_by_id_returns_no_photo_for_placeholder_image(client: TestClient):
+    """A meal logged without a photo must not get a delivery URL that 404s."""
+    from uuid import uuid4
+
+    from src.api.dependencies.event_bus import get_configured_event_bus
+    from src.domain.model.meal import MealImage
+
+    meal = _meal_with_image(
+        MealImage(image_id=str(uuid4()), format="jpeg", size_bytes=1, url=None)
+    )
+
+    class _GetMealBus:
+        async def send(self, msg):
+            return meal
+
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: _GetMealBus()
+
+    r = client.get(f"/v1/meals/{meal.meal_id}")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["image_url"] is None
+
+
+def test_meals_get_by_id_builds_url_for_stored_photo(client: TestClient):
+    from uuid import uuid4
+
+    from src.api.dependencies.event_bus import get_configured_event_bus
+    from src.domain.model.meal import MealImage
+
+    image_id = str(uuid4())
+    meal = _meal_with_image(
+        MealImage(image_id=image_id, format="jpeg", size_bytes=48_213, url=None)
+    )
+
+    class _GetMealBus:
+        async def send(self, msg):
+            return meal
+
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: _GetMealBus()
+
+    r = client.get(f"/v1/meals/{meal.meal_id}")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["image_url"] == f"https://example.com/{image_id}"
+
+
 def test_meals_edit_ingredients_edit_group(client: TestClient):
     """Smoke coverage for PUT /v1/meals/{meal_id}/ingredients (edit group)."""
     from datetime import datetime
@@ -818,6 +884,64 @@ def test_meals_value_insights_unavailable_without_cache_service(client: TestClie
     body = r.json()
     assert body["status"] == "unavailable"
     assert body["value_insights"] is None
+
+
+def test_meals_value_insights_miss_requests_recovery(client: TestClient):
+    """A missing insight asks the Worker again instead of waiting forever."""
+    from datetime import datetime
+    from uuid import uuid4
+
+    from src.api.base_dependencies import get_cache_service
+    from src.api.dependencies.event_bus import get_configured_event_bus
+    from src.bootstrap.integration_services import get_meal_insight_recovery
+    from src.domain.model.meal import Meal, MealStatus
+    from src.domain.model.nutrition import Macros, Nutrition
+
+    meal = Meal(
+        meal_id=str(uuid4()),
+        user_id=str(uuid4()),
+        status=MealStatus.READY,
+        created_at=datetime(2026, 10, 26, 12, 45),
+        ready_at=datetime(2026, 10, 26, 12, 45),
+        image=None,
+        dish_name="Fried rice",
+        source="prompt",
+        nutrition=Nutrition(macros=Macros(protein=69.1, carbs=121.8, fat=38.2)),
+    )
+
+    class _ValueInsightsBus:
+        async def send(self, msg):
+            return meal
+
+    class _EmptyCache:
+        async def get(self, key):
+            return None
+
+    class _Recovery:
+        def __init__(self):
+            self.calls = []
+
+        async def request_if_missing(self, **kwargs):
+            self.calls.append(kwargs)
+            return True
+
+    recovery = _Recovery()
+    client.app.dependency_overrides[get_configured_event_bus] = lambda: (
+        _ValueInsightsBus()
+    )
+    client.app.dependency_overrides[get_cache_service] = lambda: _EmptyCache()
+    client.app.dependency_overrides[get_meal_insight_recovery] = lambda: recovery
+
+    r = client.get(
+        f"/v1/meals/{meal.meal_id}/value-insights",
+        headers={"Accept-Language": "vi"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "generating"
+    [call] = recovery.calls
+    assert call["meal"] is meal
+    assert call["language"] == "vi"
 
 
 def test_users_sync_forbidden_when_token_uid_mismatch(client: TestClient):

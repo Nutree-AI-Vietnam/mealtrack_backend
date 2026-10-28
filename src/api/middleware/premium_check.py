@@ -65,20 +65,20 @@ async def require_subscription(user_id: str) -> None:
     Call it inside the route body, after the rate limiter, with the id from
     ``get_current_user_id``. Raises 402 ``SUBSCRIPTION_REQUIRED``, or 503
     ``SUBSCRIPTION_CHECK_UNAVAILABLE`` when RevenueCat cannot answer, so an
-    outage never sends a paying user to the paywall. Both answers are cached
-    for 60 s per user.
+    outage never sends a paying user to the paywall. Only access is cached
+    (60 s per user); a 402 never is, so a purchase made at the paywall counts
+    on the very next request.
     """
     if _dev_access_allowed():
         return
 
     cache = _get_cache()
-    access = await _cached_access(cache, user_id)
-    if access is None:
-        access = await _check_access(user_id)
-        if access is not EntitlementCheck.UNAVAILABLE:
-            await _cache_access(cache, user_id, access)
+    if await _has_cached_access(cache, user_id):
+        return
 
+    access = await _check_access(user_id)
     if access is EntitlementCheck.ENTITLED:
+        await _cache_access(cache, user_id)
         return
     if access is EntitlementCheck.UNAVAILABLE:
         raise ExternalServiceException(
@@ -126,29 +126,26 @@ def _cache_key(user_id: str) -> str:
     return f"subscription_access:{user_id}"
 
 
-async def _cached_access(
-    cache: CachePort | None, user_id: str
-) -> EntitlementCheck | None:
+async def _has_cached_access(cache: CachePort | None, user_id: str) -> bool:
     if cache is None:
-        return None
+        return False
     try:
         cached = await cache.get(_cache_key(user_id))
     except Exception:
         logger.warning("Subscription access cache read failed", exc_info=True)
-        return None
-    if cached in (EntitlementCheck.ENTITLED, EntitlementCheck.NOT_ENTITLED):
-        return EntitlementCheck(cached)
-    return None
+        return False
+    # Any other value, such as a 402 cached before only access was, is a miss.
+    return cached == EntitlementCheck.ENTITLED
 
 
-async def _cache_access(
-    cache: CachePort | None, user_id: str, access: EntitlementCheck
-) -> None:
+async def _cache_access(cache: CachePort | None, user_id: str) -> None:
     if cache is None:
         return
     try:
         await cache.set(
-            _cache_key(user_id), access.value, SUBSCRIPTION_ACCESS_CACHE_TTL_SECONDS
+            _cache_key(user_id),
+            EntitlementCheck.ENTITLED.value,
+            SUBSCRIPTION_ACCESS_CACHE_TTL_SECONDS,
         )
     except Exception:
         logger.warning("Subscription access cache write failed", exc_info=True)

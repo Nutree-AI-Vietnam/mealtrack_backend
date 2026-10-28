@@ -35,11 +35,16 @@ def build_progress_day_row(
     fiber = 0.0
     calories = 0.0
     meal_count = 0
+    # Meals logged as food: a plain drink's legacy hydration meal row and a
+    # caloric drink's macros count toward meal_count but not here.
+    food_meal_count = 0
     day_micros = None
     for meal in meals:
         if meal.status == MealStatus.INACTIVE:
             continue
         meal_count += 1
+        if meal.meal_type != "hydration":
+            food_meal_count += 1
         if meal.nutrition and meal.status in (MealStatus.READY, MealStatus.ENRICHING):
             macros = meal.nutrition.macros
             if macros:
@@ -80,6 +85,7 @@ def build_progress_day_row(
         "hydration_goal_ml": int(hydration_goal_ml),
         "protein_target_g": round(protein_target_g, 1),
         "meal_count": meal_count,
+        "food_meal_count": food_meal_count,
         "logged_status": logged_status_for_meal_count(meal_count),
         "is_cheat_day": is_cheat_day,
         "nrf_quality": nrf["nrf_quality"],

@@ -430,6 +430,7 @@ class AIModelManager:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate with vision, with automatic fallback."""
+        result_metadata = kwargs.pop("result_metadata", None)
         chain = self.get_fallback_chain(purpose)
         available = self._circuit_breaker.filter_available(chain)
 
@@ -472,6 +473,9 @@ class AIModelManager:
                     purpose_hint=purpose.value,  # NEW
                     **provider_kwargs,
                 )
+
+                if isinstance(result_metadata, dict):
+                    result_metadata.update(provider=provider.provider_name, model=model)
 
                 self._circuit_breaker.record_success(model)
 

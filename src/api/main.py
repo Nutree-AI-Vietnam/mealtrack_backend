@@ -38,8 +38,8 @@ from src.api.base_dependencies import (
 )
 from src.api.exception_handlers import register_exception_handlers
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
+from src.api.middleware.body_limit import BodyLimitMiddleware
 from src.api.middleware.dev_auth_bypass import add_dev_auth_bypass
-from src.api.middleware.preview_body_limit import PreviewBodyLimitMiddleware
 from src.api.middleware.rate_limit import limiter
 from src.api.middleware.request_logger import RequestLoggerMiddleware
 from src.api.routes.app_download import router as app_download_router
@@ -306,9 +306,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Bound unauthenticated preview bodies before FastAPI buffers or decodes JSON.
+# Cap every request body before FastAPI buffers, spools or decodes it.
 # Register this first so CORS and observability middleware still see its 413 response.
-app.add_middleware(PreviewBodyLimitMiddleware)
+app.add_middleware(BodyLimitMiddleware)
 
 allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
 if allowed_origins:

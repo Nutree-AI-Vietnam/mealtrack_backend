@@ -841,6 +841,12 @@ def get_web_funnel_redemption_service():
     return factory()
 
 
+def get_scan_feedback_service():
+    from src.app.services.scan_feedback_service import ScanFeedbackService
+
+    return ScanFeedbackService(AsyncUnitOfWork)
+
+
 def get_planner_translation_service():
     """Read prepared catalog text independently from other translation callers."""
 

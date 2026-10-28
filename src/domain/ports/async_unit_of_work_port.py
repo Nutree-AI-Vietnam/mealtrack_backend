@@ -59,6 +59,7 @@ class AsyncUnitOfWorkPort(ABC):
     promo_codes: Any
     referrals: Any
     meal_write_operations: Any
+    scan_feedback: Any
     chat: ChatRepositoryPort
     weekly_meal_plans: Any
     weekly_recaps: WeeklyRecapRepositoryPort
