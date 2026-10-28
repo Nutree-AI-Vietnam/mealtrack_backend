@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.auth import AuthProvider
 from src.domain.model.user import Goal, JobType, Sex, TdeeRequest, TrainingLevel
+from src.domain.ports.subscription_service_port import RevenueCatSnapshot
 from src.domain.services.tdee_service import TdeeCalculationService
-from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.models.user.user import User
 from src.infra.database.models.web_funnel_claim import (
@@ -19,7 +19,7 @@ from src.infra.database.models.web_funnel_claim import (
     WebFunnelRedemption,
 )
 from src.infra.database.models.weekly.weekly_macro_budget import WeeklyMacroBudgetORM
-from src.infra.services.subscription_access_sync_service import clear_sync_markers
+from src.infra.services.subscription_access_sync_service import sync_revenuecat_access
 
 
 def utcnow():
@@ -68,19 +68,6 @@ def _auth_provider(firebase_provider: str | None) -> AuthProvider:
     if firebase_provider == "custom":
         return AuthProvider.EMAIL_LINK
     return AuthProvider.GOOGLE
-
-
-def _stored_facts_are_newer(subscription: Subscription, snapshot_at) -> bool:
-    stored_at = subscription.provider_snapshot_at
-    if stored_at is None or snapshot_at is None:
-        return False
-    return _aware(stored_at) > _aware(snapshot_at)
-
-
-def _aware(value):
-    from datetime import UTC
-
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def _week_start(today):
@@ -143,11 +130,19 @@ async def finalize_redemption(
     environment: str,
     auth_provider: str | None = None,
     expires_at=None,
-    provider_snapshot_at=None,
-    subscription_facts: dict | None = None,
+    provider_snapshot: RevenueCatSnapshot | None = None,
     verified_provider_app_user_ids: set[str] | None = None,
 ) -> dict:
-    """Restore one paid lead once; hash + preflight UID select the exact row."""
+    """Restore one paid lead once; hash + preflight UID select the exact row.
+
+    ``provider_snapshot`` is the verified RevenueCat customer the caller read
+    for ``uid`` (it checked the bound product is granted). It is applied with
+    sync_revenuecat_access, like a webhook or refresh: every RevenueCat row
+    of the user is stamped, the bound product's row carries the facts, other
+    rows are left non-granting, markers the snapshot answers are cleared,
+    and a snapshot older than the stored facts changes nothing. Raises
+    RevenueCatSnapshotUnavailable, writing nothing, when it cannot be applied.
+    """
     binding = await db.scalar(
         select(WebFunnelRedemption)
         .where(
@@ -275,66 +270,12 @@ async def finalize_redemption(
                 target_fat=macros["fat"] * 7,
             )
         )
-    subscription = await db.scalar(
-        select(Subscription)
-        .where(
-            Subscription.user_id == user.id,
-            Subscription.revenuecat_subscriber_id == uid,
-            Subscription.product_id == binding.product_id,
-            # A row another provider owns is never taken over by RevenueCat.
-            Subscription.provider == "revenuecat",
-        )
-        .with_for_update()
+    if provider_snapshot is None:
+        raise ValueError("finalize_redemption needs the verified RevenueCat snapshot")
+    # Locks the user row (already locked above) like every access writer.
+    await sync_revenuecat_access(
+        db, user, snapshot=provider_snapshot, source="web_funnel"
     )
-    if subscription is None:
-        db.add(
-            Subscription(
-                user_id=user.id,
-                revenuecat_subscriber_id=uid,
-                product_id=binding.product_id,
-                platform=(subscription_facts or {}).get("platform", "web"),
-                status=(subscription_facts or {}).get("status", "active"),
-                purchased_at=(subscription_facts or {}).get("purchased_at") or utcnow(),
-                expires_at=expires_at,
-                provider="revenuecat",
-                provider_snapshot_at=provider_snapshot_at,
-                grace_period_expires_at=(subscription_facts or {}).get(
-                    "grace_period_expires_at"
-                ),
-                period_type=(subscription_facts or {}).get("period_type"),
-                cancelled_at=(subscription_facts or {}).get("cancelled_at"),
-                store_transaction_id=(subscription_facts or {}).get(
-                    "store_transaction_id"
-                ),
-                is_sandbox=(subscription_facts or {}).get("is_sandbox", False),
-            )
-        )
-    elif _stored_facts_are_newer(subscription, provider_snapshot_at):
-        # RevenueCat was read before this transaction; a webhook or refresh
-        # committed a newer snapshot for this row in between. Keep it.
-        pass
-    else:
-        subscription.status = (subscription_facts or {}).get("status", "active")
-        subscription.platform = (subscription_facts or {}).get(
-            "platform", subscription.platform
-        )
-        subscription.purchased_at = (subscription_facts or {}).get(
-            "purchased_at", subscription.purchased_at
-        )
-        subscription.expires_at = expires_at
-        subscription.provider_snapshot_at = provider_snapshot_at
-        subscription.grace_period_expires_at = (subscription_facts or {}).get(
-            "grace_period_expires_at"
-        )
-        subscription.period_type = (subscription_facts or {}).get("period_type")
-        subscription.cancelled_at = (subscription_facts or {}).get("cancelled_at")
-        store_transaction_id = (subscription_facts or {}).get("store_transaction_id")
-        if store_transaction_id is not None:
-            subscription.store_transaction_id = store_transaction_id
-        subscription.is_sandbox = (subscription_facts or {}).get("is_sandbox", False)
-        # A webhook whose RevenueCat read failed may have marked this row
-        # unresolved; the snapshot just applied answers that marker.
-        clear_sync_markers([subscription], provider_snapshot_at)
     binding.provider_app_user_ids = sorted(
         aliases | verified_aliases | {original_app_user_id, uid}
     )

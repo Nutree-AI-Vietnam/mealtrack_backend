@@ -1,13 +1,15 @@
 """Focused safety tests for authenticated RevenueCat redemption."""
 
 import hashlib
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.dialects import postgresql
+from tests.fixtures.revenuecat_samples import standard_annual_response
 
 from src.domain.model.auth import AuthProvider
+from src.domain.ports.subscription_service_port import RevenueCatSnapshot
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
 from src.infra.database.models.web_funnel_claim import (
@@ -365,72 +367,146 @@ async def test_finalization_identifies_existing_account_recovery():
     }
 
 
-@pytest.mark.asyncio
-async def test_finalization_attaches_purchase_to_authenticated_user():
-    binding = _binding(
+def _web_snapshot(
+    read_at,
+    *,
+    expires_in=timedelta(days=30),
+    app_user_id="google-user",
+    store_transaction_id="sub_stripe_9",
+    **subscription_fields,
+):
+    """A verified RevenueCat Web customer whose standard entitlement is the
+    bound web_monthly product, as finalize's caller reads it."""
+    body = standard_annual_response(
+        request_date=read_at,
+        expires_date=read_at + expires_in,
+        store="stripe",
+        store_transaction_id=store_transaction_id,
+    )
+    subscriber = body["subscriber"]
+    web = subscriber["subscriptions"].pop("annual")
+    web.update(is_sandbox=True, **subscription_fields)
+    subscriber["subscriptions"] = {"web_monthly": web}
+    subscriber["entitlements"]["standard"]["product_identifier"] = "web_monthly"
+    return RevenueCatSnapshot(subscriber, read_at, app_user_id=app_user_id)
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FinalizeSession:
+    """Answers finalize's own reads in order (binding, user by Firebase uid,
+    email owner, profile, weekly budget), then the access sync's: the user
+    lock and the user's RevenueCat rows."""
+
+    def __init__(self, binding, lead, user=None, *, profile=None, budget=None, rows=()):
+        self.lead = lead
+        self.user = user
+        self.rows = list(rows)
+        self.added = []
+        self.statements = []
+        self.committed = False
+        self._reads = iter([binding, user, user, profile, budget])
+
+    async def scalar(self, statement):
+        self.statements.append(statement)
+        return next(self._reads, self.user)
+
+    async def scalars(self, statement):
+        self.statements.append(statement)
+        return _Rows(row for row in self.rows if row.provider == "revenuecat")
+
+    async def get(self, _model, _identifier, **_kwargs):
+        return self.lead
+
+    def add(self, item):
+        self.added.append(item)
+        if isinstance(item, User):
+            self.user = item
+        if isinstance(item, Subscription):
+            self.rows.append(item)
+
+    async def flush(self):
+        if self.user is not None and self.user.id is None:
+            self.user.id = "user-1"
+
+    async def commit(self):
+        self.committed = True
+
+
+def _finalize_binding():
+    return _binding(
         original_app_user_id="$RCAnonymousID:web",
         redemption_link_hash=_link_hash(),
         preflight_uid="google-user",
         product_id="web_monthly",
         environment="SANDBOX",
-        provider="revenuecat",
-        project="default",
         verified_app_user_id="$RCAnonymousID:web",
-        entitlement_id="standard",
         verified_at=utcnow(),
     )
-    lead = _lead()
-    lead.snapshot = {
-        "gender": "female",
-        "height": 168,
-        "weight": 62,
-        "birth_year": 1995,
-        "birth_month": 4,
-        "birth_day": 20,
-        "job_type": "desk",
-        "training_days_per_week": 3,
-        "training_minutes_per_session": 45,
-        "goal": "recomp",
-        "target_calories": None,
-        "custom_protein_g": None,
-        "custom_carbs_g": None,
-        "custom_fat_g": None,
-    }
 
-    class Session:
-        def __init__(self):
-            self.scalars = iter([binding, None, None, None, None, None])
-            self.added = []
 
-        async def scalar(self, _statement):
-            return next(self.scalars)
+def _owner():
+    return User(id="user-1", firebase_uid="google-user", email="buyer@example.com")
 
-        async def get(self, _model, _identifier, **_kwargs):
-            return lead
 
-        def add(self, item):
-            self.added.append(item)
+def _web_row(**values):
+    return Subscription(
+        **{
+            "id": "web-row",
+            "user_id": "user-1",
+            "revenuecat_subscriber_id": "google-user",
+            "provider": "revenuecat",
+            "product_id": "web_monthly",
+            "platform": "web",
+            "status": "active",
+            "purchased_at": utcnow() - timedelta(days=1),
+            "is_sandbox": True,
+        }
+        | values
+    )
 
-        async def flush(self):
-            for item in self.added:
-                if isinstance(item, User):
-                    item.id = "user-1"
 
-        async def commit(self):
-            return None
-
-    from datetime import UTC, datetime, timedelta
-
-    expires = datetime.now(UTC) + timedelta(days=30)
-    session = Session()
-    result = await finalize_redemption(
+async def _finalize(session, snapshot, *, idempotency_key, **kwargs):
+    return await finalize_redemption(
         session,
         uid="google-user",
-        email="BUYER@example.com",
+        email=kwargs.pop("email", "buyer@example.com"),
         original_app_user_id="$RCAnonymousID:web",
         redemption_link_hash=_link_hash(),
-        idempotency_key="request-google-user",
+        idempotency_key=idempotency_key,
         environment="SANDBOX",
+        provider_snapshot=snapshot,
+        **kwargs,
+    )
+
+
+def _now():
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+@pytest.mark.asyncio
+async def test_finalization_attaches_purchase_to_authenticated_user():
+    binding = _finalize_binding()
+    binding.provider = "revenuecat"
+    binding.project = "default"
+    binding.entitlement_id = "standard"
+    lead = _lead()
+    lead.snapshot = _snapshot(target_calories=None)
+    now = _now()
+    expires = now + timedelta(days=30)
+    session = _FinalizeSession(binding, lead)
+
+    result = await _finalize(
+        session,
+        _web_snapshot(now),
+        idempotency_key="request-google-user",
+        email="BUYER@example.com",
         auth_provider="google.com",
         expires_at=expires,
         verified_provider_app_user_ids={"$RCAnonymousID:mobile-original"},
@@ -451,6 +527,7 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
             "google-user",
         }
     )
+    assert session.committed is True
     assert result["access_status"] == "active"
     macros = result["macros"]
     assert macros["calories"] == pytest.approx(
@@ -461,339 +538,154 @@ async def test_finalization_attaches_purchase_to_authenticated_user():
 
 @pytest.mark.asyncio
 async def test_finalization_only_matches_revenuecat_rows_and_keeps_transaction_id():
-    from datetime import UTC, datetime, timedelta
-
-    binding = _binding(
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
-        preflight_uid="google-user",
-        product_id="web_monthly",
-        environment="SANDBOX",
-        verified_app_user_id="$RCAnonymousID:web",
-        verified_at=utcnow(),
-    )
     lead = _lead()
     lead.snapshot = _snapshot()
-    owner = User(
-        id="user-1",
-        firebase_uid="google-user",
-        email="buyer@example.com",
+    existing = _web_row(store_transaction_id="sub_stripe_1")
+    momo = _web_row(
+        id="momo-row",
+        provider="momo",
+        product_id="momo_pass_30d",
+        revenuecat_subscriber_id=None,
     )
-    existing = Subscription(
-        user_id="user-1",
-        revenuecat_subscriber_id="google-user",
-        product_id="web_monthly",
-        platform="web",
-        status="active",
-        provider="revenuecat",
-        store_transaction_id="sub_stripe_1",
-        purchased_at=datetime.now(UTC) - timedelta(days=1),
+    session = _FinalizeSession(
+        _finalize_binding(),
+        lead,
+        _owner(),
+        profile=object(),
+        budget=object(),
+        rows=[existing, momo],
     )
+    now = _now()
 
-    class Session:
-        def __init__(self):
-            self.results = iter([binding, owner, owner, object(), object(), existing])
-            self.statements = []
-
-        async def scalar(self, statement):
-            self.statements.append(statement)
-            return next(self.results)
-
-        async def get(self, _model, _identifier, **_kwargs):
-            return lead
-
-        def add(self, item):
-            raise AssertionError(f"unexpected insert of {type(item).__name__}")
-
-        async def commit(self):
-            return None
-
-    snapshot_at = datetime.now(UTC)
-    session = Session()
-    await finalize_redemption(
+    await _finalize(
         session,
-        uid="google-user",
-        email="buyer@example.com",
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
+        _web_snapshot(now, store_transaction_id=None),
         idempotency_key="request-existing-row",
-        environment="SANDBOX",
-        expires_at=snapshot_at + timedelta(days=30),
-        provider_snapshot_at=snapshot_at,
-        subscription_facts={
-            "product_id": "web_monthly",
-            "platform": "web",
-            "status": "active",
-            "purchased_at": snapshot_at - timedelta(days=1),
-            "grace_period_expires_at": None,
-            "period_type": "normal",
-            "cancelled_at": None,
-            "is_sandbox": True,
-            "store_transaction_id": None,
-        },
     )
 
-    subscription_sql = str(
+    rows_sql = str(
         session.statements[-1].compile(
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
         )
     )
-    assert "subscriptions.provider = 'revenuecat'" in subscription_sql
-    assert existing.provider_snapshot_at == snapshot_at
+    assert "subscriptions.provider = 'revenuecat'" in rows_sql
+    assert not [item for item in session.added if isinstance(item, Subscription)]
+    assert existing.provider_snapshot_at == now
     assert existing.store_transaction_id == "sub_stripe_1"
-
-
-def _web_facts(now, **overrides):
-    """Normalized RevenueCat facts as the finalize route passes them."""
-    from datetime import timedelta
-
-    return {
-        "product_id": "web_monthly",
-        "platform": "web",
-        "status": "billing_issue",
-        "purchased_at": now - timedelta(days=29),
-        "expires_at": now + timedelta(days=1),
-        "grace_period_expires_at": now + timedelta(days=6),
-        "period_type": "trial",
-        "cancelled_at": now - timedelta(hours=2),
-        "is_sandbox": True,
-        "store_transaction_id": "sub_stripe_9",
-    } | overrides
+    assert (momo.status, momo.provider_snapshot_at) == ("active", None)
 
 
 @pytest.mark.asyncio
 async def test_finalization_inserts_a_verified_row_with_every_normalized_fact():
     """A new web buyer's row must be verified, or entitlements answer 503."""
-    from datetime import UTC, datetime, timedelta
-
     from src.domain.model.subscription_access import evaluate_subscription_access
-
-    binding = _binding(
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
-        preflight_uid="google-user",
-        product_id="web_monthly",
-        environment="SANDBOX",
-        verified_app_user_id="$RCAnonymousID:web",
-        verified_at=utcnow(),
+    from src.infra.services.subscription_access_sync_service import (
+        normalize_standard_access_facts,
     )
+
     lead = _lead()
     lead.snapshot = _snapshot(target_calories=None)
+    session = _FinalizeSession(_finalize_binding(), lead)
+    now = _now()
+    snapshot = _web_snapshot(
+        now,
+        expires_in=timedelta(days=1),
+        period_type="trial",
+        billing_issues_detected_at=(now - timedelta(hours=3)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        grace_period_expires_date=(now + timedelta(days=6)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        unsubscribe_detected_at=(now - timedelta(hours=2)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+    )
+    facts = normalize_standard_access_facts(snapshot.subscriber, now)
 
-    class Session:
-        def __init__(self):
-            self.scalars = iter([binding, None, None, None, None, None])
-            self.added = []
-
-        async def scalar(self, _statement):
-            return next(self.scalars)
-
-        async def get(self, _model, _identifier, **_kwargs):
-            return lead
-
-        def add(self, item):
-            self.added.append(item)
-
-        async def flush(self):
-            for item in self.added:
-                if isinstance(item, User):
-                    item.id = "user-1"
-
-        async def commit(self):
-            return None
-
-    now = datetime.now(UTC)
-    facts = _web_facts(now)
-    session = Session()
-    await finalize_redemption(
+    await _finalize(
         session,
-        uid="google-user",
-        email="buyer@example.com",
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
+        snapshot,
         idempotency_key="request-new-row",
-        environment="SANDBOX",
         auth_provider="google.com",
         expires_at=facts["expires_at"],
-        provider_snapshot_at=now,
-        subscription_facts=facts,
     )
 
-    subscription = next(
-        item for item in session.added if isinstance(item, Subscription)
-    )
+    (subscription,) = [i for i in session.added if isinstance(i, Subscription)]
     assert subscription.provider == "revenuecat"
     assert subscription.revenuecat_subscriber_id == "google-user"
     assert subscription.provider_snapshot_at == now
     assert subscription.provider_sync_required_at is None
-    for column in (
-        "product_id",
-        "platform",
-        "status",
-        "purchased_at",
-        "expires_at",
-        "grace_period_expires_at",
-        "period_type",
-        "cancelled_at",
-        "is_sandbox",
-        "store_transaction_id",
-    ):
-        assert getattr(subscription, column) == facts[column], column
+    assert facts["status"] == "billing_issue"
+    for column, value in facts.items():
+        assert getattr(subscription, column) == value, column
     access = evaluate_subscription_access([subscription], now=now + timedelta(days=3))
     assert (access.has_access, access.status) == (True, "grace_period")
 
 
 @pytest.mark.asyncio
 async def test_finalization_overwrites_stale_facts_on_an_existing_row():
-    from datetime import UTC, datetime, timedelta
-
-    binding = _binding(
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
-        preflight_uid="google-user",
-        product_id="web_monthly",
-        environment="SANDBOX",
-        verified_app_user_id="$RCAnonymousID:web",
-        verified_at=utcnow(),
-    )
     lead = _lead()
     lead.snapshot = _snapshot()
-    owner = User(id="user-1", firebase_uid="google-user", email="buyer@example.com")
-    now = datetime.now(UTC)
-    existing = Subscription(
-        user_id="user-1",
-        revenuecat_subscriber_id="google-user",
-        product_id="web_monthly",
+    now = _now()
+    existing = _web_row(
         platform="ios",
         status="expired",
-        provider="revenuecat",
         purchased_at=now - timedelta(days=400),
         expires_at=now - timedelta(days=35),
         grace_period_expires_at=now - timedelta(days=30),
         period_type="normal",
-        cancelled_at=None,
         is_sandbox=False,
         provider_snapshot_at=now - timedelta(days=35),
     )
-
-    class Session:
-        def __init__(self):
-            self.results = iter([binding, owner, owner, object(), object(), existing])
-
-        async def scalar(self, _statement):
-            return next(self.results)
-
-        async def get(self, _model, _identifier, **_kwargs):
-            return lead
-
-        def add(self, item):
-            raise AssertionError(f"unexpected insert of {type(item).__name__}")
-
-        async def commit(self):
-            return None
-
-    facts = _web_facts(now, status="active", grace_period_expires_at=None)
-    await finalize_redemption(
-        Session(),
-        uid="google-user",
-        email="buyer@example.com",
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
-        idempotency_key="request-stale-row",
-        environment="SANDBOX",
-        expires_at=facts["expires_at"],
-        provider_snapshot_at=now,
-        subscription_facts=facts,
+    session = _FinalizeSession(
+        _finalize_binding(),
+        lead,
+        _owner(),
+        profile=object(),
+        budget=object(),
+        rows=[existing],
     )
+
+    await _finalize(session, _web_snapshot(now), idempotency_key="request-stale-row")
 
     assert existing.provider_snapshot_at == now
-    for column in (
-        "platform",
-        "status",
-        "purchased_at",
-        "expires_at",
-        "grace_period_expires_at",
-        "period_type",
-        "cancelled_at",
-        "is_sandbox",
-        "store_transaction_id",
-    ):
-        assert getattr(existing, column) == facts[column], column
-
-
-def _session_finalizing_over(binding, lead, owner, row):
-    """Finalize session double whose subscription lookup returns ``row``."""
-
-    class Session:
-        def __init__(self):
-            self.results = iter([binding, owner, owner, object(), object(), row])
-
-        async def scalar(self, _statement):
-            return next(self.results)
-
-        async def get(self, _model, _identifier, **_kwargs):
-            return lead
-
-        def add(self, item):
-            raise AssertionError(f"unexpected insert of {type(item).__name__}")
-
-        async def commit(self):
-            return None
-
-    return Session()
-
-
-def _finalize_binding():
-    return _binding(
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
-        preflight_uid="google-user",
-        product_id="web_monthly",
-        environment="SANDBOX",
-        verified_app_user_id="$RCAnonymousID:web",
-        verified_at=utcnow(),
+    assert (existing.platform, existing.status, existing.is_sandbox) == (
+        "web",
+        "active",
+        True,
     )
+    assert existing.expires_at == now + timedelta(days=30)
+    assert existing.grace_period_expires_at is None
+    assert existing.store_transaction_id == "sub_stripe_9"
+    assert not [item for item in session.added if isinstance(item, Subscription)]
 
 
 @pytest.mark.asyncio
 async def test_finalization_resolves_the_marker_a_failed_webhook_read_left():
     """PURCHASE_REDEEMED could not read RevenueCat and left a placeholder;
     finalize's newer snapshot answers it, so entitlements stop answering 503."""
-    from datetime import UTC, datetime, timedelta
-
     from src.domain.model.subscription_access import evaluate_subscription_access
 
-    binding = _finalize_binding()
     lead = _lead()
     lead.snapshot = _snapshot()
-    owner = User(id="user-1", firebase_uid="google-user", email="buyer@example.com")
-    event_time = datetime.now(UTC) - timedelta(minutes=1)
-    placeholder = Subscription(
-        user_id="user-1",
-        revenuecat_subscriber_id="google-user",
-        product_id="web_monthly",
-        platform="web",
+    now = _now()
+    event_time = now - timedelta(minutes=1)
+    placeholder = _web_row(
         status="expired",
-        provider="revenuecat",
         purchased_at=event_time,
         provider_sync_required_at=event_time,
-        is_sandbox=True,
     )
-    now = datetime.now(UTC)
-    facts = _web_facts(now, status="active", grace_period_expires_at=None)
+    session = _FinalizeSession(
+        _finalize_binding(),
+        lead,
+        _owner(),
+        profile=object(),
+        budget=object(),
+        rows=[placeholder],
+    )
 
-    await finalize_redemption(
-        _session_finalizing_over(binding, lead, owner, placeholder),
-        uid="google-user",
-        email="buyer@example.com",
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
-        idempotency_key="request-marked-row",
-        environment="SANDBOX",
-        expires_at=facts["expires_at"],
-        provider_snapshot_at=now,
-        subscription_facts=facts,
-    )
+    await _finalize(session, _web_snapshot(now), idempotency_key="request-marked-row")
 
     assert placeholder.provider_sync_required_at is None
     assert evaluate_subscription_access([placeholder], now).has_access is True
@@ -803,41 +695,25 @@ async def test_finalization_resolves_the_marker_a_failed_webhook_read_left():
 async def test_finalization_keeps_newer_verified_facts_committed_meanwhile():
     """A refresh or webhook committed a newer snapshot between finalize's
     RevenueCat read and its transaction; finalize must not roll it back."""
-    from datetime import UTC, datetime, timedelta
-
-    binding = _finalize_binding()
     lead = _lead()
     lead.snapshot = _snapshot()
-    owner = User(id="user-1", firebase_uid="google-user", email="buyer@example.com")
-    now = datetime.now(UTC)
+    now = _now()
     newer_expiry = now + timedelta(days=60)
-    row = Subscription(
-        user_id="user-1",
-        revenuecat_subscriber_id="google-user",
-        product_id="web_monthly",
-        platform="web",
+    row = _web_row(
         status="cancelled",
-        provider="revenuecat",
-        purchased_at=now - timedelta(days=1),
         expires_at=newer_expiry,
         period_type="normal",
         provider_snapshot_at=now,
-        is_sandbox=True,
     )
-    older_read = now - timedelta(seconds=5)
-    facts = _web_facts(older_read, status="active", grace_period_expires_at=None)
+    binding = _finalize_binding()
+    session = _FinalizeSession(
+        binding, lead, _owner(), profile=object(), budget=object(), rows=[row]
+    )
 
-    await finalize_redemption(
-        _session_finalizing_over(binding, lead, owner, row),
-        uid="google-user",
-        email="buyer@example.com",
-        original_app_user_id="$RCAnonymousID:web",
-        redemption_link_hash=_link_hash(),
+    await _finalize(
+        session,
+        _web_snapshot(now - timedelta(seconds=5)),
         idempotency_key="request-older-read",
-        environment="SANDBOX",
-        expires_at=facts["expires_at"],
-        provider_snapshot_at=older_read,
-        subscription_facts=facts,
     )
 
     assert (row.status, row.expires_at, row.provider_snapshot_at) == (
@@ -846,3 +722,70 @@ async def test_finalization_keeps_newer_verified_facts_committed_meanwhile():
         now,
     )
     assert binding.finalized_uid == "google-user"
+
+
+@pytest.mark.asyncio
+async def test_finalization_answers_markers_on_the_users_other_revenuecat_rows():
+    """A webhook naming the uid (a TRANSFER, with no product) failed its read
+    before finalize and left a marked placeholder. Finalize's snapshot is the
+    whole customer: like any sync it stamps every RevenueCat row and clears
+    the markers it answers, so the buyer leaves the repair population and
+    the gate's sync_required count."""
+    from src.domain.model.subscription_access import evaluate_subscription_access
+
+    lead = _lead()
+    lead.snapshot = _snapshot()
+    now = _now()
+    event_time = now - timedelta(minutes=2)
+    placeholder = _web_row(
+        id="placeholder",
+        product_id="unknown",
+        platform="ios",
+        status="expired",
+        purchased_at=event_time,
+        provider_sync_required_at=event_time,
+        is_sandbox=False,
+    )
+    old_store_row = _web_row(
+        id="old-annual",
+        product_id="annual",
+        platform="ios",
+        status="cancelled",
+        expires_at=now - timedelta(days=3),
+        provider_snapshot_at=now - timedelta(days=10),
+        provider_sync_required_at=event_time,
+        is_sandbox=False,
+    )
+    session = _FinalizeSession(
+        _finalize_binding(),
+        lead,
+        _owner(),
+        profile=object(),
+        budget=object(),
+        rows=[placeholder, old_store_row],
+    )
+
+    await _finalize(session, _web_snapshot(now), idempotency_key="request-other-rows")
+
+    (created,) = [i for i in session.added if isinstance(i, Subscription)]
+    assert created.product_id == "web_monthly"
+    rows = [placeholder, old_store_row, created]
+    assert [row.provider_sync_required_at for row in rows] == [None, None, None]
+    assert [row.provider_snapshot_at for row in rows] == [now, now, now]
+    assert (placeholder.status, old_store_row.status) == ("expired", "expired")
+    access = evaluate_subscription_access(rows, now)
+    assert (access.has_access, access.source) == (True, created)
+
+
+@pytest.mark.asyncio
+async def test_finalization_without_a_snapshot_writes_nothing():
+    lead = _lead()
+    lead.snapshot = _snapshot()
+    session = _FinalizeSession(
+        _finalize_binding(), lead, _owner(), profile=object(), budget=object()
+    )
+
+    with pytest.raises(ValueError, match="verified RevenueCat snapshot"):
+        await _finalize(session, None, idempotency_key="request-no-snapshot")
+
+    assert session.committed is False

@@ -285,7 +285,12 @@ optional caches.
     row that could still grant access, except for a transfer source (during
     the `TRANSFER`, or remembered from one whose read failed).
 - Web redemption retains its existing identity binding and idempotency
-  checks; it only matches and updates `provider='revenuecat'` rows.
+  checks. Finalize applies the verified customer it read with the same
+  access sync as webhooks and refresh (`source=web_funnel`): every
+  `provider='revenuecat'` row of the user is stamped, the bound product's
+  row carries the facts, markers the snapshot answers are cleared, and a
+  read older than the stored facts changes nothing. A snapshot the sync
+  refuses fails the finalize without writing anything.
 - Canonical handoff (`/v1/web-funnel/*`):
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).

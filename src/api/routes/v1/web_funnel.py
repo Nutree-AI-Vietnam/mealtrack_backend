@@ -372,20 +372,24 @@ async def finalize_revenuecat_redemption(
         raise claim_not_found()
 
     response.headers["Cache-Control"] = "no-store"
-    return await get_web_funnel_redemption_service().finalize(
-        db,
-        uid=uid,
-        email=email,
-        original_app_user_id=original_app_user_id,
-        verified_provider_app_user_ids={original_app_user_id},
-        redemption_link_hash=payload.redemption_link_hash,
-        idempotency_key=idempotency_key,
-        environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
-        auth_provider=provider,
-        expires_at=subscription_facts["expires_at"],
-        provider_snapshot_at=provider_snapshot.request_date,
-        subscription_facts=subscription_facts,
-    )
+    try:
+        return await get_web_funnel_redemption_service().finalize(
+            db,
+            uid=uid,
+            email=email,
+            original_app_user_id=original_app_user_id,
+            verified_provider_app_user_ids={original_app_user_id},
+            redemption_link_hash=payload.redemption_link_hash,
+            idempotency_key=idempotency_key,
+            environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
+            auth_provider=provider,
+            expires_at=subscription_facts["expires_at"],
+            provider_snapshot=provider_snapshot,
+        )
+    except RevenueCatSnapshotUnavailable as error:
+        # The access sync refused the snapshot (owner changed, conflicting
+        # facts); the transaction is not committed, so nothing was written.
+        raise _unverified_redemption(error) from error
 
 
 @router.post("/leads/{lead_id}/resend")

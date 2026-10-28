@@ -13,6 +13,7 @@ from tests.fixtures.revenuecat_samples import patched_revenuecat_http
 
 from src.api.routes.v1 import web_funnel
 from src.app.services.web_funnel_claim_common import hash_secret
+from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.web_funnel_claim import (
     WebFunnelLead,
@@ -365,8 +366,12 @@ async def test_redemption_finalization_uses_provider_derived_customer_and_fresh_
     )
 
     assert response["version"] == "redemption_result_v1"
-    # The snapshot time comes from the RevenueCat response root.
-    assert captured["provider_snapshot_at"] == datetime(2026, 10, 22, tzinfo=UTC)
+    # The verified snapshot itself goes to finalize, which applies it with the
+    # access sync; its time comes from the RevenueCat response root.
+    snapshot = captured["provider_snapshot"]
+    assert snapshot.request_date == datetime(2026, 10, 22, tzinfo=UTC)
+    assert snapshot.app_user_id == "firebase-uid"
+    assert "standard" in snapshot.subscriber["entitlements"]
     assert {
         key: captured[key]
         for key in (
@@ -944,6 +949,46 @@ async def test_redemption_finalization_fills_email_from_admin_for_custom_jwt(
     assert response["access_status"] == "active"
     assert captured["email"] == "buyer@example.com"
     assert captured["auth_provider"] == "custom"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "answer"), [("conflicting_facts", 503), ("http_5xx", 404)]
+)
+async def test_redemption_finalization_reports_a_snapshot_the_sync_refuses(
+    monkeypatch, reason, answer
+):
+    """finalize applies the snapshot with the access sync; when the sync
+    refuses it, nothing is committed and the route answers like an
+    unreadable customer."""
+    _configure_redemption(monkeypatch)
+    monkeypatch.setattr(
+        web_funnel,
+        "_get_web_funnel_subscription_service",
+        lambda: VerifiedSubscriberService(),
+    )
+
+    class RefusingRedemptionService:
+        async def finalize(self, _db, **kwargs):
+            raise RevenueCatSnapshotUnavailable("refused", reason=reason)
+
+    monkeypatch.setattr(
+        web_funnel,
+        "get_web_funnel_redemption_service",
+        lambda: RefusingRedemptionService(),
+    )
+    recorded = []
+    monkeypatch.setattr(
+        web_funnel,
+        "record_snapshot_unavailable",
+        lambda error, **kwargs: recorded.append((error.reason, kwargs)),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _finalize(FinalizationSession())
+
+    assert error.value.status_code == answer
+    assert recorded == [(reason, {"source": "web_funnel"})]
 
 
 def _finalize_token():
