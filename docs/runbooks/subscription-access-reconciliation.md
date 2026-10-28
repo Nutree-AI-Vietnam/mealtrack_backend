@@ -118,12 +118,16 @@ and Render shifts traffic anyway.
       followed by `Database is up to date`. `Head revision:` comes from the
       checked-out code and reads the same whether or not the upgrade ran, so
       it proves nothing.
-- [ ] Check that `subscriptions.status` accepts `refunded`, which refund
-      syncs write. A database built from the models (`create_all`, as
-      production's was) has a `VARCHAR` column; one built by the Alembic
-      chain has the native enum migration 007 created, which only
-      `20261028085152877654` extends. Against a native enum without the value,
-      every refund webhook answers `500` and rolls back.
+- [ ] Check that `subscriptions.status` accepts `refunded`, which a
+      refund's sync writes on the rows its snapshot revokes. A database
+      built from the models (`create_all`, as production's was) has a
+      `VARCHAR` column; one built by the Alembic chain has the native enum
+      migration 007 created, which only `20261028085152877654` extends.
+      Against a native enum without the value, a refund webhook whose
+      RevenueCat snapshot revokes a row answers `500` and rolls back, legacy
+      effects included, until RevenueCat stops retrying. A refund runs the
+      cancellation handler (`cancelled`), so one whose snapshot still grants,
+      or whose read or apply fails, writes no `refunded` and succeeds.
 
   ```sql
   SELECT data_type, udt_name
