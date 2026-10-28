@@ -36,3 +36,9 @@ class ListUnresolvedSubscriptionAccessQuery(Query):
 
     limit: int
     after: UnresolvedQueueCursor | None = None
+
+
+@dataclass
+class GetSubscriptionAccessHealthQuery(Query):
+    """Monitoring: provider markers on RevenueCat rows against the alert
+    thresholds (GET /v1/health/subscription-access)."""

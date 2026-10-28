@@ -1,13 +1,25 @@
-"""Read-only SQL behind the subscription access support API."""
+"""Read-only SQL behind the subscription access support API and monitoring."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Select, String, func, literal, or_, select, tuple_
+from sqlalchemy import (
+    DateTime,
+    Select,
+    String,
+    distinct,
+    func,
+    literal,
+    or_,
+    select,
+    tuple_,
+)
 
 from src.domain.ports.subscription_access_support_repository_port import (
+    AccessMarkerHealth,
     SubscriptionAccessSupportRepositoryPort,
     SupportSubscriptionRecord,
     SupportUserRecord,
@@ -42,11 +54,15 @@ def live_marked_revenuecat_rows(statement: Select) -> Select:
     nothing reads or repairs them (their Firebase uid is a tombstone), so
     their markers would sit in the queue and the alerts forever.
     """
-    return statement.join(User, User.id == Subscription.user_id).where(
-        Subscription.provider == REVENUECAT_PROVIDER,
-        User.is_active.is_(True),
-        User.deleted_at.is_(None),
-        marked_row(),
+    return (
+        statement.select_from(Subscription)
+        .join(User, User.id == Subscription.user_id)
+        .where(
+            Subscription.provider == REVENUECAT_PROVIDER,
+            User.is_active.is_(True),
+            User.deleted_at.is_(None),
+            marked_row(),
+        )
     )
 
 
@@ -155,6 +171,24 @@ class SubscriptionAccessSupportRepository(SubscriptionAccessSupportRepositoryPor
             )
             return [_subscription_record(row) for row in result.all()]
 
+    async def marker_health(
+        self, *, sync_required_before: datetime, refund_pending_before: datetime
+    ) -> AccessMarkerHealth:
+        statement = marker_health_statement(
+            sync_required_before=sync_required_before,
+            refund_pending_before=refund_pending_before,
+        )
+        async with self._uow_factory() as uow:
+            row = (await uow.session.execute(statement)).one()
+        return AccessMarkerHealth(
+            sync_required_users=int(row.sync_required_users or 0),
+            stale_sync_required_users=int(row.stale_sync_required_users or 0),
+            refund_pending_rows=int(row.refund_pending_rows or 0),
+            stale_refund_pending_rows=int(row.stale_refund_pending_rows or 0),
+            transfer_source_rows=int(row.transfer_source_rows or 0),
+            oldest_marker_at=row.oldest_marker_at,
+        )
+
     async def list_unresolved(
         self, *, limit: int, after: UnresolvedQueueCursor | None
     ) -> list[UnresolvedAccessUser]:
@@ -172,6 +206,35 @@ class SubscriptionAccessSupportRepository(SubscriptionAccessSupportRepositoryPor
             )
             for row in rows
         ]
+
+
+def marker_health_statement(
+    *, sync_required_before: datetime, refund_pending_before: datetime
+) -> Select:
+    """Every marker count the monitoring endpoint needs, in one pass over
+    the marked rows (the partial index), joined to their users."""
+    sync_required = Subscription.provider_sync_required_at
+    refund_pending = Subscription.provider_refund_pending_at
+    return live_marked_revenuecat_rows(
+        select(
+            func.count(distinct(Subscription.user_id))
+            .filter(sync_required.is_not(None))
+            .label("sync_required_users"),
+            func.count(distinct(Subscription.user_id))
+            .filter(sync_required < sync_required_before)
+            .label("stale_sync_required_users"),
+            func.count()
+            .filter(refund_pending.is_not(None))
+            .label("refund_pending_rows"),
+            func.count()
+            .filter(refund_pending < refund_pending_before)
+            .label("stale_refund_pending_rows"),
+            func.count()
+            .filter(Subscription.provider_transfer_source_at.is_not(None))
+            .label("transfer_source_rows"),
+            func.min(oldest_marker()).label("oldest_marker_at"),
+        )
+    )
 
 
 def unresolved_users_statement(

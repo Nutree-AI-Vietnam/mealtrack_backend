@@ -401,10 +401,12 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
         ResyncSubscriptionAccessCommandHandler,
     )
     from src.app.handlers.query_handlers import (
+        GetSubscriptionAccessHealthQueryHandler,
         GetSupportSubscriptionAccessQueryHandler,
         ListUnresolvedSubscriptionAccessQueryHandler,
     )
     from src.app.queries.subscription_access import (
+        GetSubscriptionAccessHealthQuery,
         GetSupportSubscriptionAccessQuery,
         ListUnresolvedSubscriptionAccessQuery,
     )
@@ -415,10 +417,13 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     lookup = bus.handlers[GetSupportSubscriptionAccessQuery]
     resync = bus.handlers[ResyncSubscriptionAccessCommand]
     queue = bus.handlers[ListUnresolvedSubscriptionAccessQuery]
+    # GET /v1/health/subscription-access, polled by the uptime monitor.
+    monitoring = bus.handlers[GetSubscriptionAccessHealthQuery]
     assert isinstance(lookup, GetSupportSubscriptionAccessQueryHandler)
     assert isinstance(resync, ResyncSubscriptionAccessCommandHandler)
     assert isinstance(queue, ListUnresolvedSubscriptionAccessQueryHandler)
-    for handler in (lookup, resync, queue):
+    assert isinstance(monitoring, GetSubscriptionAccessHealthQueryHandler)
+    for handler in (lookup, resync, queue, monitoring):
         assert isinstance(handler.repository, SubscriptionAccessSupportRepository)
         assert handler.repository._uow_factory == AsyncUnitOfWork.read_only
     for handler in (lookup, resync):

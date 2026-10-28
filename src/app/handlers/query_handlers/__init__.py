@@ -44,6 +44,9 @@ from .get_provider_food_details_query_handler import (
 from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
 from .get_saved_suggestions_query_handler import GetSavedSuggestionsQueryHandler
 from .get_streak_query_handler import GetStreakQueryHandler
+from .get_subscription_access_health_query_handler import (
+    GetSubscriptionAccessHealthQueryHandler,
+)
 from .get_support_subscription_access_query_handler import (
     GetSupportSubscriptionAccessQueryHandler,
 )
@@ -76,6 +79,7 @@ __all__ = [
     "GetUserTdeeQueryHandler",
     "GetMyEntitlementsQueryHandler",
     "GetSupportSubscriptionAccessQueryHandler",
+    "GetSubscriptionAccessHealthQueryHandler",
     "ListUnresolvedSubscriptionAccessQueryHandler",
     "CheckSubscriptionAccessQueryHandler",
     "PreviewTdeeQueryHandler",

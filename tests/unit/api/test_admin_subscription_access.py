@@ -112,6 +112,9 @@ class _Repository(SubscriptionAccessSupportRepositoryPort):
         self.calls.append(("subscription_rows", user_id))
         return list(self.rows.get(user_id, []))
 
+    async def marker_health(self, *, sync_required_before, refund_pending_before):
+        raise AssertionError("the support routes never count markers")
+
     async def list_unresolved(self, *, limit, after):
         self.calls.append(("list_unresolved", limit, after))
         ordered = sorted(self.unresolved, key=lambda u: (u.oldest_marker_at, u.user_id))

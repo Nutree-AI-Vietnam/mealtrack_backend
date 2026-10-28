@@ -1,8 +1,9 @@
-"""Read-only port behind the subscription access support API.
+"""Read-only port behind the subscription access support API and monitoring.
 
 Support looks users up, reads their access rows, and works through the users
-whose RevenueCat rows carry a provider marker (the repair queue). Nothing
-here writes; repairs go through SubscriptionAccessRefreshPort.
+whose RevenueCat rows carry a provider marker (the repair queue); monitoring
+counts those markers. Nothing here writes; repairs go through
+SubscriptionAccessRefreshPort.
 """
 
 from __future__ import annotations
@@ -97,6 +98,23 @@ class UnresolvedAccessUser:
         return [(kind, at) for kind, at in found if at is not None]
 
 
+@dataclass(frozen=True)
+class AccessMarkerHealth:
+    """Provider markers on live users' RevenueCat rows, counted for alerts.
+
+    ``stale_*`` count markers older than the cutoffs passed in (RevenueCat's
+    event time before the cutoff). ``oldest_marker_at`` is the oldest marker
+    of any type; None when nothing is marked.
+    """
+
+    sync_required_users: int
+    stale_sync_required_users: int
+    refund_pending_rows: int
+    stale_refund_pending_rows: int
+    transfer_source_rows: int
+    oldest_marker_at: datetime | None
+
+
 class SubscriptionAccessSupportRepositoryPort(ABC):
     """Read-only lookups for support; each call opens its own session."""
 
@@ -124,3 +142,9 @@ class SubscriptionAccessSupportRepositoryPort(ABC):
 
         At most ``limit`` users, strictly after ``after`` in that order.
         """
+
+    @abstractmethod
+    async def marker_health(
+        self, *, sync_required_before: datetime, refund_pending_before: datetime
+    ) -> AccessMarkerHealth:
+        """Count the markers on live users' RevenueCat rows in one query."""

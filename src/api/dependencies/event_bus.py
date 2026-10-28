@@ -180,6 +180,7 @@ from src.app.handlers.query_handlers import (
     GetRecentMealsQueryHandler,
     GetSavedSuggestionsQueryHandler,
     GetStreakQueryHandler,
+    GetSubscriptionAccessHealthQueryHandler,
     GetSupportSubscriptionAccessQueryHandler,
     GetUserByFirebaseUidQueryHandler,
     GetUserMetricsQueryHandler,
@@ -268,6 +269,7 @@ from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
 from src.app.queries.subscription_access import (
     CheckSubscriptionAccessQuery,
     GetMyEntitlementsQuery,
+    GetSubscriptionAccessHealthQuery,
     GetSupportSubscriptionAccessQuery,
     ListUnresolvedSubscriptionAccessQuery,
 )
@@ -1176,6 +1178,11 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         ListUnresolvedSubscriptionAccessQuery,
         ListUnresolvedSubscriptionAccessQueryHandler(repository=support_repository),
+    )
+    # GET /v1/health/subscription-access (monitoring token, not admin).
+    event_bus.register_handler(
+        GetSubscriptionAccessHealthQuery,
+        GetSubscriptionAccessHealthQueryHandler(repository=support_repository),
     )
     event_bus.register_handler(
         GetUserOnboardingStatusQuery, GetUserOnboardingStatusQueryHandler()
