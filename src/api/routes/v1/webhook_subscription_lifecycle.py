@@ -325,7 +325,13 @@ async def handle_product_change(
 
 
 async def handle_refund(uow, user, event, affiliate_handler=None, event_publisher=None):
-    """Handle refund — update subscription status and revoke referral credit."""
+    """Mark a refund and claw back the referrer's commission.
+
+    Not dispatched: RevenueCat sends refunds as CANCELLATION, which runs
+    handle_cancellation. The clawback here revokes the referred user's one
+    commission whatever transaction was refunded, so it stays off until the
+    redesign in docs/external-services.md ("Refunds and referral commission").
+    """
     subscription = await get_or_create_subscription(uow, user, event)
     if subscription:
         subscription.status = "refunded"

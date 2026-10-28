@@ -169,6 +169,16 @@ the RevenueCat staging webhook pointing at it:
 
 - [ ] Cancel it: `status='cancelled'`, still granted until `expires_at`.
       Let it lapse (sandbox periods are minutes): `status='expired'`.
+- [ ] Rehearse a refund: refund a RevenueCat Web sandbox purchase, or POST
+      a `CANCELLATION` event with `cancel_reason=CUSTOMER_SUPPORT` for the
+      test user to the staging webhook (with its `Authorization` header).
+      The webhook answers `200` (a `500` means the column check in step 1
+      failed), the logs show `RevenueCat refund received; referral clawback
+      is disabled`, the referrer's `referral_wallets` row is unchanged
+      (refund clawback is off: `docs/external-services.md`, "Refunds and
+      referral commission"), and the row follows RevenueCat: `refunded` once
+      RevenueCat no longer grants, unchanged when the posted event refunded
+      nothing.
 - [ ] Logs show `RevenueCat access synced: ... result=applied` and no
       `RevenueCat snapshot unavailable`.
 - [ ] Turn the staging flag on and check step 7's requests for the test user

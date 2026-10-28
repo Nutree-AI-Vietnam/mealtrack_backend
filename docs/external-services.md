@@ -244,8 +244,8 @@ optional caches.
     `EXPERIMENT_ENROLLMENT`, `INVOICE_ISSUANCE` and
     `VIRTUAL_CURRENCY_TRANSACTION` are skipped. New event types sync by
     default.
-  - The legacy handlers (rows, referral credit and clawback, lifecycle and
-    affiliate events) always run, whatever `SUBSCRIPTION_ACCESS_ENABLED` is.
+  - The legacy handlers (rows, referral credit, lifecycle and affiliate
+    events) always run, whatever `SUBSCRIPTION_ACCESS_ENABLED` is.
     If the customer cannot be read or applied, the webhook still answers 200;
     the user's RevenueCat rows get `provider_sync_required_at` (RevenueCat's
     event time), which the access policy treats as unresolved, and the failure
@@ -258,9 +258,12 @@ optional caches.
   - Writers for one user serialise on `SELECT ... FOR UPDATE` of the user row;
     an older snapshot never overwrites a newer one (`provider_snapshot_at`).
   - RevenueCat has no `REFUND` event: a refund is a `CANCELLATION` with
-    `cancel_reason=CUSTOMER_SUPPORT` or a negative price. The refund side
-    effects run from the event; access follows the snapshot (a refund does not
-    always end the subscription).
+    `cancel_reason=CUSTOMER_SUPPORT` or a negative price. It runs the
+    cancellation handler, as production always has: no referral clawback,
+    and the `subscription_canceled` lifecycle event (see "Refunds and
+    referral commission" below). Access follows the snapshot (a refund does
+    not always end the subscription); rows the sync revokes for a refund read
+    `refunded`, and the loss of access counts as expected.
   - `TRANSFER` re-reads every local source and target user from its own
     customer; nothing is re-pointed or expired blindly.
   - A deleted account (`users.is_active` false, tombstoned uid) is never
@@ -326,9 +329,8 @@ A writer for any provider other than RevenueCat must:
 - run the post-purchase side effects itself. The access row only grants
   access; everything else a purchase sets off runs today only from the
   RevenueCat webhook handlers (`src/api/routes/v1/webhook_subscription_lifecycle.py`):
-  the referral credit on a first purchase (`credit_referral_on_purchase`) and
-  the clawback on a refund (`revoke_referral_on_refund`), the
-  `subscription_*` lifecycle events published to the integration queue
+  the referral credit on a first purchase (`credit_referral_on_purchase`),
+  the `subscription_*` lifecycle events published to the integration queue
   (affiliate commission and lifecycle messaging consume them), and the
   purge of stale trial-expiry pushes on a renewal. A MoMo payment, renewal
   or refund that only writes its row credits no referrer and tells no
@@ -338,6 +340,48 @@ RevenueCat handlers never read, expire, re-point or take over such rows:
 webhooks, transfers, refresh, reconciliation and web finalize all filter on
 `provider='revenuecat'`, and an empty RevenueCat customer never expires a
 row from another provider.
+
+### Refunds and referral commission
+
+Refund clawback is **disabled pending a product decision** (owner: product
+with the backend lead). A refund `CANCELLATION` claws back no referral
+commission and publishes `subscription_canceled`, exactly as production
+did before the subscription-access change; only its access sync is labelled
+a refund. `handle_refund` and `revoke_referral_on_refund`
+(`webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`) exist but
+nothing dispatches them. The unwired clawback must not be turned on as it
+stands:
+
+- It revokes the referred user's one commission whatever transaction was
+  refunded. RevenueCat sends a refund `CANCELLATION` for the latest period
+  only, so after one renewal every refund is a renewal's ("forgot to
+  cancel"), never the purchase that earned the commission, and nothing ever
+  restores it (a later purchase does not credit again).
+- `revoke_from_wallet` floors the balance at zero but adds the full amount
+  to `total_revoked`. A payout request debits the wallet when it is made and
+  stays `pending` or `processing` until paid, so a refund after the request
+  recovers nothing, leaves no record of the debt and does not flag the
+  payout. `RequestPayoutCommandHandler` also reads the wallet without
+  `FOR UPDATE`, so a concurrent revoke can be overwritten.
+- `subscription_refund` was never emitted in production. Before any refund
+  publishes it instead of `subscription_canceled`, confirm that
+  nutreeai_async and nutree-affiliate handle it idempotently, matched to the
+  refunded transaction, and write the accepted `lifecycle_type` values down
+  as a shared contract.
+
+A correct design needs at least:
+
+- revocation tied to the credited transaction: store the transaction that
+  earned the commission on `referral_conversions` (the paid
+  `INITIAL_PURCHASE`, or the trial-converting `RENEWAL`) and revoke only on a
+  refund of that transaction;
+- `REFUND_REVERSED` handling that restores a conversion the same transaction
+  revoked;
+- payout interaction: an outstanding clawback (or a negative balance) that
+  later credits pay down, `total_revoked` counting only what was recovered,
+  pending or processing payout requests flagged (or reduced, or blocked from
+  approval), and the wallet locked in the payout handler;
+- the lifecycle consumer contract above.
 
 ### Store policy (MoMo channel)
 

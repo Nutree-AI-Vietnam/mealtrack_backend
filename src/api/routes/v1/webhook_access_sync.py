@@ -91,8 +91,9 @@ def is_refund_event(event: dict) -> bool:
     cancel_reason CUSTOMER_SUPPORT marks a refund issued by the store or
     RevenueCat, and refunds carry a negative price. A refund does not always
     end the subscription, so access still comes from the customer snapshot;
-    the refund side effects (referral clawback, refund lifecycle event) come
-    from the event itself.
+    the classification only labels that sync (rows it revokes read
+    'refunded', and the loss of access is expected). The legacy effects are a
+    cancellation's: no referral clawback, 'subscription_canceled' published.
     """
     if event.get("type") != "CANCELLATION":
         return False

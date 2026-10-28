@@ -233,6 +233,10 @@ async def revenuecat_webhook(
         await lock_subscription_owner(session, user.id)
         facts_before_event = await capture_facts_for(session, user, access_read)
 
+        # A refund arrives as a CANCELLATION. Its classification only labels
+        # the access sync below (the access it removes is an expected
+        # downgrade, revoked rows read 'refunded') and the logs; it moves no
+        # money (see the CANCELLATION branch).
         refund_event = is_refund_event(event)
         # Legacy event effects -- commit/rollback is owned by the unit of work.
         if event_type == "INITIAL_PURCHASE":
@@ -242,14 +246,22 @@ async def revenuecat_webhook(
             await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
 
         elif event_type == "CANCELLATION":
+            # Refunds included: the cancellation path production has always
+            # run, so a refund publishes 'subscription_canceled' and claws
+            # back no referral commission. The refund clawback (handle_refund)
+            # stays off until product decides how it should work
+            # (docs/external-services.md, "Refunds and referral commission").
             if refund_event:
-                await handle_refund(
-                    uow, user, event, affiliate_handler, event_publisher
+                logger.info(
+                    "RevenueCat refund received; referral clawback is disabled: "
+                    "user_id=%s event_id=%s cancel_reason=%s",
+                    user.id,
+                    event.get("id"),
+                    event.get("cancel_reason"),
                 )
-            else:
-                await handle_cancellation(
-                    uow, user, event, affiliate_handler, event_publisher
-                )
+            await handle_cancellation(
+                uow, user, event, affiliate_handler, event_publisher
+            )
 
         elif event_type == "EXPIRATION":
             await handle_expiration(
@@ -267,8 +279,8 @@ async def revenuecat_webhook(
             )
 
         if event_syncs_access(event_type) and account_is_deleted(user):
-            # The legacy effects above still run (a refund still claws back
-            # the referrer's credit); there is no access left to sync.
+            # The legacy effects above still run (referral credit, lifecycle
+            # events); there is no access left to sync.
             logger.info(
                 "RevenueCat event for a deleted account: access not synced — "
                 "user_id=%s event_type=%s",

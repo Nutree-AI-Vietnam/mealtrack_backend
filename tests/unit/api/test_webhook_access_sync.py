@@ -461,53 +461,101 @@ async def test_access_neutral_events_never_read_revenuecat(monkeypatch, event_ty
     assert stored.provider_sync_required_at is None
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "refund_fields",
-    [
-        {"cancel_reason": "CUSTOMER_SUPPORT"},
-        {"cancel_reason": "UNKNOWN", "price": -2.99},
-        {"cancel_reason": "UNKNOWN", "price_in_purchased_currency": -79000},
-    ],
-)
-async def test_refund_clawback_runs_while_the_snapshot_still_grants(
-    monkeypatch, refund_fields
-):
-    """Refunds can leave the subscription active; the clawback must not wait
-    for the snapshot to show the entitlement expired."""
-    user = _user("user-u", "uid-u")
-    stored = _row(user)
-    database = _Database([user], [stored])
+REFUND_FIELDS = [
+    {"cancel_reason": "CUSTOMER_SUPPORT"},
+    {"cancel_reason": "UNKNOWN", "price": -2.99},
+    {"cancel_reason": "UNKNOWN", "price_in_purchased_currency": -79000},
+]
+
+
+def _referral(status: str) -> _Referrals:
     referrals = _Referrals(
         ReferralConversion(
             referrer_user_id="referrer-1",
             referred_user_id="user-u",
             code_used="ABC123",
-            status="converted",
+            status=status,
             commission_amount=2.0,
             commission_currency="USD",
             commission_amount_vnd=50000,
         )
     )
     referrals.balance = 80000
+    return referrals
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conversion_status", ["converted", "pending"])
+@pytest.mark.parametrize("refund_fields", REFUND_FIELDS)
+async def test_refund_cancellation_moves_no_referral_money(
+    monkeypatch, refund_fields, conversion_status
+):
+    """Production (20e0d5aa) sends a refund CANCELLATION through
+    handle_cancellation: no commission is clawed back or credited, and the
+    one lifecycle event is 'subscription_canceled', as for any cancellation.
+    The refund clawback stays off pending a product decision."""
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+    referrals = _referral(conversion_status)
     publisher = MagicMock(publish=AsyncMock())
+    event = _event("CANCELLATION", "uid-u", **refund_fields)
 
     with _revenuecat({"uid-u": _ok(_annual())}):
+        result = await _deliver(monkeypatch, event, database, referrals, publisher)
+
+    assert result == {"status": "success"}
+    assert (referrals.conversion.status, referrals.balance) == (
+        conversion_status,
+        80000,
+    )
+    publisher.publish.assert_awaited_once()
+    data = publisher.publish.await_args.args[0]["data"]
+    assert data["lifecycle_type"] == "subscription_canceled"
+    assert {key: data[key] for key in data if key != "occurred_at"} == {
+        "lifecycle_type": "subscription_canceled",
+        "mealtrack_user_id": "user-u",
+        "product_id": "annual",
+        "subscription_id": event["transaction_id"],
+    }
+    # Access follows the snapshot, which still grants.
+    assert stored.status == "active"
+    assert evaluate_subscription_access([stored]).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_a_refund_that_ends_access_revokes_it_from_the_snapshot(monkeypatch):
+    """The refunded user still loses access: the snapshot no longer grants, so
+    the sync revokes the row as 'refunded', an expected downgrade."""
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+    referrals = _referral("converted")
+    publisher = MagicMock(publish=AsyncMock())
+    refunded = _annual(expires_in=timedelta(minutes=-5))
+
+    with (
+        _revenuecat({"uid-u": _ok(refunded)}),
+        patch(f"{SYNC}.capture_message") as captured,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
         await _deliver(
             monkeypatch,
-            _event("CANCELLATION", "uid-u", **refund_fields),
+            _event("CANCELLATION", "uid-u", cancel_reason="CUSTOMER_SUPPORT"),
             database,
             referrals,
             publisher,
         )
 
-    assert referrals.conversion.status == "revoked"
-    assert referrals.balance == 30000
-    lifecycle = publisher.publish.await_args.args[0]["data"]["lifecycle_type"]
-    assert lifecycle == "subscription_refund"
-    # Access follows the snapshot, which still grants.
-    assert stored.status == "active"
-    assert evaluate_subscription_access([stored]).has_access is True
+    assert stored.status == "refunded"
+    assert stored.provider_sync_required_at is None
+    assert evaluate_subscription_access([stored]).has_access is False
+    (downgrade,) = _metrics(metric, "subscription_access.downgrade")
+    assert downgrade.kwargs["attributes"]["expected"] == "true"
+    captured.assert_not_called()
+    assert (referrals.conversion.status, referrals.balance) == ("converted", 80000)
+    data = publisher.publish.await_args.args[0]["data"]
+    assert data["lifecycle_type"] == "subscription_canceled"
 
 
 @pytest.mark.asyncio
@@ -1078,8 +1126,10 @@ async def test_event_for_a_deleted_account_keeps_legacy_effects_but_is_not_synce
     assert row.provider_sync_required_at is None
     captured.assert_not_called()
     reported.assert_not_called()
-    # The referrer's clawback is a legacy effect and still runs.
-    assert (referrals.conversion.status, referrals.balance) == ("revoked", 30000)
+    # The legacy cancellation still runs on the kept row; a refund claws
+    # back no commission (production behaviour, clawback disabled).
+    assert row.status == "cancelled"
+    assert (referrals.conversion.status, referrals.balance) == ("converted", 80000)
     assert processed.call_args.kwargs["attributes"]["result"] == "account_deleted"
 
 

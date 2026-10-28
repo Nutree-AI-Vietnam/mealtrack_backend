@@ -493,3 +493,83 @@ async def test_initial_purchase_after_the_apps_refresh_credits_the_referral(
     (row,) = await _rows(app_sessions, buyer)
     assert row.provider_snapshot_at == read_at
     assert evaluate_subscription_access([row]).has_access is True
+
+
+@pytest.mark.asyncio
+async def test_refund_ends_access_from_the_snapshot_and_moves_no_commission(
+    app_sessions,
+):
+    """A refund CANCELLATION runs production's cancellation path: the referrer
+    keeps the commission and the lifecycle event is 'subscription_canceled'.
+    The snapshot, which no longer grants, revokes the row as 'refunded'."""
+    referrer = await _user(app_sessions, "referrer")
+    buyer = await _user(app_sessions, "buyer")
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with app_sessions() as session:
+        session.add(
+            ReferralConversion(
+                referrer_user_id=referrer.id,
+                referred_user_id=buyer.id,
+                code_used="ABC123",
+                status="converted",
+                commission_amount=2.0,
+                commission_currency="USD",
+                commission_amount_vnd=50000,
+                converted_at=now - timedelta(days=30),
+            )
+        )
+        session.add(
+            ReferralWallet(
+                user_id=referrer.id,
+                balance=50000,
+                total_earned=50000,
+                updated_at=now - timedelta(days=30),
+            )
+        )
+        session.add(
+            Subscription(
+                user_id=buyer.id,
+                revenuecat_subscriber_id=buyer.firebase_uid,
+                provider="revenuecat",
+                product_id="annual",
+                platform="ios",
+                status="active",
+                purchased_at=now - timedelta(days=30),
+                expires_at=now + timedelta(days=335),
+                period_type="normal",
+                provider_snapshot_at=now - timedelta(days=1),
+                is_sandbox=False,
+            )
+        )
+        await session.commit()
+    refunded = _annual(now, timedelta(minutes=-1))
+    publisher = MagicMock(publish=AsyncMock())
+
+    with (
+        _revenuecat({buyer.firebase_uid: _ok(refunded)}),
+        patch.object(webhooks, "_get_event_publisher", return_value=publisher),
+    ):
+        result = await _deliver(
+            _event(
+                "CANCELLATION",
+                buyer.firebase_uid,
+                cancel_reason="CUSTOMER_SUPPORT",
+                price=-59.99,
+            )
+        )
+
+    assert result == {"status": "success"}
+    (row,) = await _rows(app_sessions, buyer)
+    assert (row.status, row.provider_sync_required_at) == ("refunded", None)
+    assert evaluate_subscription_access([row]).has_access is False
+    async with app_sessions() as session:
+        conversion = await session.scalar(
+            select(ReferralConversion).where(
+                ReferralConversion.referred_user_id == buyer.id
+            )
+        )
+        wallet = await session.get(ReferralWallet, referrer.id)
+    assert conversion.status == "converted"
+    assert (wallet.balance, wallet.total_revoked) == (50000, 0)
+    (published,) = publisher.publish.await_args_list
+    assert published.args[0]["data"]["lifecycle_type"] == "subscription_canceled"

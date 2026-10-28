@@ -952,12 +952,13 @@ class TestWebhookHandler:
         assert result == {"status": "success"}
         assert subscription.product_id == "premium_yearly"
 
-    async def test_webhook_refund_end_to_end_returns_success(
+    async def test_webhook_refund_runs_the_production_cancellation_path(
         self, mock_request, mock_event_publisher, mock_verified_access_sync
     ):
-        """A refund arrives as CANCELLATION/CUSTOMER_SUPPORT. Its clawback runs
-        from the event even while the snapshot still shows the entitlement
-        (refunds do not always end the subscription).
+        """A refund arrives as CANCELLATION/CUSTOMER_SUPPORT. As in production
+        (20e0d5aa) it runs handle_cancellation: no referral clawback, and the
+        'subscription_canceled' lifecycle event. The refund clawback stays off
+        pending a product decision; only the access sync is labelled a refund.
         """
         mock_request.json.return_value = {
             "event": {
@@ -1019,10 +1020,11 @@ class TestWebhookHandler:
                     )
 
         assert result == {"status": "success"}
-        assert subscription.status == "refunded"
-        revoke_mock.assert_awaited_once_with(mock_uow, "user_123")
+        assert subscription.status == "cancelled"
+        revoke_mock.assert_not_awaited()
+        mock_event_publisher.publish.assert_awaited_once()
         payload = mock_event_publisher.publish.await_args.args[0]
-        assert payload["data"]["lifecycle_type"] == "subscription_refund"
+        assert payload["data"]["lifecycle_type"] == "subscription_canceled"
         # Access itself still comes from the snapshot, labelled as a refund.
         assert mock_verified_access_sync[1].await_args.kwargs["refund_event"] is True
 
