@@ -112,7 +112,7 @@ and Render shifts traffic anyway.
       `20261028090710086261` (transfer source marker),
       `20261028101948171263` (refund marker) and `20261028142458697212`
       (partial index on the three markers, for the monitoring endpoint and
-      the support queue).
+      the support queue; built concurrently, so it does not block writes).
 - [ ] Run again with `dry_run=false` (production needs Environment
       approval).
 - [ ] Run `dry_run=true` once more and read the **database** line: it must

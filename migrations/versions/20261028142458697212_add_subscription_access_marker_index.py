@@ -34,22 +34,34 @@ def upgrade() -> None:
     none. Rows without a marker are not in the index, so it costs nothing
     on their writes.
 
+    Built CONCURRENTLY, outside the migration transaction (as in 049): a
+    plain CREATE INDEX holds a lock that blocks every write to
+    subscriptions, webhooks and refreshes included, for the whole build.
+    A concurrent build that fails leaves an INVALID index behind; drop it
+    (DROP INDEX CONCURRENTLY ix_subscriptions_access_markers) before
+    running the upgrade again.
+
     Autogenerate also reported the long-standing model/database drift noted
     in 20261026085224333692; none of it belongs to this change.
     """
-    op.create_index(
-        "ix_subscriptions_access_markers",
-        "subscriptions",
-        ["user_id"],
-        unique=False,
-        postgresql_where=sa.text(MARKED),
-    )
+    with op.get_context().autocommit_block():
+        op.create_index(
+            "ix_subscriptions_access_markers",
+            "subscriptions",
+            ["user_id"],
+            unique=False,
+            postgresql_where=sa.text(MARKED),
+            postgresql_concurrently=True,
+        )
 
 
 def downgrade() -> None:
-    """Drop the partial index; the queries still work, by scanning."""
-    op.drop_index(
-        "ix_subscriptions_access_markers",
-        table_name="subscriptions",
-        postgresql_where=sa.text(MARKED),
-    )
+    """Drop the partial index (concurrently, outside the transaction); the
+    queries still work, by scanning."""
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_subscriptions_access_markers",
+            table_name="subscriptions",
+            postgresql_where=sa.text(MARKED),
+            postgresql_concurrently=True,
+        )
