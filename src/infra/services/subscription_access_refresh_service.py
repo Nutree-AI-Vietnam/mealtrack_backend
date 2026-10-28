@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from src.domain.ports.subscription_access_refresh_port import (
     REFRESH_NOT_APPLIED,
+    SubscriptionAccessApplyError,
     SubscriptionAccessRefresh,
     SubscriptionAccessRefreshPort,
 )
@@ -28,6 +29,8 @@ from src.infra.services.subscription_access_sync_service import (
     record_snapshot_unavailable,
     sync_revenuecat_access,
 )
+from src.observability import capture_exception
+from src.subscription_access_alerts import ALERT_SYNC_APPLY_ERROR, alert_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,13 @@ class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
             # the rows stay as they were. No provider event happened, so
             # nothing is marked unresolved.
             return self._not_applied(error, user_id)
+        except Exception as error:
+            # A bug or a database failure while applying (or committing) the
+            # snapshot. Reported here, inside the event bus, so its fixed
+            # fingerprint is the first Sentry event for this exception.
+            raise _apply_failed(
+                error, source=REFRESH_SOURCE, user_id=user_id
+            ) from error
         return SubscriptionAccessRefresh(outcome.result)
 
     async def _firebase_uid(self, user_id: str) -> str | None:
@@ -107,3 +117,30 @@ class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
         return SubscriptionAccessRefresh(
             REFRESH_NOT_APPLIED, reason=getattr(error, "reason", None)
         )
+
+
+def _apply_failed(
+    error: Exception, *, source: str, user_id: str
+) -> SubscriptionAccessApplyError:
+    """Report an unexpected apply failure once; return the error to raise."""
+    capture_exception(
+        error,
+        context={
+            "component": "subscription_access",
+            "operation": "revenuecat_sync",
+            "source": source,
+            "user_id": user_id,
+            "error_type": type(error).__name__,
+            "result": "apply_failed",
+        },
+        fingerprint=alert_fingerprint(ALERT_SYNC_APPLY_ERROR, source),
+    )
+    logger.warning(
+        "RevenueCat snapshot could not be applied: user_id=%s source=%s error_type=%s",
+        user_id,
+        source,
+        type(error).__name__,
+    )
+    return SubscriptionAccessApplyError(
+        f"RevenueCat snapshot could not be applied ({type(error).__name__})"
+    )

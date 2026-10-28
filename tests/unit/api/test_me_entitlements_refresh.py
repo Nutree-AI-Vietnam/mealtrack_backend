@@ -17,6 +17,7 @@ from src.app.commands.subscription_access import RefreshMyEntitlementsCommand
 from src.app.queries.subscription_access import GetMyEntitlementsQuery
 from src.domain.model.subscription_access import SubscriptionAccessUnavailable
 from src.domain.ports.subscription_access_refresh_port import (
+    SubscriptionAccessApplyError,
     SubscriptionAccessRefresh,
 )
 from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
@@ -235,6 +236,38 @@ def test_unexpected_refresh_error_is_reported_then_unavailable(flag_on, monkeypa
     capture.assert_called_once()
     assert capture.call_args.args[0] is failure
     assert capture.call_args.kwargs["context"]["operation"] == "refresh"
+
+
+@pytest.mark.parametrize(
+    ("flag", "error_code"),
+    [("true", "ENTITLEMENTS_UNAVAILABLE"), ("false", "ENTITLEMENTS_DISABLED")],
+)
+def test_an_apply_failure_is_counted_but_not_reported_twice(
+    monkeypatch, caplog, flag, error_code
+):
+    """The refresher already sent it to Sentry under its fixed issue; an
+    ERROR log here would open a second one through the logging integration."""
+    import logging
+
+    monkeypatch.setenv("SUBSCRIPTION_ACCESS_ENABLED", flag)
+    capture = MagicMock()
+    metric = MagicMock()
+    monkeypatch.setattr(me_route, "capture_exception", capture)
+    monkeypatch.setattr(me_route, "increment_metric", metric)
+    failure = SubscriptionAccessApplyError("RevenueCat snapshot could not be applied")
+    bus = _EventBus(refresh=failure)
+
+    with caplog.at_level(logging.WARNING, logger="src.api.routes.v1.me"):
+        response = _refresh(_client(bus))
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == error_code
+    capture.assert_not_called()
+    metric.assert_called_once_with(
+        "subscription_access.entitlements_unavailable",
+        attributes={"operation": "refresh", "failure_kind": "unexpected"},
+    )
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
 
 
 def test_refresh_is_rate_limited_per_user(flag_on):

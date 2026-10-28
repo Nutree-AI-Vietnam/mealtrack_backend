@@ -1513,3 +1513,61 @@ async def test_database_error_in_the_sync_fails_the_delivery_for_a_retry(
         await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
 
     assert stored.provider_sync_required_at is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_delivery_pages_under_one_issue_per_exception_type(
+    monkeypatch,
+):
+    """The 500 is reported before it leaves the route, with a fingerprint an
+    issue alert matches (the framework's own report of the same exception
+    is deduplicated by Sentry), and counted with status=error."""
+    user = _user("user-u", "uid-u")
+    database = _Database([user], [_row(user)])
+    failure = OperationalError("UPDATE", {}, Exception("gone"))
+
+    with (
+        _revenuecat({"uid-u": _ok(_annual())}),
+        patch(
+            "src.api.routes.v1.webhook_access_sync.sync_revenuecat_access",
+            AsyncMock(side_effect=failure),
+        ),
+        patch.object(webhooks, "capture_exception") as reported,
+        patch.object(webhooks, "increment_metric") as metric,
+        pytest.raises(OperationalError) as raised,
+    ):
+        await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
+
+    assert raised.value is failure  # re-raised unchanged: RevenueCat retries
+    reported.assert_called_once()
+    assert reported.call_args.args[0] is failure
+    assert reported.call_args.kwargs["fingerprint"] == [
+        "subscription_access.webhook_processing_error",
+        "OperationalError",
+    ]
+    context = reported.call_args.kwargs["context"]
+    assert (context["event_type"], context["event_id"]) == ("RENEWAL", "evt-renewal")
+    metric.assert_called_once_with(
+        "webhook.revenuecat.processed",
+        attributes={
+            "event_type": "RENEWAL",
+            "status": "error",
+            "result": "exception",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_http_refusal_is_not_a_processing_error(monkeypatch):
+    """A 404 for an unknown user is RevenueCat's to retry, not a page."""
+    from fastapi import HTTPException
+
+    with (
+        _revenuecat({}),
+        patch.object(webhooks, "capture_exception") as reported,
+        pytest.raises(HTTPException) as raised,
+    ):
+        await _deliver(monkeypatch, _event("RENEWAL", "uid-nobody"), _Database([]))
+
+    assert raised.value.status_code == 404
+    reported.assert_not_called()

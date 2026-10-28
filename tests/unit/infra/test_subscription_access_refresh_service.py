@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.domain.ports.subscription_access_refresh_port import (
+    SubscriptionAccessApplyError,
+)
 from src.domain.ports.subscription_service_port import (
     RevenueCatSnapshot,
     RevenueCatSnapshotUnavailable,
@@ -169,8 +172,10 @@ async def test_user_deleted_between_read_and_write_is_not_applied(recorded):
 
 
 @pytest.mark.asyncio
-async def test_database_errors_propagate():
+async def test_database_errors_propagate(monkeypatch):
     log: list = []
+    captured = MagicMock()
+    monkeypatch.setattr(module, "capture_exception", captured)
 
     async def broken_sync(session, user, **kwargs):
         raise RuntimeError("connection reset")
@@ -179,3 +184,52 @@ async def test_database_errors_propagate():
 
     with pytest.raises(RuntimeError):
         await service.refresh("db-user-id")
+
+
+@pytest.mark.asyncio
+async def test_apply_failure_is_reported_once_under_its_fixed_issue(monkeypatch):
+    """Reported inside the bus, before anything logs the exception, so the
+    fingerprinted event is the one Sentry keeps; callers get an error that
+    says so and must not report it again."""
+    log: list = []
+    captured = MagicMock()
+    monkeypatch.setattr(module, "capture_exception", captured)
+    failure = RuntimeError("connection reset")
+
+    async def broken_sync(session, user, **kwargs):
+        raise failure
+
+    service, _, uows = _service(log, sync=broken_sync)
+
+    with pytest.raises(SubscriptionAccessApplyError) as raised:
+        await service.refresh("db-user-id")
+
+    assert raised.value.__cause__ is failure
+    assert uows[-1].exit_error is failure  # the unit of work rolled back
+    captured.assert_called_once()
+    assert captured.call_args.args[0] is failure
+    assert captured.call_args.kwargs["fingerprint"] == [
+        "subscription_access.sync_apply_error",
+        "refresh",
+    ]
+    context = captured.call_args.kwargs["context"]
+    assert (context["source"], context["user_id"]) == ("refresh", "db-user-id")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_identity_lookup_is_not_an_apply_failure(monkeypatch):
+    captured = MagicMock()
+    monkeypatch.setattr(module, "capture_exception", captured)
+
+    def broken_uow():
+        raise RuntimeError("pool exhausted")
+
+    service = RevenueCatAccessRefreshService(
+        lambda: SimpleNamespace(), uow_factory=broken_uow
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        await service.refresh("db-user-id")
+
+    assert not isinstance(raised.value, SubscriptionAccessApplyError)
+    captured.assert_not_called()

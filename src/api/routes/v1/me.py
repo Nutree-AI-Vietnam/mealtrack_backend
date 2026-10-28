@@ -33,6 +33,9 @@ from src.app.services.subscription_access_flags import (
 from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
 )
+from src.domain.ports.subscription_access_refresh_port import (
+    SubscriptionAccessApplyError,
+)
 from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 from src.observability import capture_exception, increment_metric
 
@@ -67,12 +70,29 @@ def entitlements_error(
     )
 
 
-def _report_unexpected(error: Exception, *, user_id: str, operation: str) -> None:
-    """Log and report an error that would otherwise hide inside a 503."""
+def _report_unexpected(
+    error: Exception, *, user_id: str, operation: str, reported: bool = False
+) -> None:
+    """Log and report an error that would otherwise hide inside a 503.
+
+    ``reported``: the error was already sent to Sentry where it happened
+    (a snapshot apply failure, under its fixed fingerprint). It is counted
+    and logged below ERROR, which Sentry's logging integration would turn
+    into a second issue.
+    """
     increment_metric(
         "subscription_access.entitlements_unavailable",
         attributes={"operation": operation, "failure_kind": "unexpected"},
     )
+    if reported:
+        logger.warning(
+            "Entitlements could not be decided: operation=%s user_id=%s "
+            "error_type=%s (reported where it happened)",
+            operation,
+            user_id,
+            type(error).__name__,
+        )
+        return
     capture_exception(
         error,
         context={
@@ -154,6 +174,11 @@ async def refresh_my_entitlements(
             ENTITLEMENTS_UNAVAILABLE,
             retry_after_seconds=getattr(error, "retry_after_seconds", None),
         ) from error
+    except SubscriptionAccessApplyError as error:
+        _report_unexpected(error, user_id=user_id, operation="refresh", reported=True)
+        if not database_subscription_access_enabled():
+            raise entitlements_error(ENTITLEMENTS_DISABLED) from error
+        raise entitlements_error(ENTITLEMENTS_UNAVAILABLE) from error
     except Exception as error:
         _report_unexpected(error, user_id=user_id, operation="refresh")
         if not database_subscription_access_enabled():

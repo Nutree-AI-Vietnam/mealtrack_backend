@@ -12,6 +12,16 @@ from dataclasses import dataclass
 REFRESH_NOT_APPLIED = "not_applied"
 
 
+class SubscriptionAccessApplyError(RuntimeError):
+    """A provider customer was read, but applying it failed unexpectedly.
+
+    The cause (a bug or a database failure) is chained as ``__cause__`` and
+    was already reported where it happened, with a fixed Sentry fingerprint;
+    callers answer the failure without reporting it again. Nothing was
+    written: the unit of work rolled back.
+    """
+
+
 @dataclass(frozen=True)
 class SubscriptionAccessRefresh:
     """What one refresh did to the user's access rows.
@@ -31,5 +41,6 @@ class SubscriptionAccessRefreshPort(ABC):
 
         Commits what it applied. Raises RevenueCatSnapshotUnavailable when
         the customer cannot be read (``retry_after_seconds`` is set when the
-        provider asked for a delay).
+        provider asked for a delay), and SubscriptionAccessApplyError when
+        applying it failed unexpectedly.
         """

@@ -791,6 +791,18 @@ async def test_unexpected_downgrade_and_missing_standard_are_reported():
     messages = [call.args[0] for call in captured.call_args_list]
     assert "RevenueCat customer has entitlements but no 'standard'" in messages
     assert "RevenueCat sync removed access on an unexpected event" in messages
+    # Fixed issues the runbook's alert rules match.
+    fingerprints = {
+        call.args[0]: call.kwargs["fingerprint"] for call in captured.call_args_list
+    }
+    assert fingerprints == {
+        "RevenueCat customer has entitlements but no 'standard'": [
+            "subscription_access.standard_missing"
+        ],
+        "RevenueCat sync removed access on an unexpected event": [
+            "subscription_access.unexpected_downgrade"
+        ],
+    }
     downgrade = next(
         call
         for call in metric.call_args_list
@@ -945,6 +957,52 @@ def test_snapshot_failures_are_logged_counted_and_reported(reason, capture, capl
         },
     )
     assert "user_id=user-1" in caplog.text and "event_id=evt-1" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["malformed", "http_4xx", "api_key_missing", "unsupported_store", "unexpected"],
+)
+@pytest.mark.parametrize("source", ["webhook", "refresh", "web_funnel"])
+def test_contract_failures_page_under_one_fixed_issue_per_kind(reason, source):
+    """Sentry groups exceptions by message and stack, which vary for the
+    same contract problem; the fingerprint keeps one issue per kind, the
+    one an issue alert matches, whichever path failed."""
+    error = RevenueCatSnapshotUnavailable(f"varying text for {reason}", reason=reason)
+
+    with (
+        patch(f"{SYNC}.capture_exception") as exception,
+        patch(f"{SYNC}.capture_message") as message,
+        patch(f"{SYNC}.increment_metric"),
+    ):
+        record_snapshot_unavailable(error, source=source, user_id="user-1")
+
+    message.assert_not_called()
+    exception.assert_called_once()
+    assert exception.call_args.args[0] is error
+    assert exception.call_args.kwargs["fingerprint"] == [
+        "subscription_access.snapshot_failure",
+        reason,
+    ]
+    context = exception.call_args.kwargs["context"]
+    assert (context["source"], context["failure_kind"]) == (source, reason)
+
+
+@pytest.mark.parametrize("reason", ["transport", "http_429", "http_5xx"])
+def test_transient_failures_never_reach_sentry(reason):
+    """An outage sends one failure per webhook: only the counter alerts."""
+    error = RevenueCatSnapshotUnavailable("RevenueCat is down", reason=reason)
+
+    with (
+        patch(f"{SYNC}.capture_exception") as exception,
+        patch(f"{SYNC}.capture_message") as message,
+        patch(f"{SYNC}.increment_metric") as metric,
+    ):
+        record_snapshot_unavailable(error, source="webhook", user_id="user-1")
+
+    exception.assert_not_called()
+    message.assert_not_called()
+    assert metric.call_args.kwargs["attributes"]["failure_kind"] == reason
 
 
 @pytest.mark.asyncio

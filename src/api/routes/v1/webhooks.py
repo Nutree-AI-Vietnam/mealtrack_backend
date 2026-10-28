@@ -58,7 +58,11 @@ from src.bootstrap.integration_services import (
 )
 from src.bootstrap.web_funnel_claim_dispatcher import get_web_funnel_outbox_dispatcher
 from src.infra.database.uow_async import AsyncUnitOfWork
-from src.observability import increment_metric
+from src.observability import capture_exception, increment_metric
+from src.subscription_access_alerts import (
+    ALERT_WEBHOOK_PROCESSING_ERROR,
+    alert_fingerprint,
+)
 
 router = APIRouter(prefix="/v1/webhooks", tags=["Webhooks"])
 logger = logging.getLogger(__name__)
@@ -149,11 +153,61 @@ async def revenuecat_webhook(
 
     # Extract event data
     event = payload.get("event", {})
+    if not event.get("type"):
+        raise HTTPException(status_code=400, detail="Missing event type")
+
+    try:
+        return await _process_event(event)
+    except HTTPException:
+        raise
+    except Exception as error:
+        _report_processing_error(error, event)
+        raise
+
+
+def _report_processing_error(error: Exception, event: dict) -> None:
+    """Report a delivery that fails with 500 under one fixed Sentry issue
+    per exception type (RevenueCat retries it a few times, then drops it).
+
+    Sent before the exception leaves the route, so this event, with its
+    fingerprint, is the one Sentry keeps: the framework's own report of the
+    same exception is deduplicated.
+    """
+    event_type = event.get("type")
+    increment_metric(
+        "webhook.revenuecat.processed",
+        attributes={
+            "event_type": event_type or "unknown",
+            "status": "error",
+            "result": "exception",
+        },
+    )
+    capture_exception(
+        error,
+        context={
+            "component": "subscription_access",
+            "operation": "revenuecat_webhook",
+            "event_type": event_type,
+            "event_id": event.get("id"),
+            "error_type": type(error).__name__,
+        },
+        fingerprint=alert_fingerprint(
+            ALERT_WEBHOOK_PROCESSING_ERROR, type(error).__name__
+        ),
+    )
+    logger.warning(
+        "RevenueCat webhook failed; RevenueCat will retry: event_type=%s "
+        "event_id=%s error_type=%s",
+        event_type,
+        event.get("id"),
+        type(error).__name__,
+    )
+
+
+async def _process_event(event: dict) -> dict:
+    """Apply one authenticated RevenueCat event (its type is set)."""
     event_type = event.get("type")
     app_user_id = event.get("app_user_id")
-
-    if not event_type:
-        raise HTTPException(status_code=400, detail="Missing event type")
 
     async with AsyncUnitOfWork() as redemption_uow:
         if await record_web_funnel_redemption(redemption_uow, event):

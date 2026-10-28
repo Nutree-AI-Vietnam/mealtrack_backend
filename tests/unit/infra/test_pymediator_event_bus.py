@@ -224,6 +224,20 @@ class _UnreadableCustomerHandler(EventHandler[_UnreadableCustomerQuery, None]):
         raise RevenueCatSnapshotUnavailable("RevenueCat timed out", reason="transport")
 
 
+@dataclass
+class _FailedApplyCommand(Query):
+    user_id: str
+
+
+class _FailedApplyHandler(EventHandler[_FailedApplyCommand, None]):
+    async def handle(self, event: _FailedApplyCommand) -> None:
+        from src.domain.ports.subscription_access_refresh_port import (
+            SubscriptionAccessApplyError,
+        )
+
+        raise SubscriptionAccessApplyError("RevenueCat snapshot could not be applied")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("query", "handler", "error_name"),
@@ -237,6 +251,12 @@ class _UnreadableCustomerHandler(EventHandler[_UnreadableCustomerQuery, None]):
             _UnreadableCustomerQuery("u1"),
             _UnreadableCustomerHandler(),
             "RevenueCatSnapshotUnavailable",
+        ),
+        # Already sent to Sentry under its fixed issue where it happened.
+        (
+            _FailedApplyCommand("u1"),
+            _FailedApplyHandler(),
+            "SubscriptionAccessApplyError",
         ),
     ],
 )

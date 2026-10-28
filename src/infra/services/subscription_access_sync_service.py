@@ -33,6 +33,12 @@ from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
 from src.infra.repositories.subscription_repository_async import product_match_rank
 from src.observability import capture_exception, capture_message, increment_metric
+from src.subscription_access_alerts import (
+    ALERT_SNAPSHOT_FAILURE,
+    ALERT_STANDARD_MISSING,
+    ALERT_UNEXPECTED_DOWNGRADE,
+    alert_fingerprint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -786,7 +792,9 @@ def record_snapshot_unavailable(
     """Log and count a provider state that could not be verified.
 
     Also reported to Sentry, except a provider outage or rate limit
-    (SNAPSHOT_TRANSIENT_REASONS): the counter carries that alert.
+    (SNAPSHOT_TRANSIENT_REASONS): the counter carries that alert. A contract
+    or configuration failure (SNAPSHOT_ERROR_REASONS) goes to one fixed
+    issue per failure kind (ALERT_SNAPSHOT_FAILURE), which pages.
     """
     reason = getattr(error, "reason", SNAPSHOT_REASON_UNKNOWN)
     context = {
@@ -819,7 +827,11 @@ def record_snapshot_unavailable(
     )
     if reason in SNAPSHOT_ERROR_REASONS:
         # Contract or configuration bug: needs engineering attention now.
-        capture_exception(error, context=context)
+        capture_exception(
+            error,
+            context=context,
+            fingerprint=alert_fingerprint(ALERT_SNAPSHOT_FAILURE, reason),
+        )
     elif reason in SNAPSHOT_TRANSIENT_REASONS:
         # A RevenueCat outage would send one Sentry event per webhook; the
         # counter above carries the alert instead.
@@ -876,6 +888,7 @@ def _record_sync_outcome(
             "RevenueCat customer has entitlements but no 'standard'",
             level="warning",
             context=context,
+            fingerprint=alert_fingerprint(ALERT_STANDARD_MISSING),
         )
     if outcome.downgraded:
         increment_metric(
@@ -912,6 +925,7 @@ def _record_sync_outcome(
                 "RevenueCat sync removed access on an unexpected event",
                 level="warning",
                 context=context,
+                fingerprint=alert_fingerprint(ALERT_UNEXPECTED_DOWNGRADE),
             )
         return
     logger.info(
