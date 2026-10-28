@@ -13,7 +13,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final, Literal
 
 from src.api.exceptions import ConflictException, ResourceNotFoundException
 from src.app.services.subscription_access_flags import (
@@ -44,13 +44,17 @@ SUPPORT_RESYNC_SOURCE = "support_resync"
 # More matches than this for one query is reported as ambiguous.
 MAX_LOOKUP_MATCHES = 5
 
-DECISION_GRANTED = "granted"
-DECISION_DENIED = "denied"
-DECISION_UNRESOLVED = "unresolved"
+DecisionOutcome = Literal["granted", "denied", "unresolved"]
+DECISION_GRANTED: Final = "granted"
+DECISION_DENIED: Final = "denied"
+DECISION_UNRESOLVED: Final = "unresolved"
+# GET /v1/me/entitlements' status (SubscriptionAccess.status).
+AccessStatus = Literal["none", "trial", "active", "grace_period", "expired"]
 
-LIVE_OK = "ok"
-LIVE_UNAVAILABLE = "unavailable"
-LIVE_NOT_READ = "not_read"
+LiveReadStatus = Literal["ok", "unavailable", "not_read"]
+LIVE_OK: Final = "ok"
+LIVE_UNAVAILABLE: Final = "unavailable"
+LIVE_NOT_READ: Final = "not_read"
 
 # Why a user cannot be read from RevenueCat (resync refuses, live read skips).
 NOT_LIVE_INACTIVE = "user_inactive"
@@ -98,9 +102,9 @@ class AccessDecision:
     unverified_grant).
     """
 
-    outcome: str
+    outcome: DecisionOutcome
     has_access: bool | None = None
-    status: str | None = None
+    status: AccessStatus | None = None
     expires_at: datetime | None = None
     product_id: str | None = None
     will_renew: bool | None = None
@@ -158,7 +162,7 @@ def not_live_reason(user: SupportUserRecord) -> str | None:
 class LiveRead:
     """The outcome of support's read-only RevenueCat read."""
 
-    status: str  # ok | unavailable | not_read
+    status: LiveReadStatus
     reason: str | None = None
     retry_after_seconds: float | None = None
     peek: ProviderAccessPeek | None = None

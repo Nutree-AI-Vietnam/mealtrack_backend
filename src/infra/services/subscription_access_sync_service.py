@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -20,6 +20,7 @@ from src.domain.model.subscription_access import (
 from src.domain.ports.subscription_access_refresh_port import (
     ProviderAccessPeek,
     ProviderEntitlement,
+    SyncResult,
 )
 from src.domain.ports.subscription_service_port import (
     SNAPSHOT_ERROR_REASONS,
@@ -232,7 +233,7 @@ ACCESS_UNRESOLVED = "unresolved"
 class SubscriptionSyncOutcome:
     """What one snapshot did to a user's RevenueCat access rows."""
 
-    result: str  # applied | unchanged | stale_skipped | absent
+    result: SyncResult
     access_before: str
     access_after: str
     rows_revoked: int = 0
@@ -489,7 +490,7 @@ def _same_snapshot_consistent(
 class _SyncPlan:
     """What a snapshot will do, decided before any row changes."""
 
-    result: str  # apply | absent | stale_skipped | unchanged
+    result: Literal["apply", "absent", "stale_skipped", "unchanged"]
     snapshot_at: datetime = datetime.min.replace(tzinfo=UTC)
     facts: dict | None = None
     standard_missing: bool = False
@@ -654,7 +655,7 @@ async def sync_revenuecat_access(
         _put_back(legacy_writes)
         raise
 
-    if plan.result in {"stale_skipped", "unchanged"}:
+    if plan.result in ("stale_skipped", "unchanged"):
         outcome = SubscriptionSyncOutcome(
             plan.result, access_before, _access_label(existing)
         )

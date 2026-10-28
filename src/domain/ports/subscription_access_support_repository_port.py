@@ -11,6 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Final, Literal
 
 from src.domain.model.subscription_access import (
     UNRESOLVED_REFUND_PENDING,
@@ -19,9 +20,10 @@ from src.domain.model.subscription_access import (
 )
 
 # The provider markers a row can carry, as the queue names them.
-MARKER_SYNC_REQUIRED = UNRESOLVED_SYNC_REQUIRED
-MARKER_REFUND_PENDING = UNRESOLVED_REFUND_PENDING
-MARKER_TRANSFER_SOURCE = UNRESOLVED_TRANSFER_SOURCE
+AccessMarkerType = Literal["sync_required", "refund_pending", "transfer_source"]
+MARKER_SYNC_REQUIRED: Final = UNRESOLVED_SYNC_REQUIRED
+MARKER_REFUND_PENDING: Final = UNRESOLVED_REFUND_PENDING
+MARKER_TRANSFER_SOURCE: Final = UNRESOLVED_TRANSFER_SOURCE
 
 
 @dataclass(frozen=True)
@@ -88,9 +90,9 @@ class UnresolvedAccessUser:
     def cursor(self) -> UnresolvedQueueCursor:
         return UnresolvedQueueCursor(self.oldest_marker_at, self.user_id)
 
-    def markers(self) -> list[tuple[str, datetime]]:
+    def markers(self) -> list[tuple[AccessMarkerType, datetime]]:
         """(marker type, oldest time) for each marker the user's rows carry."""
-        found = (
+        found: tuple[tuple[AccessMarkerType, datetime | None], ...] = (
             (MARKER_SYNC_REQUIRED, self.sync_required_at),
             (MARKER_REFUND_PENDING, self.refund_pending_at),
             (MARKER_TRANSFER_SOURCE, self.transfer_source_at),

@@ -227,9 +227,9 @@ async def lookup_user_access(
 
 def _decision(decision: AccessDecision) -> SupportAccessDecisionResponse:
     return SupportAccessDecisionResponse(
-        outcome=decision.outcome,  # type: ignore[arg-type]
+        outcome=decision.outcome,
         has_access=decision.has_access,
-        status=decision.status,  # type: ignore[arg-type]
+        status=decision.status,
         expires_at=decision.expires_at,
         product_id=decision.product_id,
         will_renew=decision.will_renew,
@@ -242,13 +242,13 @@ def _live(read: LiveRead) -> SupportLiveReadResponse:
     peek = read.peek
     if peek is None:
         return SupportLiveReadResponse(
-            status=read.status,  # type: ignore[arg-type]
+            status=read.status,
             reason=read.reason,
             retry_after_seconds=read.retry_after_seconds,
         )
     standard = peek.standard
     return SupportLiveReadResponse(
-        status=read.status,  # type: ignore[arg-type]
+        status=read.status,
         read_at=peek.read_at,
         absent=peek.absent,
         entitlements=list(peek.entitlements),
@@ -256,7 +256,7 @@ def _live(read: LiveRead) -> SupportLiveReadResponse:
         standard=(
             SupportLiveEntitlementResponse(
                 has_access=standard.has_access,
-                status=standard.status,  # type: ignore[arg-type]
+                status=standard.status,
                 product_id=standard.product_id,
                 platform=standard.platform,
                 purchased_at=standard.purchased_at,
@@ -355,7 +355,7 @@ async def resync_user_access(
     return SupportResyncResponse(
         user_id=outcome.user_id,
         sync=SupportSyncResultResponse(
-            result=sync.result,  # type: ignore[arg-type]
+            result=sync.result,
             reason=sync.reason,
             rows_revoked=sync.rows_revoked,
             row_created=sync.row_created,
@@ -412,7 +412,7 @@ async def list_unresolved_access(
                 oldest_marker_age_seconds=_age(page.checked_at, user.oldest_marker_at),
                 markers=[
                     UnresolvedMarkerResponse(
-                        type=kind,  # type: ignore[arg-type]
+                        type=kind,
                         marked_at=marked_at,
                         age_seconds=_age(page.checked_at, marked_at),
                     )

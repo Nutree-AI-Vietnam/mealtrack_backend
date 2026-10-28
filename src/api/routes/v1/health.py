@@ -153,9 +153,9 @@ async def database_pool_status(_monitor=Depends(require_monitoring_access)):
     },
 )
 async def subscription_access_health(
-    _monitor=Depends(require_monitoring_access),
-    event_bus=Depends(get_configured_event_bus),
-):
+    _monitor: None = Depends(require_monitoring_access),
+    event_bus: Any = Depends(get_configured_event_bus),
+) -> JSONResponse:
     """Provider markers on RevenueCat rows against the alert thresholds.
 
     The uptime monitor polls this with X-Monitoring-Token and alerts on any
@@ -181,7 +181,7 @@ async def subscription_access_health(
         )
     counts = report.counts
     body = SubscriptionAccessHealthResponse(
-        status=report.status,  # type: ignore[arg-type]
+        status=report.status,
         checked_at=report.checked_at,
         counts=SubscriptionAccessMarkerCountsResponse(
             sync_required_users=counts.sync_required_users,
@@ -199,7 +199,7 @@ async def subscription_access_health(
         ),
         reasons=[
             SubscriptionAccessHealthReasonResponse(
-                code=reason.code,  # type: ignore[arg-type]
+                code=reason.code,
                 message=reason.message,
             )
             for reason in report.reasons

@@ -25,6 +25,7 @@ import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Final, Literal
 
 from src.domain.ports.subscription_access_support_repository_port import (
     AccessMarkerHealth,
@@ -32,12 +33,16 @@ from src.domain.ports.subscription_access_support_repository_port import (
 
 logger = logging.getLogger(__name__)
 
-HEALTH_OK = "ok"
-HEALTH_DEGRADED = "degraded"
+HealthStatus = Literal["ok", "degraded"]
+HEALTH_OK: Final = "ok"
+HEALTH_DEGRADED: Final = "degraded"
 
-REASON_SYNC_REQUIRED_BACKLOG = "sync_required_backlog"
-REASON_REFUND_PENDING_STALE = "refund_pending_stale"
-REASON_OLDEST_MARKER_STALE = "oldest_marker_stale"
+HealthReasonCode = Literal[
+    "sync_required_backlog", "refund_pending_stale", "oldest_marker_stale"
+]
+REASON_SYNC_REQUIRED_BACKLOG: Final = "sync_required_backlog"
+REASON_REFUND_PENDING_STALE: Final = "refund_pending_stale"
+REASON_OLDEST_MARKER_STALE: Final = "oldest_marker_stale"
 
 ENV_SYNC_REQUIRED_MINUTES = "SUBSCRIPTION_ACCESS_ALERT_SYNC_REQUIRED_MINUTES"
 ENV_SYNC_REQUIRED_USERS = "SUBSCRIPTION_ACCESS_ALERT_SYNC_REQUIRED_USERS"
@@ -111,13 +116,13 @@ def marker_cutoffs(
 
 @dataclass(frozen=True)
 class HealthReason:
-    code: str
+    code: HealthReasonCode
     message: str
 
 
 @dataclass(frozen=True)
 class SubscriptionAccessHealthReport:
-    status: str  # ok | degraded
+    status: HealthStatus
     checked_at: datetime
     counts: AccessMarkerHealth
     oldest_marker_age_seconds: int | None

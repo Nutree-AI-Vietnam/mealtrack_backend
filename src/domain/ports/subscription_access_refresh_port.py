@@ -7,10 +7,18 @@ failed webhook leaves stale rows until something reads the provider again.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Final, Literal
+
+# What applying one provider snapshot did to the user's access rows.
+SyncResult = Literal["applied", "unchanged", "stale_skipped", "absent"]
+# A refresh's result: a sync result, or REFRESH_NOT_APPLIED.
+RefreshResult = SyncResult | Literal["not_applied"]
+# The status a provider entitlement would be stored with.
+ProviderEntitlementStatus = Literal["active", "cancelled", "billing_issue", "expired"]
 
 # The provider customer was read but could not be applied safely; the rows
 # were left exactly as they were (see ``reason``).
-REFRESH_NOT_APPLIED = "not_applied"
+REFRESH_NOT_APPLIED: Final = "not_applied"
 # ``source`` of the signed-in user's own refresh (POST /v1/me/entitlements/refresh).
 REFRESH_SOURCE = "refresh"
 
@@ -36,7 +44,7 @@ class SubscriptionAccessRefresh:
     entitlements but none named 'standard'.
     """
 
-    result: str
+    result: RefreshResult
     reason: str | None = None
     rows_revoked: int = 0
     row_created: bool = False
@@ -54,7 +62,7 @@ class ProviderEntitlement:
     """
 
     has_access: bool
-    status: str
+    status: ProviderEntitlementStatus
     product_id: str
     platform: str
     purchased_at: datetime

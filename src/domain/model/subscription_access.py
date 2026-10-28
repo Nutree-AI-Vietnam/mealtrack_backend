@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 
 class SubscriptionFacts(Protocol):
@@ -102,10 +102,10 @@ def could_still_grant(record: Any, now: datetime | None = None) -> bool:
 
 # Why stored rows leave the policy unable to decide (support and monitoring
 # vocabulary). The first three are also the provider markers on a row.
-UNRESOLVED_SYNC_REQUIRED = "sync_required"
-UNRESOLVED_REFUND_PENDING = "refund_pending"
-UNRESOLVED_TRANSFER_SOURCE = "transfer_source"
-UNRESOLVED_UNVERIFIED_GRANT = "unverified_grant"
+UNRESOLVED_SYNC_REQUIRED: Final = "sync_required"
+UNRESOLVED_REFUND_PENDING: Final = "refund_pending"
+UNRESOLVED_TRANSFER_SOURCE: Final = "transfer_source"
+UNRESOLVED_UNVERIFIED_GRANT: Final = "unverified_grant"
 _UNRESOLVED_REASON_ORDER = (
     UNRESOLVED_SYNC_REQUIRED,
     UNRESOLVED_REFUND_PENDING,
