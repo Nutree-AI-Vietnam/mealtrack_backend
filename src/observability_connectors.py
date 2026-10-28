@@ -51,6 +51,10 @@ SAFE_CONTEXT_KEYS = frozenset(
         # ``turn_id`` stays in context only; it is too high-cardinality for a tag.
         "check",
         "turn_id",
+        # Subscription access alert rules filter on these
+        # (docs/runbooks/subscription-access-reconciliation.md, "Monitoring").
+        "expected",  # subscription_access.downgrade: "true" | "false"
+        "revenuecat",  # subscription_access.enforcement_denied: EntitlementCheck
     }
 )
 
@@ -81,6 +85,8 @@ SAFE_TAG_KEYS = frozenset(
         "fallback_from",
         "fallback_to",
         "check",
+        "expected",
+        "revenuecat",
     }
 )
 
