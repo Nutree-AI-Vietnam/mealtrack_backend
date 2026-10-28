@@ -33,7 +33,7 @@ from src.domain.services.weekly_meal_planner.meal_log_snapshot import (
     build_logged_meal_snapshot,
     select_logged_nutrition,
 )
-from src.domain.utils.timezone_utils import noon_utc_for_date
+from src.domain.utils.timezone_utils import log_moment, utc_now
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
     allow_unverified=True,
@@ -106,7 +106,7 @@ class RecommendedMealMaterializationService:
             _ingredient_micro_portions(catalog_meal, projections)
         )
         recipe_micros = scale_micros(recipe_micros, portion_multiplier)
-        meal_time = noon_utc_for_date(meal_date, timezone)
+        meal_time = log_moment(meal_date, timezone, utc_now())
         verified_nutrition = {
             "calories": int(round(catalog_meal.calories * portion_multiplier)),
             "protein_g": float(catalog_meal.protein_g) * portion_multiplier,

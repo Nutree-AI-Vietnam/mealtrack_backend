@@ -84,11 +84,14 @@ async def get_streak(
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """
-    Get the user's current and best logging streak.
+    Get the user's current and best logging streak, with its restore state.
 
-    - current_streak: consecutive days logged up to today (streak not broken until end of day)
-    - best_streak: longest consecutive run ever
-    - last_logged_date: most recent date with a meal (YYYY-MM-DD), null if never logged
+    - current_streak: logged days in the run up to today (not broken until the
+      day ends); restored days bridge the run but do not count
+    - best_streak: the longest such run ever
+    - last_logged_date: most recent logged day (YYYY-MM-DD), null if never
+    - restore: restores held, the missed days still restorable (empty when
+      none) and the restored days of the last two weeks
     """
     header_tz = request.headers.get("X-Timezone")
     query = GetStreakQuery(user_id=user_id, header_timezone=header_tz)

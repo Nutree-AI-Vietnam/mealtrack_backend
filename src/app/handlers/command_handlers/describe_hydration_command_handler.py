@@ -46,7 +46,7 @@ from src.domain.services.prompts.system_prompts import SystemPrompts
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
     get_zone_info,
-    noon_utc_for_date,
+    log_moment,
     resolve_user_timezone_async,
     utc_now,
 )
@@ -143,7 +143,7 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
                 "Hydration date cannot be more than one day in the future",
                 "INVALID_DATE",
             )
-        return cmd.target_date, noon_utc_for_date(cmd.target_date, user_tz)
+        return cmd.target_date, log_moment(cmd.target_date, user_tz, now)
 
     async def _save(
         self,

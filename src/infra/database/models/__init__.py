@@ -74,6 +74,7 @@ from .saved_suggestion import SavedSuggestionModel
 from .saved_suggestion_item import SavedSuggestionItemModel
 from .saved_suggestion_step import SavedSuggestionStepModel
 from .serving_phrase_translation import ServingPhraseTranslationModel
+from .streak_restore import StreakRestoreLedgerORM
 from .subscription import Subscription
 from .user.body_fat_visual_profile import BodyFatVisualProfile
 from .user.profile import UserProfile
@@ -228,6 +229,8 @@ __all__ = [
     "DurableWriteRecordORM",
     # Movement tracking
     "MovementEntryORM",
+    # Streak restores
+    "StreakRestoreLedgerORM",
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",
     "WeeklyPlanLateLegacySlotRepairORM",

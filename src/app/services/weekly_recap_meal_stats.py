@@ -12,7 +12,7 @@ import statistics
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 
 from src.domain.constants.meal_constants import MealDefaults
 from src.domain.model.meal import Meal, MealStatus
@@ -21,13 +21,12 @@ from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.services.meal_type_determination_service import (
     determine_meal_type_from_timestamp,
 )
-from src.domain.utils.timezone_utils import ensure_utc
+from src.domain.utils.timezone_utils import ensure_utc, is_backdated_local
 
 MEAL_ORDER = ("breakfast", "lunch", "dinner", "snack")
 MAIN_MEALS = MEAL_ORDER[:3]
 PHOTO_SOURCES = frozenset({"scanner", "food_label"})
 _HYDRATION = "hydration"
-_BACKDATED_AT = time(12, 0)
 _NIGHT_ENDS_HOUR = 4
 _PLACEHOLDER_NAMES = frozenset(
     {"unknown dish", MealDefaults.UNNAMED_FOOD_NAME.casefold()}
@@ -58,7 +57,7 @@ class FoodMeal:
     @property
     def backdated(self) -> bool:
         """Logged for a past day, so stamped at noon rather than eaten then."""
-        return self.logged_at.time() == _BACKDATED_AT
+        return is_backdated_local(self.logged_at)
 
 
 def food_meals(meals: Iterable[Meal], week_start: date, tz: tzinfo) -> list[FoodMeal]:

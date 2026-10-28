@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -7,10 +7,17 @@ from src.app.commands.hydration.log_hydration_command import LogHydrationCommand
 from src.app.handlers.command_handlers.log_hydration_command_handler import (
     LogHydrationCommandHandler,
 )
+from src.domain.utils.timezone_utils import ensure_utc, utc_now
+
+USER_ID = "22222222-2222-2222-2222-222222222222"
 
 
 class _Meals:
+    def __init__(self) -> None:
+        self.saved = None
+
     async def save(self, meal):
+        self.saved = meal
         return meal
 
 
@@ -50,3 +57,36 @@ async def test_hydration_write_publishes_generic_event_after_uow() -> None:
     assert event_payload["event_id"]
     assert event_payload["aggregate_id"].startswith("hydr_")
     assert "data" not in event_payload
+
+
+@pytest.mark.asyncio
+async def test_a_drink_logged_for_today_keeps_its_real_time() -> None:
+    uow = _Uow()
+    before = utc_now()
+    await LogHydrationCommandHandler(uow, event_publisher=AsyncMock()).handle(
+        LogHydrationCommand(
+            user_id=USER_ID,
+            drink_id="water",
+            volume_ml=250,
+            target_date=before.date(),
+        )
+    )
+
+    assert before <= ensure_utc(uow.meals.saved.created_at) <= utc_now()
+
+
+@pytest.mark.asyncio
+async def test_a_drink_logged_for_a_past_day_is_stamped_at_local_noon() -> None:
+    uow = _Uow()
+    await LogHydrationCommandHandler(uow, event_publisher=AsyncMock()).handle(
+        LogHydrationCommand(
+            user_id=USER_ID,
+            drink_id="water",
+            volume_ml=250,
+            target_date=date(2026, 8, 23),
+        )
+    )
+
+    assert ensure_utc(uow.meals.saved.created_at) == datetime(
+        2026, 8, 23, 12, tzinfo=UTC
+    )

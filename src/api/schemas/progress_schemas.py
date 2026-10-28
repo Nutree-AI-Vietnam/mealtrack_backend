@@ -7,6 +7,17 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
+class StreakRestoreState(BaseModel):
+    """Restores the user holds and the missed days they can still restore."""
+
+    balance: int  # paid restores; the app shows balance + 1 while free_available
+    free_available: bool
+    missed_dates: list[str] = []  # YYYY-MM-DD; empty means nothing to restore
+    restorable_until: str | None = None  # YYYY-MM-DD, last day of the offer
+    broken_streak: int = 0  # logged days of the run the missed days broke
+    restored_dates: list[str] = []  # restored days of the last 14, YYYY-MM-DD
+
+
 class StreakResponse(BaseModel):
     """Response for GET /v1/meals/streak."""
 
@@ -14,6 +25,7 @@ class StreakResponse(BaseModel):
     best_streak: int
     last_logged_date: str | None = None  # YYYY-MM-DD, None if never logged
     scan_count: int = 0  # total meals created via scanner
+    restore: StreakRestoreState | None = None
 
 
 class DailyBreakdownEntry(BaseModel):

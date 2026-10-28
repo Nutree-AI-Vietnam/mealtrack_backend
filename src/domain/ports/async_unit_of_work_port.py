@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     from src.domain.ports.saved_suggestion_repository_port import (
         SavedSuggestionRepositoryPort,
     )
+    from src.domain.ports.streak_restore_repository_port import (
+        StreakRestoreRepositoryPort,
+    )
     from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
     from src.domain.ports.user_repository_port import UserRepositoryPort
     from src.domain.ports.weekly_recap_repository_port import (
@@ -65,6 +68,7 @@ class AsyncUnitOfWorkPort(ABC):
     weekly_recaps: WeeklyRecapRepositoryPort
     ai_jobs: AiJobRepositoryPort
     push_tokens: PushTokenRepositoryPort
+    streak_restores: StreakRestoreRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:
