@@ -16,6 +16,8 @@ from src.infra.monitoring.connectors import (
 )
 from src.infra.monitoring.sentry import (
     SentryObservabilityConnector,
+    _before_send,
+    _before_send_transaction,
     _drop_expected_events,
 )
 
@@ -117,6 +119,98 @@ def test_before_send_keeps_other_events():
     assert _drop_expected_events(event, _hint(_ProviderError("rate_limit"))) is event
     assert _drop_expected_events(event, _hint(RuntimeError("boom"))) is event
     assert _drop_expected_events(event, {}) is event
+
+
+LOOKUP_URL = "http://api.test/v1/admin/subscription-access/users/lookup"
+
+
+def _request_event(url: str, transaction: str | None = None, **extra) -> dict:
+    event = {
+        "level": "error",
+        "request": {
+            "url": url,
+            "method": "POST",
+            "data": {"query": "customer@example.com", "live": True},
+        },
+        **extra,
+    }
+    if transaction is not None:
+        event["transaction"] = transaction
+    return event
+
+
+def _frames(query: str) -> list[dict]:
+    return [
+        {"function": "send", "vars": {"event": f"Query(query={query!r})"}},
+        {"function": "find_users", "vars": {"query": repr(query)}},
+    ]
+
+
+def test_before_send_filters_the_support_lookup_body_and_frame_variables():
+    """The lookup's body is the customer's email or uid; the SDK attaches
+    JSON bodies to every event of the request, and local variables (which
+    hold the same value) to every stack frame."""
+    event = _request_event(
+        LOOKUP_URL,
+        exception={
+            "values": [{"stacktrace": {"frames": _frames("customer@example.com")}}]
+        },
+        threads={
+            "values": [{"stacktrace": {"frames": _frames("customer@example.com")}}]
+        },
+        stacktrace={"frames": _frames("customer@example.com")},
+    )
+
+    event = _before_send(event, _hint(RuntimeError("boom")))
+
+    assert event is not None
+    assert event["request"]["data"] == "[Filtered]"
+    assert "customer@example.com" not in repr(event)
+    frames = event["exception"]["values"][0]["stacktrace"]["frames"]
+    assert [frame["function"] for frame in frames] == ["send", "find_users"]
+
+
+def test_before_send_transaction_filters_the_support_lookup_body():
+    transaction = _request_event(
+        LOOKUP_URL + "/",
+        transaction="/v1/admin/subscription-access/users/lookup",
+        type="transaction",
+    )
+
+    event = _before_send_transaction(transaction, {})
+
+    assert event["request"]["data"] == "[Filtered]"
+
+
+def test_before_send_finds_the_lookup_by_transaction_without_a_url():
+    event = _request_event(
+        LOOKUP_URL, transaction="/v1/admin/subscription-access/users/lookup"
+    )
+    del event["request"]["url"]
+
+    assert _before_send(event, {})["request"]["data"] == "[Filtered]"
+
+
+def test_before_send_keeps_other_request_bodies_and_frame_variables():
+    """Only the routes that name a customer in their body are filtered."""
+    url = "http://api.test/v1/webhooks/revenuecat"
+    other = _request_event(
+        url,
+        transaction="/v1/webhooks/revenuecat",
+        exception={"values": [{"stacktrace": {"frames": _frames("evt-1")}}]},
+    )
+
+    kept = _before_send(other, {})
+
+    assert kept["request"]["data"] == {"query": "customer@example.com", "live": True}
+    assert kept["exception"]["values"][0]["stacktrace"]["frames"] == _frames("evt-1")
+    assert _before_send_transaction(_request_event(url), {})["request"]["data"]
+
+
+def test_before_send_still_drops_expected_events_on_the_lookup():
+    rejected = _request_event(LOOKUP_URL)
+
+    assert _before_send(rejected, _hint(AIContentRejectedError("x"))) is None
 
 
 def test_filter_safe_context_drops_sensitive_and_complex_values():
@@ -324,7 +418,8 @@ def test_initialize_release_uses_git_sha_when_sentry_release_unset(monkeypatch):
     init_kwargs = mock_sdk.init.call_args.kwargs
     assert init_kwargs["release"] == "abc123def456"
     assert init_kwargs["environment"] == "production"
-    assert init_kwargs["before_send"] is _drop_expected_events
+    assert init_kwargs["before_send"] is _before_send
+    assert init_kwargs["before_send_transaction"] is _before_send_transaction
 
     connector.set_request_context(
         request_id="abc12345",
@@ -387,7 +482,8 @@ def test_initialize_configures_integrations_and_release(monkeypatch):
     assert init_kwargs["enable_metrics"] is True
     assert init_kwargs["profile_session_sample_rate"] == 0.02
     assert init_kwargs["profile_lifecycle"] == "trace"
-    assert init_kwargs["before_send"] is _drop_expected_events
+    assert init_kwargs["before_send"] is _before_send
+    assert init_kwargs["before_send_transaction"] is _before_send_transaction
     assert len(init_kwargs["integrations"]) == 4
     starlette, fastapi, *_ = init_kwargs["integrations"]
     assert starlette.failed_request_status_codes == {500, 501, 502, 504}

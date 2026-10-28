@@ -8,6 +8,7 @@ import os
 from collections.abc import Sequence
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 try:
     import sentry_sdk
@@ -35,6 +36,15 @@ logger = logging.getLogger(__name__)
 # variable must still send when a DSN is set, so a missing env var cannot
 # silence production (settings defaults ENVIRONMENT to "development").
 _SENTRY_NON_REPORTING_ENVIRONMENTS = frozenset({"development", "local"})
+
+# Routes whose JSON body names a customer (an email or a Firebase uid). The
+# SDK attaches a request's JSON body to every event the request produces,
+# errors and transactions alike (max_request_body_size keeps its default),
+# and an exception's stack frames carry their local variables, which hold
+# the same value. For these paths both are removed before anything is sent.
+# Paths as the app serves them, without a trailing slash.
+_PRIVATE_REQUEST_PATHS = frozenset({"/v1/admin/subscription-access/users/lookup"})
+_FILTERED = "[Filtered]"
 
 SentryMessageLevel = Literal["fatal", "critical", "error", "warning", "info", "debug"]
 SentryLogLevel = Literal["fatal", "error", "warning", "info", "debug", "trace"]
@@ -95,7 +105,8 @@ class SentryObservabilityConnector:
             "send_default_pii": settings.SENTRY_SEND_PII,
             "enable_logs": settings.SENTRY_ENABLE_LOGS,
             "enable_metrics": settings.SENTRY_ENABLE_METRICS,
-            "before_send": _drop_expected_events,
+            "before_send": _before_send,
+            "before_send_transaction": _before_send_transaction,
             "integrations": [
                 StarletteIntegration(
                     failed_request_status_codes={500, 501, 502, 504},
@@ -291,6 +302,62 @@ def _event_grouping(fingerprint: Sequence[str] | None) -> dict[str, Any]:
 def initialize_sentry() -> None:
     """Backward-compatible Sentry initialization wrapper."""
     SentryObservabilityConnector().initialize()
+
+
+def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
+    """Drop expected events; scrub private requests from the rest."""
+    kept = _drop_expected_events(event, hint)
+    if kept is None:
+        return None
+    return _scrub_private_request(kept)
+
+
+def _before_send_transaction(
+    event: dict[str, Any], hint: dict[str, Any]
+) -> dict[str, Any]:
+    """Transactions carry the request body too."""
+    return _scrub_private_request(event)
+
+
+def _scrub_private_request(event: dict[str, Any]) -> dict[str, Any]:
+    """For a route in _PRIVATE_REQUEST_PATHS, replace the request body and
+    drop every stack frame's local variables.
+
+    The path comes from the request URL (no query string) or the transaction
+    name, which FastAPI's integration sets to the route path.
+    """
+    request = event.get("request")
+    paths = {event.get("transaction")}
+    if isinstance(request, dict) and isinstance(request.get("url"), str):
+        paths.add(urlsplit(request["url"]).path)
+    if not any(
+        isinstance(path, str) and path.rstrip("/") in _PRIVATE_REQUEST_PATHS
+        for path in paths
+    ):
+        return event
+    if isinstance(request, dict) and "data" in request:
+        request["data"] = _FILTERED
+    for frame in _stack_frames(event):
+        frame.pop("vars", None)
+    return event
+
+
+def _stack_frames(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every frame of the event's exceptions, threads and own stack trace."""
+    stacktraces = [event.get("stacktrace")]
+    for key in ("exception", "threads"):
+        container = event.get(key)
+        values = container.get("values") if isinstance(container, dict) else None
+        for value in values or ():
+            if isinstance(value, dict):
+                stacktraces.append(value.get("stacktrace"))
+    return [
+        frame
+        for stacktrace in stacktraces
+        if isinstance(stacktrace, dict)
+        for frame in stacktrace.get("frames") or ()
+        if isinstance(frame, dict)
+    ]
 
 
 def _drop_expected_events(
