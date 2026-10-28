@@ -359,13 +359,33 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     workflow = upload_handler.meal_analyze_workflow
     assert workflow is scan_handler.meal_analyze_workflow
 
-    # The entitlements refresh is wired to the RevenueCat refresher, which
-    # resolves the RevenueCat adapter when it runs, not at bus build time.
     from src.app.handlers.command_handlers import RefreshMyEntitlementsCommandHandler
+    from src.app.handlers.query_handlers.check_subscription_access_query_handler import (
+        CheckSubscriptionAccessQueryHandler,
+    )
+    from src.app.handlers.query_handlers.get_my_entitlements_query_handler import (
+        GetMyEntitlementsQueryHandler,
+    )
+    from src.app.queries.subscription_access import (
+        CheckSubscriptionAccessQuery,
+        GetMyEntitlementsQuery,
+    )
+    from src.infra.database.uow_async import AsyncUnitOfWork
     from src.infra.services.subscription_access_refresh_service import (
         RevenueCatAccessRefreshService,
     )
 
+    # GET /v1/me/entitlements and paid-route enforcement send these queries;
+    # their route tests stub the bus, so only this pins the real wiring.
+    entitlements_handler = bus.handlers[GetMyEntitlementsQuery]
+    assert isinstance(entitlements_handler, GetMyEntitlementsQueryHandler)
+    assert entitlements_handler.uow_factory is AsyncUnitOfWork
+    access_handler = bus.handlers[CheckSubscriptionAccessQuery]
+    assert isinstance(access_handler, CheckSubscriptionAccessQueryHandler)
+    assert access_handler.uow_factory is AsyncUnitOfWork
+
+    # The entitlements refresh is wired to the RevenueCat refresher, which
+    # resolves the RevenueCat adapter when it runs, not at bus build time.
     refresh_handler = bus.handlers[mod.RefreshMyEntitlementsCommand]
     assert isinstance(refresh_handler, RefreshMyEntitlementsCommandHandler)
     refresher = refresh_handler.access_refresher
