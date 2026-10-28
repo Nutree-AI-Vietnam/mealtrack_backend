@@ -172,10 +172,12 @@ failed left behind), a fallback no stricter than the policy decides and is
 logged: any `active`, `cancelled` or `billing_issue` row that is unexpired or
 in its grace period grants, whether or not a snapshot verified it;
 `expired` and `refunded` rows never do. Before a `402`, RevenueCat is asked
-with the Ghi nhanh Premium check's call (`check_entitlement` within 3 s,
-sharing its 60 s per-user access cache): a payer with no granting row (a
-purchase whose webhook is late or lost, a promotional grant) keeps the
-route, logged and counted as `subscription_access.enforcement_revenuecat_grant`
+with the Ghi nhanh Premium check's call (`check_entitlement`, sharing its 60 s
+per-user access cache), cut off after 3 s in total: httpx's own 3 s timeout
+applies to each phase of the request (connect, write, every read), so the
+call runs under a 3 s `asyncio.wait_for`, and one that runs out counts as
+RevenueCat not answering. A payer with no granting row (a purchase whose
+webhook is late or lost, a promotional grant) keeps the route, logged and counted as `subscription_access.enforcement_revenuecat_grant`
 when RevenueCat itself answered; a grant found in the shared access cache
 (which also holds the Premium check's own row grants) is counted as
 `subscription_access.enforcement_cached_grant` instead.
@@ -188,9 +190,9 @@ never rate limited there. RevenueCat is asked at most once per user per 60 s
 instead, whatever it answers: concurrent refusals in one worker share the
 call, and its answer is kept 60 s under
 `subscription_revenuecat_check:<user_id>` in Redis (in the worker's memory
-while Redis is unavailable). Later
-refusals in that window answer `402` without a call, and so does a request
-that finds another worker's call still in flight. A refresh
+while Redis is unavailable). Later refusals in that window answer `402`
+without a call, and so does a request that finds another worker's call
+still in flight. A refresh
 (`POST /v1/me/entitlements/refresh`), a webhook whose access sync succeeded
 and a web-funnel finalize clear the key, so a payer the database still
 refuses after one of them is checked again at once.

@@ -370,6 +370,24 @@ class TestRevenueCatRecheck:
         )
         access.revenuecat.check_entitlement.assert_awaited_once()
 
+    async def test_a_call_past_its_total_deadline_is_unavailable(
+        self, access, monkeypatch
+    ):
+        """httpx's 3 s timeout is per phase; the deadline bounds the whole
+        call, and its UNAVAILABLE is held like any other answer."""
+        monkeypatch.setattr(premium_check, "REVENUECAT_CHECK_DEADLINE_SECONDS", 0.05)
+
+        async def trickling_response(*_args, **_kwargs):
+            await asyncio.sleep(5)  # each read inside its own timeout
+            return EntitlementCheck.ENTITLED
+
+        access.revenuecat.check_entitlement = AsyncMock(side_effect=trickling_response)
+
+        answer = await asyncio.wait_for(premium_check.revenuecat_access(USER_ID), 1)
+
+        assert answer == _answer(EntitlementCheck.UNAVAILABLE, REVENUECAT)
+        assert access.cache.values == {RECHECK_KEY: "unavailable"}
+
     async def test_another_workers_call_in_flight_is_not_repeated(self, access):
         access.cache.values[RECHECK_KEY] = "in_flight"
 

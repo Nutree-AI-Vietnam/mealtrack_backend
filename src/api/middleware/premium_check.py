@@ -44,6 +44,10 @@ REVENUECAT_CHECK_TIMEOUT_SECONDS = 3.0
 # route's rate limiter, so this is what bounds the RevenueCat reads a refused
 # caller can cause.
 REVENUECAT_RECHECK_SECONDS = 60
+# The total bound on that check's RevenueCat call. httpx's timeout
+# (REVENUECAT_CHECK_TIMEOUT_SECONDS) applies to each phase of the request on
+# its own (connect, write, every read), so alone it allows several times 3 s.
+REVENUECAT_CHECK_DEADLINE_SECONDS = 3.0
 # Held under the recheck key while a worker is asking RevenueCat.
 _CHECK_IN_FLIGHT = "in_flight"
 # Bounds the per-process fallback kept while the shared cache is unavailable.
@@ -165,11 +169,11 @@ async def revenuecat_access(user_id: str) -> RevenueCatAccess:
 
     For paid-route enforcement, before a 402. A grant in the Premium check's
     60 s access cache answers without a call. Otherwise RevenueCat is asked
-    (``check_entitlement``) at most once per user per
-    REVENUECAT_RECHECK_SECONDS, whatever it answers: concurrent requests in
-    one process share the call, and the answer is kept under its own key
-    (``revenuecat_check_key``) in the shared cache, or in this process while
-    that cache is unavailable. A request that finds another worker's call in
+    (``check_entitlement``, cut off after REVENUECAT_CHECK_DEADLINE_SECONDS
+    in total) at most once per user per REVENUECAT_RECHECK_SECONDS, whatever
+    it answers: concurrent requests in one process share the call, and the
+    answer is kept under its own key (``revenuecat_check_key``) in the shared
+    cache, or in this process while that cache is unavailable. A request that finds another worker's call in
     flight gets UNAVAILABLE. A grant also goes to the access cache.
     UNAVAILABLE when RevenueCat cannot answer or is not configured. The
     answer says where it came from, so only RevenueCat's own grants are
@@ -218,13 +222,28 @@ async def _throttled_check(cache: CachePort | None, user_id: str) -> RevenueCatA
     if claim is None:
         # Another worker is asking RevenueCat for this user right now.
         return RevenueCatAccess(EntitlementCheck.UNAVAILABLE, ANSWER_RECENT_CHECK)
-    access = await _get_subscription_service().check_entitlement(
-        firebase_uid, timeout_seconds=REVENUECAT_CHECK_TIMEOUT_SECONDS
-    )
+    access = await _ask_revenuecat(firebase_uid)
     await _remember_check(cache if claim else None, user_id, access)
     if access is EntitlementCheck.ENTITLED:
         await _cache_access(cache, user_id)
     return RevenueCatAccess(access, ANSWER_REVENUECAT)
+
+
+async def _ask_revenuecat(firebase_uid: str) -> EntitlementCheck:
+    """check_entitlement, UNAVAILABLE once REVENUECAT_CHECK_DEADLINE_SECONDS pass."""
+    try:
+        return await asyncio.wait_for(
+            _get_subscription_service().check_entitlement(
+                firebase_uid, timeout_seconds=REVENUECAT_CHECK_TIMEOUT_SECONDS
+            ),
+            REVENUECAT_CHECK_DEADLINE_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "RevenueCat entitlement check passed its %.1f s deadline",
+            REVENUECAT_CHECK_DEADLINE_SECONDS,
+        )
+        return EntitlementCheck.UNAVAILABLE
 
 
 # Checks in flight in this process, shared by concurrent requests per user.

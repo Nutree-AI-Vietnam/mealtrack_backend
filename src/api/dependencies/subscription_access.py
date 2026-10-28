@@ -45,8 +45,8 @@ async def require_active_subscription(
 ) -> None:
     """402 SUBSCRIPTION_REQUIRED unless the caller has subscription access.
 
-    The database decides first. Before a 402, RevenueCat is asked (3 s, the
-    Premium check's 60 s access cache): a payer whose purchase has no row
+    The database decides first. Before a 402, RevenueCat is asked (3 s in
+    total, the Premium check's 60 s access cache): a payer whose purchase has no row
     yet (a webhook not yet applied or lost, a promotional grant) keeps the
     route. When RevenueCat cannot answer, the database's denial stands.
     This runs before the route's rate limiter, so RevenueCat is asked at most
