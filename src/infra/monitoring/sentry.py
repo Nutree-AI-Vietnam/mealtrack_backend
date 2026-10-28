@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
 
@@ -122,12 +123,13 @@ class SentryObservabilityConnector:
         error: BaseException,
         *,
         context: dict[str, Any] | None = None,
+        fingerprint: Sequence[str] | None = None,
     ) -> None:
         if not self._can_use_sdk():
             return
 
         self._apply_safe_context(context)
-        sentry_sdk.capture_exception(error)
+        sentry_sdk.capture_exception(error, **_event_grouping(fingerprint))
 
     def capture_message(
         self,
@@ -135,12 +137,17 @@ class SentryObservabilityConnector:
         *,
         level: str = "info",
         context: dict[str, Any] | None = None,
+        fingerprint: Sequence[str] | None = None,
     ) -> None:
         if not self._can_use_sdk():
             return
 
         self._apply_safe_context(context)
-        sentry_sdk.capture_message(message, level=_normalize_message_level(level))
+        sentry_sdk.capture_message(
+            message,
+            level=_normalize_message_level(level),
+            **_event_grouping(fingerprint),
+        )
 
     def log_event(
         self,
@@ -265,6 +272,20 @@ class SentryObservabilityConnector:
         sentry_sdk.set_context("mealtrack", safe_context)
         for key, value in filter_safe_tags(safe_context).items():
             sentry_sdk.set_tag(key, value)
+
+
+def _event_grouping(fingerprint: Sequence[str] | None) -> dict[str, Any]:
+    """Scope arguments that pin one event to a fixed Sentry issue.
+
+    The fingerprint replaces Sentry's default grouping (stack trace or
+    message), and its first part is sent as the ``alert`` tag that issue
+    alert rules match. Both go on this event only, never on the request
+    scope, so no later event of the same request carries the tag.
+    """
+    if not fingerprint:
+        return {}
+    parts = [str(part) for part in fingerprint]
+    return {"fingerprint": parts, "tags": {"alert": parts[0]}}
 
 
 def initialize_sentry() -> None:

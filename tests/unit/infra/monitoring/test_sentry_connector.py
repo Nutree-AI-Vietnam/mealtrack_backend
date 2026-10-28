@@ -449,6 +449,55 @@ def test_capture_message_applies_only_safe_context(monkeypatch):
     assert "payload" not in safe_context
 
 
+def test_fingerprint_pins_one_event_to_a_fixed_issue_and_alert_tag(monkeypatch):
+    """Issue alert rules match the ``alert`` tag; it must ride on the event
+    itself, not on the request scope, or later events would carry it too."""
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    connector = SentryObservabilityConnector()
+    connector._enabled = True
+    error = RuntimeError("RevenueCat expiry is missing")
+
+    connector.capture_exception(
+        error,
+        context={"component": "subscription_access", "failure_kind": "malformed"},
+        fingerprint=("subscription_access.snapshot_failure", "malformed"),
+    )
+    connector.capture_message(
+        "RevenueCat customer has entitlements but no 'standard'",
+        level="warning",
+        fingerprint=["subscription_access.standard_missing"],
+    )
+
+    mock_sdk.capture_exception.assert_called_once_with(
+        error,
+        fingerprint=["subscription_access.snapshot_failure", "malformed"],
+        tags={"alert": "subscription_access.snapshot_failure"},
+    )
+    mock_sdk.capture_message.assert_called_once_with(
+        "RevenueCat customer has entitlements but no 'standard'",
+        level="warning",
+        fingerprint=["subscription_access.standard_missing"],
+        tags={"alert": "subscription_access.standard_missing"},
+    )
+    scope_tags = {call.args[0] for call in mock_sdk.set_tag.call_args_list}
+    assert "alert" not in scope_tags
+
+
+def test_capture_without_fingerprint_keeps_default_grouping(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+    connector = SentryObservabilityConnector()
+    connector._enabled = True
+    error = RuntimeError("boom")
+
+    connector.capture_exception(error, context={"component": "cron"})
+    connector.capture_exception(error, fingerprint=[])
+
+    assert mock_sdk.capture_exception.call_args_list[0].kwargs == {}
+    assert mock_sdk.capture_exception.call_args_list[1].kwargs == {}
+
+
 def test_request_context_sets_safe_context_and_user(monkeypatch):
     mock_sdk = MagicMock()
     monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)

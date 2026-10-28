@@ -102,6 +102,38 @@ def test_facade_delegates_to_configured_connector():
     ]
 
 
+def test_facade_forwards_a_fingerprint_only_when_one_is_given():
+    """Connectors written before fingerprints keep working unchanged."""
+
+    class FingerprintConnector(RecordingConnector):
+        def capture_exception(self, error, *, context=None, fingerprint=None):
+            self.calls.append(("capture_exception", error, context, fingerprint))
+
+        def capture_message(
+            self, message, *, level="info", context=None, fingerprint=None
+        ):
+            self.calls.append(("capture_message", message, level, fingerprint))
+
+    legacy = RecordingConnector()
+    set_observability_connector_for_test(legacy)
+    error = RuntimeError("boom")
+    capture_exception(error, context={"component": "cron"})
+    capture_message("hello")
+    assert legacy.calls == [
+        ("capture_exception", error, {"component": "cron"}),
+        ("capture_message", "hello", "info", None),
+    ]
+
+    connector = FingerprintConnector()
+    set_observability_connector_for_test(connector)
+    capture_exception(error, fingerprint=("alert.key", "kind"))
+    capture_message("hello", level="warning", fingerprint=["alert.key"])
+    assert connector.calls == [
+        ("capture_exception", error, None, ["alert.key", "kind"]),
+        ("capture_message", "hello", "warning", ["alert.key"]),
+    ]
+
+
 def test_cache_hit_is_safe_observability_attribute_and_tag():
     attributes = {
         "ai_provider": "openai",
@@ -173,7 +205,9 @@ def test_noop_connector_methods_do_not_raise():
     connector = NoopObservabilityConnector()
     connector.initialize()
     connector.capture_exception(RuntimeError("boom"))
+    connector.capture_exception(RuntimeError("boom"), fingerprint=["alert.key"])
     connector.capture_message("hello")
+    connector.capture_message("hello", fingerprint=["alert.key"])
     connector.log_event("info", "hello")
     connector.increment_metric("cron.started")
     connector.gauge_metric("db.pool.size", 3)
