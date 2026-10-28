@@ -15,6 +15,11 @@ from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     could_still_grant,
     evaluate_subscription_access,
+    subscription_will_renew,
+)
+from src.domain.ports.subscription_access_refresh_port import (
+    ProviderAccessPeek,
+    ProviderEntitlement,
 )
 from src.domain.ports.subscription_service_port import (
     SNAPSHOT_ERROR_REASONS,
@@ -165,6 +170,45 @@ def normalize_standard_access_facts(
         "is_sandbox": is_sandbox,
         "store_transaction_id": _store_transaction_id(subscription),
     }
+
+
+def describe_provider_access(
+    snapshot: RevenueCatSnapshot, now: datetime | None = None
+) -> ProviderAccessPeek:
+    """What one RevenueCat read says about 'standard', without applying it.
+
+    The entitlement is normalized exactly as the sync would store it, so a
+    support read shows what a resync would write. Raises
+    RevenueCatSnapshotUnavailable (malformed, unsupported_store) when the
+    sync could not apply the customer either.
+    """
+    read_at = _utc(snapshot.request_date) if snapshot.request_date else None
+    subscriber = snapshot.subscriber
+    if snapshot.absent or subscriber is None:
+        return ProviderAccessPeek(read_at, absent=True, entitlements=(), standard=None)
+    entitlements = subscriber.get("entitlements") or {}
+    facts = normalize_standard_access_facts(subscriber, now)
+    standard = None
+    if facts is not None:
+        renewal = SimpleNamespace(provider=REVENUECAT_PROVIDER, **facts)
+        standard = ProviderEntitlement(
+            has_access=facts["status"] != "expired",
+            status=facts["status"],
+            product_id=facts["product_id"],
+            platform=facts["platform"],
+            purchased_at=facts["purchased_at"],
+            expires_at=facts["expires_at"],
+            grace_period_expires_at=facts["grace_period_expires_at"],
+            period_type=facts["period_type"],
+            is_sandbox=facts["is_sandbox"],
+            will_renew=subscription_will_renew(renewal),
+        )
+    return ProviderAccessPeek(
+        read_at,
+        absent=False,
+        entitlements=tuple(sorted(str(name) for name in entitlements)),
+        standard=standard,
+    )
 
 
 def _store_transaction_id(purchase: dict) -> str | None:

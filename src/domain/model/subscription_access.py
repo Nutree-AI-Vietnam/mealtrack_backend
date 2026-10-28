@@ -100,6 +100,42 @@ def could_still_grant(record: Any, now: datetime | None = None) -> bool:
     )
 
 
+# Why stored rows leave the policy unable to decide (support and monitoring
+# vocabulary). The first three are also the provider markers on a row.
+UNRESOLVED_SYNC_REQUIRED = "sync_required"
+UNRESOLVED_REFUND_PENDING = "refund_pending"
+UNRESOLVED_TRANSFER_SOURCE = "transfer_source"
+UNRESOLVED_UNVERIFIED_GRANT = "unverified_grant"
+_UNRESOLVED_REASON_ORDER = (
+    UNRESOLVED_SYNC_REQUIRED,
+    UNRESOLVED_REFUND_PENDING,
+    UNRESOLVED_TRANSFER_SOURCE,
+    UNRESOLVED_UNVERIFIED_GRANT,
+)
+
+
+def unresolved_access_reasons(subscriptions: Iterable[Any]) -> list[str]:
+    """Why evaluate_subscription_access treats some rows as unverified.
+
+    ``sync_required``: a provider event was applied without a verified
+    snapshot; ``refund_pending`` or ``transfer_source`` add that the event
+    was a refund or moved the purchases away (TRANSFER). ``unverified_grant``:
+    a granting row no snapshot ever verified. Each reason once, in that
+    order; empty when every row is verified.
+    """
+    found: set[str] = set()
+    for record in subscriptions:
+        if getattr(record, "provider_sync_required_at", None) is not None:
+            found.add(UNRESOLVED_SYNC_REQUIRED)
+            if getattr(record, "provider_refund_pending_at", None) is not None:
+                found.add(UNRESOLVED_REFUND_PENDING)
+            if getattr(record, "provider_transfer_source_at", None) is not None:
+                found.add(UNRESOLVED_TRANSFER_SOURCE)
+        elif record.status in GRANTING_STATUSES and record.provider_snapshot_at is None:
+            found.add(UNRESOLVED_UNVERIFIED_GRANT)
+    return [reason for reason in _UNRESOLVED_REASON_ORDER if reason in found]
+
+
 def fallback_may_grant(record: Any, now: datetime | None = None) -> bool:
     """Whether the paid-route fallback may grant a row the policy cannot verify.
 

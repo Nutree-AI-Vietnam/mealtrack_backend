@@ -25,6 +25,7 @@ from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
 from src.infra.services.subscription_access_sync_service import (
     _platform,
+    describe_provider_access,
     mark_revenuecat_access_unresolved,
     normalize_standard_access_facts,
     record_snapshot_unavailable,
@@ -1030,3 +1031,88 @@ async def test_sync_applies_a_real_adapter_read_without_patching_either():
     assert row.store_transaction_id == "GPA.1234-5678"
     assert row.expires_at == now + timedelta(days=365)
     assert evaluate_subscription_access([row], now).has_access is True
+
+
+# --- describe_provider_access: support's read-only view -----------------------
+
+
+def test_describe_shows_standard_as_the_sync_would_store_it():
+    now = datetime.now(UTC).replace(microsecond=0)
+    body = standard_annual_response(
+        request_date=now,
+        expires_date=now + timedelta(days=30),
+        unsubscribe_detected_at=now - timedelta(days=1),
+    )
+
+    peek = describe_provider_access(_snapshot(body, now), now)
+
+    assert (peek.read_at, peek.absent, peek.entitlements) == (now, False, ("standard",))
+    assert peek.standard_missing is False
+    standard = peek.standard
+    assert standard is not None
+    assert (standard.status, standard.has_access, standard.will_renew) == (
+        "cancelled",
+        True,
+        False,
+    )
+    facts = normalize_standard_access_facts(body["subscriber"], now)
+    assert facts is not None
+    assert (standard.product_id, standard.platform, standard.expires_at) == (
+        facts["product_id"],
+        facts["platform"],
+        facts["expires_at"],
+    )
+
+
+def test_describe_an_expired_standard_has_no_access():
+    now = datetime.now(UTC).replace(microsecond=0)
+    body = standard_annual_response(
+        request_date=now, expires_date=now - timedelta(days=1)
+    )
+
+    standard = describe_provider_access(_snapshot(body, now), now).standard
+
+    assert standard is not None
+    assert (standard.status, standard.has_access, standard.will_renew) == (
+        "expired",
+        False,
+        False,
+    )
+
+
+def test_describe_an_absent_customer():
+    now = datetime.now(UTC)
+
+    peek = describe_provider_access(RevenueCatSnapshot(None, now, absent=True))
+
+    assert (peek.absent, peek.entitlements, peek.standard) == (True, (), None)
+
+
+def test_describe_flags_entitlements_without_standard():
+    now = datetime.now(UTC).replace(microsecond=0)
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=30)
+    )
+    body["subscriber"]["entitlements"] = {
+        "premium": body["subscriber"]["entitlements"]["standard"]
+    }
+
+    peek = describe_provider_access(_snapshot(body, now), now)
+
+    assert (peek.entitlements, peek.standard, peek.standard_missing) == (
+        ("premium",),
+        None,
+        True,
+    )
+
+
+def test_describe_refuses_a_customer_the_sync_could_not_apply():
+    now = datetime.now(UTC).replace(microsecond=0)
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=30), store="amazon"
+    )
+
+    with pytest.raises(RevenueCatSnapshotUnavailable) as raised:
+        describe_provider_access(_snapshot(body, now), now)
+
+    assert raised.value.reason == "unsupported_store"

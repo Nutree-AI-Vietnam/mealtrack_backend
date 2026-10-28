@@ -14,13 +14,15 @@ def database_subscription_access_enabled() -> bool:
     return os.getenv("SUBSCRIPTION_ACCESS_ENABLED", "false").lower() in _TRUE
 
 
+def subscription_enforcement_flag_on() -> bool:
+    """SUBSCRIPTION_ENFORCEMENT_ENABLED itself, whatever the access flag says."""
+    return os.getenv("SUBSCRIPTION_ENFORCEMENT_ENABLED", "false").lower() in _TRUE
+
+
 def subscription_enforcement_enabled() -> bool:
     """SUBSCRIPTION_ENFORCEMENT_ENABLED: paid backend routes answer 402.
 
     Effective only while SUBSCRIPTION_ACCESS_ENABLED is also on, so turning
     the database authority off (the kill switch) also stops enforcement.
     """
-    return (
-        database_subscription_access_enabled()
-        and os.getenv("SUBSCRIPTION_ENFORCEMENT_ENABLED", "false").lower() in _TRUE
-    )
+    return database_subscription_access_enabled() and subscription_enforcement_flag_on()

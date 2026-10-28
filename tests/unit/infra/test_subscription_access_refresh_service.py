@@ -1,6 +1,6 @@
 """RevenueCatAccessRefreshService: read the customer, then apply it in a UoW."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,6 +8,7 @@ import pytest
 
 from src.domain.ports.subscription_access_refresh_port import (
     SubscriptionAccessApplyError,
+    SubscriptionAccessRefresh,
 )
 from src.domain.ports.subscription_service_port import (
     RevenueCatSnapshot,
@@ -233,3 +234,102 @@ async def test_a_failed_identity_lookup_is_not_an_apply_failure(monkeypatch):
 
     assert not isinstance(raised.value, SubscriptionAccessApplyError)
     captured.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_support_resync_labels_its_read_and_sync_and_reports_the_outcome(
+    recorded,
+):
+    log: list = []
+    seen: dict = {}
+
+    async def sync(session, user, **kwargs):
+        seen.update(kwargs)
+        return SubscriptionSyncOutcome(
+            "absent",
+            "unresolved",
+            "denied",
+            rows_revoked=2,
+            markers_cleared=2,
+            standard_missing=False,
+        )
+
+    service, _, _ = _service(log, sync=sync)
+
+    result = await service.refresh("db-user-id", source="support_resync")
+
+    assert seen == {"snapshot": SNAPSHOT, "source": "support_resync"}
+    assert result == SubscriptionAccessRefresh(
+        "absent", rows_revoked=2, row_created=False, markers_cleared=2
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_support_resync_failure_is_recorded_under_its_source(recorded):
+    log: list = []
+    failure = RevenueCatSnapshotUnavailable("down", reason="http_5xx")
+    service, _, _ = _service(log, snapshot=failure)
+
+    with pytest.raises(RevenueCatSnapshotUnavailable):
+        await service.refresh("db-user-id", source="support_resync")
+
+    assert recorded == [
+        (failure, {"source": "support_resync", "user_id": "db-user-id"})
+    ]
+
+
+def _standard_customer(now):
+    from tests.fixtures.revenuecat_samples import standard_annual_response
+
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=200)
+    )
+    return RevenueCatSnapshot(
+        subscriber=body["subscriber"], request_date=now, app_user_id="firebase-uid"
+    )
+
+
+@pytest.mark.asyncio
+async def test_peek_reads_and_describes_the_customer_without_a_write(recorded):
+    now = datetime.now(UTC).replace(microsecond=0)
+    log: list = []
+    service, revenuecat, uows = _service(
+        log, snapshot=_standard_customer(now), sync=AsyncMock()
+    )
+
+    peek = await service.peek("db-user-id", source="support_lookup")
+
+    assert revenuecat.get_verified_snapshot.await_args.args == ("firebase-uid",)
+    # Only the identity lookup opened a unit of work; nothing was synced.
+    assert log == ["uow_enter", "uow_commit", "read:firebase-uid"]
+    assert len(uows) == 1
+    assert (peek.read_at, peek.absent, peek.entitlements) == (now, False, ("standard",))
+    assert peek.standard is not None and peek.standard.has_access is True
+    assert recorded == []
+
+
+@pytest.mark.asyncio
+async def test_peek_never_reads_an_account_without_an_active_identity(recorded):
+    log: list = []
+    service, revenuecat, _ = _service(log, firebase_uid=None)
+
+    with pytest.raises(RevenueCatSnapshotUnavailable) as raised:
+        await service.peek("db-user-id", source="support_lookup")
+
+    assert raised.value.reason == "owner_changed"
+    revenuecat.get_verified_snapshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_peek_failure_is_recorded_and_raised(recorded):
+    log: list = []
+    failure = RevenueCatSnapshotUnavailable("bad key", reason="http_4xx")
+    service, _, _ = _service(log, snapshot=failure)
+
+    with pytest.raises(RevenueCatSnapshotUnavailable) as raised:
+        await service.peek("db-user-id", source="support_lookup")
+
+    assert raised.value is failure
+    assert recorded == [
+        (failure, {"source": "support_lookup", "user_id": "db-user-id"})
+    ]

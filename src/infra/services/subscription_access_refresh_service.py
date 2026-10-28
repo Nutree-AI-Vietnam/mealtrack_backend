@@ -3,7 +3,11 @@
 The customer is read before the write transaction, so no database lock is
 held across the HTTP call; the snapshot is then applied with
 sync_revenuecat_access inside one unit of work, which locks the user row
-and commits on success.
+and commits on success. The same sync honours a remembered TRANSFER source
+(an empty customer read after the transfer is applied as authoritative),
+exactly as reconcile --repair does.
+
+``peek`` reads the customer the same way and writes nothing.
 """
 
 import logging
@@ -14,6 +18,8 @@ from sqlalchemy import select
 
 from src.domain.ports.subscription_access_refresh_port import (
     REFRESH_NOT_APPLIED,
+    REFRESH_SOURCE,
+    ProviderAccessPeek,
     SubscriptionAccessApplyError,
     SubscriptionAccessRefresh,
     SubscriptionAccessRefreshPort,
@@ -26,6 +32,7 @@ from src.domain.ports.subscription_service_port import (
 from src.infra.database.models.user.user import User
 from src.infra.database.uow_async import AsyncUnitOfWork
 from src.infra.services.subscription_access_sync_service import (
+    describe_provider_access,
     record_snapshot_unavailable,
     sync_revenuecat_access,
 )
@@ -33,8 +40,6 @@ from src.observability import capture_exception
 from src.subscription_access_alerts import ALERT_SYNC_APPLY_ERROR, alert_fingerprint
 
 logger = logging.getLogger(__name__)
-
-REFRESH_SOURCE = "refresh"
 
 
 class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
@@ -54,7 +59,9 @@ class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
         self._uow_factory = uow_factory
         self._sync = sync
 
-    async def refresh(self, user_id: str) -> SubscriptionAccessRefresh:
+    async def refresh(
+        self, user_id: str, *, source: str = REFRESH_SOURCE
+    ) -> SubscriptionAccessRefresh:
         firebase_uid = await self._firebase_uid(user_id)
         if not firebase_uid:
             # The caller authenticated a moment ago; the account was deleted
@@ -65,6 +72,7 @@ class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
                     reason=SNAPSHOT_REASON_OWNER_CHANGED,
                 ),
                 user_id,
+                source,
             )
 
         try:
@@ -72,7 +80,7 @@ class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
                 firebase_uid
             )
         except RevenueCatSnapshotUnavailable as error:
-            record_snapshot_unavailable(error, source=REFRESH_SOURCE, user_id=user_id)
+            record_snapshot_unavailable(error, source=source, user_id=user_id)
             raise
 
         try:
@@ -84,22 +92,45 @@ class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
                         reason=SNAPSHOT_REASON_OWNER_CHANGED,
                     )
                 outcome = await self._sync(
-                    uow.session, user, snapshot=snapshot, source=REFRESH_SOURCE
+                    uow.session, user, snapshot=snapshot, source=source
                 )
         except RevenueCatSnapshotUnavailable as error:
             # Readable but unsafe to apply (owner changed, conflicting facts,
             # absence over a possible grant): the unit of work rolled back and
             # the rows stay as they were. No provider event happened, so
             # nothing is marked unresolved.
-            return self._not_applied(error, user_id)
+            return self._not_applied(error, user_id, source)
         except Exception as error:
             # A bug or a database failure while applying (or committing) the
             # snapshot. Reported here, inside the event bus, so its fixed
             # fingerprint is the first Sentry event for this exception.
-            raise _apply_failed(
-                error, source=REFRESH_SOURCE, user_id=user_id
-            ) from error
-        return SubscriptionAccessRefresh(outcome.result)
+            raise _apply_failed(error, source=source, user_id=user_id) from error
+        return SubscriptionAccessRefresh(
+            outcome.result,
+            rows_revoked=outcome.rows_revoked,
+            row_created=outcome.row_created,
+            markers_cleared=outcome.markers_cleared,
+            standard_missing=outcome.standard_missing,
+        )
+
+    async def peek(self, user_id: str, *, source: str) -> ProviderAccessPeek:
+        """Read and describe the customer; no unit of work writes anything."""
+        firebase_uid = await self._firebase_uid(user_id)
+        if not firebase_uid:
+            # Reading a deleted account's tombstoned uid would only create an
+            # empty RevenueCat customer under it.
+            raise RevenueCatSnapshotUnavailable(
+                "User has no active Firebase identity",
+                reason=SNAPSHOT_REASON_OWNER_CHANGED,
+            )
+        try:
+            snapshot = await self._subscription_service_factory().get_verified_snapshot(
+                firebase_uid
+            )
+            return describe_provider_access(snapshot)
+        except RevenueCatSnapshotUnavailable as error:
+            record_snapshot_unavailable(error, source=source, user_id=user_id)
+            raise
 
     async def _firebase_uid(self, user_id: str) -> str | None:
         async with self._uow_factory() as uow:
@@ -111,9 +142,9 @@ class RevenueCatAccessRefreshService(SubscriptionAccessRefreshPort):
 
     @staticmethod
     def _not_applied(
-        error: RevenueCatSnapshotUnavailable, user_id: str
+        error: RevenueCatSnapshotUnavailable, user_id: str, source: str
     ) -> SubscriptionAccessRefresh:
-        record_snapshot_unavailable(error, source=REFRESH_SOURCE, user_id=user_id)
+        record_snapshot_unavailable(error, source=source, user_id=user_id)
         return SubscriptionAccessRefresh(
             REFRESH_NOT_APPLIED, reason=getattr(error, "reason", None)
         )

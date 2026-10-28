@@ -393,6 +393,37 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     adapter = object()
     monkeypatch.setattr(deps, "get_subscription_service", lambda: adapter)
     assert refresher._subscription_service_factory() is adapter
+
+    # The support API's lookups, resync and repair queue: their route tests
+    # stub the bus, so only this pins the real repository and refresher.
+    from src.app.commands.subscription_access import ResyncSubscriptionAccessCommand
+    from src.app.handlers.command_handlers import (
+        ResyncSubscriptionAccessCommandHandler,
+    )
+    from src.app.handlers.query_handlers import (
+        GetSupportSubscriptionAccessQueryHandler,
+        ListUnresolvedSubscriptionAccessQueryHandler,
+    )
+    from src.app.queries.subscription_access import (
+        GetSupportSubscriptionAccessQuery,
+        ListUnresolvedSubscriptionAccessQuery,
+    )
+    from src.infra.repositories.subscription_access_support_repository import (
+        SubscriptionAccessSupportRepository,
+    )
+
+    lookup = bus.handlers[GetSupportSubscriptionAccessQuery]
+    resync = bus.handlers[ResyncSubscriptionAccessCommand]
+    queue = bus.handlers[ListUnresolvedSubscriptionAccessQuery]
+    assert isinstance(lookup, GetSupportSubscriptionAccessQueryHandler)
+    assert isinstance(resync, ResyncSubscriptionAccessCommandHandler)
+    assert isinstance(queue, ListUnresolvedSubscriptionAccessQueryHandler)
+    for handler in (lookup, resync, queue):
+        assert isinstance(handler.repository, SubscriptionAccessSupportRepository)
+        assert handler.repository._uow_factory == AsyncUnitOfWork.read_only
+    for handler in (lookup, resync):
+        assert isinstance(handler.access_refresher, RevenueCatAccessRefreshService)
+        assert handler.access_refresher._subscription_service_factory() is adapter
     assert workflow._fatsecret_validation_enabled is True
     assert workflow._food_reference_validation_service is not None
     assert workflow._graph_version == "test-v2"

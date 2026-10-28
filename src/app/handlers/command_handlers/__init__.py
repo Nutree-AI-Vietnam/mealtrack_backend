@@ -40,6 +40,9 @@ from .refresh_my_entitlements_command_handler import (
     RefreshMyEntitlementsCommandHandler,
 )
 from .repeat_meal_command_handler import RepeatMealCommandHandler
+from .resync_subscription_access_command_handler import (
+    ResyncSubscriptionAccessCommandHandler,
+)
 
 # Notification handlers
 from .save_body_fat_visual_profile_command_handler import (
@@ -86,6 +89,7 @@ __all__ = [
     # User handlers
     "SaveUserOnboardingCommandHandler",
     "RefreshMyEntitlementsCommandHandler",
+    "ResyncSubscriptionAccessCommandHandler",
     "SaveBodyFatVisualProfileCommandHandler",
     "SyncUserCommandHandler",
     "UpdateUserLastAccessedCommandHandler",

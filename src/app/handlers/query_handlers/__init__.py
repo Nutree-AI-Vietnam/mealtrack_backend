@@ -44,6 +44,9 @@ from .get_provider_food_details_query_handler import (
 from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
 from .get_saved_suggestions_query_handler import GetSavedSuggestionsQueryHandler
 from .get_streak_query_handler import GetStreakQueryHandler
+from .get_support_subscription_access_query_handler import (
+    GetSupportSubscriptionAccessQueryHandler,
+)
 from .get_user_by_firebase_uid_query_handler import GetUserByFirebaseUidQueryHandler
 from .get_user_metrics_query_handler import GetUserMetricsQueryHandler
 from .get_user_onboarding_status_query_handler import (
@@ -59,6 +62,9 @@ from .get_user_timezone_query_handler import GetUserTimezoneQueryHandler
 from .get_weekly_auto_adjust_query_handler import GetWeeklyAutoAdjustQueryHandler
 from .get_weekly_budget_query_handler import GetWeeklyBudgetQueryHandler
 from .get_weekly_hydration_query_handler import GetWeeklyHydrationQueryHandler
+from .list_unresolved_subscription_access_query_handler import (
+    ListUnresolvedSubscriptionAccessQueryHandler,
+)
 
 # Food handlers
 from .lookup_barcode_query_handler import LookupBarcodeQueryHandler
@@ -69,6 +75,8 @@ __all__ = [
     # TDEE
     "GetUserTdeeQueryHandler",
     "GetMyEntitlementsQueryHandler",
+    "GetSupportSubscriptionAccessQueryHandler",
+    "ListUnresolvedSubscriptionAccessQueryHandler",
     "CheckSubscriptionAccessQueryHandler",
     "PreviewTdeeQueryHandler",
     # Food

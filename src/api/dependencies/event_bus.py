@@ -57,7 +57,10 @@ from src.app.commands.saved_suggestion import (
     DeleteSavedSuggestionCommand,
     SaveSuggestionCommand,
 )
-from src.app.commands.subscription_access import RefreshMyEntitlementsCommand
+from src.app.commands.subscription_access import (
+    RefreshMyEntitlementsCommand,
+    ResyncSubscriptionAccessCommand,
+)
 from src.app.commands.user import (
     CompleteOnboardingCommand,
     DeleteUserCommand,
@@ -102,6 +105,7 @@ from src.app.handlers.command_handlers import (
     RecognizeIngredientCommandHandler,
     RefreshMyEntitlementsCommandHandler,
     RepeatMealCommandHandler,
+    ResyncSubscriptionAccessCommandHandler,
     SaveBodyFatVisualProfileCommandHandler,
     SaveMealSuggestionCommandHandler,
     SaveSuggestionCommandHandler,
@@ -176,6 +180,7 @@ from src.app.handlers.query_handlers import (
     GetRecentMealsQueryHandler,
     GetSavedSuggestionsQueryHandler,
     GetStreakQueryHandler,
+    GetSupportSubscriptionAccessQueryHandler,
     GetUserByFirebaseUidQueryHandler,
     GetUserMetricsQueryHandler,
     GetUserOnboardingStatusQueryHandler,
@@ -184,6 +189,7 @@ from src.app.handlers.query_handlers import (
     GetUserTimezoneQueryHandler,
     GetWeeklyAutoAdjustQueryHandler,
     GetWeeklyBudgetQueryHandler,
+    ListUnresolvedSubscriptionAccessQueryHandler,
     LookupBarcodeQueryHandler,
     PreviewTdeeQueryHandler,
     SearchFoodsQueryHandler,
@@ -262,6 +268,8 @@ from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
 from src.app.queries.subscription_access import (
     CheckSubscriptionAccessQuery,
     GetMyEntitlementsQuery,
+    GetSupportSubscriptionAccessQuery,
+    ListUnresolvedSubscriptionAccessQuery,
 )
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
@@ -291,6 +299,9 @@ from src.app.services.meal_recommendation_history_projector import (
 from src.bootstrap.integration_services import get_integration_event_publisher
 from src.bootstrap.subscription_access_refresh import (
     build_subscription_access_refresher,
+)
+from src.bootstrap.subscription_access_support import (
+    build_subscription_access_support_repository,
 )
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
@@ -1145,6 +1156,26 @@ def get_configured_event_bus() -> EventBus:
         RefreshMyEntitlementsCommandHandler(
             access_refresher=build_subscription_access_refresher(_subscription_service)
         ),
+    )
+    # Support API (admin only): lookups and the repair queue read the
+    # database, a live lookup and a resync read RevenueCat like the refresh.
+    support_repository = build_subscription_access_support_repository()
+    support_refresher = build_subscription_access_refresher(_subscription_service)
+    event_bus.register_handler(
+        GetSupportSubscriptionAccessQuery,
+        GetSupportSubscriptionAccessQueryHandler(
+            repository=support_repository, access_refresher=support_refresher
+        ),
+    )
+    event_bus.register_handler(
+        ResyncSubscriptionAccessCommand,
+        ResyncSubscriptionAccessCommandHandler(
+            repository=support_repository, access_refresher=support_refresher
+        ),
+    )
+    event_bus.register_handler(
+        ListUnresolvedSubscriptionAccessQuery,
+        ListUnresolvedSubscriptionAccessQueryHandler(repository=support_repository),
     )
     event_bus.register_handler(
         GetUserOnboardingStatusQuery, GetUserOnboardingStatusQueryHandler()

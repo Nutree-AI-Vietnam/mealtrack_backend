@@ -198,3 +198,46 @@ def test_will_renew_mirrors_revenuecat_and_is_false_for_non_renewing(row, expect
     from src.domain.model.subscription_access import subscription_will_renew
 
     assert subscription_will_renew(row) is expected
+
+
+@dataclass
+class MarkedFacts(Facts):
+    provider_refund_pending_at: datetime | None = None
+    provider_transfer_source_at: datetime | None = None
+
+
+def test_unresolved_reasons_name_each_unverified_row_kind_once_in_order():
+    from src.domain.model.subscription_access import unresolved_access_reasons
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    rows = [
+        MarkedFacts(status="cancelled", provider_snapshot_at=None),
+        MarkedFacts(
+            status="expired",
+            provider_sync_required_at=now,
+            provider_transfer_source_at=now,
+        ),
+        MarkedFacts(provider_sync_required_at=now, provider_refund_pending_at=now),
+        MarkedFacts(status="cancelled", provider_snapshot_at=None),
+    ]
+
+    assert unresolved_access_reasons(rows) == [
+        "sync_required",
+        "refund_pending",
+        "transfer_source",
+        "unverified_grant",
+    ]
+
+
+def test_unresolved_reasons_are_empty_when_every_row_is_verified():
+    from src.domain.model.subscription_access import unresolved_access_reasons
+
+    rows = [
+        MarkedFacts(),
+        # Never granting, so an unverified expired row decides nothing.
+        MarkedFacts(status="expired", provider_snapshot_at=None),
+        # A refund marker without the sync marker does not stop the policy.
+        MarkedFacts(provider_refund_pending_at=datetime(2026, 1, 1, tzinfo=UTC)),
+    ]
+
+    assert unresolved_access_reasons(rows) == []
