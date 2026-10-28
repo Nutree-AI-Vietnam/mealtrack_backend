@@ -27,7 +27,7 @@ toggles and sends the one server push (payment failed).
 | D2 | Only **one** notification may fire in the evening window (17:30–21:30). Every notification is **at least 60 min** apart from the previous one. |
 | D3 | Quiet hours: notifications the system picks a time for fire only between 07:00 and 21:30 local. User-chosen meal times are kept but clamped to 06:00–21:30. |
 | D4 | Every reminder **cancels itself** once the user logs. The device rebuilds the plan on every app open, log, settings change and day change. |
-| D5 | Copy rotates. A pool of variants per type, picked deterministically per day, and a template used in the last 14 days is skipped. Titles are dynamic and hooky; the app name already shows on iOS and Android. The buddy word (`bro` / `mate` / `bạn ơi`) appears in about 1 of every 3 variants. Unknown gender gets neutral copy. |
+| D5 | Copy rotates. A pool of variants per type, picked deterministically per day, and a template used in the last 14 days is skipped. Titles are dynamic and hooky; the app name already shows on iOS and Android. The voice is a small, dramatic buddy ("I" / "tui") that begs and sulks about itself, never about the user's food or body. The buddy word (`bro` / `bestie`) appears in about 1 of every 4 variants. Unknown gender gets neutral copy. |
 | D6 | No shaming numbers. The under/over-goal summaries are retired. The evening check-in is either an on-plan celebration (at most 2 a week) or a neutral "day closed" note. |
 | D7 | Promotional items (renewal offer, paywall follow-up) require the **Offers & new features** toggle, **off by default**, per Apple 4.5.4. Paywall hooks no longer replace meal reminders. |
 | D8 | Users without access can't log, so they get no logging reminders. They get only the paywall follow-up, and only after opting in to offers. |
@@ -46,7 +46,7 @@ Times are local. "Slot" means the user's meal-reminder time.
 |---|---|---|---|
 | `meal_breakfast` / `meal_lunch` / `meal_dinner` | Meal slot; skipped once that meal is logged; only on D0–D1 | ≤1 per meal per day | Meal reminders |
 | `evening_checkin` | Summary time, only on logged days and only if the evening slot is free; on-plan or day-close copy | ≤1/day; on-plan ≤2/week | Daily summary |
-| `win_the_day` | 20:00 when nothing is logged today (streak 0–2), or after an app open on a lapse day | ≤1/day | Streak alerts |
+| `win_the_day` | 20:00 when nothing is logged today (streak 0–2), or after an app open on a lapse day. At streak 2 the copy names the 3-day medal only if the best streak never reached 3 | ≤1/day | Streak alerts |
 | `streak_saver` | Streak ≥3 with nothing logged today, at 20:30 (later for late loggers, ≤21:15) | ≤1/day, ≤4/week | Streak alerts |
 | `first_meal` | Never logged: anchor +2h, then the next day's lunch, then day 3 lunch | 3 total | Meal reminders |
 | `lapse_fresh_start` (D2), `lapse_paused` (D7), `lapse_final` (D30) | Around lunch | Once per lapse | Comeback nudges |
@@ -63,7 +63,7 @@ Times are local. "Slot" means the user's meal-reminder time.
 | `lapse_comeback` (D3) | Last logged dish and its time ("Cơm tấm at 12:10 was your last log"). A drink logged later does not change the time. If the last meal is older than the last logged day, the copy names no dish | Once per lapse |
 | `lapse_type_it` (D5) | Lower the friction: "just type it", using the last dish as the example | Once per lapse |
 | `lapse_best_streak` (D14) | Best streak ≥3: "your 12-day record is still yours" | Once per lapse |
-| Badge-day eve (copy overlay) | Logging today reaches a streak medal (3/10/50/100/365/1000) or a new personal best | Replaces the first slot's copy |
+| Badge-day eve (copy overlay) | Logging today reaches a streak medal (3/10/50/100/365/1000) the user has not earned yet, or a new personal best. Medals follow the best streak, so a rebuilt streak gets no medal copy; the streak saver follows the same rule | Replaces the first slot's copy |
 | Comeback day 2 (copy overlay) | Yesterday was the first log after a gap of 3+ days | Once per comeback |
 | First-week journey (copy overlay) | Days 2–7 after the first log: one lesson a day (streak, text log, scan, water, coach, recap). Only for users the device saw before their first log. The day-2 and day-7 lessons ask for the day's first log, so they skip a day that is already logged | 6 total |
 | `weekly_recap` | Monday 08:15 if the recap flag is on and the user logged in the last 7 days | 1/week |
