@@ -58,6 +58,21 @@ def test_get_user_id_or_ip_returns_uid_from_uid_field():
     assert get_user_id_or_ip(req) == "user_2"
 
 
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER", "bEaReR"])
+def test_get_user_id_or_ip_keys_on_the_uid_whatever_the_scheme_casing(scheme):
+    """HTTPBearer authenticates any casing of the scheme, so the refresh
+    route's per-user limit must not turn per-IP for a lowercase 'bearer'."""
+    token = _jwt_with_payload({"sub": "user_1"})
+    req = _Req(auth=f"{scheme} {token}", ip="203.0.113.9")
+    assert get_user_id_or_ip(req) == "user_1"
+
+
+def test_get_user_id_or_ip_ignores_other_schemes():
+    token = _jwt_with_payload({"sub": "user_1"})
+    req = _Req(auth=f"Basic {token}", ip="203.0.113.9")
+    assert get_user_id_or_ip(req) == "203.0.113.9"
+
+
 def test_get_user_id_or_ip_falls_back_to_ip_on_bad_token():
     req = _Req(auth="Bearer not.a.jwt", ip="5.6.7.8")
     assert get_user_id_or_ip(req) == "5.6.7.8"

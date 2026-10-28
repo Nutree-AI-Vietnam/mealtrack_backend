@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi.responses import JSONResponse
+from fastapi.security.utils import get_authorization_scheme_param
 from limits import RateLimitItem, parse_many
 from limits.aio.storage import RedisStorage
 from limits.aio.strategies import FixedWindowRateLimiter
@@ -152,13 +153,15 @@ def get_user_id_or_ip(request):
 
     Uses lightweight base64 decode of JWT payload (no verification).
     Auth is already enforced by verify_firebase_token dependency —
-    this only needs a stable key for rate limiting.
+    this only needs a stable key for rate limiting. The scheme is parsed
+    like the auth dependency's HTTPBearer (case-insensitive), so every
+    header that authenticates gets the per-user key, not the IP.
     """
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
+    scheme, token = get_authorization_scheme_param(request.headers.get("Authorization"))
+    if scheme.lower() == "bearer" and token:
         try:
             # Decode JWT payload without verification (just for rate limit key)
-            payload_b64 = auth[7:].split(".")[1]
+            payload_b64 = token.split(".")[1]
             # Add padding for base64
             padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded))
