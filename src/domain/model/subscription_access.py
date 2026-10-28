@@ -55,6 +55,23 @@ def subscription_will_renew(record: Any) -> bool:
     return record.status == "active"
 
 
+def entitlements_payload(access: SubscriptionAccess) -> dict[str, Any]:
+    """The GET /v1/me/entitlements body for one access decision.
+
+    product_id, will_renew and provider describe the granting row with the
+    latest deadline (a lifetime grant wins); all null when access is denied.
+    """
+    source = access.source if access.has_access else None
+    return {
+        "has_access": access.has_access,
+        "status": access.status,
+        "expires_at": access.expires_at,
+        "product_id": source.product_id if source is not None else None,
+        "will_renew": subscription_will_renew(source) if source is not None else None,
+        "provider": source.provider if source is not None else None,
+    }
+
+
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
