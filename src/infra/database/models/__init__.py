@@ -43,6 +43,7 @@ from .meal.meal_instruction_step import MealInstructionStepORM
 
 # Translation models (meals + food items)
 from .meal.meal_translation_model import MealTranslationORM
+from .meal.scan_feedback import ScanFeedbackORM
 from .meal_image_cache import MealImageCacheModel
 from .meal_recommendation import (
     AllergenReferenceORM,
@@ -147,6 +148,7 @@ from .weekly_recap import WeeklyRecapORM
 from .weight_entry import WeightEntryORM
 
 __all__ = [
+    "ScanFeedbackORM",
     "CatalogPreparationJobORM",
     "CatalogRecipeTranslationORM",
     "CatalogPublicationVersionORM",

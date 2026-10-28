@@ -1,8 +1,10 @@
 from typing import List, Optional
 from uuid import UUID
 
+from src.domain.exceptions.user_exceptions import UserNotFoundError
 from src.domain.model.user import UserDomainModel, UserProfileDomainModel
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
+from src.domain.model.user.user_avatar import UserAvatar
 from src.domain.ports.user_repository_port import UserRepositoryPort
 
 
@@ -85,3 +87,13 @@ class FakeUserRepository(UserRepositoryPort):
         self, user_id: UUID, enabled: bool
     ) -> None:
         self.weekly_auto_adjust[str(user_id)] = enabled
+
+    async def update_user_avatar(
+        self, user_id: UUID | str, avatar: UserAvatar
+    ) -> Optional[str]:
+        for user in self.users.values():
+            if str(user.id) == str(user_id) and user.is_active:
+                previous_image_id = user.avatar.image_id
+                user.avatar = avatar
+                return previous_image_id
+        raise UserNotFoundError(f"No active user {user_id}")

@@ -179,6 +179,7 @@ class AsyncMealRepository(MealRepositoryPort):
                     )
 
             await self.session.flush()
+            await self._capture_scan_baseline(meal)
             return await self._reload_meal_domain(
                 meal.meal_id, fallback_image=meal.image
             )
@@ -193,9 +194,17 @@ class AsyncMealRepository(MealRepositoryPort):
 
         self.session.add(db_meal)
         await self.session.flush()
+        await self._capture_scan_baseline(meal)
         return await self._reload_meal_domain(
             db_meal.meal_id, fallback_image=meal.image
         )
+
+    async def _capture_scan_baseline(self, meal: Meal) -> None:
+        from src.infra.repositories.scan_feedback_repository import (
+            ScanFeedbackRepository,
+        )
+
+        await ScanFeedbackRepository(self.session).capture_baseline(meal)
 
     async def find_by_id(
         self, meal_id: str, projection: MealProjection = MealProjection.FULL
@@ -326,9 +335,9 @@ class AsyncMealRepository(MealRepositoryPort):
     ) -> datetime | None:
         """Newest meal write on a local day, including edits and deletes' siblings."""
         tz = get_zone_info(user_timezone) if user_timezone else UTC
-        start_dt = datetime.combine(date_obj, datetime.min.time(), tzinfo=tz).astimezone(
-            UTC
-        )
+        start_dt = datetime.combine(
+            date_obj, datetime.min.time(), tzinfo=tz
+        ).astimezone(UTC)
         end_dt = start_dt + timedelta(days=1)
         result = await self.session.execute(
             select(func.max(MealORM.updated_at)).where(

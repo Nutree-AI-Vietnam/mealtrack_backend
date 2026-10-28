@@ -23,6 +23,15 @@ class FakeEventBus:
         return self.meal
 
 
+class FakeRecovery:
+    def __init__(self):
+        self.meal_ids = []
+
+    async def request_if_missing(self, *, meal, **_kwargs):
+        self.meal_ids.append(meal.meal_id)
+        return True
+
+
 def _request() -> Request:
     return Request(
         {
@@ -91,14 +100,17 @@ async def test_status_endpoint_reports_fresh_worker_cache():
     service = MealValueInsightService()
     cache = FakeCache({service.cache_key_for_meal(meal.meal_id): _payload()})
 
+    recovery = FakeRecovery()
     response = await get_meal_value_insights(
         request=_request(),
         meal_id=meal.meal_id,
         user_id="00000000-0000-4000-8000-000000000002",
         event_bus=FakeEventBus(meal),
         cache_service=cache,
+        insight_recovery=recovery,
     )
 
+    assert recovery.meal_ids == []
     assert response.status == "fresh"
     assert response.version == service.cache_key_for_meal(meal.meal_id)
     assert response.value_insights is not None
@@ -107,13 +119,16 @@ async def test_status_endpoint_reports_fresh_worker_cache():
 @pytest.mark.asyncio
 async def test_status_endpoint_reports_generating_on_cache_miss():
     meal = _meal()
+    recovery = FakeRecovery()
     response = await get_meal_value_insights(
         request=_request(),
         meal_id=meal.meal_id,
         user_id="00000000-0000-4000-8000-000000000002",
         event_bus=FakeEventBus(meal),
         cache_service=FakeCache(),
+        insight_recovery=recovery,
     )
 
     assert response.status == "generating"
     assert response.value_insights is None
+    assert recovery.meal_ids == [meal.meal_id]

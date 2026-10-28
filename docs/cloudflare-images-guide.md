@@ -161,4 +161,6 @@ Photos already stored on Cloudflare Images and on `res.cloudinary.com` stay wher
 |---|---|---|
 | `403 Authentication error (code 10000)` on direct upload | `CLOUDFLARE_API_TOKEN` lacks Images permission | Add **Cloudflare Images: Edit** permission to the token in Cloudflare Dashboard. |
 | `422 INVALID_IMAGE_URL` on scan-by-url | Host not in allowed list | Ensure the URL hostname is either `imagedelivery.net` or matches `CLOUDFLARE_CUSTOM_DOMAIN`. |
+| `401 INVALID_UPLOAD_TICKET` on a POST to `upload_url` | The `exp` or `sig` in `upload_url` is missing, expired or altered. The backend answers before it reads the photo. | Fetch a new token from `/v1/meals/upload-token` and post to its `upload_url` unchanged. |
+| `429` on a POST to `upload_url` | More than 30 uploads with a valid ticket from one IP in a minute | Retry after the `Retry-After` header. |
 | Missing Account Hash error on startup | `CLOUDFLARE_ACCOUNT_HASH` is empty | Copy account hash from Cloudflare Images dashboard and add to `.env`. |

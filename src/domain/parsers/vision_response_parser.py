@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from src.domain.model.ai.nutrition_contracts import (
+    MAX_AI_FOOD_ITEMS,
     FoodLabelNutritionResponse,
     VisionNutritionResponse,
 )
@@ -26,7 +27,11 @@ class VisionResponseParsingError(Exception):
 def _ai_micros(payload: Any):
     if payload is None:
         return None
-    data = payload.model_dump(exclude_none=True) if hasattr(payload, "model_dump") else payload
+    data = (
+        payload.model_dump(exclude_none=True)
+        if hasattr(payload, "model_dump")
+        else payload
+    )
     return micros_from_mapping(data)
 
 
@@ -37,7 +42,7 @@ class VisionResponseParser:
     This class implements US-2.2 - Parse the vision AI response to structured food list and macros.
     """
 
-    MAX_FOOD_ITEMS = 8
+    MAX_FOOD_ITEMS = MAX_AI_FOOD_ITEMS
 
     def __init__(self, strict_schema_mode: bool | None = None):
         if strict_schema_mode is None:

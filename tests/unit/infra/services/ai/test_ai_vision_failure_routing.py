@@ -260,14 +260,25 @@ class TestVisionFailureKindRouting:
             return_value={"result": "openai_vision_success"}
         )
 
+        provenance = {}
         result = await manager_with_cf_vision.generate_with_vision(
             purpose=ModelPurpose.MEAL_SCAN,
             prompt="analyze food",
             image_data=b"fake_image",
             schema=VisionNutritionResponse,
+            result_metadata=provenance,
         )
 
         assert result == {"result": "openai_vision_success"}
+        assert provenance["model"] == "openai-vision-model"
+        assert (
+            "result_metadata"
+            not in mock_openai_provider.generate_with_vision.await_args.kwargs
+        )
+        assert (
+            "result_metadata"
+            not in mock_cf_vision_provider.generate_with_vision.await_args.kwargs
+        )
         mock_openai_provider.generate_with_vision.assert_awaited()
         assert (
             mock_cf_vision_provider.generate_with_vision.await_args.kwargs["schema"]

@@ -24,7 +24,18 @@ class NotificationPreferencesORM(Base, BaseMixin):
     )
 
     # Notification Type Toggles
+    # meal_reminders_enabled is derived: true while any meal switch below is on.
+    # Older apps still read and send it.
     meal_reminders_enabled = Column(Boolean, default=True, nullable=False)
+    breakfast_reminder_enabled = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    lunch_reminder_enabled = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    dinner_reminder_enabled = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
     daily_summary_enabled = Column(Boolean, default=True, nullable=False)
     hydration_reminders_enabled = Column(
         Boolean, default=True, nullable=False, server_default="true"
@@ -55,6 +66,11 @@ class NotificationPreferencesORM(Base, BaseMixin):
     # Daily Summary Timing (minutes from midnight)
     daily_summary_time_minutes = Column(Integer, nullable=True, default=1260)
 
+    # Water reminder time (minutes from midnight), 15:30 by default
+    hydration_reminder_time_minutes = Column(
+        Integer, default=930, nullable=False, server_default="930"
+    )
+
     # Preferred notification language (ISO 639-1: 'en', 'vi')
     language = Column(String(5), default="en", nullable=False, server_default="en")
 
@@ -78,5 +94,10 @@ class NotificationPreferencesORM(Base, BaseMixin):
         CheckConstraint(
             "daily_summary_time_minutes >= 0 AND daily_summary_time_minutes < 1440",
             name="check_daily_summary_time",
+        ),
+        CheckConstraint(
+            "hydration_reminder_time_minutes >= 0 "
+            "AND hydration_reminder_time_minutes < 1440",
+            name="check_hydration_reminder_time",
         ),
     )

@@ -25,3 +25,7 @@ class UpdateNotificationPreferencesCommand(Command):
     dinner_time_minutes: Optional[int] = None
     daily_summary_time_minutes: Optional[int] = None
     language: Optional[str] = None
+    breakfast_reminder_enabled: bool | None = None
+    lunch_reminder_enabled: bool | None = None
+    dinner_reminder_enabled: bool | None = None
+    hydration_reminder_time_minutes: int | None = None

@@ -3,9 +3,14 @@
 from io import BytesIO
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageOps, ImageStat
 
-from src.domain.utils.image_compression import compress_image, _MAX_DIM, _MAX_BYTES
+from src.domain.utils.image_compression import (
+    _MAX_BYTES,
+    _MAX_DIM,
+    compress_image,
+    compress_vision_image,
+)
 
 
 def _make_jpeg(width: int, height: int) -> bytes:
@@ -50,3 +55,44 @@ class TestCompressImage:
         corrupt = b"not an image at all"
         result = compress_image(corrupt)
         assert result is corrupt  # unchanged fallback
+
+
+@pytest.mark.parametrize("orientation", range(2, 9))
+@pytest.mark.parametrize("size", [(120, 80), (2400, 1600)])
+def test_scan_normalizes_exif_pixels_before_resizing(orientation, size):
+    image = Image.new("RGB", size, "white")
+    image.paste("red", (0, 0, size[0] // 2, size[1] // 2))
+    image.paste("blue", (size[0] // 2, 0, size[0], size[1] // 2))
+    exif = image.getexif()
+    exif[274] = orientation
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=95, exif=exif)
+    raw = buf.getvalue()
+    expected = ImageOps.exif_transpose(Image.open(BytesIO(raw)))
+    expected.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+
+    encoded = compress_vision_image(raw)
+    actual = Image.open(BytesIO(encoded))
+
+    assert actual.size == expected.size
+    assert actual.getexif().get(274, 1) == 1
+    difference = ImageStat.Stat(ImageChops.difference(actual, expected))
+    assert max(difference.mean) < 3
+    # Sending the same scan through acquisition and vision must not re-encode it.
+    assert compress_vision_image(encoded) is encoded
+
+
+def test_scan_preserves_detail_that_thumbnail_compression_discards():
+    raw = _make_jpeg(4000, 3000)
+    assert _image_size(compress_vision_image(raw)) == (2048, 1536)
+    assert _image_size(compress_image(raw)) == (768, 576)
+
+
+def test_scan_does_not_upscale_or_reencode_an_already_suitable_jpeg():
+    raw = _make_jpeg(1600, 1200)
+    assert compress_vision_image(raw) is raw
+
+
+def test_extremely_narrow_image_keeps_nonzero_dimension():
+    raw = _make_png(1, 4000)
+    assert _image_size(compress_vision_image(raw)) == (1, 2048)

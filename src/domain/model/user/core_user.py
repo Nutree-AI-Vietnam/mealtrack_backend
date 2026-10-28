@@ -11,6 +11,7 @@ from uuid import UUID
 
 from src.domain.model.auth.auth_provider import AuthProvider
 from src.domain.model.base import BaseDomainModel
+from src.domain.model.user.user_avatar import UserAvatar
 from src.domain.utils.timezone_utils import utc_now
 
 
@@ -71,6 +72,8 @@ class UserDomainModel(BaseDomainModel):
     photo_url: str | None = None
     deleted_at: datetime | None = None
     language_code: str | None = None
+    # Read-only here: only the repository's update_user_avatar writes it.
+    avatar: UserAvatar = field(default_factory=UserAvatar)
     profiles: list[UserProfileDomainModel] = field(default_factory=list)
 
     @property

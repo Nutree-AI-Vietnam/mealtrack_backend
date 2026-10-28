@@ -258,6 +258,9 @@ class MealMapper:
                     )
                     food_item_dto = FoodItemResponse(
                         id=str(item.id),
+                        confidence=item.confidence
+                        if meal.source == "scanner" and not meal.is_manually_edited
+                        else None,
                         name=display_name,
                         display_name=display_name,
                         canonical_name=canonical_name,
@@ -420,6 +423,8 @@ class MealMapper:
 
         return DetailedMealResponse(
             meal_id=meal.meal_id,
+            edit_count=meal.edit_count,
+            is_manually_edited=meal.is_manually_edited,
             status=STATUS_MAPPING.get(meal.status.value, meal.status.value.lower()),
             dish_name=dish_name,
             emoji=meal.emoji,
@@ -447,7 +452,9 @@ class MealMapper:
                 else None
             ),
             translations=translations_response,
-            food_label_metadata=MealMapper._food_label_metadata(meal, parsed_raw=parsed_raw_gpt),
+            food_label_metadata=MealMapper._food_label_metadata(
+                meal, parsed_raw=parsed_raw_gpt
+            ),
             value_insights=value_insights_response,
             translation_language=translation_language,
             description=getattr(meal, "description", None),

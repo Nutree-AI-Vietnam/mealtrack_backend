@@ -3,8 +3,9 @@ Notification preferences domain model.
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Any
 
 from src.domain.utils.timezone_utils import format_iso_utc, utc_now
 
@@ -17,21 +18,35 @@ DEFAULT_MEAL_REMINDER_MINUTES = {
     "dinner": 1080,  # 6:00 PM
 }
 
+# The one daily water reminder, in minutes from midnight
+DEFAULT_HYDRATION_REMINDER_MINUTES = 930  # 3:30 PM
+
 # Map notification types to their corresponding preference fields
 NOTIFICATION_TYPE_TO_FIELD = {
-    NotificationType.MEAL_REMINDER_BREAKFAST: "meal_reminders_enabled",
-    NotificationType.MEAL_REMINDER_LUNCH: "meal_reminders_enabled",
-    NotificationType.MEAL_REMINDER_DINNER: "meal_reminders_enabled",
+    NotificationType.MEAL_REMINDER_BREAKFAST: "breakfast_reminder_enabled",
+    NotificationType.MEAL_REMINDER_LUNCH: "lunch_reminder_enabled",
+    NotificationType.MEAL_REMINDER_DINNER: "dinner_reminder_enabled",
     NotificationType.DAILY_SUMMARY: "daily_summary_enabled",
     NotificationType.HYDRATION_REMINDER_AFTERNOON: "hydration_reminders_enabled",
     NotificationType.HYDRATION_REMINDER_EVENING: "hydration_reminders_enabled",
 }
+
+_TIME_FIELDS = (
+    "breakfast_time_minutes",
+    "lunch_time_minutes",
+    "dinner_time_minutes",
+    "daily_summary_time_minutes",
+    "hydration_reminder_time_minutes",
+)
 
 
 @dataclass
 class NotificationPreferences:
     """
     Domain model representing a user's notification preferences.
+
+    `meal_reminders_enabled` is what older apps read and send. After any
+    update it is true while at least one meal switch is on.
     """
 
     preferences_id: str  # UUID as string
@@ -53,6 +68,10 @@ class NotificationPreferences:
     language: str = "en"  # ISO 639-1; must be in ENABLED_APP_LOCALES
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    breakfast_reminder_enabled: bool = True
+    lunch_reminder_enabled: bool = True
+    dinner_reminder_enabled: bool = True
+    hydration_reminder_time_minutes: int = DEFAULT_HYDRATION_REMINDER_MINUTES
 
     def __post_init__(self):
         """Validate invariants."""
@@ -68,14 +87,8 @@ class NotificationPreferences:
         except ValueError as e:
             raise ValueError(f"Invalid UUID format for user_id: {self.user_id}") from e
 
-        self._validate_time_minutes(
-            self.breakfast_time_minutes, "breakfast_time_minutes"
-        )
-        self._validate_time_minutes(self.lunch_time_minutes, "lunch_time_minutes")
-        self._validate_time_minutes(self.dinner_time_minutes, "dinner_time_minutes")
-        self._validate_time_minutes(
-            self.daily_summary_time_minutes, "daily_summary_time_minutes"
-        )
+        for field_name in _TIME_FIELDS:
+            self._validate_time_minutes(getattr(self, field_name), field_name)
 
     def _validate_time_minutes(self, time_minutes: int | None, field_name: str):
         """Validate time in minutes from midnight."""
@@ -91,6 +104,9 @@ class NotificationPreferences:
             preferences_id=str(uuid.uuid4()),
             user_id=user_id,
             meal_reminders_enabled=True,
+            breakfast_reminder_enabled=True,
+            lunch_reminder_enabled=True,
+            dinner_reminder_enabled=True,
             daily_summary_enabled=True,
             hydration_reminders_enabled=True,
             streak_reminders_enabled=True,
@@ -101,6 +117,7 @@ class NotificationPreferences:
             lunch_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["lunch"],
             dinner_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["dinner"],
             daily_summary_time_minutes=1260,  # 9:00 PM
+            hydration_reminder_time_minutes=DEFAULT_HYDRATION_REMINDER_MINUTES,
             language="en",
             created_at=utc_now(),
             updated_at=utc_now(),
@@ -120,81 +137,73 @@ class NotificationPreferences:
         dinner_time_minutes: int | None = None,
         daily_summary_time_minutes: int | None = None,
         language: str | None = None,
+        breakfast_reminder_enabled: bool | None = None,
+        lunch_reminder_enabled: bool | None = None,
+        dinner_reminder_enabled: bool | None = None,
+        hydration_reminder_time_minutes: int | None = None,
     ) -> "NotificationPreferences":
-        """Update notification preferences with new values."""
-        if breakfast_time_minutes is not None:
-            self._validate_time_minutes(
-                breakfast_time_minutes, "breakfast_time_minutes"
-            )
-        if lunch_time_minutes is not None:
-            self._validate_time_minutes(lunch_time_minutes, "lunch_time_minutes")
-        if dinner_time_minutes is not None:
-            self._validate_time_minutes(dinner_time_minutes, "dinner_time_minutes")
-        if daily_summary_time_minutes is not None:
-            self._validate_time_minutes(
-                daily_summary_time_minutes, "daily_summary_time_minutes"
-            )
-
-        return NotificationPreferences(
-            preferences_id=self.preferences_id,
-            user_id=self.user_id,
-            meal_reminders_enabled=(
-                meal_reminders_enabled
-                if meal_reminders_enabled is not None
-                else self.meal_reminders_enabled
+        """Return a copy with the given values; None keeps the current value."""
+        requested = {
+            "daily_summary_enabled": daily_summary_enabled,
+            "hydration_reminders_enabled": hydration_reminders_enabled,
+            "streak_reminders_enabled": streak_reminders_enabled,
+            "reengagement_enabled": reengagement_enabled,
+            "progress_updates_enabled": progress_updates_enabled,
+            "offers_enabled": offers_enabled,
+            "breakfast_time_minutes": breakfast_time_minutes,
+            "lunch_time_minutes": lunch_time_minutes,
+            "dinner_time_minutes": dinner_time_minutes,
+            "daily_summary_time_minutes": daily_summary_time_minutes,
+            "hydration_reminder_time_minutes": hydration_reminder_time_minutes,
+            "language": language,
+        }
+        changes: dict[str, Any] = {
+            name: value for name, value in requested.items() if value is not None
+        }
+        breakfast, lunch, dinner = self._meal_switches_after_update(
+            meal_reminders_enabled,
+            (
+                breakfast_reminder_enabled,
+                lunch_reminder_enabled,
+                dinner_reminder_enabled,
             ),
-            daily_summary_enabled=(
-                daily_summary_enabled
-                if daily_summary_enabled is not None
-                else self.daily_summary_enabled
-            ),
-            hydration_reminders_enabled=(
-                hydration_reminders_enabled
-                if hydration_reminders_enabled is not None
-                else self.hydration_reminders_enabled
-            ),
-            streak_reminders_enabled=(
-                streak_reminders_enabled
-                if streak_reminders_enabled is not None
-                else self.streak_reminders_enabled
-            ),
-            reengagement_enabled=(
-                reengagement_enabled
-                if reengagement_enabled is not None
-                else self.reengagement_enabled
-            ),
-            progress_updates_enabled=(
-                progress_updates_enabled
-                if progress_updates_enabled is not None
-                else self.progress_updates_enabled
-            ),
-            offers_enabled=(
-                offers_enabled if offers_enabled is not None else self.offers_enabled
-            ),
-            breakfast_time_minutes=(
-                breakfast_time_minutes
-                if breakfast_time_minutes is not None
-                else self.breakfast_time_minutes
-            ),
-            lunch_time_minutes=(
-                lunch_time_minutes
-                if lunch_time_minutes is not None
-                else self.lunch_time_minutes
-            ),
-            dinner_time_minutes=(
-                dinner_time_minutes
-                if dinner_time_minutes is not None
-                else self.dinner_time_minutes
-            ),
-            daily_summary_time_minutes=(
-                daily_summary_time_minutes
-                if daily_summary_time_minutes is not None
-                else self.daily_summary_time_minutes
-            ),
-            language=language if language is not None else self.language,
-            created_at=self.created_at,
+        )
+        # replace() runs __post_init__, which validates every time field.
+        return replace(
+            self,
+            **changes,
+            breakfast_reminder_enabled=breakfast,
+            lunch_reminder_enabled=lunch,
+            dinner_reminder_enabled=dinner,
+            meal_reminders_enabled=breakfast or lunch or dinner,
             updated_at=utc_now(),
         )
+
+    def _meal_switches_after_update(
+        self,
+        meal_reminders_enabled: bool | None,
+        per_meal: tuple[bool | None, bool | None, bool | None],
+    ) -> tuple[bool, bool, bool]:
+        """Resolve the three meal switches for an update.
+
+        Any per-meal value wins and the legacy flag is ignored. Older apps send
+        only the legacy flag, and send it with every save, so it changes the
+        switches only when it differs from what they currently add up to.
+        """
+        stored = (
+            self.breakfast_reminder_enabled,
+            self.lunch_reminder_enabled,
+            self.dinner_reminder_enabled,
+        )
+        if any(value is not None for value in per_meal):
+            breakfast, lunch, dinner = (
+                old if new is None else new
+                for new, old in zip(per_meal, stored, strict=True)
+            )
+            return breakfast, lunch, dinner
+        if meal_reminders_enabled is not None and meal_reminders_enabled != any(stored):
+            return (meal_reminders_enabled,) * 3
+        return stored
 
     def is_notification_type_enabled(self, notification_type: NotificationType) -> bool:
         """Check if a specific notification type is enabled."""
@@ -218,6 +227,9 @@ class NotificationPreferences:
             "preferences_id": self.preferences_id,
             "user_id": self.user_id,
             "meal_reminders_enabled": self.meal_reminders_enabled,
+            "breakfast_reminder_enabled": self.breakfast_reminder_enabled,
+            "lunch_reminder_enabled": self.lunch_reminder_enabled,
+            "dinner_reminder_enabled": self.dinner_reminder_enabled,
             "daily_summary_enabled": self.daily_summary_enabled,
             "hydration_reminders_enabled": self.hydration_reminders_enabled,
             "streak_reminders_enabled": self.streak_reminders_enabled,
@@ -228,6 +240,7 @@ class NotificationPreferences:
             "lunch_time_minutes": self.lunch_time_minutes,
             "dinner_time_minutes": self.dinner_time_minutes,
             "daily_summary_time_minutes": self.daily_summary_time_minutes,
+            "hydration_reminder_time_minutes": self.hydration_reminder_time_minutes,
             "language": self.language,
             "created_at": format_iso_utc(self.created_at),
             "updated_at": format_iso_utc(self.updated_at),

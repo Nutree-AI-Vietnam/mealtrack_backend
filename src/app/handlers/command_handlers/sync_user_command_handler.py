@@ -151,6 +151,7 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
                         "phone_number": user.phone_number,
                         "display_name": user.display_name,
                         "photo_url": user.photo_url,
+                        "avatar": user.avatar.to_public_dict(),
                         "provider": user.provider,
                         "is_active": user.is_active,
                         "onboarding_completed": user.onboarding_completed,
@@ -306,7 +307,10 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
 
             uuid.UUID(user_id_str)
         except ValueError:
-            logger.warning("Skipping notification prefs: invalid UUID value (len=%d)", len(user_id_str))
+            logger.warning(
+                "Skipping notification prefs: invalid UUID value (len=%d)",
+                len(user_id_str),
+            )
             return
 
         try:

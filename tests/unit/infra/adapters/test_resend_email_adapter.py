@@ -13,6 +13,7 @@ def mock_settings():
         settings = MagicMock()
         settings.RESEND_API_KEY = "re_test_123"
         settings.EMAIL_FROM = "Nutree <test@nutree.app>"
+        settings.EMAIL_REPLY_TO = "support@nutreeai.com"
         settings.EMAIL_ENABLED = True
         mock.return_value = settings
         yield settings
@@ -34,6 +35,26 @@ async def test_send_email_success(mock_settings):
         assert result.success is True
         assert result.message_id == "msg_123"
         mock_resend.Emails.send.assert_called_once()
+        assert mock_resend.Emails.send.call_args.args[0]["reply_to"] == (
+            "support@nutreeai.com"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply_to", [None, ""])
+async def test_send_email_without_reply_to_omits_it(mock_settings, reply_to):
+    mock_settings.EMAIL_REPLY_TO = reply_to
+    with patch("src.infra.adapters.resend_email_adapter.resend") as mock_resend:
+        mock_resend.Emails.send.return_value = {"id": "msg_123"}
+
+        adapter = ResendEmailAdapter()
+        await adapter.send_email(
+            to="user@example.com",
+            subject="Welcome!",
+            html_body="<p>Hello</p>",
+        )
+
+        assert "reply_to" not in mock_resend.Emails.send.call_args.args[0]
 
 
 @pytest.mark.asyncio

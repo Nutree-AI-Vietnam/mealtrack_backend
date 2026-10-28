@@ -143,6 +143,10 @@ class Settings(BaseSettings):
     # Email (Resend)
     RESEND_API_KEY: str | None = Field(default=None)
     EMAIL_FROM: str = Field(default="Nutree <hello@nutree.app>")
+    EMAIL_REPLY_TO: str | None = Field(
+        default="support@nutreeai.com",
+        description="Where replies to outgoing email go; empty sends none.",
+    )
     EMAIL_ENABLED: bool = Field(default=False)
 
     # External APIs & integrations

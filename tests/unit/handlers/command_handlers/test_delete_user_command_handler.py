@@ -55,6 +55,9 @@ class AsyncSqliteUserRepository:
     async def delete(self, *args, **kwargs):
         return self._repo.delete(*args, **kwargs)
 
+    async def update_user_avatar(self, *args, **kwargs):
+        return self._repo.update_user_avatar(*args, **kwargs)
+
 
 class DummyUnitOfWork:
     """
@@ -511,3 +514,75 @@ async def test_nothing_is_published_when_the_deletion_does_not_commit(
         await handler.handle(DeleteUserCommand(firebase_uid=active_user.firebase_uid))
 
     mock_publisher.publish.assert_not_awaited()
+
+
+def _user_with_photo_avatar(db_session, image_id: str) -> User:
+    user = User(
+        email="avatar_delete@example.com",
+        username="avatar_delete",
+        password_hash="hash",
+        firebase_uid="firebase_avatar_delete",
+        is_active=True,
+        avatar_kind="photo",
+        avatar_image_id=image_id,
+        avatar_image_url=f"https://img.example/{image_id}",
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.mark.asyncio
+async def test_deletion_resets_the_avatar_and_deletes_its_image(
+    mock_publisher, db_session
+):
+    from tests.fixtures.mock_image_store import MockImageStore
+
+    store = MockImageStore()
+    store.storage["avatar-img"] = b"jpeg"
+    user = _user_with_photo_avatar(db_session, "avatar-img")
+    handler = DeleteUserCommandHandler(
+        uow=DummyUnitOfWork(db_session),
+        event_publisher=mock_publisher,
+        image_store=store,
+    )
+
+    result = await handler.handle(DeleteUserCommand(firebase_uid=user.firebase_uid))
+
+    assert result["deleted"] is True
+    db_session.expire_all()
+    stored = db_session.query(User).filter(User.id == user.id).one()
+    assert stored.avatar_kind == "auto"
+    assert stored.avatar_image_id is None
+    assert stored.avatar_image_url is None
+    assert stored.avatar_character is None
+    assert stored.avatar_color is None
+    assert "avatar-img" not in store.storage
+    mock_publisher.publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failing_avatar_image_delete_is_retried_then_logged(
+    mock_publisher, db_session, caplog
+):
+    import logging
+
+    store = MagicMock()
+    store.delete_async = AsyncMock(return_value=False)
+    user = _user_with_photo_avatar(db_session, "stuck-img")
+    handler = DeleteUserCommandHandler(
+        uow=DummyUnitOfWork(db_session),
+        event_publisher=mock_publisher,
+        image_store=store,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="src.app.services.user_avatar_writes"):
+        result = await handler.handle(DeleteUserCommand(firebase_uid=user.firebase_uid))
+
+    assert result["deleted"] is True
+    assert store.delete_async.await_count == 3
+    assert any("stuck-img" in record.getMessage() for record in caplog.records)
+    db_session.expire_all()
+    assert db_session.query(User).filter(User.id == user.id).one().avatar_kind == "auto"
+    mock_publisher.publish.assert_awaited_once()

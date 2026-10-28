@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from urllib.parse import parse_qs, urlparse
 
@@ -9,7 +10,11 @@ import httpx
 import pytest
 import respx
 
-from src.infra.adapters.cloudflare_image_store import CloudflareImageStore
+from src.domain.exceptions.meal_photo_upload import MealPhotoUploadError
+from src.infra.adapters.cloudflare_image_store import (
+    CloudflareImageStore,
+    _upload_ticket_signature,
+)
 from src.infra.config.settings import Settings
 
 
@@ -343,6 +348,86 @@ async def test_generate_upload_signature_async_does_not_call_cloudflare(
 
     assert token["provider"] == "r2"
     assert route.call_count == 0
+
+
+@pytest.fixture
+def r2_store(mock_cf_settings, monkeypatch):
+    monkeypatch.setattr(
+        "src.infra.adapters.cloudflare_image_store.get_settings",
+        lambda: mock_cf_settings,
+    )
+    return CloudflareImageStore(
+        account_id="acct",
+        api_token="token",
+        account_hash="hash",
+        api_public_base_url="https://api.test",
+        r2_access_key_id="access",
+        r2_secret_access_key="secret",
+        r2_bucket="meal-photos",
+        r2_public_base_url="https://photos.example.com",
+    )
+
+
+def test_verify_upload_ticket_accepts_the_upload_url_ticket(r2_store):
+    image_id = str(uuid.uuid4())
+    token = r2_store.generate_upload_signature(image_id)
+    query = parse_qs(urlparse(token["upload_url"]).query)
+
+    verified = r2_store.verify_upload_ticket(
+        image_id, int(query["exp"][0]), query["sig"][0]
+    )
+
+    assert verified == image_id
+
+
+@pytest.mark.parametrize(
+    ("expires_in", "signature"),
+    [
+        pytest.param(-60, None, id="expired"),
+        pytest.param(2 * 3600, None, id="longer-than-any-ticket"),
+        pytest.param(300, "0" * 64, id="wrong-signature"),
+        pytest.param(300, "é" * 64, id="non-ascii-signature"),
+    ],
+)
+def test_verify_upload_ticket_refuses_a_bad_ticket(r2_store, expires_in, signature):
+    image_id = str(uuid.uuid4())
+    expires_at = int(time.time()) + expires_in
+    signed = _upload_ticket_signature("secret", image_id, expires_at)
+
+    with pytest.raises(MealPhotoUploadError) as refused:
+        r2_store.verify_upload_ticket(image_id, expires_at, signature or signed)
+
+    assert refused.value.error_code == "INVALID_UPLOAD_TICKET"
+
+
+def test_verify_upload_ticket_refuses_an_image_id_that_is_not_a_uuid(r2_store):
+    expires_at = int(time.time()) + 300
+    signature = _upload_ticket_signature("secret", "img-1", expires_at)
+
+    with pytest.raises(MealPhotoUploadError) as refused:
+        r2_store.verify_upload_ticket("img-1", expires_at, signature)
+
+    assert refused.value.error_code == "INVALID_IMAGE_ID"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_store_signed_upload_refuses_a_bad_ticket_without_storing(r2_store):
+    put = respx.put(url__regex=r"https://acct\.r2\.cloudflarestorage\.com/.*").mock(
+        return_value=httpx.Response(200)
+    )
+
+    with pytest.raises(MealPhotoUploadError) as refused:
+        await r2_store.store_signed_upload(
+            image_id=str(uuid.uuid4()),
+            expires_at=int(time.time()) + 300,
+            signature="0" * 64,
+            content_type="image/jpeg",
+            body=b"image-bytes",
+        )
+
+    assert refused.value.error_code == "INVALID_UPLOAD_TICKET"
+    assert put.call_count == 0
 
 
 @respx.mock

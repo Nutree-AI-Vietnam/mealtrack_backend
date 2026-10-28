@@ -40,9 +40,11 @@ from src.domain.strategies.meal_analysis_strategy import (
     FoodLabelImageAnalysisStrategy,
 )
 from src.domain.utils.image_compression import (
-    compress_image,
+    VISION_JPEG_QUALITY,
+    VISION_MAX_DIM,
     to_compressed_image_url,
 )
+from src.domain.utils.image_compression import compress_vision_image as compress_image
 from src.domain.utils.timezone_utils import (
     get_zone_info,
     is_valid_timezone,
@@ -193,6 +195,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             download_url = (
                 to_compressed_image_url(
                     command.image_url,
+                    max_dim=VISION_MAX_DIM,
+                    quality=str(VISION_JPEG_QUALITY),
                     custom_domain=self.cloudflare_custom_domain,
                     flexible_variants_enabled=self.cloudflare_flexible_variants_enabled,
                 )
