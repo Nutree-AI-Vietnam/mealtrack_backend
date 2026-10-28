@@ -24,6 +24,14 @@ USER_ID = "user_456"
 RECHECK_KEY = f"subscription_revenuecat_check:{USER_ID}"
 
 
+def _answer(check: EntitlementCheck, source: str) -> premium_check.RevenueCatAccess:
+    return premium_check.RevenueCatAccess(check, source)
+
+
+REVENUECAT = premium_check.ANSWER_REVENUECAT
+RECENT = premium_check.ANSWER_RECENT_CHECK
+
+
 class _Subscriptions:
     def __init__(self, entitled):
         self.entitled = entitled
@@ -245,8 +253,8 @@ class TestRevenueCatAccess:
     async def test_entitled_answer_is_cached_for_both_checks(self, access):
         access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
 
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.ENTITLED
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            EntitlementCheck.ENTITLED, REVENUECAT
         )
 
         access.revenuecat.check_entitlement.assert_awaited_once_with(
@@ -262,14 +270,18 @@ class TestRevenueCatAccess:
         access.revenuecat.check_entitlement.assert_awaited_once()
 
     async def test_cached_grant_answers_without_revenuecat(self, access):
-        access.cache.values[f"subscription_access:{USER_ID}"] = (
-            EntitlementCheck.ENTITLED.value
-        )
+        """The grant may be require_subscription's own row decision: it is
+        reported as cached, never as RevenueCat's."""
+        access.uow = _Uow(entitled=True)
+        await require_subscription(USER_ID)  # caches the database's grant
+        access.uow = _Uow()
 
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.ENTITLED
-        )
+        answer = await premium_check.revenuecat_access(USER_ID)
 
+        assert answer == _answer(
+            EntitlementCheck.ENTITLED, premium_check.ANSWER_ACCESS_CACHE
+        )
+        assert answer.from_revenuecat is False
         access.revenuecat.check_entitlement.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -280,7 +292,9 @@ class TestRevenueCatAccess:
     ):
         access.revenuecat.check_entitlement.return_value = answer
 
-        assert await premium_check.revenuecat_access(USER_ID) is answer
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            answer, REVENUECAT
+        )
 
         # Only the recheck key holds it; the Premium check's cache has nothing.
         assert access.cache.values == {RECHECK_KEY: answer.value}
@@ -288,8 +302,8 @@ class TestRevenueCatAccess:
     async def test_user_without_firebase_uid_is_not_entitled(self, access):
         access.uow = _Uow(firebase_uid=None)
 
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.NOT_ENTITLED
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            EntitlementCheck.NOT_ENTITLED, premium_check.ANSWER_NOT_ASKED
         )
 
         access.revenuecat.check_entitlement.assert_not_called()
@@ -297,8 +311,8 @@ class TestRevenueCatAccess:
     async def test_missing_api_key_is_unavailable(self, access, monkeypatch):
         monkeypatch.delenv("REVENUECAT_SECRET_API_KEY")
 
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.UNAVAILABLE
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            EntitlementCheck.UNAVAILABLE, premium_check.ANSWER_NOT_ASKED
         )
 
         access.revenuecat.check_entitlement.assert_not_called()
@@ -313,10 +327,12 @@ class TestRevenueCatRecheck:
     )
     async def test_an_answer_holds_for_the_window(self, access, answer):
         access.revenuecat.check_entitlement.return_value = answer
-        assert await premium_check.revenuecat_access(USER_ID) is answer
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            answer, REVENUECAT
+        )
 
         access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
-        assert await premium_check.revenuecat_access(USER_ID) is answer
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(answer, RECENT)
 
         access.revenuecat.check_entitlement.assert_awaited_once()
         assert access.cache.ttls[RECHECK_KEY] == (
@@ -328,8 +344,8 @@ class TestRevenueCatRecheck:
         del access.cache.values[RECHECK_KEY]  # its TTL ran out
         access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
 
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.ENTITLED
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            EntitlementCheck.ENTITLED, REVENUECAT
         )
         assert access.revenuecat.check_entitlement.await_count == 2
 
@@ -348,14 +364,17 @@ class TestRevenueCatRecheck:
         await asyncio.sleep(0)
         answered.set()
 
-        assert await asyncio.gather(*requests) == [EntitlementCheck.ENTITLED] * 10
+        assert (
+            await asyncio.gather(*requests)
+            == [_answer(EntitlementCheck.ENTITLED, REVENUECAT)] * 10
+        )
         access.revenuecat.check_entitlement.assert_awaited_once()
 
     async def test_another_workers_call_in_flight_is_not_repeated(self, access):
         access.cache.values[RECHECK_KEY] = "in_flight"
 
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.UNAVAILABLE
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            EntitlementCheck.UNAVAILABLE, RECENT
         )
         access.revenuecat.check_entitlement.assert_not_called()
 
@@ -369,8 +388,8 @@ class TestRevenueCatRecheck:
 
         access.cache.add = claimed_first
 
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.UNAVAILABLE
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            EntitlementCheck.UNAVAILABLE, RECENT
         )
         access.revenuecat.check_entitlement.assert_not_called()
 
@@ -380,9 +399,8 @@ class TestRevenueCatRecheck:
         monkeypatch.setattr(premium_check, "_get_cache", lambda: None)
 
         for _ in range(5):
-            assert await premium_check.revenuecat_access(USER_ID) is (
-                EntitlementCheck.NOT_ENTITLED
-            )
+            answer = await premium_check.revenuecat_access(USER_ID)
+            assert answer.check is EntitlementCheck.NOT_ENTITLED
 
         access.revenuecat.check_entitlement.assert_awaited_once()
 
@@ -406,8 +424,8 @@ class TestRevenueCatRecheck:
 
         assert RECHECK_KEY not in access.cache.values
         access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
-        assert await premium_check.revenuecat_access(USER_ID) is (
-            EntitlementCheck.ENTITLED
+        assert await premium_check.revenuecat_access(USER_ID) == _answer(
+            EntitlementCheck.ENTITLED, REVENUECAT
         )
         assert access.revenuecat.check_entitlement.await_count == 2
 

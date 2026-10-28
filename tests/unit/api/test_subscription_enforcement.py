@@ -18,6 +18,12 @@ from fastapi.testclient import TestClient
 from src.api.dependencies import subscription_access as enforcement
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.subscription_access import require_active_subscription
+from src.api.middleware.premium_check import (
+    ANSWER_ACCESS_CACHE,
+    ANSWER_RECENT_CHECK,
+    ANSWER_REVENUECAT,
+    RevenueCatAccess,
+)
 from src.app.handlers.query_handlers.check_subscription_access_query_handler import (
     CheckSubscriptionAccessQueryHandler,
 )
@@ -58,15 +64,17 @@ class _Bus:
 
 
 class _RevenueCat:
-    """Stands in for premium_check.revenuecat_access (its own tests below)."""
+    """Stands in for premium_check.revenuecat_access (tested in
+    test_premium_middleware.py)."""
 
     def __init__(self, answer: EntitlementCheck = EntitlementCheck.NOT_ENTITLED):
         self.answer = answer
+        self.source = ANSWER_REVENUECAT
         self.asked: list[str] = []
 
-    async def __call__(self, user_id: str) -> EntitlementCheck:
+    async def __call__(self, user_id: str) -> RevenueCatAccess:
         self.asked.append(user_id)
-        return self.answer
+        return RevenueCatAccess(self.answer, self.source)
 
 
 @pytest.fixture(autouse=True)
@@ -169,6 +177,53 @@ def test_revenuecat_grant_allows_a_payer_the_database_does_not_know(
     assert revenuecat.asked == ["db-user-id"]
     assert metrics == ["subscription_access.enforcement_revenuecat_grant"]
     assert "Paid route allowed by RevenueCat" in caplog.text
+
+
+def test_a_cached_grant_is_not_counted_as_revenuecats(monkeypatch, revenuecat, caplog):
+    """The access cache also holds require_subscription's own row grants:
+    allowing the route from it is not a payer RevenueCat just found."""
+    _flags(monkeypatch, access="true", enforcement_flag="true")
+    revenuecat.answer = EntitlementCheck.ENTITLED
+    revenuecat.source = ANSWER_ACCESS_CACHE
+    metrics = []
+    monkeypatch.setattr(
+        enforcement,
+        "increment_metric",
+        lambda name, **kwargs: metrics.append((name, kwargs.get("attributes"))),
+    )
+
+    with caplog.at_level(logging.INFO, logger=enforcement.__name__):
+        response = _client(monkeypatch, _Bus(has_access=False)).post("/paid")
+
+    assert response.status_code == 200
+    assert metrics == [
+        ("subscription_access.enforcement_cached_grant", {"source": "access_cache"})
+    ]
+    assert "Paid route allowed by RevenueCat" not in caplog.text
+    assert "Paid route allowed by a cached grant" in caplog.text
+
+
+def test_a_refusal_is_counted_with_revenuecats_answer_and_its_source(
+    monkeypatch, revenuecat
+):
+    _flags(monkeypatch, access="true", enforcement_flag="true")
+    revenuecat.source = ANSWER_RECENT_CHECK
+    metrics = []
+    monkeypatch.setattr(
+        enforcement,
+        "increment_metric",
+        lambda name, **kwargs: metrics.append((name, kwargs.get("attributes"))),
+    )
+
+    response = _client(monkeypatch, _Bus(has_access=False)).post("/paid")
+
+    assert response.status_code == 402
+    assert metrics == [
+        (
+            "subscription_access.enforcement_denied",
+            {"revenuecat": "not_entitled", "source": "recent_check"},
+        )
+    ]
 
 
 def test_revenuecat_unavailable_keeps_the_databases_402(monkeypatch, revenuecat):

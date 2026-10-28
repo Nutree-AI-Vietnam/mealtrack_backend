@@ -6,6 +6,7 @@ The gated routes are listed in docs/api-endpoints.md.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, status
 
@@ -16,6 +17,9 @@ from src.app.services.subscription_access_flags import (
 )
 from src.domain.ports.subscription_service_port import EntitlementCheck
 from src.observability import increment_metric
+
+if TYPE_CHECKING:
+    from src.api.middleware.premium_check import RevenueCatAccess
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +33,7 @@ def _event_bus():
     return get_configured_event_bus()
 
 
-async def _revenuecat_access(user_id: str) -> EntitlementCheck:
+async def _revenuecat_access(user_id: str) -> "RevenueCatAccess":
     """RevenueCat's short, cached check, shared with the Premium check."""
     from src.api.middleware.premium_check import revenuecat_access
 
@@ -53,22 +57,38 @@ async def require_active_subscription(
     if await _event_bus().send(CheckSubscriptionAccessQuery(user_id)):
         return
     revenuecat = await _revenuecat_access(user_id)
-    if revenuecat is EntitlementCheck.ENTITLED:
-        increment_metric("subscription_access.enforcement_revenuecat_grant")
-        logger.warning(
-            "Paid route allowed by RevenueCat; the database grants no access: "
-            "user_id=%s",
-            user_id,
-        )
+    if revenuecat.check is EntitlementCheck.ENTITLED:
+        if revenuecat.from_revenuecat:
+            increment_metric("subscription_access.enforcement_revenuecat_grant")
+            logger.warning(
+                "Paid route allowed by RevenueCat; the database grants no access: "
+                "user_id=%s",
+                user_id,
+            )
+        else:
+            # A grant cached earlier, possibly from require_subscription's
+            # own row check: not a payer RevenueCat just found.
+            increment_metric(
+                "subscription_access.enforcement_cached_grant",
+                attributes={"source": revenuecat.source},
+            )
+            logger.info(
+                "Paid route allowed by a cached grant; the database grants no "
+                "access: user_id=%s source=%s",
+                user_id,
+                revenuecat.source,
+            )
         return
     increment_metric(
         "subscription_access.enforcement_denied",
-        attributes={"revenuecat": revenuecat.value},
+        attributes={"revenuecat": revenuecat.check.value, "source": revenuecat.source},
     )
     logger.info(
-        "Paid route refused without subscription access: user_id=%s revenuecat=%s",
+        "Paid route refused without subscription access: user_id=%s revenuecat=%s "
+        "source=%s",
         user_id,
-        revenuecat.value,
+        revenuecat.check.value,
+        revenuecat.source,
     )
     raise HTTPException(
         status_code=status.HTTP_402_PAYMENT_REQUIRED,

@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, Request, status
@@ -47,6 +48,29 @@ REVENUECAT_RECHECK_SECONDS = 60
 _CHECK_IN_FLIGHT = "in_flight"
 # Bounds the per-process fallback kept while the shared cache is unavailable.
 _LOCAL_CHECKS_MAX = 10_000
+
+# Where revenuecat_access's answer came from.
+ANSWER_ACCESS_CACHE = "access_cache"  # a grant either check cached (DB or RC)
+ANSWER_RECENT_CHECK = "recent_check"  # held from a check within the window
+ANSWER_REVENUECAT = "revenuecat"  # RevenueCat answered this request's call
+ANSWER_NOT_ASKED = "not_asked"  # no Firebase uid, or RevenueCat not configured
+
+
+@dataclass(frozen=True)
+class RevenueCatAccess:
+    """revenuecat_access's answer and where it came from (ANSWER_*).
+
+    Only ANSWER_REVENUECAT is RevenueCat's answer to this request (a call it
+    made or shared with concurrent ones). A grant from the access cache may
+    be the database's: require_subscription caches its row grants there too.
+    """
+
+    check: EntitlementCheck
+    source: str
+
+    @property
+    def from_revenuecat(self) -> bool:
+        return self.source == ANSWER_REVENUECAT
 
 
 def _get_subscription_service() -> SubscriptionServicePort:
@@ -136,7 +160,7 @@ async def _check_access(user_id: str) -> EntitlementCheck:
     return access
 
 
-async def revenuecat_access(user_id: str) -> EntitlementCheck:
+async def revenuecat_access(user_id: str) -> RevenueCatAccess:
     """RevenueCat's answer for a user the database does not grant.
 
     For paid-route enforcement, before a 402. A grant in the Premium check's
@@ -147,11 +171,13 @@ async def revenuecat_access(user_id: str) -> EntitlementCheck:
     (``revenuecat_check_key``) in the shared cache, or in this process while
     that cache is unavailable. A request that finds another worker's call in
     flight gets UNAVAILABLE. A grant also goes to the access cache.
-    UNAVAILABLE when RevenueCat cannot answer or is not configured.
+    UNAVAILABLE when RevenueCat cannot answer or is not configured. The
+    answer says where it came from, so only RevenueCat's own grants are
+    counted as such.
     """
     cache = _get_cache()
     if await _has_cached_access(cache, user_id):
-        return EntitlementCheck.ENTITLED
+        return RevenueCatAccess(EntitlementCheck.ENTITLED, ANSWER_ACCESS_CACHE)
     return await _single_flight(user_id, lambda: _throttled_check(cache, user_id))
 
 
@@ -176,38 +202,38 @@ def revenuecat_check_key(user_id: str) -> str:
     return f"subscription_revenuecat_check:{user_id}"
 
 
-async def _throttled_check(cache: CachePort | None, user_id: str) -> EntitlementCheck:
+async def _throttled_check(cache: CachePort | None, user_id: str) -> RevenueCatAccess:
     recent = await _recent_check(cache, user_id)
     if recent is not None:
-        return recent
+        return RevenueCatAccess(recent, ANSWER_RECENT_CHECK)
     async with _get_uow_factory()() as uow:
         user = await uow.users.find_by_id(user_id)
     firebase_uid = getattr(user, "firebase_uid", None)
     if not firebase_uid:
-        return EntitlementCheck.NOT_ENTITLED
+        return RevenueCatAccess(EntitlementCheck.NOT_ENTITLED, ANSWER_NOT_ASKED)
     if not os.getenv("REVENUECAT_SECRET_API_KEY", ""):
         logger.warning("REVENUECAT_SECRET_API_KEY not configured")
-        return EntitlementCheck.UNAVAILABLE
+        return RevenueCatAccess(EntitlementCheck.UNAVAILABLE, ANSWER_NOT_ASKED)
     claim = await _claim_check(cache, user_id)
     if claim is None:
         # Another worker is asking RevenueCat for this user right now.
-        return EntitlementCheck.UNAVAILABLE
+        return RevenueCatAccess(EntitlementCheck.UNAVAILABLE, ANSWER_RECENT_CHECK)
     access = await _get_subscription_service().check_entitlement(
         firebase_uid, timeout_seconds=REVENUECAT_CHECK_TIMEOUT_SECONDS
     )
     await _remember_check(cache if claim else None, user_id, access)
     if access is EntitlementCheck.ENTITLED:
         await _cache_access(cache, user_id)
-    return access
+    return RevenueCatAccess(access, ANSWER_REVENUECAT)
 
 
 # Checks in flight in this process, shared by concurrent requests per user.
-_checks_in_flight: dict[str, asyncio.Task[EntitlementCheck]] = {}
+_checks_in_flight: dict[str, asyncio.Task[RevenueCatAccess]] = {}
 
 
 async def _single_flight(
-    user_id: str, check: Callable[[], Coroutine[Any, Any, EntitlementCheck]]
-) -> EntitlementCheck:
+    user_id: str, check: Callable[[], Coroutine[Any, Any, RevenueCatAccess]]
+) -> RevenueCatAccess:
     loop = asyncio.get_running_loop()
     task = _checks_in_flight.get(user_id)
     if task is None or task.done() or task.get_loop() is not loop:
@@ -219,7 +245,7 @@ async def _single_flight(
     return await asyncio.shield(task)
 
 
-def _check_finished(user_id: str, task: asyncio.Task[EntitlementCheck]) -> None:
+def _check_finished(user_id: str, task: asyncio.Task[RevenueCatAccess]) -> None:
     if _checks_in_flight.get(user_id) is task:
         del _checks_in_flight[user_id]
     if not task.cancelled():

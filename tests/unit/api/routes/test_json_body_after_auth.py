@@ -179,6 +179,7 @@ async def test_enforcement_refuses_ingredient_recognition_before_reading_the_pho
     enforcement on, a caller without access gets 402 and the photo is never
     read."""
     from src.api.dependencies import subscription_access as enforcement
+    from src.api.middleware.premium_check import ANSWER_REVENUECAT, RevenueCatAccess
     from src.domain.ports.subscription_service_port import EntitlementCheck
 
     class _NoAccess:
@@ -186,7 +187,7 @@ async def test_enforcement_refuses_ingredient_recognition_before_reading_the_pho
             return False
 
     async def revenuecat_denies(_user_id):
-        return EntitlementCheck.NOT_ENTITLED
+        return RevenueCatAccess(EntitlementCheck.NOT_ENTITLED, ANSWER_REVENUECAT)
 
     monkeypatch.setenv("SUBSCRIPTION_ACCESS_ENABLED", "true")
     monkeypatch.setenv("SUBSCRIPTION_ENFORCEMENT_ENABLED", "true")

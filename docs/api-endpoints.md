@@ -175,7 +175,10 @@ in its grace period grants, whether or not a snapshot verified it;
 with the Ghi nhanh Premium check's call (`check_entitlement` within 3 s,
 sharing its 60 s per-user access cache): a payer with no granting row (a
 purchase whose webhook is late or lost, a promotional grant) keeps the
-route, logged and counted as `subscription_access.enforcement_revenuecat_grant`.
+route, logged and counted as `subscription_access.enforcement_revenuecat_grant`
+when RevenueCat itself answered; a grant found in the shared access cache
+(which also holds the Premium check's own row grants) is counted as
+`subscription_access.enforcement_cached_grant` instead.
 When RevenueCat cannot answer, the database's denial stands and the route
 answers `402`: enforcement stays a database decision, and a `503` here would
 not unblock anyone.
