@@ -14,6 +14,7 @@ from src.api.dependencies.auth import (
     verify_firebase_uid_ownership,
 )
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.routes.v1.momo_payments import momo_pass_email
 from src.api.schemas.request.user_requests import (
     UserSyncRequest,
     UserUpdateLastAccessedRequest,
@@ -46,6 +47,7 @@ from src.app.queries.user.get_user_onboarding_status_query import (
 from src.app.queries.user.get_weekly_auto_adjust_query import (
     GetWeeklyAutoAdjustQuery,
 )
+from src.bootstrap.momo_payments import activate_momo_passes
 from src.domain.exceptions.firebase_identity_exceptions import (
     FirebaseIdentityConflictError,
 )
@@ -138,6 +140,8 @@ async def sync_user_from_firebase(
 
     # Map result to response
     user_data = result["user"]
+    if await activate_momo_passes(str(user_data["id"]), momo_pass_email(token)):
+        user_data = {**user_data, "has_subscription": True}
 
     logger.info(
         f"User sync completed for firebase_uid: {request.firebase_uid}",
@@ -306,9 +310,7 @@ async def update_weekly_auto_adjust(
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """Enable or disable leftover-split daily targets. Enabled by default."""
-    command = UpdateWeeklyAutoAdjustCommand(
-        user_id=user_id, enabled=request.enabled
-    )
+    command = UpdateWeeklyAutoAdjustCommand(user_id=user_id, enabled=request.enabled)
     result = await event_bus.send(command)
     return result
 

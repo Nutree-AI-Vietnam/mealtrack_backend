@@ -19,6 +19,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
 | RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Premium route gates are not enforced yet |
+| MoMo payment gateway | **Billing (one-time passes)** | Checkout 503 and IPN rejected until configured (outside `ENVIRONMENT` development, local, staging or test also until `MOMO_ENV=production`), 502 when MoMo refuses; pending orders retry through the query API on status reads and user sync (30 s timeout, MoMo's documented minimum, at most every 3 s per order), so a slow MoMo can delay a status read, or a sign-in or app activation with a recent pending MoMo order, by about 30 s per network step (connect, send, read) (known trade-off; moving the query off the request path is an open decision); a paid pass's window is fixed when it is credited, so while RevenueCat is down the pass still ends on that date (accepted trade-off); RevenueCat may replace a promotional, so one user's grants are serialized by a per-user advisory lock whose holder sends the latest end (10 s timeout) and keeps one database connection, holding no row locks, open during that call, as does an activation waiting up to 12 s behind it so it reports that grant (accepted trade-off); a failed grant is retried on the next status read, IPN, user sync or app `POST /v1/payments/momo/activate` (launch and resume while not Premium); a grant that timed out here but lands at RevenueCat after a later one can still shorten access (residual risk); a window that ended before delivery is not sent (logged as an error) |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
@@ -71,6 +72,7 @@ durable.
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
+| MoMo one-time passes | `src/infra/adapters/momo_gateway_adapter.py`, `src/infra/services/momo_pass_*.py`, routes `momo_payments.py` and `web_funnel_momo.py`; contract in `api-endpoints.md` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
 | Queue consumer | sibling `nutreeai_async` repository |

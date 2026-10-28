@@ -85,6 +85,18 @@ async def get_subscription_by_revenuecat_id(uow, revenuecat_id: str):
     return await uow.subscriptions.find_by_revenuecat_id(revenuecat_id)
 
 
+def is_promotional_event(event: dict) -> bool:
+    """A RevenueCat promotional grant: a MoMo pass or a dashboard grant.
+
+    Promotionals are entitlements, not store subscriptions. Their lifecycle
+    events (purchase, cancellation, expiration) carry the user's app_user_id,
+    so the store-subscription handlers would expire or invent that user's
+    subscription row.
+    """
+    store = event.get("store")
+    return isinstance(store, str) and store.upper() == "PROMOTIONAL"
+
+
 def parse_platform(store: str) -> str:
     """Parse store name to platform."""
     if not store:

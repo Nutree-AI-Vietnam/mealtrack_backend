@@ -63,8 +63,9 @@ def test_fixture_translations_pass_adapter_invariant_guard() -> None:
 
 def test_active_repository_surfaces_contain_no_vendor_translation_residue() -> None:
     root = FIXTURE_PATH.parents[3]
-    # Build the marker so this test does not match its own source text.
-    marker = "d" + "ee" + "pl"
+    # Build the marker so this test does not match its own source text. The
+    # lookahead skips "deeplink", a payment-gateway field, not the vendor.
+    marker = re.compile("d" + "ee" + "pl" + r"(?!ink)")
     excluded_prefixes = (
         root / "migrations",
         root / "docs/archive",
@@ -95,11 +96,7 @@ def test_active_repository_surfaces_contain_no_vendor_translation_residue() -> N
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         api_key_marker = "DEE" + "PL_API_KEY"
-        if (
-            marker in text.lower()
-            or api_key_marker in text
-            or "get_" + marker in text.lower()
-        ):
+        if marker.search(text.lower()) or api_key_marker in text:
             hits.append(str(path.relative_to(root)))
 
     assert hits == []
