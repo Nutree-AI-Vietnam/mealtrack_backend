@@ -265,7 +265,11 @@ optional caches.
     not always end the subscription); rows the sync revokes for a refund read
     `refunded`, and the loss of access counts as expected.
   - `TRANSFER` re-reads every local source and target user from its own
-    customer; nothing is re-pointed or expired blindly.
+    customer; nothing is re-pointed or expired blindly. A source whose read
+    fails is marked and remembered as a transfer source
+    (`provider_transfer_source_at`), so the next snapshot taken after the
+    transfer (refresh, `--repair`, a later webhook) applies its emptied
+    customer instead of leaving it unresolved.
   - A deleted account (`users.is_active` false, tombstoned uid) is never
     synced. Its kept RevenueCat rows still resolve events for the old uid (a
     store subscription outlives the account), so the legacy handlers run, but
@@ -273,7 +277,8 @@ optional caches.
     `result=account_deleted`); a `TRANSFER` party that is deleted is skipped.
   - `GET /v1/subscribers` is "get or create": an unseen id answers 200 with an
     empty customer, which is treated as "no purchases". It never expires a
-    row that could still grant access (except for a transfer source).
+    row that could still grant access, except for a transfer source (during
+    the `TRANSFER`, or remembered from one whose read failed).
 - Web redemption retains its existing identity binding and idempotency
   checks; it only matches and updates `provider='revenuecat'` rows.
 - Canonical handoff (`/v1/web-funnel/*`):

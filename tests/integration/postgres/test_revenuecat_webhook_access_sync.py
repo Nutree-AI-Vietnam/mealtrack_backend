@@ -573,3 +573,68 @@ async def test_refund_ends_access_from_the_snapshot_and_moves_no_commission(
     assert (wallet.balance, wallet.total_revoked) == (50000, 0)
     (published,) = publisher.publish.await_args_list
     assert published.args[0]["data"]["lifecycle_type"] == "subscription_canceled"
+
+
+@pytest.mark.asyncio
+async def test_refresh_resolves_a_transfer_source_whose_read_failed(app_sessions):
+    """TRANSFER A -> B while A's RevenueCat read fails: A's row is only marked
+    and remembered as a transfer source. A's refresh then reads the emptied
+    customer and applies it."""
+    source = await _user(app_sessions, "source")
+    target = await _user(app_sessions, "target")
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with app_sessions() as session:
+        session.add(
+            Subscription(
+                user_id=source.id,
+                revenuecat_subscriber_id=source.firebase_uid,
+                provider="revenuecat",
+                product_id="annual",
+                platform="ios",
+                status="active",
+                purchased_at=now - timedelta(days=10),
+                expires_at=now + timedelta(days=65),
+                period_type="normal",
+                provider_snapshot_at=now - timedelta(days=1),
+                is_sandbox=False,
+            )
+        )
+        await session.commit()
+
+    async def down():
+        return 503, None
+
+    transfer = {
+        "id": f"evt-{uuid4()}",
+        "type": "TRANSFER",
+        "transferred_from": [source.firebase_uid],
+        "transferred_to": [target.firebase_uid],
+        "event_timestamp_ms": int(now.timestamp() * 1000),
+    }
+    with _revenuecat(
+        {
+            source.firebase_uid: down,
+            target.firebase_uid: _ok(_annual(now, timedelta(days=65))),
+        }
+    ):
+        assert await _deliver(transfer) == {"status": "success"}
+
+    (row,) = await _rows(app_sessions, source)
+    assert (row.status, row.provider_transfer_source_at) == ("active", now)
+    assert row.provider_sync_required_at == now
+
+    emptied = _annual(now + timedelta(seconds=5), timedelta(days=365))
+    emptied["subscriber"].update(entitlements={}, subscriptions={})
+    with _revenuecat({source.firebase_uid: _ok(emptied)}):
+        refreshed = await RevenueCatAccessRefreshService(
+            lambda: RevenueCatAdapter(api_key="test-key")
+        ).refresh(source.id)
+
+    assert refreshed.result == "applied"
+    (row,) = await _rows(app_sessions, source)
+    assert row.status == "expired"
+    assert (row.provider_sync_required_at, row.provider_transfer_source_at) == (
+        None,
+        None,
+    )
+    assert evaluate_subscription_access([row]).has_access is False

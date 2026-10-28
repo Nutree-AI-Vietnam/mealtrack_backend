@@ -32,6 +32,7 @@ from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
     evaluate_subscription_access,
 )
+from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.referral.referral_conversion import ReferralConversion
 from src.infra.database.models.subscription import Subscription
@@ -773,6 +774,69 @@ async def test_transfer_never_expires_a_source_it_could_not_read(monkeypatch):
         evaluate_subscription_access([store_row])
     (target_row,) = database.rows_of(target)
     assert evaluate_subscription_access([target_row]).has_access is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_read", [_fails(429), _raises(RuntimeError("boom"))], ids=["429", "error"]
+)
+async def test_a_transfer_source_left_unresolved_is_resolved_by_its_empty_customer(
+    monkeypatch, source_read
+):
+    """The source's read fails during the TRANSFER, so its row is only marked.
+    The source is remembered, so the next read of its (now empty) customer --
+    a refresh, a repair -- applies the transfer instead of answering
+    absent_with_history for good."""
+    source = _user("user-a", "uid-a")
+    target = _user("user-b", "uid-b")
+    store_row = _row(source)
+    database = _Database([source, target], [store_row])
+    transfer = _transfer("uid-a", "uid-b")
+
+    with _revenuecat({"uid-a": source_read, "uid-b": _ok(_annual())}):
+        await _deliver(monkeypatch, transfer, database)
+
+    moved_at = datetime.fromtimestamp(transfer["event_timestamp_ms"] / 1000, UTC)
+    assert store_row.status == "active"
+    assert store_row.provider_sync_required_at == moved_at
+    assert store_row.provider_transfer_source_at == moved_at
+
+    with _revenuecat({"uid-a": _ok(empty_customer_response(app_user_id="uid-a"))}):
+        snapshot = await RevenueCatAdapter(api_key="key").get_verified_snapshot("uid-a")
+    outcome = await sync_revenuecat_access(
+        database, source, snapshot=snapshot, source="refresh"
+    )
+
+    assert outcome.result == "applied"
+    assert store_row.status == "expired"
+    assert store_row.provider_sync_required_at is None
+    assert store_row.provider_transfer_source_at is None
+    assert evaluate_subscription_access([store_row]).has_access is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_non_transfer_read_never_makes_absence_authoritative(
+    monkeypatch,
+):
+    """Only a TRANSFER source is remembered; a user whose RENEWAL read failed
+    still gets absent_with_history from an empty customer."""
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+
+    with _revenuecat({"uid-u": _fails(503)}):
+        await _deliver(monkeypatch, _event("RENEWAL", "uid-u"), database)
+
+    assert stored.provider_sync_required_at is not None
+    assert stored.provider_transfer_source_at is None
+    with _revenuecat({"uid-u": _ok(empty_customer_response(app_user_id="uid-u"))}):
+        snapshot = await RevenueCatAdapter(api_key="key").get_verified_snapshot("uid-u")
+    with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+        await sync_revenuecat_access(
+            database, user, snapshot=snapshot, source="refresh"
+        )
+    assert error.value.reason == "absent_with_history"
+    assert stored.status == "active"
 
 
 @pytest.mark.asyncio

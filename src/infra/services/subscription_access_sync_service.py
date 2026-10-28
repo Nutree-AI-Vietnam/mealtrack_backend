@@ -248,7 +248,9 @@ def clear_sync_markers(rows: list[Subscription], request_date: datetime | None) 
     """Clear sync-required markers a snapshot taken at ``request_date`` resolves.
 
     Only for rows that snapshot was applied to: a marker set for an event at
-    or before the snapshot time is answered by it.
+    or before the snapshot time is answered by it, and so is a TRANSFER the
+    rows were left unresolved by (``provider_transfer_source_at``). Returns
+    the number of sync-required markers cleared.
     """
     if request_date is None:
         return 0
@@ -258,7 +260,26 @@ def clear_sync_markers(rows: list[Subscription], request_date: datetime | None) 
         if marker is not None and _utc(marker) <= request_date:
             setattr(row, "provider_sync_required_at", None)  # noqa: B010
             cleared += 1
+        transfer = getattr(row, "provider_transfer_source_at", None)
+        if transfer is not None and _utc(transfer) <= request_date:
+            setattr(row, "provider_transfer_source_at", None)  # noqa: B010
     return cleared
+
+
+def _transfer_source_pending(
+    rows: list[Subscription], request_date: datetime | None
+) -> bool:
+    """Whether a snapshot at ``request_date`` follows a TRANSFER away from
+    the user that no snapshot has answered yet.
+
+    RevenueCat moved the user's purchases to another app user id at that
+    time, so a customer read at or after it that holds nothing is RevenueCat
+    saying so, not missing history.
+    """
+    if request_date is None:
+        return False
+    moved = [getattr(row, "provider_transfer_source_at", None) for row in rows]
+    return any(at is not None and _utc(at) <= request_date for at in moved)
 
 
 # Columns a legacy event handler may write on a row the snapshot sync owns.
@@ -491,7 +512,11 @@ async def sync_revenuecat_access(
     An empty RevenueCat customer normally proves nothing about rows that
     could still grant access. ``absence_is_authoritative`` is for callers
     that know why it is empty -- the source of a TRANSFER, whose purchases
-    RevenueCat just moved away -- and applies it as "no purchases".
+    RevenueCat just moved away -- and applies it as "no purchases". A TRANSFER
+    source whose own read failed is remembered on its rows
+    (``provider_transfer_source_at``), so any later snapshot taken after the
+    transfer -- a refresh, a repair, the next webhook -- applies it the same
+    way.
 
     ``facts_before_event`` (from capture_access_facts) undoes legacy handler
     writes on rows a verified snapshot already owned, so only snapshots
@@ -528,6 +553,10 @@ async def sync_revenuecat_access(
     access_before = _access_before_event(existing, facts_before_event)
     request_date = _utc(snapshot.request_date) if snapshot.request_date else None
     revoked_status = "refunded" if refund_event else "expired"
+    if _transfer_source_pending(existing, request_date):
+        # What this snapshot removes is what the transfer moved away.
+        absence_is_authoritative = True
+        downgrade_expected = True
 
     # Judge the snapshot against the verified facts, not against what this
     # event's legacy handler just wrote on them. If the snapshot cannot be
@@ -653,6 +682,7 @@ async def mark_revenuecat_access_unresolved(
     product_id: str | None = None,
     platform: str | None = None,
     is_sandbox: bool = False,
+    transfer_source: bool = False,
 ) -> int:
     """Leave the user's RevenueCat access unresolved until a snapshot repairs it.
 
@@ -662,7 +692,9 @@ async def mark_revenuecat_access_unresolved(
     it clears the marker, so an older snapshot racing in cannot. A user with
     no RevenueCat row gets a non-granting placeholder row carrying the
     marker, so the policy answers "unresolved" instead of "none".
-    Returns the number of rows marked.
+    ``transfer_source`` (the user is the source of a TRANSFER at ``since``)
+    also records that, so a later empty customer is applied as authoritative
+    (see sync_revenuecat_access). Returns the number of rows marked.
     """
     locked_user = await lock_subscription_owner(session, user.id)
     if locked_user is None:
@@ -692,6 +724,13 @@ async def mark_revenuecat_access_unresolved(
             "provider_sync_required_at",
             marker if current is None else max(_utc(current), marker),
         )
+        if transfer_source:
+            moved = row.provider_transfer_source_at
+            setattr(  # noqa: B010
+                row,
+                "provider_transfer_source_at",
+                marker if moved is None else max(_utc(moved), marker),
+            )
     return len(rows)
 
 

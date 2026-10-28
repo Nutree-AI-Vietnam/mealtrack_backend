@@ -80,6 +80,13 @@ class Subscription(Base, BaseMixin):
     # set, the access policy treats the row as unresolved; the next snapshot
     # taken at or after this time clears it.
     provider_sync_required_at = Column(DateTime(timezone=True), nullable=True)
+    # RevenueCat time of a TRANSFER that moved this user's purchases to
+    # another app user id while its customer could not be read. Until a
+    # snapshot taken at or after it is applied, an empty customer is
+    # authoritative for the user ("RevenueCat moved it away"), so refresh and
+    # repair can revoke what the transfer took instead of leaving it
+    # unresolved for good.
+    provider_transfer_source_at = Column(DateTime(timezone=True), nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
 
     # Store metadata

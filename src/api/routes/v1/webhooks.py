@@ -317,7 +317,9 @@ async def _process_transfer(event: dict) -> dict:
     its own verified customer, so a source keeps whatever RevenueCat still
     holds for it (another store's subscription, a web purchase) and loses
     only what RevenueCat moved. Only provider='revenuecat' rows are touched.
-    A party whose customer cannot be read is left unresolved for repair.
+    A party whose customer cannot be read is left unresolved for repair; a
+    source is also remembered as one, so the repair (a refresh, reconcile
+    --repair, its next webhook) can apply its emptied customer.
     """
     transfer_ids = [
         identity
@@ -365,6 +367,7 @@ async def _process_transfer(event: dict) -> dict:
                     event,
                     reads[user_id],
                     downgrade_expected=user_id in sources,
+                    transfer_source=user_id in sources,
                 )
             )
     logger.info(

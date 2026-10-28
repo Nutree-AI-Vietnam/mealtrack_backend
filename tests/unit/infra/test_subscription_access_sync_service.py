@@ -323,6 +323,87 @@ async def test_absence_never_expires_a_possible_grant():
 
 
 @pytest.mark.asyncio
+async def test_absence_after_an_unresolved_transfer_away_is_applied():
+    """The user was the source of a TRANSFER whose own read failed. An empty
+    customer read after it is RevenueCat saying the purchase moved: a
+    refresh or repair applies it, and the loss is the transfer's."""
+    now = datetime.now(UTC)
+    moved_at = now - timedelta(minutes=10)
+    row = _granting_row(
+        now, provider_sync_required_at=moved_at, provider_transfer_source_at=moved_at
+    )
+
+    with patch(f"{SYNC}.increment_metric") as metric:
+        outcome = await sync_revenuecat_access(
+            _SyncSession(_owner(), [row]),
+            _owner(),
+            snapshot=_snapshot(empty_customer_response(), now, absent=True),
+            source="refresh",
+        )
+
+    assert outcome.result == "applied"
+    assert (outcome.access_before, outcome.access_after) == ("unresolved", "denied")
+    assert (row.status, row.provider_snapshot_at) == ("expired", now)
+    assert (row.provider_sync_required_at, row.provider_transfer_source_at) == (
+        None,
+        None,
+    )
+    assert evaluate_subscription_access([row], now).has_access is False
+    assert not [
+        call
+        for call in metric.call_args_list
+        if call.args[0] == "subscription_access.downgrade"
+        and call.kwargs["attributes"]["expected"] != "true"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_absence_read_before_the_transfer_proves_nothing():
+    """A snapshot taken before the transfer cannot speak for it."""
+    now = datetime.now(UTC)
+    row = _granting_row(
+        now, provider_sync_required_at=now, provider_transfer_source_at=now
+    )
+
+    with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+        await sync_revenuecat_access(
+            _SyncSession(_owner(), [row]),
+            _owner(),
+            snapshot=_snapshot(
+                empty_customer_response(), now - timedelta(minutes=1), absent=True
+            ),
+        )
+
+    assert error.value.reason == "absent_with_history"
+    assert (row.status, row.provider_transfer_source_at) == ("active", now)
+
+
+@pytest.mark.asyncio
+async def test_a_transfer_source_that_kept_a_purchase_keeps_it():
+    """A non-empty customer after the transfer is applied as usual and
+    answers the transfer marker too."""
+    now = datetime.now(UTC)
+    moved_at = now - timedelta(minutes=10)
+    row = _granting_row(
+        now, provider_sync_required_at=moved_at, provider_transfer_source_at=moved_at
+    )
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=90)
+    )
+
+    outcome = await sync_revenuecat_access(
+        _SyncSession(_owner(), [row]), _owner(), snapshot=_snapshot(body, now)
+    )
+
+    assert (outcome.result, outcome.access_after) == ("applied", "granted")
+    assert row.status == "active"
+    assert (row.provider_sync_required_at, row.provider_transfer_source_at) == (
+        None,
+        None,
+    )
+
+
+@pytest.mark.asyncio
 async def test_absence_with_only_terminal_rows_resolves_to_no_access():
     now = datetime.now(UTC)
     row = _revenuecat_row(

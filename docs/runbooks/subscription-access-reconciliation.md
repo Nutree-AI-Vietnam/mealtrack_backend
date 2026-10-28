@@ -80,7 +80,7 @@ tombstone).
 | `reason` | Meaning | Action |
 |---|---|---|
 | `applied`, `unchanged`, `absent`, `stale_skipped` | Snapshot applied (or already current) | None |
-| `absent_with_history` | RevenueCat holds no purchases under this Firebase uid, but the database holds a possible grant (fallback match, manual grant) | Find the purchase in RevenueCat and attach it to the Firebase uid (transfer), then `--user-id <id> --apply`. If nothing is owed, expire the row explicitly and note why. Never merge accounts by email |
+| `absent_with_history` | RevenueCat holds no purchases under this Firebase uid, but the database holds a possible grant (fallback match, manual grant). Not reported for the source of a `TRANSFER` whose own read failed: the webhook remembers it (`provider_transfer_source_at`), and the next read after the transfer applies the emptied customer. A `TRANSFER` delivery lost after RevenueCat's retries leaves the source's row verified and unmarked, so only a `--subscribers` pass shows it, with this reason | Find the purchase in RevenueCat and attach it to the Firebase uid (transfer), then `--user-id <id> --apply`. If nothing is owed (it moved to another account), expire the row explicitly and note why. Never merge accounts by email |
 | `owner_changed`, `conflicting_facts` | The user or RevenueCat changed during the read | Re-run `--user-id <id>`; escalate if it persists |
 | `transport`, `http_429`, `http_5xx` | RevenueCat unavailable | `--resume` later |
 | `malformed`, `unsupported_store`, `http_4xx`, `api_key_missing` | Contract or configuration problem | Engineering; also reported to Sentry by the app |
@@ -108,11 +108,12 @@ and Render shifts traffic anyway.
       `20261022125800304190` (access metadata), `20261026080322454705` (sync
       marker), `20261026085224333692` (nullable RevenueCat id),
       `20261028084517715547` (merge with delivery's scan-feedback head, no
-      schema change) and `20261028085152877654` (`refunded` status value).
+      schema change), `20261028085152877654` (`refunded` status value) and
+      `20261028090710086261` (transfer source marker).
 - [ ] Run again with `dry_run=false` (production needs Environment
       approval).
 - [ ] Run `dry_run=true` once more and read the **database** line: it must
-      show `Current revision: 20261028085152877654` (or a later revision)
+      show `Current revision: 20261028090710086261` (or a later revision)
       followed by `Database is up to date`. `Head revision:` comes from the
       checked-out code and reads the same whether or not the upgrade ran, so
       it proves nothing.
@@ -432,7 +433,12 @@ lose the marker, so after rolling forward the facts that event's handler
 wrote read as verified on a row an earlier snapshot stamped. Before downgrading it, run
 `--repair --apply` until `--gate` shows `sync_required=0`, or accept the
 loss and run the full `--subscribers --apply` pass above after rolling
-forward. The schema downgrade also loses row ownership. Downgrading
+forward. Downgrading `20261028090710086261` drops
+`provider_transfer_source_at`: a transfer source still marked then answers
+`absent_with_history` instead of resolving itself; run `--repair --apply`
+until `--gate` shows `sync_required=0` first. Downgrading
+`20261028085152877654` changes nothing (PostgreSQL keeps an enum value).
+The schema downgrade also loses row ownership. Downgrading
 `20261026085224333692` fills every NULL `revenuecat_subscriber_id` (rows of
 other providers) with the owner's Firebase uid; downgrading
 `20261022125800304190` drops `provider`. After both, a MoMo row reads as a

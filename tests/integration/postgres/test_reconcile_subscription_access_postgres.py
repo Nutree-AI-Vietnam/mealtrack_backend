@@ -383,3 +383,56 @@ async def test_an_account_deleted_while_its_snapshot_is_applied_is_gone(sessions
     assert summary.exit_code == rec.EXIT_GO
     (row,) = await _rows(sessions, user)
     assert row.provider_snapshot_at is None
+
+
+@pytest.mark.asyncio
+async def test_repair_applies_the_emptied_customer_of_an_unresolved_transfer_source(
+    sessions,
+):
+    """A TRANSFER moved the user's purchase away while its own RevenueCat read
+    failed: the verified row is still 'active', marked, and remembered as a
+    transfer source. --repair reads the now-empty customer and, because of
+    the transfer, applies it instead of reporting absent_with_history."""
+    now = datetime.now(UTC)
+    moved_at = now - timedelta(minutes=10)
+    source = await _user(sessions)
+    await _row(
+        sessions,
+        source,
+        provider_snapshot_at=now - timedelta(days=1),
+        provider_sync_required_at=moved_at,
+        provider_transfer_source_at=moved_at,
+    )
+    repair = rec.Population(rec.POPULATION_REPAIR, expiring_within_hours=24)
+    assert await rec.candidate_ids(sessions, repair, now) == [source.id]
+    output = StringIO()
+
+    with _revenuecat({}):  # every customer is empty
+        summary = await rec.run_pass(
+            [source.id],
+            apply=True,
+            population=repair,
+            session_factory=sessions,
+            adapter=RevenueCatAdapter(api_key="test-key"),
+            pacer=rec.Pacer(0),
+            output=output,
+            stdout=StringIO(),
+        )
+
+    record = json.loads(output.getvalue())
+    assert (record["reason"], record["snapshot"], record["decision"]) == (
+        "applied",
+        "absent",
+        "denied",
+    )
+    assert summary.exit_code == rec.EXIT_GO
+    (row,) = await _rows(sessions, source)
+    assert row.status == "expired"
+    assert (row.provider_sync_required_at, row.provider_transfer_source_at) == (
+        None,
+        None,
+    )
+    assert rec.gate_line(await rec.gate_counts(sessions)) == (
+        "GATE: GO unverified_grants=0 sync_required=0",
+        rec.EXIT_GO,
+    )
