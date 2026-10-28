@@ -107,7 +107,7 @@ class SupportUserAccessResponse(BaseModel):
     decision: SupportAccessDecisionResponse
     flags: SupportAccessFlagsResponse
     live: SupportLiveReadResponse | None = Field(
-        default=None, description="Only with ?live=true"
+        default=None, description='Only when the lookup body has "live": true'
     )
 
 

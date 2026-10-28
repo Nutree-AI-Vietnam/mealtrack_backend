@@ -261,12 +261,19 @@ without a valid token, `403` for anyone else) and answer with
 `Cache-Control: private, no-store`. Errors use the usual envelope,
 `{"detail": {"error_code", "message", "details"}}`. Every call logs one INFO
 line with the admin's email, the action, the target user id and the result;
-customer emails and lookup queries are never logged.
+customer emails and lookup queries are never logged. Rate limits are per
+admin (the bearer token's uid), across every user a call names.
 
-**`GET /users?query=<email | firebase uid | user id>[&live=true]`**
-(30 per minute per admin). `query` matches the internal id, the Firebase uid
-or the email exactly; an email that matches nobody is retried ignoring case.
-Deleted and deactivated accounts are found too. `200`:
+**`POST /users/lookup`** with a JSON body
+`{"query": "<email | firebase uid | user id>", "live": false}` (30 per
+minute per admin). The query travels in the body, never the URL, so a
+customer's email stays out of the server's access log and of Sentry's
+request URL; Sentry events of this route carry `[Filtered]` instead of the
+body and no stack-frame variables. `query` (1 to 320 characters) matches
+the internal id, the Firebase uid or the email exactly; an email that
+matches nobody is retried ignoring case. `live` is optional (default
+`false`); any other field answers `422`. Deleted and deactivated accounts
+are found too. Nothing is written. `200`:
 
 ```json
 {
@@ -294,7 +301,7 @@ Deleted and deactivated accounts are found too. `200`:
   `transfer_source`, `unverified_grant`.
 - `flags`: `SUBSCRIPTION_ACCESS_ENABLED`, `SUBSCRIPTION_ENFORCEMENT_ENABLED`
   as set, and `enforcement_active` (both on, so paid routes answer `402`).
-- `live=true` also reads the user's RevenueCat customer and writes nothing:
+- `"live": true` also reads the user's RevenueCat customer and writes nothing:
   `live.status` `ok` (with `read_at`, `absent`, `entitlements`,
   `standard_missing` and `standard`: the `standard` entitlement normalized
   as a resync would store it, with `has_access`, `status`, `product_id`,
@@ -302,8 +309,8 @@ Deleted and deactivated accounts are found too. `200`:
   `period_type`, `is_sandbox`, `will_renew`), `unavailable` (`reason` is
   the snapshot failure kind, `retry_after_seconds` when RevenueCat sent
   one), or `not_read` (`reason` `user_inactive` or `no_firebase_uid`).
-  Without `live`, RevenueCat is never called: its `GET /v1/subscribers` is
-  get-or-create.
+  Otherwise `live` is `null` and RevenueCat is never called: its
+  `GET /v1/subscribers` is get-or-create.
 - `404 USER_NOT_FOUND`; `409 AMBIGUOUS_QUERY` with
   `details.user_ids` when several accounts match.
 

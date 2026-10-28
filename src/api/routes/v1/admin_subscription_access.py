@@ -8,7 +8,11 @@ docs/runbooks/subscription-access-reconciliation.md, "Support procedure".
 Every call is logged at INFO with the admin's email, the action, the target
 user id and the result. A resync is also counted
 (``subscription_access.support_action``), without the email. Customer
-emails and lookup queries are never logged.
+emails and lookup queries are never logged. The lookup takes its query in a
+POST body, never the URL, which the server's access log and Sentry's
+request data record; Sentry events of that route have the body and stack
+frame variables removed (``_PRIVATE_REQUEST_PATHS`` in
+src/infra/monitoring/sentry.py).
 """
 
 from __future__ import annotations
@@ -25,6 +29,9 @@ from src.api.dependencies.auth import require_admin
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.middleware.premium_check import forget_revenuecat_check
 from src.api.middleware.rate_limit import limiter
+from src.api.schemas.request.admin_subscription_access_requests import (
+    SupportUserLookupRequest,
+)
 from src.api.schemas.response.admin_subscription_access_responses import (
     SupportAccessDecisionResponse,
     SupportAccessFlagsResponse,
@@ -77,6 +84,7 @@ NO_STORE = "private, no-store"
 RESYNC_RATE_LIMIT = "10/minute"
 RESYNC_RATE_LIMIT_SCOPE = "admin_subscription_access_resync"
 LOOKUP_RATE_LIMIT = "30/minute"
+LOOKUP_RATE_LIMIT_SCOPE = "admin_subscription_access_lookup"
 DEFAULT_QUEUE_LIMIT = 50
 MAX_QUEUE_LIMIT = 200
 
@@ -130,34 +138,29 @@ def _record_resync(admin_email: str, user_id: str, result: str, **fields: Any) -
     )
 
 
-# --- GET /users ----------------------------------------------------------------
+# --- POST /users/lookup --------------------------------------------------------
 
 
-@router.get("/users", response_model=SupportUserAccessResponse)
-@limiter.limit(LOOKUP_RATE_LIMIT)
+@router.post("/users/lookup", response_model=SupportUserAccessResponse)
+@limiter.shared_limit(LOOKUP_RATE_LIMIT, scope=LOOKUP_RATE_LIMIT_SCOPE)
 async def lookup_user_access(
     request: Request,
     response: Response,
-    query: str = Query(
-        ...,
-        min_length=1,
-        max_length=320,
-        description="Email, Firebase uid or internal user id",
-    ),
-    live: bool = Query(
-        False,
-        description="Also read RevenueCat (read-only). RevenueCat's GET "
-        "/v1/subscribers creates an empty customer for a uid it has never "
-        "seen, so only ask when needed.",
-    ),
+    body: SupportUserLookupRequest,
     admin_email: str = Depends(require_admin),
     event_bus=Depends(get_configured_event_bus),
 ) -> SupportUserAccessResponse:
-    """One user's subscription rows and the access decision taken from them."""
+    """One user's subscription rows and the access decision taken from them.
+
+    The body's ``query`` is an email, a Firebase uid or an internal user id;
+    ``live`` also reads RevenueCat. Nothing is written. A POST so that the
+    query, usually a customer's email, stays out of URLs (access logs,
+    Sentry).
+    """
     response.headers["Cache-Control"] = NO_STORE
     try:
         view: SupportAccessView = await event_bus.send(
-            GetSupportSubscriptionAccessQuery(query, live=live)
+            GetSupportSubscriptionAccessQuery(body.query, live=body.live)
         )
     except SupportUserNotFound as error:
         _audit(admin_email, ACTION_LOOKUP, target_user_id=None, result="not_found")

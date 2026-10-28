@@ -530,12 +530,14 @@ with the caller's email. The answers contain customer emails: keep them out
 of tickets and chat, as for the reconcile output files.
 
 1. **Look the user up** by the email the customer wrote, their Firebase uid
-   or the internal user id:
+   or the internal user id. The query goes in a JSON body, never the URL,
+   so the email stays out of access logs and Sentry:
 
    ```bash
-   curl -sS -G -H "Authorization: Bearer $ID_TOKEN" \
-     --data-urlencode "query=customer@example.com" \
-     https://<api-host>/v1/admin/subscription-access/users
+   curl -sS -X POST -H "Authorization: Bearer $ID_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"query": "customer@example.com"}' \
+     https://<api-host>/v1/admin/subscription-access/users/lookup
    ```
 
    Read `decision`: `granted` or `denied` is what the app gets from
@@ -547,11 +549,11 @@ of tickets and chat, as for the reconcile output files.
    verified). `subscriptions` lists every row and its markers; `flags`
    shows whether the database decision and enforcement are on. `409
    AMBIGUOUS_QUERY` lists the ids of several accounts with that email
-   (different capitalisation): look each up by id. Add
-   `--data-urlencode "live=true"` to compare with RevenueCat's own view,
-   read-only (`live.standard`); RevenueCat creates an empty customer for a
-   Firebase uid it has never seen, so skip it for accounts that never
-   bought.
+   (different capitalisation): look each up by id. Add `"live": true` to
+   the body (`{"query": "...", "live": true}`) to compare with RevenueCat's
+   own view, read-only (`live.standard`); RevenueCat creates an empty
+   customer for a Firebase uid it has never seen, so skip it for accounts
+   that never bought. 30 lookups a minute per admin.
 
 2. **Resync** when the decision is `unresolved`, or disagrees with
    RevenueCat or the customer's store receipt:

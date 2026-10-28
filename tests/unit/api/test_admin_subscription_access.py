@@ -58,6 +58,7 @@ from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavail
 NOW = datetime.now(UTC).replace(microsecond=0)
 ADMIN = "support@nutree.test"
 BASE = "/v1/admin/subscription-access"
+LOOKUP = f"{BASE}/users/lookup"
 
 USER = SupportUserRecord(
     id="db-user-1",
@@ -249,41 +250,41 @@ def _setup(rows=None, **refresher):
 
 
 ROUTES = [
-    ("GET", f"{BASE}/users?query=buyer@example.com"),
-    ("POST", f"{BASE}/users/db-user-1/resync"),
-    ("GET", f"{BASE}/unresolved"),
+    ("POST", LOOKUP, {"query": "buyer@example.com"}),
+    ("POST", f"{BASE}/users/db-user-1/resync", None),
+    ("GET", f"{BASE}/unresolved", None),
 ]
 
 
-@pytest.mark.parametrize(("method", "path"), ROUTES)
-def test_every_route_needs_a_firebase_token(real_tokens, method, path):
+@pytest.mark.parametrize(("method", "path", "body"), ROUTES)
+def test_every_route_needs_a_firebase_token(real_tokens, method, path, body):
     repository, refresher, bus = _setup()
 
-    response = _client(bus, real_auth=True).request(method, path)
+    response = _client(bus, real_auth=True).request(method, path, json=body)
 
     assert response.status_code == 401
     assert bus.sent == [] and refresher.calls == [] and repository.calls == []
 
 
-@pytest.mark.parametrize(("method", "path"), ROUTES)
+@pytest.mark.parametrize(("method", "path", "body"), ROUTES)
 @pytest.mark.parametrize("email", ["buyer@example.com", None])
-def test_every_route_refuses_a_non_admin(real_tokens, method, path, email):
+def test_every_route_refuses_a_non_admin(real_tokens, method, path, body, email):
     repository, refresher, bus = _setup()
 
     response = _client(bus, real_auth=True).request(
-        method, path, headers=_headers(uid="customer-uid", email=email)
+        method, path, json=body, headers=_headers(uid="customer-uid", email=email)
     )
 
     assert response.status_code == 403
     assert bus.sent == [] and refresher.calls == [] and repository.calls == []
 
 
-@pytest.mark.parametrize(("method", "path"), ROUTES)
-def test_every_route_serves_an_admin(real_tokens, method, path):
+@pytest.mark.parametrize(("method", "path", "body"), ROUTES)
+def test_every_route_serves_an_admin(real_tokens, method, path, body):
     _, _, bus = _setup(rows={USER.id: [_row()]})
 
     response = _client(bus, real_auth=True).request(
-        method, path, headers=_headers(email="Support@Nutree.test")
+        method, path, json=body, headers=_headers(email="Support@Nutree.test")
     )
 
     assert response.status_code == 200
@@ -306,9 +307,7 @@ def test_lookup_by_email_uid_or_id_returns_rows_decision_and_flags(monkeypatch, 
     )
     repository, refresher, bus = _setup(rows={USER.id: [_row(), momo]})
 
-    response = _client(bus).get(
-        f"{BASE}/users", params={"query": query}, headers=_headers()
-    )
+    response = _client(bus).post(LOOKUP, json={"query": query}, headers=_headers())
 
     assert response.status_code == 200
     body = response.json()
@@ -364,7 +363,7 @@ def test_lookup_explains_an_unresolved_decision():
     )
     _, _, bus = _setup(rows={USER.id: [marked]})
 
-    body = _client(bus).get(f"{BASE}/users", params={"query": "db-user-1"}).json()
+    body = _client(bus).post(LOOKUP, json={"query": "db-user-1"}).json()
 
     assert body["decision"] == {
         "outcome": "unresolved",
@@ -382,7 +381,7 @@ def test_lookup_of_nobody_is_not_found(caplog):
     _, _, bus = _setup()
 
     with caplog.at_level(logging.INFO, logger=route_mod.logger.name):
-        response = _client(bus).get(f"{BASE}/users", params={"query": "who@x.test"})
+        response = _client(bus).post(LOOKUP, json={"query": "who@x.test"})
 
     assert response.status_code == 404
     assert response.json()["detail"]["error_code"] == "USER_NOT_FOUND"
@@ -399,7 +398,7 @@ def test_lookup_matching_several_accounts_lists_their_ids():
         replace(USER, id="db-user-2", email="Buyer@example.com"),
     ]
 
-    response = _client(bus).get(f"{BASE}/users", params={"query": "BUYER@example.com"})
+    response = _client(bus).post(LOOKUP, json={"query": "BUYER@example.com"})
 
     assert response.status_code == 409
     detail = response.json()["detail"]
@@ -407,10 +406,50 @@ def test_lookup_matching_several_accounts_lists_their_ids():
     assert detail["details"] == {"user_ids": ["db-user-1", "db-user-2"]}
 
 
-def test_lookup_rejects_an_empty_query():
+@pytest.mark.parametrize(
+    "body",
+    [{"query": ""}, {}, {"query": "x" * 321}, {"query": "db-user-1", "email": "x"}],
+)
+def test_lookup_rejects_a_missing_empty_or_unknown_field(body):
     _, _, bus = _setup()
 
-    assert _client(bus).get(f"{BASE}/users", params={"query": ""}).status_code == 422
+    response = _client(bus).post(LOOKUP, json=body)
+
+    assert response.status_code == 422
+    assert bus.sent == []
+
+
+def test_lookup_is_not_served_with_the_query_in_the_url():
+    """The query is usually a customer's email: a URL carrying it lands in
+    the access log and in Sentry's request data."""
+    _, _, bus = _setup(rows={USER.id: [_row()]})
+    client = _client(bus)
+
+    assert (
+        client.get(f"{BASE}/users", params={"query": "buyer@example.com"}).status_code
+        == 404
+    )
+    assert client.get(LOOKUP, params={"query": "buyer@example.com"}).status_code == 405
+    assert bus.sent == []
+
+
+def test_lookup_is_rate_limited_per_admin():
+    _, _, bus = _setup(rows={USER.id: [_row()]})
+    client = _client(bus)
+
+    statuses = [
+        client.post(
+            LOOKUP, json={"query": f"user-{index}@example.com"}, headers=_headers()
+        ).status_code
+        for index in range(31)
+    ]
+    other_admin = client.post(
+        LOOKUP, json={"query": "db-user-1"}, headers=_headers(uid="admin-uid-2")
+    )
+
+    assert statuses == [404] * 30 + [429]
+    assert other_admin.status_code == 200
+    assert len(bus.sent) == 31  # the limited call never reached the database
 
 
 # --- Live read ----------------------------------------------------------------
@@ -438,11 +477,7 @@ PEEK = ProviderAccessPeek(
 def test_live_lookup_reads_revenuecat_and_writes_nothing():
     repository, refresher, bus = _setup(rows={USER.id: [_row()]}, peek=PEEK)
 
-    body = (
-        _client(bus)
-        .get(f"{BASE}/users", params={"query": "db-user-1", "live": "true"})
-        .json()
-    )
+    body = _client(bus).post(LOOKUP, json={"query": "db-user-1", "live": True}).json()
 
     assert refresher.calls == [("peek", "db-user-1", "support_lookup")]
     assert body["live"]["status"] == "ok"
@@ -462,9 +497,7 @@ def test_live_lookup_while_revenuecat_is_down_still_shows_the_rows():
     )
     _, _, bus = _setup(rows={USER.id: [_row()]}, peek=down)
 
-    response = _client(bus).get(
-        f"{BASE}/users", params={"query": "db-user-1", "live": "true"}
-    )
+    response = _client(bus).post(LOOKUP, json={"query": "db-user-1", "live": True})
 
     assert response.status_code == 200
     body = response.json()
@@ -489,7 +522,7 @@ def test_live_lookup_never_reads_a_deleted_account():
 
     body = (
         _client(_Bus(repository, refresher))
-        .get(f"{BASE}/users", params={"query": "db-user-1", "live": "true"})
+        .post(LOOKUP, json={"query": "db-user-1", "live": True})
         .json()
     )
 
