@@ -433,6 +433,67 @@ async def test_snapshot_updates_the_play_row_a_webhook_wrote_with_its_base_plan(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("play_product", ["annual:p1y", "annual"])
+async def test_snapshot_updates_its_own_stores_row_when_ids_collide(play_product):
+    """An App Store product and a Play subscription share the id 'annual'.
+    A Play snapshot updates the Play row, even when the App Store row holds
+    the exact id or is newer; the App Store row is left non-granting."""
+    now = datetime.now(UTC)
+    # Newest first, as _locked_revenuecat_rows orders them.
+    ios_row = _revenuecat_row(
+        id="row-ios",
+        product_id="annual",
+        platform="ios",
+        purchased_at=now - timedelta(days=1),
+    )
+    play_row = _revenuecat_row(
+        id="row-play",
+        product_id=play_product,
+        platform="android",
+        purchased_at=now - timedelta(days=100),
+    )
+    session = _SyncSession(_owner(), [ios_row, play_row])
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=200), store="play_store"
+    )
+
+    outcome = await sync_revenuecat_access(
+        session, _owner(), snapshot=_snapshot(body, now)
+    )
+
+    assert (outcome.row_created, outcome.rows_revoked) == (False, 1)
+    assert (play_row.product_id, play_row.platform, play_row.status) == (
+        "annual",
+        "android",
+        "active",
+    )
+    assert (ios_row.platform, ios_row.status) == ("ios", "expired")
+
+
+@pytest.mark.asyncio
+async def test_locked_rows_come_newest_first_like_the_repository_lookup():
+    now = datetime.now(UTC)
+    session = _SyncSession(_owner(), [])
+
+    await sync_revenuecat_access(
+        session,
+        _owner(),
+        snapshot=_snapshot(
+            standard_annual_response(
+                request_date=now, expires_date=now + timedelta(days=30)
+            ),
+            now,
+        ),
+    )
+
+    rows_sql = str(session.statements[1].compile(dialect=postgresql.dialect()))
+    assert (
+        "ORDER BY subscriptions.purchased_at DESC, subscriptions.created_at DESC"
+        in rows_sql
+    )
+
+
+@pytest.mark.asyncio
 async def test_absence_with_only_terminal_rows_resolves_to_no_access():
     now = datetime.now(UTC)
     row = _revenuecat_row(

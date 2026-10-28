@@ -641,6 +641,67 @@ async def test_refresh_resolves_a_transfer_source_whose_read_failed(app_sessions
 
 
 @pytest.mark.asyncio
+async def test_a_bare_play_snapshot_updates_the_newest_of_two_base_plan_rows(
+    app_sessions,
+):
+    """Two Play rows of one subscription a legacy handler wrote with their
+    base plans ('annual:p1m' bought first, 'annual:p1y' later) both match
+    the bare 'annual' a snapshot names, on the same store. The newest takes
+    the facts whatever order PostgreSQL returns them in; the other is left
+    non-granting."""
+    user = await _user(app_sessions, "play")
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with app_sessions() as session:
+        # The older row is stored first.
+        for row_id, product_id, bought_days_ago in (
+            ("play-older", "annual:p1m", 300),
+            ("play-newer", "annual:p1y", 10),
+        ):
+            session.add(
+                Subscription(
+                    id=row_id,
+                    user_id=user.id,
+                    revenuecat_subscriber_id=user.firebase_uid,
+                    provider="revenuecat",
+                    product_id=product_id,
+                    platform="android",
+                    status="active",
+                    purchased_at=now - timedelta(days=bought_days_ago),
+                    expires_at=now + timedelta(days=30),
+                    period_type="normal",
+                    provider_snapshot_at=now - timedelta(days=1),
+                    is_sandbox=False,
+                )
+            )
+        await session.commit()
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=355), store="play_store"
+    )
+
+    async with app_sessions() as session:
+        outcome = await sync_revenuecat_access(
+            session,
+            await session.get(User, user.id),
+            snapshot=RevenueCatSnapshot(
+                body["subscriber"], now, app_user_id=user.firebase_uid
+            ),
+        )
+        await session.commit()
+
+    assert (outcome.result, outcome.row_created) == ("applied", False)
+    rows = {row.id: row for row in await _rows(app_sessions, user)}
+    assert (rows["play-newer"].product_id, rows["play-newer"].status) == (
+        "annual",
+        "active",
+    )
+    assert rows["play-newer"].expires_at == now + timedelta(days=355)
+    assert (rows["play-older"].product_id, rows["play-older"].status) == (
+        "annual:p1m",
+        "expired",
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_refund_whose_read_failed_keeps_paid_routes_closed_until_repair(
     app_sessions,
 ):

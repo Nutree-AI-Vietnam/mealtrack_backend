@@ -235,6 +235,9 @@ async def _locked_revenuecat_rows(
             Subscription.user_id == user_id,
             Subscription.provider == REVENUECAT_PROVIDER,
         )
+        # Newest first, like the repository's row lookup: the order
+        # _row_for_product breaks a tie in.
+        .order_by(Subscription.purchased_at.desc(), Subscription.created_at.desc())
         .with_for_update()
         # A row loaded before the lock (the webhook's user lookup can match
         # through a subscription row) keeps its pre-lock values in the
@@ -365,17 +368,25 @@ def _restore_verified_facts(
     return overwritten
 
 
-def _row_for_product(rows: list[Subscription], product_id: str) -> Subscription | None:
-    """The row holding ``product_id``: the exact id first, else the same store
-    product (a Google Play row a legacy handler wrote as
-    '<subscription>:<base plan>' for the bare id a snapshot names), so a
-    snapshot updates that row instead of adding a duplicate next to it."""
+def _row_for_product(
+    rows: list[Subscription], product_id: str, platform: str
+) -> Subscription | None:
+    """The row holding the snapshot's ``product_id`` on its ``platform``.
+
+    Candidates hold the exact id or the same store product (a Google Play row
+    a legacy handler wrote as '<subscription>:<base plan>' for the bare id a
+    snapshot names), so a snapshot updates that row instead of adding a
+    duplicate next to it. A row of the snapshot's own store wins first: an
+    App Store product may share its id with the Play subscription, and the
+    Play webhook named the Play row. Then the exact id, then the newest row
+    (``rows`` come newest first, as _locked_revenuecat_rows orders them).
+    """
     ranked = [
-        (rank, index, row)
+        (str(row.platform) != platform, rank, index, row)
         for index, row in enumerate(rows)
         if (rank := product_match_rank(str(row.product_id), product_id)) < 2
     ]
-    return min(ranked, key=lambda item: item[:2])[2] if ranked else None
+    return min(ranked, key=lambda item: item[:3])[3] if ranked else None
 
 
 def _put_back(legacy_writes: LegacyWrites) -> None:
@@ -634,7 +645,11 @@ async def sync_revenuecat_access(
     request_date = plan.snapshot_at
     facts = plan.facts
     standard_missing = plan.standard_missing
-    target_row = _row_for_product(existing, facts["product_id"]) if facts else None
+    target_row = (
+        _row_for_product(existing, facts["product_id"], facts["platform"])
+        if facts
+        else None
+    )
     rows_revoked = 0
     for row in existing:
         if row is not target_row and row.status in GRANTING_STATUSES:

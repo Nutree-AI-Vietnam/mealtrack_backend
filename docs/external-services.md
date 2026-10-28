@@ -261,7 +261,9 @@ optional caches.
     `EXPIRATION` never on the newer plan's row). Google Play webhooks name
     `<subscription>:<base plan>` while snapshots name the bare subscription
     id, so row lookups and snapshot targets treat both forms as one product,
-    the exact id first.
+    the exact id first. A snapshot's target is a row of its own store before
+    the exact id (an App Store product can share its id with a Play
+    subscription), and the newest row on a remaining tie, like the lookup.
   - RevenueCat has no `REFUND` event: a refund is a `CANCELLATION` with
     `cancel_reason=CUSTOMER_SUPPORT` or a negative price. It runs the
     cancellation handler, as production always has: no referral clawback,
