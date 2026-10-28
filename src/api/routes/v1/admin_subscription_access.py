@@ -72,7 +72,10 @@ router = APIRouter(
 NO_STORE = "private, no-store"
 # Per admin (the limiter keys on the bearer token's uid). A resync is one
 # RevenueCat read and one write transaction; a live lookup is one read.
+# Shared limits: one bucket per admin whatever the path says, so resyncing
+# many different users does not give each of them its own budget.
 RESYNC_RATE_LIMIT = "10/minute"
+RESYNC_RATE_LIMIT_SCOPE = "admin_subscription_access_resync"
 LOOKUP_RATE_LIMIT = "30/minute"
 DEFAULT_QUEUE_LIMIT = 50
 MAX_QUEUE_LIMIT = 200
@@ -270,7 +273,7 @@ def _live(read: LiveRead) -> SupportLiveReadResponse:
 
 
 @router.post("/users/{user_id}/resync", response_model=SupportResyncResponse)
-@limiter.limit(RESYNC_RATE_LIMIT)
+@limiter.shared_limit(RESYNC_RATE_LIMIT, scope=RESYNC_RATE_LIMIT_SCOPE)
 async def resync_user_access(
     request: Request,
     response: Response,

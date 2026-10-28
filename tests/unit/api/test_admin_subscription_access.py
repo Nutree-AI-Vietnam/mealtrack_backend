@@ -651,23 +651,32 @@ def test_resync_of_an_unknown_user_is_not_found(metric):
     assert metric.call_args.kwargs["attributes"]["result"] == "user_not_found"
 
 
-def test_resync_is_rate_limited_per_admin():
-    _, refresher, bus = _setup(rows={USER.id: [_row()]})
-    client = _client(bus)
+def test_resync_is_rate_limited_per_admin_whatever_user_it_names():
+    """One budget per admin: the path names the target user, so a limit keyed
+    on the path would give every user its own 10 RevenueCat reads a minute."""
+    users = [
+        replace(USER, id=f"db-user-{index:02d}", firebase_uid=f"uid-{index:02d}")
+        for index in range(11)
+    ]
+    repository = _Repository(users=users, rows={user.id: [_row()] for user in users})
+    refresher = _Refresher(repository)
+    client = _client(_Bus(repository, refresher))
 
     statuses = [
-        client.post(f"{BASE}/users/db-user-1/resync", headers=_headers()).status_code
-        for _ in range(10)
+        client.post(f"{BASE}/users/{user.id}/resync", headers=_headers()).status_code
+        for user in users
     ]
-    limited = client.post(f"{BASE}/users/db-user-1/resync", headers=_headers())
     other_admin = client.post(
-        f"{BASE}/users/db-user-1/resync", headers=_headers(uid="admin-uid-2")
+        f"{BASE}/users/{users[-1].id}/resync", headers=_headers(uid="admin-uid-2")
     )
 
-    assert statuses == [200] * 10
-    assert limited.status_code == 429
+    assert statuses == [200] * 10 + [429]
     assert other_admin.status_code == 200
-    assert len(refresher.calls) == 11  # the limited call never reached RevenueCat
+    # The limited call never reached RevenueCat; the other admin's did.
+    assert [call[1] for call in refresher.calls] == [
+        *(user.id for user in users[:10]),
+        users[-1].id,
+    ]
 
 
 # --- Repair queue -------------------------------------------------------------
