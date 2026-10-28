@@ -54,6 +54,7 @@ from src.domain.ports.subscription_access_support_repository_port import (
     UnresolvedQueueCursor,
 )
 from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
+from src.infra.event_bus.pymediator_event_bus import PyMediatorEventBus
 
 NOW = datetime.now(UTC).replace(microsecond=0)
 ADMIN = "support@nutree.test"
@@ -404,6 +405,54 @@ def test_lookup_matching_several_accounts_lists_their_ids():
     detail = response.json()["detail"]
     assert detail["error_code"] == "AMBIGUOUS_QUERY"
     assert detail["details"] == {"user_ids": ["db-user-1", "db-user-2"]}
+
+
+def _real_bus(repository: _Repository) -> PyMediatorEventBus:
+    """The app's event bus, whose log level for a handler's exception decides
+    whether Sentry's logging integration opens an issue."""
+    refresher = _Refresher(repository)
+    bus = PyMediatorEventBus()
+    bus.register_handler(
+        GetSupportSubscriptionAccessQuery,
+        GetSupportSubscriptionAccessQueryHandler(repository, refresher),
+    )
+    bus.register_handler(
+        ResyncSubscriptionAccessCommand,
+        ResyncSubscriptionAccessCommandHandler(repository, refresher),
+    )
+    return bus
+
+
+INACTIVE = replace(USER, id="db-user-9", is_active=False, deleted_at=NOW)
+SUPPORT_MISSES = [
+    ("lookup_not_found", "POST", LOOKUP, {"query": "nobody@example.com"}, 404),
+    ("lookup_ambiguous", "POST", LOOKUP, {"query": "BUYER@example.com"}, 409),
+    ("resync_not_found", "POST", f"{BASE}/users/nobody/resync", None, 404),
+    ("resync_inactive", "POST", f"{BASE}/users/{INACTIVE.id}/resync", None, 409),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "method", "path", "body", "status"),
+    SUPPORT_MISSES,
+    ids=[case[0] for case in SUPPORT_MISSES],
+)
+def test_support_misses_are_not_logged_as_errors(
+    caplog, case, method, path, body, status
+):
+    """Routine answers to support, not failures: an ERROR record would open a
+    Sentry issue (LoggingIntegration) for every mistyped email."""
+    repository = _Repository(users=[USER, INACTIVE])
+    if case == "lookup_ambiguous":
+        repository.matches = [USER, replace(USER, id="db-user-2")]
+    client = _client(_real_bus(repository))
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.request(method, path, json=body)
+
+    assert response.status_code == status
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors == []
 
 
 @pytest.mark.parametrize(

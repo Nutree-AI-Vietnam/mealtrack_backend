@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from src.api.exceptions import ConflictException, ResourceNotFoundException
 from src.app.services.subscription_access_flags import (
     database_subscription_access_enabled,
     subscription_enforcement_enabled,
@@ -56,11 +57,16 @@ NOT_LIVE_INACTIVE = "user_inactive"
 NOT_LIVE_NO_FIREBASE_UID = "no_firebase_uid"
 
 
-class SupportUserNotFound(LookupError):
+# The three outcomes below are routine answers to support (404 or 409), not
+# failures. As MealTrackExceptions the event bus logs them at DEBUG, so
+# Sentry's logging integration opens no issue for them.
+
+
+class SupportUserNotFound(ResourceNotFoundException):
     """No account matches the query or id."""
 
 
-class SupportUserAmbiguous(LookupError):
+class SupportUserAmbiguous(ConflictException):
     """Several accounts match the query (an email differing only in case)."""
 
     def __init__(self, user_ids: list[str]):
@@ -68,7 +74,7 @@ class SupportUserAmbiguous(LookupError):
         self.user_ids = user_ids
 
 
-class SupportUserNotLive(RuntimeError):
+class SupportUserNotLive(ConflictException):
     """The account cannot be read from RevenueCat: deleted, deactivated, or
     without a Firebase uid. Reading a tombstoned uid would only create an
     empty RevenueCat customer under it."""
