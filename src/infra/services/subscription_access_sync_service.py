@@ -11,7 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.subscription_access import (
+    GRANTING_STATUSES,
     SubscriptionAccessUnavailable,
+    could_still_grant,
     evaluate_subscription_access,
 )
 from src.domain.ports.subscription_service_port import (
@@ -34,8 +36,6 @@ from src.observability import capture_exception, capture_message, increment_metr
 logger = logging.getLogger(__name__)
 
 REVENUECAT_PROVIDER = "revenuecat"
-# Statuses the access policy can turn into a grant.
-GRANTING_STATUSES = frozenset({"active", "cancelled", "billing_issue"})
 # Events whose whole point is to remove access; a downgrade on them is normal
 # (so is one on a refund, which arrives as a CANCELLATION, and one on the
 # source of a TRANSFER: callers say so with ``downgrade_expected``).
@@ -350,15 +350,7 @@ def _could_still_grant(row: Subscription, instant: datetime) -> bool:
     A granting status alone is not enough: a 'cancelled' row whose paid
     period ended long ago (an unreconciled legacy row) can never grant.
     """
-    if row.status not in GRANTING_STATUSES:
-        return False
-    expires_at = row.expires_at
-    grace = row.grace_period_expires_at
-    return (
-        expires_at is None
-        or _utc(expires_at) > instant
-        or (grace is not None and _utc(grace) > instant)
-    )
+    return could_still_grant(row, instant)
 
 
 def _same_snapshot_consistent(

@@ -442,8 +442,13 @@ cd /app && python -m scripts.reconcile_subscription_access --repair --apply \
   user's next webhook whose RevenueCat read succeeds, on the app's
   `POST /v1/me/entitlements/refresh` (after a purchase or restore and on
   `ENTITLEMENTS_UNAVAILABLE`), or on a reconcile or repair run. Users with
-  neither a later RevenueCat event nor an app open stay unresolved (sign-in
-  and paid routes use the legacy decision meanwhile). Run the repair above by
+  neither a later RevenueCat event nor an app open stay unresolved
+  meanwhile: sign-in and profile use the legacy decision (an `active`,
+  unexpired row), and paid routes under enforcement grant any `active`,
+  `cancelled` or `billing_issue` row that is unexpired or in grace, so a
+  payer whose `CANCELLATION` or `BILLING_ISSUE` read failed keeps them. A
+  refund whose read failed reads `cancelled` there too (the cancellation
+  handler wrote it) until a snapshot revokes it. Run the repair above by
   hand after any RevenueCat incident, and check the step 6 gate before each
   flag change.
 

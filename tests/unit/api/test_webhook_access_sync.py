@@ -411,6 +411,44 @@ async def test_an_old_products_event_never_lands_on_the_newer_products_row(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("event", "written"),
+    [
+        (
+            {"type": "CANCELLATION", "cancel_reason": "UNSUBSCRIBE"},
+            "cancelled",
+        ),
+        ({"type": "BILLING_ISSUE"}, "billing_issue"),
+    ],
+)
+async def test_enforcement_keeps_a_paying_user_whose_webhook_read_failed(
+    monkeypatch, event, written
+):
+    """Auto-renew off (or a failed charge), and RevenueCat answers 503: the
+    legacy handler writes the row and every row is marked unresolved. The
+    paid routes keep answering for the paid-through user."""
+    user = _user("user-u", "uid-u")
+    grace_end = datetime.now(UTC) + timedelta(days=5)
+    stored = _row(user, grace_period_expires_at=grace_end)
+    database = _Database([user], [stored])
+
+    with _revenuecat({"uid-u": _fails(503)}):
+        result = await _deliver(
+            monkeypatch, _event(event.pop("type"), "uid-u", **event), database
+        )
+
+    assert result == {"status": "success"}
+    assert stored.status == written
+    assert stored.provider_sync_required_at is not None
+    with pytest.raises(SubscriptionAccessUnavailable):
+        evaluate_subscription_access(database.rows_of(user))
+    enforcement = CheckSubscriptionAccessQueryHandler(
+        uow_factory=lambda: _UnitOfWork(database, _Referrals())
+    )
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(user.id)) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "event_type",
     [
         "SUBSCRIPTION_EXTENDED",

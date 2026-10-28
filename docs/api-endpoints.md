@@ -167,8 +167,11 @@ when the caller has no subscription access. It is a no-op unless
 `SUBSCRIPTION_ENFORCEMENT_ENABLED` **and** `SUBSCRIPTION_ACCESS_ENABLED` are
 both on (default off, so deploying changes nothing; the kill switch also
 stops enforcement). The decision is the database policy; when it cannot
-decide (an unreconciled row), the legacy row check decides (an `active`,
-unexpired row grants) and the fallback is logged.
+decide (an unreconciled row, such as one a webhook whose RevenueCat read
+failed left behind), a fallback no stricter than the policy decides and is
+logged: any `active`, `cancelled` or `billing_issue` row that is unexpired or
+in its grace period grants, whether or not a snapshot verified it;
+`expired` and `refunded` rows never do.
 
 Gated: the AI routes behind features the mobile app hard-gates with
 `requireSubscriptionAccess` (tests pin this exact list in

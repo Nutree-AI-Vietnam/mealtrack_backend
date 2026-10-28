@@ -296,3 +296,72 @@ async def test_unresolved_rows_fall_back_to_the_legacy_check(caplog):
         assert await _decide([unverified_lapsed]) is False
 
     assert caplog.text.count("source=enforcement") == 2
+
+
+@pytest.mark.asyncio
+async def test_unresolved_fallback_is_no_stricter_than_the_policy(caplog):
+    """A webhook whose RevenueCat read failed marks the user's rows after its
+    legacy handler wrote them: a CANCELLATION leaves a paid-through
+    'cancelled' row, a BILLING_ISSUE a 'billing_issue' row in grace. The
+    policy and the other gates grant both, so the fallback must too."""
+    marker = NOW - timedelta(minutes=5)
+    cancelled_paid_through = _Row(
+        status="cancelled",
+        expires_at=NOW + timedelta(days=65),
+        provider_sync_required_at=marker,
+    )
+    billing_issue_in_grace = _Row(
+        status="billing_issue",
+        expires_at=NOW - timedelta(days=1),
+        grace_period_expires_at=NOW + timedelta(days=5),
+        provider_sync_required_at=marker,
+    )
+    never_verified_cancelled = _Row(
+        status="cancelled",
+        expires_at=NOW + timedelta(days=20),
+        provider_snapshot_at=None,
+    )
+    lifetime = _Row(expires_at=None, provider_sync_required_at=marker)
+
+    with caplog.at_level(logging.WARNING):
+        assert await _decide([cancelled_paid_through]) is True
+        assert await _decide([billing_issue_in_grace]) is True
+        assert await _decide([never_verified_cancelled]) is True
+        assert await _decide([lifetime]) is True
+
+    assert caplog.text.count("source=enforcement") == 4
+
+
+@pytest.mark.asyncio
+async def test_unresolved_fallback_still_refuses_refunded_and_lapsed_rows():
+    marker = NOW - timedelta(minutes=5)
+    unexpired = NOW + timedelta(days=30)
+
+    assert (
+        await _decide(
+            [
+                _Row(
+                    status="refunded",
+                    expires_at=unexpired,
+                    provider_sync_required_at=marker,
+                ),
+                _Row(
+                    status="expired",
+                    expires_at=unexpired,
+                    provider_sync_required_at=marker,
+                ),
+                _Row(
+                    status="billing_issue",
+                    expires_at=NOW - timedelta(days=1),
+                    grace_period_expires_at=NOW - timedelta(hours=1),
+                    provider_sync_required_at=marker,
+                ),
+                _Row(
+                    status="cancelled",
+                    expires_at=NOW - timedelta(days=1),
+                    provider_sync_required_at=marker,
+                ),
+            ]
+        )
+        is False
+    )

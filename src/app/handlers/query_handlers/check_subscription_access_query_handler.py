@@ -9,6 +9,7 @@ from src.app.services.subscription_access_fallback import (
 )
 from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
+    could_still_grant,
     evaluate_subscription_access,
 )
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -19,8 +20,15 @@ class CheckSubscriptionAccessQueryHandler(
     EventHandler[CheckSubscriptionAccessQuery, bool]
 ):
     """The database policy decides; when it cannot (an unreconciled row and
-    no other grant), the legacy row check decides instead of failing the
-    request: a row that still says 'active' and has not expired grants.
+    no other grant), a fallback decides instead of failing the request.
+
+    The fallback is never stricter than the policy: any row whose status can
+    grant ('active', 'cancelled' paid through, 'billing_issue') and that is
+    unexpired or in its grace period grants. A webhook whose RevenueCat read
+    failed leaves exactly such rows behind (a CANCELLATION writes
+    'cancelled', a BILLING_ISSUE 'billing_issue'), and their payers keep the
+    paid routes until a snapshot resolves the marker. 'expired' and
+    'refunded' rows never grant.
     """
 
     def __init__(self, uow_factory: Callable[[], AsyncUnitOfWorkPort]):
@@ -35,4 +43,4 @@ class CheckSubscriptionAccessQueryHandler(
                 record_legacy_access_fallback(
                     source="enforcement", user_id=query.user_id
                 )
-                return any(row.is_active() for row in subscriptions)
+                return any(could_still_grant(row) for row in subscriptions)

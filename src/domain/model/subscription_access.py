@@ -59,6 +59,30 @@ def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+# Statuses the policy can turn into a grant; 'expired' and 'refunded' never do.
+GRANTING_STATUSES = frozenset({"active", "cancelled", "billing_issue"})
+
+
+def could_still_grant(record: Any, now: datetime | None = None) -> bool:
+    """Whether a row would grant access at ``now`` if its facts held.
+
+    The most the policy could grant from the row, ignoring whether a snapshot
+    verified it: a granting status that is unexpired (no expiry is a
+    lifetime grant) or still in its grace period. A 'cancelled' row whose
+    paid period ended long ago never can.
+    """
+    if record.status not in GRANTING_STATUSES:
+        return False
+    instant = _utc(now or datetime.now(UTC))
+    expires_at = record.expires_at
+    grace = getattr(record, "grace_period_expires_at", None)
+    return (
+        expires_at is None
+        or _utc(expires_at) > instant
+        or (grace is not None and _utc(grace) > instant)
+    )
+
+
 def evaluate_subscription_access(
     subscriptions: Iterable[SubscriptionFacts], now: datetime | None = None
 ) -> SubscriptionAccess:
@@ -74,7 +98,7 @@ def evaluate_subscription_access(
             # this row's facts are unverified whatever its status says.
             unresolved = True
             continue
-        if record.status not in {"active", "cancelled", "billing_issue"}:
+        if record.status not in GRANTING_STATUSES:
             continue
         if record.provider_snapshot_at is None:
             unresolved = True
