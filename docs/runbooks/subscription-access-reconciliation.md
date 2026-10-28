@@ -139,9 +139,9 @@ and Render shifts traffic anyway.
       database included: do not deploy this image to preprod before
       production is migrated.
 
-The migrations only add columns or relax a constraint: the previous image
-keeps working on the migrated schema, so an image rollback never needs a
-schema downgrade.
+The migrations only add columns, add an enum value or relax a constraint:
+the previous image keeps working on the migrated schema, so an image rollback
+never needs a schema downgrade.
 
 ### 2. Deploy with both flags off
 
@@ -497,7 +497,7 @@ observability facade:
 |---|---|---|
 | Metric `subscription_access.snapshot_unavailable` (`source`, `failure_kind`, `event_type`), WARNING `RevenueCat snapshot unavailable; access left unresolved for repair` | A webhook (`source=webhook`), refresh or web finalize (`source=web_funnel`) could not read or apply a RevenueCat customer. Only webhooks mark rows for repair; a refresh or finalize writes nothing. The reconcile script emits nothing here: its failures are its exit code and stdout | Any `failure_kind` in `malformed`, `unsupported_store`, `http_4xx`, `api_key_missing`, `unexpected` (also a Sentry exception): page. Transient kinds (`transport`, `http_429`, `http_5xx`) are not sent to Sentry; alert on a sustained rate of this counter (e.g. more than 20 in 15 minutes) |
 | Metric `subscription_access.entitlements_unavailable` (`operation`, `failure_kind`) | `GET` or refresh answered `503 ENTITLEMENTS_UNAVAILABLE` | `failure_kind=unexpected` (logged with `logger.exception` and sent to Sentry): page on any. `unresolved`: users on unrepaired rows; should be near zero after cutover |
-| Metric `subscription_access.legacy_fallback` (`source`), WARNING `Subscription access is unresolved in the database; using the legacy decision` | Sign-in, profile or a paid route fell back to the legacy row check | Should trend to zero after step 6; investigate if it persists |
+| Metric `subscription_access.legacy_fallback` (`source`), WARNING `Subscription access is unresolved in the database; using the legacy decision` | Sign-in or profile fell back to the legacy row check, or a paid route to the enforcement fallback (`docs/api-endpoints.md`) | Should trend to zero after step 6; investigate if it persists |
 | Metric `subscription_access.downgrade` (`source`, `event_type`, `result`, `expected`), Sentry `RevenueCat sync removed access on an unexpected event` | A sync removed access the user had before the event. `expected=true` on an `EXPIRATION`, a refund (a `CANCELLATION` too, so only this attribute separates the two) or the source of a `TRANSFER` (it loses what RevenueCat moved away); `expected=false` otherwise, including a `TRANSFER` target that loses access, also reported to Sentry | `expected=false` more than 5 per hour (entitlement or product misconfiguration in RevenueCat) |
 | Sentry `RevenueCat customer has entitlements but no 'standard'` | RevenueCat entitlement configuration drift | Page |
 | WARNING `RevenueCat snapshot older than stored facts skipped`, metric `subscription_access.sync` with `result=stale_skipped` | Out-of-order reads; routine when the app's refresh after a purchase commits before the purchase webhook. Not sent to Sentry | Spikes only |
