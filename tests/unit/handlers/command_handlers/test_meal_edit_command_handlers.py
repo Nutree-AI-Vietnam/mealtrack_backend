@@ -4,6 +4,7 @@ Unit tests for meal edit command handlers.
 
 import json
 from dataclasses import replace
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -16,6 +17,7 @@ from src.app.commands.meal import (
     FoodItemChange,
 )
 from src.app.events.meal import MealEditedEvent
+from src.app.events.meal.meal_events import register_local_cache_invalidation_hook
 from src.app.handlers.command_handlers.edit_meal_command_handler import (
     EditMealCommandHandler,
 )
@@ -226,6 +228,45 @@ class TestEditMealCommandHandler:
             test_session.query(MealORM).filter(MealORM.meal_id == meal.meal_id).one()
         )
         assert saved_meal.dish_name == ""
+
+    @pytest.mark.asyncio
+    async def test_moved_meal_time_survives_a_reload_and_purges_both_local_days(
+        self, event_bus, sample_meal_with_nutrition, sample_user, test_session
+    ):
+        """06:30 on Oct 28 in Vietnam is 23:30 UTC on Oct 27.
+
+        Moving that breakfast to noon on Oct 27 must purge Oct 28 and Oct 27,
+        the local days the day caches are keyed by, not the UTC dates.
+        """
+        meal = sample_meal_with_nutrition
+        sample_user.timezone = "Asia/Ho_Chi_Minh"
+        row = test_session.query(MealORM).filter(MealORM.meal_id == meal.meal_id).one()
+        row.created_at = datetime(2026, 10, 27, 23, 30)
+        row.meal_type = "breakfast"
+        test_session.commit()
+        purged = []
+
+        async def record_purge(user_id, meal_date, old_meal_date):
+            purged.append((user_id, meal_date, old_meal_date))
+
+        register_local_cache_invalidation_hook(record_purge)
+        try:
+            await event_bus.send(
+                EditMealCommand(
+                    meal_id=meal.meal_id,
+                    created_at=datetime(2026, 10, 27, 5, 0, tzinfo=UTC),
+                    meal_type="lunch",
+                    food_item_changes=[],
+                )
+            )
+        finally:
+            register_local_cache_invalidation_hook(None)
+
+        test_session.expire_all()
+        row = test_session.query(MealORM).filter(MealORM.meal_id == meal.meal_id).one()
+        assert row.created_at.replace(tzinfo=None) == datetime(2026, 10, 27, 5, 0)
+        assert row.meal_type == "lunch"
+        assert purged == [(meal.user_id, date(2026, 10, 27), date(2026, 10, 28))]
 
     @pytest.mark.asyncio
     async def test_edit_meal_unauthorized_user(
