@@ -49,6 +49,24 @@ def test_the_runbook_says_the_rules_are_not_in_the_repository():
     assert "no alerting-as-code" in _monitoring_section()
 
 
+@pytest.mark.parametrize("rule", ["SA-1", "SA-2", "SA-3", "SA-4"])
+def test_paging_issue_rules_fire_on_every_recurrence(rule):
+    """The fixed fingerprint keeps one issue per key and kind, so "A new
+    issue is created" fires once ever: the paging rules trigger on any event
+    and the issue is resolved once fixed."""
+    monitoring = _monitoring_section()
+    (row,) = [line for line in monitoring.splitlines() if line.startswith(f"| {rule} ")]
+    prose = " ".join(monitoring.split())
+
+    assert "Sentry issue alert" in row and "| Page |" in row
+    assert "Resolve the issue once fixed" in row
+    assert (
+        'the paging rules SA-1 to SA-4 use the trigger "The issue is seen more '
+        'than 0 times in 5 minutes"' in prose
+    )
+    assert 'use the triggers "A new issue is created"' not in prose
+
+
 def test_fingerprints_are_the_key_then_bounded_parts():
     assert alerts.alert_fingerprint(alerts.ALERT_SNAPSHOT_FAILURE, "malformed") == [
         "subscription_access.snapshot_failure",
