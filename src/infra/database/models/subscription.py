@@ -2,6 +2,8 @@
 Subscription model for tracking user subscriptions.
 """
 
+from datetime import datetime
+
 from sqlalchemy import (
     Boolean,
     Column,
@@ -94,22 +96,24 @@ class Subscription(Base, BaseMixin):
         Index("idx_revenuecat_subscriber_id", "revenuecat_subscriber_id"),
     )
 
-    def is_active(self) -> bool:
+    def is_active(self, now: datetime | None = None) -> bool:
         """Legacy active-row check retained until the database policy is enabled.
 
         Rows never verified, or changed by an event whose snapshot could not
         be read, keep the pre-policy behaviour while the flag is off.
+        ``now`` defaults to the current time.
         """
+        instant = now or utc_now()
         if (
             self.provider_snapshot_at is None
             or self.provider_sync_required_at is not None
         ):
             return bool(
                 self.status == "active"
-                and (self.expires_at is None or utc_now() < self.expires_at)
+                and (self.expires_at is None or instant < self.expires_at)
             )
         try:
-            return evaluate_subscription_access([self]).has_access
+            return evaluate_subscription_access([self], now=instant).has_access
         except SubscriptionAccessUnavailable:
             return False
 

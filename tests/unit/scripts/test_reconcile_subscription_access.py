@@ -192,8 +192,44 @@ async def _run(database, user_ids, *, apply=False, adapter=None, sync=None, **kw
         pacer=pacer,
         sync=sync or FakeSync(),
         stdout=stdout,
+        # The rows above are dated from NOW; the decisions must be too, or
+        # the tests change verdict once the wall clock passes their expiry.
+        clock=kwargs.pop("clock", lambda: NOW),
         **kwargs,
     )
+
+
+@pytest.mark.asyncio
+async def test_stored_and_legacy_decisions_are_taken_at_the_runs_clock():
+    """Both decisions use the injected clock, not the wall clock: at NOW + 31
+    days the rows that expire at NOW + 30 days grant nothing."""
+    database = FakeDatabase()
+    database.add_user("verified", [_row(snapshot_at=NOW)])
+    database.add_user("legacy", [_row()])
+    path_records = StringIO()
+    error = RevenueCatSnapshotUnavailable("bad key", reason="http_4xx")
+
+    summary = await _run(
+        database,
+        ["verified", "legacy"],
+        adapter=FakeAdapter(default=error),
+        output=path_records,
+        clock=lambda: NOW + timedelta(days=31),
+    )
+
+    records = {
+        record["user_id"]: record
+        for record in map(json.loads, path_records.getvalue().splitlines())
+    }
+    assert (records["verified"]["before"], records["verified"]["legacy_before"]) == (
+        "denied",
+        "denied",
+    )
+    assert (records["legacy"]["before"], records["legacy"]["legacy_before"]) == (
+        "unresolved",
+        "denied",
+    )
+    assert summary.counts["granted"] == 0
 
 
 # --- Checkpoint (finding 37) ------------------------------------------------

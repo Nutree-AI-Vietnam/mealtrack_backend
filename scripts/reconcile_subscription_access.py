@@ -99,6 +99,7 @@ from src.domain.ports.subscription_service_port import (
     RevenueCatSnapshot,
     RevenueCatSnapshotUnavailable,
 )
+from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
 from src.infra.services.subscription_access_sync_service import (
@@ -377,15 +378,15 @@ def _gone_reason(user: Any) -> str | None:
     return None
 
 
-def legacy_decision(rows: Iterable[Any]) -> str:
+def legacy_decision(rows: Iterable[Any], now: datetime | None = None) -> str:
     """The flag-off decision: any row passing the legacy Subscription check."""
-    granted = any(Subscription.is_active(row) for row in rows)
+    granted = any(Subscription.is_active(row, now=now) for row in rows)
     return ACCESS_GRANTED if granted else ACCESS_DENIED
 
 
-def stored_decision(rows: Iterable[Any]) -> str:
+def stored_decision(rows: Iterable[Any], now: datetime | None = None) -> str:
     try:
-        granted = evaluate_subscription_access(rows).has_access
+        granted = evaluate_subscription_access(rows, now=now).has_access
     except SubscriptionAccessUnavailable:
         return ACCESS_UNRESOLVED
     return ACCESS_GRANTED if granted else ACCESS_DENIED
@@ -414,12 +415,15 @@ async def reconcile_user(
     sync: SyncFunction = sync_revenuecat_access,
     max_attempts: int = 3,
     max_wait_seconds: float = 600,
+    clock: Callable[[], datetime] = utc_now,
 ) -> UserResult:
+    """Read and apply one user; ``clock`` times the stored decisions."""
     mode = "apply" if apply else "dry-run"
     async with session_factory() as session:
         user, rows = await _load_user(session, user_id)
-        before = stored_decision(rows)
-        legacy_before = legacy_decision(rows)
+        now = clock()
+        before = stored_decision(rows, now)
+        legacy_before = legacy_decision(rows, now)
         firebase_uid = getattr(user, "firebase_uid", None)
         gone = _gone_reason(user)
     if gone is not None or not firebase_uid:
@@ -686,8 +690,13 @@ async def run_pass(
     sync: SyncFunction = sync_revenuecat_access,
     max_attempts: int = 3,
     max_wait_seconds: float = 600,
+    clock: Callable[[], datetime] = utc_now,
 ) -> Summary:
-    """Reconcile every user once; resumable through ``checkpoint``."""
+    """Reconcile every user once; resumable through ``checkpoint``.
+
+    ``clock`` is the time each user's stored and legacy decisions are taken
+    at (read per user, as a pass can run for hours).
+    """
     summary = Summary("apply" if apply else "dry-run", population.key)
     stdout = stdout or sys.stdout
     completed = checkpoint.completed if checkpoint else set()
@@ -706,6 +715,7 @@ async def run_pass(
                 sync=sync,
                 max_attempts=max_attempts,
                 max_wait_seconds=max_wait_seconds,
+                clock=clock,
             )
             summary.add(result)
             if output is not None:
