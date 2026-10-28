@@ -72,6 +72,12 @@ def test_users_get_user_profile_by_firebase_uid(monkeypatch, client: TestClient)
             "phone_number": None,
             "display_name": None,
             "photo_url": None,
+            "avatar": {
+                "kind": "initials",
+                "image_url": None,
+                "character": None,
+                "color": 2,
+            },
             "provider": "google",
             "is_active": True,
             "onboarding_completed": False,
@@ -87,6 +93,12 @@ def test_users_get_user_profile_by_firebase_uid(monkeypatch, client: TestClient)
     r = client.get("/v1/users/firebase/firebase_1")
     assert r.status_code == 200
     assert r.json()["firebase_uid"] == "firebase_1"
+    assert r.json()["avatar"] == {
+        "kind": "initials",
+        "image_url": None,
+        "character": None,
+        "color": 2,
+    }
 
 
 def test_users_get_onboarding_status(monkeypatch, client: TestClient):

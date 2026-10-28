@@ -13,6 +13,8 @@ from re import Pattern
 from starlette.routing import compile_path
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from src.domain.model.user.user_avatar import AVATAR_PHOTO_MAX_BYTES
+
 KIB = 1024
 MIB = 1024 * KIB
 
@@ -32,6 +34,8 @@ INGREDIENT_PHOTO_BODY_MAX_BYTES = 8 * MIB
 # 720-recipe manifest, the largest the import scripts have produced, is about
 # 3 to 6 MiB of JSON at typical recipe lengths.
 CATALOG_MANIFEST_BODY_MAX_BYTES = 8 * MIB
+# The avatar photo route accepts files up to AVATAR_PHOTO_MAX_BYTES (5 MiB).
+AVATAR_PHOTO_BODY_MAX_BYTES = AVATAR_PHOTO_MAX_BYTES + MULTIPART_OVERHEAD_BYTES
 
 # Largest body each route accepts, keyed by route path in router syntax, so
 # "{image_id}" matches one path segment. Routes missing here get
@@ -46,6 +50,7 @@ BODY_LIMITS: dict[str, int] = {
     "/v1/admin/meal-catalog/import": CATALOG_MANIFEST_BODY_MAX_BYTES,
     "/v1/admin/meal-catalog/resolve": CATALOG_MANIFEST_BODY_MAX_BYTES,
     "/v1/admin/meal-catalog/enrich": CATALOG_MANIFEST_BODY_MAX_BYTES,
+    "/v1/users/avatar/photo": AVATAR_PHOTO_BODY_MAX_BYTES,
 }
 
 

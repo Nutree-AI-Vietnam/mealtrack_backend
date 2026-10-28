@@ -11,9 +11,12 @@ from src.api.exceptions import ResourceNotFoundException
 from src.app.commands.user import DeleteUserCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.user.user_deleted_event import UserDeletedEvent
+from src.app.services.user_avatar_writes import delete_avatar_image
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
+from src.domain.model.user.user_avatar import UserAvatar
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.cache_port import CachePort
+from src.domain.ports.image_store_port import ImageStorePort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
@@ -41,9 +44,11 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
         cache_service: CachePort | None = None,
         event_publisher: IntegrationEventPublisherPort | None = None,
         environment: str = "development",
+        image_store: ImageStorePort | None = None,
     ):
         self.uow = uow
         self.cache_service = cache_service
+        self.image_store = image_store
         self.event_publisher = event_publisher
         self.environment = environment
 
@@ -72,6 +77,12 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
 
                 # Step 1: Soft-delete all related user data
                 await self._soft_delete_related_data(uow, str(user_id))
+
+                # The avatar has its own locked setter; save() never writes it.
+                # Its stored image is deleted after commit.
+                avatar_image_id = await uow.users.update_user_avatar(
+                    user_id, UserAvatar()
+                )
 
                 # Step 2: Anonymize user data (GDPR compliance).
                 # firebase_uid stays on the integration event (command.firebase_uid)
@@ -105,6 +116,10 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
                 raise Exception(f"Failed to delete user account: {str(e)}") from e
 
         await invalidate_cached_user_id(self.cache_service, command.firebase_uid)
+        if avatar_image_id:
+            await delete_avatar_image(
+                self.image_store, avatar_image_id, reason="account deleted"
+            )
 
         # Step 4: Emit UserDeletedEvent to async queue for nutreeai_async to perform Firebase cleanup
         event = UserDeletedEvent(

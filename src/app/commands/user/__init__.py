@@ -7,7 +7,9 @@ from .save_user_onboarding_command import SaveUserOnboardingCommand
 from .update_custom_macros_command import UpdateCustomMacrosCommand
 from .update_language_command import UpdateLanguageCommand
 from .update_timezone_command import UpdateTimezoneCommand
+from .update_user_avatar_command import UpdateUserAvatarCommand
 from .update_weekly_auto_adjust_command import UpdateWeeklyAutoAdjustCommand
+from .upload_user_avatar_photo_command import UploadUserAvatarPhotoCommand
 
 __all__ = [
     "SaveUserOnboardingCommand",
@@ -17,5 +19,7 @@ __all__ = [
     "UpdateCustomMacrosCommand",
     "UpdateLanguageCommand",
     "UpdateTimezoneCommand",
+    "UpdateUserAvatarCommand",
     "UpdateWeeklyAutoAdjustCommand",
+    "UploadUserAvatarPhotoCommand",
 ]

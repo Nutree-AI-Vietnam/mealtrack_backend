@@ -69,7 +69,9 @@ from src.app.commands.user import (
     UpdateCustomMacrosCommand,
     UpdateLanguageCommand,
     UpdateTimezoneCommand,
+    UpdateUserAvatarCommand,
     UpdateWeeklyAutoAdjustCommand,
+    UploadUserAvatarPhotoCommand,
 )
 from src.app.commands.user.sync_user_command import (
     SyncUserCommand,
@@ -118,10 +120,12 @@ from src.app.handlers.command_handlers import (
     UpdateMovementEntryCommandHandler,
     UpdateNotificationPreferencesCommandHandler,
     UpdateTimezoneCommandHandler,
+    UpdateUserAvatarCommandHandler,
     UpdateUserLastAccessedCommandHandler,
     UpdateUserMetricsCommandHandler,
     UpdateWeeklyAutoAdjustCommandHandler,
     UploadMealImageImmediatelyHandler,
+    UploadUserAvatarPhotoCommandHandler,
 )
 from src.app.handlers.command_handlers.add_weight_entry_command_handler import (
     AddWeightEntryCommandHandler,
@@ -1085,6 +1089,7 @@ def get_configured_event_bus() -> EventBus:
         DeleteUserCommand,
         DeleteUserCommandHandler(
             cache_service=cache_service,
+            image_store=image_store,
             environment=settings.ENVIRONMENT,
             event_publisher=queue_publisher,
         ),
@@ -1116,6 +1121,18 @@ def get_configured_event_bus() -> EventBus:
         UpdateWeeklyAutoAdjustCommandHandler(
             event_publisher=queue_publisher,
             environment=settings.ENVIRONMENT,
+        ),
+    )
+    event_bus.register_handler(
+        UpdateUserAvatarCommand,
+        UpdateUserAvatarCommandHandler(
+            uow_factory=AsyncUnitOfWork, image_store=image_store
+        ),
+    )
+    event_bus.register_handler(
+        UploadUserAvatarPhotoCommand,
+        UploadUserAvatarPhotoCommandHandler(
+            uow_factory=AsyncUnitOfWork, image_store=image_store
         ),
     )
     event_bus.register_handler(

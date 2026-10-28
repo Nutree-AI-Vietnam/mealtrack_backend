@@ -110,13 +110,15 @@ and Render shifts traffic anyway.
       `20261028084517715547` (merge with delivery's scan-feedback head, no
       schema change), `20261028085152877654` (`refunded` status value),
       `20261028090710086261` (transfer source marker),
-      `20261028101948171263` (refund marker) and `20261028142458697212`
+      `20261028101948171263` (refund marker), `20261028142458697212`
       (partial index on the three markers, for the monitoring endpoint and
-      the support queue; built concurrently, so it does not block writes).
+      the support queue; built concurrently, so it does not block writes)
+      and `20261028154642851623` (merge with delivery's user-avatar head, no
+      schema change).
 - [ ] Run again with `dry_run=false` (production needs Environment
       approval).
 - [ ] Run `dry_run=true` once more and read the **database** line: it must
-      show `Current revision: 20261028142458697212` (or a later revision)
+      show `Current revision: 20261028154642851623` (or a later revision)
       followed by `Database is up to date`. `Head revision:` comes from the
       checked-out code and reads the same whether or not the upgrade ran, so
       it proves nothing.

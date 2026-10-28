@@ -65,6 +65,7 @@ from .update_notification_preferences_command_handler import (
     UpdateNotificationPreferencesCommandHandler,
 )
 from .update_timezone_command_handler import UpdateTimezoneCommandHandler
+from .update_user_avatar_command_handler import UpdateUserAvatarCommandHandler
 from .update_user_last_accessed_command_handler import (
     UpdateUserLastAccessedCommandHandler,
 )
@@ -74,6 +75,9 @@ from .update_weekly_auto_adjust_command_handler import (
 )
 from .upload_meal_image_immediately_command_handler import (
     UploadMealImageImmediatelyHandler,
+)
+from .upload_user_avatar_photo_command_handler import (
+    UploadUserAvatarPhotoCommandHandler,
 )
 
 __all__ = [
@@ -100,6 +104,8 @@ __all__ = [
     "UpdateLanguageCommandHandler",
     "UpdateTimezoneCommandHandler",
     "UpdateWeeklyAutoAdjustCommandHandler",
+    "UpdateUserAvatarCommandHandler",
+    "UploadUserAvatarPhotoCommandHandler",
     # Meal Suggestion handlers
     "DiscoverMealsCommandHandler",
     "GenerateMealRecipesCommandHandler",

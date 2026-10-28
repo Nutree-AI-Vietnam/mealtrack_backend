@@ -13,6 +13,7 @@ from src.app.handlers.query_handlers.get_user_by_firebase_uid_query_handler impo
 from src.app.queries.user.get_user_by_firebase_uid_query import (
     GetUserByFirebaseUidQuery,
 )
+from src.domain.model.user.user_avatar import UserAvatar
 
 
 def _user():
@@ -27,6 +28,7 @@ def _user():
         phone_number=None,
         display_name=None,
         photo_url=None,
+        avatar=UserAvatar(),
         provider="google",
         is_active=True,
         onboarding_completed=True,

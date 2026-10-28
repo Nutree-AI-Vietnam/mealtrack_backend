@@ -161,6 +161,7 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
                         "phone_number": user.phone_number,
                         "display_name": user.display_name,
                         "photo_url": user.photo_url,
+                        "avatar": user.avatar.to_public_dict(),
                         "provider": user.provider,
                         "is_active": user.is_active,
                         "onboarding_completed": user.onboarding_completed,
