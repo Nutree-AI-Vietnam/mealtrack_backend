@@ -68,6 +68,9 @@ class Meal:
     emoji: str | None = None  # AI-assigned food emoji, stored once on creation
     # Generic serving quantity: grams for food, ml for hydration
     quantity: int | None = None
+    # Whether the log was made on the day it is for, decided once when the
+    # request arrived; None on rows saved before it was stored. Never edited.
+    logged_on_day: bool | None = None
 
     def __post_init__(self):
         """Validate invariants."""
@@ -141,6 +144,7 @@ class Meal:
             meal_type=self.meal_type,
             translations=self.translations,
             source=self.source,
+            logged_on_day=self.logged_on_day,
             **self._recipe_fields(),
         )
 
@@ -165,6 +169,7 @@ class Meal:
             meal_type=self.meal_type,
             translations=self.translations,
             source=self.source,
+            logged_on_day=self.logged_on_day,
             **self._recipe_fields(),
         )
 
@@ -197,6 +202,7 @@ class Meal:
             meal_type=self.meal_type,
             translations=self.translations,
             source=self.source,
+            logged_on_day=self.logged_on_day,
             description=self.description,
             instructions=self.instructions,
             prep_time_min=self.prep_time_min,
@@ -231,6 +237,7 @@ class Meal:
             meal_type=self.meal_type,
             translations=self.translations,
             source=self.source,
+            logged_on_day=self.logged_on_day,
             **self._recipe_fields(),
         )
 
@@ -261,6 +268,7 @@ class Meal:
             meal_type=meal_type or self.meal_type,
             translations=self.translations,
             source=self.source,
+            logged_on_day=self.logged_on_day,
             **self._recipe_fields(),
         )
 
@@ -285,6 +293,7 @@ class Meal:
             meal_type=self.meal_type,
             translations=self.translations,
             source=self.source,
+            logged_on_day=self.logged_on_day,
             quantity=self.quantity,
             **self._recipe_fields(),
         )
@@ -314,6 +323,7 @@ class Meal:
             meal_type=self.meal_type,
             translations=self.translations,
             source=self.source,
+            logged_on_day=self.logged_on_day,
             quantity=self.quantity,
             **self._recipe_fields(),
         )

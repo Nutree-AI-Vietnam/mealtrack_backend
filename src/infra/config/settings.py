@@ -3,6 +3,7 @@ Application configuration settings loaded from environment variables.
 """
 
 import json
+from datetime import date
 from functools import lru_cache
 from typing import Any
 
@@ -201,6 +202,29 @@ class Settings(BaseSettings):
         default=60,
         ge=1,
         description="Describe sentences per user per local day, across both routes.",
+    )
+    # Streak restore: a restored day bridges a streak; packs are store consumables.
+    STREAK_SAME_DAY_LOGS_FROM: date | None = Field(
+        default=None,
+        description=(
+            "From this local date on, only logs made on the day itself keep a "
+            "streak. Unset counts every day with a log."
+        ),
+    )
+    STREAK_RESTORE_SPEND_ENABLED: bool = Field(
+        default=True,
+        description="Offer restores in GET /v1/meals/streak and accept spending them.",
+    )
+    STREAK_RESTORE_CLAIM_ENABLED: bool = Field(
+        default=True,
+        description="Accept restore pack purchase claims from the app.",
+    )
+    STREAK_RESTORE_SANDBOX_USER_IDS: str = Field(
+        default="",
+        description=(
+            "Comma-separated user ids whose sandbox pack purchases credit in "
+            "production (App Review, QA)."
+        ),
     )
     OPENAI_TRANSLATION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
@@ -529,6 +553,11 @@ class Settings(BaseSettings):
         if "://" in cleaned:
             cleaned = cleaned.split("://", 1)[1]
         return cleaned.split("/")[0]
+
+    @field_validator("STREAK_SAME_DAY_LOGS_FROM", mode="before")
+    @classmethod
+    def unset_blank_date(cls, value: Any) -> Any:
+        return None if value == "" else value
 
     @field_validator("NUTRITION_PROVIDER_GLOBAL_RPM", mode="before")
     @classmethod

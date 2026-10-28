@@ -2,7 +2,7 @@
 
 import inspect
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from datetime import timezone as datetime_timezone
 from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 timezone = datetime_timezone
+
+# A log made later for another day is stamped at this local time.
+BACKDATED_LOCAL_TIME = time(12, 0)
 
 # Legacy IANA timezone aliases that may not resolve on slim Docker images
 _TIMEZONE_ALIASES: dict[str, str] = {
@@ -361,3 +364,34 @@ def noon_utc_for_date(target_date: date, user_timezone: str = "UTC") -> datetime
         tzinfo=tz,
     )
     return local_noon.astimezone(UTC)
+
+
+def log_moment(target_date: date | None, user_timezone: str, now: datetime) -> datetime:
+    """When a log is stamped: ``now`` for today, local noon for any other day.
+
+    The noon stamp is what marks a log made later for a past day
+    (``is_backdated_local``), so a log for today must keep its real time.
+    """
+    if target_date is None or is_same_day_log(target_date, user_timezone, now):
+        return now
+    return noon_utc_for_date(target_date, user_timezone)
+
+
+def is_same_day_log(
+    target_date: date | None, user_timezone: str, received_at: datetime
+) -> bool:
+    """Whether a log is for the user's local day at the moment its request arrived.
+
+    Decided once at receipt and stored with the meal, so slow processing past
+    midnight or a later edit of the meal time cannot change it.
+    """
+    if target_date is None:
+        return True
+    if received_at.tzinfo is None:
+        received_at = received_at.replace(tzinfo=UTC)
+    return target_date == received_at.astimezone(get_zone_info(user_timezone)).date()
+
+
+def is_backdated_local(local_dt: datetime) -> bool:
+    """Whether a log's local time is the stamp of a log made for another day."""
+    return local_dt.time() == BACKDATED_LOCAL_TIME

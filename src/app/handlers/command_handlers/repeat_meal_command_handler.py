@@ -25,6 +25,7 @@ from src.domain.ports.integration_event_publisher_port import (
 )
 from src.domain.ports.meal_list_cache_port import MealListCachePort
 from src.domain.utils.timezone_utils import (
+    is_same_day_log,
     noon_utc_for_date,
     resolve_user_timezone_async,
     user_today,
@@ -55,6 +56,7 @@ class RepeatMealCommandHandler(EventHandler[RepeatMealCommand, Meal]):
         self.environment = environment
 
     async def handle(self, command: RepeatMealCommand) -> Meal:
+        received_at = utc_now()
         cache_event_needed = False
         saved_meal: Meal | None = None
         meal_date = None
@@ -228,6 +230,9 @@ class RepeatMealCommandHandler(EventHandler[RepeatMealCommand, Meal]):
                     translations=source_meal.translations,
                     description=source_meal.description,
                     instructions=source_meal.instructions,
+                    logged_on_day=is_same_day_log(
+                        command.target_date, user_tz, received_at
+                    ),
                 )
 
                 saved_meal = await uow.meals.insert(cloned_meal)

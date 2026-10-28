@@ -60,6 +60,9 @@ from src.infra.repositories.saved_suggestion_db_repository_async import (
     AsyncSavedSuggestionDbRepository,
 )
 from src.infra.repositories.scan_feedback_repository import ScanFeedbackRepository
+from src.infra.repositories.streak_restore_repository_async import (
+    AsyncStreakRestoreRepository,
+)
 from src.infra.repositories.subscription_repository_async import (
     AsyncSubscriptionRepository,
 )
@@ -181,6 +184,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.ai_jobs = AsyncAiJobRepository(session)
         self.push_tokens = AsyncPushTokenRepository(session)
         self.engagement_pushes = AsyncEngagementPushRepository(session)
+        self.streak_restores = AsyncStreakRestoreRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         session = self.session

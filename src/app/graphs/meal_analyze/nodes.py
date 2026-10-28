@@ -42,6 +42,7 @@ from src.domain.utils.image_compression import (
 )
 from src.domain.utils.timezone_utils import (
     get_zone_info,
+    is_same_day_log,
     is_valid_timezone,
     noon_utc_for_date,
     user_today,
@@ -387,7 +388,9 @@ async def persist_meal(
         raise RuntimeError("Parser and UoW dependencies are required for persistence")
 
     command = runtime.command
-    meal_datetime, meal_date, meal_type = await _resolve_meal_datetime(runtime)
+    meal_datetime, meal_date, meal_type, logged_on_day = await _resolve_meal_datetime(
+        runtime
+    )
     runtime.meal_date = meal_date
 
     is_food_label = (
@@ -398,6 +401,7 @@ async def persist_meal(
         meal_datetime=meal_datetime,
         meal_type=meal_type,
         is_food_label=is_food_label,
+        logged_on_day=logged_on_day,
     )
 
     if (
@@ -456,7 +460,11 @@ async def _resolve_meal_datetime(runtime: MealAnalyzeRuntime):
 
     zone_info = get_zone_info(user_timezone)
     meal_type = determine_meal_type_from_timestamp(meal_datetime.astimezone(zone_info))
-    return meal_datetime, meal_date, meal_type
+    # Judged at the request's arrival, not now: analysis can end past midnight.
+    logged_on_day = is_same_day_log(
+        command.target_date, user_timezone, command.received_at
+    )
+    return meal_datetime, meal_date, meal_type, logged_on_day
 
 
 def _build_ready_meal(
@@ -465,6 +473,7 @@ def _build_ready_meal(
     meal_datetime,
     meal_type: str,
     is_food_label: bool,
+    logged_on_day: bool,
 ) -> Meal:
     acquired = runtime.acquired_image
     command = runtime.command
@@ -500,4 +509,5 @@ def _build_ready_meal(
         raw_gpt_json=runtime.gpt_parser.extract_raw_json(runtime.vision_result),
         food_label_metadata=runtime.label_metadata if is_food_label else None,
         nutrition=runtime.nutrition,
+        logged_on_day=logged_on_day,
     )

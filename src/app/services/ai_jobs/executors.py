@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Protocol
 
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
@@ -21,6 +21,7 @@ from src.domain.model.ai_jobs import AiJobClaim
 from src.domain.model.chat.models import ChatSseEvent
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
+from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,8 @@ class MealScanJobExecutor:
                 label_crop_public_id=_optional_str(payload, "label_crop_public_id"),
                 crop_metadata=_optional_dict(payload, "crop_metadata"),
                 meal_id=meal_id,
+                # Jobs queued before the enqueue time was stored use this attempt's.
+                received_at=_optional_datetime(payload, "received_at") or utc_now(),
             )
         )
         if getattr(meal, "status", None) == MealStatus.FAILED:
@@ -249,5 +252,15 @@ def _optional_date(payload: Mapping[str, Any], key: str) -> date | None:
         return None
     try:
         return date.fromisoformat(value)
+    except ValueError as exc:
+        raise AiJobExecutionError("INVALID_JOB_INPUT", f"invalid {key}") from exc
+
+
+def _optional_datetime(payload: Mapping[str, Any], key: str) -> datetime | None:
+    value = _optional_str(payload, key)
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
     except ValueError as exc:
         raise AiJobExecutionError("INVALID_JOB_INPUT", f"invalid {key}") from exc
