@@ -107,7 +107,7 @@ class Subscription(Base, BaseMixin):
         Index("idx_expires_at", "expires_at"),
         Index("idx_revenuecat_subscriber_id", "revenuecat_subscriber_id"),
         # Only rows carrying a provider marker (normally none): the support
-        # repair queue and the monitoring endpoint, polled every minute,
+        # repair queue and the monitoring endpoint, polled every 5 minutes,
         # read these instead of scanning every subscription.
         Index(
             "ix_subscriptions_access_markers",

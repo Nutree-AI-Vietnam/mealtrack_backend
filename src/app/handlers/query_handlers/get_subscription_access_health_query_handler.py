@@ -19,7 +19,7 @@ class GetSubscriptionAccessHealthQueryHandler(
     EventHandler[GetSubscriptionAccessHealthQuery, SubscriptionAccessHealthReport]
 ):
     """One read-only query over the marked rows (a partial index), so the
-    uptime monitor can poll it every minute."""
+    uptime monitor can poll it every 5 minutes (runbook rule SA-5)."""
 
     def __init__(self, repository: SubscriptionAccessSupportRepositoryPort):
         self.repository = repository

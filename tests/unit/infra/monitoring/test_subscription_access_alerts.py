@@ -79,3 +79,36 @@ def test_fingerprints_are_the_key_then_bounded_parts():
         "subscription_access.sync_apply_error",
         "none",
     ]
+
+
+def test_every_doc_gives_the_uptime_monitor_the_same_poll_interval():
+    """SA-5 sets it; the endpoint's docs and the index's reason state it."""
+    (row,) = [
+        line
+        for line in _monitoring_section().splitlines()
+        if line.startswith("| SA-5 ")
+    ]
+    endpoints = (ROOT / "docs" / "api-endpoints.md").read_text(encoding="utf-8")
+    monitoring = endpoints[endpoints.index("### Subscription access monitoring") :]
+    stated = {
+        "runbook SA-5": row,
+        "api-endpoints.md": monitoring[: monitoring.index("\n### ")],
+        "health query handler": (
+            ROOT
+            / "src/app/handlers/query_handlers"
+            / "get_subscription_access_health_query_handler.py"
+        ).read_text(encoding="utf-8"),
+        "subscription model": (
+            ROOT / "src/infra/database/models/subscription.py"
+        ).read_text(encoding="utf-8"),
+        "index migration": (
+            ROOT
+            / "migrations/versions"
+            / "20261028142458697212_add_subscription_access_marker_index.py"
+        ).read_text(encoding="utf-8"),
+    }
+
+    for where, text in stated.items():
+        prose = " ".join(text.split())
+        assert "every 5 minutes" in prose, where
+        assert "every minute" not in prose, where

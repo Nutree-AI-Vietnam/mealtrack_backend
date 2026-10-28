@@ -27,12 +27,12 @@ MARKED = (
 def upgrade() -> None:
     """Index only the subscriptions rows that carry a provider marker.
 
-    GET /v1/health/subscription-access (polled every minute by the uptime
-    monitor) and the support repair queue select exactly these rows. No
-    other index covers the marker columns, so without this one each poll
-    scans the whole table; with it, a poll reads the marked rows, normally
-    none. Rows without a marker are not in the index, so it costs nothing
-    on their writes.
+    GET /v1/health/subscription-access (polled every 5 minutes by the
+    uptime monitor) and the support repair queue select exactly these
+    rows. No other index covers the marker columns, so without this one
+    each poll scans the whole table; with it, a poll reads the marked rows,
+    normally none. Rows without a marker are not in the index, so it costs
+    nothing on their writes.
 
     Built CONCURRENTLY, outside the migration transaction (as in 049): a
     plain CREATE INDEX holds a lock that blocks every write to

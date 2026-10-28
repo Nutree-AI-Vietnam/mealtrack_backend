@@ -395,9 +395,11 @@ than `SUBSCRIPTION_ACCESS_ALERT_SYNC_REQUIRED_USERS` users marked for over
 (the oldest marker older than `SUBSCRIPTION_ACCESS_ALERT_OLDEST_MARKER_HOURS`).
 Defaults 20 users, 30 and 60 minutes, 6 hours; read at request time, an
 invalid value keeps its default. `503 {"status": "error", "error_type": …}`
-when the counts cannot be read. Ages run from RevenueCat's event time. One
-query over a partial index of the marked rows, so polling every minute is
-cheap. Alert rules: "Monitoring" in the runbook.
+(the exception type only) when the counts cannot be read; the OpenAPI
+schema declares both `503` bodies. Ages run from RevenueCat's event time.
+One query over a partial index of the marked rows, so the uptime monitor's
+poll every 5 minutes (rule SA-5) is cheap. Alert rules: "Monitoring" in the
+runbook.
 
 ### Offline / agent dump
 
