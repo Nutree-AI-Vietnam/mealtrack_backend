@@ -16,6 +16,7 @@ import pytest
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 
 from src.infra.database.models.subscription import Subscription
 
@@ -162,3 +163,89 @@ def test_refunded_migration_downgrade_keeps_the_value(schema_connection):
     assert (
         schema_connection.scalar(text("SELECT status FROM subscriptions")) == "refunded"
     )
+
+
+NULLABLE_ID = "20261026085224333692_make_revenuecat_subscriber_id_nullable_.py"
+
+# The columns 20261026085224333692's downgrade reads, after its upgrade.
+PROVIDER_ROWS_TABLES = """
+CREATE TABLE users (
+    id varchar(36) PRIMARY KEY,
+    firebase_uid varchar(128)
+);
+CREATE TABLE subscriptions (
+    id varchar(36) PRIMARY KEY,
+    user_id varchar(36) NOT NULL REFERENCES users(id),
+    provider varchar(32) NOT NULL DEFAULT 'revenuecat',
+    revenuecat_subscriber_id varchar(255)
+);
+INSERT INTO users (id, firebase_uid) VALUES ('u1', 'uid-1'), ('u2', NULL);
+"""
+
+
+def _subscriber_ids(connection) -> dict[str, str | None]:
+    return dict(
+        connection.execute(
+            text("SELECT id, revenuecat_subscriber_id FROM subscriptions")
+        ).all()
+    )
+
+
+def _id_nullable(connection) -> bool:
+    return (
+        connection.scalar(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'subscriptions' "
+                "AND column_name = 'revenuecat_subscriber_id'"
+            )
+        )
+        == "YES"
+    )
+
+
+def test_nullable_id_downgrade_refuses_while_momo_rows_have_no_id(
+    schema_connection,
+):
+    """The image before this revision has no provider filter: a MoMo row
+    backfilled with the Firebase uid would be picked by RevenueCat events."""
+    _create(schema_connection, PROVIDER_ROWS_TABLES)
+    schema_connection.execute(
+        text(
+            "INSERT INTO subscriptions (id, user_id, provider, "
+            "revenuecat_subscriber_id) VALUES "
+            "('rc', 'u1', 'revenuecat', 'uid-1'), ('momo', 'u1', 'momo', NULL)"
+        )
+    )
+    schema_connection.commit()
+
+    with pytest.raises(DBAPIError, match="Refusing to downgrade 20261026085224333692"):
+        _run(schema_connection, NULLABLE_ID, "downgrade")
+    schema_connection.rollback()
+
+    assert _subscriber_ids(schema_connection) == {"rc": "uid-1", "momo": None}
+    assert _id_nullable(schema_connection) is True
+
+
+def test_nullable_id_downgrade_backfills_only_revenuecat_rows(schema_connection):
+    _create(schema_connection, PROVIDER_ROWS_TABLES)
+    schema_connection.execute(
+        text(
+            "INSERT INTO subscriptions (id, user_id, provider, "
+            "revenuecat_subscriber_id) VALUES "
+            "('rc', 'u1', 'revenuecat', 'uid-1'), "
+            "('rc-no-id', 'u1', 'revenuecat', NULL), "
+            "('rc-no-uid', 'u2', 'revenuecat', NULL)"
+        )
+    )
+    schema_connection.commit()
+
+    _run(schema_connection, NULLABLE_ID, "downgrade")
+
+    assert _subscriber_ids(schema_connection) == {
+        "rc": "uid-1",
+        "rc-no-id": "uid-1",
+        "rc-no-uid": "u2",
+    }
+    assert _id_nullable(schema_connection) is False

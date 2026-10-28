@@ -438,13 +438,16 @@ forward. Downgrading `20261028090710086261` drops
 `absent_with_history` instead of resolving itself; run `--repair --apply`
 until `--gate` shows `sync_required=0` first. Downgrading
 `20261028085152877654` changes nothing (PostgreSQL keeps an enum value).
-The schema downgrade also loses row ownership. Downgrading
-`20261026085224333692` fills every NULL `revenuecat_subscriber_id` (rows of
-other providers) with the owner's Firebase uid; downgrading
-`20261022125800304190` drops `provider`. After both, a MoMo row reads as a
-RevenueCat row that RevenueCat code may expire or re-point. Once
-`provider='momo'` rows exist, do not downgrade past `20261022125800304190`
-(or export those rows first and restore them after rolling forward).
+The schema downgrade also loses row ownership. The image before this change
+looks RevenueCat rows up by `revenuecat_subscriber_id` alone, with no
+`provider` filter, so it would expire or overwrite any row carrying a user's
+Firebase uid. Downgrading `20261026085224333692` therefore refuses (it
+raises `Refusing to downgrade 20261026085224333692` and changes nothing)
+while a row of another provider has no `revenuecat_subscriber_id`; it fills
+only RevenueCat rows that lack one. Downgrading `20261022125800304190` then
+drops `provider`. Once `provider='momo'` rows exist, do not downgrade past
+`20261026085224333692`: export those rows and delete them first, and restore
+them after rolling forward, or keep the schema (the default above).
 
 ## Scheduled repair (recommended)
 

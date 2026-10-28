@@ -34,14 +34,42 @@ def upgrade() -> None:
     )
 
 
-def downgrade() -> None:
-    """Restore NOT NULL without losing rows another provider wrote.
+# The image before this revision looks RevenueCat rows up by
+# revenuecat_subscriber_id alone (no provider filter, no ORDER BY), so filling
+# another provider's row with the owner's Firebase uid would let that user's
+# RevenueCat events select and overwrite it. Refuse instead.
+REFUSE_OTHER_PROVIDERS = """
+DO $$
+DECLARE
+    blocking integer;
+BEGIN
+    SELECT count(*) INTO blocking
+    FROM subscriptions
+    WHERE revenuecat_subscriber_id IS NULL
+      AND provider <> 'revenuecat';
+    IF blocking > 0 THEN
+        RAISE EXCEPTION
+            'Refusing to downgrade 20261026085224333692: % subscriptions rows '
+            'of providers other than RevenueCat have no revenuecat_subscriber_id. '
+            'The image before this revision would treat them as RevenueCat '
+            'rows. Export and remove them first, or keep this revision.',
+            blocking;
+    END IF;
+END
+$$;
+"""
 
-    Such rows get the owner's Firebase uid (the value RevenueCat rows use),
-    or the user id when there is none (the user_id foreign key guarantees
-    the join). RevenueCat code filters on provider='revenuecat', so the
-    backfilled id never matches them.
+
+def downgrade() -> None:
+    """Restore NOT NULL, refusing while other providers' rows rely on NULL.
+
+    A RevenueCat row with no id (a user who had no Firebase uid when it was
+    written) gets the owner's Firebase uid, the value RevenueCat rows use, or
+    the user id when there is none (the user_id foreign key guarantees the
+    join). Rows of other providers (MoMo) are never backfilled: the migration
+    raises while any exists.
     """
+    op.execute(REFUSE_OTHER_PROVIDERS)
     op.execute(
         """
         UPDATE subscriptions AS s
@@ -49,6 +77,7 @@ def downgrade() -> None:
         FROM users AS u
         WHERE u.id = s.user_id
           AND s.revenuecat_subscriber_id IS NULL
+          AND s.provider = 'revenuecat'
         """
     )
     op.alter_column(
