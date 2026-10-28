@@ -7,6 +7,7 @@ from src.app.commands.hydration import LogCaloricDrinkCommand
 from src.app.handlers.command_handlers.log_caloric_drink_command_handler import (
     LogCaloricDrinkCommandHandler,
 )
+from src.domain.utils.timezone_utils import ensure_utc, utc_now
 
 
 class _Users:
@@ -121,3 +122,21 @@ async def test_log_caloric_drink_publishes_integration_event_post_commit():
         "user_id": "user-1",
         "log_date": "2026-05-26",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_caloric_drink_logged_for_today_keeps_its_real_time():
+    uow = _Uow()
+    before = utc_now()
+    await LogCaloricDrinkCommandHandler(
+        uow=uow, event_publisher=MagicMock(publish=AsyncMock())
+    ).handle(
+        LogCaloricDrinkCommand(
+            user_id="22222222-2222-2222-2222-222222222222",
+            drink_id="coke",
+            volume_ml=330,
+            target_date=before.date(),
+        )
+    )
+
+    assert before <= ensure_utc(uow.hydration_entries.saved.logged_at) <= utc_now()

@@ -1,5 +1,5 @@
 import dataclasses
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -21,6 +21,7 @@ from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
 from src.domain.services.meal_nrf_fields import meal_nrf_fields
+from src.domain.utils.timezone_utils import ensure_utc, utc_now
 
 
 class _CatalogRepo:
@@ -437,3 +438,48 @@ async def test_materializer_scales_published_recipe_payload_without_mutating_cat
     assert meal.recipe_snapshot["ingredients"][0]["quantity"] == 100
     assert meal.recipe_snapshot["ingredients"][1]["quantity"] is None
     assert catalog_meal.recipe_payload["ingredients"][0]["quantity"] == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("for_today", [True, False])
+async def test_materializer_stamps_today_now_and_other_days_at_local_noon(for_today):
+    plan, slot = _plan_and_slot()
+    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    before = utc_now()
+    meal_date = before.date() if for_today else date(2026, 7, 16)
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        _Uow(),
+        user_id=plan.user_id,
+        catalog_meal=slot.selected.catalog_meal,
+        meal_date=meal_date,
+        meal_type="lunch",
+        timezone="UTC",
+    )
+
+    created_at = ensure_utc(meal.created_at)
+    if for_today:
+        assert before <= created_at <= utc_now()
+    else:
+        assert created_at == datetime(2026, 7, 16, 12, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("for_today", [True, False])
+async def test_materializer_marks_only_a_log_for_today_as_logged_on_its_day(
+    for_today,
+):
+    plan, slot = _plan_and_slot()
+    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    meal_date = utc_now().date() if for_today else date(2026, 7, 16)
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        _Uow(),
+        user_id=plan.user_id,
+        catalog_meal=slot.selected.catalog_meal,
+        meal_date=meal_date,
+        meal_type="lunch",
+        timezone="UTC",
+    )
+
+    assert meal.logged_on_day is for_today

@@ -527,6 +527,8 @@ def get_configured_event_bus() -> EventBus:
         get_meal_analyze_graph_settings,
         get_meal_translation_service,
         get_parse_text_settings,
+        get_streak_restore_policy,
+        get_subscription_service,
         get_suggestion_orchestration_service,
         get_text_translation_service,
         get_vision_service,
@@ -811,7 +813,21 @@ def get_configured_event_bus() -> EventBus:
     )
     event_bus.register_handler(
         GetStreakQuery,
-        GetStreakQueryHandler(cache_service=cache_service),
+        GetStreakQueryHandler(
+            cache_service=cache_service, policy=get_streak_restore_policy()
+        ),
+    )
+    from src.app.commands.streak import RestoreStreakCommand
+    from src.app.handlers.command_handlers import RestoreStreakCommandHandler
+
+    event_bus.register_handler(
+        RestoreStreakCommand,
+        RestoreStreakCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            cache_service=cache_service,
+            subscription_service=get_subscription_service(),
+            policy=get_streak_restore_policy(),
+        ),
     )
     event_bus.register_handler(
         GetDailyBreakdownQuery,

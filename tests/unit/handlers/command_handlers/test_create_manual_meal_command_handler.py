@@ -6,8 +6,12 @@ timing log messages are emitted.
 
 import logging
 import time
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
+from itertools import chain, repeat
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +25,7 @@ from src.app.commands.meal.create_manual_meal_command import (
 from src.app.handlers.command_handlers.create_manual_meal_command_handler import (
     CreateManualMealCommandHandler,
 )
+from src.domain.utils.timezone_utils import is_backdated_local, utc_now
 
 # ---------------------------------------------------------------------------
 # Minimal fakes (no mocking framework dependency for simple objects)
@@ -629,3 +634,50 @@ async def test_handler_timing_logs(caplog):
     )
 
     assert result.meal_id is not None
+
+
+class _SaigonUsers:
+    async def find_by_id(self, user_id):
+        return SimpleNamespace(timezone="Asia/Saigon")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("days_ago", "logged_on_day"), [(None, True), (0, True), (1, False)]
+)
+async def test_only_a_meal_logged_for_today_counts_as_logged_on_its_day(
+    days_ago, logged_on_day
+):
+    handler = CreateManualMealCommandHandler(
+        uow=_FakeUow(_make_meal()), event_publisher=_publisher()
+    )
+    target_date = (
+        None if days_ago is None else utc_now().date() - timedelta(days=days_ago)
+    )
+
+    meal = await handler.handle(replace(_make_command(), target_date=target_date))
+
+    assert meal.logged_on_day is logged_on_day
+
+
+@pytest.mark.asyncio
+async def test_a_meal_saved_past_midnight_counts_for_the_day_its_request_arrived():
+    uow = _FakeUow(_make_meal())
+    uow.users = _SaigonUsers()
+    handler = CreateManualMealCommandHandler(uow=uow, event_publisher=_publisher())
+    arrived = datetime(2026, 10, 28, 16, 59, 50, tzinfo=UTC)  # 23:59:50 in Saigon
+    saved = datetime(2026, 10, 28, 17, 0, 10, tzinfo=UTC)  # 00:00:10 the next day
+    module = "src.app.handlers.command_handlers.create_manual_meal_command_handler"
+
+    with (
+        patch(f"{module}.utc_now", side_effect=chain([arrived], repeat(saved))),
+        patch(f"{module}.user_today", return_value=date(2026, 10, 29)),
+    ):
+        meal = await handler.handle(
+            replace(_make_command(), target_date=date(2026, 10, 28))
+        )
+
+    # By the save the day had turned, so the time reads like a backfill.
+    local = meal.created_at.astimezone(ZoneInfo("Asia/Ho_Chi_Minh"))
+    assert (local.date(), is_backdated_local(local)) == (date(2026, 10, 28), True)
+    assert meal.logged_on_day is True

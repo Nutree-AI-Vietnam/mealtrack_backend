@@ -309,12 +309,19 @@ async def test_meal_scan_jobs_get_a_fresh_meal_id_outside_the_fingerprint():
     )
     request = dict(SCAN_REQUEST)
 
-    await _enqueue(h.service, job_type=AiJobType.MEAL_SCAN, request=request)
+    with patch("src.app.services.ai_jobs.service.utc_now", return_value=NOW):
+        await _enqueue(h.service, job_type=AiJobType.MEAL_SCAN, request=request)
 
     new_job = h.uow.ai_jobs.create.await_args.args[0]
     meal_id = new_job.request_payload["meal_id"]
     assert str(UUID(meal_id)) == meal_id
-    assert new_job.request_payload == {**SCAN_REQUEST, "meal_id": meal_id}
+    # The enqueue time decides, on every attempt, whether the meal was logged
+    # on its own day.
+    assert new_job.request_payload == {
+        **SCAN_REQUEST,
+        "meal_id": meal_id,
+        "received_at": NOW.isoformat(),
+    }
     assert new_job.request_fingerprint == SCAN_FINGERPRINT
     assert new_job.dedupe_key is None
     assert request == SCAN_REQUEST
