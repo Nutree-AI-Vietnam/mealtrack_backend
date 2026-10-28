@@ -134,14 +134,15 @@ class TestRevenueCatAdapter:
 
     async def test_get_or_create_empty_customer_is_absent(self, service):
         """GET /subscribers creates unseen ids and answers 200, never 404."""
-        body = empty_customer_response()
+        read_at = datetime(2026, 10, 26, 8, tzinfo=UTC)
+        body = empty_customer_response(request_date=read_at)
 
         with patched_revenuecat_http(body, status_code=201):
             snapshot = await service.get_verified_snapshot("firebase-uid")
 
         assert snapshot.absent is True
         assert snapshot.subscriber == body["subscriber"]
-        assert snapshot.request_date == datetime(2026, 10, 26, 8, tzinfo=UTC)
+        assert snapshot.request_date == read_at
 
     async def test_customer_with_only_non_subscription_purchases_is_present(
         self, service

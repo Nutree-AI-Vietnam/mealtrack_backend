@@ -29,17 +29,24 @@ def verbatim_subscriber_response() -> dict[str, Any]:
 
 
 def empty_customer_response(
-    request_date: str = "2026-10-26T08:00:00Z",
-    request_date_ms: int = 1793001600000,
+    *,
+    request_date: datetime | None = None,
     app_user_id: str = "firebase-uid",
 ) -> dict[str, Any]:
-    """Body of a customer RevenueCat just created ("get or create")."""
+    """Body of a customer RevenueCat just created ("get or create").
+
+    ``request_date`` (RevenueCat's clock at the read) defaults to now, as for
+    a live read. Never a fixed date: the sync skips a snapshot older than the
+    facts a row already holds, and tests stamp rows relative to now.
+    """
+    read_at = request_date or datetime.now(UTC)
+    iso = _iso(read_at)
     return {
-        "request_date": request_date,
-        "request_date_ms": request_date_ms,
+        "request_date": iso,
+        "request_date_ms": int(read_at.timestamp() * 1000),
         "subscriber": {
             "entitlements": {},
-            "first_seen": request_date,
+            "first_seen": iso,
             "management_url": None,
             "non_subscriptions": {},
             "original_app_user_id": app_user_id,
