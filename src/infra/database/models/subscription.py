@@ -106,6 +106,18 @@ class Subscription(Base, BaseMixin):
         Index("idx_user_id_status", "user_id", "status"),
         Index("idx_expires_at", "expires_at"),
         Index("idx_revenuecat_subscriber_id", "revenuecat_subscriber_id"),
+        # Only rows carrying a provider marker (normally none): the support
+        # repair queue and the monitoring endpoint, polled every minute,
+        # read these instead of scanning every subscription.
+        Index(
+            "ix_subscriptions_access_markers",
+            "user_id",
+            postgresql_where=text(
+                "provider_sync_required_at IS NOT NULL"
+                " OR provider_refund_pending_at IS NOT NULL"
+                " OR provider_transfer_source_at IS NOT NULL"
+            ),
+        ),
     )
 
     def is_active(self, now: datetime | None = None) -> bool:
