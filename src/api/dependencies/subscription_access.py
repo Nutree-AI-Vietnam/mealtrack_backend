@@ -14,6 +14,7 @@ from src.app.queries.subscription_access import CheckSubscriptionAccessQuery
 from src.app.services.subscription_access_flags import (
     subscription_enforcement_enabled,
 )
+from src.domain.ports.subscription_service_port import EntitlementCheck
 from src.observability import increment_metric
 
 logger = logging.getLogger(__name__)
@@ -28,16 +29,45 @@ def _event_bus():
     return get_configured_event_bus()
 
 
+async def _revenuecat_access(user_id: str) -> EntitlementCheck:
+    """RevenueCat's short, cached check, shared with the Premium check."""
+    from src.api.middleware.premium_check import revenuecat_access
+
+    return await revenuecat_access(user_id)
+
+
 async def require_active_subscription(
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """402 SUBSCRIPTION_REQUIRED unless the caller has subscription access."""
+    """402 SUBSCRIPTION_REQUIRED unless the caller has subscription access.
+
+    The database decides first. Before a 402, RevenueCat is asked (3 s, the
+    Premium check's 60 s access cache): a payer whose purchase has no row
+    yet (a webhook not yet applied or lost, a promotional grant) keeps the
+    route. When RevenueCat cannot answer, the database's denial stands.
+    """
     if not subscription_enforcement_enabled():
         return
     if await _event_bus().send(CheckSubscriptionAccessQuery(user_id)):
         return
-    increment_metric("subscription_access.enforcement_denied")
-    logger.info("Paid route refused without subscription access: user_id=%s", user_id)
+    revenuecat = await _revenuecat_access(user_id)
+    if revenuecat is EntitlementCheck.ENTITLED:
+        increment_metric("subscription_access.enforcement_revenuecat_grant")
+        logger.warning(
+            "Paid route allowed by RevenueCat; the database grants no access: "
+            "user_id=%s",
+            user_id,
+        )
+        return
+    increment_metric(
+        "subscription_access.enforcement_denied",
+        attributes={"revenuecat": revenuecat.value},
+    )
+    logger.info(
+        "Paid route refused without subscription access: user_id=%s revenuecat=%s",
+        user_id,
+        revenuecat.value,
+    )
     raise HTTPException(
         status_code=status.HTTP_402_PAYMENT_REQUIRED,
         detail={

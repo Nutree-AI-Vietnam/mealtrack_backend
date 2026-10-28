@@ -213,7 +213,8 @@ jq -c 'select(.loses_current_access or .downgrade)' ~/reconcile/dry-run.jsonl
       investigate instead of applying.
 - [ ] Buyers with no row at all (a lost `INITIAL_PURCHASE`) are not in this
       population; the app's refresh after purchase or restore, their next
-      webhook, or an explicit `--all-users` pass repairs them.
+      webhook, or an explicit `--all-users` pass repairs them. Step 9 needs
+      that `--all-users` pass.
 
 ### 5. Apply
 
@@ -305,13 +306,39 @@ WHERE s.provider = 'revenuecat'
 
 ### 9. Enforcement, later and separately
 
-- [ ] Turn `SUBSCRIPTION_ENFORCEMENT_ENABLED=true` only after the mobile
-      rollout is complete and the database decisions have matched RevenueCat
-      for a sustained period. It makes the paid AI routes answer `402`
-      (list in `docs/api-endpoints.md`); a wrong database row then blocks a
-      paying user server-side. Both flags are read from the service's
-      environment, so turning one off takes effect when Render redeploys
-      after the env change (a few minutes), not at once.
+Turn `SUBSCRIPTION_ENFORCEMENT_ENABLED=true` only when all of these hold. It
+makes the paid AI routes answer `402` (list in `docs/api-endpoints.md`); a
+wrong database row then blocks a paying user server-side. Before a `402` the
+route asks RevenueCat (3 s), which rescues a payer the database does not
+know, but not while RevenueCat is down or slow.
+
+- [ ] The mobile rollout is complete and the database decisions have
+      matched RevenueCat for a sustained period.
+- [ ] One `--all-users --apply` pass has run since step 7 and ended `GO`
+      (on exit `1`, work through its unresolved and failed users as in
+      step 5 first).
+      The `--subscribers` and `--repair` passes and the step 6 gate only see
+      users who already have a RevenueCat row; paying users with none (a
+      lost or anonymous purchase webhook, a promotional grant, an event type
+      the old image ignored) only show up in an all-users pass. It creates an
+      empty RevenueCat customer for every user who never bought (see the
+      population table), so plan its duration (users x one second):
+
+  ```bash
+  python -m scripts.reconcile_subscription_access --all-users --apply \
+    --output ~/reconcile/all-users.jsonl \
+    --checkpoint ~/reconcile/all-users.checkpoint
+  ```
+
+- [ ] The share of active installs on app builds older than step 8's (from
+      App Store Connect and Play Console version reports) is near zero.
+      Those builds never call `POST /v1/me/entitlements/refresh` and show a
+      `402` as a generic server error, so a payer the database denies while
+      RevenueCat cannot answer stays blocked there until their next webhook.
+- [ ] Both flags are read from the service's environment, so turning one off
+      takes effect when Render redeploys after the env change (a few
+      minutes), not at once. Watch `enforcement_denied` and
+      `enforcement_revenuecat_grant` (Monitoring) after turning it on.
 
 ## Rollback
 
@@ -467,5 +494,6 @@ observability facade:
 | WARNING `RevenueCat snapshot older than stored facts skipped`, metric `subscription_access.sync` with `result=stale_skipped` | Out-of-order reads; routine when the app's refresh after a purchase commits before the purchase webhook. Not sent to Sentry | Spikes only |
 | Metric `subscription_access.sync` (`source`, `event_type`, `result`) | Every applied snapshot | Volume drops to zero (webhooks not arriving) |
 | Metric `webhook.revenuecat.processed` (`event_type`, `status`, `result`) | Webhook outcomes; `result=access_unresolved` means the rows were marked for repair, `result=account_deleted` an event for a deleted account (legacy effects only, nothing synced) | Rate of `access_unresolved`, and webhook HTTP 5xx at Render (RevenueCat stops retrying after about 5 attempts) |
-| Metric `subscription_access.enforcement_denied` | A paid route answered `402` | A spike right after step 9: turn enforcement off |
+| Metric `subscription_access.enforcement_denied` (`revenuecat`: `not_entitled` or `unavailable`) | A paid route answered `402`; the attribute is RevenueCat's answer to the check before it | A spike right after step 9: turn enforcement off. `revenuecat=unavailable` means payers may be among them |
+| Metric `subscription_access.enforcement_revenuecat_grant`, WARNING `Paid route allowed by RevenueCat; the database grants no access` | Enforcement found no granting row but RevenueCat grants: a purchase not yet (or never) synced | A sustained rate: find the users in the logs and `--user-id <id> --apply` them; check webhook delivery |
 | Scheduled repair exit code | `1` users left unresolved or reads that failed, `3` stopped early | Any failed run |

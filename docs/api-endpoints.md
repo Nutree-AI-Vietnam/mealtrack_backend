@@ -171,7 +171,14 @@ decide (an unreconciled row, such as one a webhook whose RevenueCat read
 failed left behind), a fallback no stricter than the policy decides and is
 logged: any `active`, `cancelled` or `billing_issue` row that is unexpired or
 in its grace period grants, whether or not a snapshot verified it;
-`expired` and `refunded` rows never do.
+`expired` and `refunded` rows never do. Before a `402`, RevenueCat is asked
+with the Ghi nhanh Premium check's call (`check_entitlement` within 3 s,
+sharing its 60 s per-user access cache): a payer with no granting row (a
+purchase whose webhook is late or lost, a promotional grant) keeps the
+route, logged and counted as `subscription_access.enforcement_revenuecat_grant`.
+When RevenueCat cannot answer, the database's denial stands and the route
+answers `402`: enforcement stays a database decision, and a `503` here would
+not unblock anyone.
 
 Gated: the AI routes behind features the mobile app hard-gates with
 `requireSubscriptionAccess` (tests pin this exact list in

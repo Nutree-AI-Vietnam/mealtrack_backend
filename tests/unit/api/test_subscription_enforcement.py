@@ -25,6 +25,7 @@ from src.app.queries.subscription_access import CheckSubscriptionAccessQuery
 from src.app.services.subscription_access_flags import (
     subscription_enforcement_enabled,
 )
+from src.domain.ports.subscription_service_port import EntitlementCheck
 
 NOW = datetime.now(UTC)
 
@@ -54,6 +55,26 @@ class _Bus:
     async def send(self, query):
         self.sent.append(query)
         return self.has_access
+
+
+class _RevenueCat:
+    """Stands in for premium_check.revenuecat_access (its own tests below)."""
+
+    def __init__(self, answer: EntitlementCheck = EntitlementCheck.NOT_ENTITLED):
+        self.answer = answer
+        self.asked: list[str] = []
+
+    async def __call__(self, user_id: str) -> EntitlementCheck:
+        self.asked.append(user_id)
+        return self.answer
+
+
+@pytest.fixture(autouse=True)
+def revenuecat(monkeypatch) -> _RevenueCat:
+    """RevenueCat says "not entitled" unless a test says otherwise."""
+    fake = _RevenueCat()
+    monkeypatch.setattr(enforcement, "_revenuecat_access", fake)
+    return fake
 
 
 def _client(monkeypatch, bus) -> TestClient:
@@ -90,7 +111,7 @@ def test_enforcement_needs_both_flags(monkeypatch, access, enforcement_flag, exp
     assert subscription_enforcement_enabled() is expected
 
 
-def test_flag_off_is_a_no_op_without_any_lookup(monkeypatch):
+def test_flag_off_is_a_no_op_without_any_lookup(monkeypatch, revenuecat):
     _flags(monkeypatch, access="true", enforcement_flag=None)
     bus = _Bus(has_access=False)
 
@@ -98,9 +119,10 @@ def test_flag_off_is_a_no_op_without_any_lookup(monkeypatch):
 
     assert response.status_code == 200
     assert bus.sent == []
+    assert revenuecat.asked == []
 
 
-def test_flag_on_allows_a_user_with_access(monkeypatch):
+def test_flag_on_allows_a_user_with_access(monkeypatch, revenuecat):
     _flags(monkeypatch, access="true", enforcement_flag="true")
     bus = _Bus(has_access=True)
 
@@ -108,9 +130,10 @@ def test_flag_on_allows_a_user_with_access(monkeypatch):
 
     assert response.status_code == 200
     assert bus.sent == [CheckSubscriptionAccessQuery("db-user-id")]
+    assert revenuecat.asked == []  # the database grant is enough
 
 
-def test_flag_on_refuses_a_user_without_access_with_402(monkeypatch):
+def test_flag_on_refuses_a_user_without_access_with_402(monkeypatch, revenuecat):
     _flags(monkeypatch, access="true", enforcement_flag="true")
 
     response = _client(monkeypatch, _Bus(has_access=False)).post("/paid")
@@ -122,6 +145,41 @@ def test_flag_on_refuses_a_user_without_access_with_402(monkeypatch):
             "message": "Standard subscription required",
         }
     }
+    assert revenuecat.asked == ["db-user-id"]
+
+
+def test_revenuecat_grant_allows_a_payer_the_database_does_not_know(
+    monkeypatch, revenuecat, caplog
+):
+    """No granting row (a purchase whose webhook is late or lost, a promo
+    grant): RevenueCat still says entitled, so the route answers."""
+    _flags(monkeypatch, access="true", enforcement_flag="true")
+    revenuecat.answer = EntitlementCheck.ENTITLED
+    metrics = []
+    monkeypatch.setattr(
+        enforcement,
+        "increment_metric",
+        lambda name, **kwargs: metrics.append(name),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=enforcement.__name__):
+        response = _client(monkeypatch, _Bus(has_access=False)).post("/paid")
+
+    assert response.status_code == 200
+    assert revenuecat.asked == ["db-user-id"]
+    assert metrics == ["subscription_access.enforcement_revenuecat_grant"]
+    assert "Paid route allowed by RevenueCat" in caplog.text
+
+
+def test_revenuecat_unavailable_keeps_the_databases_402(monkeypatch, revenuecat):
+    """RevenueCat cannot answer: the database's denial stands."""
+    _flags(monkeypatch, access="true", enforcement_flag="true")
+    revenuecat.answer = EntitlementCheck.UNAVAILABLE
+
+    response = _client(monkeypatch, _Bus(has_access=False)).post("/paid")
+
+    assert response.status_code == 402
+    assert response.json()["detail"]["error_code"] == "SUBSCRIPTION_REQUIRED"
 
 
 def test_gated_route_refuses_before_its_handler_runs(monkeypatch):

@@ -122,6 +122,33 @@ async def _check_access(user_id: str) -> EntitlementCheck:
     return access
 
 
+async def revenuecat_access(user_id: str) -> EntitlementCheck:
+    """RevenueCat's answer for a user the database does not grant.
+
+    The same short check ``require_subscription`` makes (``check_entitlement``
+    within 3 s) and the same 60 s per-user access cache: a cached grant
+    answers without a call, a new grant is cached, a denial never is.
+    UNAVAILABLE when RevenueCat cannot answer or is not configured.
+    """
+    cache = _get_cache()
+    if await _has_cached_access(cache, user_id):
+        return EntitlementCheck.ENTITLED
+    async with _get_uow_factory()() as uow:
+        user = await uow.users.find_by_id(user_id)
+    firebase_uid = getattr(user, "firebase_uid", None)
+    if not firebase_uid:
+        return EntitlementCheck.NOT_ENTITLED
+    if not os.getenv("REVENUECAT_SECRET_API_KEY", ""):
+        logger.warning("REVENUECAT_SECRET_API_KEY not configured")
+        return EntitlementCheck.UNAVAILABLE
+    access = await _get_subscription_service().check_entitlement(
+        firebase_uid, timeout_seconds=REVENUECAT_CHECK_TIMEOUT_SECONDS
+    )
+    if access is EntitlementCheck.ENTITLED:
+        await _cache_access(cache, user_id)
+    return access
+
+
 def _cache_key(user_id: str) -> str:
     return f"subscription_access:{user_id}"
 

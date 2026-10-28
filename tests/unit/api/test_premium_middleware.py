@@ -222,6 +222,70 @@ class TestRequireSubscription:
 
 
 @pytest.mark.asyncio
+class TestRevenueCatAccess:
+    """RevenueCat's answer for paid-route enforcement when no row grants."""
+
+    async def test_entitled_answer_is_cached_for_both_checks(self, access):
+        access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
+
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.ENTITLED
+        )
+
+        access.revenuecat.check_entitlement.assert_awaited_once_with(
+            "firebase_uid_456",
+            timeout_seconds=premium_check.REVENUECAT_CHECK_TIMEOUT_SECONDS,
+        )
+        assert access.cache.values == {
+            f"subscription_access:{USER_ID}": EntitlementCheck.ENTITLED.value
+        }
+        # The Premium check reads the same cache entry.
+        assert await require_subscription(USER_ID) is None
+        access.revenuecat.check_entitlement.assert_awaited_once()
+
+    async def test_cached_grant_answers_without_revenuecat(self, access):
+        access.cache.values[f"subscription_access:{USER_ID}"] = (
+            EntitlementCheck.ENTITLED.value
+        )
+
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.ENTITLED
+        )
+
+        access.revenuecat.check_entitlement.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "answer", [EntitlementCheck.NOT_ENTITLED, EntitlementCheck.UNAVAILABLE]
+    )
+    async def test_a_denial_or_outage_is_returned_and_never_cached(
+        self, access, answer
+    ):
+        access.revenuecat.check_entitlement.return_value = answer
+
+        assert await premium_check.revenuecat_access(USER_ID) is answer
+
+        assert access.cache.values == {}
+
+    async def test_user_without_firebase_uid_is_not_entitled(self, access):
+        access.uow = _Uow(firebase_uid=None)
+
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.NOT_ENTITLED
+        )
+
+        access.revenuecat.check_entitlement.assert_not_called()
+
+    async def test_missing_api_key_is_unavailable(self, access, monkeypatch):
+        monkeypatch.delenv("REVENUECAT_SECRET_API_KEY")
+
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.UNAVAILABLE
+        )
+
+        access.revenuecat.check_entitlement.assert_not_called()
+
+
+@pytest.mark.asyncio
 class TestSubscriptionMiddleware:
     """Test suite for subscription middleware."""
 
