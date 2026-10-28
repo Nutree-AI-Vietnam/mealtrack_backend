@@ -367,3 +367,18 @@ async def test_a_hanging_lookup_answers_503(monkeypatch):
         await handler.handle(_cmd())
     assert error.value.error_code == "PURCHASE_VERIFICATION_UNAVAILABLE"
     assert world.ledger.rows == []
+
+
+@pytest.mark.asyncio
+async def test_paused_claims_still_answer_for_a_pack_the_ledger_holds():
+    world = _World()
+    world.seed(
+        LedgerKind.PURCHASE,
+        3,
+        product_id="nutree_streak_restore_3",
+        store_transaction_id="tx-1",
+    )
+    handler, subscriptions = _handler(world, claim_enabled=False)
+    result = await handler.handle(_cmd(dates=()))
+    assert (result["outcome"], result["credited"]) == ("credited_only", 3)
+    subscriptions.find_one_time_purchase.assert_not_awaited()

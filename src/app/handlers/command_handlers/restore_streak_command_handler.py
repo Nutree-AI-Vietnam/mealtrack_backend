@@ -63,8 +63,6 @@ class RestoreStreakCommandHandler(EventHandler[RestoreStreakCommand, dict[str, A
 
     async def handle(self, cmd: RestoreStreakCommand) -> dict[str, Any]:
         _validate_dates(cmd)
-        if cmd.purchase is not None and not self.policy.claim_enabled:
-            raise _disabled("Restore purchases are paused.")
         if cmd.purchase is None and not self.policy.spend_enabled:
             raise _disabled("Streak restores are paused.")
         pack = None

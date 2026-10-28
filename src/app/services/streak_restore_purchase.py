@@ -72,6 +72,12 @@ async def verify_pack_claim(
             store=held.store,
             environment=held.environment,
         )
+    # Paused claims still answer for a pack the ledger holds (the webhook
+    # credited it), so the app's pending claim can clear.
+    if not policy.claim_enabled:
+        raise ExternalServiceException(
+            "Restore purchases are paused.", "FEATURE_DISABLED"
+        )
     firebase_uid = getattr(user, "firebase_uid", None)
     if not firebase_uid:
         raise ResourceNotFoundException("User not found.", "USER_NOT_FOUND")
