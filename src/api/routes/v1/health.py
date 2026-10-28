@@ -14,6 +14,7 @@ from src.api.dependencies.auth import require_monitoring_access
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.schemas.response.subscription_access import (
     SubscriptionAccessAlertThresholdsResponse,
+    SubscriptionAccessHealthErrorResponse,
     SubscriptionAccessHealthReasonResponse,
     SubscriptionAccessHealthResponse,
     SubscriptionAccessMarkerCountsResponse,
@@ -146,7 +147,8 @@ async def database_pool_status(_monitor=Depends(require_monitoring_access)):
     response_model=SubscriptionAccessHealthResponse,
     responses={
         503: {
-            "model": SubscriptionAccessHealthResponse,
+            "model": SubscriptionAccessHealthResponse
+            | SubscriptionAccessHealthErrorResponse,
             "description": "status degraded (thresholds exceeded, with the "
             "reasons), or status error when the counts could not be read",
         }
@@ -174,10 +176,11 @@ async def subscription_access_health(
             "Subscription access health could not be read: error_type=%s",
             type(exc).__name__,
         )
+        error = SubscriptionAccessHealthErrorResponse(
+            status="error", error_type=type(exc).__name__
+        )
         return JSONResponse(
-            status_code=503,
-            content={"status": "error", "error_type": type(exc).__name__},
-            headers=headers,
+            status_code=503, content=error.model_dump(mode="json"), headers=headers
         )
     counts = report.counts
     body = SubscriptionAccessHealthResponse(

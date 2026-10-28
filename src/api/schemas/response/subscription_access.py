@@ -63,3 +63,10 @@ class SubscriptionAccessHealthResponse(BaseModel):
     counts: SubscriptionAccessMarkerCountsResponse
     thresholds: SubscriptionAccessAlertThresholdsResponse
     reasons: list[SubscriptionAccessHealthReasonResponse]
+
+
+class SubscriptionAccessHealthErrorResponse(BaseModel):
+    """503 when the marker counts could not be read."""
+
+    status: Literal["error"]
+    error_type: str = Field(description="The exception's type name, nothing else")

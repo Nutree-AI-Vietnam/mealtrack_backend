@@ -164,6 +164,27 @@ def test_a_failed_read_answers_503_without_the_exception_text(caplog):
     assert "hunter2" not in caplog.text
 
 
+def test_the_503_schema_declares_both_bodies():
+    """degraded (the report) and error (the counts could not be read)."""
+    app = FastAPI()
+    app.include_router(router)
+    schema = app.openapi()
+    declared = schema["paths"][PATH]["get"]["responses"]["503"]["content"][
+        "application/json"
+    ]["schema"]
+    refs = {option["$ref"].rsplit("/", 1)[-1] for option in declared["anyOf"]}
+    error = schema["components"]["schemas"]["SubscriptionAccessHealthErrorResponse"]
+    degraded = schema["components"]["schemas"]["SubscriptionAccessHealthResponse"]
+
+    assert refs == {
+        "SubscriptionAccessHealthResponse",
+        "SubscriptionAccessHealthErrorResponse",
+    }
+    assert set(error["required"]) == {"status", "error_type"}
+    assert error["properties"]["status"]["const"] == "error"
+    assert degraded["properties"]["status"]["enum"] == ["ok", "degraded"]
+
+
 def test_the_handler_passes_cutoffs_from_the_thresholds(monkeypatch):
     monkeypatch.setattr(
         "src.app.handlers.query_handlers.get_subscription_access_health_query_handler.utc_now",
