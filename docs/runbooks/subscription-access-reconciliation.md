@@ -460,11 +460,13 @@ looks RevenueCat rows up by `revenuecat_subscriber_id` alone, with no
 `provider` filter, so it would expire or overwrite any row carrying a user's
 Firebase uid. Downgrading `20261026085224333692` therefore refuses (it
 raises `Refusing to downgrade 20261026085224333692` and changes nothing)
-while a row of another provider has no `revenuecat_subscriber_id`; it fills
-only RevenueCat rows that lack one. Downgrading `20261022125800304190` then
-drops `provider`. Once `provider='momo'` rows exist, do not downgrade past
-`20261026085224333692`: export those rows and delete them first, and restore
-them after rolling forward, or keep the schema (the default above).
+while any row of another provider exists, with or without a
+`revenuecat_subscriber_id`; otherwise it fills only RevenueCat rows that
+lack one. Downgrading `20261022125800304190` drops `provider` and refuses
+the same way (`Refusing to downgrade 20261022125800304190`) while such a row
+exists. So once `provider='momo'` rows exist, neither downgrade runs: export
+those rows and delete them first, and restore them after rolling forward, or
+keep the schema (the default above).
 
 ## Scheduled repair (recommended)
 

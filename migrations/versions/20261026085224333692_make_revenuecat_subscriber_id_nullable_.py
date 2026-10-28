@@ -35,9 +35,10 @@ def upgrade() -> None:
 
 
 # The image before this revision looks RevenueCat rows up by
-# revenuecat_subscriber_id alone (no provider filter, no ORDER BY), so filling
-# another provider's row with the owner's Firebase uid would let that user's
-# RevenueCat events select and overwrite it. Refuse instead.
+# revenuecat_subscriber_id alone (no provider filter, no ORDER BY), so any
+# row of another provider is at risk once it is back: filling one with the
+# owner's Firebase uid, or one already carrying an id, lets that user's
+# RevenueCat events select and overwrite it. Refuse while any exists.
 REFUSE_OTHER_PROVIDERS = """
 DO $$
 DECLARE
@@ -45,14 +46,13 @@ DECLARE
 BEGIN
     SELECT count(*) INTO blocking
     FROM subscriptions
-    WHERE revenuecat_subscriber_id IS NULL
-      AND provider <> 'revenuecat';
+    WHERE provider <> 'revenuecat';
     IF blocking > 0 THEN
         RAISE EXCEPTION
             'Refusing to downgrade 20261026085224333692: % subscriptions rows '
-            'of providers other than RevenueCat have no revenuecat_subscriber_id. '
-            'The image before this revision would treat them as RevenueCat '
-            'rows. Export and remove them first, or keep this revision.',
+            'belong to providers other than RevenueCat. The image before this '
+            'revision would treat them as RevenueCat rows. Export and remove '
+            'them first, or keep this revision.',
             blocking;
     END IF;
 END
@@ -61,13 +61,14 @@ $$;
 
 
 def downgrade() -> None:
-    """Restore NOT NULL, refusing while other providers' rows rely on NULL.
+    """Restore NOT NULL, refusing while any other provider's row exists.
 
     A RevenueCat row with no id (a user who had no Firebase uid when it was
     written) gets the owner's Firebase uid, the value RevenueCat rows use, or
     the user id when there is none (the user_id foreign key guarantees the
-    join). Rows of other providers (MoMo) are never backfilled: the migration
-    raises while any exists.
+    join). Rows of other providers (MoMo) are never backfilled or left for
+    the older image: the migration raises while any exists, with or without
+    an id.
     """
     op.execute(REFUSE_OTHER_PROVIDERS)
     op.execute(

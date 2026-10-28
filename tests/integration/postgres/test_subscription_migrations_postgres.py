@@ -205,18 +205,21 @@ def _id_nullable(connection) -> bool:
     )
 
 
-def test_nullable_id_downgrade_refuses_while_momo_rows_have_no_id(
-    schema_connection,
+@pytest.mark.parametrize("momo_id", [None, "uid-1"], ids=["no-id", "with-id"])
+def test_nullable_id_downgrade_refuses_while_any_other_providers_row_exists(
+    schema_connection, momo_id
 ):
-    """The image before this revision has no provider filter: a MoMo row
-    backfilled with the Firebase uid would be picked by RevenueCat events."""
+    """The image before this revision has no provider filter: a MoMo row,
+    backfilled with the Firebase uid or already carrying an id, would be
+    picked by RevenueCat events."""
     _create(schema_connection, PROVIDER_ROWS_TABLES)
     schema_connection.execute(
         text(
             "INSERT INTO subscriptions (id, user_id, provider, "
             "revenuecat_subscriber_id) VALUES "
-            "('rc', 'u1', 'revenuecat', 'uid-1'), ('momo', 'u1', 'momo', NULL)"
-        )
+            "('rc', 'u1', 'revenuecat', 'uid-1'), ('momo', 'u1', 'momo', :momo_id)"
+        ),
+        {"momo_id": momo_id},
     )
     schema_connection.commit()
 
@@ -224,7 +227,7 @@ def test_nullable_id_downgrade_refuses_while_momo_rows_have_no_id(
         _run(schema_connection, NULLABLE_ID, "downgrade")
     schema_connection.rollback()
 
-    assert _subscriber_ids(schema_connection) == {"rc": "uid-1", "momo": None}
+    assert _subscriber_ids(schema_connection) == {"rc": "uid-1", "momo": momo_id}
     assert _id_nullable(schema_connection) is True
 
 
@@ -249,3 +252,63 @@ def test_nullable_id_downgrade_backfills_only_revenuecat_rows(schema_connection)
         "rc-no-uid": "u2",
     }
     assert _id_nullable(schema_connection) is False
+
+
+ACCESS_METADATA = "20261022125800304190_add_subscription_access_metadata.py"
+
+# The columns 20261022125800304190's upgrade adds, on a bare subscriptions table.
+ACCESS_METADATA_TABLE = """
+CREATE TABLE subscriptions (
+    id varchar(36) PRIMARY KEY,
+    provider varchar(32) NOT NULL DEFAULT 'revenuecat',
+    grace_period_expires_at timestamptz,
+    period_type varchar(16),
+    provider_snapshot_at timestamptz
+);
+"""
+
+
+def _subscription_columns(connection) -> set[str]:
+    return set(
+        connection.scalars(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'subscriptions'"
+            )
+        )
+    )
+
+
+def test_access_metadata_downgrade_refuses_while_another_providers_row_exists(
+    schema_connection,
+):
+    """Dropping provider would turn a MoMo row into a RevenueCat row."""
+    _create(schema_connection, ACCESS_METADATA_TABLE)
+    schema_connection.execute(
+        text(
+            "INSERT INTO subscriptions (id, provider) "
+            "VALUES ('rc', 'revenuecat'), ('momo', 'momo')"
+        )
+    )
+    schema_connection.commit()
+
+    with pytest.raises(DBAPIError, match="Refusing to downgrade 20261022125800304190"):
+        _run(schema_connection, ACCESS_METADATA, "downgrade")
+    schema_connection.rollback()
+
+    assert "provider" in _subscription_columns(schema_connection)
+
+
+def test_access_metadata_downgrade_drops_its_columns_for_revenuecat_rows_only(
+    schema_connection,
+):
+    _create(schema_connection, ACCESS_METADATA_TABLE)
+    schema_connection.execute(
+        text("INSERT INTO subscriptions (id, provider) VALUES ('rc', 'revenuecat')")
+    )
+    schema_connection.commit()
+
+    _run(schema_connection, ACCESS_METADATA, "downgrade")
+
+    assert _subscription_columns(schema_connection) == {"id"}

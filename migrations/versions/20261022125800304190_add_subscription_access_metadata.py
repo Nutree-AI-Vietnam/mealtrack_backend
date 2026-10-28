@@ -40,8 +40,34 @@ def upgrade() -> None:
     )
 
 
+# Dropping ``provider`` makes every row read as RevenueCat's again: the image
+# before this revision would expire or overwrite another provider's row on
+# its owner's RevenueCat events. Refuse while any exists.
+REFUSE_OTHER_PROVIDERS = """
+DO $$
+DECLARE
+    blocking integer;
+BEGIN
+    SELECT count(*) INTO blocking
+    FROM subscriptions
+    WHERE provider <> 'revenuecat';
+    IF blocking > 0 THEN
+        RAISE EXCEPTION
+            'Refusing to downgrade 20261022125800304190: % subscriptions rows '
+            'belong to providers other than RevenueCat. Dropping provider '
+            'would make them RevenueCat rows. Export and remove them first, '
+            'or keep this revision.',
+            blocking;
+    END IF;
+END
+$$;
+"""
+
+
 def downgrade() -> None:
-    """Remove the additive provider facts."""
+    """Remove the additive provider facts, refusing while other providers'
+    rows exist (they would read as RevenueCat's without ``provider``)."""
+    op.execute(REFUSE_OTHER_PROVIDERS)
     op.drop_column("subscriptions", "provider_snapshot_at")
     op.drop_column("subscriptions", "period_type")
     op.drop_column("subscriptions", "grace_period_expires_at")
