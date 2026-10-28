@@ -136,8 +136,10 @@ when a user the app last saw as granted reads as expired.
 - Flag on, RevenueCat unreadable (timeout, 5xx, 429, missing key): `503
   ENTITLEMENTS_UNAVAILABLE`, with `Retry-After: <seconds>` when RevenueCat
   sent one. Nothing is written.
-- Flag on, unexpected error: `503 ENTITLEMENTS_UNAVAILABLE`, logged with
-  `logger.exception` and reported to Sentry first.
+- Flag on, unexpected error: `503 ENTITLEMENTS_UNAVAILABLE`, reported to
+  Sentry first: a failure applying the read snapshot under the fixed issue
+  `subscription_access.sync_apply_error`, anything else logged with
+  `logger.exception`.
 - RevenueCat readable but unsafe to apply (owner changed, conflicting facts,
   no RevenueCat purchases while the database holds a possible grant from
   elsewhere): nothing is written, the failure is logged, and the answer is
@@ -247,6 +249,148 @@ template. `POST` is an LLM call, cached per user and window (`force=true`
 regenerates). Moving the recap behind the subscription is a product
 decision (owner: backend lead with product): gate `POST /v1/progress/recap`
 here and the app's recap generation in the same release.
+
+### Subscription access support (admin)
+
+Three routes under `/v1/admin/subscription-access` let support look a user
+up and repair them one at a time (there is no scheduled repair job; the
+procedure is "Support procedure" in
+`docs/runbooks/subscription-access-reconciliation.md`). All take a Firebase
+bearer token whose email is in `ADMIN_EMAILS` (`require_admin`: `401`
+without a valid token, `403` for anyone else) and answer with
+`Cache-Control: private, no-store`. Errors use the usual envelope,
+`{"detail": {"error_code", "message", "details"}}`. Every call logs one INFO
+line with the admin's email, the action, the target user id and the result;
+customer emails and lookup queries are never logged.
+
+**`GET /users?query=<email | firebase uid | user id>[&live=true]`**
+(30 per minute per admin). `query` matches the internal id, the Firebase uid
+or the email exactly; an email that matches nobody is retried ignoring case.
+Deleted and deactivated accounts are found too. `200`:
+
+```json
+{
+  "user": {"id": "…", "firebase_uid": "…", "email": "…", "is_active": true, "deleted_at": null},
+  "subscriptions": [
+    {"id": "…", "provider": "revenuecat", "status": "cancelled", "product_id": "annual",
+     "platform": "ios", "purchased_at": "…", "expires_at": "…", "grace_period_expires_at": null,
+     "provider_snapshot_at": "…", "provider_sync_required_at": "…",
+     "provider_refund_pending_at": null, "provider_transfer_source_at": null, "is_sandbox": false}
+  ],
+  "decision": {"outcome": "unresolved", "has_access": null, "status": null, "expires_at": null,
+               "product_id": null, "will_renew": null, "provider": null,
+               "unresolved_reasons": ["sync_required"]},
+  "flags": {"subscription_access_enabled": true, "subscription_enforcement_enabled": false,
+            "enforcement_active": false},
+  "live": null
+}
+```
+
+- `subscriptions`: every row, any provider, newest purchase first.
+- `decision`: what `GET /v1/me/entitlements` answers for those rows.
+  `outcome` `granted` or `denied` carries its body's fields; `unresolved`
+  (the user's GET answers `503 ENTITLEMENTS_UNAVAILABLE`) nulls them and
+  lists `unresolved_reasons`: `sync_required`, `refund_pending`,
+  `transfer_source`, `unverified_grant`.
+- `flags`: `SUBSCRIPTION_ACCESS_ENABLED`, `SUBSCRIPTION_ENFORCEMENT_ENABLED`
+  as set, and `enforcement_active` (both on, so paid routes answer `402`).
+- `live=true` also reads the user's RevenueCat customer and writes nothing:
+  `live.status` `ok` (with `read_at`, `absent`, `entitlements`,
+  `standard_missing` and `standard`: the `standard` entitlement normalized
+  as a resync would store it, with `has_access`, `status`, `product_id`,
+  `platform`, `purchased_at`, `expires_at`, `grace_period_expires_at`,
+  `period_type`, `is_sandbox`, `will_renew`), `unavailable` (`reason` is
+  the snapshot failure kind, `retry_after_seconds` when RevenueCat sent
+  one), or `not_read` (`reason` `user_inactive` or `no_firebase_uid`).
+  Without `live`, RevenueCat is never called: its `GET /v1/subscribers` is
+  get-or-create.
+- `404 USER_NOT_FOUND`; `409 AMBIGUOUS_QUERY` with
+  `details.user_ids` when several accounts match.
+
+**`POST /users/{user_id}/resync`** (no body; 10 per minute per admin).
+The app's `POST /v1/me/entitlements/refresh` for the named user: RevenueCat
+is read outside any transaction, the snapshot applied with the access sync
+in one unit of work (markers it answers are cleared; a remembered
+`TRANSFER` source has an empty customer applied as authoritative, as
+reconcile `--repair` does) and committed, and the paid-route RevenueCat
+recheck is forgotten. `200`:
+
+```json
+{
+  "user_id": "…",
+  "sync": {"result": "applied", "reason": null, "rows_revoked": 0, "row_created": false,
+           "markers_cleared": 1, "standard_missing": false},
+  "before": {"outcome": "unresolved", "…": "…"},
+  "after": {"outcome": "granted", "…": "…"}
+}
+```
+
+`sync.result` is `applied`, `unchanged`, `stale_skipped`, `absent`, or
+`not_applied` with `sync.reason` (`owner_changed`, `conflicting_facts`,
+`absent_with_history`, …: nothing was written). `before` and `after` have
+the lookup's `decision` shape. Errors: `404 USER_NOT_FOUND`;
+`409 USER_INACTIVE` (`details.reason` `user_inactive` or `no_firebase_uid`;
+RevenueCat is not read); `503 REVENUECAT_UNAVAILABLE` with
+`details.reason` (the snapshot failure kind) and `details.retry_after_seconds`,
+plus `Retry-After` when RevenueCat sent one: nothing was written;
+`500 RESYNC_FAILED`: RevenueCat was read but applying it failed (already
+reported to Sentry); nothing was written. Each resync counts
+`subscription_access.support_action` (`operation`, `result`, `user_id`).
+
+**`GET /unresolved?limit=<1-200, default 50>&cursor=<next_cursor>`**: the
+repair queue, live users whose RevenueCat rows carry a marker, oldest marker
+first:
+
+```json
+{
+  "items": [
+    {"user_id": "…", "firebase_uid": "…", "oldest_marker_at": "…",
+     "oldest_marker_age_seconds": 7260,
+     "markers": [{"type": "sync_required", "marked_at": "…", "age_seconds": 7260},
+                 {"type": "refund_pending", "marked_at": "…", "age_seconds": 6900}]}
+  ],
+  "next_cursor": "…",
+  "limit": 50,
+  "checked_at": "…"
+}
+```
+
+Each marker type appears once per user with its oldest time (RevenueCat's
+event time). `next_cursor` is opaque and `null` on the last page; an unknown
+cursor answers `400 INVALID_CURSOR`.
+
+### Subscription access monitoring
+
+**`GET /v1/health/subscription-access`** takes the `X-Monitoring-Token`
+header (`require_monitoring_access`, like `/v1/health/db-pool`: `403`
+without it, and for everyone while `MONITORING_API_TOKEN` is unset) and
+counts the provider markers on live users' RevenueCat rows:
+
+```json
+{
+  "status": "ok",
+  "checked_at": "…",
+  "counts": {"sync_required_users": 3, "stale_sync_required_users": 1,
+             "refund_pending_rows": 0, "stale_refund_pending_rows": 0,
+             "transfer_source_rows": 0, "oldest_marker_age_seconds": 2400},
+  "thresholds": {"sync_required_minutes": 30, "sync_required_users": 20,
+                 "refund_pending_minutes": 60, "oldest_marker_hours": 6},
+  "reasons": []
+}
+```
+
+`200` with `status: ok`, or `503` with `status: degraded` and one
+`{"code", "message"}` per threshold exceeded: `sync_required_backlog` (more
+than `SUBSCRIPTION_ACCESS_ALERT_SYNC_REQUIRED_USERS` users marked for over
+`SUBSCRIPTION_ACCESS_ALERT_SYNC_REQUIRED_MINUTES`), `refund_pending_stale`
+(any refund pending for over
+`SUBSCRIPTION_ACCESS_ALERT_REFUND_PENDING_MINUTES`), `oldest_marker_stale`
+(the oldest marker older than `SUBSCRIPTION_ACCESS_ALERT_OLDEST_MARKER_HOURS`).
+Defaults 20 users, 30 and 60 minutes, 6 hours; read at request time, an
+invalid value keeps its default. `503 {"status": "error", "error_type": …}`
+when the counts cannot be read. Ages run from RevenueCat's event time. One
+query over a partial index of the marked rows, so polling every minute is
+cheap. Alert rules: "Monitoring" in the runbook.
 
 ### Offline / agent dump
 

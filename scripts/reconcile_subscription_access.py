@@ -17,7 +17,9 @@ Populations (pick one; the default is --subscribers):
                   since then. It cannot find events that wrote nothing (an
                   image rolled back past this code acknowledges several
                   types without writing): use --subscribers for those.
-                  Meant to be scheduled (hourly) with --apply.
+                  Run it with --apply on demand: no job schedules it. The
+                  subscription-access alerts (runbook, "Monitoring") say
+                  when; support resyncs single users through the admin API.
   --all-users     every active user. Opt-in only: it creates an empty
                   RevenueCat customer for every user who never bought.
 

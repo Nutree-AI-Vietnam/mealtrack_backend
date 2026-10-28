@@ -234,9 +234,12 @@ optional caches.
   is always on and reads neither flag.
 - A failed or malformed provider fetch must not erase a previously verified
   row. Use the guarded reconciliation command described in
-  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads,
-  and schedule its `--repair` mode (the runbook explains how; no job is
-  defined in `render.yaml`).
+  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads.
+  No job repairs rows on a schedule: support resyncs single users through
+  the admin API (`/v1/admin/subscription-access`, `docs/api-endpoints.md`),
+  `GET /v1/health/subscription-access` and the Sentry rules in the
+  runbook's "Monitoring" alert when rows a failed read left unresolved pile
+  up or age, and the team then runs the script's `--repair` mode by hand.
 - Webhooks (signature verification is constant-time):
   - Every event type whose user resolves is re-read from RevenueCat
     (`GET /v1/subscribers/{firebase_uid}`, only when the event names that
@@ -253,6 +256,10 @@ optional caches.
     `failure_kind`). It also goes to Sentry, except a RevenueCat outage or
     rate limit (`transport`, `http_429`, `http_5xx`), which would send one
     event per webhook; the counter carries that alert (runbook, Monitoring).
+    A contract or configuration failure is sent under the fixed fingerprint
+    `[subscription_access.snapshot_failure, <failure_kind>]` (event tag
+    `alert`), which the runbook's issue alert matches; a webhook that
+    answers `500` under `subscription_access.webhook_processing_error`.
     Only a snapshot taken at or after that time clears it (next event,
     refresh or reconciliation).
   - Writers for one user serialise on `SELECT ... FOR UPDATE` of the user row;

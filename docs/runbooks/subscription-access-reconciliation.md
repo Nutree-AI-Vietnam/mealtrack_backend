@@ -296,8 +296,10 @@ WHERE s.provider = 'revenuecat'
 
   Both answer `200` with the expected `has_access`, `status`, `expires_at`,
   `product_id`, `will_renew` and `provider`.
-- [ ] Watch the monitoring signals below for at least a day:
-      `entitlements_unavailable` and `legacy_fallback` stay near zero.
+- [ ] Create the alert rules in Monitoring now (step 9 requires them),
+      then watch the signals for at least a day: `entitlements_unavailable`
+      and `legacy_fallback` stay near zero, and
+      `/v1/health/subscription-access` answers `200`.
 
 ### 8. Staged mobile rollout
 
@@ -326,14 +328,17 @@ web-funnel finalize.
 
 - [ ] The mobile rollout is complete and the database decisions have
       matched RevenueCat for a sustained period.
-- [ ] **Hard precondition:** the scheduled `--repair --apply` (Scheduled
-      repair below) runs in this environment, and its runs over the last
-      24 hours exited `0`. Do not turn enforcement on while it is still an
-      open decision. Under enforcement a row a failed webhook read left
+- [ ] **Hard precondition:** the alert rules SA-1 to SA-10 (Monitoring)
+      exist in this environment and each has been seen to notify its owner;
+      the Support procedure below is documented and the support team can
+      run it (their emails are in `ADMIN_EMAILS`); and the team runs
+      `scripts/reconcile_subscription_access.py --repair --apply` on demand
+      (Repair on demand below) whenever SA-5 or SA-6 fires. There is no
+      scheduled repair. Under enforcement a row a failed webhook read left
       unresolved is decided by the fallback until a snapshot repairs it: a
       refund whose read failed keeps its payer off the paid routes, and a
       payer whose `CANCELLATION` or `BILLING_ISSUE` read failed keeps them,
-      for as long as nothing repairs the row.
+      until an alert leads someone to repair the row.
 - [ ] One `--all-users --apply` pass has run since step 7 and ended `GO`
       (on exit `1`, work through its unresolved and failed users as in
       step 5 first).
@@ -474,64 +479,184 @@ exists. So once `provider='momo'` rows exist, neither downgrade runs: export
 those rows and delete them first, and restore them after rolling forward, or
 keep the schema (the default above).
 
-## Scheduled repair (recommended)
+## Repair on demand
 
-Run the repair hourly so a webhook whose RevenueCat read failed beyond
-RevenueCat's retries (about 5 over 80 minutes), or a missed renewal or
-expiration near its deadline, does not wait for the user's next event:
+There is no scheduled repair job (product decision): support repairs single
+users through the admin API (Support procedure below), the alert rules
+(Monitoring) say when rows pile up, and the team then runs the repair by
+hand:
 
 ```bash
 cd /app && python -m scripts.reconcile_subscription_access --repair --apply \
-  --expiring-within-hours 24
+  --expiring-within-hours 24 --output ~/reconcile/repair.jsonl
 ```
 
-- Exit `1` (users left unresolved, or reads that failed) or `3` (stopped
-  early) should alert; the stdout lists the unresolved and failed internal
-  user ids with their reasons.
-- Keep one pass well inside the interval: candidates x one second. Lower
-  `--expiring-within-hours` if it grows. Overlapping passes are safe (writers
-  for one user serialise on the user row) but waste RevenueCat quota.
-- **Open decision (owner: backend lead), not yet scheduled.** This
-  repository does not define the job, because it is new paid
-  infrastructure. Either add a Render Cron Job on the same image and
-  environment as `mealtrack-backend` (schedule `0 * * * *`, the command
-  above), or a scheduled GitHub Actions workflow on an Environment holding
-  `APP_DATABASE_URL` and `REVENUECAT_SECRET_API_KEY`. Get approval for the
-  cost first.
-- Until it exists, a `provider_sync_required_at` marker clears only when a
+- **When:** SA-5 (marker backlog) fires; SA-6 (RevenueCat outage) has
+  cleared and RevenueCat answers again; after any other RevenueCat incident;
+  and before each flag change, followed by the step 6 gate. For one user,
+  support's resync does the same read and apply.
+- Exit `1` (users left unresolved, or reads that failed): stdout lists their
+  internal user ids with the reasons; work through them with the reason
+  table above. Exit `3` (stopped early): run it again with `--checkpoint`
+  and `--resume`. A pass takes about candidates x one second; overlapping
+  passes are safe (writers for one user serialise on the user row) but
+  waste RevenueCat quota.
+- Without a repair, a `provider_sync_required_at` marker clears only when a
   RevenueCat snapshot taken at or after it is applied for that user: on the
   user's next webhook whose RevenueCat read succeeds, on the app's
   `POST /v1/me/entitlements/refresh` (after a purchase or restore and on
-  `ENTITLEMENTS_UNAVAILABLE`), or on a reconcile or repair run. Users with
-  neither a later RevenueCat event nor an app open stay unresolved
-  meanwhile: sign-in and profile use the legacy decision (an `active`,
-  unexpired row), and paid routes under enforcement grant any `active`,
-  `cancelled` or `billing_issue` row that is unexpired or in grace, so a
-  payer whose `CANCELLATION` or `BILLING_ISSUE` read failed keeps them. A
-  refund whose read or apply failed reads `cancelled` too (the cancellation
-  handler wrote it), but the webhook also marks the user's rows with the
-  refund (`provider_refund_pending_at`), so the fallback refuses them until
-  a snapshot taken after the refund decides; sign-in and profile keep the
-  legacy decision. Run the repair above by hand after any RevenueCat
-  incident, and check the step 6 gate before each flag change. Step 9
-  requires the scheduled repair.
+  `ENTITLEMENTS_UNAVAILABLE`), on a support resync, or on a reconcile or
+  repair run. Users with neither a later RevenueCat event nor an app open
+  stay unresolved meanwhile: sign-in and profile use the legacy decision (an
+  `active`, unexpired row), and paid routes under enforcement grant any
+  `active`, `cancelled` or `billing_issue` row that is unexpired or in
+  grace, so a payer whose `CANCELLATION` or `BILLING_ISSUE` read failed
+  keeps them. A refund whose read or apply failed reads `cancelled` too (the
+  cancellation handler wrote it), but the webhook also marks the user's rows
+  with the refund (`provider_refund_pending_at`), so the fallback refuses
+  them until a snapshot taken after the refund decides; sign-in and profile
+  keep the legacy decision. SA-5 is what bounds how long that lasts.
+- No alert sees a webhook RevenueCat never delivered, or dropped after its
+  retries (SA-3 pages for the `500`s): it leaves no marker. The user's next
+  event or app refresh repairs it; after a webhook incident, run a
+  `--subscribers --apply` pass.
+
+## Support procedure
+
+Support works from the admin API (`/v1/admin/subscription-access`, contract
+in `docs/api-endpoints.md`). Callers need a Firebase ID token for an account
+whose email is in the environment's `ADMIN_EMAILS`. Every call is logged
+with the caller's email. The answers contain customer emails: keep them out
+of tickets and chat, as for the reconcile output files.
+
+1. **Look the user up** by the email the customer wrote, their Firebase uid
+   or the internal user id:
+
+   ```bash
+   curl -sS -G -H "Authorization: Bearer $ID_TOKEN" \
+     --data-urlencode "query=customer@example.com" \
+     https://<api-host>/v1/admin/subscription-access/users
+   ```
+
+   Read `decision`: `granted` or `denied` is what the app gets from
+   `GET /v1/me/entitlements`; `unresolved` means the app gets `503
+   ENTITLEMENTS_UNAVAILABLE` and `unresolved_reasons` says why
+   (`sync_required`: a webhook's RevenueCat read failed; `refund_pending`:
+   that webhook was a refund; `transfer_source`: RevenueCat moved the
+   purchases to another account; `unverified_grant`: a grant no snapshot
+   verified). `subscriptions` lists every row and its markers; `flags`
+   shows whether the database decision and enforcement are on. `409
+   AMBIGUOUS_QUERY` lists the ids of several accounts with that email
+   (different capitalisation): look each up by id. Add
+   `--data-urlencode "live=true"` to compare with RevenueCat's own view,
+   read-only (`live.standard`); RevenueCat creates an empty customer for a
+   Firebase uid it has never seen, so skip it for accounts that never
+   bought.
+
+2. **Resync** when the decision is `unresolved`, or disagrees with
+   RevenueCat or the customer's store receipt:
+
+   ```bash
+   curl -sS -X POST -H "Authorization: Bearer $ID_TOKEN" \
+     https://<api-host>/v1/admin/subscription-access/users/<user-id>/resync
+   ```
+
+   It does what the app's refresh does for its own user and answers
+   `before`, `after` and `sync`. `sync.result` `applied`, `unchanged` or
+   `absent`: done, `after` is what the app now gets (a source of a
+   `TRANSFER` is applied as "no purchases": it lost what RevenueCat moved
+   away). `not_applied`: nothing changed; act on `sync.reason` with the
+   reason table above (`absent_with_history`: the purchase is under another
+   identity; engineering transfers it in RevenueCat, never merge accounts by
+   email). `409 USER_INACTIVE`: the account is deleted or has no Firebase
+   uid; there is nothing to repair. `500 RESYNC_FAILED`: a bug or a database
+   failure, already paged (SA-2); hand it to engineering. Limit: 10 resyncs
+   a minute per admin; for more users than that, ask engineering to run the
+   repair (Repair on demand).
+
+3. **If RevenueCat is down** (a resync answered `503 REVENUECAT_UNAVAILABLE`
+   with `details.reason` `transport`, `http_429` or `http_5xx`, or a live
+   lookup shows `live.status: unavailable` with that `live.reason`): nothing
+   was changed, and the purchase is safe at RevenueCat and the store. Tell
+   the customer:
+
+   > We can't confirm purchases with the app store right now because of a
+   > temporary problem on our provider's side. Your subscription is safe and
+   > nothing has changed on your account. Please don't buy again: access
+   > comes back by itself once the purchase is confirmed, usually within a
+   > few hours. If it doesn't, reply to this message and we'll fix it.
+
+   Meanwhile the app keeps its last decision or asks RevenueCat itself
+   (`ENTITLEMENTS_UNAVAILABLE` is never a denial). Retry the resync after
+   `Retry-After` seconds, or leave the user to the repair the team runs once
+   SA-6 clears. Any other reason (`malformed`, `http_4xx`,
+   `api_key_missing`, `unsupported_store`, `unexpected`) is a contract or
+   configuration problem, already paged (SA-1): tell the customer the same
+   and hand it to engineering.
+
+4. **Work the queue** once a day, or when SA-5 fires:
+
+   ```bash
+   curl -sS -G -H "Authorization: Bearer $ID_TOKEN" \
+     --data-urlencode "limit=50" \
+     https://<api-host>/v1/admin/subscription-access/unresolved
+   ```
+
+   It lists live users whose RevenueCat rows carry a marker, oldest first,
+   with each marker's type and age. Resync them in order; pass
+   `next_cursor` as `cursor` for the next page. A user still listed after a
+   resync answered `not_applied`: follow its reason.
 
 ## Monitoring
 
-Application logs plus Sentry metrics and issues, emitted through the
-observability facade:
+Signals come from the application logs, Sentry issues and Sentry metrics
+(emitted through the observability facade) and from
+`GET /v1/health/subscription-access`. **Nothing in this repository creates
+alert rules: there is no alerting-as-code.** Create every rule below by hand
+in each environment's Sentry project (Alerts, Create Alert) and in the uptime
+monitor that already polls `/v1/health/db-pool`, and re-check them whenever a
+signal below is renamed.
 
-| Signal | Meaning | Alert on |
+Each page-worthy failure goes to Sentry with a fixed fingerprint whose first
+part is its alert key, also sent as the event's `alert` tag
+(`src/subscription_access_alerts.py`). Issue alert rules filter on that tag
+("The event's tags match `alert` equals ..."); the fingerprint keeps one
+Sentry issue per key and kind, and the issue title is whatever the first
+event said, so never match on the title. Unless a rule says otherwise, use
+the triggers "A new issue is created", "The issue changes state from
+resolved to unresolved" and "The issue is seen more than 10 times in 1
+hour", with an action interval of 30 minutes.
+
+Who acts: **backend on-call** (engineering) for everything paged; **support**
+for single users, through the Support procedure. Severity: **Page** wakes
+the on-call; **High** notifies the on-call channel, to act the same working
+day.
+
+| Rule | Source | Severity | Who acts |
+|---|---|---|---|
+| SA-1 RevenueCat snapshot contract failure | Sentry issue alert on tag `alert` = `subscription_access.snapshot_failure`; fingerprint `[subscription_access.snapshot_failure, <failure_kind>]`, one issue per kind: `malformed`, `http_4xx`, `api_key_missing`, `unsupported_store`, `unexpected`. Any source (`webhook`, `refresh`, `web_funnel`, `support_lookup`, `support_resync`; the event's `source` tag). Transient kinds never reach Sentry (SA-6) | Page | Backend on-call. `api_key_missing`, `http_4xx`: check `REVENUECAT_SECRET_API_KEY` in Render. `malformed`, `unsupported_store`: RevenueCat's response or store setup changed. `unexpected`: the stack trace (a webhook that caught it marked the rows and answered 200). After the fix, run the repair (Repair on demand) |
+| SA-2 Snapshot apply failure | Sentry issue alert on tag `alert` = `subscription_access.sync_apply_error`; fingerprint `[subscription_access.sync_apply_error, <source>]` (`refresh`, `support_resync`). A read customer could not be applied (a bug or a database failure); nothing was written; refresh answered `503`, resync `500 RESYNC_FAILED` | Page | Backend on-call: the stack trace; then the repair |
+| SA-3 RevenueCat webhook failing | Sentry issue alert on tag `alert` = `subscription_access.webhook_processing_error`; fingerprint `[subscription_access.webhook_processing_error, <exception type>]`. The webhook answered `500` (also counted as `webhook.revenuecat.processed` with `status=error`); RevenueCat retries about 5 times over 80 minutes, then drops the event | Page | Backend on-call: fix within the retry window. A dropped event rolled back everything, so no marker shows its user: after the fix run a `--subscribers --apply` pass (Rollback, step 3 command) |
+| SA-4 'standard' entitlement missing | Sentry issue alert on tag `alert` = `subscription_access.standard_missing` (message `RevenueCat customer has entitlements but no 'standard'`) | Page | Backend on-call with the RevenueCat project owner: an entitlement was renamed or a product attached elsewhere |
+| SA-5 Unresolved marker backlog | Uptime monitor: `GET https://<api-host>/v1/health/subscription-access` with header `X-Monitoring-Token: <MONITORING_API_TOKEN>`, every 5 minutes, alert on any non-`200` twice in a row. `503` `status: degraded` lists `reasons`: `sync_required_backlog` (more than `SUBSCRIPTION_ACCESS_ALERT_SYNC_REQUIRED_USERS`, default 20, users marked for over `SUBSCRIPTION_ACCESS_ALERT_SYNC_REQUIRED_MINUTES`, default 30), `refund_pending_stale` (any refund pending for over `SUBSCRIPTION_ACCESS_ALERT_REFUND_PENDING_MINUTES`, default 60), `oldest_marker_stale` (oldest marker over `SUBSCRIPTION_ACCESS_ALERT_OLDEST_MARKER_HOURS`, default 6). `status: error`: the counts could not be read | High: notify on-call and the support channel | Backend on-call runs the repair (Repair on demand); support works the queue for what remains. `status: error`: check the database (`/v1/health/db-pool`) |
+| SA-6 RevenueCat unavailable | Sentry metric alert: count of `subscription_access.snapshot_unavailable` where `failure_kind` is `transport`, `http_429` or `http_5xx`, above 20 in 15 minutes | High: notify on-call | Backend on-call: check RevenueCat's status page; support answers customers (Support procedure, step 3); once it clears, run the repair |
+| SA-7 Unexpected access removals | Sentry metric alert: count of `subscription_access.downgrade` where `expected` is `false`, above 5 in 1 hour. Its Sentry issue (tag `alert` = `subscription_access.unexpected_downgrade`) is for investigation, not an alert | High | Backend on-call: product or entitlement mapping in RevenueCat; spot-check users with a live lookup |
+| SA-8 Entitlements failing unexpectedly | Sentry metric alert: count of `subscription_access.entitlements_unavailable` where `failure_kind` is `unexpected`, above 0 in 5 minutes | Page | Backend on-call: `GET` or refresh hit a bug or a database failure; the app falls back, so no customer is denied |
+| SA-9 Webhook syncs stopped | Sentry metric alert: count of `subscription_access.sync` where `source` is `webhook`, below 1 in 6 hours (production; lower the window if traffic allows) | High | Backend on-call: RevenueCat webhook URL and `Authorization` header, then webhook 4xx at Render |
+| SA-10 Enforcement refusals spike (only once step 9 is on) | Two Sentry metric alerts on `subscription_access.enforcement_denied`: a change alert, count over 15 minutes more than 200% above the same window a week earlier; and a count where `revenuecat` is `unavailable`, above 10 in 15 minutes (payers may be among them) | Page | Backend on-call: turn `SUBSCRIPTION_ENFORCEMENT_ENABLED` off (Rollback) before investigating |
+
+Before step 9, test each Sentry rule with "Send Test Notification" and point
+the uptime check once at a wrong token to see it alert.
+
+Other signals (dashboards and investigation, no rule):
+
+| Signal | Meaning | Look at it when |
 |---|---|---|
-| Metric `subscription_access.snapshot_unavailable` (`source`, `failure_kind`, `event_type`), WARNING `RevenueCat snapshot unavailable; access left unresolved for repair` | A webhook (`source=webhook`), refresh or web finalize (`source=web_funnel`) could not read or apply a RevenueCat customer. Only webhooks mark rows for repair; a refresh or finalize writes nothing. The reconcile script emits nothing here: its failures are its exit code and stdout | Any `failure_kind` in `malformed`, `unsupported_store`, `http_4xx`, `api_key_missing`, `unexpected` (also a Sentry exception): page. Transient kinds (`transport`, `http_429`, `http_5xx`) are not sent to Sentry; alert on a sustained rate of this counter (e.g. more than 20 in 15 minutes) |
-| Metric `subscription_access.entitlements_unavailable` (`operation`, `failure_kind`) | `GET` or refresh answered `503 ENTITLEMENTS_UNAVAILABLE` | `failure_kind=unexpected` (logged with `logger.exception` and sent to Sentry): page on any. `unresolved`: users on unrepaired rows; should be near zero after cutover |
-| Metric `subscription_access.legacy_fallback` (`source`), WARNING `Subscription access is unresolved in the database; using the legacy decision` | Sign-in or profile fell back to the legacy row check, or a paid route to the enforcement fallback (`docs/api-endpoints.md`) | Should trend to zero after step 6; investigate if it persists |
-| Metric `subscription_access.downgrade` (`source`, `event_type`, `result`, `expected`), Sentry `RevenueCat sync removed access on an unexpected event` | A sync removed access the user had before the event. `expected=true` on an `EXPIRATION`, a refund (a `CANCELLATION` too, so only this attribute separates the two) or the source of a `TRANSFER` (it loses what RevenueCat moved away); `expected=false` otherwise, including a `TRANSFER` target that loses access, also reported to Sentry | `expected=false` more than 5 per hour (entitlement or product misconfiguration in RevenueCat) |
-| Sentry `RevenueCat customer has entitlements but no 'standard'` | RevenueCat entitlement configuration drift | Page |
+| Metric `subscription_access.snapshot_unavailable` (`source`, `failure_kind`, `event_type`), WARNING `RevenueCat snapshot unavailable; access left unresolved for repair` | A webhook, refresh, web finalize (`source=web_funnel`) or support call could not read or apply a RevenueCat customer. Only webhooks mark rows for repair; the others write nothing. The reconcile script emits nothing here: its failures are its exit code and stdout | SA-1 or SA-6 fired |
+| Metric `subscription_access.entitlements_unavailable` (`operation`, `failure_kind`) | `GET` or refresh answered `503 ENTITLEMENTS_UNAVAILABLE`; `failure_kind=unresolved` counts users on unrepaired rows | After step 7: should stay near zero |
+| Metric `subscription_access.legacy_fallback` (`source`), WARNING `Subscription access is unresolved in the database; using the legacy decision` | Sign-in or profile fell back to the legacy row check, or a paid route to the enforcement fallback (`docs/api-endpoints.md`) | Should trend to zero after step 6 |
 | WARNING `RevenueCat snapshot older than stored facts skipped`, metric `subscription_access.sync` with `result=stale_skipped` | Out-of-order reads; routine when the app's refresh after a purchase commits before the purchase webhook. Not sent to Sentry | Spikes only |
-| Metric `subscription_access.sync` (`source`, `event_type`, `result`) | Every applied snapshot | Volume drops to zero (webhooks not arriving) |
-| Metric `webhook.revenuecat.processed` (`event_type`, `status`, `result`) | Webhook outcomes; `result=access_unresolved` means the rows were marked for repair, `result=account_deleted` an event for a deleted account (legacy effects only, nothing synced) | Rate of `access_unresolved`, and webhook HTTP 5xx at Render (RevenueCat stops retrying after about 5 attempts) |
-| Metric `subscription_access.enforcement_denied` (`revenuecat`: `not_entitled` or `unavailable`; `source`: `revenuecat`, `recent_check` or `not_asked`) | A paid route answered `402`. `revenuecat` is the answer of the RevenueCat check before it; `source=recent_check` means that answer was held from the user's check in the last minute (or another worker's call was still in flight, read as `unavailable`), `not_asked` that the user has no Firebase uid or RevenueCat is not configured | A spike right after step 9: turn enforcement off. `revenuecat=unavailable` means payers may be among them |
-| Metric `subscription_access.enforcement_revenuecat_grant`, WARNING `Paid route allowed by RevenueCat; the database grants no access` | Enforcement found no granting row but RevenueCat itself answered that it grants: a purchase not yet (or never) synced | A sustained rate: find the users in the logs and `--user-id <id> --apply` them; check webhook delivery |
-| Metric `subscription_access.enforcement_cached_grant` (`source`), INFO `Paid route allowed by a cached grant` | Enforcement found no granting row but the Premium check's 60 s access cache held a grant, which may be that check's own row decision (`require_subscription` caches both) rather than RevenueCat's | Informational; compare with `enforcement_revenuecat_grant` before acting on either |
-| Scheduled repair exit code | `1` users left unresolved or reads that failed, `3` stopped early | Any failed run |
+| Metric `webhook.revenuecat.processed` (`event_type`, `status`, `result`) | Webhook outcomes: `result=access_unresolved` marked rows for repair, `result=account_deleted` an event for a deleted account (legacy effects only, nothing synced), `status=error` a delivery that failed (SA-3) | A rising `access_unresolved` rate comes before SA-5 |
+| Metric `subscription_access.enforcement_revenuecat_grant`, WARNING `Paid route allowed by RevenueCat; the database grants no access` | Enforcement found no granting row but RevenueCat itself answered that it grants: a purchase not yet (or never) synced | A sustained rate: resync those users (Support procedure), check webhook delivery |
+| Metric `subscription_access.enforcement_cached_grant` (`source`), INFO `Paid route allowed by a cached grant` | Enforcement found no granting row but the Premium check's 60 s access cache held a grant, which may be that check's own row decision (`require_subscription` caches both) rather than RevenueCat's | Compare with `enforcement_revenuecat_grant` before acting on either |
+| Metric `subscription_access.support_action` (`operation=resync`, `result`, `user_id`), INFO `Subscription access support call: admin=...` | Each support resync (the log line also for lookups and the queue, with the admin's email; the metric never carries an email) | Auditing support work |
