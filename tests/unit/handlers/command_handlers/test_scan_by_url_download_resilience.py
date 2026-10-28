@@ -104,7 +104,7 @@ async def test_scan_by_url_falls_back_to_original_url_when_compressed_url_fails(
 
     assert result is not None
     assert len(downloaded_urls) == 2
-    assert "w=768,fit=scale-down,f=auto" in downloaded_urls[0]
+    assert "w=2048,fit=scale-down,q=90,f=auto" in downloaded_urls[0]
     assert downloaded_urls[1] == _CF_IMAGE_URL
 
 

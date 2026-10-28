@@ -713,7 +713,7 @@ async def test_acquire_image_scan_by_url_downloads_and_compresses_regular_scan()
     state_update = await acquire_image({}, runtime)
 
     download_image_bytes.assert_awaited_once_with(
-        "https://res.cloudinary.com/demo/image/upload/w_768,c_limit,q_auto,f_jpg/v1/mealtrack/image-456.jpg"
+        "https://res.cloudinary.com/demo/image/upload/w_2048,c_limit,q_90,f_jpg/v1/mealtrack/image-456.jpg"
     )
     assert compression_calls == [large_raw]
     assert state_update == {
@@ -788,7 +788,7 @@ async def test_acquire_image_scan_by_url_cloudflare_custom_domain():
     state_update = await acquire_image({}, runtime)
 
     download_image_bytes.assert_awaited_once_with(
-        "https://media.nutree.ai/img-cf-1/w=768,fit=scale-down,f=auto"
+        "https://media.nutree.ai/img-cf-1/w=2048,fit=scale-down,q=90,f=auto"
     )
     assert state_update["image_id"] == "img-cf-1"
 
@@ -848,12 +848,9 @@ async def test_acquire_image_scan_by_url_download_failure_falls_back_to_source_u
 
     assert download_image_bytes.await_count == 2
     download_image_bytes.assert_any_await(
-        "https://media.nutree.ai/img-cf-1/w=768,fit=scale-down,f=auto"
+        "https://media.nutree.ai/img-cf-1/w=2048,fit=scale-down,q=90,f=auto"
     )
-    download_image_bytes.assert_any_await(
-        "https://media.nutree.ai/img-cf-1/public"
-    )
+    download_image_bytes.assert_any_await("https://media.nutree.ai/img-cf-1/public")
     assert runtime.acquired_image is not None
     assert runtime.acquired_image.source_bytes == b"fallback-original-bytes"
     assert state_update["image_id"] == "img-cf-1"
-

@@ -23,7 +23,9 @@ from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.meal_analysis.meal_translation_service import (
     MealTranslationService,
 )
-from src.domain.utils.image_compression import compress_image as default_compress_image
+from src.domain.utils.image_compression import (
+    compress_vision_image as default_compress_image,
+)
 
 
 @dataclass

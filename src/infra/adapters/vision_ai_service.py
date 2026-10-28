@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any
@@ -24,7 +25,7 @@ from src.domain.strategies.meal_analysis_strategy import (
     IngredientIdentificationStrategy,
     MealAnalysisStrategy,
 )
-from src.domain.utils.image_compression import compress_image
+from src.domain.utils.image_compression import compress_vision_image
 from src.infra.adapters.ai_json_utils import extract_json
 from src.infra.config.settings import get_settings
 from src.infra.services.ai.ai_model_manager import AIModelManager, ModelPurpose
@@ -53,7 +54,7 @@ class VisionAIService(VisionAIServicePort):
 
     def _compress_image(self, image_bytes: bytes) -> bytes:
         """Fallback compression and format normalization using shared utility."""
-        return compress_image(image_bytes)
+        return compress_vision_image(image_bytes)
 
     async def analyze_with_strategy(
         self, image_bytes: bytes, strategy: MealAnalysisStrategy
@@ -95,6 +96,13 @@ class VisionAIService(VisionAIServicePort):
                 if is_food_label
                 else ModelPurpose.MEAL_SCAN
             )
+            provenance: dict[str, Any] = {
+                "prompt_sha256": hashlib.sha256(
+                    strategy.get_analysis_prompt().encode()
+                ).hexdigest(),
+                "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
+                "strategy": strategy.get_strategy_name(),
+            }
             result = await self._ai_manager.generate_with_vision(
                 purpose=model_purpose,
                 prompt=strategy.get_user_message(),
@@ -102,6 +110,7 @@ class VisionAIService(VisionAIServicePort):
                 system_message=strategy.get_analysis_prompt(),
                 max_tokens=self._max_output_tokens,
                 schema=schema,
+                result_metadata=provenance,
             )
             structured_data = validate_ai_output(
                 result,
@@ -110,7 +119,9 @@ class VisionAIService(VisionAIServicePort):
                 attempt_count=1,
             )
             return {
-                "raw_response": json.dumps(structured_data),
+                "raw_response": json.dumps(
+                    {**structured_data, "_scan_provenance": provenance}
+                ),
                 "structured_data": structured_data,
                 "strategy_used": strategy.get_strategy_name(),
             }

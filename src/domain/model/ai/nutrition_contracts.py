@@ -18,7 +18,7 @@ from pydantic import (
 
 from src.domain.model.nutrition import MAX_FOOD_ITEM_QUANTITY
 
-MAX_AI_FOOD_ITEMS = 8
+MAX_AI_FOOD_ITEMS = 20
 MAX_TEXT_PARSE_ITEMS = 20
 MAX_AI_MACRO_GRAMS = 5000.0
 PARSE_TEXT_PREPARATIONS = ("raw", "boiled", "baked", "fried", "mashed", "unknown")
