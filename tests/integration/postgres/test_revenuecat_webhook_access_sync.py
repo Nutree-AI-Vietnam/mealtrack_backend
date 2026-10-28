@@ -641,6 +641,68 @@ async def test_refresh_resolves_a_transfer_source_whose_read_failed(app_sessions
 
 
 @pytest.mark.asyncio
+async def test_a_refund_whose_read_failed_keeps_paid_routes_closed_until_repair(
+    app_sessions,
+):
+    """A refunded annual payer whose refund CANCELLATION meets a RevenueCat
+    outage: the cancellation handler leaves a paid-through 'cancelled' row,
+    but the refund is remembered on it, so the paid-route fallback refuses
+    it. The repair's snapshot then decides and clears the marker."""
+    buyer = await _user(app_sessions, "refunded")
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with app_sessions() as session:
+        session.add(
+            Subscription(
+                user_id=buyer.id,
+                revenuecat_subscriber_id=buyer.firebase_uid,
+                provider="revenuecat",
+                product_id="annual",
+                platform="ios",
+                status="active",
+                purchased_at=now - timedelta(days=30),
+                expires_at=now + timedelta(days=335),
+                period_type="normal",
+                provider_snapshot_at=now - timedelta(days=1),
+                is_sandbox=False,
+            )
+        )
+        await session.commit()
+
+    async def down():
+        return 503, None
+
+    enforcement = CheckSubscriptionAccessQueryHandler(uow_factory=AsyncUnitOfWork)
+    event = _event(
+        "CANCELLATION",
+        buyer.firebase_uid,
+        cancel_reason="CUSTOMER_SUPPORT",
+        event_timestamp_ms=int(now.timestamp() * 1000),
+    )
+    with _revenuecat({buyer.firebase_uid: down}):
+        assert await _deliver(event) == {"status": "success"}
+
+    (row,) = await _rows(app_sessions, buyer)
+    assert (row.status, row.provider_sync_required_at) == ("cancelled", now)
+    assert row.provider_refund_pending_at == now
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(buyer.id)) is False
+
+    refunded = _annual(now + timedelta(seconds=5), timedelta(minutes=-1))
+    with _revenuecat({buyer.firebase_uid: _ok(refunded)}):
+        repaired = await RevenueCatAccessRefreshService(
+            lambda: RevenueCatAdapter(api_key="test-key")
+        ).refresh(buyer.id)
+
+    assert repaired.result == "applied"
+    (row,) = await _rows(app_sessions, buyer)
+    assert (row.provider_sync_required_at, row.provider_refund_pending_at) == (
+        None,
+        None,
+    )
+    assert row.status == "expired"
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(buyer.id)) is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stored_monthly", "event_monthly"),
     [("onemonth", "onemonth:p1m"), ("onemonth:p1m", "onemonth")],

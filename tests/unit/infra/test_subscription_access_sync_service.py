@@ -548,6 +548,77 @@ async def test_sync_marker_is_cleared_only_by_a_snapshot_taken_after_it():
     assert row.provider_snapshot_at == now
 
 
+@pytest.mark.asyncio
+async def test_mark_unresolved_for_a_refund_records_it_on_every_row():
+    now = datetime.now(UTC)
+    rows = [
+        _granting_row(now, id="row-1", provider_refund_pending_at=now),
+        _granting_row(now, id="row-2"),
+    ]
+    session = _SyncSession(_owner(), rows)
+
+    await mark_revenuecat_access_unresolved(
+        session, _owner(), since=now - timedelta(hours=1), refund=True
+    )
+
+    # The newest refund wins, like the sync marker.
+    assert [row.provider_refund_pending_at for row in rows] == [
+        now,
+        now - timedelta(hours=1),
+    ]
+    await mark_revenuecat_access_unresolved(
+        session, _owner(), since=now + timedelta(minutes=1)
+    )
+    # A later event that is no refund leaves the refund recorded.
+    assert rows[1].provider_refund_pending_at == now - timedelta(hours=1)
+
+
+@pytest.mark.asyncio
+async def test_refund_marker_is_cleared_only_by_a_snapshot_taken_after_it():
+    """Until a snapshot at or after the refund is applied, the refund stands;
+    that snapshot then decides (here: the refund did not end access)."""
+    now = datetime.now(UTC)
+    refunded_at = now - timedelta(seconds=10)
+    row = _granting_row(
+        now,
+        status="cancelled",
+        provider_sync_required_at=refunded_at,
+        provider_refund_pending_at=refunded_at,
+    )
+    session = _SyncSession(_owner(), [row])
+    before = refunded_at - timedelta(seconds=1)
+
+    await sync_revenuecat_access(
+        session,
+        _owner(),
+        snapshot=_snapshot(
+            standard_annual_response(
+                request_date=before, expires_date=now + timedelta(days=30)
+            ),
+            before,
+        ),
+    )
+
+    assert row.provider_refund_pending_at == refunded_at
+
+    await sync_revenuecat_access(
+        session,
+        _owner(),
+        snapshot=_snapshot(
+            standard_annual_response(
+                request_date=now, expires_date=now + timedelta(days=30)
+            ),
+            now,
+        ),
+    )
+
+    assert (row.provider_refund_pending_at, row.provider_sync_required_at) == (
+        None,
+        None,
+    )
+    assert evaluate_subscription_access([row], now).has_access is True
+
+
 def _several_revenuecat_rows(now):
     return [
         _granting_row(now, id="row-annual"),

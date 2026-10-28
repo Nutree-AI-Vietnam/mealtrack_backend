@@ -693,6 +693,76 @@ async def test_a_refund_that_ends_access_revokes_it_from_the_snapshot(monkeypatc
     assert data["lifecycle_type"] == "subscription_canceled"
 
 
+def _unappliable_annual() -> dict:
+    """Readable, but the sync refuses it (a store it does not support)."""
+    body = _annual()
+    body["subscriber"]["subscriptions"]["annual"]["store"] = "amazon"
+    return body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refund_fields", REFUND_FIELDS)
+@pytest.mark.parametrize("failure", ["read", "apply"])
+async def test_a_refund_whose_customer_cannot_be_used_is_refused_by_the_fallback(
+    monkeypatch, refund_fields, failure
+):
+    """RevenueCat cannot be read (or its customer applied) when a refund
+    arrives: the cancellation handler writes a paid-through 'cancelled' row
+    and every row is marked unresolved. The refund is remembered on the
+    marked rows, so the paid-route fallback refuses them until a snapshot
+    decides. The legacy effects stay a cancellation's."""
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    other = _row(user, id="user-u-monthly", product_id="monthly")
+    database = _Database([user], [stored, other])
+    referrals = _referral("converted")
+    publisher = MagicMock(publish=AsyncMock())
+    event = _event("CANCELLATION", "uid-u", **refund_fields)
+    reply = _fails(503) if failure == "read" else _ok(_unappliable_annual())
+
+    with _revenuecat({"uid-u": reply}), patch(f"{SYNC}.capture_exception"):
+        result = await _deliver(monkeypatch, event, database, referrals, publisher)
+
+    assert result == {"status": "success"}
+    assert stored.status == "cancelled"
+    marker = datetime.fromtimestamp(event["event_timestamp_ms"] / 1000, UTC)
+    assert [row.provider_refund_pending_at for row in (stored, other)] == [
+        marker,
+        marker,
+    ]
+    enforcement = CheckSubscriptionAccessQueryHandler(
+        uow_factory=lambda: _UnitOfWork(database, _Referrals())
+    )
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(user.id)) is False
+    # Production's cancellation path: no clawback, 'subscription_canceled'.
+    assert (referrals.conversion.status, referrals.balance) == ("converted", 80000)
+    data = publisher.publish.await_args.args[0]["data"]
+    assert data["lifecycle_type"] == "subscription_canceled"
+
+
+@pytest.mark.asyncio
+async def test_a_plain_cancellation_whose_read_failed_is_not_marked_as_a_refund(
+    monkeypatch,
+):
+    user = _user("user-u", "uid-u")
+    stored = _row(user)
+    database = _Database([user], [stored])
+
+    with _revenuecat({"uid-u": _fails(503)}):
+        await _deliver(
+            monkeypatch,
+            _event("CANCELLATION", "uid-u", cancel_reason="UNSUBSCRIBE"),
+            database,
+        )
+
+    assert stored.provider_sync_required_at is not None
+    assert stored.provider_refund_pending_at is None
+    enforcement = CheckSubscriptionAccessQueryHandler(
+        uow_factory=lambda: _UnitOfWork(database, _Referrals())
+    )
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(user.id)) is True
+
+
 @pytest.mark.asyncio
 async def test_plain_unsubscribe_is_not_a_refund(monkeypatch):
     user = _user("user-u", "uid-u")

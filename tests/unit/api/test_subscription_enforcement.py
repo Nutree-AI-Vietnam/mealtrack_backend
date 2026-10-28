@@ -351,6 +351,7 @@ class _Row:
     period_type: str | None = "normal"
     provider_snapshot_at: datetime | None = NOW
     provider_sync_required_at: datetime | None = None
+    provider_refund_pending_at: datetime | None = None
     provider: str = "revenuecat"
     product_id: str = "standard_monthly"
 
@@ -478,3 +479,26 @@ async def test_unresolved_fallback_still_refuses_refunded_and_lapsed_rows():
         )
         is False
     )
+
+
+@pytest.mark.asyncio
+async def test_unresolved_fallback_refuses_rows_a_refund_marked():
+    """A refund whose RevenueCat read failed leaves its rows as the
+    cancellation handler wrote them: 'cancelled' and paid through. The
+    refund may have ended that period, so the fallback grants none of them
+    until a snapshot decides; the same rows without the refund do grant."""
+    marker = NOW - timedelta(minutes=5)
+    refunded = {
+        "provider_sync_required_at": marker,
+        "provider_refund_pending_at": marker,
+    }
+    cancelled_paid_through = _Row(
+        status="cancelled", expires_at=NOW + timedelta(days=300), **refunded
+    )
+    other_product = _Row(expires_at=NOW + timedelta(days=20), **refunded)
+    lifetime = _Row(expires_at=None, **refunded)
+
+    assert await _decide([cancelled_paid_through, other_product, lifetime]) is False
+    for row in (cancelled_paid_through, other_product, lifetime):
+        row.provider_refund_pending_at = None
+        assert await _decide([row]) is True

@@ -236,8 +236,9 @@ async def revenuecat_webhook(
 
         # A refund arrives as a CANCELLATION. Its classification only labels
         # the access sync below (the access it removes is an expected
-        # downgrade, revoked rows read 'refunded') and the logs; it moves no
-        # money (see the CANCELLATION branch).
+        # downgrade, revoked rows read 'refunded'; rows left unresolved are
+        # marked as refunded, so the paid-route fallback refuses them) and
+        # the logs; it moves no money (see the CANCELLATION branch).
         refund_event = is_refund_event(event)
         # Legacy event effects -- commit/rollback is owned by the unit of work.
         if event_type == "INITIAL_PURCHASE":

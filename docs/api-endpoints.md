@@ -171,7 +171,10 @@ decide (an unreconciled row, such as one a webhook whose RevenueCat read
 failed left behind), a fallback no stricter than the policy decides and is
 logged: any `active`, `cancelled` or `billing_issue` row that is unexpired or
 in its grace period grants, whether or not a snapshot verified it;
-`expired` and `refunded` rows never do. Before a `402`, RevenueCat is asked
+`expired` and `refunded` rows never do, and neither does a row a refund
+webhook marked when its RevenueCat read or apply failed
+(`provider_refund_pending_at`, set on every RevenueCat row of the user until
+a snapshot taken after the refund decides). Before a `402`, RevenueCat is asked
 with the Ghi nhanh Premium check's call (`check_entitlement`, sharing its 60 s
 per-user access cache), cut off after 3 s in total: httpx's own 3 s timeout
 applies to each phase of the request (connect, write, every read), so the

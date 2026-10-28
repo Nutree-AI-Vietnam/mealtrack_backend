@@ -268,7 +268,10 @@ optional caches.
     and the `subscription_canceled` lifecycle event (see "Refunds and
     referral commission" below). Access follows the snapshot (a refund does
     not always end the subscription); rows the sync revokes for a refund read
-    `refunded`, and the loss of access counts as expected.
+    `refunded`, and the loss of access counts as expected. A refund whose
+    customer cannot be read or applied also marks the user's rows with it
+    (`provider_refund_pending_at`), so the paid-route enforcement fallback
+    refuses them until a snapshot taken after the refund decides.
   - `TRANSFER` re-reads every local source and target user from its own
     customer; nothing is re-pointed or expired blindly. A source whose read
     fails is marked and remembered as a transfer source

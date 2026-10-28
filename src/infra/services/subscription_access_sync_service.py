@@ -249,9 +249,10 @@ def clear_sync_markers(rows: list[Subscription], request_date: datetime | None) 
     """Clear sync-required markers a snapshot taken at ``request_date`` resolves.
 
     Only for rows that snapshot was applied to: a marker set for an event at
-    or before the snapshot time is answered by it, and so is a TRANSFER the
-    rows were left unresolved by (``provider_transfer_source_at``). Returns
-    the number of sync-required markers cleared.
+    or before the snapshot time is answered by it, and so is a TRANSFER or a
+    refund the rows were left unresolved by (``provider_transfer_source_at``,
+    ``provider_refund_pending_at``). Returns the number of sync-required
+    markers cleared.
     """
     if request_date is None:
         return 0
@@ -264,6 +265,9 @@ def clear_sync_markers(rows: list[Subscription], request_date: datetime | None) 
         transfer = getattr(row, "provider_transfer_source_at", None)
         if transfer is not None and _utc(transfer) <= request_date:
             setattr(row, "provider_transfer_source_at", None)  # noqa: B010
+        refund = getattr(row, "provider_refund_pending_at", None)
+        if refund is not None and _utc(refund) <= request_date:
+            setattr(row, "provider_refund_pending_at", None)  # noqa: B010
     return cleared
 
 
@@ -693,6 +697,7 @@ async def mark_revenuecat_access_unresolved(
     platform: str | None = None,
     is_sandbox: bool = False,
     transfer_source: bool = False,
+    refund: bool = False,
 ) -> int:
     """Leave the user's RevenueCat access unresolved until a snapshot repairs it.
 
@@ -704,7 +709,11 @@ async def mark_revenuecat_access_unresolved(
     marker, so the policy answers "unresolved" instead of "none".
     ``transfer_source`` (the user is the source of a TRANSFER at ``since``)
     also records that, so a later empty customer is applied as authoritative
-    (see sync_revenuecat_access). Returns the number of rows marked.
+    (see sync_revenuecat_access). ``refund`` (the event is a refund) also
+    records that (``provider_refund_pending_at``), so the paid-route
+    fallback never grants the rows on the 'cancelled' status the
+    cancellation handler wrote; the snapshot that clears the marker decides.
+    Returns the number of rows marked.
     """
     locked_user = await lock_subscription_owner(session, user.id)
     if locked_user is None:
@@ -740,6 +749,13 @@ async def mark_revenuecat_access_unresolved(
                 row,
                 "provider_transfer_source_at",
                 marker if moved is None else max(_utc(moved), marker),
+            )
+        if refund:
+            refunded = row.provider_refund_pending_at
+            setattr(  # noqa: B010
+                row,
+                "provider_refund_pending_at",
+                marker if refunded is None else max(_utc(refunded), marker),
             )
     return len(rows)
 

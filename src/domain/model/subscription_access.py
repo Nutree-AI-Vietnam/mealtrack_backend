@@ -83,6 +83,19 @@ def could_still_grant(record: Any, now: datetime | None = None) -> bool:
     )
 
 
+def fallback_may_grant(record: Any, now: datetime | None = None) -> bool:
+    """Whether the paid-route fallback may grant a row the policy cannot verify.
+
+    ``could_still_grant``, except for a row a refund marked while its
+    provider customer could not be read or applied
+    (``provider_refund_pending_at``): the refund may have ended the paid
+    period the row still shows, so only a snapshot may grant it again.
+    """
+    if getattr(record, "provider_refund_pending_at", None) is not None:
+        return False
+    return could_still_grant(record, now)
+
+
 def evaluate_subscription_access(
     subscriptions: Iterable[SubscriptionFacts], now: datetime | None = None
 ) -> SubscriptionAccess:

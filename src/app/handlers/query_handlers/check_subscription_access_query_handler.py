@@ -9,8 +9,8 @@ from src.app.services.subscription_access_fallback import (
 )
 from src.domain.model.subscription_access import (
     SubscriptionAccessUnavailable,
-    could_still_grant,
     evaluate_subscription_access,
+    fallback_may_grant,
 )
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 
@@ -28,7 +28,9 @@ class CheckSubscriptionAccessQueryHandler(
     failed leaves exactly such rows behind (a CANCELLATION writes
     'cancelled', a BILLING_ISSUE 'billing_issue'), and their payers keep the
     paid routes until a snapshot resolves the marker. 'expired' and
-    'refunded' rows never grant.
+    'refunded' rows never grant, and neither does a row a refund marked
+    while its RevenueCat read failed (it also reads 'cancelled'): the
+    refund may have ended its paid period.
     """
 
     def __init__(self, uow_factory: Callable[[], AsyncUnitOfWorkPort]):
@@ -43,4 +45,4 @@ class CheckSubscriptionAccessQueryHandler(
                 record_legacy_access_fallback(
                     source="enforcement", user_id=query.user_id
                 )
-                return any(could_still_grant(row) for row in subscriptions)
+                return any(fallback_may_grant(row) for row in subscriptions)

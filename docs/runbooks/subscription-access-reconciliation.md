@@ -108,12 +108,13 @@ and Render shifts traffic anyway.
       `20261022125800304190` (access metadata), `20261026080322454705` (sync
       marker), `20261026085224333692` (nullable RevenueCat id),
       `20261028084517715547` (merge with delivery's scan-feedback head, no
-      schema change), `20261028085152877654` (`refunded` status value) and
-      `20261028090710086261` (transfer source marker).
+      schema change), `20261028085152877654` (`refunded` status value),
+      `20261028090710086261` (transfer source marker) and
+      `20261028101948171263` (refund marker).
 - [ ] Run again with `dry_run=false` (production needs Environment
       approval).
 - [ ] Run `dry_run=true` once more and read the **database** line: it must
-      show `Current revision: 20261028090710086261` (or a later revision)
+      show `Current revision: 20261028101948171263` (or a later revision)
       followed by `Database is up to date`. `Head revision:` comes from the
       checked-out code and reads the same whether or not the upgrade ran, so
       it proves nothing.
@@ -319,6 +320,14 @@ web-funnel finalize.
 
 - [ ] The mobile rollout is complete and the database decisions have
       matched RevenueCat for a sustained period.
+- [ ] **Hard precondition:** the scheduled `--repair --apply` (Scheduled
+      repair below) runs in this environment, and its runs over the last
+      24 hours exited `0`. Do not turn enforcement on while it is still an
+      open decision. Under enforcement a row a failed webhook read left
+      unresolved is decided by the fallback until a snapshot repairs it: a
+      refund whose read failed keeps its payer off the paid routes, and a
+      payer whose `CANCELLATION` or `BILLING_ISSUE` read failed keeps them,
+      for as long as nothing repairs the row.
 - [ ] One `--all-users --apply` pass has run since step 7 and ended `GO`
       (on exit `1`, work through its unresolved and failed users as in
       step 5 first).
@@ -441,6 +450,10 @@ forward. Downgrading `20261028090710086261` drops
 `provider_transfer_source_at`: a transfer source still marked then answers
 `absent_with_history` instead of resolving itself; run `--repair --apply`
 until `--gate` shows `sync_required=0` first. Downgrading
+`20261028101948171263` drops `provider_refund_pending_at`: the paid-route
+fallback then grants a refund's still-marked `cancelled` row again, so run
+`--repair --apply` until `--gate` shows `sync_required=0` first too.
+Downgrading
 `20261028085152877654` changes nothing (PostgreSQL keeps an enum value).
 The schema downgrade also loses row ownership. The image before this change
 looks RevenueCat rows up by `revenuecat_subscriber_id` alone, with no
@@ -487,10 +500,13 @@ cd /app && python -m scripts.reconcile_subscription_access --repair --apply \
   unexpired row), and paid routes under enforcement grant any `active`,
   `cancelled` or `billing_issue` row that is unexpired or in grace, so a
   payer whose `CANCELLATION` or `BILLING_ISSUE` read failed keeps them. A
-  refund whose read failed reads `cancelled` there too (the cancellation
-  handler wrote it) until a snapshot revokes it. Run the repair above by
-  hand after any RevenueCat incident, and check the step 6 gate before each
-  flag change.
+  refund whose read or apply failed reads `cancelled` too (the cancellation
+  handler wrote it), but the webhook also marks the user's rows with the
+  refund (`provider_refund_pending_at`), so the fallback refuses them until
+  a snapshot taken after the refund decides; sign-in and profile keep the
+  legacy decision. Run the repair above by hand after any RevenueCat
+  incident, and check the step 6 gate before each flag change. Step 9
+  requires the scheduled repair.
 
 ## Monitoring
 

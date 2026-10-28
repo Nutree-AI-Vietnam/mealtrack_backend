@@ -92,7 +92,9 @@ def is_refund_event(event: dict) -> bool:
     RevenueCat, and refunds carry a negative price. A refund does not always
     end the subscription, so access still comes from the customer snapshot;
     the classification only labels that sync (rows it revokes read
-    'refunded', and the loss of access is expected). The legacy effects are a
+    'refunded', and the loss of access is expected), or, when the customer
+    cannot be read or applied, the rows left unresolved (the paid-route
+    fallback refuses them until a snapshot decides). The legacy effects are a
     cancellation's: no referral clawback, 'subscription_canceled' published.
     """
     if event.get("type") != "CANCELLATION":
@@ -175,7 +177,9 @@ async def apply_access(
     (the source of a TRANSFER), so it is not reported as unexpected.
     ``transfer_source`` (RevenueCat moved this user's purchases away) is
     recorded with the marker when the customer cannot be applied, so a later
-    refresh or repair can apply an empty customer for the user.
+    refresh or repair can apply an empty customer for the user. So is
+    ``refund_event``, so the paid-route fallback refuses the rows until a
+    snapshot resolves them.
     """
     event_type = event.get("type")
     event_id = event.get("id")
@@ -217,6 +221,7 @@ async def apply_access(
         platform=parse_platform(store if isinstance(store, str) else ""),
         is_sandbox=event.get("environment") == "SANDBOX",
         transfer_source=transfer_source,
+        refund=refund_event,
     )
     return ACCESS_UNRESOLVED
 

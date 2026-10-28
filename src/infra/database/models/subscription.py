@@ -87,6 +87,11 @@ class Subscription(Base, BaseMixin):
     # repair can revoke what the transfer took instead of leaving it
     # unresolved for good.
     provider_transfer_source_at = Column(DateTime(timezone=True), nullable=True)
+    # RevenueCat time of a refund whose customer could not be read or
+    # applied. The refund may have ended the paid period the row still shows,
+    # so until a snapshot taken at or after it is applied, the paid-route
+    # fallback never grants the row; that snapshot then decides.
+    provider_refund_pending_at = Column(DateTime(timezone=True), nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
 
     # Store metadata
