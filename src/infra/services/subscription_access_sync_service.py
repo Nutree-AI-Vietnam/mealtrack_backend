@@ -31,6 +31,7 @@ from src.domain.ports.subscription_service_port import (
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
+from src.infra.repositories.subscription_repository_async import product_match_rank
 from src.observability import capture_exception, capture_message, increment_metric
 
 logger = logging.getLogger(__name__)
@@ -360,6 +361,19 @@ def _restore_verified_facts(
     return overwritten
 
 
+def _row_for_product(rows: list[Subscription], product_id: str) -> Subscription | None:
+    """The row holding ``product_id``: the exact id first, else the same store
+    product (a Google Play row a legacy handler wrote as
+    '<subscription>:<base plan>' for the bare id a snapshot names), so a
+    snapshot updates that row instead of adding a duplicate next to it."""
+    ranked = [
+        (rank, index, row)
+        for index, row in enumerate(rows)
+        if (rank := product_match_rank(row.product_id, product_id)) < 2
+    ]
+    return min(ranked, key=lambda item: item[:2])[2] if ranked else None
+
+
 def _put_back(legacy_writes: LegacyWrites) -> None:
     for row, column, value in legacy_writes:
         setattr(row, column, value)
@@ -616,11 +630,7 @@ async def sync_revenuecat_access(
     request_date = plan.snapshot_at
     facts = plan.facts
     standard_missing = plan.standard_missing
-    target_row = (
-        next((row for row in existing if row.product_id == facts["product_id"]), None)
-        if facts
-        else None
-    )
+    target_row = _row_for_product(existing, facts["product_id"]) if facts else None
     rows_revoked = 0
     for row in existing:
         if row is not target_row and row.status in GRANTING_STATUSES:

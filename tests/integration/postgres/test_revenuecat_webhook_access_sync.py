@@ -638,3 +638,60 @@ async def test_refresh_resolves_a_transfer_source_whose_read_failed(app_sessions
         None,
     )
     assert evaluate_subscription_access([row]).has_access is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored_monthly", "event_monthly"),
+    [("onemonth", "onemonth:p1m"), ("onemonth:p1m", "onemonth")],
+)
+async def test_an_old_play_products_expiration_during_an_outage_keeps_the_upgrade(
+    app_sessions, stored_monthly, event_monthly
+):
+    """The Android variant on the real repository: the Play webhook's
+    '<subscription>:<base plan>' and the stored bare id (or the reverse) are
+    the same product, so the EXPIRATION lands on the monthly row."""
+    user = await _user(app_sessions, "upgrader")
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with app_sessions() as session:
+        for product_id, status, purchased_days_ago, expires_in_days in (
+            (stored_monthly, "expired", 400, -2),
+            ("annual", "active", 2, 363),
+        ):
+            session.add(
+                Subscription(
+                    user_id=user.id,
+                    revenuecat_subscriber_id=user.firebase_uid,
+                    provider="revenuecat",
+                    product_id=product_id,
+                    platform="android",
+                    status=status,
+                    purchased_at=now - timedelta(days=purchased_days_ago),
+                    expires_at=now + timedelta(days=expires_in_days),
+                    period_type="normal",
+                    provider_snapshot_at=now - timedelta(days=1),
+                    is_sandbox=False,
+                )
+            )
+        await session.commit()
+
+    async def down():
+        return 503, None
+
+    with _revenuecat({user.firebase_uid: down}):
+        result = await _deliver(
+            _event(
+                "EXPIRATION",
+                user.firebase_uid,
+                product_id=event_monthly,
+                store="PLAY_STORE",
+            )
+        )
+
+    assert result == {"status": "success"}
+    rows = {row.product_id: row for row in await _rows(app_sessions, user)}
+    assert rows["annual"].status == "active"
+    assert rows["annual"].expires_at == now + timedelta(days=363)
+    assert rows[stored_monthly].status == "expired"
+    enforcement = CheckSubscriptionAccessQueryHandler(uow_factory=AsyncUnitOfWork)
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(user.id)) is True

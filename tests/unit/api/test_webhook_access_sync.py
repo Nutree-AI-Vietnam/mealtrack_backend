@@ -37,6 +37,7 @@ from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 from src.infra.database.models.referral.referral_conversion import ReferralConversion
 from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.user import User
+from src.infra.repositories.subscription_repository_async import product_match_rank
 from src.infra.services.subscription_access_sync_service import (
     sync_revenuecat_access,
 )
@@ -142,7 +143,8 @@ class _Subscriptions:
         self.database = database
 
     async def find_by_revenuecat_id(self, revenuecat_id, user_id=None, product_id=None):
-        """The repository's order: the event's product first, then newest."""
+        """The repository's order: the event's product first (the repository's
+        own product_match_rank), then newest."""
         matches = [
             row
             for row in self.database.rows
@@ -150,11 +152,11 @@ class _Subscriptions:
             and row.provider == "revenuecat"
             and (user_id is None or row.user_id == user_id)
         ]
-        return max(
+        return min(
             matches,
             key=lambda row: (
-                bool(product_id) and row.product_id == product_id,
-                row.purchased_at,
+                product_match_rank(row.product_id, product_id) if product_id else 0,
+                -row.purchased_at.timestamp(),
             ),
             default=None,
         )
@@ -404,6 +406,62 @@ async def test_an_old_products_event_never_lands_on_the_newer_products_row(
     assert annual.provider_sync_required_at is not None
     with pytest.raises(SubscriptionAccessUnavailable):
         evaluate_subscription_access(database.rows_of(user))
+    enforcement = CheckSubscriptionAccessQueryHandler(
+        uow_factory=lambda: _UnitOfWork(database, _Referrals())
+    )
+    assert await enforcement.handle(CheckSubscriptionAccessQuery(user.id)) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["EXPIRATION", "CANCELLATION", "BILLING_ISSUE"])
+@pytest.mark.parametrize(
+    ("stored_monthly", "event_monthly"),
+    [("onemonth", "onemonth:p1m"), ("onemonth:p1m", "onemonth")],
+    ids=["snapshot-row", "legacy-row"],
+)
+async def test_an_old_play_products_event_never_lands_on_the_newer_products_row(
+    monkeypatch, event_type, stored_monthly, event_monthly
+):
+    """The Android variant: Play webhooks name '<subscription>:<base plan>',
+    snapshot rows the bare subscription id. The old product's event must
+    still find the old product's row, either way round."""
+    monkeypatch.setenv("SUBSCRIPTION_ACCESS_ENABLED", "true")
+    user = _user("user-u", "uid-u")
+    now = datetime.now(UTC)
+    monthly = _row(
+        user,
+        id="u-monthly",
+        product_id=stored_monthly,
+        platform="android",
+        status="expired",
+        purchased_at=now - timedelta(days=400),
+        expires_at=now - timedelta(days=2),
+        created_at=now - timedelta(days=400),
+    )
+    annual = _row(
+        user,
+        id="u-annual",
+        product_id="annual",
+        platform="android",
+        purchased_at=now - timedelta(days=2),
+        expires_at=now + timedelta(days=363),
+        created_at=now - timedelta(days=2),
+    )
+    database = _Database([user], [monthly, annual])
+
+    with _revenuecat({"uid-u": _fails(503)}):
+        result = await _deliver(
+            monkeypatch,
+            _event(event_type, "uid-u", product_id=event_monthly, store="PLAY_STORE"),
+            database,
+        )
+
+    assert result == {"status": "success"}
+    assert (annual.status, annual.expires_at) == (
+        "active",
+        now + timedelta(days=363),
+    )
+    assert monthly.status != "active"
     enforcement = CheckSubscriptionAccessQueryHandler(
         uow_factory=lambda: _UnitOfWork(database, _Referrals())
     )

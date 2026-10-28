@@ -257,6 +257,11 @@ optional caches.
     refresh or reconciliation).
   - Writers for one user serialise on `SELECT ... FOR UPDATE` of the user row;
     an older snapshot never overwrites a newer one (`provider_snapshot_at`).
+  - An event lands on the row of its own product (an old plan's
+    `EXPIRATION` never on the newer plan's row). Google Play webhooks name
+    `<subscription>:<base plan>` while snapshots name the bare subscription
+    id, so row lookups and snapshot targets treat both forms as one product,
+    the exact id first.
   - RevenueCat has no `REFUND` event: a refund is a `CANCELLATION` with
     `cancel_reason=CUSTOMER_SUPPORT` or a negative price. It runs the
     cancellation handler, as production always has: no referral clawback,

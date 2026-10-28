@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, case, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
@@ -15,6 +15,42 @@ REVENUECAT_PROVIDER = "revenuecat"
 # to RevenueCat: a store refund arrives as a CANCELLATION webhook too, so a
 # cancelled row can't tell "paid until expiry" from "refunded".
 ENTITLED_SUBSCRIPTION_STATUSES = ("active", "billing_issue")
+
+
+def store_product_base(product_id: str) -> str:
+    """A store product id without its Google Play base plan.
+
+    RevenueCat names a Google Play subscription
+    '<subscription_id>:<base_plan_id>' in webhooks, while v1 GET /subscribers,
+    and so every row a snapshot wrote, names the bare subscription id. App
+    Store and web product ids carry no colon.
+    """
+    return product_id.split(":", 1)[0]
+
+
+def product_match_rank(stored: str | None, wanted: str) -> int:
+    """0 for the same id, 1 for the same store product, 2 for another."""
+    if stored == wanted:
+        return 0
+    if stored and store_product_base(stored) == store_product_base(wanted):
+        return 1
+    return 2
+
+
+def _product_match_rank_sql(product_id: str):
+    """``product_match_rank`` of each row's product_id, in SQL."""
+    base = store_product_base(product_id)
+    return case(
+        (Subscription.product_id == product_id, 0),
+        (
+            or_(
+                Subscription.product_id == base,
+                func.substr(Subscription.product_id, 1, len(base) + 1) == f"{base}:",
+            ),
+            1,
+        ),
+        else_=2,
+    )
 
 
 class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
@@ -105,7 +141,9 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
         ``product_id`` (the event's product) prefers that product's row, so
         an event for a product the user moved away from (an EXPIRATION for
         the old monthly plan after an upgrade to annual) never lands on the
-        newer product's row. Without a row for it, the newest row is used.
+        newer product's row. A Google Play id matches with or without its
+        base plan, either way round ('premium:p1m' and 'premium'); the exact
+        id wins. Without a row for the product, the newest row is used.
         """
         if not revenuecat_subscriber_id:
             return None
@@ -116,9 +154,7 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
         if user_id is not None:
             statement = statement.where(Subscription.user_id == user_id)
         if product_id:
-            statement = statement.order_by(
-                case((Subscription.product_id == product_id, 0), else_=1)
-            )
+            statement = statement.order_by(_product_match_rank_sql(product_id))
         result = await self.session.execute(
             statement.order_by(
                 Subscription.purchased_at.desc(), Subscription.created_at.desc()

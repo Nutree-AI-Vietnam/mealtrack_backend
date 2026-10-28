@@ -404,6 +404,35 @@ async def test_a_transfer_source_that_kept_a_purchase_keeps_it():
 
 
 @pytest.mark.asyncio
+async def test_snapshot_updates_the_play_row_a_webhook_wrote_with_its_base_plan():
+    """A legacy handler stored the Play webhook's 'annual:p1y'; the snapshot
+    names the bare 'annual'. It is the same purchase: update that row instead
+    of revoking it and adding a duplicate."""
+    now = datetime.now(UTC)
+    row = _revenuecat_row(product_id="annual:p1y", platform="android")
+    session = _SyncSession(_owner(), [row])
+    body = standard_annual_response(
+        request_date=now, expires_date=now + timedelta(days=200), store="play_store"
+    )
+
+    outcome = await sync_revenuecat_access(
+        session, _owner(), snapshot=_snapshot(body, now)
+    )
+
+    assert (outcome.result, outcome.row_created, outcome.rows_revoked) == (
+        "applied",
+        False,
+        0,
+    )
+    assert session.added == []
+    assert (row.product_id, row.status, row.provider_snapshot_at) == (
+        "annual",
+        "active",
+        now,
+    )
+
+
+@pytest.mark.asyncio
 async def test_absence_with_only_terminal_rows_resolves_to_no_access():
     now = datetime.now(UTC)
     row = _revenuecat_row(
