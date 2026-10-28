@@ -14,6 +14,7 @@ from src.api.dependencies.auth import (
     verify_firebase_uid_ownership,
 )
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.routes.v1.users_avatar import router as avatar_router
 from src.api.schemas.request.user_requests import (
     UserSyncRequest,
     UserUpdateLastAccessedRequest,
@@ -53,6 +54,7 @@ from src.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/users", tags=["Users"])
+router.include_router(avatar_router)
 
 
 class UpdateLanguageRequest(BaseModel):
@@ -306,9 +308,7 @@ async def update_weekly_auto_adjust(
     event_bus: EventBus = Depends(get_configured_event_bus),
 ):
     """Enable or disable leftover-split daily targets. Enabled by default."""
-    command = UpdateWeeklyAutoAdjustCommand(
-        user_id=user_id, enabled=request.enabled
-    )
+    command = UpdateWeeklyAutoAdjustCommand(user_id=user_id, enabled=request.enabled)
     result = await event_bus.send(command)
     return result
 

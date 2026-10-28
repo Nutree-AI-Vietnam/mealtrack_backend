@@ -39,7 +39,9 @@ async def test_save_translates_identity_unique_constraint_to_conflict(
     session.begin_nested = Mock(return_value=_Savepoint())
     session.flush = AsyncMock(
         side_effect=IntegrityError(
-            "INSERT", {}, Exception(f'duplicate key value violates unique constraint "{constraint}"')
+            "INSERT",
+            {},
+            Exception(f'duplicate key value violates unique constraint "{constraint}"'),
         )
     )
     repository = AsyncUserRepository(session)
@@ -114,3 +116,40 @@ async def test_save_does_not_reload_user_after_flush() -> None:
     assert saved.email == "new@example.com"
     assert saved.language_code == "vi"
     assert added["entity"].language_code == "vi"
+
+
+def test_save_never_copies_the_avatar_columns() -> None:
+    """Only update_user_avatar writes the avatar; a stale model must not."""
+    from src.infra.repositories.user_repository_async import _USER_SAVE_COLUMNS
+
+    assert not [name for name in _USER_SAVE_COLUMNS if name.startswith("avatar")]
+
+
+def test_mapper_writes_no_avatar_and_reads_a_bad_stored_avatar_as_auto() -> None:
+    from src.domain.model.user.user_avatar import UserAvatar
+    from src.infra.database.models.user.user import User
+    from src.infra.mappers.user_mapper import UserMapper, avatar_from_entity
+
+    user = UserDomainModel(
+        firebase_uid="firebase-avatar-map",
+        email="map@example.com",
+        username="mapuser",
+        password_hash="",
+        provider=AuthProvider.GOOGLE,
+        avatar=UserAvatar.chosen("initials", color=4),
+    )
+    entity = UserMapper.to_persistence(user)
+    assert entity.avatar_kind is None
+    assert entity.avatar_color is None
+
+    stored = User(id="u-1", avatar_kind="character", avatar_character="durian")
+    assert avatar_from_entity(stored) == UserAvatar()
+    stored_photo = User(
+        id="u-2",
+        avatar_kind="photo",
+        avatar_image_id="img",
+        avatar_image_url="https://img.example/img",
+    )
+    assert avatar_from_entity(stored_photo) == UserAvatar.photo(
+        "img", "https://img.example/img"
+    )

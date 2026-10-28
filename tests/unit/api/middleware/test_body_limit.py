@@ -12,6 +12,7 @@ from starlette import formparsers
 
 from src.api.main import app as mealtrack_app
 from src.api.middleware.body_limit import (
+    AVATAR_PHOTO_BODY_MAX_BYTES,
     BODY_LIMITS,
     CATALOG_MANIFEST_BODY_MAX_BYTES,
     DEFAULT_BODY_MAX_BYTES,
@@ -29,6 +30,7 @@ PREVIEW_PATH = "/v1/tdee/preview"
 ANALYZE_PATH = "/v1/meals/image/analyze"
 DIRECT_UPLOAD_PATH = "/v1/meals/direct-upload/0b6f3c2e-6d1a-4a8e-9c47-2f5d8e1a7b90"
 RESOLVE_PATH = "/v1/admin/meal-catalog/resolve"
+AVATAR_PHOTO_PATH = "/v1/users/avatar/photo"
 LIMITED_PATHS = [
     (PREVIEW_PATH, PREVIEW_BODY_MAX_BYTES),
     (ANALYZE_PATH, MEAL_PHOTO_BODY_MAX_BYTES),
@@ -37,6 +39,7 @@ LIMITED_PATHS = [
     ("/v1/admin/meal-catalog/import", CATALOG_MANIFEST_BODY_MAX_BYTES),
     (RESOLVE_PATH, CATALOG_MANIFEST_BODY_MAX_BYTES),
     ("/v1/admin/meal-catalog/enrich", CATALOG_MANIFEST_BODY_MAX_BYTES),
+    (AVATAR_PHOTO_PATH, AVATAR_PHOTO_BODY_MAX_BYTES),
 ]
 # Not in BODY_LIMITS: a JSON route, and a path that only starts like a listed one.
 UNLISTED_PATHS = [
@@ -455,6 +458,25 @@ def test_app_limits_every_form_route_with_the_innermost_middleware():
     }
     assert ANALYZE_PATH in form_paths
     assert form_paths <= BODY_LIMITS.keys()
+
+
+@pytest.mark.asyncio
+async def test_app_refuses_an_avatar_photo_over_its_limit_before_auth():
+    # Refused before auth runs, at the avatar limit rather than the 1 MiB default.
+    chunks = _photo_chunks(AVATAR_PHOTO_BODY_MAX_BYTES + MIB)
+    client = _Client(chunks)
+
+    await mealtrack_app(
+        _scope(AVATAR_PHOTO_PATH, MULTIPART), client.receive, client.send
+    )
+
+    assert client.statuses == [413]
+    assert client.json() == TOO_LARGE
+    sizes = accumulate(len(chunk) for chunk in chunks)
+    first_over = next(
+        n for n, total in enumerate(sizes, 1) if total > AVATAR_PHOTO_BODY_MAX_BYTES
+    )
+    assert client.reads == first_over < len(chunks)
 
 
 def test_app_gives_every_catalog_manifest_route_the_manifest_limit():

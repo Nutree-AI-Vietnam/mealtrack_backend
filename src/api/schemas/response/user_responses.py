@@ -3,7 +3,7 @@ User management response schemas for Firebase integration.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -30,6 +30,27 @@ class SubscriptionInfo(BaseModel):
     platform: str = Field(..., description="Platform (ios, android, web)")
 
 
+class AvatarResponse(BaseModel):
+    """The avatar a person chose.
+
+    With kind `auto`, show `photo_url` when the profile has one, otherwise
+    initials on a colour the app derives from the user id.
+    """
+
+    kind: Literal["auto", "photo", "character", "initials"] = Field(
+        ..., description="Which avatar to show"
+    )
+    image_url: str | None = Field(
+        None, description="Uploaded photo URL; set only when kind is photo"
+    )
+    character: str | None = Field(
+        None, description="Nutree character id; set only when kind is character"
+    )
+    color: int | None = Field(
+        None, description="Initials palette index 0-7; set only when kind is initials"
+    )
+
+
 class UserProfileResponse(BaseModel):
     """Response containing user profile information."""
 
@@ -42,6 +63,7 @@ class UserProfileResponse(BaseModel):
     phone_number: Optional[str] = Field(None, description="Phone number")
     display_name: Optional[str] = Field(None, description="Display name")
     photo_url: Optional[str] = Field(None, description="Profile photo URL")
+    avatar: AvatarResponse = Field(..., description="Avatar the user chose")
     provider: AuthProviderEnum = Field(..., description="Authentication provider")
     is_active: bool = Field(..., description="Whether user account is active")
     onboarding_completed: bool = Field(

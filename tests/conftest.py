@@ -18,6 +18,7 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
+from src.domain.exceptions.user_exceptions import UserNotFoundError
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
@@ -573,6 +574,24 @@ class TestUserRepository:
         )
         self.db.commit()
 
+    def update_user_avatar(self, user_id, avatar) -> str | None:
+        entity = (
+            self.db.query(User)
+            .filter(User.id == str(user_id), User.is_active.is_(True))
+            .with_for_update()
+            .first()
+        )
+        if entity is None:
+            raise UserNotFoundError(f"No active user {user_id}")
+        previous_image_id = entity.avatar_image_id
+        entity.avatar_kind = avatar.kind.value
+        entity.avatar_image_id = avatar.image_id
+        entity.avatar_image_url = avatar.image_url
+        entity.avatar_character = avatar.character
+        entity.avatar_color = avatar.color
+        self.db.flush()
+        return previous_image_id
+
 
 class AsyncTestMealRepository:
     """Explicit async test facade for legacy sync-session handler tests."""
@@ -652,6 +671,9 @@ class AsyncTestUserRepository:
 
     async def update_user_weekly_auto_adjust(self, *args, **kwargs):
         return self._repo.update_user_weekly_auto_adjust(*args, **kwargs)
+
+    async def update_user_avatar(self, *args, **kwargs):
+        return self._repo.update_user_avatar(*args, **kwargs)
 
 
 class TestUnitOfWork:
@@ -1098,7 +1120,9 @@ def event_bus(
 
     event_bus.register_handler(
         DeleteUserCommand,
-        DeleteUserCommandHandler(event_publisher=event_publisher),
+        DeleteUserCommandHandler(
+            event_publisher=event_publisher, image_store=mock_image_store
+        ),
     )
 
     return event_bus

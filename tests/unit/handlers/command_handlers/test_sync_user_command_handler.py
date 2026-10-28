@@ -630,3 +630,59 @@ class TestSyncUserReRegistration:
         assert prefs is not None, (
             "Notification preferences should be created for new user"
         )
+
+
+@pytest.mark.asyncio
+async def test_sync_leaves_the_chosen_avatar_untouched(handler):
+    """Sign-in sync overwrites the provider photo, never the chosen avatar."""
+    from src.domain.model.auth.auth_provider import AuthProvider
+    from src.domain.model.user import UserDomainModel
+    from src.domain.model.user.user_avatar import UserAvatar
+
+    fake_uow = FakeUnitOfWork()
+    avatar = UserAvatar.photo("avatar-image", "https://img.example/avatar")
+    existing_user = UserDomainModel(
+        firebase_uid="firebase_avatar",
+        email="avatar@example.com",
+        username="avataruser",
+        password_hash="",
+        provider=AuthProvider.GOOGLE,
+        photo_url="https://provider.example/old.jpg",
+        avatar=avatar,
+    )
+    await fake_uow.users.save(existing_user)
+    handler.uow = fake_uow
+
+    result = await handler.handle(
+        SyncUserCommand(
+            firebase_uid="firebase_avatar",
+            email="avatar@example.com",
+            photo_url=None,
+            provider="google",
+        )
+    )
+
+    assert existing_user.avatar == avatar
+    assert result["user"]["photo_url"] is None
+    assert result["user"]["avatar"] == {
+        "kind": "photo",
+        "image_url": "https://img.example/avatar",
+        "character": None,
+        "color": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_new_user_sync_returns_the_auto_avatar(handler):
+    fake_uow = FakeUnitOfWork()
+    handler.uow = fake_uow
+
+    result = await handler.handle(
+        SyncUserCommand(
+            firebase_uid="firebase_new_avatar",
+            email="new-avatar@example.com",
+            provider="google",
+        )
+    )
+
+    assert result["user"]["avatar"]["kind"] == "auto"
