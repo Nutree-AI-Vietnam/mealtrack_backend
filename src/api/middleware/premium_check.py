@@ -12,8 +12,13 @@ gates the other paid routes behind SUBSCRIPTION_ENFORCEMENT_ENABLED (off by
 default). ``get_subscription_status`` is a non-blocking status read.
 """
 
+import asyncio
+import functools
 import logging
 import os
+import time
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 
@@ -33,6 +38,15 @@ logger = logging.getLogger(__name__)
 
 SUBSCRIPTION_ACCESS_CACHE_TTL_SECONDS = 60
 REVENUECAT_CHECK_TIMEOUT_SECONDS = 3.0
+# Paid-route enforcement asks RevenueCat before a 402 at most once per user
+# per this many seconds, whatever the answer. Its dependency runs before the
+# route's rate limiter, so this is what bounds the RevenueCat reads a refused
+# caller can cause.
+REVENUECAT_RECHECK_SECONDS = 60
+# Held under the recheck key while a worker is asking RevenueCat.
+_CHECK_IN_FLIGHT = "in_flight"
+# Bounds the per-process fallback kept while the shared cache is unavailable.
+_LOCAL_CHECKS_MAX = 10_000
 
 
 def _get_subscription_service() -> SubscriptionServicePort:
@@ -125,14 +139,47 @@ async def _check_access(user_id: str) -> EntitlementCheck:
 async def revenuecat_access(user_id: str) -> EntitlementCheck:
     """RevenueCat's answer for a user the database does not grant.
 
-    The same short check ``require_subscription`` makes (``check_entitlement``
-    within 3 s) and the same 60 s per-user access cache: a cached grant
-    answers without a call, a new grant is cached, a denial never is.
+    For paid-route enforcement, before a 402. A grant in the Premium check's
+    60 s access cache answers without a call. Otherwise RevenueCat is asked
+    (``check_entitlement``) at most once per user per
+    REVENUECAT_RECHECK_SECONDS, whatever it answers: concurrent requests in
+    one process share the call, and the answer is kept under its own key
+    (``revenuecat_check_key``) in the shared cache, or in this process while
+    that cache is unavailable. A request that finds another worker's call in
+    flight gets UNAVAILABLE. A grant also goes to the access cache.
     UNAVAILABLE when RevenueCat cannot answer or is not configured.
     """
     cache = _get_cache()
     if await _has_cached_access(cache, user_id):
         return EntitlementCheck.ENTITLED
+    return await _single_flight(user_id, lambda: _throttled_check(cache, user_id))
+
+
+async def forget_revenuecat_check(user_id: str) -> None:
+    """Let the user's next refused paid request ask RevenueCat again.
+
+    For writers that just read and applied the user's RevenueCat customer (a
+    refresh, a synced webhook, a web-funnel finalize): a payer the database
+    still denies is not held to an answer older than that read.
+    """
+    _local_checks.pop(user_id, None)
+    cache = _get_cache()
+    if cache is None:
+        return
+    try:
+        await cache.invalidate(revenuecat_check_key(user_id))
+    except Exception:
+        logger.warning("RevenueCat recheck invalidation failed", exc_info=True)
+
+
+def revenuecat_check_key(user_id: str) -> str:
+    return f"subscription_revenuecat_check:{user_id}"
+
+
+async def _throttled_check(cache: CachePort | None, user_id: str) -> EntitlementCheck:
+    recent = await _recent_check(cache, user_id)
+    if recent is not None:
+        return recent
     async with _get_uow_factory()() as uow:
         user = await uow.users.find_by_id(user_id)
     firebase_uid = getattr(user, "firebase_uid", None)
@@ -141,12 +188,129 @@ async def revenuecat_access(user_id: str) -> EntitlementCheck:
     if not os.getenv("REVENUECAT_SECRET_API_KEY", ""):
         logger.warning("REVENUECAT_SECRET_API_KEY not configured")
         return EntitlementCheck.UNAVAILABLE
+    claim = await _claim_check(cache, user_id)
+    if claim is None:
+        # Another worker is asking RevenueCat for this user right now.
+        return EntitlementCheck.UNAVAILABLE
     access = await _get_subscription_service().check_entitlement(
         firebase_uid, timeout_seconds=REVENUECAT_CHECK_TIMEOUT_SECONDS
     )
+    await _remember_check(cache if claim else None, user_id, access)
     if access is EntitlementCheck.ENTITLED:
         await _cache_access(cache, user_id)
     return access
+
+
+# Checks in flight in this process, shared by concurrent requests per user.
+_checks_in_flight: dict[str, asyncio.Task[EntitlementCheck]] = {}
+
+
+async def _single_flight(
+    user_id: str, check: Callable[[], Coroutine[Any, Any, EntitlementCheck]]
+) -> EntitlementCheck:
+    loop = asyncio.get_running_loop()
+    task = _checks_in_flight.get(user_id)
+    if task is None or task.done() or task.get_loop() is not loop:
+        task = loop.create_task(check())
+        _checks_in_flight[user_id] = task
+        task.add_done_callback(functools.partial(_check_finished, user_id))
+    # A request that goes away (client disconnect) leaves the call running
+    # for the others.
+    return await asyncio.shield(task)
+
+
+def _check_finished(user_id: str, task: asyncio.Task[EntitlementCheck]) -> None:
+    if _checks_in_flight.get(user_id) is task:
+        del _checks_in_flight[user_id]
+    if not task.cancelled():
+        task.exception()  # retrieved, so a call nobody awaits any more stays quiet
+
+
+# user_id -> (monotonic expiry, stored answer): the recheck key for this
+# process, used only while the shared cache cannot hold it.
+_local_checks: dict[str, tuple[float, str]] = {}
+
+
+def _local_get(user_id: str) -> str | None:
+    entry = _local_checks.get(user_id)
+    if entry is None:
+        return None
+    if entry[0] <= time.monotonic():
+        _local_checks.pop(user_id, None)
+        return None
+    return entry[1]
+
+
+def _local_put(user_id: str, value: str) -> None:
+    now = time.monotonic()
+    if user_id not in _local_checks and len(_local_checks) >= _LOCAL_CHECKS_MAX:
+        for key in [key for key, entry in _local_checks.items() if entry[0] <= now]:
+            del _local_checks[key]
+        if len(_local_checks) >= _LOCAL_CHECKS_MAX:
+            _local_checks.clear()
+    _local_checks[user_id] = (now + REVENUECAT_RECHECK_SECONDS, value)
+
+
+def _stored_answer(value: object) -> EntitlementCheck | None:
+    if value is None:
+        return None
+    if value == _CHECK_IN_FLIGHT:
+        return EntitlementCheck.UNAVAILABLE
+    try:
+        return EntitlementCheck(value)
+    except ValueError:
+        return None
+
+
+async def _recent_check(
+    cache: CachePort | None, user_id: str
+) -> EntitlementCheck | None:
+    """The answer of the user's last check, if within the recheck window."""
+    stored: object = _local_get(user_id)
+    if stored is None and cache is not None:
+        try:
+            stored = await cache.get(revenuecat_check_key(user_id))
+        except Exception:
+            logger.warning("RevenueCat recheck read failed", exc_info=True)
+    return _stored_answer(stored)
+
+
+async def _claim_check(cache: CachePort | None, user_id: str) -> bool | None:
+    """Claim the user's next RevenueCat call for the recheck window.
+
+    True when claimed in the shared cache, False when claimed in this process
+    (the shared cache could not answer), None when another worker holds it.
+    """
+    claimed: bool | None = None
+    if cache is not None:
+        try:
+            claimed = await cache.add(
+                revenuecat_check_key(user_id),
+                _CHECK_IN_FLIGHT,
+                REVENUECAT_RECHECK_SECONDS,
+            )
+        except Exception:
+            logger.warning("RevenueCat recheck claim failed", exc_info=True)
+    if claimed is None:
+        _local_put(user_id, _CHECK_IN_FLIGHT)
+        return False
+    return True if claimed else None
+
+
+async def _remember_check(
+    cache: CachePort | None, user_id: str, access: EntitlementCheck
+) -> None:
+    if cache is not None:
+        try:
+            await cache.set(
+                revenuecat_check_key(user_id),
+                access.value,
+                REVENUECAT_RECHECK_SECONDS,
+            )
+            return
+        except Exception:
+            logger.warning("RevenueCat recheck write failed", exc_info=True)
+    _local_put(user_id, access.value)
 
 
 def _cache_key(user_id: str) -> str:

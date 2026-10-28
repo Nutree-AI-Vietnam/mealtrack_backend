@@ -363,6 +363,44 @@ async def test_initial_purchase_leaves_exactly_one_reconciled_row(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("answer", "forgotten"), [(_ok, True), (_fails, False)])
+async def test_a_synced_event_lets_a_refused_paid_route_ask_revenuecat_again(
+    monkeypatch, answer, forgotten
+):
+    """After the commit of a synced event, the paid-route RevenueCat check is
+    not held to an answer older than this read; a failed read changes nothing."""
+    user = _user("user-u", "uid-u")
+    database = _Database([user])
+    forget = AsyncMock()
+    monkeypatch.setattr(webhooks, "forget_revenuecat_check", forget)
+    reply = answer(_annual()) if answer is _ok else answer(503)
+
+    with _revenuecat({"uid-u": reply}):
+        await _deliver(monkeypatch, _event("INITIAL_PURCHASE", "uid-u"), database)
+
+    if forgotten:
+        forget.assert_awaited_once_with("user-u")
+    else:
+        forget.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_synced_transfer_lets_each_synced_party_ask_revenuecat_again(
+    monkeypatch,
+):
+    source = _user("user-a", "uid-a")
+    target = _user("user-b", "uid-b")
+    database = _Database([source, target], [_row(source)])
+    forget = AsyncMock()
+    monkeypatch.setattr(webhooks, "forget_revenuecat_check", forget)
+
+    with _revenuecat({"uid-a": _fails(503), "uid-b": _ok(_annual())}):
+        await _deliver(monkeypatch, _transfer("uid-a", "uid-b"), database)
+
+    forget.assert_awaited_once_with("user-b")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("event_type", ["EXPIRATION", "CANCELLATION", "BILLING_ISSUE"])
 async def test_an_old_products_event_never_lands_on_the_newer_products_row(
     monkeypatch, event_type

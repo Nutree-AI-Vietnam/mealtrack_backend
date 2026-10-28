@@ -991,6 +991,52 @@ async def test_redemption_finalization_reports_a_snapshot_the_sync_refuses(
     assert recorded == [(reason, {"source": "web_funnel"})]
 
 
+class _RedeemerSession(FinalizationSession):
+    """Also answers the route's lookup of the redeemer's user id."""
+
+    async def scalar(self, statement):
+        if "FROM users" in str(statement):
+            return "user-1"
+        return await super().scalar(statement)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finalized", [True, False])
+async def test_a_finalize_lets_a_refused_paid_route_ask_revenuecat_again(
+    monkeypatch, finalized
+):
+    """Finalize applied the user's RevenueCat customer: the paid-route
+    RevenueCat check is not held to an older answer. A refused finalize
+    changes nothing."""
+    _configure_redemption(monkeypatch)
+    monkeypatch.setattr(
+        web_funnel,
+        "_get_web_funnel_subscription_service",
+        lambda: VerifiedSubscriberService(),
+    )
+
+    class RedemptionService:
+        async def finalize(self, _db, **kwargs):
+            if not finalized:
+                raise RevenueCatSnapshotUnavailable("refused", reason="http_5xx")
+            return {"version": "redemption_result_v1", "access_status": "active"}
+
+    monkeypatch.setattr(
+        web_funnel, "get_web_funnel_redemption_service", lambda: RedemptionService()
+    )
+    monkeypatch.setattr(web_funnel, "record_snapshot_unavailable", lambda *a, **k: None)
+    forget = AsyncMock()
+    monkeypatch.setattr(web_funnel, "forget_revenuecat_check", forget)
+
+    if finalized:
+        assert (await _finalize(_RedeemerSession()))["access_status"] == "active"
+        forget.assert_awaited_once_with("user-1")
+    else:
+        with pytest.raises(HTTPException):
+            await _finalize(_RedeemerSession())
+        forget.assert_not_called()
+
+
 def _finalize_token():
     return {
         "uid": "firebase-uid",

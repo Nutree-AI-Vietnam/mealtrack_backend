@@ -3,7 +3,7 @@
 from hmac import compare_digest
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import (
@@ -13,6 +13,7 @@ from src.api.base_dependencies import (
     record_snapshot_unavailable,
 )
 from src.api.dependencies.auth import verify_firebase_token_revocation_checked
+from src.api.middleware.premium_check import forget_revenuecat_check
 from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.web_funnel_redemption_session import (
     hydrate_custom_email,
@@ -373,7 +374,7 @@ async def finalize_revenuecat_redemption(
 
     response.headers["Cache-Control"] = "no-store"
     try:
-        return await get_web_funnel_redemption_service().finalize(
+        result = await get_web_funnel_redemption_service().finalize(
             db,
             uid=uid,
             email=email,
@@ -390,6 +391,22 @@ async def finalize_revenuecat_redemption(
         # The access sync refused the snapshot (owner changed, conflicting
         # facts); the transaction is not committed, so nothing was written.
         raise _unverified_redemption(error) from error
+    await _forget_revenuecat_check(db, uid)
+    return result
+
+
+# Only the two columns the finalize route reads to name the redeemed user.
+_USERS = table("users", column("id"), column("firebase_uid"))
+
+
+async def _forget_revenuecat_check(db: AsyncSession, firebase_uid: str) -> None:
+    """Finalize applied the user's RevenueCat customer: a paid route the
+    database still refuses may ask RevenueCat again."""
+    user_id = await db.scalar(
+        select(_USERS.c.id).where(_USERS.c.firebase_uid == firebase_uid)
+    )
+    if isinstance(user_id, str):
+        await forget_revenuecat_check(user_id)
 
 
 @router.post("/leads/{lead_id}/resend")

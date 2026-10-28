@@ -2,7 +2,7 @@
 
 import base64
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -118,6 +118,36 @@ def test_refresh_not_applied_still_answers_from_the_database(flag_on):
 
     assert response.status_code == 200
     assert response.json() == GRANTED
+
+
+@pytest.mark.parametrize(
+    "refresh",
+    [
+        SubscriptionAccessRefresh("applied"),
+        SubscriptionAccessRefresh("not_applied", reason="conflicting_facts"),
+    ],
+)
+def test_a_refresh_lets_a_refused_paid_route_ask_revenuecat_again(
+    flag_on, monkeypatch, refresh
+):
+    """RevenueCat was just read: a paid route the database still refuses
+    must not wait out the RevenueCat answer it got before the refresh."""
+    forget = AsyncMock()
+    monkeypatch.setattr(me_route, "forget_revenuecat_check", forget)
+
+    assert _refresh(_client(_EventBus(refresh=refresh))).status_code == 200
+
+    forget.assert_awaited_once_with("db-user-id")
+
+
+def test_an_unreadable_refresh_keeps_the_last_revenuecat_answer(flag_on, monkeypatch):
+    forget = AsyncMock()
+    monkeypatch.setattr(me_route, "forget_revenuecat_check", forget)
+    bus = _EventBus(refresh=RevenueCatSnapshotUnavailable("down", reason="http_5xx"))
+
+    assert _refresh(_client(bus)).status_code == 503
+
+    forget.assert_not_called()
 
 
 def test_refresh_then_unresolved_rows_answer_unavailable(flag_on):

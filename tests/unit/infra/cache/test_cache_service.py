@@ -177,3 +177,23 @@ async def test_revision_is_unknown_when_cache_disabled():
     assert await service.get_json_with_revision("k", "r") == (None, None)
     await service.purge(["k"], {"r": 60})
     redis.purge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored", [True, False, None])
+async def test_add_is_one_set_if_absent_call(service, stored):
+    """True stored, False already held, None Redis could not answer."""
+    service.redis.set_if_not_exists = AsyncMock(return_value=stored)
+
+    assert await service.add("k", "in_flight", 60) is stored
+    # JSON, like set(), so get() reads back the same value.
+    service.redis.set_if_not_exists.assert_awaited_once_with("k", '"in_flight"', 60)
+
+
+@pytest.mark.asyncio
+async def test_add_when_cache_disabled_cannot_tell():
+    redis = AsyncMock()
+    service = CacheService(redis_client=redis, enabled=False)
+
+    assert await service.add("k", "v", 60) is None
+    redis.set_if_not_exists.assert_not_awaited()

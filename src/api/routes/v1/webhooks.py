@@ -14,6 +14,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import lock_subscription_owner
+from src.api.middleware.premium_check import forget_revenuecat_check
 from src.api.routes.v1.webhook_access_sync import (
     ACCESS_ACCOUNT_DELETED,
     ACCESS_NOT_SYNCED,
@@ -298,6 +299,9 @@ async def revenuecat_webhook(
                 facts_before_event=facts_before_event,
             )
 
+    if access_result == ACCESS_SYNCED:
+        # Committed: a paid route need not wait out an older RevenueCat answer.
+        await forget_revenuecat_check(str(user.id))
     increment_metric(
         "webhook.revenuecat.processed",
         attributes={
@@ -351,6 +355,7 @@ async def _process_transfer(event: dict) -> dict:
         for party in parties
     }
     results = []
+    synced_user_ids = []
     async with AsyncUnitOfWork() as uow:
         session = cast(AsyncSession, uow.session)
         # A fixed lock order keeps concurrent A->B and B->A transfers apart.
@@ -360,16 +365,19 @@ async def _process_transfer(event: dict) -> dict:
                 continue
             # A source losing what RevenueCat moved away is the transfer
             # itself, not an unexpected downgrade.
-            results.append(
-                await apply_access(
-                    session,
-                    user,
-                    event,
-                    reads[user_id],
-                    downgrade_expected=user_id in sources,
-                    transfer_source=user_id in sources,
-                )
+            result = await apply_access(
+                session,
+                user,
+                event,
+                reads[user_id],
+                downgrade_expected=user_id in sources,
+                transfer_source=user_id in sources,
             )
+            results.append(result)
+            if result == ACCESS_SYNCED:
+                synced_user_ids.append(str(user.id))
+    for synced_user_id in synced_user_ids:
+        await forget_revenuecat_check(synced_user_id)
     logger.info(
         "RevenueCat transfer applied: parties=%d results=%s",
         len(parties),

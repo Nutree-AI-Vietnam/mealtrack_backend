@@ -95,9 +95,7 @@ class CacheService(CachePort):
         revision_field: str | None = None,
     ) -> bool:
         """Write a cached value asynchronously."""
-        return await self.set_json_now(
-            key, value, ttl, revision_field=revision_field
-        )
+        return await self.set_json_now(key, value, ttl, revision_field=revision_field)
 
     async def set_json_now(
         self,
@@ -125,6 +123,13 @@ class CacheService(CachePort):
                     key, payload, revision, effective_ttl
                 )
         return await self.redis.set(key, payload, effective_ttl)
+
+    async def add(self, key: str, value: Any, ttl_seconds: int) -> bool | None:
+        """SET NX EX in one Redis call; None when Redis is off or unavailable."""
+        if not self.enabled:
+            return None
+        payload = json.dumps(value, default=_json_serializer)
+        return await self.redis.set_if_not_exists(key, payload, ttl_seconds)
 
     @staticmethod
     def _key_hash(key: str) -> str:

@@ -311,7 +311,10 @@ Turn `SUBSCRIPTION_ENFORCEMENT_ENABLED=true` only when all of these hold. It
 makes the paid AI routes answer `402` (list in `docs/api-endpoints.md`); a
 wrong database row then blocks a paying user server-side. Before a `402` the
 route asks RevenueCat (3 s), which rescues a payer the database does not
-know, but not while RevenueCat is down or slow.
+know, but not while RevenueCat is down or slow. It asks at most once per user
+per minute, whatever the answer: a payer refused less than a minute before
+buying is rescued by the first request after that minute, or at once after
+the app's refresh, a synced webhook or a web-funnel finalize.
 
 - [ ] The mobile rollout is complete and the database decisions have
       matched RevenueCat for a sustained period.

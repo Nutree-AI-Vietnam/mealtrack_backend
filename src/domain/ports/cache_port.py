@@ -19,6 +19,18 @@ class CachePort(ABC):
         to Redis inline with the business request.
         """
 
+    async def add(self, key: str, value: Any, ttl_seconds: int) -> bool | None:
+        """Store a value under a TTL only when the key holds nothing.
+
+        True when this call stored it, False when the key already held a
+        value, None when the cache cannot tell. Adapters do it atomically and
+        inline; this fallback reads, then writes, so two callers may both win.
+        """
+        if await self.get(key) is not None:
+            return False
+        await self.set(key, value, ttl_seconds)
+        return True
+
     @abstractmethod
     async def invalidate(self, key: str) -> bool:
         """Request deletion of one cache entry.

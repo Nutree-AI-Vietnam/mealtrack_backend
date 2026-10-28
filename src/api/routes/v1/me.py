@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.middleware.premium_check import forget_revenuecat_check
 from src.api.middleware.rate_limit import limiter
 from src.api.schemas.response.subscription_access import MyEntitlementsResponse
 from src.app.commands.subscription_access import RefreshMyEntitlementsCommand
@@ -142,6 +143,9 @@ async def refresh_my_entitlements(
     response.headers["Cache-Control"] = NO_STORE
     try:
         await event_bus.send(RefreshMyEntitlementsCommand(user_id))
+        # RevenueCat was just read: a paid route the database still refuses
+        # may ask it again instead of waiting out the last answer.
+        await forget_revenuecat_check(user_id)
     except RevenueCatSnapshotUnavailable as error:
         # Already logged, counted and reported where the read failed.
         if not database_subscription_access_enabled():

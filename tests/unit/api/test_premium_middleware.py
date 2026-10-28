@@ -2,6 +2,7 @@
 Unit tests for subscription access middleware.
 """
 
+import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ from src.domain.ports.subscription_service_port import EntitlementCheck
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 
 USER_ID = "user_456"
+RECHECK_KEY = f"subscription_revenuecat_check:{USER_ID}"
 
 
 class _Subscriptions:
@@ -59,12 +61,24 @@ class _Uow:
 class _Cache:
     def __init__(self):
         self.values: dict[str, object] = {}
+        self.ttls: dict[str, int] = {}
 
     async def get(self, key):
         return self.values.get(key)
 
     async def set(self, key, value, ttl_seconds):
         self.values[key] = value
+        self.ttls[key] = ttl_seconds
+
+    async def add(self, key, value, ttl_seconds):
+        if key in self.values:
+            return False
+        await self.set(key, value, ttl_seconds)
+        return True
+
+    async def invalidate(self, key):
+        self.ttls.pop(key, None)
+        return self.values.pop(key, None) is not None
 
 
 @pytest.fixture
@@ -86,6 +100,9 @@ def access(monkeypatch):
     monkeypatch.setattr(
         premium_check, "_get_subscription_service", lambda: state.revenuecat
     )
+    # Per-process state of the RevenueCat recheck starts empty in every test.
+    monkeypatch.setattr(premium_check, "_local_checks", {})
+    monkeypatch.setattr(premium_check, "_checks_in_flight", {})
     return state
 
 
@@ -237,7 +254,8 @@ class TestRevenueCatAccess:
             timeout_seconds=premium_check.REVENUECAT_CHECK_TIMEOUT_SECONDS,
         )
         assert access.cache.values == {
-            f"subscription_access:{USER_ID}": EntitlementCheck.ENTITLED.value
+            f"subscription_access:{USER_ID}": EntitlementCheck.ENTITLED.value,
+            RECHECK_KEY: EntitlementCheck.ENTITLED.value,
         }
         # The Premium check reads the same cache entry.
         assert await require_subscription(USER_ID) is None
@@ -257,14 +275,15 @@ class TestRevenueCatAccess:
     @pytest.mark.parametrize(
         "answer", [EntitlementCheck.NOT_ENTITLED, EntitlementCheck.UNAVAILABLE]
     )
-    async def test_a_denial_or_outage_is_returned_and_never_cached(
+    async def test_a_denial_or_outage_is_returned_and_never_cached_as_access(
         self, access, answer
     ):
         access.revenuecat.check_entitlement.return_value = answer
 
         assert await premium_check.revenuecat_access(USER_ID) is answer
 
-        assert access.cache.values == {}
+        # Only the recheck key holds it; the Premium check's cache has nothing.
+        assert access.cache.values == {RECHECK_KEY: answer.value}
 
     async def test_user_without_firebase_uid_is_not_entitled(self, access):
         access.uow = _Uow(firebase_uid=None)
@@ -283,6 +302,148 @@ class TestRevenueCatAccess:
         )
 
         access.revenuecat.check_entitlement.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestRevenueCatRecheck:
+    """At most one RevenueCat call per user per window before a 402."""
+
+    @pytest.mark.parametrize(
+        "answer", [EntitlementCheck.NOT_ENTITLED, EntitlementCheck.UNAVAILABLE]
+    )
+    async def test_an_answer_holds_for_the_window(self, access, answer):
+        access.revenuecat.check_entitlement.return_value = answer
+        assert await premium_check.revenuecat_access(USER_ID) is answer
+
+        access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
+        assert await premium_check.revenuecat_access(USER_ID) is answer
+
+        access.revenuecat.check_entitlement.assert_awaited_once()
+        assert access.cache.ttls[RECHECK_KEY] == (
+            premium_check.REVENUECAT_RECHECK_SECONDS
+        )
+
+    async def test_revenuecat_is_asked_again_once_the_window_ends(self, access):
+        await premium_check.revenuecat_access(USER_ID)
+        del access.cache.values[RECHECK_KEY]  # its TTL ran out
+        access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
+
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.ENTITLED
+        )
+        assert access.revenuecat.check_entitlement.await_count == 2
+
+    async def test_concurrent_refusals_share_one_call(self, access):
+        answered = asyncio.Event()
+
+        async def slow_answer(*_args, **_kwargs):
+            await answered.wait()
+            return EntitlementCheck.ENTITLED
+
+        access.revenuecat.check_entitlement = AsyncMock(side_effect=slow_answer)
+        requests = [
+            asyncio.create_task(premium_check.revenuecat_access(USER_ID))
+            for _ in range(10)
+        ]
+        await asyncio.sleep(0)
+        answered.set()
+
+        assert await asyncio.gather(*requests) == [EntitlementCheck.ENTITLED] * 10
+        access.revenuecat.check_entitlement.assert_awaited_once()
+
+    async def test_another_workers_call_in_flight_is_not_repeated(self, access):
+        access.cache.values[RECHECK_KEY] = "in_flight"
+
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.UNAVAILABLE
+        )
+        access.revenuecat.check_entitlement.assert_not_called()
+
+    async def test_a_claim_lost_to_another_worker_is_not_repeated(self, access):
+        """Another worker claims the call between this one's read and claim."""
+        claim = access.cache.add
+
+        async def claimed_first(key, value, ttl_seconds):
+            access.cache.values[key] = "in_flight"
+            return await claim(key, value, ttl_seconds)
+
+        access.cache.add = claimed_first
+
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.UNAVAILABLE
+        )
+        access.revenuecat.check_entitlement.assert_not_called()
+
+    async def test_without_a_shared_cache_the_window_holds_in_process(
+        self, access, monkeypatch
+    ):
+        monkeypatch.setattr(premium_check, "_get_cache", lambda: None)
+
+        for _ in range(5):
+            assert await premium_check.revenuecat_access(USER_ID) is (
+                EntitlementCheck.NOT_ENTITLED
+            )
+
+        access.revenuecat.check_entitlement.assert_awaited_once()
+
+    async def test_a_cache_that_cannot_answer_still_holds_the_window(self, access):
+        access.cache.add = AsyncMock(return_value=None)  # Redis unavailable
+
+        for _ in range(5):
+            await premium_check.revenuecat_access(USER_ID)
+
+        access.revenuecat.check_entitlement.assert_awaited_once()
+
+    @pytest.mark.parametrize("shared_cache", [True, False])
+    async def test_forget_lets_the_next_refusal_ask_again(
+        self, access, monkeypatch, shared_cache
+    ):
+        if not shared_cache:
+            monkeypatch.setattr(premium_check, "_get_cache", lambda: None)
+        await premium_check.revenuecat_access(USER_ID)
+
+        await premium_check.forget_revenuecat_check(USER_ID)
+
+        assert RECHECK_KEY not in access.cache.values
+        access.revenuecat.check_entitlement.return_value = EntitlementCheck.ENTITLED
+        assert await premium_check.revenuecat_access(USER_ID) is (
+            EntitlementCheck.ENTITLED
+        )
+        assert access.revenuecat.check_entitlement.await_count == 2
+
+
+def test_refused_paid_requests_ask_revenuecat_once_a_window(access, monkeypatch):
+    """require_active_subscription runs before the route's own rate limiter,
+    so the recheck window is what bounds the RevenueCat reads refused
+    requests cause: 20 refusals in a row make one call."""
+    from fastapi import Depends, FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.dependencies import subscription_access as enforcement
+    from src.api.dependencies.auth import get_current_user_id
+    from src.api.middleware.rate_limit import limiter
+
+    class _DatabaseDenies:
+        async def send(self, _query):
+            return False
+
+    monkeypatch.setenv("SUBSCRIPTION_ACCESS_ENABLED", "true")
+    monkeypatch.setenv("SUBSCRIPTION_ENFORCEMENT_ENABLED", "true")
+    monkeypatch.setattr(enforcement, "_event_bus", lambda: _DatabaseDenies())
+    app = FastAPI()
+
+    @app.post("/paid", dependencies=[Depends(enforcement.require_active_subscription)])
+    @limiter.limit("2/minute")
+    async def paid(request: Request):
+        return {"ok": True}
+
+    app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+    client = TestClient(app)
+
+    codes = [client.post("/paid").status_code for _ in range(20)]
+
+    assert codes == [402] * 20  # the limiter never ran: the 402 came first
+    access.revenuecat.check_entitlement.assert_awaited_once()
 
 
 @pytest.mark.asyncio

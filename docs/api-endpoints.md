@@ -180,6 +180,18 @@ When RevenueCat cannot answer, the database's denial stands and the route
 answers `402`: enforcement stays a database decision, and a `503` here would
 not unblock anyone.
 
+The dependency runs before the route's rate limiter, so a refused caller is
+never rate limited there. RevenueCat is asked at most once per user per 60 s
+instead, whatever it answers: concurrent refusals in one worker share the
+call, and its answer is kept 60 s under
+`subscription_revenuecat_check:<user_id>` in Redis (in the worker's memory
+while Redis is unavailable). Later
+refusals in that window answer `402` without a call, and so does a request
+that finds another worker's call still in flight. A refresh
+(`POST /v1/me/entitlements/refresh`), a webhook whose access sync succeeded
+and a web-funnel finalize clear the key, so a payer the database still
+refuses after one of them is checked again at once.
+
 Gated: the AI routes behind features the mobile app hard-gates with
 `requireSubscriptionAccess` (tests pin this exact list in
 `tests/unit/api/test_subscription_enforcement.py`):

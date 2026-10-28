@@ -45,6 +45,8 @@ async def require_active_subscription(
     Premium check's 60 s access cache): a payer whose purchase has no row
     yet (a webhook not yet applied or lost, a promotional grant) keeps the
     route. When RevenueCat cannot answer, the database's denial stands.
+    This runs before the route's rate limiter, so RevenueCat is asked at most
+    once per user per minute (premium_check.revenuecat_access).
     """
     if not subscription_enforcement_enabled():
         return
