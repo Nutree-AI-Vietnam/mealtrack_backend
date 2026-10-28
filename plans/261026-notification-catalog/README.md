@@ -105,7 +105,11 @@ Times are local. "Slot" means the user's meal-reminder time.
 Follow-ups (not done):
 - FCM temporary failures are marked `failed` instead of retried.
 - Nothing cleans up old outbox rows.
-- Turn on `ENGAGEMENT_PUSH_ENABLED` in the worker process.
+- Turn on `ENGAGEMENT_PUSH_ENABLED` on the API service. Every API process runs
+  the dispatcher, and the webhook queues nothing while the flag is off.
+- The app does not read the per-meal switches or the water reminder time
+  (PR #803) yet. The planner still uses the single meal switch and 15:30
+  for water, which is also the server default.
 
 ## Rotation and the per-day cap
 
