@@ -297,8 +297,8 @@ def _local_put(user_id: str, value: str) -> None:
 
 
 def _stored_answer(value: object) -> EntitlementCheck | None:
-    if value is None:
-        return None
+    if not isinstance(value, str):
+        return None  # nothing stored, or not a value this module writes
     if value == _CHECK_IN_FLIGHT:
         return EntitlementCheck.UNAVAILABLE
     try:
