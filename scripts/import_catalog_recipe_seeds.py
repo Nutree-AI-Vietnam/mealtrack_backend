@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.app.services.catalog_meal_seed_import_service import CatalogMealSeedImporter
 from src.bootstrap.inline_catalog_preparation import prepare_pending_catalog
 from src.domain.services.meal_recommendation.catalog_recipe_seed_validator import (
+    ALLOWED_CUISINES,
     PRODUCTION_CUISINE_COUNTS,
     REQUIRED_CUISINES,
     CatalogSeedValidationResult,
@@ -145,7 +146,7 @@ def main() -> None:
             else PRODUCTION_CUISINE_COUNTS
         ),
         allow_declared_expected_count_mismatch=args.partial,
-        allowed_cuisines=None if args.partial else REQUIRED_CUISINES,
+        allowed_cuisines=None if args.partial else ALLOWED_CUISINES,
         required_cuisines=() if args.partial else REQUIRED_CUISINES,
     )
 

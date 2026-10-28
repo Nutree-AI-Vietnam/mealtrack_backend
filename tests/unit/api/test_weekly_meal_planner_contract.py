@@ -569,3 +569,67 @@ def test_patch_requires_people_when_preferences_are_updated():
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"Accept-Language": "vi", "X-Timezone": "America/Chicago"}, "VN"),
+        ({"Accept-Language": "en", "X-Timezone": "America/Chicago"}, "US"),
+        ({"Accept-Language": "en", "X-Timezone": "Asia/Ho_Chi_Minh"}, "VN"),
+        ({"Accept-Language": "en", "X-Timezone": "Europe/Paris"}, None),
+    ],
+)
+def test_current_plan_auto_generates_for_the_users_food_region(headers, expected):
+    bus = _Bus(plan=None)
+    response = TestClient(_app(bus=bus)).get("/v1/meal-plans/current", headers=headers)
+
+    assert response.status_code == 200
+    assert bus.generate_commands[0].preferences.region == expected
+
+
+def test_generate_infers_region_only_when_the_client_omits_it():
+    bus = _Bus()
+    client = TestClient(_app(bus=bus))
+    headers = {
+        "Accept-Language": "en",
+        "X-Timezone": "America/New_York",
+        "Idempotency-Key": "generate-region-1",
+    }
+
+    inferred = client.post(
+        "/v1/meal-plans/generate",
+        json={"week_start_date": "2026-10-26"},
+        headers=headers,
+    )
+    explicit = client.post(
+        "/v1/meal-plans/generate",
+        json={"week_start_date": "2026-10-26", "preferences": {"region": "VN"}},
+        headers={**headers, "Idempotency-Key": "generate-region-2"},
+    )
+
+    assert inferred.status_code == 201
+    assert explicit.status_code == 201
+    assert [command.preferences.region for command in bus.generate_commands] == [
+        "US",
+        "VN",
+    ]
+
+
+def test_generate_rejects_an_unsupported_region():
+    response = TestClient(_app()).post(
+        "/v1/meal-plans/generate",
+        json={"week_start_date": "2026-10-26", "preferences": {"region": "FR"}},
+        headers={"Idempotency-Key": "generate-region-3"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_recipe_list_forwards_region_for_home_cuisine_ordering():
+    bus = _Bus()
+    response = TestClient(_app(bus=bus)).get("/v1/recipes?meal_type=dinner&region=US")
+
+    assert response.status_code == 200
+    assert bus.recipe_query.region == "US"
+    assert TestClient(_app()).get("/v1/recipes?region=FR").status_code == 422

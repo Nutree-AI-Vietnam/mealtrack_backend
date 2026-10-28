@@ -192,6 +192,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                     cuisine=preferences.cuisine,
                     dislikes=preferences.dislikes,
                     allergies=preferences.allergies,
+                    region=preferences.region,
                 )
             row.preferences = preferences.to_dict()
             row.people = preferences.people

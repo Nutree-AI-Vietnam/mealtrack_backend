@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import unicodedata
 
+from src.domain.model.weekly_meal_planner.regional_meal_profile import (
+    regional_meal_profile,
+)
+
 # Familiar breakfast shapes. Luxury ingredients are rejected separately.
 _BREAKFAST_FORMS = (
     "trung",
@@ -72,20 +76,31 @@ def practicality_rank(
     total_minutes: int | None = None,
     ingredient_count: int | None = None,
     non_meal: bool = False,
+    region: str | None = None,
 ) -> tuple[int, int]:
     """Return a sort key where a lower pair is an easier, better-fitting meal.
 
     The first number is how well the dish fits the meal time. The second is how
     ordinary the cooking is. Salmon porridge sorts behind eggs for breakfast,
-    and a named request can still select it later.
+    and a named request can still select it later. ``region`` adds the
+    breakfasts and everyday foods of that country, so phở is a Vietnamese
+    breakfast and a cheese omelet is an ordinary American one.
     """
     if non_meal:
         return (3, 2)
+    profile = regional_meal_profile(region)
+    breakfast_forms: tuple[str, ...] = _BREAKFAST_FORMS
+    luxury_foods: tuple[str, ...] = _LUXURY
+    if profile is not None:
+        breakfast_forms += profile.breakfast_forms
+        luxury_foods = tuple(
+            food for food in _LUXURY if food not in profile.everyday_foods
+        )
     folded = _fold(name)
-    luxury = _contains(folded, _LUXURY)
+    luxury = _contains(folded, luxury_foods)
     clickbait = _contains(folded, _CLICKBAIT)
     if meal_type == "breakfast":
-        breakfast_form = _contains(folded, _BREAKFAST_FORMS)
+        breakfast_form = _contains(folded, breakfast_forms)
         dinner_plate = _contains(folded, _DINNER_PLATES)
         if luxury or (dinner_plate and not breakfast_form):
             occasion = 2

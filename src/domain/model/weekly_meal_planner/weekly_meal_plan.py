@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
+from src.domain.model.weekly_meal_planner.regional_meal_profile import (
+    SUPPORTED_MEAL_REGIONS,
+    normalize_meal_region,
+)
+
 WEEKLY_DAYS = 7
 # Slot order is breakfast, lunch, dinner.
 WEEKLY_SLOTS_PER_DAY = 3
@@ -46,8 +51,12 @@ class WeeklyMealPlanPreferences:
     cuisine: str | None = None
     dislikes: tuple[str, ...] = ()
     allergies: tuple[str, ...] = ()
+    # Country food culture (VN, US) that leads the plan with home meals.
+    region: str | None = None
 
     def __post_init__(self) -> None:
+        if self.region is not None and self.region not in SUPPORTED_MEAL_REGIONS:
+            raise ValueError("region must be a supported meal region")
         if not 1 <= self.people <= 6:
             raise ValueError("people must be between 1 and 6")
         if self.diet not in {"any", "vegetarian", "no-pork"}:
@@ -67,6 +76,7 @@ class WeeklyMealPlanPreferences:
             cuisine=_clean_text(payload.get("cuisine"), 80),
             dislikes=_csv_values(payload.get("dislikes")),
             allergies=_csv_values(payload.get("allergies")),
+            region=normalize_meal_region(payload.get("region")),
         )
 
     def to_dict(self) -> dict:
@@ -77,6 +87,7 @@ class WeeklyMealPlanPreferences:
             "cuisine": self.cuisine,
             "dislikes": ", ".join(self.dislikes),
             "allergies": ", ".join(self.allergies),
+            "region": self.region,
         }
 
 

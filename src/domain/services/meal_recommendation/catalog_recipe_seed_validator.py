@@ -23,6 +23,8 @@ ALLOWED_MANIFEST_INGREDIENT_CATEGORIES: frozenset[str] = (
 )
 
 REQUIRED_CUISINES = ("vietnamese", "japanese", "korean")
+# Labels a seed may carry. American recipes serve US users of the weekly planner.
+ALLOWED_CUISINES = (*REQUIRED_CUISINES, "american")
 ALLOWED_MEAL_TYPES = ("breakfast", "lunch", "dinner", "snack")
 REQUIRED_COVERAGE_MEAL_TYPES = ("breakfast", "lunch", "dinner")
 PRODUCTION_CUISINE_COUNTS = {
@@ -68,7 +70,7 @@ def validate_catalog_seed_manifest(
     min_per_cuisine_meal_type: int = 5,
     expected_cuisine_counts: dict[str, int] | None = PRODUCTION_CUISINE_COUNTS,
     allow_declared_expected_count_mismatch: bool = False,
-    allowed_cuisines: Collection[str] | None = REQUIRED_CUISINES,
+    allowed_cuisines: Collection[str] | None = ALLOWED_CUISINES,
     required_cuisines: Collection[str] | None = REQUIRED_CUISINES,
 ) -> CatalogSeedValidationResult:
     """Validate catalog recipe seed manifest before any DB writes.

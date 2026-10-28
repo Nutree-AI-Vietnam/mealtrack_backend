@@ -5,6 +5,9 @@ from dataclasses import replace
 from sqlalchemy import exists, func, or_, select
 
 from src.domain.model.weekly_meal_planner import SLOT_MEAL_TYPES
+from src.domain.model.weekly_meal_planner.regional_meal_profile import (
+    regional_meal_profile,
+)
 from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_preferences,
@@ -119,6 +122,7 @@ class CatalogProjectionRepository:
         meal_type=None,
         dislikes=(),
         allergies=(),
+        region=None,
         limit=20,
         offset=0,
     ):
@@ -136,6 +140,7 @@ class CatalogProjectionRepository:
                 meal_type=meal_type,
                 dislikes=dislikes,
                 codes=codes,
+                region=region,
                 limit=limit,
                 offset=offset,
             )
@@ -151,7 +156,7 @@ class CatalogProjectionRepository:
         base = self._base().where(*filters)
         if meal_type in SLOT_MEAL_TYPES:
             return await self._practical_page(
-                base, meal_type=meal_type, limit=limit, offset=offset
+                base, meal_type=meal_type, region=region, limit=limit, offset=offset
             )
         total = (
             await self.repository._execute_catalog(
@@ -201,13 +206,23 @@ class CatalogProjectionRepository:
             projected=True,
         )
 
-    async def _practical_page(self, base, *, meal_type: str, limit: int, offset: int):
-        """Page meal-time lists with everyday dishes ahead of fussy ones."""
+    async def _practical_page(
+        self,
+        base,
+        *,
+        meal_type: str,
+        limit: int,
+        offset: int,
+        region: str | None = None,
+    ):
+        """Page meal-time lists with home and everyday dishes ahead of fussy ones."""
+        profile = regional_meal_profile(region)
         scored = (
             await self.repository._execute_catalog(
                 base.with_only_columns(
                     Projection.catalog_meal_id,
                     Projection.name_casefold,
+                    Projection.cuisine_casefold,
                     Projection.total_minutes,
                     Projection.popularity_rank,
                     Projection.non_meal,
@@ -217,11 +232,13 @@ class CatalogProjectionRepository:
         ranked = sorted(
             scored,
             key=lambda row: (
+                profile.cuisine_rank(row.cuisine_casefold) if profile else 0,
                 practicality_rank(
                     row.name_casefold,
                     meal_type,
                     total_minutes=int(row.total_minutes or 0),
                     non_meal=bool(row.non_meal),
+                    region=region,
                 ),
                 row.popularity_rank is None,
                 row.popularity_rank if row.popularity_rank is not None else 0,

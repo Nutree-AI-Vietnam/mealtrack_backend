@@ -12,5 +12,6 @@ class ListRecipesQuery(Query):
     meal_type: str | None = None
     allergies: tuple[str, ...] = ()
     dislikes: tuple[str, ...] = ()
+    region: str | None = None
     limit: int = 20
     offset: int = 0

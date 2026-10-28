@@ -16,8 +16,12 @@ async def legacy_recipe_page(
     codes,
     limit,
     offset,
+    region=None,
 ):
     # Legacy reads remain the authority until every mandatory query field is current.
+    from src.domain.model.weekly_meal_planner.regional_meal_profile import (
+        regional_meal_profile,
+    )
     from src.domain.services.weekly_meal_planner.allergen_constraint import (
         recipe_excluded_by_allergen,
     )
@@ -71,8 +75,10 @@ async def legacy_recipe_page(
         if recipe_excluded_by_allergen(meal.allergen_codes, codes):
             continue
         filtered.append(meal)
+    profile = regional_meal_profile(region) if meal_type in SLOT_MEAL_TYPES else None
     filtered.sort(
         key=lambda meal: (
+            profile.cuisine_rank(meal.cuisine) if profile else 0,
             practicality_rank(
                 meal.name,
                 meal_type,
@@ -80,6 +86,7 @@ async def legacy_recipe_page(
                 + int(meal.cook_time_minutes or 0),
                 ingredient_count=len(meal.ingredients),
                 non_meal=is_non_meal_title(meal.name, meal.tag),
+                region=region,
             )
             if meal_type in SLOT_MEAL_TYPES
             else (0, 0),

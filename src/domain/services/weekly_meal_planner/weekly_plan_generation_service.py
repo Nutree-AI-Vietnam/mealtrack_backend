@@ -15,6 +15,10 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanPreferences,
     meal_type_for_slot,
 )
+from src.domain.model.weekly_meal_planner.regional_meal_profile import (
+    RegionalMealProfile,
+    regional_meal_profile,
+)
 from src.domain.services.meal_recommendation.calorie_allocation_policy import (
     CalorieAllocationPolicy,
 )
@@ -40,7 +44,7 @@ class GeneratedSlot:
 class WeeklyPlanGenerationService:
     """Generate stable selections without provider calls or persistence."""
 
-    algorithm_version = "v2"
+    algorithm_version = "v3"
 
     def generate(
         self,
@@ -66,7 +70,8 @@ class WeeklyPlanGenerationService:
                 for slot in range(WEEKLY_SLOTS_PER_DAY)
             )
 
-        targets = _slot_calorie_targets(daily_calories)
+        profile = regional_meal_profile(preferences.region)
+        targets = _slot_calorie_targets(daily_calories, profile)
         slot_candidates = [
             [
                 (meal, abs(meal.calories - targets[slot]))
@@ -88,7 +93,9 @@ class WeeklyPlanGenerationService:
                     eligible,
                     key=lambda item: (
                         1 if item[0].id in day_used else 0,
-                        *_practicality(item[0], slot),
+                        # Home food leads; other cuisines fill a slot it cannot.
+                        _cuisine_rank(item[0], profile),
+                        *_practicality(item[0], slot, preferences.region),
                         used_counts.get(item[0].id, 0),
                         item[1],
                         self._stable_rank(item[0], user_id, week_start_date, day, slot),
@@ -164,9 +171,16 @@ class WeeklyPlanGenerationService:
         return WeeklyPlanGenerationService._supports_slot(meal, slot_index)
 
     @staticmethod
-    def selection_rank(meal: CatalogMeal, slot_index: int) -> tuple[int, int]:
+    def selection_rank(
+        meal: CatalogMeal, slot_index: int, region: str | None = None
+    ) -> tuple[int, int]:
         """Prefer a simple meal that fits this slot over a closer calorie match."""
-        return _practicality(meal, slot_index)
+        return _practicality(meal, slot_index, region)
+
+    @staticmethod
+    def regional_rank(meal: CatalogMeal, preferences: WeeklyMealPlanPreferences) -> int:
+        """Rank home cuisine 0, a familiar one 1, others 2; 0 with no region."""
+        return _cuisine_rank(meal, regional_meal_profile(preferences.region))
 
     @staticmethod
     def _soft_eligible(
@@ -320,7 +334,9 @@ def _is_non_meal_recipe(meal: CatalogMeal) -> bool:
     return is_non_meal_title(meal.name, meal.tag)
 
 
-def _practicality(meal: CatalogMeal, slot_index: int) -> tuple[int, int]:
+def _practicality(
+    meal: CatalogMeal, slot_index: int, region: str | None = None
+) -> tuple[int, int]:
     features = meal.selection_features
     non_meal = features.non_meal if features else _is_non_meal_recipe(meal)
     minutes = _total_minutes(meal)
@@ -330,11 +346,23 @@ def _practicality(meal: CatalogMeal, slot_index: int) -> tuple[int, int]:
         total_minutes=minutes or None,
         ingredient_count=len(meal.ingredients),
         non_meal=non_meal,
+        region=region,
     )
 
 
-def _slot_calorie_targets(daily_calories: int) -> tuple[int, ...]:
-    allocations = CalorieAllocationPolicy().allocate(max(1, daily_calories))
+def _cuisine_rank(meal: CatalogMeal, profile: RegionalMealProfile | None) -> int:
+    return profile.cuisine_rank(meal.cuisine) if profile is not None else 0
+
+
+def _slot_calorie_targets(
+    daily_calories: int, profile: RegionalMealProfile | None = None
+) -> tuple[int, ...]:
+    policy = (
+        CalorieAllocationPolicy(weights=profile.slot_calorie_shares)
+        if profile is not None
+        else CalorieAllocationPolicy()
+    )
+    allocations = policy.allocate(max(1, daily_calories))
     return tuple(
         allocations[meal_type_for_slot(slot)] for slot in range(WEEKLY_SLOTS_PER_DAY)
     )

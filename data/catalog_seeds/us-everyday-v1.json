@@ -1,0 +1,4007 @@
+{
+  "release_key": "us-everyday-v1",
+  "expected_recipe_count": 49,
+  "notes": "Everyday American meals for US users of the weekly planner. One adult serving per recipe; quantities are grams so nutrition resolves from food references. Import with --partial after a --dry-run review.",
+  "recipes": [
+    {
+      "recipe_key": "us-veggie-scrambled-eggs-toast",
+      "cuisine": "american",
+      "name": "Veggie Scrambled Eggs with Whole-Wheat Toast",
+      "description": "Soft scrambled eggs with spinach and bell pepper, served with whole-wheat toast.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5001,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 8,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, high-protein",
+      "equipment": "nonstick skillet, toaster",
+      "ingredients": [
+        {
+          "name": "Egg",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Spinach",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Red bell pepper",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Butter",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Whole wheat bread",
+          "quantity": 56,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Prep",
+          "description": "Dice the bell pepper and roughly chop the spinach."
+        },
+        {
+          "step_number": 2,
+          "title": "Cook vegetables",
+          "description": "Melt the butter in a nonstick skillet over medium heat and cook the pepper for 2 minutes, then add the spinach until wilted."
+        },
+        {
+          "step_number": 3,
+          "title": "Scramble",
+          "description": "Whisk the eggs with a pinch of salt, pour into the pan and stir gently until just set."
+        },
+        {
+          "step_number": 4,
+          "title": "Serve",
+          "description": "Toast the bread and serve with the eggs."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, wheat, milk"
+    },
+    {
+      "recipe_key": "us-oatmeal-berries-walnuts",
+      "cuisine": "american",
+      "name": "Oatmeal with Blueberries and Walnuts",
+      "description": "Creamy rolled oats cooked in milk and topped with blueberries, walnuts and a little honey.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5002,
+      "prep_time_minutes": 2,
+      "cook_time_minutes": 6,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, vegetarian, high-fiber",
+      "equipment": "small saucepan",
+      "ingredients": [
+        {
+          "name": "Rolled oats",
+          "quantity": 50,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Milk, 2% fat",
+          "quantity": 240,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Blueberries",
+          "quantity": 75,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Walnuts",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Honey",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Simmer",
+          "description": "Bring the milk to a gentle simmer, stir in the oats and cook for 5 minutes, stirring often."
+        },
+        {
+          "step_number": 2,
+          "title": "Top",
+          "description": "Spoon into a bowl and top with blueberries, chopped walnuts and honey."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk, tree nuts"
+    },
+    {
+      "recipe_key": "us-greek-yogurt-parfait",
+      "cuisine": "american",
+      "name": "Greek Yogurt Parfait with Granola and Strawberries",
+      "description": "Layers of plain Greek yogurt, sliced strawberries and crunchy granola.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5003,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 0,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "no-cook, vegetarian, high-protein",
+      "equipment": "glass or bowl",
+      "ingredients": [
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 200,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Granola",
+          "quantity": 40,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Strawberries",
+          "quantity": 100,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Honey",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Slice",
+          "description": "Hull and slice the strawberries."
+        },
+        {
+          "step_number": 2,
+          "title": "Layer",
+          "description": "Layer half the yogurt, half the strawberries and half the granola, then repeat."
+        },
+        {
+          "step_number": 3,
+          "title": "Finish",
+          "description": "Drizzle with honey and eat right away so the granola stays crisp."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk, wheat, tree nuts"
+    },
+    {
+      "recipe_key": "us-avocado-toast-egg",
+      "cuisine": "american",
+      "name": "Avocado Toast with a Fried Egg",
+      "description": "Whole-wheat toast with mashed avocado, cherry tomatoes and a fried egg.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5004,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 4,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, vegetarian",
+      "equipment": "nonstick skillet, toaster",
+      "ingredients": [
+        {
+          "name": "Whole wheat bread",
+          "quantity": 56,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Avocado",
+          "quantity": 70,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Egg",
+          "quantity": 50,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Cherry tomatoes",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Lemon juice",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Mash",
+          "description": "Mash the avocado with lemon juice, salt and pepper."
+        },
+        {
+          "step_number": 2,
+          "title": "Fry",
+          "description": "Fry the egg in the olive oil until the white is set."
+        },
+        {
+          "step_number": 3,
+          "title": "Assemble",
+          "description": "Toast the bread, spread with avocado, add halved tomatoes and top with the egg."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, wheat"
+    },
+    {
+      "recipe_key": "us-spinach-cheddar-omelet",
+      "cuisine": "american",
+      "name": "Spinach and Cheddar Omelet",
+      "description": "A three-egg omelet filled with spinach and cheddar, with a slice of whole-wheat toast.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5005,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 6,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, vegetarian, high-protein",
+      "equipment": "nonstick skillet",
+      "ingredients": [
+        {
+          "name": "Egg",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Spinach",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 20,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Butter",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Whole wheat bread",
+          "quantity": 28,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Wilt spinach",
+          "description": "Melt half the butter in a skillet and wilt the spinach; set aside."
+        },
+        {
+          "step_number": 2,
+          "title": "Cook eggs",
+          "description": "Whisk the eggs, add the remaining butter to the pan and pour in the eggs, pulling the edges in as they set."
+        },
+        {
+          "step_number": 3,
+          "title": "Fill",
+          "description": "Scatter spinach and cheddar over one half, fold and cook 1 minute more."
+        },
+        {
+          "step_number": 4,
+          "title": "Serve",
+          "description": "Serve with the toast."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk, wheat"
+    },
+    {
+      "recipe_key": "us-breakfast-burrito",
+      "cuisine": "american",
+      "name": "Egg and Black Bean Breakfast Burrito",
+      "description": "Scrambled eggs, black beans, cheddar and salsa wrapped in a flour tortilla.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5006,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 7,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, vegetarian, make-ahead",
+      "equipment": "nonstick skillet",
+      "ingredients": [
+        {
+          "name": "Flour tortilla",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Egg",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Black beans, canned, drained",
+          "quantity": 60,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Salsa",
+          "quantity": 40,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Warm beans",
+          "description": "Rinse the beans and warm them in the oiled skillet for 2 minutes."
+        },
+        {
+          "step_number": 2,
+          "title": "Scramble",
+          "description": "Add the whisked eggs and stir until just set."
+        },
+        {
+          "step_number": 3,
+          "title": "Wrap",
+          "description": "Warm the tortilla, fill with eggs, beans, cheddar and salsa, then roll up tightly."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk, wheat"
+    },
+    {
+      "recipe_key": "us-peanut-butter-banana-toast",
+      "cuisine": "american",
+      "name": "Peanut Butter Banana Toast",
+      "description": "Whole-wheat toast spread with peanut butter and topped with banana and cinnamon.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5007,
+      "prep_time_minutes": 4,
+      "cook_time_minutes": 2,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "quick, vegetarian",
+      "equipment": "toaster",
+      "ingredients": [
+        {
+          "name": "Whole wheat bread",
+          "quantity": 56,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Peanut butter",
+          "quantity": 32,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Banana",
+          "quantity": 100,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Ground cinnamon",
+          "quantity": 1,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Toast",
+          "description": "Toast the bread."
+        },
+        {
+          "step_number": 2,
+          "title": "Top",
+          "description": "Spread with peanut butter, add banana slices and dust with cinnamon."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "peanuts, wheat"
+    },
+    {
+      "recipe_key": "us-apple-cinnamon-overnight-oats",
+      "cuisine": "american",
+      "name": "Apple Cinnamon Overnight Oats",
+      "description": "Oats soaked overnight in milk and yogurt with apple, chia and cinnamon.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5008,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 0,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "make-ahead, no-cook, vegetarian, high-fiber",
+      "equipment": "jar with lid",
+      "ingredients": [
+        {
+          "name": "Rolled oats",
+          "quantity": 50,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Milk, 2% fat",
+          "quantity": 180,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 60,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Apple",
+          "quantity": 100,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Chia seeds",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Maple syrup",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Ground cinnamon",
+          "quantity": 1,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Mix",
+          "description": "Stir the oats, milk, yogurt, chia, maple syrup and cinnamon together in a jar."
+        },
+        {
+          "step_number": 2,
+          "title": "Chill",
+          "description": "Cover and refrigerate overnight, or at least 4 hours."
+        },
+        {
+          "step_number": 3,
+          "title": "Top",
+          "description": "Dice the apple and stir it in before eating."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-whole-grain-blueberry-pancakes",
+      "cuisine": "american",
+      "name": "Whole-Grain Blueberry Pancakes",
+      "description": "Fluffy whole-wheat pancakes studded with blueberries and a drizzle of maple syrup.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5009,
+      "prep_time_minutes": 8,
+      "cook_time_minutes": 10,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weekend, vegetarian",
+      "equipment": "mixing bowl, skillet or griddle",
+      "ingredients": [
+        {
+          "name": "Whole wheat flour",
+          "quantity": 50,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Egg",
+          "quantity": 50,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Milk, 2% fat",
+          "quantity": 120,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Baking powder",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Canola oil",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Blueberries",
+          "quantity": 75,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Maple syrup",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Mix batter",
+          "description": "Whisk the flour and baking powder, then stir in the egg, milk and oil until just combined."
+        },
+        {
+          "step_number": 2,
+          "title": "Cook",
+          "description": "Pour small rounds onto a hot greased griddle, scatter with blueberries and flip when bubbles form."
+        },
+        {
+          "step_number": 3,
+          "title": "Serve",
+          "description": "Serve warm with maple syrup."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk, wheat"
+    },
+    {
+      "recipe_key": "us-turkey-sausage-egg-muffin",
+      "cuisine": "american",
+      "name": "Turkey Sausage and Egg English Muffin",
+      "description": "A toasted whole-wheat English muffin with an egg, a turkey sausage patty and cheddar.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5010,
+      "prep_time_minutes": 3,
+      "cook_time_minutes": 8,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, high-protein",
+      "equipment": "nonstick skillet, toaster",
+      "ingredients": [
+        {
+          "name": "Whole wheat English muffin",
+          "quantity": 66,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Egg",
+          "quantity": 50,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Turkey sausage patty",
+          "quantity": 40,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Cook sausage",
+          "description": "Brown the turkey sausage patty for 3 to 4 minutes per side until cooked through."
+        },
+        {
+          "step_number": 2,
+          "title": "Cook egg",
+          "description": "Fry the egg in the same pan, breaking the yolk so it cooks evenly."
+        },
+        {
+          "step_number": 3,
+          "title": "Assemble",
+          "description": "Toast the muffin and stack the sausage, egg and cheddar inside."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk, wheat"
+    },
+    {
+      "recipe_key": "us-cottage-cheese-peach-bowl",
+      "cuisine": "american",
+      "name": "Cottage Cheese Bowl with Peaches and Almonds",
+      "description": "Low-fat cottage cheese topped with sliced peaches, almonds and honey.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5011,
+      "prep_time_minutes": 4,
+      "cook_time_minutes": 0,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "no-cook, vegetarian, high-protein",
+      "equipment": "bowl",
+      "ingredients": [
+        {
+          "name": "Cottage cheese, low fat",
+          "quantity": 200,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Peaches",
+          "quantity": 120,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Almonds",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Honey",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Slice",
+          "description": "Slice the peaches."
+        },
+        {
+          "step_number": 2,
+          "title": "Assemble",
+          "description": "Spoon the cottage cheese into a bowl and top with peaches, chopped almonds and honey."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk, tree nuts"
+    },
+    {
+      "recipe_key": "us-veggie-egg-muffin-cups",
+      "cuisine": "american",
+      "name": "Veggie Egg Muffin Cups",
+      "description": "Baked egg cups with peppers, onion, spinach and cheddar, great for busy mornings.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5012,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 20,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "make-ahead, vegetarian, high-protein",
+      "equipment": "muffin tin, oven",
+      "ingredients": [
+        {
+          "name": "Egg",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Red bell pepper",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Onion",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Spinach",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Prep",
+          "description": "Heat the oven to 375°F (190°C) and oil 4 muffin cups."
+        },
+        {
+          "step_number": 2,
+          "title": "Fill",
+          "description": "Divide the diced vegetables and cheese between the cups."
+        },
+        {
+          "step_number": 3,
+          "title": "Bake",
+          "description": "Pour in the whisked, seasoned eggs and bake 18 to 20 minutes until set."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk"
+    },
+    {
+      "recipe_key": "us-sweet-potato-breakfast-hash",
+      "cuisine": "american",
+      "name": "Sweet Potato Breakfast Hash with Eggs",
+      "description": "Crispy sweet potato, onion and pepper hash topped with two eggs.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5013,
+      "prep_time_minutes": 8,
+      "cook_time_minutes": 18,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weekend, vegetarian",
+      "equipment": "large skillet",
+      "ingredients": [
+        {
+          "name": "Sweet potato",
+          "quantity": 150,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Onion",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Green bell pepper",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Egg",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Smoked paprika",
+          "quantity": 1,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Cook potato",
+          "description": "Dice the sweet potato and cook in the oil over medium heat for 10 minutes, stirring now and then."
+        },
+        {
+          "step_number": 2,
+          "title": "Add vegetables",
+          "description": "Add the diced onion, pepper and paprika and cook 5 minutes more."
+        },
+        {
+          "step_number": 3,
+          "title": "Add eggs",
+          "description": "Make two wells, crack in the eggs, cover and cook until the whites are set."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg"
+    },
+    {
+      "recipe_key": "us-bagel-lox-cream-cheese",
+      "cuisine": "american",
+      "name": "Whole-Wheat Bagel with Smoked Salmon and Cream Cheese",
+      "description": "A toasted whole-wheat bagel with cream cheese, smoked salmon, cucumber and red onion.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5014,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 2,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, no-cook",
+      "equipment": "toaster",
+      "ingredients": [
+        {
+          "name": "Whole wheat bagel",
+          "quantity": 95,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cream cheese",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Smoked salmon",
+          "quantity": 50,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Cucumber",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Red onion",
+          "quantity": 10,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Toast",
+          "description": "Split and toast the bagel."
+        },
+        {
+          "step_number": 2,
+          "title": "Assemble",
+          "description": "Spread with cream cheese and top with smoked salmon, thin cucumber slices and red onion."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "fish, milk, wheat"
+    },
+    {
+      "recipe_key": "us-egg-pepper-breakfast-quesadilla",
+      "cuisine": "american",
+      "name": "Egg and Pepper Breakfast Quesadilla",
+      "description": "Scrambled eggs, peppers and melted cheese crisped in a whole-wheat tortilla.",
+      "meal_types": [
+        "breakfast"
+      ],
+      "popularity_rank": 5015,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 8,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "quick, vegetarian",
+      "equipment": "nonstick skillet",
+      "ingredients": [
+        {
+          "name": "Whole wheat tortilla",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Egg",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Red bell pepper",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Monterey Jack cheese",
+          "quantity": 20,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Salsa",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Scramble",
+          "description": "Soften the diced pepper in the oil, add the eggs and scramble until just set."
+        },
+        {
+          "step_number": 2,
+          "title": "Fill",
+          "description": "Spread the eggs and cheese over half the tortilla and fold."
+        },
+        {
+          "step_number": 3,
+          "title": "Crisp",
+          "description": "Cook the quesadilla 2 minutes per side until golden; serve with salsa."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk, wheat"
+    },
+    {
+      "recipe_key": "us-turkey-avocado-sandwich",
+      "cuisine": "american",
+      "name": "Turkey Avocado Sandwich with Baby Carrots",
+      "description": "Sliced turkey, avocado, lettuce and tomato on whole-wheat bread, with baby carrots on the side.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5016,
+      "prep_time_minutes": 8,
+      "cook_time_minutes": 0,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, no-cook, packable",
+      "equipment": "cutting board",
+      "ingredients": [
+        {
+          "name": "Whole wheat bread",
+          "quantity": 56,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Turkey breast, deli sliced",
+          "quantity": 85,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Avocado",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Lettuce",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Tomato",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Yellow mustard",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Baby carrots",
+          "quantity": 80,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Spread",
+          "description": "Mash the avocado onto one slice of bread and spread mustard on the other."
+        },
+        {
+          "step_number": 2,
+          "title": "Build",
+          "description": "Layer the turkey, lettuce and tomato, close and cut in half."
+        },
+        {
+          "step_number": 3,
+          "title": "Serve",
+          "description": "Pack or serve with the baby carrots."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "wheat, mustard"
+    },
+    {
+      "recipe_key": "us-grilled-chicken-caesar-salad",
+      "cuisine": "american",
+      "name": "Grilled Chicken Caesar Salad",
+      "description": "Crisp romaine with grilled chicken, parmesan, croutons and Caesar dressing.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5017,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 12,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, high-protein",
+      "equipment": "grill pan",
+      "ingredients": [
+        {
+          "name": "Chicken breast",
+          "quantity": 120,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Romaine lettuce",
+          "quantity": 120,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Parmesan cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Caesar dressing",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Croutons",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Grill chicken",
+          "description": "Rub the chicken with oil, salt and pepper and grill 5 to 6 minutes per side until cooked through; rest and slice."
+        },
+        {
+          "step_number": 2,
+          "title": "Toss",
+          "description": "Chop the romaine and toss with the dressing and half the parmesan."
+        },
+        {
+          "step_number": 3,
+          "title": "Finish",
+          "description": "Top with chicken, croutons and the remaining parmesan."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk, egg, fish, wheat"
+    },
+    {
+      "recipe_key": "us-chicken-burrito-bowl",
+      "cuisine": "american",
+      "name": "Chicken Burrito Bowl",
+      "description": "Brown rice topped with seasoned chicken, black beans, corn, salsa, lettuce and avocado.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5018,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 15,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "meal-prep, high-protein",
+      "equipment": "skillet",
+      "ingredients": [
+        {
+          "name": "Chicken breast",
+          "quantity": 120,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Brown rice, cooked",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Black beans, canned, drained",
+          "quantity": 80,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Corn kernels",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Salsa",
+          "quantity": 50,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lettuce",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Avocado",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Lime juice",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Chili powder",
+          "quantity": 2,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Cook chicken",
+          "description": "Season the chicken with chili powder and salt, then cook in the oil 6 minutes per side; slice."
+        },
+        {
+          "step_number": 2,
+          "title": "Warm",
+          "description": "Warm the rice, beans and corn."
+        },
+        {
+          "step_number": 3,
+          "title": "Build",
+          "description": "Fill a bowl with rice and top with chicken, beans, corn, lettuce, salsa and avocado; squeeze over the lime."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ]
+    },
+    {
+      "recipe_key": "us-tuna-salad-wrap",
+      "cuisine": "american",
+      "name": "Tuna Salad Wrap",
+      "description": "Light tuna salad with celery, lettuce and tomato rolled in a whole-wheat tortilla.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5019,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 0,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "no-cook, packable, high-protein",
+      "equipment": "mixing bowl",
+      "ingredients": [
+        {
+          "name": "Tuna, canned in water, drained",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Light mayonnaise",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Celery",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Whole wheat tortilla",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lettuce",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Tomato",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Mix",
+          "description": "Flake the tuna and mix with mayonnaise and finely diced celery."
+        },
+        {
+          "step_number": 2,
+          "title": "Fill",
+          "description": "Spread over the tortilla and top with lettuce and sliced tomato."
+        },
+        {
+          "step_number": 3,
+          "title": "Roll",
+          "description": "Roll up tightly and cut in half."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "fish, egg, wheat"
+    },
+    {
+      "recipe_key": "us-black-bean-soup",
+      "cuisine": "american",
+      "name": "Black Bean Soup",
+      "description": "A hearty, smoky black bean soup finished with a spoon of Greek yogurt.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5020,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 25,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "vegetarian, high-fiber, make-ahead",
+      "equipment": "soup pot, blender",
+      "ingredients": [
+        {
+          "name": "Black beans, canned, drained",
+          "quantity": 200,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Onion",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 5,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Carrot",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Vegetable broth",
+          "quantity": 250,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Ground cumin",
+          "quantity": 1,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Soften",
+          "description": "Cook the diced onion, carrot and garlic in the oil for 6 minutes."
+        },
+        {
+          "step_number": 2,
+          "title": "Simmer",
+          "description": "Add the beans, broth and cumin and simmer 15 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Blend",
+          "description": "Blend about half the soup and stir it back in for a creamy texture."
+        },
+        {
+          "step_number": 4,
+          "title": "Serve",
+          "description": "Top with Greek yogurt."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-chicken-noodle-soup",
+      "cuisine": "american",
+      "name": "Chicken Noodle Soup",
+      "description": "Classic chicken noodle soup with carrots, celery and egg noodles.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5021,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 25,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, comfort",
+      "equipment": "soup pot",
+      "ingredients": [
+        {
+          "name": "Chicken breast",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Egg noodles, dry",
+          "quantity": 50,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Carrot",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Celery",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Onion",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Chicken broth",
+          "quantity": 400,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Soften",
+          "description": "Cook the diced onion, carrot and celery in the oil for 5 minutes."
+        },
+        {
+          "step_number": 2,
+          "title": "Poach",
+          "description": "Add the broth and chicken and simmer 15 minutes; remove and shred the chicken."
+        },
+        {
+          "step_number": 3,
+          "title": "Noodles",
+          "description": "Add the noodles and cook until tender, then return the chicken and season."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, wheat"
+    },
+    {
+      "recipe_key": "us-cobb-salad",
+      "cuisine": "american",
+      "name": "Cobb Salad",
+      "description": "Romaine with chicken, hard-boiled egg, bacon, avocado, tomato and blue cheese.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5022,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 10,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, high-protein",
+      "equipment": "saucepan, skillet",
+      "ingredients": [
+        {
+          "name": "Romaine lettuce",
+          "quantity": 120,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Chicken breast, cooked",
+          "quantity": 90,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Egg",
+          "quantity": 50,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Bacon",
+          "quantity": 15,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Avocado",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Tomato",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Blue cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Red wine vinaigrette",
+          "quantity": 20,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Boil egg",
+          "description": "Boil the egg for 10 minutes, cool and chop."
+        },
+        {
+          "step_number": 2,
+          "title": "Crisp bacon",
+          "description": "Cook the bacon until crisp and crumble."
+        },
+        {
+          "step_number": 3,
+          "title": "Arrange",
+          "description": "Arrange rows of chicken, egg, bacon, avocado, tomato and blue cheese over the lettuce and drizzle with vinaigrette."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk"
+    },
+    {
+      "recipe_key": "us-grilled-cheese-tomato-soup",
+      "cuisine": "american",
+      "name": "Grilled Cheese with Tomato Soup",
+      "description": "A golden whole-wheat grilled cheese sandwich with a bowl of tomato soup.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5023,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 10,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, comfort, vegetarian",
+      "equipment": "skillet, small saucepan",
+      "ingredients": [
+        {
+          "name": "Whole wheat bread",
+          "quantity": 56,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 40,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Butter",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Tomato soup, canned, prepared",
+          "quantity": 250,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Heat soup",
+          "description": "Warm the tomato soup in a saucepan."
+        },
+        {
+          "step_number": 2,
+          "title": "Build",
+          "description": "Butter the outsides of the bread and fill with cheddar."
+        },
+        {
+          "step_number": 3,
+          "title": "Grill",
+          "description": "Cook over medium heat 3 minutes per side until golden and melted; serve with the soup."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk, wheat"
+    },
+    {
+      "recipe_key": "us-turkey-chili",
+      "cuisine": "american",
+      "name": "Turkey and Bean Chili",
+      "description": "Lean ground turkey chili with kidney beans, tomatoes and peppers.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5024,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 30,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "make-ahead, high-protein, high-fiber",
+      "equipment": "soup pot",
+      "ingredients": [
+        {
+          "name": "Ground turkey, 93% lean",
+          "quantity": 120,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Kidney beans, canned, drained",
+          "quantity": 80,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Diced tomatoes, canned",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Onion",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Green bell pepper",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Chili powder",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Brown",
+          "description": "Cook the onion and pepper in the oil for 4 minutes, then add the turkey and brown it."
+        },
+        {
+          "step_number": 2,
+          "title": "Simmer",
+          "description": "Stir in the chili powder, tomatoes and beans and simmer 20 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Serve",
+          "description": "Top with a little cheddar."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-quinoa-chickpea-bowl",
+      "cuisine": "american",
+      "name": "Quinoa Chickpea Bowl with Hummus",
+      "description": "Quinoa with chickpeas, cucumber, tomatoes, spinach, feta and a lemon dressing.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5025,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 0,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "vegetarian, meal-prep, high-fiber",
+      "equipment": "mixing bowl",
+      "ingredients": [
+        {
+          "name": "Quinoa, cooked",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Chickpeas, canned, drained",
+          "quantity": 80,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cucumber",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cherry tomatoes",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Spinach",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Hummus",
+          "quantity": 40,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Feta cheese",
+          "quantity": 20,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lemon juice",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Dress",
+          "description": "Whisk the olive oil and lemon juice with salt and pepper."
+        },
+        {
+          "step_number": 2,
+          "title": "Combine",
+          "description": "Toss the quinoa, chickpeas, spinach, diced cucumber and halved tomatoes with the dressing."
+        },
+        {
+          "step_number": 3,
+          "title": "Top",
+          "description": "Finish with hummus and crumbled feta."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk, sesame"
+    },
+    {
+      "recipe_key": "us-chicken-quesadilla",
+      "cuisine": "american",
+      "name": "Chicken Quesadilla with Peppers",
+      "description": "A crisp whole-wheat quesadilla with chicken, peppers, onion and melted cheese.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5026,
+      "prep_time_minutes": 8,
+      "cook_time_minutes": 8,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "quick, high-protein",
+      "equipment": "skillet",
+      "ingredients": [
+        {
+          "name": "Whole wheat tortilla",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Chicken breast, cooked",
+          "quantity": 90,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Monterey Jack cheese",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Red bell pepper",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Onion",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Salsa",
+          "quantity": 40,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Soften",
+          "description": "Cook the sliced pepper and onion in the oil for 3 minutes."
+        },
+        {
+          "step_number": 2,
+          "title": "Fill",
+          "description": "Layer the cheese, chicken and vegetables on half the tortilla and fold."
+        },
+        {
+          "step_number": 3,
+          "title": "Crisp",
+          "description": "Cook 2 to 3 minutes per side until golden; serve with salsa."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk, wheat"
+    },
+    {
+      "recipe_key": "us-lentil-vegetable-soup",
+      "cuisine": "american",
+      "name": "Lentil Vegetable Soup",
+      "description": "A thick lentil soup with carrots, celery and tomatoes.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5027,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 30,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "vegetarian, high-fiber, make-ahead",
+      "equipment": "soup pot",
+      "ingredients": [
+        {
+          "name": "Lentils, dry",
+          "quantity": 60,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Carrot",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Celery",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Onion",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Diced tomatoes, canned",
+          "quantity": 100,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Vegetable broth",
+          "quantity": 300,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 5,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Soften",
+          "description": "Cook the diced onion, carrot, celery and garlic in the oil for 6 minutes."
+        },
+        {
+          "step_number": 2,
+          "title": "Simmer",
+          "description": "Add the rinsed lentils, tomatoes and broth and simmer 25 minutes until tender."
+        },
+        {
+          "step_number": 3,
+          "title": "Season",
+          "description": "Season with salt and pepper."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "celery"
+    },
+    {
+      "recipe_key": "us-blt-sandwich",
+      "cuisine": "american",
+      "name": "BLT Sandwich",
+      "description": "Crisp bacon, lettuce and tomato with light mayo on whole-wheat toast.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5028,
+      "prep_time_minutes": 5,
+      "cook_time_minutes": 8,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic",
+      "equipment": "skillet, toaster",
+      "ingredients": [
+        {
+          "name": "Whole wheat bread",
+          "quantity": 56,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Bacon",
+          "quantity": 30,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Lettuce",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Tomato",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Light mayonnaise",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Cook bacon",
+          "description": "Cook the bacon until crisp and drain on paper towels."
+        },
+        {
+          "step_number": 2,
+          "title": "Toast",
+          "description": "Toast the bread and spread with mayonnaise."
+        },
+        {
+          "step_number": 3,
+          "title": "Stack",
+          "description": "Layer lettuce, tomato and bacon, close and slice."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "wheat, egg"
+    },
+    {
+      "recipe_key": "us-veggie-hummus-wrap",
+      "cuisine": "american",
+      "name": "Veggie Hummus Wrap",
+      "description": "Hummus, crunchy vegetables, spinach and feta in a whole-wheat tortilla.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5029,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 0,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "no-cook, vegetarian, packable",
+      "equipment": "cutting board",
+      "ingredients": [
+        {
+          "name": "Whole wheat tortilla",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Hummus",
+          "quantity": 50,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cucumber",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Carrot",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Spinach",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Red bell pepper",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Feta cheese",
+          "quantity": 20,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Spread",
+          "description": "Spread the hummus over the tortilla."
+        },
+        {
+          "step_number": 2,
+          "title": "Fill",
+          "description": "Add spinach, sliced cucumber, pepper, grated carrot and feta."
+        },
+        {
+          "step_number": 3,
+          "title": "Roll",
+          "description": "Roll tightly and cut in half."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "sesame, milk, wheat"
+    },
+    {
+      "recipe_key": "us-egg-salad-sandwich",
+      "cuisine": "american",
+      "name": "Egg Salad Sandwich",
+      "description": "Creamy egg salad with celery and mustard on whole-wheat bread.",
+      "meal_types": [
+        "lunch"
+      ],
+      "popularity_rank": 5030,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 10,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, vegetarian",
+      "equipment": "saucepan",
+      "ingredients": [
+        {
+          "name": "Egg",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Light mayonnaise",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Yellow mustard",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Celery",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Whole wheat bread",
+          "quantity": 56,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lettuce",
+          "quantity": 15,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Boil",
+          "description": "Boil the eggs for 10 minutes, cool in cold water and peel."
+        },
+        {
+          "step_number": 2,
+          "title": "Mix",
+          "description": "Chop the eggs and mix with mayonnaise, mustard and finely diced celery."
+        },
+        {
+          "step_number": 3,
+          "title": "Assemble",
+          "description": "Spread on the bread with lettuce."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, wheat, mustard"
+    },
+    {
+      "recipe_key": "us-baked-salmon-broccoli-rice",
+      "cuisine": "american",
+      "name": "Baked Salmon with Roasted Broccoli and Brown Rice",
+      "description": "Lemon-garlic baked salmon with roasted broccoli and brown rice.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5031,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 20,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weeknight, high-protein",
+      "equipment": "sheet pan, oven",
+      "ingredients": [
+        {
+          "name": "Salmon fillet",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Broccoli",
+          "quantity": 150,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Brown rice, cooked",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lemon juice",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Heat oven",
+          "description": "Heat the oven to 425°F (220°C)."
+        },
+        {
+          "step_number": 2,
+          "title": "Roast",
+          "description": "Toss the broccoli with half the oil and roast 10 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Bake salmon",
+          "description": "Add the salmon, brushed with the remaining oil, garlic and lemon, and bake 12 minutes more."
+        },
+        {
+          "step_number": 4,
+          "title": "Serve",
+          "description": "Serve with warm brown rice."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "fish"
+    },
+    {
+      "recipe_key": "us-grilled-chicken-sweet-potato",
+      "cuisine": "american",
+      "name": "Grilled Chicken with Sweet Potato and Green Beans",
+      "description": "Herb-grilled chicken breast with a baked sweet potato and garlicky green beans.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5032,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 30,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weeknight, high-protein",
+      "equipment": "grill pan, oven",
+      "ingredients": [
+        {
+          "name": "Chicken breast",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Sweet potato",
+          "quantity": 200,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Green beans",
+          "quantity": 120,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Bake potato",
+          "description": "Prick the sweet potato and bake at 400°F (200°C) for 30 minutes, or microwave 6 to 8 minutes."
+        },
+        {
+          "step_number": 2,
+          "title": "Grill",
+          "description": "Season the chicken and grill 5 to 6 minutes per side until cooked through."
+        },
+        {
+          "step_number": 3,
+          "title": "Beans",
+          "description": "Sauté the green beans with the garlic in the oil for 5 minutes."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ]
+    },
+    {
+      "recipe_key": "us-turkey-meatballs-spaghetti",
+      "cuisine": "american",
+      "name": "Turkey Meatballs with Whole-Wheat Spaghetti",
+      "description": "Baked turkey meatballs in marinara over whole-wheat spaghetti.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5033,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 25,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "family, comfort",
+      "equipment": "oven, pot",
+      "ingredients": [
+        {
+          "name": "Ground turkey, 93% lean",
+          "quantity": 120,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Whole wheat spaghetti, dry",
+          "quantity": 75,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Marinara sauce",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Egg",
+          "quantity": 15,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Breadcrumbs",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Parmesan cheese",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Shape",
+          "description": "Mix the turkey, egg, breadcrumbs, garlic and half the parmesan and roll into 6 meatballs."
+        },
+        {
+          "step_number": 2,
+          "title": "Bake",
+          "description": "Bake at 400°F (200°C) for 18 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Pasta",
+          "description": "Cook the spaghetti; warm the marinara and add the meatballs."
+        },
+        {
+          "step_number": 4,
+          "title": "Serve",
+          "description": "Serve over pasta with the remaining parmesan."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, milk, wheat"
+    },
+    {
+      "recipe_key": "us-sheet-pan-chicken-fajitas",
+      "cuisine": "american",
+      "name": "Sheet-Pan Chicken Fajitas",
+      "description": "Chicken, peppers and onion roasted with fajita spices, served in warm corn tortillas.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5034,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 20,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weeknight, family",
+      "equipment": "sheet pan, oven",
+      "ingredients": [
+        {
+          "name": "Chicken breast",
+          "quantity": 140,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Bell peppers",
+          "quantity": 150,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Onion",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Chili powder",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Ground cumin",
+          "quantity": 1,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Corn tortillas",
+          "quantity": 52,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lime juice",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Toss",
+          "description": "Slice the chicken, peppers and onion and toss with the oil and spices."
+        },
+        {
+          "step_number": 2,
+          "title": "Roast",
+          "description": "Roast at 425°F (220°C) for 18 to 20 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Serve",
+          "description": "Squeeze over the lime and serve in warm tortillas with Greek yogurt."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-shrimp-tacos-slaw",
+      "cuisine": "american",
+      "name": "Shrimp Tacos with Cabbage Slaw",
+      "description": "Chili-lime shrimp in corn tortillas with a crunchy cabbage slaw and avocado.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5035,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 6,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weeknight, quick",
+      "equipment": "skillet",
+      "ingredients": [
+        {
+          "name": "Shrimp",
+          "quantity": 140,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Corn tortillas",
+          "quantity": 78,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cabbage",
+          "quantity": 70,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lime juice",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Avocado",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Chili powder",
+          "quantity": 2,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Slaw",
+          "description": "Toss the shredded cabbage with the yogurt, half the lime juice and a pinch of salt."
+        },
+        {
+          "step_number": 2,
+          "title": "Cook shrimp",
+          "description": "Season the shrimp with chili powder and cook in the oil 2 minutes per side; add the remaining lime."
+        },
+        {
+          "step_number": 3,
+          "title": "Assemble",
+          "description": "Fill warm tortillas with shrimp, slaw and sliced avocado."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "shellfish, milk"
+    },
+    {
+      "recipe_key": "us-lean-beef-burger-salad",
+      "cuisine": "american",
+      "name": "Lean Beef Burger with Side Salad",
+      "description": "A lean beef burger on a whole-wheat bun with lettuce and tomato and a simple green salad.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5036,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 10,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, family",
+      "equipment": "skillet or grill",
+      "ingredients": [
+        {
+          "name": "Ground beef, 90% lean",
+          "quantity": 120,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Whole wheat hamburger bun",
+          "quantity": 60,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lettuce",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Tomato",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Red onion",
+          "quantity": 15,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Mixed salad greens",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Balsamic vinaigrette",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Shape",
+          "description": "Season the beef and shape into a patty slightly wider than the bun."
+        },
+        {
+          "step_number": 2,
+          "title": "Cook",
+          "description": "Cook 4 minutes per side, adding the cheddar for the last minute."
+        },
+        {
+          "step_number": 3,
+          "title": "Assemble",
+          "description": "Build the burger on the toasted bun with lettuce, tomato and onion; toss the greens with vinaigrette on the side."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "wheat, milk"
+    },
+    {
+      "recipe_key": "us-beef-broccoli-stir-fry",
+      "cuisine": "american",
+      "name": "Beef and Broccoli Stir-Fry",
+      "description": "Takeout-style beef and broccoli in a garlic-ginger soy sauce over brown rice.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5037,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 10,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weeknight, takeout-style",
+      "equipment": "wok or large skillet",
+      "ingredients": [
+        {
+          "name": "Flank steak",
+          "quantity": 120,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Broccoli",
+          "quantity": 150,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Soy sauce, low sodium",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 5,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Ginger",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cornstarch",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Canola oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Brown rice, cooked",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Slice",
+          "description": "Thinly slice the beef across the grain and toss with half the cornstarch."
+        },
+        {
+          "step_number": 2,
+          "title": "Sear",
+          "description": "Stir-fry the beef in hot oil for 2 minutes and remove."
+        },
+        {
+          "step_number": 3,
+          "title": "Broccoli",
+          "description": "Stir-fry the broccoli with garlic and ginger for 3 minutes with a splash of water."
+        },
+        {
+          "step_number": 4,
+          "title": "Sauce",
+          "description": "Return the beef, add soy sauce mixed with the remaining cornstarch and 3 tbsp water, and toss until glossy; serve with rice."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "soy, wheat"
+    },
+    {
+      "recipe_key": "us-pork-chops-mashed-potatoes",
+      "cuisine": "american",
+      "name": "Pork Chops with Mashed Potatoes and Green Beans",
+      "description": "Pan-seared pork chops with creamy mashed potatoes and green beans.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5038,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 25,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, comfort",
+      "equipment": "skillet, pot",
+      "ingredients": [
+        {
+          "name": "Pork loin chop, boneless",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Potatoes",
+          "quantity": 200,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Milk, 2% fat",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Butter",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Green beans",
+          "quantity": 120,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Potatoes",
+          "description": "Boil the peeled, cubed potatoes 15 minutes, drain and mash with milk and butter."
+        },
+        {
+          "step_number": 2,
+          "title": "Sear",
+          "description": "Season the chops and sear in the oil 4 to 5 minutes per side until 145°F (63°C) inside; rest 3 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Beans",
+          "description": "Steam or sauté the green beans and serve everything together."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-turkey-meatloaf-carrots",
+      "cuisine": "american",
+      "name": "Turkey Meatloaf with Roasted Carrots",
+      "description": "A tender turkey meatloaf glazed with ketchup, served with roasted carrots.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5039,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 40,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, family, make-ahead",
+      "equipment": "loaf pan, oven",
+      "ingredients": [
+        {
+          "name": "Ground turkey, 93% lean",
+          "quantity": 140,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Breadcrumbs",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Egg",
+          "quantity": 15,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Onion",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Ketchup",
+          "quantity": 20,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Carrots",
+          "quantity": 150,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Mix",
+          "description": "Mix the turkey, breadcrumbs, egg, grated onion and half the ketchup and shape into a small loaf."
+        },
+        {
+          "step_number": 2,
+          "title": "Bake",
+          "description": "Brush with the remaining ketchup and bake at 375°F (190°C) for 35 to 40 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Carrots",
+          "description": "Toss the carrots with the oil and roast on the same oven rack for the last 25 minutes."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg, wheat"
+    },
+    {
+      "recipe_key": "us-bbq-chicken-corn-coleslaw",
+      "cuisine": "american",
+      "name": "BBQ Chicken with Corn on the Cob and Coleslaw",
+      "description": "Barbecue-glazed chicken thighs with sweet corn and a creamy coleslaw.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5040,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 25,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "summer, family",
+      "equipment": "grill or oven",
+      "ingredients": [
+        {
+          "name": "Chicken thigh, boneless, skinless",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Barbecue sauce",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Corn on the cob",
+          "quantity": 150,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cabbage",
+          "quantity": 80,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Carrot",
+          "quantity": 20,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Light mayonnaise",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Apple cider vinegar",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Slaw",
+          "description": "Toss the shredded cabbage and carrot with mayonnaise and vinegar; chill."
+        },
+        {
+          "step_number": 2,
+          "title": "Cook chicken",
+          "description": "Grill or bake the chicken at 425°F (220°C) for 20 minutes, brushing with barbecue sauce for the last 5."
+        },
+        {
+          "step_number": 3,
+          "title": "Corn",
+          "description": "Boil or grill the corn for 8 minutes and serve with the chicken and slaw."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "egg"
+    },
+    {
+      "recipe_key": "us-stuffed-bell-peppers",
+      "cuisine": "american",
+      "name": "Stuffed Bell Peppers with Beef and Rice",
+      "description": "Bell peppers filled with lean beef, brown rice and tomatoes, topped with cheddar.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5041,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 35,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "family, make-ahead",
+      "equipment": "baking dish, oven",
+      "ingredients": [
+        {
+          "name": "Bell peppers",
+          "quantity": 200,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Ground beef, 90% lean",
+          "quantity": 100,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Brown rice, cooked",
+          "quantity": 80,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Diced tomatoes, canned",
+          "quantity": 100,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Onion",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Filling",
+          "description": "Brown the beef with the onion, then stir in the rice and tomatoes."
+        },
+        {
+          "step_number": 2,
+          "title": "Stuff",
+          "description": "Halve and seed the peppers and pack them with the filling."
+        },
+        {
+          "step_number": 3,
+          "title": "Bake",
+          "description": "Cover and bake at 375°F (190°C) for 30 minutes, add the cheddar and bake 5 minutes more."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-baked-cod-quinoa-asparagus",
+      "cuisine": "american",
+      "name": "Baked Cod with Quinoa and Asparagus",
+      "description": "Paprika-lemon baked cod with fluffy quinoa and roasted asparagus.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5042,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 15,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weeknight, light, high-protein",
+      "equipment": "sheet pan, oven",
+      "ingredients": [
+        {
+          "name": "Cod fillet",
+          "quantity": 170,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Quinoa, cooked",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Asparagus",
+          "quantity": 120,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lemon juice",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Smoked paprika",
+          "quantity": 1,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Heat oven",
+          "description": "Heat the oven to 400°F (200°C)."
+        },
+        {
+          "step_number": 2,
+          "title": "Season",
+          "description": "Lay the cod and asparagus on a sheet pan and brush with oil, garlic, lemon and paprika."
+        },
+        {
+          "step_number": 3,
+          "title": "Bake",
+          "description": "Bake 12 to 15 minutes until the fish flakes; serve over quinoa."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "fish"
+    },
+    {
+      "recipe_key": "us-black-bean-enchiladas",
+      "cuisine": "american",
+      "name": "Black Bean and Spinach Enchiladas",
+      "description": "Corn tortillas rolled around black beans and spinach, baked in enchilada sauce with cheese.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5043,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 25,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "vegetarian, family",
+      "equipment": "baking dish, oven",
+      "ingredients": [
+        {
+          "name": "Corn tortillas",
+          "quantity": 78,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Black beans, canned, drained",
+          "quantity": 120,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Enchilada sauce",
+          "quantity": 100,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Cheddar cheese",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Onion",
+          "quantity": 30,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Spinach",
+          "quantity": 40,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Filling",
+          "description": "Warm the beans with the diced onion and spinach until wilted."
+        },
+        {
+          "step_number": 2,
+          "title": "Roll",
+          "description": "Fill and roll the tortillas and lay them seam-side down in a dish with half the sauce."
+        },
+        {
+          "step_number": 3,
+          "title": "Bake",
+          "description": "Top with the rest of the sauce and the cheese and bake at 375°F (190°C) for 20 minutes; serve with yogurt."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-roast-chicken-thighs-potatoes",
+      "cuisine": "american",
+      "name": "Roast Chicken Thighs with Potatoes and Carrots",
+      "description": "One-pan rosemary chicken thighs roasted with potatoes and carrots.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5044,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 40,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "family, one-pan",
+      "equipment": "sheet pan, oven",
+      "ingredients": [
+        {
+          "name": "Chicken thigh, boneless, skinless",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Potatoes",
+          "quantity": 200,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Carrots",
+          "quantity": 100,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Rosemary",
+          "quantity": 1,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Toss",
+          "description": "Cut the potatoes and carrots into chunks and toss with oil, garlic, rosemary and salt."
+        },
+        {
+          "step_number": 2,
+          "title": "Roast",
+          "description": "Roast at 425°F (220°C) for 15 minutes, add the seasoned chicken and roast 25 minutes more until cooked through."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ]
+    },
+    {
+      "recipe_key": "us-sirloin-steak-baked-potato",
+      "cuisine": "american",
+      "name": "Sirloin Steak with Baked Potato and Asparagus",
+      "description": "Pan-seared sirloin with a baked potato topped with Greek yogurt and roasted asparagus.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5045,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 45,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "classic, high-protein",
+      "equipment": "skillet, oven",
+      "ingredients": [
+        {
+          "name": "Beef sirloin steak",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Russet potato",
+          "quantity": 200,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Asparagus",
+          "quantity": 120,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Butter",
+          "quantity": 5,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Bake potato",
+          "description": "Bake the potato at 425°F (220°C) for 45 minutes, adding the oiled asparagus for the last 12."
+        },
+        {
+          "step_number": 2,
+          "title": "Sear",
+          "description": "Season the steak and sear in a hot pan 3 to 4 minutes per side; rest 5 minutes with the butter on top."
+        },
+        {
+          "step_number": 3,
+          "title": "Serve",
+          "description": "Split the potato, top with Greek yogurt and serve with the sliced steak and asparagus."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    },
+    {
+      "recipe_key": "us-shrimp-scampi-linguine",
+      "cuisine": "american",
+      "name": "Shrimp Scampi with Whole-Wheat Linguine",
+      "description": "Garlic-lemon shrimp tossed with whole-wheat linguine and spinach.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5046,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 15,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "weeknight, quick",
+      "equipment": "pot, skillet",
+      "ingredients": [
+        {
+          "name": "Shrimp",
+          "quantity": 120,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Whole wheat linguine, dry",
+          "quantity": 75,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 6,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Butter",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Lemon juice",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Spinach",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Parmesan cheese",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Pasta",
+          "description": "Cook the linguine and save a splash of the water."
+        },
+        {
+          "step_number": 2,
+          "title": "Shrimp",
+          "description": "Cook the garlic in the oil and butter for 1 minute, add the shrimp and cook 3 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Toss",
+          "description": "Add the spinach, lemon juice, pasta and pasta water and toss; finish with parmesan."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "shellfish, milk, wheat"
+    },
+    {
+      "recipe_key": "us-tofu-vegetable-stir-fry",
+      "cuisine": "american",
+      "name": "Tofu Vegetable Stir-Fry",
+      "description": "Crispy tofu with broccoli, peppers and carrots in a soy-ginger sauce over brown rice.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5047,
+      "prep_time_minutes": 15,
+      "cook_time_minutes": 12,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "vegetarian, weeknight",
+      "equipment": "wok or large skillet",
+      "ingredients": [
+        {
+          "name": "Tofu, firm",
+          "quantity": 150,
+          "unit": "g",
+          "category": "protein"
+        },
+        {
+          "name": "Broccoli",
+          "quantity": 100,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Red bell pepper",
+          "quantity": 80,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Carrot",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Soy sauce, low sodium",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Brown rice, cooked",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Canola oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Ginger",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Crisp tofu",
+          "description": "Press and cube the tofu, then fry in half the oil until golden; set aside."
+        },
+        {
+          "step_number": 2,
+          "title": "Vegetables",
+          "description": "Stir-fry the vegetables with garlic and ginger in the remaining oil for 4 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Finish",
+          "description": "Return the tofu, add the soy sauce and toss; serve over rice."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "soy, wheat"
+    },
+    {
+      "recipe_key": "us-pasta-primavera",
+      "cuisine": "american",
+      "name": "Whole-Wheat Pasta Primavera",
+      "description": "Whole-wheat pasta with zucchini, cherry tomatoes and broccoli in garlic olive oil.",
+      "meal_types": [
+        "dinner"
+      ],
+      "popularity_rank": 5048,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 15,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "vegetarian, weeknight",
+      "equipment": "pot, skillet",
+      "ingredients": [
+        {
+          "name": "Whole wheat penne, dry",
+          "quantity": 75,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Zucchini",
+          "quantity": 80,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Cherry tomatoes",
+          "quantity": 80,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Broccoli",
+          "quantity": 60,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 10,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Garlic",
+          "quantity": 3,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Parmesan cheese",
+          "quantity": 15,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Pasta",
+          "description": "Cook the pasta, adding the broccoli for the last 3 minutes; drain."
+        },
+        {
+          "step_number": 2,
+          "title": "Vegetables",
+          "description": "Sauté the zucchini and garlic in the oil for 4 minutes, then add the tomatoes until they soften."
+        },
+        {
+          "step_number": 3,
+          "title": "Toss",
+          "description": "Toss with the pasta and broccoli and finish with parmesan."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "wheat, milk"
+    },
+    {
+      "recipe_key": "us-three-bean-vegetarian-chili",
+      "cuisine": "american",
+      "name": "Three-Bean Vegetarian Chili",
+      "description": "A hearty chili with black, kidney and pinto beans, peppers and tomatoes.",
+      "meal_types": [
+        "lunch",
+        "dinner"
+      ],
+      "popularity_rank": 5049,
+      "prep_time_minutes": 10,
+      "cook_time_minutes": 30,
+      "base_servings": 1,
+      "serving_source": "recipe_author",
+      "serving_confidence": "estimated",
+      "tag": "vegetarian, high-fiber, make-ahead",
+      "equipment": "soup pot",
+      "ingredients": [
+        {
+          "name": "Black beans, canned, drained",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Kidney beans, canned, drained",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Pinto beans, canned, drained",
+          "quantity": 70,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Diced tomatoes, canned",
+          "quantity": 150,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Onion",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Green bell pepper",
+          "quantity": 50,
+          "unit": "g",
+          "category": "produce"
+        },
+        {
+          "name": "Chili powder",
+          "quantity": 3,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Olive oil",
+          "quantity": 7,
+          "unit": "g",
+          "category": "pantry"
+        },
+        {
+          "name": "Greek yogurt, plain, nonfat",
+          "quantity": 30,
+          "unit": "g",
+          "category": "pantry"
+        }
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "title": "Soften",
+          "description": "Cook the onion and pepper in the oil for 5 minutes."
+        },
+        {
+          "step_number": 2,
+          "title": "Simmer",
+          "description": "Add the chili powder, beans and tomatoes with a splash of water and simmer 25 minutes."
+        },
+        {
+          "step_number": 3,
+          "title": "Serve",
+          "description": "Top with Greek yogurt."
+        }
+      ],
+      "sources": [
+        {
+          "source_type": "commissioned"
+        }
+      ],
+      "allergens": "milk"
+    }
+  ]
+}

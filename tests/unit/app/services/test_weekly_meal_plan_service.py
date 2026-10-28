@@ -1040,3 +1040,45 @@ async def test_shortlist_widens_once_to_reach_lower_ranked_target_recipe():
     )
     assert target_slot.recipe_id == "desired"
     assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_patch_from_a_client_without_region_keeps_the_saved_region():
+    plan = _plan(WeeklyMealPlanPreferences(region="US"))
+    uow = _Uow(plan, ())
+
+    await WeeklyMealPlanService(lambda: uow).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="prefs-no-region",
+            people=1,
+            preferences=WeeklyMealPlanPreferences(cooking_time="30"),
+        )
+    )
+
+    assert uow.update_args["preferences"].region == "US"
+    assert uow.update_args["preferences"].cooking_time == "30"
+
+
+def test_shortlist_leads_with_the_users_home_cuisine():
+    from dataclasses import replace
+
+    from src.app.services.weekly_meal_plan_service import _ai_shortlist
+    from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
+
+    vietnamese = _meal("pho", "Phở gà", meal_types=("dinner",), rank=1)
+    american = replace(
+        _meal("chili", "Turkey Chili", meal_types=("dinner",), rank=50),
+        cuisine="american",
+    )
+
+    chosen = _ai_shortlist(
+        WeeklyPlanGenerationService(),
+        "swap Monday dinner",
+        (vietnamese, american),
+        WeeklyMealPlanPreferences(region="US"),
+        (0, 2),
+    )
+
+    assert [meal.id for meal in chosen] == ["chili", "pho"]

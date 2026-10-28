@@ -70,6 +70,7 @@ class WeeklyRecipeService:
         meal_type=None,
         dislikes=(),
         allergies=(),
+        region=None,
         limit=20,
         offset=0,
     ) -> RecipePage:
@@ -82,6 +83,7 @@ class WeeklyRecipeService:
                 meal_type=meal_type,
                 dislikes=dislikes,
                 allergies=allergies,
+                region=region,
                 limit=limit,
                 offset=offset,
             )

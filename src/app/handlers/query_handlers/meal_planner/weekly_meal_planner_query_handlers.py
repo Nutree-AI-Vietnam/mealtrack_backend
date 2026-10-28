@@ -40,6 +40,7 @@ class ListRecipesQueryHandler(EventHandler):
             meal_type=query.meal_type,
             allergies=query.allergies,
             dislikes=query.dislikes,
+            region=query.region,
             limit=query.limit,
             offset=query.offset,
         )

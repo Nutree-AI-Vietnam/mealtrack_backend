@@ -11,6 +11,7 @@ from src.domain.model.weekly_meal_planner.weekly_meal_plan import (
 )
 
 WeeklyPlannerMealType = Literal["breakfast", "lunch", "dinner"]
+WeeklyPlannerRegion = Literal["VN", "US"]
 
 
 class WeeklyMealPlanPreferencesRequest(BaseModel):
@@ -19,6 +20,13 @@ class WeeklyMealPlanPreferencesRequest(BaseModel):
     cuisine: str | None = Field(default=None, max_length=80)
     dislikes: str = Field(default="", max_length=1000)
     allergies: str = Field(default="", max_length=1000)
+    region: WeeklyPlannerRegion | None = Field(
+        default=None,
+        description=(
+            "Country food culture that leads the plan. When omitted the server "
+            "infers it from the app language and timezone."
+        ),
+    )
 
 
 class GenerateWeeklyMealPlanRequest(BaseModel):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from time import monotonic
 
@@ -254,7 +254,10 @@ class WeeklyMealPlanService:
                 )
                 if current is None:
                     raise ResourceNotFoundException("Weekly meal plan not found")
-                preferences = command.preferences or current.preferences
+                requested_preferences = _keep_saved_region(
+                    command.preferences, current.preferences
+                )
+                preferences = requested_preferences or current.preferences
                 hard_preferences_changed = _hard_preferences_changed(
                     current.preferences, preferences
                 )
@@ -334,7 +337,7 @@ class WeeklyMealPlanService:
                     user_id=command.user_id,
                     plan_id=command.plan_id,
                     people=command.people,
-                    preferences=command.preferences,
+                    preferences=requested_preferences,
                     status=command.status,
                     slots=command.slots,
                     expected_revision=expected_revision,
@@ -459,6 +462,7 @@ class WeeklyMealPlanService:
                 candidates = preferred_candidates
             candidates.sort(
                 key=lambda meal: (
+                    self.generator.regional_rank(meal, preferences),
                     meal.popularity_rank
                     if meal.popularity_rank is not None
                     else 2_147_483_647,
@@ -832,7 +836,10 @@ class WeeklyMealPlanService:
             replacement = min(
                 candidates,
                 key=lambda meal: (
-                    self.generator.selection_rank(meal, slot.slot_index),
+                    self.generator.regional_rank(meal, preferences),
+                    self.generator.selection_rank(
+                        meal, slot.slot_index, preferences.region
+                    ),
                     not self.generator.is_soft_eligible(meal, preferences),
                     usage[meal.id],
                     meal.popularity_rank
@@ -934,6 +941,16 @@ def _revision_key(revision) -> str:
             revision.food_reference_updated_at,
         )
     )
+
+
+def _keep_saved_region(
+    requested: WeeklyMealPlanPreferences | None,
+    saved: WeeklyMealPlanPreferences,
+) -> WeeklyMealPlanPreferences | None:
+    """Carry the saved region when a client that predates it sends preferences."""
+    if requested is None or requested.region is not None:
+        return requested
+    return replace(requested, region=saved.region)
 
 
 def _hard_preferences_changed(
@@ -1066,6 +1083,7 @@ def _with_profile_context(
             cuisine=request_preferences.cuisine,
             dislikes=request_preferences.dislikes,
             allergies=tuple(sorted(allergies)),
+            region=request_preferences.region,
         ),
         profile_dietary_preferences,
     )
@@ -1287,6 +1305,7 @@ def _preferences_from_prompt(
         cuisine=current.cuisine,
         dislikes=tuple(sorted(dislikes)),
         allergies=tuple(sorted(allergies)),
+        region=current.region,
     )
 
 
@@ -1413,7 +1432,10 @@ def _ai_shortlist(
     eligible.sort(
         key=lambda meal: (
             0 if named is not None and named.id == meal.id else 1,
-            generator.selection_rank(meal, target[1]) if target is not None else (0, 0),
+            generator.regional_rank(meal, preferences),
+            generator.selection_rank(meal, target[1], preferences.region)
+            if target is not None
+            else (0, 0),
             0 if generator.is_soft_eligible(meal, preferences) else 1,
             meal.popularity_rank if meal.popularity_rank is not None else 2_147_483_647,
             meal.id,

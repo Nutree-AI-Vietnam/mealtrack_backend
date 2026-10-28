@@ -143,10 +143,14 @@ class CatalogMealRepositoryPort(ABC):
         meal_type: str | None = None,
         dislikes: tuple[str, ...] = (),
         allergies: tuple[str, ...] = (),
+        region: str | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> CatalogRecipePage:
-        """Apply every eligibility filter before counting and paging."""
+        """Apply every eligibility filter before counting and paging.
+
+        ``region`` only reorders meal-time lists, home cuisine first.
+        """
         raise NotImplementedError
 
     async def capture_catalog_publication_version(self) -> CatalogPublicationVersion:

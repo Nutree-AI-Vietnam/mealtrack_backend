@@ -295,3 +295,47 @@ def test_manifest_rejects_unknown_ingredient_category():
 
     assert result.is_valid is False
     assert any("ingredients[0].category is invalid" in error for error in result.errors)
+
+
+def test_committed_us_everyday_manifest_covers_every_meal_of_the_week():
+    import json
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[5]
+        / "data"
+        / "catalog_seeds"
+        / "us-everyday-v1.json"
+    )
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+
+    result = validate_catalog_seed_manifest(
+        manifest,
+        expected_recipe_count=len(manifest["recipes"]),
+        expected_cuisine_counts=None,
+        required_cuisines=("american",),
+        # A week has seven of each meal; no US slot should need a repeat.
+        min_per_cuisine_meal_type=7,
+    )
+
+    assert result.errors == ()
+    assert {recipe["cuisine"] for recipe in manifest["recipes"]} == {"american"}
+    assert all(recipe["popularity_rank"] > 5000 for recipe in manifest["recipes"])
+
+
+def test_american_is_an_allowed_cuisine_label():
+    manifest = {
+        "release_key": "test-release",
+        "expected_recipe_count": 1,
+        "recipes": [_recipe("us-dinner", "american", "dinner")],
+    }
+
+    result = validate_catalog_seed_manifest(
+        manifest,
+        expected_recipe_count=1,
+        min_per_cuisine_meal_type=0,
+        expected_cuisine_counts=None,
+        required_cuisines=(),
+    )
+
+    assert result.is_valid is True
