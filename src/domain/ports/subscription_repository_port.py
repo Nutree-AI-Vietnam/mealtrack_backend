@@ -39,7 +39,9 @@ class SubscriptionRepositoryPort(ABC):
         pass
 
     @abstractmethod
-    async def find_expiring_soon(self, days_until_expiry: int = 7) -> list[Subscription]:
+    async def find_expiring_soon(
+        self, days_until_expiry: int = 7
+    ) -> list[Subscription]:
         """Find subscriptions expiring within specified days."""
         pass
 

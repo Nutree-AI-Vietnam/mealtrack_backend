@@ -358,6 +358,77 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     assert scan_handler.meal_analyze_graph_enabled is True
     workflow = upload_handler.meal_analyze_workflow
     assert workflow is scan_handler.meal_analyze_workflow
+
+    from src.app.handlers.command_handlers import RefreshMyEntitlementsCommandHandler
+    from src.app.handlers.query_handlers.check_subscription_access_query_handler import (
+        CheckSubscriptionAccessQueryHandler,
+    )
+    from src.app.handlers.query_handlers.get_my_entitlements_query_handler import (
+        GetMyEntitlementsQueryHandler,
+    )
+    from src.app.queries.subscription_access import (
+        CheckSubscriptionAccessQuery,
+        GetMyEntitlementsQuery,
+    )
+    from src.infra.database.uow_async import AsyncUnitOfWork
+    from src.infra.services.subscription_access_refresh_service import (
+        RevenueCatAccessRefreshService,
+    )
+
+    # GET /v1/me/entitlements and paid-route enforcement send these queries;
+    # their route tests stub the bus, so only this pins the real wiring.
+    entitlements_handler = bus.handlers[GetMyEntitlementsQuery]
+    assert isinstance(entitlements_handler, GetMyEntitlementsQueryHandler)
+    assert entitlements_handler.uow_factory is AsyncUnitOfWork
+    access_handler = bus.handlers[CheckSubscriptionAccessQuery]
+    assert isinstance(access_handler, CheckSubscriptionAccessQueryHandler)
+    assert access_handler.uow_factory is AsyncUnitOfWork
+
+    # The entitlements refresh is wired to the RevenueCat refresher, which
+    # resolves the RevenueCat adapter when it runs, not at bus build time.
+    refresh_handler = bus.handlers[mod.RefreshMyEntitlementsCommand]
+    assert isinstance(refresh_handler, RefreshMyEntitlementsCommandHandler)
+    refresher = refresh_handler.access_refresher
+    assert isinstance(refresher, RevenueCatAccessRefreshService)
+    adapter = object()
+    monkeypatch.setattr(deps, "get_subscription_service", lambda: adapter)
+    assert refresher._subscription_service_factory() is adapter
+
+    # The support API's lookups, resync and repair queue: their route tests
+    # stub the bus, so only this pins the real repository and refresher.
+    from src.app.commands.subscription_access import ResyncSubscriptionAccessCommand
+    from src.app.handlers.command_handlers import (
+        ResyncSubscriptionAccessCommandHandler,
+    )
+    from src.app.handlers.query_handlers import (
+        GetSubscriptionAccessHealthQueryHandler,
+        GetSupportSubscriptionAccessQueryHandler,
+        ListUnresolvedSubscriptionAccessQueryHandler,
+    )
+    from src.app.queries.subscription_access import (
+        GetSubscriptionAccessHealthQuery,
+        GetSupportSubscriptionAccessQuery,
+        ListUnresolvedSubscriptionAccessQuery,
+    )
+    from src.infra.repositories.subscription_access_support_repository import (
+        SubscriptionAccessSupportRepository,
+    )
+
+    lookup = bus.handlers[GetSupportSubscriptionAccessQuery]
+    resync = bus.handlers[ResyncSubscriptionAccessCommand]
+    queue = bus.handlers[ListUnresolvedSubscriptionAccessQuery]
+    # GET /v1/health/subscription-access, polled by the uptime monitor.
+    monitoring = bus.handlers[GetSubscriptionAccessHealthQuery]
+    assert isinstance(lookup, GetSupportSubscriptionAccessQueryHandler)
+    assert isinstance(resync, ResyncSubscriptionAccessCommandHandler)
+    assert isinstance(queue, ListUnresolvedSubscriptionAccessQueryHandler)
+    assert isinstance(monitoring, GetSubscriptionAccessHealthQueryHandler)
+    for handler in (lookup, resync, queue, monitoring):
+        assert isinstance(handler.repository, SubscriptionAccessSupportRepository)
+        assert handler.repository._uow_factory == AsyncUnitOfWork.read_only
+    for handler in (lookup, resync):
+        assert isinstance(handler.access_refresher, RevenueCatAccessRefreshService)
+        assert handler.access_refresher._subscription_service_factory() is adapter
     assert workflow._fatsecret_validation_enabled is True
     assert workflow._food_reference_validation_service is not None
     assert workflow._graph_version == "test-v2"

@@ -169,3 +169,36 @@ async def test_admin_manifest_of_the_wrong_shape_gets_422(catalog):
     assert post.status == 422
     [error] = post.json()["detail"]
     assert (error["type"], error["loc"]) == ("dict_type", ["body", "manifest"])
+
+
+@pytest.mark.asyncio
+async def test_enforcement_refuses_ingredient_recognition_before_reading_the_photo(
+    monkeypatch,
+):
+    """The route reads its JSON body after its dependencies, so with server
+    enforcement on, a caller without access gets 402 and the photo is never
+    read."""
+    from src.api.dependencies import subscription_access as enforcement
+    from src.api.middleware.premium_check import ANSWER_REVENUECAT, RevenueCatAccess
+    from src.domain.ports.subscription_service_port import EntitlementCheck
+
+    class _NoAccess:
+        async def send(self, _query):
+            return False
+
+    async def revenuecat_denies(_user_id):
+        return RevenueCatAccess(EntitlementCheck.NOT_ENTITLED, ANSWER_REVENUECAT)
+
+    monkeypatch.setenv("SUBSCRIPTION_ACCESS_ENABLED", "true")
+    monkeypatch.setenv("SUBSCRIPTION_ENFORCEMENT_ENABLED", "true")
+    monkeypatch.setattr(enforcement, "_event_bus", lambda: _NoAccess())
+    monkeypatch.setattr(enforcement, "_revenuecat_access", revenuecat_denies)
+    app.dependency_overrides[auth.get_current_user_id] = lambda: "db-user-id"
+    try:
+        post = await _post(RECOGNIZE_PATH, {"image_data": "aGVsbG8="}, "user-token")
+    finally:
+        app.dependency_overrides.pop(auth.get_current_user_id, None)
+
+    assert post.status == 402
+    assert post.json()["detail"]["error_code"] == "SUBSCRIPTION_REQUIRED"
+    assert post.reads == 0

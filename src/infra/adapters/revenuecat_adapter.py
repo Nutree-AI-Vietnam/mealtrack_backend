@@ -7,16 +7,48 @@ and handles HTTP communication with RevenueCat API.
 
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 
 from src.domain.ports.subscription_service_port import (
+    SNAPSHOT_REASON_API_KEY_MISSING,
+    SNAPSHOT_REASON_HTTP_4XX,
+    SNAPSHOT_REASON_HTTP_5XX,
+    SNAPSHOT_REASON_HTTP_429,
+    SNAPSHOT_REASON_MALFORMED,
+    SNAPSHOT_REASON_TRANSPORT,
     EntitlementCheck,
+    RevenueCatSnapshot,
+    RevenueCatSnapshotUnavailable,
     SubscriptionServicePort,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _http_failure_reason(status_code: int) -> str:
+    if status_code == 429:
+        return SNAPSHOT_REASON_HTTP_429
+    if status_code >= 500:
+        return SNAPSHOT_REASON_HTTP_5XX
+    return SNAPSHOT_REASON_HTTP_4XX
+
+
+def _response_request_date(payload: dict) -> datetime:
+    """Read RevenueCat's request time from the response root, not the subscriber."""
+    request_ms = payload.get("request_date_ms")
+    if request_ms is not None:
+        if isinstance(request_ms, bool):
+            raise ValueError("request_date_ms is malformed")
+        return datetime.fromtimestamp(float(request_ms) / 1000, UTC)
+    request_date = payload.get("request_date")
+    if not isinstance(request_date, str) or not request_date:
+        raise KeyError("request_date_ms")
+    parsed = datetime.fromisoformat(request_date.replace("Z", "+00:00"))
+    return (
+        parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    )
 
 
 def _standard_entitlement_active(subscriber_info: dict | None) -> bool:
@@ -91,6 +123,75 @@ class RevenueCatAdapter(SubscriptionServicePort):
         except httpx.HTTPError as e:
             logger.error(f"RevenueCat API error: {e}")
             return None
+
+    async def get_verified_snapshot(self, app_user_id: str) -> RevenueCatSnapshot:
+        """Fetch provider state without collapsing errors into a negative result.
+
+        v1 GET /subscribers/{id} answers ``{"request_date", "request_date_ms",
+        "subscriber"}``. It is "get or create": an id RevenueCat has never seen
+        answers 200/201 with an empty customer instead of 404, so a customer
+        with no entitlements, subscriptions or non-subscriptions is reported
+        as ``absent`` (no purchases), exactly like a 404.
+        """
+        if not self.api_key:
+            raise RevenueCatSnapshotUnavailable(
+                "RevenueCat API key is missing",
+                reason=SNAPSHOT_REASON_API_KEY_MISSING,
+            )
+
+        url = f"{self.BASE_URL}/subscribers/{app_user_id}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, timeout=10.0)
+        except httpx.HTTPError as error:
+            raise RevenueCatSnapshotUnavailable(
+                "RevenueCat request failed", reason=SNAPSHOT_REASON_TRANSPORT
+            ) from error
+
+        if response.status_code == 404:
+            return RevenueCatSnapshot(None, None, absent=True, app_user_id=app_user_id)
+        if response.status_code >= 400:
+            retry_after = response.headers.get("Retry-After")
+            try:
+                retry_after_seconds = float(retry_after) if retry_after else None
+            except ValueError:
+                retry_after_seconds = None
+            raise RevenueCatSnapshotUnavailable(
+                f"RevenueCat returned HTTP {response.status_code}",
+                retry_after_seconds=retry_after_seconds,
+                reason=_http_failure_reason(response.status_code),
+            )
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("response is not an object")
+            subscriber = payload["subscriber"]
+            if not isinstance(subscriber, dict):
+                raise ValueError("subscriber is not an object")
+            entitlements = subscriber.get("entitlements")
+            subscriptions = subscriber.get("subscriptions")
+            non_subscriptions = subscriber.get("non_subscriptions", {})
+            if not isinstance(entitlements, dict):
+                raise ValueError("entitlements are missing")
+            if not isinstance(subscriptions, dict):
+                raise ValueError("subscriptions are missing")
+            if non_subscriptions is None:
+                non_subscriptions = {}
+            if not isinstance(non_subscriptions, dict):
+                raise ValueError("non_subscriptions are malformed")
+            request_date = _response_request_date(payload)
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise RevenueCatSnapshotUnavailable(
+                "RevenueCat response is malformed", reason=SNAPSHOT_REASON_MALFORMED
+            ) from error
+        absent = not entitlements and not subscriptions and not non_subscriptions
+        return RevenueCatSnapshot(
+            subscriber, request_date, absent=absent, app_user_id=app_user_id
+        )
 
     async def has_active_subscription(self, app_user_id: str) -> bool:
         """

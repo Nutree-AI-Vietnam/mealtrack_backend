@@ -21,9 +21,6 @@ from .describe_movement_command_handler import DescribeMovementCommandHandler
 from .edit_meal_command_handler import EditMealCommandHandler
 from .favorite_meal_command_handler import FavoriteMealCommandHandler
 from .log_caloric_drink_command_handler import LogCaloricDrinkCommandHandler
-from .repeat_meal_command_handler import RepeatMealCommandHandler
-from .unfavorite_meal_command_handler import UnfavoriteMealCommandHandler
-
 
 # Hydration handlers
 from .log_hydration_command_handler import LogHydrationCommandHandler
@@ -39,6 +36,13 @@ from .parse_meal_text_handler import ParseMealTextHandler
 
 # Ingredient handlers
 from .recognize_ingredient_command_handler import RecognizeIngredientCommandHandler
+from .refresh_my_entitlements_command_handler import (
+    RefreshMyEntitlementsCommandHandler,
+)
+from .repeat_meal_command_handler import RepeatMealCommandHandler
+from .resync_subscription_access_command_handler import (
+    ResyncSubscriptionAccessCommandHandler,
+)
 
 # Notification handlers
 from .save_body_fat_visual_profile_command_handler import (
@@ -53,6 +57,7 @@ from .saved_suggestion import (
 )
 from .scan_by_url_command_handler import ScanByUrlCommandHandler
 from .sync_user_command_handler import SyncUserCommandHandler
+from .unfavorite_meal_command_handler import UnfavoriteMealCommandHandler
 from .update_custom_macros_command_handler import UpdateCustomMacrosCommandHandler
 from .update_language_command_handler import UpdateLanguageCommandHandler
 from .update_movement_entry_command_handler import UpdateMovementEntryCommandHandler
@@ -61,13 +66,13 @@ from .update_notification_preferences_command_handler import (
 )
 from .update_timezone_command_handler import UpdateTimezoneCommandHandler
 from .update_user_avatar_command_handler import UpdateUserAvatarCommandHandler
-from .update_weekly_auto_adjust_command_handler import (
-    UpdateWeeklyAutoAdjustCommandHandler,
-)
 from .update_user_last_accessed_command_handler import (
     UpdateUserLastAccessedCommandHandler,
 )
 from .update_user_metrics_command_handler import UpdateUserMetricsCommandHandler
+from .update_weekly_auto_adjust_command_handler import (
+    UpdateWeeklyAutoAdjustCommandHandler,
+)
 from .upload_meal_image_immediately_command_handler import (
     UploadMealImageImmediatelyHandler,
 )
@@ -87,6 +92,8 @@ __all__ = [
     "RepeatMealCommandHandler",
     # User handlers
     "SaveUserOnboardingCommandHandler",
+    "RefreshMyEntitlementsCommandHandler",
+    "ResyncSubscriptionAccessCommandHandler",
     "SaveBodyFatVisualProfileCommandHandler",
     "SyncUserCommandHandler",
     "UpdateUserLastAccessedCommandHandler",

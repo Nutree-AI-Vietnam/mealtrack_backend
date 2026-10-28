@@ -14,6 +14,7 @@ from src.api.base_dependencies import (
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.dependencies.guest_quota import get_guest_quota_service
+from src.api.dependencies.subscription_access import require_active_subscription
 from src.api.exceptions import ValidationException, handle_exception
 from src.api.mappers.meal_mapper import MealMapper
 from src.api.middleware.accept_language import get_request_language
@@ -291,7 +292,11 @@ def _manual_request_fingerprint(payload: CreateManualMealFromFoodsRequest) -> st
     return hashlib.sha256(canonical).hexdigest()
 
 
-@router.post("/parse-text", response_model=ParseMealTextResponse)
+@router.post(
+    "/parse-text",
+    response_model=ParseMealTextResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
 @limiter.limit("20/minute")
 async def parse_meal_text(
     request: Request,

@@ -48,6 +48,9 @@ from src.api.routes.v1.admin_meal_catalog import router as admin_meal_catalog_ro
 from src.api.routes.v1.admin_meal_catalog_import import (
     router as admin_meal_catalog_import_router,
 )
+from src.api.routes.v1.admin_subscription_access import (
+    router as admin_subscription_access_router,
+)
 from src.api.routes.v1.ai_jobs import router as ai_jobs_router
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.api.routes.v1.chat import router as chat_router
@@ -59,6 +62,7 @@ from src.api.routes.v1.health import root_router as root_health_router
 from src.api.routes.v1.health import router as health_router
 from src.api.routes.v1.hydration import router as hydration_router
 from src.api.routes.v1.ingredients import router as ingredients_router
+from src.api.routes.v1.me import router as me_router
 from src.api.routes.v1.meal_catalog import router as meal_catalog_router
 from src.api.routes.v1.meal_catalog_log import router as meal_catalog_log_router
 from src.api.routes.v1.meal_plans import router as meal_plans_router
@@ -347,6 +351,7 @@ app.include_router(root_health_router)
 app.include_router(health_router)
 app.include_router(admin_meal_catalog_router)
 app.include_router(admin_meal_catalog_import_router)
+app.include_router(admin_subscription_access_router)
 app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)
@@ -361,6 +366,7 @@ app.include_router(meal_plans_router)
 app.include_router(meal_catalog_router)
 app.include_router(user_profiles_router)
 app.include_router(users_router)
+app.include_router(me_router)
 app.include_router(foods_router)
 app.include_router(monitoring_router)
 app.include_router(webhooks_router)

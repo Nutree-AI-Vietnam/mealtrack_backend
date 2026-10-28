@@ -18,7 +18,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | Firebase Auth | **Required** | Fail fast (401) |
 | AI provider stack | **Required for AI routes** | Circuit breaker → next model in chain; exhausted chain raises `AIUnavailableError` |
 | Cloudflare Workers AI | **Optional routed provider** | Skip / fall through; disable via env |
-| RevenueCat | **Billing sync** | Webhook/cache degrade; last-known subscription where available. Premium route gates are not enforced yet |
+| RevenueCat | **Payment facts** | Webhook/reconciliation sync updates PostgreSQL; the database policy owns runtime access. A provider failure never blocks webhook side effects: the user's rows are left unresolved (entitlements answer 503) and reported for repair |
 | Redis optional caches | **Optional** | Bypass cache; continue from source of truth |
 | Redis provider budget | **Required for provider-origin manual writes** | Fail closed with `NUTRITION_PROVIDER_UNAVAILABLE` |
 | Redis meal-suggestion sessions | **Required transient state** (current design) | Session writes fail when store unavailable |
@@ -69,7 +69,7 @@ durable.
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
-| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
+| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; normalized writes in `src/infra/services/subscription_access_sync_service.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_access_sync.py`, `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
@@ -211,7 +211,98 @@ optional caches.
 
 ### RevenueCat and web redemption
 
-- Webhooks update local `subscriptions`; signature verification is constant-time.
+- RevenueCat is the purchase rail for the App Store and Google Play: the app
+  buys and restores through the RevenueCat SDK logged in as the Firebase uid,
+  and renewals, billing issues, refunds and expirations reach the backend only
+  through RevenueCat webhooks and snapshots. The backend has no direct App
+  Store or Google Play verification (no receipt or purchase-token endpoint, no
+  App Store Server Notifications or Play RTDN); dropping RevenueCat would need
+  that whole store lifecycle stack first.
+- RevenueCat verifies purchase facts. Runtime access is evaluated from verified
+  `subscriptions` rows; `GET /v1/me/entitlements` never calls RevenueCat.
+  `POST /v1/me/entitlements/refresh` is the per-user self-heal: it reads the
+  caller's RevenueCat customer and applies it like a webhook would (contract
+  and rate limit in `docs/api-endpoints.md`).
+- `subscriptions.provider` names the row's owner; RevenueCat code reads and
+  writes only `provider='revenuecat'` rows (rules for other providers below).
+- `SUBSCRIPTION_ENFORCEMENT_ENABLED` (with `SUBSCRIPTION_ACCESS_ENABLED`) makes
+  the paid AI routes answer 402 `SUBSCRIPTION_REQUIRED`; the route list is in
+  `docs/api-endpoints.md`. The Ghi nhanh describe routes
+  (`POST /v1/hydration/describe`, `POST /v1/movement/describe`) are separate:
+  their own Premium check (`premium_check.require_subscription`: an unexpired
+  `active` or `billing_issue` row of any provider, else RevenueCat within 3 s)
+  is always on and reads neither flag.
+- A failed or malformed provider fetch must not erase a previously verified
+  row. Use the guarded reconciliation command described in
+  `docs/runbooks/subscription-access-reconciliation.md` before enabling reads.
+  No job repairs rows on a schedule: support resyncs single users through
+  the admin API (`/v1/admin/subscription-access`, `docs/api-endpoints.md`),
+  `GET /v1/health/subscription-access` and the Sentry rules in the
+  runbook's "Monitoring" alert when rows a failed read left unresolved pile
+  up or age, and the team then runs the script's `--repair` mode by hand.
+- Webhooks (signature verification is constant-time):
+  - Every event type whose user resolves is re-read from RevenueCat
+    (`GET /v1/subscribers/{firebase_uid}`, only when the event names that
+    uid) and applied to `provider='revenuecat'` rows; only `TEST`,
+    `EXPERIMENT_ENROLLMENT`, `INVOICE_ISSUANCE` and
+    `VIRTUAL_CURRENCY_TRANSACTION` are skipped. New event types sync by
+    default.
+  - The legacy handlers (rows, referral credit, lifecycle and affiliate
+    events) always run, whatever `SUBSCRIPTION_ACCESS_ENABLED` is.
+    If the customer cannot be read or applied, the webhook still answers 200;
+    the user's RevenueCat rows get `provider_sync_required_at` (RevenueCat's
+    event time), which the access policy treats as unresolved, and the failure
+    is logged and counted (`subscription_access.snapshot_unavailable`, by
+    `failure_kind`). It also goes to Sentry, except a RevenueCat outage or
+    rate limit (`transport`, `http_429`, `http_5xx`), which would send one
+    event per webhook; the counter carries that alert (runbook, Monitoring).
+    A contract or configuration failure is sent under the fixed fingerprint
+    `[subscription_access.snapshot_failure, <failure_kind>]` (event tag
+    `alert`), which the runbook's issue alert matches; a webhook that
+    answers `500` under `subscription_access.webhook_processing_error`.
+    Only a snapshot taken at or after that time clears it (next event,
+    refresh or reconciliation).
+  - Writers for one user serialise on `SELECT ... FOR UPDATE` of the user row;
+    an older snapshot never overwrites a newer one (`provider_snapshot_at`).
+  - An event lands on the row of its own product (an old plan's
+    `EXPIRATION` never on the newer plan's row). Google Play webhooks name
+    `<subscription>:<base plan>` while snapshots name the bare subscription
+    id, so row lookups and snapshot targets treat both forms as one product,
+    the exact id first. A snapshot's target is a row of its own store before
+    the exact id (an App Store product can share its id with a Play
+    subscription), and the newest row on a remaining tie, like the lookup.
+  - RevenueCat has no `REFUND` event: a refund is a `CANCELLATION` with
+    `cancel_reason=CUSTOMER_SUPPORT` or a negative price. It runs the
+    cancellation handler, as production always has: no referral clawback,
+    and the `subscription_canceled` lifecycle event (see "Refunds and
+    referral commission" below). Access follows the snapshot (a refund does
+    not always end the subscription); rows the sync revokes for a refund read
+    `refunded`, and the loss of access counts as expected. A refund whose
+    customer cannot be read or applied also marks the user's rows with it
+    (`provider_refund_pending_at`), so the paid-route enforcement fallback
+    refuses them until a snapshot taken after the refund decides.
+  - `TRANSFER` re-reads every local source and target user from its own
+    customer; nothing is re-pointed or expired blindly. A source whose read
+    fails is marked and remembered as a transfer source
+    (`provider_transfer_source_at`), so the next snapshot taken after the
+    transfer (refresh, `--repair`, a later webhook) applies its emptied
+    customer instead of leaving it unresolved.
+  - A deleted account (`users.is_active` false, tombstoned uid) is never
+    synced. Its kept RevenueCat rows still resolve events for the old uid (a
+    store subscription outlives the account), so the legacy handlers run, but
+    nothing is read, marked or reported (`webhook.revenuecat.processed`
+    `result=account_deleted`); a `TRANSFER` party that is deleted is skipped.
+  - `GET /v1/subscribers` is "get or create": an unseen id answers 200 with an
+    empty customer, which is treated as "no purchases". It never expires a
+    row that could still grant access, except for a transfer source (during
+    the `TRANSFER`, or remembered from one whose read failed).
+- Web redemption retains its existing identity binding and idempotency
+  checks. Finalize applies the verified customer it read with the same
+  access sync as webhooks and refresh (`source=web_funnel`): every
+  `provider='revenuecat'` row of the user is stamped, the bound product's
+  row carries the facts, markers the snapshot answers are cleared, and a
+  read older than the stored facts changes nothing. A snapshot the sync
+  refuses fails the finalize without writing anything.
 - Canonical handoff (`/v1/web-funnel/*`):
   - **Correlation** after anonymous web pay: lead + RC `app_user_id` + redeem
     link digest (never raw URL).
@@ -233,7 +324,106 @@ optional caches.
     webhook reconcile does not enqueue `claim_email`, and claim routes/dispatch
     stay off).
 - Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
-- Premium feature gates are planned, not enforced on routes.
+- Paid AI routes are enforced on the server only while
+  `SUBSCRIPTION_ENFORCEMENT_ENABLED` and `SUBSCRIPTION_ACCESS_ENABLED` are both
+  on (default off); otherwise the mobile app's gates are the only ones. The
+  Ghi nhanh describe routes are the exception: their Premium check is always
+  on (`docs/api-endpoints.md`).
+
+### Subscription providers (`subscriptions.provider`)
+
+The access policy evaluates every row of a user together, whatever its
+provider: the grant with the latest deadline wins (a lifetime grant beats
+any), and a row it cannot verify makes the decision "unresolved" only when
+nothing else grants. Each row has exactly one owner:
+
+| `provider` | Written by | Identity |
+|---|---|---|
+| `revenuecat` | RevenueCat snapshots only: webhooks, `POST /v1/me/entitlements/refresh`, the reconcile script, web-funnel finalize | `revenuecat_subscriber_id` = Firebase uid |
+| `momo` | The MoMo web checkout and its IPN handler (separate change) | `revenuecat_subscriber_id` NULL |
+
+A writer for any provider other than RevenueCat must:
+
+- set `provider` explicitly (`'momo'` for MoMo; an ORM insert without one
+  raises), leave `revenuecat_subscriber_id` NULL, and use `platform='web'`;
+- set `provider_snapshot_at` to when the provider confirmed the payment (the
+  verified IPN), or the policy treats a granting row as unverified;
+- set `expires_at` to the end of the paid period (a fixed-term pass, so
+  `will_renew` reads `false`), with `status='active'`, and move the row to
+  `expired` or `refunded` itself; leave `provider_sync_required_at` NULL;
+- write in one transaction under `lock_subscription_owner` (`SELECT ... FOR
+  UPDATE` on the user row), like the RevenueCat writers;
+- run the post-purchase side effects itself. The access row only grants
+  access; everything else a purchase sets off runs today only from the
+  RevenueCat webhook handlers (`src/api/routes/v1/webhook_subscription_lifecycle.py`):
+  the referral credit on a first purchase (`credit_referral_on_purchase`),
+  the `subscription_*` lifecycle events published to the integration queue
+  (affiliate commission and lifecycle messaging consume them), and the
+  purge of stale trial-expiry pushes on a renewal. A MoMo payment, renewal
+  or refund that only writes its row credits no referrer and tells no
+  consumer.
+
+RevenueCat handlers never read, expire, re-point or take over such rows:
+webhooks, transfers, refresh, reconciliation and web finalize all filter on
+`provider='revenuecat'`, and an empty RevenueCat customer never expires a
+row from another provider.
+
+### Refunds and referral commission
+
+Refund clawback is **disabled pending a product decision** (owner: product
+with the backend lead). A refund `CANCELLATION` claws back no referral
+commission and publishes `subscription_canceled`, exactly as production
+did before the subscription-access change; only its access sync is labelled
+a refund. `handle_refund` and `revoke_referral_on_refund`
+(`webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`) exist but
+nothing dispatches them. The unwired clawback must not be turned on as it
+stands:
+
+- It revokes the referred user's one commission whatever transaction was
+  refunded. RevenueCat sends a refund `CANCELLATION` for the latest period
+  only, so after one renewal every refund is a renewal's ("forgot to
+  cancel"), never the purchase that earned the commission, and nothing ever
+  restores it (a later purchase does not credit again).
+- `revoke_from_wallet` floors the balance at zero but adds the full amount
+  to `total_revoked`. A payout request debits the wallet when it is made and
+  stays `pending` or `processing` until paid, so a refund after the request
+  recovers nothing, leaves no record of the debt and does not flag the
+  payout. `RequestPayoutCommandHandler` also reads the wallet without
+  `FOR UPDATE`, so a concurrent revoke can be overwritten.
+- `subscription_refund` was never emitted in production. Before any refund
+  publishes it instead of `subscription_canceled`, confirm that
+  nutreeai_async and nutree-affiliate handle it idempotently, matched to the
+  refunded transaction, and write the accepted `lifecycle_type` values down
+  as a shared contract.
+
+A correct design needs at least:
+
+- revocation tied to the credited transaction: store the transaction that
+  earned the commission on `referral_conversions` (the paid
+  `INITIAL_PURCHASE`, or the trial-converting `RENEWAL`) and revoke only on a
+  refund of that transaction;
+- `REFUND_REVERSED` handling that restores a conversion the same transaction
+  revoked;
+- payout interaction: an outstanding clawback (or a negative balance) that
+  later credits pay down, `total_revoked` counting only what was recovered,
+  pending or processing payout requests flagged (or reduced, or blocked from
+  approval), and the wallet locked in the payout handler;
+- the lifecycle consumer contract above.
+
+### Store policy (MoMo channel)
+
+MoMo is a **web checkout channel**, not an in-app payment method. In the
+Vietnam storefronts the iOS and Android apps keep selling subscriptions
+through App Store and Google Play billing (via RevenueCat) and must not show
+MoMo buttons, links, prices or other calls to action that point to buying
+elsewhere (App Store Review Guidelines 3.1.1 and 3.1.3; Google Play Payments
+policy). A buyer pays with MoMo on the web while signed in with the same
+Firebase account, and the app unlocks access by signing in with that account
+(Apple guideline 3.1.3(b), multiplatform services). In-app wording stays
+neutral ("Already subscribed? Sign in"), and the same subscription must stay
+on sale as in-app purchase in both apps. Have legal confirm this before the
+MoMo channel launches, and re-check Google's alternative-billing programs
+for Vietnam before changing anything on Android.
 
 ### Sentry ownership
 

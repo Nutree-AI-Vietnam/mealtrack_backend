@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from typing import Any
@@ -49,9 +50,21 @@ def capture_exception(
     error: BaseException,
     *,
     context: dict[str, Any] | None = None,
+    fingerprint: Sequence[str] | None = None,
 ) -> None:
-    """Capture an unexpected exception through the active connector."""
-    get_observability_connector().capture_exception(error, context=context)
+    """Capture an unexpected exception through the active connector.
+
+    ``fingerprint`` pins the event to a fixed issue whatever its message or
+    stack (its first part becomes the event's ``alert`` tag); omitted, the
+    provider groups it as usual.
+    """
+    connector = get_observability_connector()
+    if fingerprint is None:
+        connector.capture_exception(error, context=context)
+    else:
+        connector.capture_exception(
+            error, context=context, fingerprint=list(fingerprint)
+        )
 
 
 def capture_message(
@@ -59,13 +72,16 @@ def capture_message(
     *,
     level: str = "info",
     context: dict[str, Any] | None = None,
+    fingerprint: Sequence[str] | None = None,
 ) -> None:
     """Capture an operational message through the active connector."""
-    get_observability_connector().capture_message(
-        message,
-        level=level,
-        context=context,
-    )
+    connector = get_observability_connector()
+    if fingerprint is None:
+        connector.capture_message(message, level=level, context=context)
+    else:
+        connector.capture_message(
+            message, level=level, context=context, fingerprint=list(fingerprint)
+        )
 
 
 def log_event(

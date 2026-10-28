@@ -1,13 +1,25 @@
 """
 Subscription access validation middleware.
 
-The subscriptions table (kept by RevenueCat webhooks) answers first. RevenueCat
-is asked only when no paid-up row exists, which covers a purchase whose webhook
-has not arrived yet.
+``require_subscription`` is the always-on Premium check behind the Ghi nhanh
+describe routes. The subscriptions table (kept by RevenueCat webhooks) answers
+first. RevenueCat is asked only when no paid-up row exists, which covers a
+purchase whose webhook has not arrived yet.
+
+It is separate from
+src.api.dependencies.subscription_access.require_active_subscription, which
+gates the other paid routes behind SUBSCRIPTION_ENFORCEMENT_ENABLED (off by
+default). ``get_subscription_status`` is a non-blocking status read.
 """
 
+import asyncio
+import functools
 import logging
 import os
+import time
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 
@@ -27,6 +39,42 @@ logger = logging.getLogger(__name__)
 
 SUBSCRIPTION_ACCESS_CACHE_TTL_SECONDS = 60
 REVENUECAT_CHECK_TIMEOUT_SECONDS = 3.0
+# Paid-route enforcement asks RevenueCat before a 402 at most once per user
+# per this many seconds, whatever the answer. Its dependency runs before the
+# route's rate limiter, so this is what bounds the RevenueCat reads a refused
+# caller can cause.
+REVENUECAT_RECHECK_SECONDS = 60
+# The total bound on that check's RevenueCat call. httpx's timeout
+# (REVENUECAT_CHECK_TIMEOUT_SECONDS) applies to each phase of the request on
+# its own (connect, write, every read), so alone it allows several times 3 s.
+REVENUECAT_CHECK_DEADLINE_SECONDS = 3.0
+# Held under the recheck key while a worker is asking RevenueCat.
+_CHECK_IN_FLIGHT = "in_flight"
+# Bounds the per-process fallback kept while the shared cache is unavailable.
+_LOCAL_CHECKS_MAX = 10_000
+
+# Where revenuecat_access's answer came from.
+ANSWER_ACCESS_CACHE = "access_cache"  # a grant either check cached (DB or RC)
+ANSWER_RECENT_CHECK = "recent_check"  # held from a check within the window
+ANSWER_REVENUECAT = "revenuecat"  # RevenueCat answered this request's call
+ANSWER_NOT_ASKED = "not_asked"  # no Firebase uid, or RevenueCat not configured
+
+
+@dataclass(frozen=True)
+class RevenueCatAccess:
+    """revenuecat_access's answer and where it came from (ANSWER_*).
+
+    Only ANSWER_REVENUECAT is RevenueCat's answer to this request (a call it
+    made or shared with concurrent ones). A grant from the access cache may
+    be the database's: require_subscription caches its row grants there too.
+    """
+
+    check: EntitlementCheck
+    source: str
+
+    @property
+    def from_revenuecat(self) -> bool:
+        return self.source == ANSWER_REVENUECAT
 
 
 def _get_subscription_service() -> SubscriptionServicePort:
@@ -114,6 +162,200 @@ async def _check_access(user_id: str) -> EntitlementCheck:
             "User %s has subscription in RevenueCat but not in cache", user_id
         )
     return access
+
+
+async def revenuecat_access(user_id: str) -> RevenueCatAccess:
+    """RevenueCat's answer for a user the database does not grant.
+
+    For paid-route enforcement, before a 402. A grant in the Premium check's
+    60 s access cache answers without a call. Otherwise RevenueCat is asked
+    (``check_entitlement``, cut off after REVENUECAT_CHECK_DEADLINE_SECONDS
+    in total) at most once per user per REVENUECAT_RECHECK_SECONDS, whatever
+    it answers: concurrent requests in one process share the call, and the
+    answer is kept under its own key (``revenuecat_check_key``) in the shared
+    cache, or in this process while that cache is unavailable. A request that finds another worker's call in
+    flight gets UNAVAILABLE. A grant also goes to the access cache.
+    UNAVAILABLE when RevenueCat cannot answer or is not configured. The
+    answer says where it came from, so only RevenueCat's own grants are
+    counted as such.
+    """
+    cache = _get_cache()
+    if await _has_cached_access(cache, user_id):
+        return RevenueCatAccess(EntitlementCheck.ENTITLED, ANSWER_ACCESS_CACHE)
+    return await _single_flight(user_id, lambda: _throttled_check(cache, user_id))
+
+
+async def forget_revenuecat_check(user_id: str) -> None:
+    """Let the user's next refused paid request ask RevenueCat again.
+
+    For writers that just read and applied the user's RevenueCat customer (a
+    refresh, a synced webhook, a web-funnel finalize): a payer the database
+    still denies is not held to an answer older than that read.
+    """
+    _local_checks.pop(user_id, None)
+    cache = _get_cache()
+    if cache is None:
+        return
+    try:
+        await cache.invalidate(revenuecat_check_key(user_id))
+    except Exception:
+        logger.warning("RevenueCat recheck invalidation failed", exc_info=True)
+
+
+def revenuecat_check_key(user_id: str) -> str:
+    return f"subscription_revenuecat_check:{user_id}"
+
+
+async def _throttled_check(cache: CachePort | None, user_id: str) -> RevenueCatAccess:
+    recent = await _recent_check(cache, user_id)
+    if recent is not None:
+        return RevenueCatAccess(recent, ANSWER_RECENT_CHECK)
+    async with _get_uow_factory()() as uow:
+        user = await uow.users.find_by_id(user_id)
+    firebase_uid = getattr(user, "firebase_uid", None)
+    if not firebase_uid:
+        return RevenueCatAccess(EntitlementCheck.NOT_ENTITLED, ANSWER_NOT_ASKED)
+    if not os.getenv("REVENUECAT_SECRET_API_KEY", ""):
+        logger.warning("REVENUECAT_SECRET_API_KEY not configured")
+        return RevenueCatAccess(EntitlementCheck.UNAVAILABLE, ANSWER_NOT_ASKED)
+    claim = await _claim_check(cache, user_id)
+    if claim is None:
+        # Another worker is asking RevenueCat for this user right now.
+        return RevenueCatAccess(EntitlementCheck.UNAVAILABLE, ANSWER_RECENT_CHECK)
+    access = await _ask_revenuecat(firebase_uid)
+    await _remember_check(cache if claim else None, user_id, access)
+    if access is EntitlementCheck.ENTITLED:
+        await _cache_access(cache, user_id)
+    return RevenueCatAccess(access, ANSWER_REVENUECAT)
+
+
+async def _ask_revenuecat(firebase_uid: str) -> EntitlementCheck:
+    """check_entitlement, UNAVAILABLE once REVENUECAT_CHECK_DEADLINE_SECONDS pass."""
+    try:
+        return await asyncio.wait_for(
+            _get_subscription_service().check_entitlement(
+                firebase_uid, timeout_seconds=REVENUECAT_CHECK_TIMEOUT_SECONDS
+            ),
+            REVENUECAT_CHECK_DEADLINE_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "RevenueCat entitlement check passed its %.1f s deadline",
+            REVENUECAT_CHECK_DEADLINE_SECONDS,
+        )
+        return EntitlementCheck.UNAVAILABLE
+
+
+# Checks in flight in this process, shared by concurrent requests per user.
+_checks_in_flight: dict[str, asyncio.Task[RevenueCatAccess]] = {}
+
+
+async def _single_flight(
+    user_id: str, check: Callable[[], Coroutine[Any, Any, RevenueCatAccess]]
+) -> RevenueCatAccess:
+    loop = asyncio.get_running_loop()
+    task = _checks_in_flight.get(user_id)
+    if task is None or task.done() or task.get_loop() is not loop:
+        task = loop.create_task(check())
+        _checks_in_flight[user_id] = task
+        task.add_done_callback(functools.partial(_check_finished, user_id))
+    # A request that goes away (client disconnect) leaves the call running
+    # for the others.
+    return await asyncio.shield(task)
+
+
+def _check_finished(user_id: str, task: asyncio.Task[RevenueCatAccess]) -> None:
+    if _checks_in_flight.get(user_id) is task:
+        del _checks_in_flight[user_id]
+    if not task.cancelled():
+        task.exception()  # retrieved, so a call nobody awaits any more stays quiet
+
+
+# user_id -> (monotonic expiry, stored answer): the recheck key for this
+# process, used only while the shared cache cannot hold it.
+_local_checks: dict[str, tuple[float, str]] = {}
+
+
+def _local_get(user_id: str) -> str | None:
+    entry = _local_checks.get(user_id)
+    if entry is None:
+        return None
+    if entry[0] <= time.monotonic():
+        _local_checks.pop(user_id, None)
+        return None
+    return entry[1]
+
+
+def _local_put(user_id: str, value: str) -> None:
+    now = time.monotonic()
+    if user_id not in _local_checks and len(_local_checks) >= _LOCAL_CHECKS_MAX:
+        for key in [key for key, entry in _local_checks.items() if entry[0] <= now]:
+            del _local_checks[key]
+        if len(_local_checks) >= _LOCAL_CHECKS_MAX:
+            _local_checks.clear()
+    _local_checks[user_id] = (now + REVENUECAT_RECHECK_SECONDS, value)
+
+
+def _stored_answer(value: object) -> EntitlementCheck | None:
+    if not isinstance(value, str):
+        return None  # nothing stored, or not a value this module writes
+    if value == _CHECK_IN_FLIGHT:
+        return EntitlementCheck.UNAVAILABLE
+    try:
+        return EntitlementCheck(value)
+    except ValueError:
+        return None
+
+
+async def _recent_check(
+    cache: CachePort | None, user_id: str
+) -> EntitlementCheck | None:
+    """The answer of the user's last check, if within the recheck window."""
+    stored: object = _local_get(user_id)
+    if stored is None and cache is not None:
+        try:
+            stored = await cache.get(revenuecat_check_key(user_id))
+        except Exception:
+            logger.warning("RevenueCat recheck read failed", exc_info=True)
+    return _stored_answer(stored)
+
+
+async def _claim_check(cache: CachePort | None, user_id: str) -> bool | None:
+    """Claim the user's next RevenueCat call for the recheck window.
+
+    True when claimed in the shared cache, False when claimed in this process
+    (the shared cache could not answer), None when another worker holds it.
+    """
+    claimed: bool | None = None
+    if cache is not None:
+        try:
+            claimed = await cache.add(
+                revenuecat_check_key(user_id),
+                _CHECK_IN_FLIGHT,
+                REVENUECAT_RECHECK_SECONDS,
+            )
+        except Exception:
+            logger.warning("RevenueCat recheck claim failed", exc_info=True)
+    if claimed is None:
+        _local_put(user_id, _CHECK_IN_FLIGHT)
+        return False
+    return True if claimed else None
+
+
+async def _remember_check(
+    cache: CachePort | None, user_id: str, access: EntitlementCheck
+) -> None:
+    if cache is not None:
+        try:
+            await cache.set(
+                revenuecat_check_key(user_id),
+                access.value,
+                REVENUECAT_RECHECK_SECONDS,
+            )
+            return
+        except Exception:
+            logger.warning("RevenueCat recheck write failed", exc_info=True)
+    _local_put(user_id, access.value)
 
 
 def _cache_key(user_id: str) -> str:

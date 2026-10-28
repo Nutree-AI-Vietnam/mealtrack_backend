@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.auth import AuthProvider
 from src.domain.model.user import Goal, JobType, Sex, TdeeRequest, TrainingLevel
+from src.domain.ports.subscription_service_port import RevenueCatSnapshot
 from src.domain.services.tdee_service import TdeeCalculationService
-from src.infra.database.models.subscription import Subscription
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.models.user.user import User
 from src.infra.database.models.web_funnel_claim import (
@@ -19,6 +19,7 @@ from src.infra.database.models.web_funnel_claim import (
     WebFunnelRedemption,
 )
 from src.infra.database.models.weekly.weekly_macro_budget import WeeklyMacroBudgetORM
+from src.infra.services.subscription_access_sync_service import sync_revenuecat_access
 
 
 def utcnow():
@@ -129,9 +130,19 @@ async def finalize_redemption(
     environment: str,
     auth_provider: str | None = None,
     expires_at=None,
+    provider_snapshot: RevenueCatSnapshot | None = None,
     verified_provider_app_user_ids: set[str] | None = None,
 ) -> dict:
-    """Restore one paid lead once; hash + preflight UID select the exact row."""
+    """Restore one paid lead once; hash + preflight UID select the exact row.
+
+    ``provider_snapshot`` is the verified RevenueCat customer the caller read
+    for ``uid`` (it checked the bound product is granted). It is applied with
+    sync_revenuecat_access, like a webhook or refresh: every RevenueCat row
+    of the user is stamped, the bound product's row carries the facts, other
+    rows are left non-granting, markers the snapshot answers are cleared,
+    and a snapshot older than the stored facts changes nothing. Raises
+    RevenueCatSnapshotUnavailable, writing nothing, when it cannot be applied.
+    """
     binding = await db.scalar(
         select(WebFunnelRedemption)
         .where(
@@ -259,31 +270,12 @@ async def finalize_redemption(
                 target_fat=macros["fat"] * 7,
             )
         )
-    subscription = await db.scalar(
-        select(Subscription)
-        .where(
-            Subscription.user_id == user.id,
-            Subscription.revenuecat_subscriber_id == uid,
-            Subscription.product_id == binding.product_id,
-        )
-        .with_for_update()
+    if provider_snapshot is None:
+        raise ValueError("finalize_redemption needs the verified RevenueCat snapshot")
+    # Locks the user row (already locked above) like every access writer.
+    await sync_revenuecat_access(
+        db, user, snapshot=provider_snapshot, source="web_funnel"
     )
-    if subscription is None:
-        db.add(
-            Subscription(
-                user_id=user.id,
-                revenuecat_subscriber_id=uid,
-                product_id=binding.product_id,
-                platform="web",
-                status="active",
-                purchased_at=utcnow(),
-                expires_at=expires_at,
-                is_sandbox=binding.environment.upper() == "SANDBOX",
-            )
-        )
-    else:
-        subscription.status = "active"
-        subscription.expires_at = expires_at
     binding.provider_app_user_ids = sorted(
         aliases | verified_aliases | {original_app_user_id, uid}
     )

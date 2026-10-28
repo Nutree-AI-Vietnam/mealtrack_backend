@@ -9,11 +9,21 @@ from typing import Any
 
 from src.app.commands.user.sync_user_command import SyncUserCommand
 from src.app.events.base import EventHandler, handles
+from src.app.services.subscription_access_fallback import (
+    record_legacy_access_fallback,
+)
+from src.app.services.subscription_access_flags import (
+    database_subscription_access_enabled,
+)
 from src.domain.exceptions.firebase_identity_exceptions import (
     FirebaseIdentityConflictError,
 )
 from src.domain.model.auth.auth_provider import AuthProvider
 from src.domain.model.notification import NotificationPreferences
+from src.domain.model.subscription_access import (
+    SubscriptionAccessUnavailable,
+    evaluate_subscription_access,
+)
 from src.domain.model.user import UserDomainModel
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -112,10 +122,10 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
 
                 # Get subscription info from UoW
                 subscription_info = None
-                active_subscription = await uow.subscriptions.find_active_by_user_id(
-                    str(user.id)
-                )
-                has_subscription = active_subscription is not None
+                (
+                    active_subscription,
+                    has_subscription,
+                ) = await self._subscription_access(uow, str(user.id))
 
                 if active_subscription:
                     subscription_info = {
@@ -177,6 +187,29 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
             except Exception:
                 await uow.rollback()
                 raise
+
+    @staticmethod
+    async def _subscription_access(
+        uow: AsyncUnitOfWorkPort, user_id: str
+    ) -> tuple[Any | None, bool]:
+        """Return the subscription row to describe and has_subscription.
+
+        has_subscription is informational here, so sync never fails on it:
+        when the stored facts cannot decide access (an unreconciled row),
+        the legacy decision answers and the fallback is logged.
+        """
+        if database_subscription_access_enabled():
+            subscriptions = await uow.subscriptions.find_by_user_id(user_id)
+            try:
+                access = evaluate_subscription_access(subscriptions)
+            except SubscriptionAccessUnavailable:
+                record_legacy_access_fallback(source="users_sync", user_id=user_id)
+            else:
+                # The granting row with the latest deadline, as the
+                # entitlements endpoint describes it.
+                return access.source, access.has_access
+        active_subscription = await uow.subscriptions.find_active_by_user_id(user_id)
+        return active_subscription, active_subscription is not None
 
     @staticmethod
     def _supported_language_code(language_code: str | None) -> str | None:

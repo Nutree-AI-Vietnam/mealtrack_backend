@@ -3,6 +3,10 @@ query_handlers - Individual handler files.
 Each handler is in its own file for better maintainability.
 """
 
+from .check_subscription_access_query_handler import (
+    CheckSubscriptionAccessQueryHandler,
+)
+
 # Activity handlers
 from .get_body_fat_visual_profile_query_handler import (
     GetBodyFatVisualProfileQueryHandler,
@@ -16,30 +20,36 @@ from .get_daily_hydration_query_handler import GetDailyHydrationQueryHandler
 from .get_daily_macros_query_handler import GetDailyMacrosQueryHandler
 from .get_daily_movement_query_handler import GetDailyMovementQueryHandler
 from .get_drink_catalog_query_handler import GetDrinkCatalogQueryHandler
-from .get_food_details_query_handler import GetFoodDetailsQueryHandler
-from .get_provider_food_details_query_handler import (
-    GetProviderFoodDetailsQueryHandler,
-)
-from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
-from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
-from .get_latest_weekly_recap_query_handler import GetLatestWeeklyRecapQueryHandler
-from .get_progress_recap_query_handler import GetProgressRecapQueryHandler
-from .get_progress_summary_query_handler import GetProgressSummaryQueryHandler
 
 # Meal handlers
 from .get_favorite_meals_query_handler import GetFavoriteMealsQueryHandler
+from .get_food_details_query_handler import GetFoodDetailsQueryHandler
+from .get_journey_progress_query_handler import GetJourneyProgressQueryHandler
+from .get_latest_weekly_recap_query_handler import GetLatestWeeklyRecapQueryHandler
 from .get_meal_by_id_query_handler import GetMealByIdQueryHandler
 from .get_meals_by_date_query_handler import GetMealsByDateQueryHandler
 from .get_movement_catalog_query_handler import GetMovementCatalogQueryHandler
-from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
-
+from .get_my_entitlements_query_handler import GetMyEntitlementsQueryHandler
 
 # Notification handlers
 from .get_notification_preferences_query_handler import (
     GetNotificationPreferencesQueryHandler,
 )
+from .get_popular_staples_query_handler import GetPopularStaplesQueryHandler
+from .get_progress_recap_query_handler import GetProgressRecapQueryHandler
+from .get_progress_summary_query_handler import GetProgressSummaryQueryHandler
+from .get_provider_food_details_query_handler import (
+    GetProviderFoodDetailsQueryHandler,
+)
+from .get_recent_meals_query_handler import GetRecentMealsQueryHandler
 from .get_saved_suggestions_query_handler import GetSavedSuggestionsQueryHandler
 from .get_streak_query_handler import GetStreakQueryHandler
+from .get_subscription_access_health_query_handler import (
+    GetSubscriptionAccessHealthQueryHandler,
+)
+from .get_support_subscription_access_query_handler import (
+    GetSupportSubscriptionAccessQueryHandler,
+)
 from .get_user_by_firebase_uid_query_handler import GetUserByFirebaseUidQueryHandler
 from .get_user_metrics_query_handler import GetUserMetricsQueryHandler
 from .get_user_onboarding_status_query_handler import (
@@ -55,6 +65,9 @@ from .get_user_timezone_query_handler import GetUserTimezoneQueryHandler
 from .get_weekly_auto_adjust_query_handler import GetWeeklyAutoAdjustQueryHandler
 from .get_weekly_budget_query_handler import GetWeeklyBudgetQueryHandler
 from .get_weekly_hydration_query_handler import GetWeeklyHydrationQueryHandler
+from .list_unresolved_subscription_access_query_handler import (
+    ListUnresolvedSubscriptionAccessQueryHandler,
+)
 
 # Food handlers
 from .lookup_barcode_query_handler import LookupBarcodeQueryHandler
@@ -64,6 +77,11 @@ from .search_foods_query_handler import SearchFoodsQueryHandler
 __all__ = [
     # TDEE
     "GetUserTdeeQueryHandler",
+    "GetMyEntitlementsQueryHandler",
+    "GetSupportSubscriptionAccessQueryHandler",
+    "GetSubscriptionAccessHealthQueryHandler",
+    "ListUnresolvedSubscriptionAccessQueryHandler",
+    "CheckSubscriptionAccessQueryHandler",
     "PreviewTdeeQueryHandler",
     # Food
     "SearchFoodsQueryHandler",

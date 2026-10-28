@@ -92,33 +92,43 @@ async def _notify_affiliate(
 async def handle_purchase(
     uow, user, event, affiliate_handler=None, event_publisher=None
 ):
-    """Handle initial purchase."""
-    logger.info(f"Creating subscription for user {user.id}")
+    """Handle an initial purchase (INITIAL_PURCHASE, or a missed one).
 
-    # Check if subscription already exists
-    existing = await get_subscription_by_revenuecat_id(uow, event.get("app_user_id"))
-
-    if existing:
-        logger.warning(f"Subscription already exists for {user.id}, updating instead")
-        await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
-        return
-
-    # Create new subscription record
-    subscription = Subscription(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        revenuecat_subscriber_id=event.get("app_user_id"),
-        product_id=event.get("product_id"),
-        platform=parse_platform(event.get("store")),
-        status="active",
-        purchased_at=parse_timestamp(event.get("purchased_at_ms")) or utc_now(),
-        expires_at=parse_timestamp(event.get("expiration_at_ms")),
-        store_transaction_id=event.get("transaction_id"),
-        is_sandbox=event.get("environment") == "SANDBOX",
+    The event, not the absence of a row, makes this the first purchase: a
+    POST /v1/me/entitlements/refresh right after the purchase, an earlier
+    synced event, a reconcile repair or an unresolved placeholder can all
+    create the row before this webhook lands. The referral credit (pending
+    -> converted only) and the lifecycle event (its id derives from the
+    RevenueCat event id) are idempotent, so they always run.
+    """
+    existing = await get_subscription_by_revenuecat_id(
+        uow, event.get("app_user_id"), str(user.id), event.get("product_id")
     )
 
-    uow.session.add(subscription)
-    logger.info(f"User {user.id} purchased {subscription.product_id}")
+    if existing:
+        logger.info(
+            "Subscription row already exists for user %s; applying the purchase",
+            user.id,
+        )
+        existing.expires_at = parse_timestamp(event.get("expiration_at_ms"))
+        existing.status = "active"
+        existing.updated_at = utc_now()
+    else:
+        subscription = Subscription(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            provider="revenuecat",
+            revenuecat_subscriber_id=event.get("app_user_id") or user.firebase_uid,
+            product_id=event.get("product_id"),
+            platform=parse_platform(event.get("store")),
+            status="active",
+            purchased_at=parse_timestamp(event.get("purchased_at_ms")) or utc_now(),
+            expires_at=parse_timestamp(event.get("expiration_at_ms")),
+            store_transaction_id=event.get("transaction_id"),
+            is_sandbox=event.get("environment") == "SANDBOX",
+        )
+        uow.session.add(subscription)
+        logger.info(f"User {user.id} purchased {subscription.product_id}")
 
     # Credit referrer if this user has a pending referral conversion
     await credit_referral_on_purchase(uow, str(user.id))
@@ -146,7 +156,7 @@ async def handle_renewal(
 ):
     """Handle subscription renewal."""
     subscription = await get_subscription_by_revenuecat_id(
-        uow, event.get("app_user_id")
+        uow, event.get("app_user_id"), str(user.id), event.get("product_id")
     )
 
     if subscription:
@@ -179,16 +189,19 @@ async def handle_renewal(
 
     # Purge stale trial-expiry pushes so we don't send a
     # "your trial ends tomorrow" push for a sub that just auto-renewed.
+    # The savepoint keeps a failed purge from aborting the webhook's
+    # transaction (PostgreSQL refuses every later statement otherwise).
     try:
-        await uow.session.execute(
-            text("""
-                DELETE FROM notifications
-                WHERE user_id = :uid
-                  AND notification_type LIKE 'trial_expiry%'
-                  AND status = 'pending'
-                """),
-            {"uid": user.id},
-        )
+        async with uow.session.begin_nested():
+            await uow.session.execute(
+                text("""
+                    DELETE FROM notifications
+                    WHERE user_id = :uid
+                      AND notification_type LIKE 'trial_expiry%'
+                      AND status = 'pending'
+                    """),
+                {"uid": user.id},
+            )
     except Exception:
         # Do not raise — webhook MUST still ACK so RevenueCat doesn't retry.
         logger.exception(
@@ -312,7 +325,13 @@ async def handle_product_change(
 
 
 async def handle_refund(uow, user, event, affiliate_handler=None, event_publisher=None):
-    """Handle refund — update subscription status and revoke referral credit."""
+    """Mark a refund and claw back the referrer's commission.
+
+    Not dispatched: RevenueCat sends refunds as CANCELLATION, which runs
+    handle_cancellation. The clawback here revokes the referred user's one
+    commission whatever transaction was refunded, so it stays off until the
+    redesign in docs/external-services.md ("Refunds and referral commission").
+    """
     subscription = await get_or_create_subscription(uow, user, event)
     if subscription:
         subscription.status = "refunded"
@@ -337,9 +356,17 @@ async def handle_refund(uow, user, event, affiliate_handler=None, event_publishe
 
 
 async def get_or_create_subscription(uow, user, event):
-    """Get existing subscription or create one if missing (handles missed INITIAL_PURCHASE)."""
+    """Get existing subscription or create one if missing (handles missed INITIAL_PURCHASE).
+
+    The row of the event's product is preferred: a user who upgraded holds a
+    row per product, and an EXPIRATION, CANCELLATION or BILLING_ISSUE for the
+    old product must not land on the newer product's row (when RevenueCat
+    cannot be read to undo it, that write would deny a paying user).
+    """
     subscription = await uow.subscriptions.find_by_revenuecat_id(
-        event.get("app_user_id")
+        event.get("app_user_id"),
+        user_id=str(user.id),
+        product_id=event.get("product_id"),
     )
 
     if not subscription:
@@ -349,7 +376,8 @@ async def get_or_create_subscription(uow, user, event):
         subscription = Subscription(
             id=str(uuid.uuid4()),
             user_id=user.id,
-            revenuecat_subscriber_id=event.get("app_user_id"),
+            provider="revenuecat",
+            revenuecat_subscriber_id=event.get("app_user_id") or user.firebase_uid,
             product_id=event.get("product_id") or "unknown",
             platform=parse_platform(event.get("store")),
             status="active",

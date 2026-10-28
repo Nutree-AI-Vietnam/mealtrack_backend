@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import logging
 import time
 
@@ -1839,6 +1840,11 @@ async def test_rate_limited_embedding_degrades_without_honouring_retry_after():
     orchestrator = _orchestrator(
         repo, embedding=OpenAIChatEmbeddingAdapter(api_key="test")
     )
+    # The SDK imports all of openai.resources on the first client.embeddings
+    # access. Do that cold import here so the timed call measures the 429 path:
+    # in a long serial session a full GC pass can land in it and pass the 3 s
+    # deadline before any request is sent.
+    importlib.import_module("openai.resources")
 
     with respx.mock as mock:
         route = mock.post(path__regex=r"/embeddings$").mock(

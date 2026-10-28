@@ -2,13 +2,28 @@
 Unit tests for RevenueCat adapter.
 """
 
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from tests.fixtures.revenuecat_samples import (
+    SAMPLE_REQUEST_DATE,
+    empty_customer_response,
+    patched_revenuecat_http,
+    verbatim_subscriber_response,
+)
 
-from src.domain.ports.subscription_service_port import EntitlementCheck
+from src.domain.ports.subscription_service_port import (
+    SNAPSHOT_REASON_API_KEY_MISSING,
+    SNAPSHOT_REASON_HTTP_4XX,
+    SNAPSHOT_REASON_HTTP_5XX,
+    SNAPSHOT_REASON_HTTP_429,
+    SNAPSHOT_REASON_MALFORMED,
+    SNAPSHOT_REASON_TRANSPORT,
+    EntitlementCheck,
+    RevenueCatSnapshotUnavailable,
+)
 from src.infra.adapters.revenuecat_adapter import RevenueCatAdapter
 
 
@@ -47,6 +62,165 @@ class TestRevenueCatAdapter:
                 },
             }
         }
+
+    async def test_verified_snapshot_keeps_absence_distinct_from_errors(self, service):
+        with patch("httpx.AsyncClient") as mock_client:
+            response = MagicMock(status_code=404)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=response
+            )
+            result = await service.get_verified_snapshot("firebase-uid")
+            assert result.absent is True
+            assert result.request_date is None
+
+            response.status_code = 429
+            response.headers = {"Retry-After": "7"}
+            with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+                await service.get_verified_snapshot("firebase-uid")
+            assert error.value.retry_after_seconds == 7
+
+    async def test_verified_snapshot_reads_request_date_from_response_root(
+        self, service
+    ):
+        """The documented v1 200 body keeps request_date_ms next to subscriber."""
+        body = verbatim_subscriber_response()
+        assert "request_date_ms" not in body["subscriber"]
+
+        with patched_revenuecat_http(body) as get:
+            snapshot = await service.get_verified_snapshot("firebase-uid")
+
+        get.assert_awaited_once()
+        assert get.await_args.args[0].endswith("/subscribers/firebase-uid")
+        assert snapshot.request_date == SAMPLE_REQUEST_DATE
+        assert snapshot.subscriber == body["subscriber"]
+        assert snapshot.absent is False
+        assert snapshot.app_user_id == "firebase-uid"
+
+    async def test_verified_snapshot_falls_back_to_request_date_string(self, service):
+        body = verbatim_subscriber_response()
+        del body["request_date_ms"]
+
+        with patched_revenuecat_http(body):
+            snapshot = await service.get_verified_snapshot("firebase-uid")
+
+        assert snapshot.request_date == datetime(2019, 7, 26, 17, 40, 10, tzinfo=UTC)
+
+    async def test_verified_snapshot_without_any_request_date_is_malformed(
+        self, service
+    ):
+        body = verbatim_subscriber_response()
+        del body["request_date_ms"]
+        del body["request_date"]
+        body["subscriber"]["request_date_ms"] = 1564162810884
+
+        with patched_revenuecat_http(body):
+            with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+                await service.get_verified_snapshot("firebase-uid")
+
+        assert error.value.reason == SNAPSHOT_REASON_MALFORMED
+
+    @pytest.mark.parametrize("subscriber", [None, [], "subscriber", 7])
+    async def test_verified_snapshot_rejects_non_object_subscriber(
+        self, service, subscriber
+    ):
+        body = verbatim_subscriber_response()
+        body["subscriber"] = subscriber
+
+        with patched_revenuecat_http(body):
+            with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+                await service.get_verified_snapshot("firebase-uid")
+
+        assert error.value.reason == SNAPSHOT_REASON_MALFORMED
+
+    async def test_get_or_create_empty_customer_is_absent(self, service):
+        """GET /subscribers creates unseen ids and answers 200, never 404."""
+        read_at = datetime(2026, 10, 26, 8, tzinfo=UTC)
+        body = empty_customer_response(request_date=read_at)
+
+        with patched_revenuecat_http(body, status_code=201):
+            snapshot = await service.get_verified_snapshot("firebase-uid")
+
+        assert snapshot.absent is True
+        assert snapshot.subscriber == body["subscriber"]
+        assert snapshot.request_date == read_at
+
+    async def test_customer_with_only_non_subscription_purchases_is_present(
+        self, service
+    ):
+        body = empty_customer_response()
+        body["subscriber"]["non_subscriptions"] = verbatim_subscriber_response()[
+            "subscriber"
+        ]["non_subscriptions"]
+
+        with patched_revenuecat_http(body):
+            snapshot = await service.get_verified_snapshot("firebase-uid")
+
+        assert snapshot.absent is False
+
+    @pytest.mark.parametrize(
+        ("status_code", "reason"),
+        [
+            (401, SNAPSHOT_REASON_HTTP_4XX),
+            (429, SNAPSHOT_REASON_HTTP_429),
+            (500, SNAPSHOT_REASON_HTTP_5XX),
+            (503, SNAPSHOT_REASON_HTTP_5XX),
+        ],
+    )
+    async def test_verified_snapshot_classifies_http_failures(
+        self, service, status_code, reason
+    ):
+        with patched_revenuecat_http(None, status_code=status_code):
+            with pytest.raises(RevenueCatSnapshotUnavailable) as error:
+                await service.get_verified_snapshot("firebase-uid")
+
+        assert error.value.reason == reason
+
+    async def test_verified_snapshot_classifies_transport_and_key_failures(self):
+        with patch("httpx.AsyncClient") as client:
+            client.return_value.__aenter__.return_value.get = AsyncMock(
+                side_effect=httpx.ConnectTimeout("timeout")
+            )
+            with pytest.raises(RevenueCatSnapshotUnavailable) as transport:
+                await RevenueCatAdapter(api_key="key").get_verified_snapshot("uid")
+        assert transport.value.reason == SNAPSHOT_REASON_TRANSPORT
+
+        with patch.dict("os.environ", {"REVENUECAT_SECRET_API_KEY": ""}):
+            with pytest.raises(RevenueCatSnapshotUnavailable) as missing:
+                await RevenueCatAdapter(api_key="").get_verified_snapshot("uid")
+        assert missing.value.reason == SNAPSHOT_REASON_API_KEY_MISSING
+
+    async def test_verified_snapshot_requires_timestamp_and_normalized_fields(
+        self, service
+    ):
+        with patch("httpx.AsyncClient") as mock_client:
+            response = MagicMock(status_code=200)
+            response.json.return_value = {"subscriber": {"entitlements": {}}}
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=response
+            )
+            with pytest.raises(RevenueCatSnapshotUnavailable):
+                await service.get_verified_snapshot("firebase-uid")
+
+    async def test_verified_snapshot_reads_request_date_beside_subscriber(
+        self, service
+    ):
+        """RevenueCat's v1 subscriber response puts request_date_ms at the top
+        level, next to "subscriber"."""
+        subscriber = {"entitlements": {}, "subscriptions": {}}
+        with patch("httpx.AsyncClient") as mock_client:
+            response = MagicMock(status_code=200)
+            response.json.return_value = {
+                "request_date": "2026-10-22T00:00:00Z",
+                "request_date_ms": 1792627200000,
+                "subscriber": subscriber,
+            }
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=response
+            )
+            result = await service.get_verified_snapshot("firebase-uid")
+
+        assert result.subscriber == subscriber
+        assert result.request_date == datetime(2026, 10, 22, tzinfo=UTC)
 
     async def test_get_subscriber_info_success(self, service, mock_subscriber_response):
         """Test successful retrieval of subscriber info."""

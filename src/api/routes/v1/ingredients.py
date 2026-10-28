@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.dependencies.subscription_access import require_active_subscription
 from src.api.middleware.accept_language import get_request_language
 from src.api.schemas.request import IngredientRecognitionRequest
 from src.api.schemas.response import IngredientRecognitionResponse
@@ -19,8 +20,9 @@ router = APIRouter(prefix="/v1/ingredients", tags=["Ingredients"])
 @router.post(
     "/recognize",
     response_model=IngredientRecognitionResponse,
-    # The photo is read only after authentication, which a body parameter
-    # would come after.
+    dependencies=[Depends(require_active_subscription)],
+    # The photo is read only after authentication and the subscription
+    # check, which a body parameter would come after.
     openapi_extra=json_body_openapi(IngredientRecognitionRequest),
 )
 async def recognize_ingredient(

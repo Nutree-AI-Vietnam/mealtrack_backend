@@ -24,6 +24,11 @@ from src.domain.exceptions.meal_recommendation_exceptions import (
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
+from src.domain.model.subscription_access import SubscriptionAccessUnavailable
+from src.domain.ports.subscription_access_refresh_port import (
+    SubscriptionAccessApplyError,
+)
+from src.domain.ports.subscription_service_port import RevenueCatSnapshotUnavailable
 
 from .event_bus import EventBus
 
@@ -191,10 +196,18 @@ class PyMediatorEventBus(EventBus):
             AIOutputValidationError,
             AIContentRejectedError,
             MealRecommendationCreationError,
+            SubscriptionAccessUnavailable,
+            RevenueCatSnapshotUnavailable,
+            SubscriptionAccessApplyError,
         ) as e:
             # Controlled application exceptions and degraded AI-provider failures
             # are converted to proper HTTP responses by the API layer. Keep this
             # at debug so routine control flow does not produce duplicate ERRORs.
+            # Unresolved subscription access and an unreadable RevenueCat
+            # customer are expected 503 outcomes, recorded where they occur.
+            # A snapshot apply failure was reported to Sentry where it
+            # happened, under a fixed fingerprint; an ERROR here would open
+            # a second issue for it.
             logger.debug(
                 f"Application exception handling {event_type.__name__}: {str(e)}"
             )

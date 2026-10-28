@@ -3,14 +3,17 @@
 from hmac import compare_digest
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.base_dependencies import (
     get_subscription_service,
     get_web_funnel_redemption_service,
+    normalize_standard_access_facts,
+    record_snapshot_unavailable,
 )
 from src.api.dependencies.auth import verify_firebase_token_revocation_checked
+from src.api.middleware.premium_check import forget_revenuecat_check
 from src.api.middleware.rate_limit import limiter
 from src.api.routes.v1.web_funnel_redemption_session import (
     hydrate_custom_email,
@@ -26,7 +29,6 @@ from src.api.schemas.request.web_funnel_claim_requests import (
 )
 from src.app.services.web_funnel_claim_common import (
     claim_not_found,
-    standard_expires_at,
     utcnow,
 )
 from src.app.services.web_funnel_claim_completion import complete_claim, recover_claim
@@ -41,6 +43,10 @@ from src.app.services.web_funnel_leads import (
 from src.app.services.web_funnel_redemption_verification import (
     RevenueCatVerificationState,
     verify_redeemed_customer,
+)
+from src.domain.ports.subscription_service_port import (
+    SNAPSHOT_TRANSIENT_REASONS,
+    RevenueCatSnapshotUnavailable,
 )
 from src.infra.config.settings import settings
 from src.infra.database.config_async import get_async_db
@@ -238,6 +244,26 @@ async def preflight_revenuecat_redemption(
     return {"version": "redemption_preflight_v1", "eligible": True}
 
 
+def _unverified_redemption(error: RevenueCatSnapshotUnavailable) -> HTTPException:
+    """Answer a finalize whose RevenueCat customer could not be verified.
+
+    A transient failure (outage, timeout, rate limit) answers the same 404
+    as a redemption RevenueCat has not caught up with yet: app builds already
+    in the stores retry only a 404, with a bounded backoff, and treat any
+    other status as final. Anything else (a malformed or unsupported
+    customer, a rejected API key) will not clear on a retry: 503, paged
+    through the counter and Sentry. Finalize writes nothing on either.
+    """
+    # Firebase uids stay out of logs; the reason code identifies the cause.
+    record_snapshot_unavailable(error, source="web_funnel")
+    if error.reason in SNAPSHOT_TRANSIENT_REASONS:
+        return claim_not_found()
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Subscription state could not be verified",
+    )
+
+
 @router.post("/redemptions/finalize")
 async def finalize_revenuecat_redemption(
     request: Request,
@@ -287,7 +313,13 @@ async def finalize_revenuecat_redemption(
     if not binding:
         raise claim_not_found()
 
-    subscriber = await service.get_subscriber_info(uid)
+    try:
+        provider_snapshot = await service.get_verified_snapshot(uid)
+    except RevenueCatSnapshotUnavailable as error:
+        raise _unverified_redemption(error) from error
+    if provider_snapshot.absent or not provider_snapshot.subscriber:
+        raise claim_not_found()
+    subscriber = {"subscriber": provider_snapshot.subscriber}
     original_app_user_id = _subscriber_original_app_user_id(subscriber)
     if (
         not original_app_user_id
@@ -327,19 +359,54 @@ async def finalize_revenuecat_redemption(
         ):
             raise claim_not_found()
 
+    try:
+        subscription_facts = normalize_standard_access_facts(
+            provider_snapshot.subscriber
+        )
+    except RevenueCatSnapshotUnavailable as error:
+        raise _unverified_redemption(error) from error
+    if (
+        subscription_facts is None
+        or subscription_facts["product_id"] != binding.product_id
+        or subscription_facts["status"] == "expired"
+    ):
+        raise claim_not_found()
+
     response.headers["Cache-Control"] = "no-store"
-    return await get_web_funnel_redemption_service().finalize(
-        db,
-        uid=uid,
-        email=email,
-        original_app_user_id=original_app_user_id,
-        verified_provider_app_user_ids={original_app_user_id},
-        redemption_link_hash=payload.redemption_link_hash,
-        idempotency_key=idempotency_key,
-        environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
-        auth_provider=provider,
-        expires_at=standard_expires_at(subscriber),
+    try:
+        result = await get_web_funnel_redemption_service().finalize(
+            db,
+            uid=uid,
+            email=email,
+            original_app_user_id=original_app_user_id,
+            verified_provider_app_user_ids={original_app_user_id},
+            redemption_link_hash=payload.redemption_link_hash,
+            idempotency_key=idempotency_key,
+            environment=settings.WEB_FUNNEL_REVENUECAT_ENVIRONMENT,
+            auth_provider=provider,
+            expires_at=subscription_facts["expires_at"],
+            provider_snapshot=provider_snapshot,
+        )
+    except RevenueCatSnapshotUnavailable as error:
+        # The access sync refused the snapshot (owner changed, conflicting
+        # facts); the transaction is not committed, so nothing was written.
+        raise _unverified_redemption(error) from error
+    await _forget_revenuecat_check(db, uid)
+    return result
+
+
+# Only the two columns the finalize route reads to name the redeemed user.
+_USERS = table("users", column("id"), column("firebase_uid"))
+
+
+async def _forget_revenuecat_check(db: AsyncSession, firebase_uid: str) -> None:
+    """Finalize applied the user's RevenueCat customer: a paid route the
+    database still refuses may ask RevenueCat again."""
+    user_id = await db.scalar(
+        select(_USERS.c.id).where(_USERS.c.firebase_uid == firebase_uid)
     )
+    if isinstance(user_id, str):
+        await forget_revenuecat_check(user_id)
 
 
 @router.post("/leads/{lead_id}/resend")
