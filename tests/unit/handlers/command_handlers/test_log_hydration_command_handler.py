@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -90,3 +90,26 @@ async def test_a_drink_logged_for_a_past_day_is_stamped_at_local_noon() -> None:
     assert ensure_utc(uow.meals.saved.created_at) == datetime(
         2026, 8, 23, 12, tzinfo=UTC
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("days_ago", "logged_on_day"), [(None, True), (0, True), (1, False)]
+)
+async def test_only_a_drink_logged_for_today_counts_as_logged_on_its_day(
+    days_ago, logged_on_day
+) -> None:
+    uow = _Uow()
+    target_date = (
+        None if days_ago is None else utc_now().date() - timedelta(days=days_ago)
+    )
+    await LogHydrationCommandHandler(uow, event_publisher=AsyncMock()).handle(
+        LogHydrationCommand(
+            user_id=USER_ID,
+            drink_id="water",
+            volume_ml=250,
+            target_date=target_date,
+        )
+    )
+
+    assert uow.meals.saved.logged_on_day is logged_on_day

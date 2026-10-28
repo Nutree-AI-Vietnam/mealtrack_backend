@@ -691,8 +691,9 @@ class AsyncMealRepository(MealRepositoryPort):
     ) -> list[tuple[date, bool]]:
         """Each local day with a log, and whether one was made on the day itself.
 
-        A log made later for a past day is stamped at local noon
-        (``BACKDATED_LOCAL_TIME``); water counts, as it saves a meal row too.
+        ``logged_on_day`` is stored when a log is created. Older rows fall back
+        to the stamp: a log made later for a past day sits at local noon
+        (``BACKDATED_LOCAL_TIME``). Water counts, as it saves a meal row too.
         """
         local_ts: ColumnElement[Any] = MealORM.created_at
         if user_timezone and user_timezone != "UTC":
@@ -700,7 +701,10 @@ class AsyncMealRepository(MealRepositoryPort):
             local_ts = func.timezone(user_timezone, created_at)
         local_day = func.date(local_ts)
         same_day = func.bool_or(
-            cast(local_ts, Time) != bindparam("noon", BACKDATED_LOCAL_TIME, Time)
+            func.coalesce(
+                MealORM.logged_on_day,
+                cast(local_ts, Time) != bindparam("noon", BACKDATED_LOCAL_TIME, Time),
+            )
         )
         result = await self.session.execute(
             select(local_day, same_day)

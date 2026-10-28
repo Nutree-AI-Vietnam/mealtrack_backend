@@ -372,11 +372,24 @@ def log_moment(target_date: date | None, user_timezone: str, now: datetime) -> d
     The noon stamp is what marks a log made later for a past day
     (``is_backdated_local``), so a log for today must keep its real time.
     """
-    if target_date is None:
-        return now
-    if target_date == now.astimezone(get_zone_info(user_timezone)).date():
+    if target_date is None or is_same_day_log(target_date, user_timezone, now):
         return now
     return noon_utc_for_date(target_date, user_timezone)
+
+
+def is_same_day_log(
+    target_date: date | None, user_timezone: str, received_at: datetime
+) -> bool:
+    """Whether a log is for the user's local day at the moment its request arrived.
+
+    Decided once at receipt and stored with the meal, so slow processing past
+    midnight or a later edit of the meal time cannot change it.
+    """
+    if target_date is None:
+        return True
+    if received_at.tzinfo is None:
+        received_at = received_at.replace(tzinfo=UTC)
+    return target_date == received_at.astimezone(get_zone_info(user_timezone)).date()
 
 
 def is_backdated_local(local_dt: datetime) -> bool:

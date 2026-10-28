@@ -413,7 +413,7 @@ class TestMealRepository:
         self, user_id: str, user_timezone: str | None = None
     ) -> list[tuple[date, bool]]:
         rows = (
-            self.db.query(MealORM.created_at)
+            self.db.query(MealORM.created_at, MealORM.logged_on_day)
             .filter(
                 MealORM.user_id == user_id,
                 _test_domain_hydratable_active_meal_filter(),
@@ -421,11 +421,15 @@ class TestMealRepository:
             .all()
         )
         days: dict[date, bool] = {}
-        for (created_at,) in rows:
+        for created_at, logged_on_day in rows:
             local = created_at
             if user_timezone and user_timezone != "UTC":
                 local = ensure_utc(created_at).astimezone(get_zone_info(user_timezone))
-            same_day = not is_backdated_local(local)
+            same_day = (
+                logged_on_day
+                if logged_on_day is not None
+                else not is_backdated_local(local)
+            )
             days[local.date()] = days.get(local.date(), False) or same_day
         return sorted(days.items(), reverse=True)
 

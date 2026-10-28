@@ -412,3 +412,21 @@ async def test_a_sentence_logged_for_today_keeps_its_real_time(cache_hook):
     await handler.handle(_command(target_date=before.date()))
 
     assert before <= ensure_utc(store.meals[0].created_at) <= utc_now()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("days_ago", "logged_on_day"), [(None, True), (0, True), (3, False)]
+)
+async def test_only_a_sentence_logged_for_today_counts_as_logged_on_its_day(
+    cache_hook, days_ago, logged_on_day
+):
+    store = _Store()
+    handler, _ = _handler(store, {"items": [_item("water", "nước")]})
+    kwargs = {}
+    if days_ago is not None:
+        kwargs["target_date"] = utc_now().date() - timedelta(days=days_ago)
+
+    await handler.handle(_command(**kwargs))
+
+    assert store.meals[0].logged_on_day is logged_on_day

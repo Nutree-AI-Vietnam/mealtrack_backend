@@ -462,3 +462,24 @@ async def test_materializer_stamps_today_now_and_other_days_at_local_noon(for_to
         assert before <= created_at <= utc_now()
     else:
         assert created_at == datetime(2026, 7, 16, 12, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("for_today", [True, False])
+async def test_materializer_marks_only_a_log_for_today_as_logged_on_its_day(
+    for_today,
+):
+    plan, slot = _plan_and_slot()
+    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    meal_date = utc_now().date() if for_today else date(2026, 7, 16)
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        _Uow(),
+        user_id=plan.user_id,
+        catalog_meal=slot.selected.catalog_meal,
+        meal_date=meal_date,
+        meal_type="lunch",
+        timezone="UTC",
+    )
+
+    assert meal.logged_on_day is for_today

@@ -120,6 +120,7 @@ class TestRepeatMealCommandHandler:
         assert result.meal_type == "dinner"
         assert result.dish_name == "Chicken Dish"
         assert result.source == "repeat"
+        assert result.logged_on_day is True
         assert result.image is not None
         assert result.image.url == "https://images.example.com/meal.jpg"
         assert result.image.image_id != source_meal.image.image_id
@@ -177,6 +178,7 @@ class TestRepeatMealCommandHandler:
         assert result.created_at is not None
         # Local noon Asia/Ho_Chi_Minh on 2026-09-22 → 05:00 UTC same calendar day
         assert result.created_at.astimezone(UTC).date() == past_day
+        assert result.logged_on_day is False
         uow.meal_write_operations.reserve.assert_awaited_once()
         assert (
             uow.meal_write_operations.reserve.await_args.kwargs["request_fingerprint"]

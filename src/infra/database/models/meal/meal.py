@@ -68,6 +68,9 @@ class MealORM(Base, TimestampMixin):
 
     # Generic serving quantity: grams for food meals, ml for hydration meals
     quantity = Column(Integer, nullable=True)
+    # Whether the log was made on the day it is for, set once at creation.
+    # NULL on older rows: the streak then reads the local-noon backdate stamp.
+    logged_on_day = Column(Boolean, nullable=True)
 
     # Recipe details (populated for AI suggestions)
     description = Column(Text, nullable=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -33,6 +34,8 @@ from src.app.services.streak_restore_ledger import (
     refund_pack,
     spend_restores,
 )
+from src.domain.model.meal import Meal, MealStatus
+from src.domain.model.nutrition import Macros, Nutrition
 from src.domain.model.streak import (
     LedgerEntry,
     LedgerKind,
@@ -78,7 +81,9 @@ async def _user(session, timezone: str = ZONE) -> str:
     return user.id
 
 
-async def _meals(session, user_id: str, *created_at: datetime) -> None:
+async def _meals(
+    session, user_id: str, *created_at: datetime, logged_on_day: bool | None = None
+) -> None:
     for moment in created_at:
         session.add(
             MealORM(
@@ -87,6 +92,7 @@ async def _meals(session, user_id: str, *created_at: datetime) -> None:
                 status=MealStatusEnum.PROCESSING,
                 created_at=moment,
                 updated_at=moment,
+                logged_on_day=logged_on_day,
             )
         )
     await session.commit()
@@ -243,6 +249,74 @@ async def test_streak_log_days_read_the_noon_stamp_on_the_users_clock(
         (DAY_1, True),
         (DAY_1 - timedelta(days=1), True),
     ]
+
+
+@pytest.mark.asyncio
+async def test_streak_log_days_trust_the_stored_flag_over_the_noon_stamp(
+    factory, pg_session
+):
+    user_id = await _user(pg_session)
+    # Logged on the day itself, then moved to exactly noon.
+    await _meals(
+        pg_session,
+        user_id,
+        datetime(2026, 10, 20, 5, 0, tzinfo=UTC),
+        logged_on_day=True,
+    )
+    # Logged later for that day, then moved off noon (09:00 in Saigon).
+    await _meals(
+        pg_session,
+        user_id,
+        datetime(2026, 10, 21, 2, 0, tzinfo=UTC),
+        logged_on_day=False,
+    )
+    # Saved before the flag existed: the noon stamp still decides.
+    await _meals(pg_session, user_id, datetime(2026, 10, 22, 5, 0, tzinfo=UTC))
+
+    async with AsyncUnitOfWork() as uow:
+        days = await uow.meals.get_streak_log_days(user_id, ZONE)
+
+    assert days == [(DAY_3, False), (DAY_2, False), (DAY_1, True)]
+
+
+@pytest.mark.asyncio
+async def test_saving_an_edited_meal_never_rewrites_its_stored_flag(
+    factory, pg_session
+):
+    user_id = await _user(pg_session)
+    logged_at = datetime(2026, 10, 20, 1, 15, tzinfo=UTC)  # 08:15 in Saigon
+    meal = Meal(
+        meal_id=str(uuid4()),
+        user_id=user_id,
+        status=MealStatus.READY,
+        created_at=logged_at,
+        ready_at=logged_at,
+        image=None,
+        dish_name="Pho",
+        nutrition=Nutrition(macros=Macros(protein=20, carbs=50, fat=10)),
+        logged_on_day=True,
+    )
+    async with AsyncUnitOfWork() as uow:
+        await uow.meals.save(meal)
+
+    async with AsyncUnitOfWork() as uow:
+        stored = await uow.meals.find_by_id(meal.meal_id)
+        assert stored is not None and stored.logged_on_day is True
+        edited = stored.mark_edited(
+            stored.nutrition,
+            "Pho bo",
+            created_at=datetime(2026, 10, 20, 5, 0, tzinfo=UTC),  # noon in Saigon
+        )
+        # The flag is set once at creation; an update never writes it back.
+        await uow.meals.save(replace(edited, logged_on_day=False))
+
+    async with AsyncUnitOfWork() as uow:
+        reloaded = await uow.meals.find_by_id(meal.meal_id)
+        days = await uow.meals.get_streak_log_days(user_id, ZONE)
+
+    assert reloaded is not None
+    assert (reloaded.dish_name, reloaded.logged_on_day) == ("Pho bo", True)
+    assert days == [(DAY_1, True)]
 
 
 def _app(user_id: str) -> FastAPI:

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, create_autospec
 from uuid import UUID
@@ -27,10 +27,13 @@ from src.domain.model.chat.models import ChatSseEvent
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.meal_repository_port import MealRepositoryPort
+from src.domain.utils.timezone_utils import utc_now
 
 SUPERVISION_LOGGER = "src.app.services.ai_jobs.supervision"
 MEAL_ID = "8d0c6c1e-2f43-4b8e-9a7e-5c1d2b3a4f60"
 IMAGE_URL = "https://res.cloudinary.com/demo/image/upload/v1/mealtrack/img-1.jpg"
+# 23:59:50 in Saigon on the scanned day; the attempt may run after midnight.
+RECEIVED_AT = datetime(2026, 10, 12, 16, 59, 50, tzinfo=UTC)
 
 STARTED = ChatSseEvent(
     event="message.started",
@@ -71,6 +74,7 @@ def _scan_payload(**overrides):
         "label_crop_image_url": None,
         "label_crop_public_id": None,
         "crop_metadata": None,
+        "received_at": RECEIVED_AT.isoformat(),
         **overrides,
     }
 
@@ -228,6 +232,7 @@ async def test_meal_scan_analyzes_the_photo_under_the_job_meal_id(uow, send):
             label_crop_public_id=None,
             crop_metadata=None,
             meal_id=MEAL_ID,
+            received_at=RECEIVED_AT,
         )
     )
     # The lookup's session is closed before the slow analysis starts.
@@ -266,6 +271,17 @@ async def test_meal_scan_defaults_to_the_scanner_mode(uow, send, overrides):
     await _scan(uow, send, _scan_claim(**overrides))
 
     assert send.await_args.args[0].scan_mode == "scanner"
+
+
+@pytest.mark.asyncio
+async def test_meal_scan_queued_before_its_arrival_was_stored_uses_the_attempt_time(
+    uow, send
+):
+    before = utc_now()
+
+    await _scan(uow, send, _scan_claim(drop=("received_at",)))
+
+    assert before <= send.await_args.args[0].received_at <= utc_now()
 
 
 @pytest.mark.asyncio
@@ -368,6 +384,8 @@ async def test_meal_scan_without_a_meal_id_is_invalid_input(uow, send, overrides
         {"scan_mode": 1},
         {"crop_metadata": "x"},
         {"label_crop_image_url": 7},
+        {"received_at": "yesterday"},
+        {"received_at": 1760288390},
     ],
     ids=[
         "no-image-url",
@@ -378,6 +396,8 @@ async def test_meal_scan_without_a_meal_id_is_invalid_input(uow, send, overrides
         "mode-not-a-string",
         "crop-metadata-not-a-dict",
         "crop-url-not-a-string",
+        "received-at-not-iso",
+        "received-at-not-a-string",
     ],
 )
 async def test_meal_scan_with_malformed_input_is_invalid_input(uow, send, overrides):
