@@ -461,7 +461,7 @@ async def test_scan_by_url_legacy_path_compresses_cloudflare_custom_domain_url()
         pass
 
     download_mock.assert_awaited_once_with(
-        "https://media.nutree.ai/custom-img-123/w=768,fit=scale-down,f=auto"
+        "https://media.nutree.ai/custom-img-123/w=2048,fit=scale-down,q=90,f=auto"
     )
 
 

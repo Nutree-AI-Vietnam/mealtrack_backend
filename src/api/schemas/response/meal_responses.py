@@ -275,6 +275,12 @@ class FoodItemResponse(BaseModel):
     """Response DTO for food item information."""
 
     id: str = Field(..., description="Food item ID")
+    confidence: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Model confidence; not a calibrated probability of correctness",
+    )
     name: str = Field(..., description="Food item name")
     display_name: str | None = Field(
         None, description="Localized display name for the requested language"
@@ -341,6 +347,9 @@ class SimpleMealResponse(BaseModel):
 
 class DetailedMealResponse(SimpleMealResponse):
     """Response DTO for detailed meal information with nutrition."""
+
+    edit_count: int = Field(0, ge=0)
+    is_manually_edited: bool = False
 
     food_items: list[FoodItemResponse] = Field(
         default_factory=list, description="Food items in the meal"

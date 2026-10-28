@@ -56,6 +56,7 @@ from src.infra.repositories.referral_repository import ReferralRepository
 from src.infra.repositories.saved_suggestion_db_repository_async import (
     AsyncSavedSuggestionDbRepository,
 )
+from src.infra.repositories.scan_feedback_repository import ScanFeedbackRepository
 from src.infra.repositories.subscription_repository_async import (
     AsyncSubscriptionRepository,
 )
@@ -145,6 +146,7 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
     def _init_repositories(self):
         session = self._require_session()
         self.meals = AsyncMealRepository(session)
+        self.scan_feedback = ScanFeedbackRepository(session)
         self.favorite_meals = AsyncFavoriteMealRepository(session)
         self.meal_recommendation_plans = AsyncMealRecommendationPlanRepository(session)
         self.meal_suggestions = UnavailableMealSuggestionSessionStore()

@@ -36,6 +36,8 @@ from src.domain.strategies.meal_analysis_strategy import (
     FoodLabelImageAnalysisStrategy,
 )
 from src.domain.utils.image_compression import (
+    VISION_JPEG_QUALITY,
+    VISION_MAX_DIM,
     to_compressed_image_url,
 )
 from src.domain.utils.timezone_utils import (
@@ -131,6 +133,8 @@ async def _acquire_scan_by_url_image(
         if is_food_label
         else to_compressed_image_url(
             source_url,
+            max_dim=VISION_MAX_DIM,
+            quality=str(VISION_JPEG_QUALITY),
             custom_domain=runtime.cloudflare_custom_domain,
             flexible_variants_enabled=runtime.cloudflare_flexible_variants_enabled,
         )

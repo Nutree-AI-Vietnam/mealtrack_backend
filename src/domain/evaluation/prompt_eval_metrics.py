@@ -7,8 +7,6 @@ from .prompt_eval_models import MICRO_ERROR_FLOORS, MICRO_UNITS
 
 
 def score_foods(expected: tuple[dict[str, Any], ...], actual: list[Any]):
-    if not expected:
-        return 0, 0, 0, []
     unmatched = list(expected)
     grams: list[float] = []
     true_positive = false_positive = 0
@@ -76,7 +74,7 @@ def whole_meal_micros(structured: dict[str, Any]) -> dict[str, float | None]:
             micros = food.get("micros") if isinstance(food, dict) else None
             values.append(micros.get(name) if isinstance(micros, dict) else None)
         totals[name] = (
-            sum(float(value) for value in values)
+            sum(float(value) for value in values if value is not None)
             if all(value is not None for value in values)
             else None
         )
