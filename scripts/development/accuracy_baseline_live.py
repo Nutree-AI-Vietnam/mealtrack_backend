@@ -641,16 +641,19 @@ def _grounding_rows(
     rows: list[dict[str, Any]] = []
     for key, food in zip(item_keys, foods, strict=False):
         tier = str(getattr(food, "source_kind", None) or "ai_estimate")
+        lookup_hit = bool(key.lookup_key) and key.lookup_key in hits
+        catalog_hit = bool(key.catalog_key) and key.catalog_key in hits
         rows.append(
             {
                 "catalog_key_would_hit": None,
                 "empty": key.empty,
                 "keys_differ": key.keys_differ,
-                "product_local_hit": bool(key.lookup_key) and key.lookup_key in hits,
+                "product_local_hit": lookup_hit or catalog_hit,
                 "tier": tier,
                 "_catalog_key": key.catalog_key,
                 "_needs_diagnostic": key.keys_differ
-                and not (bool(key.lookup_key) and key.lookup_key in hits),
+                and not lookup_hit
+                and not catalog_hit,
             }
         )
     return rows

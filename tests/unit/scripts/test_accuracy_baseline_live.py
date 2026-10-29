@@ -128,6 +128,39 @@ def test_unscored_partial_and_not_food_stay_out_of_mae():
     assert summary["not_food_cases"] == 1
 
 
+def test_seed_key_in_the_batch_counts_as_a_product_local_hit():
+    live, _metrics = _modules()
+    relation = live.key_relation("grilled chicken")
+
+    class _Food:
+        source_kind = "local"
+
+    class _Nutrition:
+        food_items = [_Food()]
+
+    rows = live._grounding_rows((relation,), _Nutrition(), {"chicken": {"id": 1}})
+
+    assert relation.keys_differ is True
+    assert rows[0]["product_local_hit"] is True
+    assert rows[0]["_needs_diagnostic"] is False
+
+
+def test_neither_catalog_key_still_needs_the_mismatch_diagnostic():
+    live, _metrics = _modules()
+    relation = live.key_relation("grilled chicken")
+
+    class _Food:
+        source_kind = "ai_estimate"
+
+    class _Nutrition:
+        food_items = [_Food()]
+
+    rows = live._grounding_rows((relation,), _Nutrition(), {})
+
+    assert rows[0]["product_local_hit"] is False
+    assert rows[0]["_needs_diagnostic"] is True
+
+
 def test_lookup_key_mismatch_is_counted_separately_from_a_catalog_hit():
     live, metrics = _modules()
     relation = live.key_relation("grilled chicken")
