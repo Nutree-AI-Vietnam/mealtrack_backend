@@ -39,6 +39,14 @@ SentryMessageLevel = Literal["fatal", "critical", "error", "warning", "info", "d
 SentryLogLevel = Literal["fatal", "error", "warning", "info", "debug", "trace"]
 _SENTRY_MESSAGE_LEVELS = {"fatal", "critical", "error", "warning", "info", "debug"}
 _SENTRY_LOG_LEVELS = {"fatal", "error", "warning", "info", "debug", "trace"}
+_CHAT_MESSAGE_TRANSACTIONS = frozenset(
+    {
+        "/v1/chat/messages",
+        "/v1/chat/threads/{thread_id}/messages",
+    }
+)
+_LANGCHAIN_ORIGIN = "auto.ai.langchain"
+_CONNECTION_TERMINATE_MESSAGE = "Exception terminating connection"
 
 
 class SentryObservabilityConnector:
@@ -281,10 +289,17 @@ def _drop_expected_events(
     but the LangChain integration captures the raw provider error before that
     mapping, so those events are dropped here.
 
-    A direct ``asyncio.CancelledError`` on ``POST /v1/chat/messages`` is the
+    A direct ``asyncio.CancelledError`` on the chat message routes is the
     ASGI request task cancelling in-flight streaming after the client
-    disconnects. Chained non-cancellation causes and contexts stay visible,
-    as do other routes and events with no original exception.
+    disconnects. Those routes are ``POST /v1/chat/messages`` and
+    ``POST /v1/chat/threads/{thread_id}/messages``. Chained non-cancellation
+    causes and contexts stay visible, as do other routes and events with no
+    original exception.
+
+    ``GeneratorExit`` captured by the LangChain integration is the provider
+    stream closing after a safety stop. Only that origin is dropped.
+    SQLAlchemy's "Exception terminating connection" log is dropped when the
+    logging integration attached a bare ``CancelledError``.
     """
     exc_info = hint.get("exc_info")
     exc = exc_info[1] if exc_info else None
@@ -292,15 +307,111 @@ def _drop_expected_events(
         return None
     if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
         return None
+    if _is_langchain_generator_exit(event, exc_info):
+        return None
     if _is_expected_chat_cancellation(event, exc_info):
+        return None
+    if _is_expected_connection_terminate(event, exc_info):
         return None
     return event
 
 
 def _is_expected_chat_cancellation(event: dict[str, Any], exc_info: Any) -> bool:
-    """True for a direct client disconnect on the chat messages route only."""
-    if event.get("transaction") != "/v1/chat/messages":
+    """True for a direct client disconnect on a chat messages route."""
+    if event.get("transaction") not in _CHAT_MESSAGE_TRANSACTIONS:
         return False
+    return _is_bare_cancellation(exc_info)
+
+
+def _is_langchain_generator_exit(event: dict[str, Any], exc_info: Any) -> bool:
+    """True when LangChain captured ``GeneratorExit`` from a closed stream.
+
+    The origin ``auto.ai.langchain`` is the integration's span origin. The
+    same string on the exception mechanism counts. Other ``GeneratorExit``
+    events and other exceptions on that span stay visible.
+    """
+    if not _is_generator_exit(exc_info):
+        return False
+    return _has_langchain_origin(event)
+
+
+def _is_generator_exit(exc_info: Any) -> bool:
+    if not isinstance(exc_info, tuple) or len(exc_info) < 2:
+        return False
+    return isinstance(exc_info[1], GeneratorExit)
+
+
+def _has_langchain_origin(event: dict[str, Any]) -> bool:
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        trace = contexts.get("trace")
+        if isinstance(trace, dict) and trace.get("origin") == _LANGCHAIN_ORIGIN:
+            return True
+    spans = event.get("spans")
+    if isinstance(spans, list):
+        for span in spans:
+            if isinstance(span, dict) and span.get("origin") == _LANGCHAIN_ORIGIN:
+                return True
+    for value in _exception_values(event):
+        mechanism = value.get("mechanism")
+        if not isinstance(mechanism, dict):
+            continue
+        if mechanism.get("type") == _LANGCHAIN_ORIGIN:
+            return True
+        data = mechanism.get("data")
+        if isinstance(data, dict) and data.get("origin") == _LANGCHAIN_ORIGIN:
+            return True
+    return False
+
+
+def _is_expected_connection_terminate(event: dict[str, Any], exc_info: Any) -> bool:
+    """True for SQLAlchemy's pool log of a cancel during connection close.
+
+    The logging integration records mechanism type ``logging`` and the
+    message "Exception terminating connection". A different exception on
+    that log line stays visible.
+    """
+    if not _is_bare_cancellation(exc_info):
+        return False
+    if not _has_logging_mechanism(event):
+        return False
+    return _CONNECTION_TERMINATE_MESSAGE in _event_log_message(event)
+
+
+def _has_logging_mechanism(event: dict[str, Any]) -> bool:
+    for value in _exception_values(event):
+        mechanism = value.get("mechanism")
+        if isinstance(mechanism, dict) and mechanism.get("type") == "logging":
+            return True
+    return False
+
+
+def _event_log_message(event: dict[str, Any]) -> str:
+    parts: list[str] = []
+    message = event.get("message")
+    if isinstance(message, str):
+        parts.append(message)
+    logentry = event.get("logentry")
+    if isinstance(logentry, dict):
+        for key in ("message", "formatted"):
+            value = logentry.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+    return "\n".join(parts)
+
+
+def _exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
+    exception = event.get("exception")
+    if not isinstance(exception, dict):
+        return []
+    values = exception.get("values")
+    if not isinstance(values, list):
+        return []
+    return [value for value in values if isinstance(value, dict)]
+
+
+def _is_bare_cancellation(exc_info: Any) -> bool:
+    """True for ``CancelledError`` with no unrelated cause or context."""
     if not isinstance(exc_info, tuple) or len(exc_info) < 2:
         return False
 

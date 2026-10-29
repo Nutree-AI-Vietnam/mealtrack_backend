@@ -82,6 +82,147 @@ def test_before_send_drops_expected_chat_cancellations():
     assert _drop_expected_events(event, _hint(nested)) is None
 
 
+def test_before_send_drops_langchain_generator_exit():
+    """PYTHON-HF: aclose() throws GeneratorExit into the LangChain span.
+
+    The integration's span origin is ``auto.ai.langchain``. The exception
+    mechanism stays generic. Either the span origin or the same origin on
+    the mechanism identifies that capture. A safety stop is not a failure.
+    """
+    exit_error = GeneratorExit()
+    span_event = {
+        "level": "error",
+        "transaction": "/v1/chat/threads/{thread_id}/messages",
+        "exception": {
+            "values": [
+                {
+                    "type": "GeneratorExit",
+                    "value": "",
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+        "contexts": {
+            "trace": {
+                "op": "gen_ai.chat",
+                "origin": "auto.ai.langchain",
+            }
+        },
+    }
+    mechanism_event = {
+        "level": "error",
+        "exception": {
+            "values": [
+                {
+                    "type": "GeneratorExit",
+                    "value": "",
+                    "mechanism": {
+                        "type": "generic",
+                        "handled": True,
+                        "data": {"origin": "auto.ai.langchain"},
+                    },
+                }
+            ]
+        },
+    }
+
+    assert _drop_expected_events(span_event, _hint(exit_error)) is None
+    assert _drop_expected_events(mechanism_event, _hint(GeneratorExit())) is None
+
+
+def test_before_send_keeps_generator_exit_without_langchain_origin():
+    event = {
+        "level": "error",
+        "exception": {
+            "values": [
+                {
+                    "type": "GeneratorExit",
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+        "contexts": {"trace": {"op": "http.server", "origin": "auto.http.starlette"}},
+    }
+
+    assert _drop_expected_events(event, _hint(GeneratorExit())) is event
+
+
+def test_before_send_keeps_langchain_errors_that_are_not_generator_exit():
+    event = {
+        "level": "error",
+        "transaction": "/v1/chat/threads/{thread_id}/messages",
+        "contexts": {"trace": {"op": "gen_ai.chat", "origin": "auto.ai.langchain"}},
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+    }
+
+    assert _drop_expected_events(event, _hint(RuntimeError("boom"))) is event
+
+
+def test_before_send_drops_cancelled_error_on_both_chat_message_routes():
+    """PYTHON-HW / PYTHON-HP use the thread route. PYTHON-HY uses /messages."""
+    plain = asyncio.CancelledError("Cancelled via cancel scope")
+    for transaction in (
+        "/v1/chat/messages",
+        "/v1/chat/threads/{thread_id}/messages",
+    ):
+        event = {"level": "error", "transaction": transaction}
+        assert _drop_expected_events(event, _hint(plain)) is None
+
+    other_route = {
+        "level": "error",
+        "transaction": "/v1/meals/scan-by-url",
+    }
+    assert _drop_expected_events(other_route, _hint(plain)) is other_route
+
+
+def _connection_terminate_event(*, exc_type: str) -> dict:
+    return {
+        "level": "error",
+        "logger": "src.infra.database.planner_pool.PlannerQueuePool",
+        "logentry": {
+            "message": "Exception terminating connection %r",
+            "formatted": (
+                "Exception terminating connection "
+                "<AdaptedConnection <asyncpg.connection.Connection object>>"
+            ),
+        },
+        "exception": {
+            "values": [
+                {
+                    "type": exc_type,
+                    "mechanism": {"type": "logging", "handled": True},
+                }
+            ]
+        },
+    }
+
+
+def test_before_send_drops_logging_connection_terminate_cancelled_error():
+    """PYTHON-HP f3faf05d: pool logger, logging mechanism, bare CancelledError."""
+    event = _connection_terminate_event(exc_type="CancelledError")
+    cancelled = asyncio.CancelledError(
+        "Cancelled via cancel scope 799b40143750 by "
+        "<Task pending name='Task-246698' "
+        "coro=<RequestResponseCycle.run_asgi() "
+        "running at uvicorn/protocols/http/httptools_impl.py:421>"
+    )
+
+    assert _drop_expected_events(event, _hint(cancelled)) is None
+
+
+def test_before_send_keeps_connection_terminate_that_is_not_cancelled():
+    event = _connection_terminate_event(exc_type="RuntimeError")
+
+    assert _drop_expected_events(event, _hint(RuntimeError("close failed"))) is event
+
+
 def test_before_send_keeps_chat_cancellations_that_are_not_client_disconnects():
     event = {"level": "error", "transaction": "/v1/chat/messages"}
     provider_error = RuntimeError("provider failed")
