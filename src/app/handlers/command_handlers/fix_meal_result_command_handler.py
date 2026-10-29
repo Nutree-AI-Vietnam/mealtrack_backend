@@ -17,6 +17,7 @@ from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
 from src.domain.model.meal import Meal, MealStatus
+from src.domain.model.meal.scan_correction_memory import build_fix_result_history_entry
 from src.domain.model.meal_projection import MealProjection
 from src.domain.parsers.vision_response_parser import VisionResponseParsingError
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -42,8 +43,16 @@ _FOOD_LABEL_SOURCES = frozenset({"food_label", "scan_food_label"})
 _MAX_FIX_HISTORY = 10
 
 
-def append_fix_result_correction(meal: Meal, correction: str) -> Meal:
-    """Keep recent Fix result notes on the meal for review/export pipelines."""
+def append_fix_result_correction(
+    meal: Meal,
+    correction: str,
+    *,
+    wrong_dish: str | None = None,
+    right_dish: str | None = None,
+    wrong_names: list[str] | None = None,
+    right_names: list[str] | None = None,
+) -> Meal:
+    """Keep recent Fix result notes for later scan few-shot memory."""
     try:
         raw = json.loads(meal.raw_gpt_json or "{}")
     except (TypeError, ValueError):
@@ -55,11 +64,15 @@ def append_fix_result_correction(meal: Meal, correction: str) -> Meal:
     if not isinstance(history, list):
         history = []
     history.append(
-        {
-            "correction": correction,
-            "at": format_iso_utc(utc_now()),
-            "edit_count_after": meal.edit_count,
-        }
+        build_fix_result_history_entry(
+            correction=correction,
+            wrong_dish=wrong_dish,
+            right_dish=right_dish,
+            wrong_names=wrong_names or [],
+            right_names=right_names or [],
+            edit_count_after=meal.edit_count,
+            at_iso=format_iso_utc(utc_now()),
+        )
     )
     raw["_fix_result_corrections"] = history[-_MAX_FIX_HISTORY:]
     return replace(meal, raw_gpt_json=json.dumps(raw, ensure_ascii=False))
@@ -242,6 +255,10 @@ class FixMealResultCommandHandler(EventHandler[FixMealResultCommand, Any]):
                     dish_name=final_dish_name,
                 ),
                 command.correction,
+                wrong_dish=dish_name,
+                right_dish=final_dish_name,
+                wrong_names=[item.name for item in old_items if item.name],
+                right_names=[item.name for item in merged_items if item.name],
             )
             saved_meal = await uow.meals.save(updated_meal)
             await uow.commit()

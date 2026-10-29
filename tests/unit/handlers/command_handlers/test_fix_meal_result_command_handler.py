@@ -133,9 +133,18 @@ def test_append_fix_result_correction_keeps_history():
     meal = meal.mark_edited(
         nutrition=meal.nutrition, dish_name=meal.dish_name or "Meal"
     )
-    updated = append_fix_result_correction(meal, "it was fish not chicken")
-    payload = json.loads(updated.raw_gpt_json or "{}")
-    assert payload["_fix_result_corrections"][-1]["correction"] == (
-        "it was fish not chicken"
+    updated = append_fix_result_correction(
+        meal,
+        "it was fish not chicken",
+        wrong_dish="Chicken bowl",
+        right_dish="Fish bowl",
+        wrong_names=["Chicken", "Rice"],
+        right_names=["Fish", "Rice"],
     )
-    assert payload["_fix_result_corrections"][-1]["edit_count_after"] == meal.edit_count
+    payload = json.loads(updated.raw_gpt_json or "{}")
+    entry = payload["_fix_result_corrections"][-1]
+    assert entry["correction"] == "it was fish not chicken"
+    assert entry["wrong_dish"] == "Chicken bowl"
+    assert entry["right_dish"] == "Fish bowl"
+    assert entry["wrong_names"] == ["Chicken", "Rice"]
+    assert entry["edit_count_after"] == meal.edit_count

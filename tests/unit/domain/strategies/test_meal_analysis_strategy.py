@@ -23,9 +23,9 @@ def test_all_5_strategies_return_vision_analysis_system_prompt():
     ]
     for s in strategies:
         result = s.get_analysis_prompt()
-        assert (
-            result == SystemPrompts.VISION_ANALYSIS
-        ), f"{s.__class__.__name__}.get_analysis_prompt() must return SystemPrompts.VISION_ANALYSIS"
+        assert result == SystemPrompts.VISION_ANALYSIS, (
+            f"{s.__class__.__name__}.get_analysis_prompt() must return SystemPrompts.VISION_ANALYSIS"
+        )
 
 
 def test_portion_aware_user_message_contains_portion_info():
@@ -38,6 +38,18 @@ def test_portion_aware_user_message_contains_portion_info():
     msg = s.get_user_message()
     assert "350" in msg
     assert "g" in msg
+
+
+def test_basic_strategy_appends_correction_hints():
+    from src.domain.strategies.meal_analysis_strategy import BasicAnalysisStrategy
+
+    msg = BasicAnalysisStrategy(
+        correction_hints=[
+            'Past correction: model said "Indian date"; user corrected to "Grape"'
+        ]
+    ).get_user_message()
+    assert "Past user corrections" in msg
+    assert "Grape" in msg
 
 
 def test_weight_aware_user_message_contains_weight():

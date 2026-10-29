@@ -265,13 +265,22 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             elif command.user_description:
                 if image_bytes is None:
                     raise RuntimeError("Image bytes unavailable for scan-by-url")
+                from src.app.services.scan_correction_hints import (
+                    load_correction_hints_for_scan,
+                )
                 from src.domain.strategies.meal_analysis_strategy import (
                     AnalysisStrategyFactory,
                 )
 
+                correction_hints = await load_correction_hints_for_scan(
+                    user_id=command.user_id,
+                    user_description=command.user_description,
+                    uow_factory=self.uow_factory,
+                )
                 strategy = AnalysisStrategyFactory.create_user_context_strategy(
                     command.user_description,
                     language=command.language,
+                    correction_hints=correction_hints,
                 )
                 vision_result = await self.vision_service.analyze_with_strategy(
                     image_bytes, strategy
@@ -279,9 +288,18 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             else:
                 if image_bytes is None:
                     raise RuntimeError("Image bytes unavailable for scan-by-url")
+                from src.app.services.scan_correction_hints import (
+                    load_correction_hints_for_scan,
+                )
+
+                correction_hints = await load_correction_hints_for_scan(
+                    user_id=command.user_id,
+                    uow_factory=self.uow_factory,
+                )
                 vision_result = await self.vision_service.analyze(
                     image_bytes,
                     language=command.language,
+                    correction_hints=correction_hints,
                 )
 
             vision_elapsed = time.time() - start

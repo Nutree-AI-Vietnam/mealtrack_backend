@@ -55,20 +55,28 @@ class BasicAnalysisStrategy(MealAnalysisStrategy):
         self,
         optimized_prompt_enabled: bool | None = None,
         language: str = "en",
+        correction_hints: list[str] | None = None,
     ):
         if optimized_prompt_enabled is None:
             optimized_prompt_enabled = True
         self.optimized_prompt_enabled = bool(optimized_prompt_enabled)
         self.language = language
+        self.correction_hints = list(correction_hints or [])
 
     def get_analysis_prompt(self) -> str:
         return SystemPrompts.get_vision_analysis_prompt(self.language)
 
     def get_user_message(self) -> str:
-        return (
+        from src.domain.model.meal.scan_correction_memory import (
+            format_correction_hint_block,
+        )
+
+        base = (
             "Analyze this food image. Estimate the visible edible portion and "
             "return totals for each food row."
         )
+        block = format_correction_hint_block(self.correction_hints)
+        return f"{base}\n\n{block}" if block else base
 
     def get_strategy_name(self) -> str:
         return "BasicAnalysis"
@@ -337,9 +345,15 @@ class UserContextAwareAnalysisStrategy(MealAnalysisStrategy):
     generated in the same structured response when a language is provided.
     """
 
-    def __init__(self, user_description: str, language: str = "en"):
+    def __init__(
+        self,
+        user_description: str,
+        language: str = "en",
+        correction_hints: list[str] | None = None,
+    ):
         self.user_description = user_description
         self.language = language
+        self.correction_hints = list(correction_hints or [])
         logger.info(
             f"Created UserContextAwareAnalysisStrategy: desc_len={len(user_description)}"
         )
@@ -348,13 +362,19 @@ class UserContextAwareAnalysisStrategy(MealAnalysisStrategy):
         return SystemPrompts.get_vision_analysis_prompt(self.language)
 
     def get_user_message(self) -> str:
-        return (
+        from src.domain.model.meal.scan_correction_memory import (
+            format_correction_hint_block,
+        )
+
+        base = (
             f"Analyze this food image.\nUser-supplied meal facts: "
             f"{self.user_description}. Apply stated food facts and amounts to "
             f"the named foods; a stated whole-meal amount applies to the full "
             f"meal. Use the image for visible portion evidence and do not infer "
             f"unseen consumption. Return each food only once."
         )
+        block = format_correction_hint_block(self.correction_hints)
+        return f"{base}\n\n{block}" if block else base
 
     def get_strategy_name(self) -> str:
         return "UserContextAware"
@@ -424,11 +444,13 @@ class AnalysisStrategyFactory:
     def create_basic_strategy(
         optimized_prompt_enabled: bool | None = None,
         language: str = "en",
+        correction_hints: list[str] | None = None,
     ) -> MealAnalysisStrategy:
         """Create a basic analysis strategy."""
         return BasicAnalysisStrategy(
             optimized_prompt_enabled=optimized_prompt_enabled,
             language=language,
+            correction_hints=correction_hints,
         )
 
     @staticmethod
@@ -457,6 +479,7 @@ class AnalysisStrategyFactory:
     def create_user_context_strategy(
         user_description: str,
         language: str = "en",
+        correction_hints: list[str] | None = None,
     ) -> MealAnalysisStrategy:
         """Create a user-context-aware analysis strategy.
 
@@ -466,7 +489,11 @@ class AnalysisStrategyFactory:
         Returns:
             MealAnalysisStrategy: Strategy that incorporates user context
         """
-        return UserContextAwareAnalysisStrategy(user_description, language=language)
+        return UserContextAwareAnalysisStrategy(
+            user_description,
+            language=language,
+            correction_hints=correction_hints,
+        )
 
     @staticmethod
     def create_fix_result_strategy(
