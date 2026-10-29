@@ -1,5 +1,6 @@
 """Tests for the sync-compatible meal analysis workflow seam."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -108,7 +109,9 @@ async def test_workflow_runs_validation_when_enabled(monkeypatch):
     meal = object()
     validated_meal = object()
     validation_service = AsyncMock()
-    validation_service.validate_meal = AsyncMock(return_value=validated_meal)
+    validation_service.validate_meal = AsyncMock(
+        return_value=SimpleNamespace(meal=validated_meal)
+    )
     legacy_handler = AsyncMock(return_value=meal)
     command = UploadMealImageImmediatelyCommand(
         user_id="00000000-0000-0000-0000-000000000001",
