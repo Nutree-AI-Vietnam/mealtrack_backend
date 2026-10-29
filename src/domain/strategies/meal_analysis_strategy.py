@@ -360,6 +360,58 @@ class UserContextAwareAnalysisStrategy(MealAnalysisStrategy):
         return "UserContextAware"
 
 
+class FixResultAnalysisStrategy(MealAnalysisStrategy):
+    """Re-analyze a stored meal photo using the user's correction text.
+
+    The image is visible portion evidence. The correction is ground truth for
+    what the user says was wrong. Current items are the prior estimate and
+    must be preserved unless the correction touches them.
+    """
+
+    def __init__(
+        self,
+        correction: str,
+        current_items: list[dict[str, Any]],
+        language: str = "en",
+    ):
+        self.correction = correction
+        self.current_items = current_items
+        self.language = language
+        logger.info(
+            "Created FixResultAnalysisStrategy: correction_len=%s items=%s",
+            len(correction),
+            len(current_items),
+        )
+
+    def get_analysis_prompt(self) -> str:
+        return SystemPrompts.get_vision_analysis_prompt(self.language)
+
+    def get_user_message(self) -> str:
+        import json
+
+        current = json.dumps(self.current_items, ensure_ascii=False)
+        return (
+            "Re-analyze this food image to fix a prior estimate.\n"
+            f"User correction (ground truth for what was wrong): {self.correction}\n"
+            f"Current meal items from the prior estimate "
+            f"(name, amount, macros):\n{current}\n\n"
+            "Rules:\n"
+            "- Apply the correction. Only change foods the correction mentions "
+            "or that the correction clearly replaces.\n"
+            "- Preserve every unmentioned item with the same name, quantity, "
+            "and macros from the current list.\n"
+            "- Use the image for visible portion evidence. Do not invent "
+            "unseen consumption.\n"
+            "- Return the complete updated food list. Each food only once.\n"
+            "- If the correction changes identity (for example fish instead of "
+            "chicken), replace that item and re-estimate its macros for the "
+            "visible portion."
+        )
+
+    def get_strategy_name(self) -> str:
+        return "FixResult"
+
+
 class AnalysisStrategyFactory:
     """
     Factory class for creating meal analysis strategies.
@@ -415,6 +467,19 @@ class AnalysisStrategyFactory:
             MealAnalysisStrategy: Strategy that incorporates user context
         """
         return UserContextAwareAnalysisStrategy(user_description, language=language)
+
+    @staticmethod
+    def create_fix_result_strategy(
+        correction: str,
+        current_items: list[dict[str, Any]],
+        language: str = "en",
+    ) -> MealAnalysisStrategy:
+        """Create a fix-result strategy for correcting a prior scan."""
+        return FixResultAnalysisStrategy(
+            correction=correction,
+            current_items=current_items,
+            language=language,
+        )
 
     @staticmethod
     def create_combined_strategy(

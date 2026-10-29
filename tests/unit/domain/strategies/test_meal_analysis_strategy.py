@@ -118,3 +118,19 @@ def test_vision_decomposition_rules_importable():
         "DECOMPOSE" in VISION_DECOMPOSITION_RULES
         or "decompos" in VISION_DECOMPOSITION_RULES.lower()
     )
+
+
+def test_fix_result_strategy_includes_correction_and_current_items():
+    from src.domain.strategies.meal_analysis_strategy import AnalysisStrategyFactory
+
+    strategy = AnalysisStrategyFactory.create_fix_result_strategy(
+        correction="it was fish not chicken",
+        current_items=[
+            {"name": "Chicken", "quantity": 120, "unit": "g", "calories": 200}
+        ],
+    )
+    message = strategy.get_user_message()
+    assert strategy.get_strategy_name() == "FixResult"
+    assert "it was fish not chicken" in message
+    assert "Chicken" in message
+    assert "Preserve every unmentioned item" in message

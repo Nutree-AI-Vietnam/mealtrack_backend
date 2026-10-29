@@ -20,6 +20,7 @@ from .describe_movement_command_handler import DescribeMovementCommandHandler
 # Meal handlers (already extracted)
 from .edit_meal_command_handler import EditMealCommandHandler
 from .favorite_meal_command_handler import FavoriteMealCommandHandler
+from .fix_meal_result_command_handler import FixMealResultCommandHandler
 from .log_caloric_drink_command_handler import LogCaloricDrinkCommandHandler
 from .repeat_meal_command_handler import RepeatMealCommandHandler
 from .unfavorite_meal_command_handler import UnfavoriteMealCommandHandler
@@ -74,6 +75,7 @@ from .upload_meal_image_immediately_command_handler import (
 __all__ = [
     # Meal handlers
     "EditMealCommandHandler",
+    "FixMealResultCommandHandler",
     "AddCustomIngredientCommandHandler",
     "AttachMealPhotoCommandHandler",
     "DeleteMealPhotoCommandHandler",

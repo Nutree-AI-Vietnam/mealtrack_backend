@@ -256,8 +256,14 @@ class MealMapper:
                         getattr(item, "food_reference_id", None),
                         getattr(item, "source_snapshot", None),
                     )
+                    item_confidence = getattr(item, "confidence", None)
                     food_item_dto = FoodItemResponse(
                         id=str(item.id),
+                        confidence=(
+                            float(item_confidence)
+                            if isinstance(item_confidence, (int, float))
+                            else None
+                        ),
                         name=display_name,
                         display_name=display_name,
                         canonical_name=canonical_name,
@@ -418,6 +424,12 @@ class MealMapper:
                     translated_at=tr.translated_at,
                 )
 
+        meal_confidence = None
+        if meal.nutrition is not None:
+            raw_confidence = getattr(meal.nutrition, "confidence_score", None)
+            if isinstance(raw_confidence, (int, float)):
+                meal_confidence = float(raw_confidence)
+
         return DetailedMealResponse(
             meal_id=meal.meal_id,
             status=STATUS_MAPPING.get(meal.status.value, meal.status.value.lower()),
@@ -436,6 +448,7 @@ class MealMapper:
                 meal.weight_grams if hasattr(meal, "weight_grams") else None
             ),
             total_nutrition=total_nutrition,
+            ai_confidence=meal_confidence,
             nutrition_override=(
                 NutritionOverrideResponse(
                     calories=meal.nutrition.nutrition_override.calories,
@@ -447,7 +460,9 @@ class MealMapper:
                 else None
             ),
             translations=translations_response,
-            food_label_metadata=MealMapper._food_label_metadata(meal, parsed_raw=parsed_raw_gpt),
+            food_label_metadata=MealMapper._food_label_metadata(
+                meal, parsed_raw=parsed_raw_gpt
+            ),
             value_insights=value_insights_response,
             translation_language=translation_language,
             description=getattr(meal, "description", None),

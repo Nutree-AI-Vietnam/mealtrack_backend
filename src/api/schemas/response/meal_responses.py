@@ -275,6 +275,12 @@ class FoodItemResponse(BaseModel):
     """Response DTO for food item information."""
 
     id: str = Field(..., description="Food item ID")
+    confidence: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="AI identity/portion confidence for this item when available",
+    )
     name: str = Field(..., description="Food item name")
     display_name: str | None = Field(
         None, description="Localized display name for the requested language"
@@ -349,6 +355,12 @@ class DetailedMealResponse(SimpleMealResponse):
     total_calories: float | None = Field(None, description="Total calories")
     total_weight_grams: float | None = Field(None, gt=0, description="Total weight")
     total_nutrition: MacrosResponse | None = Field(None, description="Total macros")
+    ai_confidence: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Meal-level vision confidence for scanner meals when available",
+    )
     nutrition_override: NutritionOverrideResponse | None = Field(
         None, description="Independent meal-level nutrition values"
     )
