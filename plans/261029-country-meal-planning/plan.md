@@ -70,7 +70,7 @@ The app waits at least 10 seconds before showing suggestions (`MealSuggestionFlo
 - Calories stay backend-derived. Allergen and dislike exclusions stay hard filters. Country filtering must not weaken them.
 - A United States week turns on when breakfast, lunch, and dinner each have at least five imported American meals. Until then the API returns `market_catalog_not_ready`. The production manifest still targets 60 American meals so the family caps have room. Do not fill a US week with Vietnamese, Japanese, or Korean recipes.
 - Curated catalog meals stay the source for the weekly planner. The model is for "suggest a meal now", constrained to the same country menu. Do not replace the Vietnam week with free-form generation.
-- American catalog rows are drafted by the existing suggestion generator and published by the existing catalog importer. Nobody types the 60 recipes, their grams-to-calories math, or their photos. A person only clears ingredient names the importer cannot match and near-duplicate reviews. See Phase 2.
+- American meals are filled by one command. The suggestion model finds the dishes. The script builds the importer schema, resolves ingredients, imports, and generates photos. Nobody collects recipes, fills a spreadsheet, or edits a manifest. See Phase 2.
 - Perceived wait: show discovery names when they return. Remove the fixed 10-second floor. Generate a full recipe after the user picks a name.
 - This plan does not replace the 2 October 2026 planner performance review (`plans/reports/meal-plan-performance-review-2026-10-02.md`). Country filtering has to shrink the candidate set those findings already called out.
 

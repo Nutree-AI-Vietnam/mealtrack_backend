@@ -32,15 +32,25 @@ Families:
 | Breakfast | `eggs`, `oatmeal`, `toast`, `yogurt`, `breakfast_sandwich` |
 | Lunch and dinner | `sandwich`, `salad`, `grain_bowl`, `pasta`, `grilled_plate`, `soup_stew`, `taco` |
 
-Build that pool with the tools already in the repo. There is no job today that invents a country menu and inserts it into `meal_catalog`. Saved suggestions stay on the user's meal row. The publish path is the catalog importer.
+The last catalog was slow because a person had to find the dishes and then shape them for the importer. `scripts/convert_excel_recipes_to_manifest.py` only converts a spreadsheet column named `Structured JSON`. `docs/meal-catalog-import-schema.md` still expects that manifest. Saved suggestions never enter `meal_catalog`. That research-and-format loop is not the path for a new country.
 
-1. **Draft.** One script calls the existing suggestion generator once per family and meal time, with the US prompt block from this phase. It writes a partial manifest: `recipe_key`, `cuisine: american`, `name`, `meal_types`, `dish_family`, and `ingredients[]` of `name`, `quantity`, `unit`. It leaves calories, macros, and `food_reference_id` empty. The importer computes those. An existing spreadsheet can skip the model and use `scripts/convert_excel_recipes_to_manifest.py` instead.
-2. **Resolve.** `scripts/import_catalog_recipe_seeds.py --partial --dry-run` matches ingredient names to verified `food_reference` rows. Exact and high-confidence fuzzy matches resolve themselves. `POST /v1/admin/meal-catalog/enrich` caches a FatSecret candidate for a name that is missing. `--resolve-all-best-effort` is only for a test catalog.
-3. **Review.** A person approves the resolver report and any near-duplicate held at ingredient Jaccard `0.80`. That is the remaining manual step. Unresolved names and unreviewed duplicates do not publish.
-4. **Import.** The same script, or `POST /v1/admin/meal-catalog/import`, writes the rows. `--partial` is how the first American meals land before the count hits 60. Production validation still requires the full count and the per-slot minimum.
-5. **Photos and micros.** `scripts/generate_catalog_meal_images.py` fills `image_url`. `scripts/enrich_catalog_recipe_micronutrients.py` fills micronutrients. `scripts/estimate_catalog_macros_ai.py` is only for rows that still have no food-reference mapping. Mapped rows keep backend-derived calories.
+One command fills a country:
 
-Until `american` meets the production count and the per-slot minimum, `food_market=US` generates zero slots and the API returns a typed empty reason (`market_catalog_not_ready`) rather than falling through to other cuisines. A partial import can already serve a US week once each slot type has five eligible meals; the 60-recipe gate stays on the production manifest, not on the first usable week.
+```bash
+python scripts/fill_country_catalog.py --market US
+```
+
+The same command with `--market VN` can top up Vietnam later. The person running it does not pick dishes, open a spreadsheet, or write JSON.
+
+What the command does, in order, with code that already exists:
+
+1. Ask the existing suggestion generator for one everyday dish per family and meal time, using the country prompt in this phase. The model is the thing that finds the dishes. If a reply is incomplete, it asks again for that family until the slot minimum is met or the retry cap is hit.
+2. Map that reply onto the importer's manifest in memory: `recipe_key`, `cuisine`, `name`, `meal_types`, `dish_family`, and ingredients as `name`, `quantity`, `unit`. The script owns that shape. It is not a file someone edits.
+3. Resolve each ingredient through `NutritionLookupService` and `IngredientNutritionResolver`. Those already match `food_reference` and, on a miss, search FatSecret and store the food. Calories stay backend-derived from that match.
+4. Call `CatalogMealSeedImporter` in process with partial import and best-effort resolution. Near-duplicates are skipped and another dish is requested for that family. The command does not stop for a resolver-map file or a review disposition.
+5. Generate photos with the existing catalog image generator for the rows it inserted, then enqueue the existing micronutrient enrichment.
+
+The command prints one report: inserted, skipped as duplicate, skipped as unresolved, and whether breakfast, lunch, and dinner each reached five meals. A US week stays on `market_catalog_not_ready` until that minimum is in the catalog. The production manifest target of 60 is how many the command aims to insert, not a file someone prepares beforehand. Re-running the command continues from what is already imported. It does not replace rows.
 
 Japan and Korea stay at 60. They are not selectable in this phase.
 
@@ -70,7 +80,7 @@ The discovery fallback builder must use the same family list. A provider failure
 
 ## Tests
 
-- A drafted American manifest with null `food_reference_id` dry-runs through `import_catalog_recipe_seeds.py --partial` and reports ingredient issues instead of inventing calories.
+- `fill_country_catalog.py --market US` builds the importer payload itself, imports without a hand-written manifest, and stops at five meals per slot or the retry cap. A fixture generator response is enough. No spreadsheet and no resolver-map file.
 - Seed validator accepts a full American manifest and rejects production when American coverage is short, once American is required. Until the manifest exists, the runtime empty reason is what US users hit; do not weaken the Vietnam/Japan/Korea counts to ship the column.
 - Generator fixture: 3 Vietnamese + 3 Japanese meals, market `VN`, 21 slots. Every selected id is Vietnamese. No fallback.
 - Prompt snapshot tests: Vietnam discovery contains the family list and does not contain "Asian, Mediterranean, Latin, American". Vietnamese-language discovery does not contain the English-only name ban. US discovery does not mention phở or kimchi as required variety.
