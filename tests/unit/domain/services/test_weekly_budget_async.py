@@ -601,6 +601,59 @@ class TestGetEffectiveAdjustedDailyAsync:
         assert result.consumed_total["fat"] == 100
         assert result.adjusted.calories == pytest.approx(1983.3, abs=1.0)
 
+    @pytest.mark.asyncio
+    async def test_unlogged_day_movement_does_not_raise_target(self):
+        """Monday has a synced 500 kcal workout but no meals; Tuesday ate base.
+
+        Monday's budget is out of the window, so its burn must be too.
+        Before: (12000 - (2000 - 500)) / 5 = 2100 on Wednesday.
+        """
+        week_start = date(2026, 3, 9)
+        meal = _ready_meal(
+            protein=100,
+            carbs=250,
+            fat=66.6667,
+            created_at=datetime(2026, 3, 10, 12, tzinfo=UTC),
+        )
+
+        mock_uow = Mock()
+        mock_uow.cheat_days.find_by_user_and_date_range = AsyncMock(return_value=[])
+        mock_uow.meals.get_daily_meal_counts = AsyncMock(
+            return_value={date(2026, 3, 10): 1}
+        )
+        mock_uow.meals.find_by_date_range = AsyncMock(return_value=[meal])
+        mock_uow.movement_entries = _FakeMovementEntries(
+            [(datetime(2026, 3, 9, 18, tzinfo=UTC), 500.0, True)]
+        )
+
+        result = await WeeklyBudgetService.get_effective_adjusted_daily_async(
+            uow=mock_uow,
+            user_id="user123",
+            week_start=week_start,
+            target_date=date(2026, 3, 11),
+            weekly_budget=WeeklyMacroBudget(
+                weekly_budget_id="budget-1",
+                user_id="user123",
+                week_start_date=week_start,
+                target_calories=14000,
+                target_protein=700,
+                target_carbs=1750,
+                target_fat=466.6667,
+            ),
+            base_daily_cal=2000,
+            base_daily_protein=100,
+            base_daily_carbs=250,
+            base_daily_fat=66.6667,
+            bmr=1600,
+            user_timezone="UTC",
+        )
+
+        assert result.logged_past_days == 1
+        assert result.skipped_days == 1
+        # Weekly totals still report the real burn.
+        assert result.consumed_before_today["calories"] == pytest.approx(1500.0)
+        assert result.adjusted.calories == pytest.approx(2000.0, abs=1.0)
+
     # --- Ported from TestGetEffectiveAdjustedDaily (sync) — see scout matrix ---
 
     @pytest.mark.asyncio

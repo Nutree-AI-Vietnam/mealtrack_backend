@@ -386,14 +386,15 @@ class WeeklyBudgetService:
     ) -> WeeklyEffectivePreload:
         """Build per-user preload maps from batch-fetched rows (one timezone group)."""
         past_end = target_date - timedelta(days=1)
-        past_days_count = (target_date - week_start).days
-        past_cheat_dates = [d for d in cheat_dates if d < target_date]
 
-        logged_past_days = 0
-        if past_days_count > 0:
-            logged_past_days = len(
-                {d for d in hydratable_dates if week_start <= d <= past_end}
-            )
+        logged_dates = {d for d in hydratable_dates if week_start <= d <= past_end}
+        logged_past_days = len(logged_dates)
+        excluded_dates = WeeklyBudgetService._redistribution_excluded_dates(
+            week_start=week_start,
+            target_date=target_date,
+            logged_dates=logged_dates,
+            cheat_dates=cheat_dates,
+        )
 
         consumed_total = WeeklyBudgetService.aggregate_weekly_consumed_from_meal_rows(
             meal_rows,
@@ -410,13 +411,13 @@ class WeeklyBudgetService:
                 user_timezone=user_timezone,
             )
         )
-        if past_cheat_dates:
+        if excluded_dates:
             consumed_for_redistribution = (
                 WeeklyBudgetService.aggregate_weekly_consumed_from_meal_rows(
                     meal_rows,
                     week_start=week_start,
                     end_date=past_end,
-                    exclude_dates=past_cheat_dates,
+                    exclude_dates=excluded_dates,
                     movement_by_date=movement_by_date,
                     user_timezone=user_timezone,
                 )
@@ -430,6 +431,29 @@ class WeeklyBudgetService:
             consumed_before_today=consumed_before_today,
             consumed_for_redistribution=consumed_for_redistribution,
         )
+
+    @staticmethod
+    def _redistribution_excluded_dates(
+        *,
+        week_start: date,
+        target_date: date,
+        logged_dates: set[date],
+        cheat_dates: list[date],
+    ) -> list[date]:
+        """Past days whose intake and movement stay out of redistribution.
+
+        Cheat days, and days with no logged meal. An unlogged day's budget is
+        already dropped from the redistribution window, so its synced movement
+        and drinks must be dropped too: otherwise a day the user never logged
+        credits its whole workout burn to the rest of the week.
+        """
+        excluded = {d for d in cheat_dates if d < target_date}
+        current = week_start
+        while current < target_date:
+            if current not in logged_dates:
+                excluded.add(current)
+            current += timedelta(days=1)
+        return sorted(excluded)
 
     @staticmethod
     def _apply_effective_adjusted_policy(
@@ -598,6 +622,7 @@ class WeeklyBudgetService:
         past_end = target_date - timedelta(days=1)
         past_days_count = (target_date - week_start).days
         logged_past_days = 0
+        logged_dates: set[date] = set()
         if past_days_count > 0:
             daily_counts = await uow.meals.get_daily_meal_counts(
                 user_id,
@@ -605,6 +630,7 @@ class WeeklyBudgetService:
                 past_end,
                 user_timezone=user_timezone,
             )
+            logged_dates = set(daily_counts)
             logged_past_days = len(daily_counts)
 
         week_end = week_start + timedelta(days=6)
@@ -675,26 +701,31 @@ class WeeklyBudgetService:
             "calories": food_before_today["calories"] - movement_before_today,
         }
 
-        past_cheat_dates = [d for d in all_cheat_dates if d < target_date]
-        if past_cheat_dates:
+        excluded_dates = calc._redistribution_excluded_dates(
+            week_start=week_start,
+            target_date=target_date,
+            logged_dates=logged_dates,
+            cheat_dates=all_cheat_dates,
+        )
+        if excluded_dates:
             food_for_redistribution = add_unrepresented_drink_totals(
                 calc._aggregate_meals_consumed(
                     all_week_meals,
                     end_date=past_end,
-                    exclude_dates=past_cheat_dates,
+                    exclude_dates=excluded_dates,
                     user_timezone=user_timezone,
                 ),
                 all_week_meals,
                 drink_entries,
                 end_date=past_end,
-                exclude_dates=past_cheat_dates,
+                exclude_dates=excluded_dates,
                 user_timezone=user_timezone,
             )
             movement_redistribution = calc._sum_movement_from_daily_map(
                 movement_by_date,
                 week_start=week_start,
                 end_date=past_end,
-                exclude_dates=past_cheat_dates,
+                exclude_dates=excluded_dates,
             )
             consumed_for_redistribution = {
                 **food_for_redistribution,

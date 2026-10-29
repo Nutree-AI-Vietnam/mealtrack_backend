@@ -558,3 +558,27 @@ class TestLeftoverBudgetCap:
             bmr=1600,
         )
         assert result.calories == 1800
+
+
+class TestWeeklyEffectivePreload:
+    """Batch preload must apply the same redistribution window as the async path."""
+
+    def test_unlogged_day_movement_stays_out_of_redistribution(self):
+        from datetime import UTC, datetime
+
+        week_start = date(2026, 3, 9)
+        preload = WeeklyBudgetService.build_weekly_effective_preload(
+            meal_rows=[
+                (datetime(2026, 3, 10, 12, tzinfo=UTC), 100.0, 250.0, 50.0, 0.0)
+            ],
+            hydratable_dates={date(2026, 3, 10)},
+            movement_by_date={date(2026, 3, 9): 500.0},
+            cheat_dates=[],
+            week_start=week_start,
+            target_date=date(2026, 3, 11),
+            user_timezone="UTC",
+        )
+
+        assert preload.logged_past_days == 1
+        assert preload.consumed_before_today["calories"] == pytest.approx(1350.0)
+        assert preload.consumed_for_redistribution["calories"] == pytest.approx(1850.0)
