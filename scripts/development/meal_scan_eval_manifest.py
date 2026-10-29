@@ -161,3 +161,17 @@ def _corpus_status(cases: list[ReviewedMealCase]) -> str:
         ):
             return "blocked_incomplete_nutrition_references"
     return "reviewed_corpus_complete"
+
+
+def load_scan_scaffold_manifest(path: str | Path | None = None):
+    """Load the synthetic scan scaffold. This is not a reviewed photo corpus."""
+    from scripts.development.accuracy_baseline_scaffold import (
+        SCAN_FIXTURE,
+        ScaffoldManifest,
+        load_scaffold_manifest,
+    )
+
+    manifest: ScaffoldManifest = load_scaffold_manifest(path or SCAN_FIXTURE)
+    if manifest.surface != "meal_scan":
+        raise ValueError("scan scaffold surface must be meal_scan")
+    return manifest

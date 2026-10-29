@@ -1,0 +1,922 @@
+{
+  "candidate_pool": {
+    "loaded_into_this_manifest": false,
+    "path": "/workspace/ai-accuracy-eval",
+    "pool_case_ids": "eval_prompt_001..eval_prompt_200",
+    "pool_rows": 200,
+    "resampled": false,
+    "selection_sql": "/workspace/ai-accuracy-eval/README.md",
+    "trim_target": 100
+  },
+  "cases": [
+    {
+      "case_id": "text-en-dev-001",
+      "coverage_slot": "simple-food",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-001",
+      "coverage_slot": "vietnamese-mixed-dish",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-002",
+      "coverage_slot": "dry-cooked-pair",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-002",
+      "coverage_slot": "egg-fruit-count",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-003",
+      "coverage_slot": "liquid-density",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-003",
+      "coverage_slot": "exclusion",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-004",
+      "coverage_slot": "sauce-or-oil",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-004",
+      "coverage_slot": "partial-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-005",
+      "coverage_slot": "double-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-005",
+      "coverage_slot": "packed-drink",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-006",
+      "coverage_slot": "refinement-add",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-006",
+      "coverage_slot": "refinement-remove",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-007",
+      "coverage_slot": "refinement-quantity",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-007",
+      "coverage_slot": "stress-many-items",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-008",
+      "coverage_slot": "localization-smoke",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-008",
+      "coverage_slot": "simple-food",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-009",
+      "coverage_slot": "vietnamese-mixed-dish",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-009",
+      "coverage_slot": "dry-cooked-pair",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-010",
+      "coverage_slot": "egg-fruit-count",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-010",
+      "coverage_slot": "liquid-density",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-011",
+      "coverage_slot": "exclusion",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-011",
+      "coverage_slot": "sauce-or-oil",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-012",
+      "coverage_slot": "partial-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-012",
+      "coverage_slot": "double-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-013",
+      "coverage_slot": "packed-drink",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-013",
+      "coverage_slot": "refinement-add",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-014",
+      "coverage_slot": "refinement-remove",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-014",
+      "coverage_slot": "refinement-quantity",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-015",
+      "coverage_slot": "stress-many-items",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-015",
+      "coverage_slot": "localization-smoke",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-016",
+      "coverage_slot": "simple-food",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-016",
+      "coverage_slot": "vietnamese-mixed-dish",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-017",
+      "coverage_slot": "dry-cooked-pair",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-017",
+      "coverage_slot": "egg-fruit-count",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-018",
+      "coverage_slot": "liquid-density",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-018",
+      "coverage_slot": "exclusion",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-019",
+      "coverage_slot": "sauce-or-oil",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-019",
+      "coverage_slot": "partial-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-020",
+      "coverage_slot": "double-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-020",
+      "coverage_slot": "packed-drink",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-021",
+      "coverage_slot": "refinement-add",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-021",
+      "coverage_slot": "refinement-remove",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-022",
+      "coverage_slot": "refinement-quantity",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-022",
+      "coverage_slot": "stress-many-items",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-023",
+      "coverage_slot": "localization-smoke",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-023",
+      "coverage_slot": "simple-food",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-024",
+      "coverage_slot": "vietnamese-mixed-dish",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-024",
+      "coverage_slot": "dry-cooked-pair",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-025",
+      "coverage_slot": "egg-fruit-count",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-025",
+      "coverage_slot": "liquid-density",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-026",
+      "coverage_slot": "exclusion",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-026",
+      "coverage_slot": "sauce-or-oil",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-027",
+      "coverage_slot": "partial-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-027",
+      "coverage_slot": "double-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-028",
+      "coverage_slot": "packed-drink",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-028",
+      "coverage_slot": "refinement-add",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-029",
+      "coverage_slot": "refinement-remove",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-029",
+      "coverage_slot": "refinement-quantity",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-030",
+      "coverage_slot": "stress-many-items",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-030",
+      "coverage_slot": "localization-smoke",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-031",
+      "coverage_slot": "simple-food",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-031",
+      "coverage_slot": "vietnamese-mixed-dish",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-032",
+      "coverage_slot": "dry-cooked-pair",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-032",
+      "coverage_slot": "egg-fruit-count",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-033",
+      "coverage_slot": "liquid-density",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-033",
+      "coverage_slot": "exclusion",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-034",
+      "coverage_slot": "sauce-or-oil",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-034",
+      "coverage_slot": "partial-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-dev-035",
+      "coverage_slot": "double-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-vi-dev-035",
+      "coverage_slot": "packed-drink",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "development"
+    },
+    {
+      "case_id": "text-en-hold-001",
+      "coverage_slot": "refinement-add",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-001",
+      "coverage_slot": "refinement-remove",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-002",
+      "coverage_slot": "refinement-quantity",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-002",
+      "coverage_slot": "stress-many-items",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-003",
+      "coverage_slot": "localization-smoke",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-003",
+      "coverage_slot": "simple-food",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-004",
+      "coverage_slot": "vietnamese-mixed-dish",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-004",
+      "coverage_slot": "dry-cooked-pair",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-005",
+      "coverage_slot": "egg-fruit-count",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-005",
+      "coverage_slot": "liquid-density",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-006",
+      "coverage_slot": "exclusion",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-006",
+      "coverage_slot": "sauce-or-oil",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-007",
+      "coverage_slot": "partial-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-007",
+      "coverage_slot": "double-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-008",
+      "coverage_slot": "packed-drink",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-008",
+      "coverage_slot": "refinement-add",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-009",
+      "coverage_slot": "refinement-remove",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-009",
+      "coverage_slot": "refinement-quantity",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-010",
+      "coverage_slot": "stress-many-items",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-010",
+      "coverage_slot": "localization-smoke",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-011",
+      "coverage_slot": "simple-food",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-011",
+      "coverage_slot": "vietnamese-mixed-dish",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-012",
+      "coverage_slot": "dry-cooked-pair",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-012",
+      "coverage_slot": "egg-fruit-count",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-013",
+      "coverage_slot": "liquid-density",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-013",
+      "coverage_slot": "exclusion",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-014",
+      "coverage_slot": "sauce-or-oil",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-014",
+      "coverage_slot": "partial-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-en-hold-015",
+      "coverage_slot": "double-serving",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "en",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    },
+    {
+      "case_id": "text-vi-hold-015",
+      "coverage_slot": "packed-drink",
+      "input_status": "placeholder_no_sample",
+      "label_status": "pending_qa",
+      "language": "vi",
+      "language_source": "scaffold_slot_not_from_production",
+      "split": "held_out"
+    }
+  ],
+  "corpus_kind": "accuracy_baseline_scaffold",
+  "label_status": "pending_qa",
+  "placeholder_notice": "Synthetic placeholder slots only. The 200 plus 200 candidate pool already exists at /workspace/ai-accuracy-eval and is not copied here. These case ids are not a trim of that pool.",
+  "privacy_reviewed": false,
+  "review_status": "unreviewed",
+  "sample_collection_status": "placeholders_only",
+  "schema_version": 1,
+  "source_provenance": "synthetic_placeholder_no_production_samples",
+  "surface": "parse_text"
+}

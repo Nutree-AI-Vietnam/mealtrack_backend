@@ -94,3 +94,7 @@ profile*.svg
 
 # Verification runs. The skill keeps these after cleanup; they are not source.
 .cursor/skills/verify-mealtrack-backend/artifacts/
+
+# Restricted accuracy pool. Production metadata, meal ids, and image URLs.
+# The shared-box copy lives at /workspace/ai-accuracy-eval and must not be committed.
+/ai-accuracy-eval/
