@@ -518,15 +518,22 @@ async def get_weekly_groceries(
         )
         if result is None:
             raise HTTPException(status_code=404, detail="Weekly meal plan not found")
-        _, categories = result
+        plan, categories = result
         try:
+            # Prepared labels are a database read; only the translator call for
+            # names still missing is held to the 1.5s budget. The outer bound
+            # guards a stalled read.
             localized_categories = await asyncio.wait_for(
                 localize_grocery_categories(
                     categories,
                     language=get_request_language(request),
                     translation_service=translation_service,
+                    recipe_ids=sorted(
+                        {slot.recipe_id for slot in plan.slots if slot.recipe_id}
+                    ),
+                    provider_timeout_seconds=1.5,
                 ),
-                timeout=1.5,
+                timeout=3.0,
             )
         except TimeoutError:
             logger.info("Grocery localization timed out; using catalog names")

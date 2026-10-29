@@ -16,12 +16,18 @@ class CatalogPersistedPresentationService:
                 [meal.id for meal in meals], locale=locale
             )
 
-    async def get_grocery_translations(self, categories, language):
+    async def get_grocery_translations(self, categories, language, recipe_ids=()):
+        """Map grocery names to prepared labels for the request locale.
+
+        English reads these too: catalog preparation translates Vietnamese
+        ingredient names to English, and a grocery read cannot wait on a
+        provider call. ``recipe_ids`` are the plan's recipes; their prepared
+        text maps cover rows that have no food reference.
+        """
         locale = normalize_language(language)
-        if locale == "en":
-            return {}
         items = [item for category in categories for item in category.items]
         ingredient_ids = [item.ingredient_id for item in items]
+        recipe_ids = tuple(dict.fromkeys(recipe_ids))
         async with self.uow_factory() as uow:
             references = (
                 await uow.food_references.get_display_projections(
@@ -33,11 +39,25 @@ class CatalogPersistedPresentationService:
             prepared = await uow.catalog_preparation.load_ingredient_translations(
                 ingredient_ids, locale=locale
             )
+            recipe_texts = (
+                await uow.catalog_preparation.load_translations(
+                    recipe_ids, locale=locale
+                )
+                if recipe_ids
+                else {}
+            )
+        by_text: dict[str, str] = {}
+        for texts in recipe_texts.values():
+            for source, target in texts.items():
+                if source and isinstance(target, str) and target.strip():
+                    by_text.setdefault(source, target.strip())
         translated = {}
         for item in items:
             reference = references.get(item.ingredient_id) or {}
-            name = str(reference.get("name_vi") or "").strip() or prepared.get(
-                item.ingredient_id
+            name = (
+                str(reference.get("name_vi") or "").strip()
+                or by_text.get(item.name)
+                or prepared.get(item.ingredient_id)
             )
             if name:
                 translated[item.name] = name

@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
@@ -514,7 +515,7 @@ async def test_english_groceries_translate_when_prepared_names_are_empty():
             self.translator = _GroceryTranslator(_MIXED_GROCERY_TRANSLATIONS)
             self.prepared_calls: list[str] = []
 
-        async def get_grocery_translations(self, categories, language):
+        async def get_grocery_translations(self, categories, language, recipe_ids=()):
             self.prepared_calls.append(language)
             assert language == "en"
             return {}
@@ -544,12 +545,103 @@ async def test_english_groceries_translate_when_prepared_names_are_empty():
         "piece",
     )
     assert service.translator.calls == [(["ớt", "Hành tím"], "vi", "en")]
+    assert service.prepared_calls == ["en"]
+
+
+@pytest.mark.asyncio
+async def test_english_groceries_send_only_names_without_a_prepared_label():
+    class _Prepared:
+        def __init__(self) -> None:
+            self.translator = _GroceryTranslator(_MIXED_GROCERY_TRANSLATIONS)
+            self.recipe_ids: list[tuple[str, ...]] = []
+
+        async def get_grocery_translations(self, categories, language, recipe_ids=()):
+            self.recipe_ids.append(recipe_ids)
+            return {"ớt": "Red chili"}
+
+        async def translate_texts(self, texts, source_language, target_language):
+            return await self.translator.translate_texts(
+                texts, source_language, target_language
+            )
+
+    service = _Prepared()
+    localized = await localize_grocery_categories(
+        _mixed_grocery_categories(),
+        language="en",
+        translation_service=service,
+        recipe_ids=["recipe-1", "recipe-2"],
+    )
+
+    assert tuple(item.name for item in localized[0].items) == (
+        "Red chili",
+        "Rice",
+        "Shallot",
+        "Lime",
+    )
+    assert service.recipe_ids == [("recipe-1", "recipe-2")]
+    assert service.translator.calls == [(["Hành tím"], "vi", "en")]
+
+
+@pytest.mark.asyncio
+async def test_slow_grocery_translation_finishes_for_the_next_read():
+    class _Slow:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        async def get_grocery_translations(self, categories, language, recipe_ids=()):
+            return {"ớt": "Red chili"}
+
+        async def translate_texts(self, texts, source_language, target_language):
+            self.calls.append(list(texts))
+            await asyncio.sleep(0.2)
+            return TranslationResult(
+                tuple(_MIXED_GROCERY_TRANSLATIONS.get(text, text) for text in texts),
+                TranslationOutcome.TRANSLATED,
+                source_language,
+                target_language,
+            )
+
+    service = _Slow()
+    first = await localize_grocery_categories(
+        _mixed_grocery_categories(),
+        language="en",
+        translation_service=service,
+        provider_timeout_seconds=0.01,
+    )
+    await asyncio.sleep(0.3)
+    second = await localize_grocery_categories(
+        _mixed_grocery_categories(),
+        language="en",
+        translation_service=service,
+        provider_timeout_seconds=0.01,
+    )
+
+    # The timed-out read keeps its prepared label and mapped units.
+    assert tuple(item.name for item in first[0].items) == (
+        "Red chili",
+        "Rice",
+        "Hành tím",
+        "Lime",
+    )
+    assert tuple(item.unit for item in first[0].items) == (
+        "piece",
+        "g",
+        "piece",
+        "piece",
+    )
+    assert tuple(item.name for item in second[0].items) == (
+        "Red chili",
+        "Rice",
+        "Shallot",
+        "Lime",
+    )
+    assert service.calls == [["Hành tím"]]
 
 
 @pytest.mark.asyncio
 async def test_vietnamese_groceries_keep_using_prepared_names():
     class _Prepared:
-        async def get_grocery_translations(self, categories, language):
+        async def get_grocery_translations(self, categories, language, recipe_ids=()):
             assert language == "vi"
             return {"Rice": "Gạo", "Lime": "Chanh"}
 

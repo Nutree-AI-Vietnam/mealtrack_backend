@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterable
 from dataclasses import replace
@@ -32,6 +33,7 @@ _GROCERY_TRANSLATION_MISS_TTL_SECONDS = 5 * 60
 _CATALOG_TRANSLATION_MISS_CACHE: TTLCache[tuple[str, str], bool] = TTLCache(
     maxsize=4096, ttl=_GROCERY_TRANSLATION_MISS_TTL_SECONDS
 )
+_BACKGROUND_GROCERY_TRANSLATIONS: set[asyncio.Future[None]] = set()
 # Whole-unit labels. Longer phrases are exact keys, so "quả lớn" does not
 # collapse to the "quả" entry.
 _ENGLISH_GROCERY_UNITS = {
@@ -430,30 +432,32 @@ async def localize_grocery_categories(
     *,
     language: str,
     translation_service: TextTranslationService | None,
+    recipe_ids: Iterable[str] = (),
+    provider_timeout_seconds: float | None = None,
 ) -> tuple[Any, ...]:
     """Translate grocery names, and Vietnamese units when the request is English.
 
-    English requests still translate catalog copy that is Vietnamese. Prepared
-    English grocery maps are empty for rows with no food reference, so those
-    names and units use the same batched presentation translator as other
-    catalog copy.
+    Prepared catalog labels come first for every locale. English requests then
+    send the Vietnamese names that are still missing, and units, to the
+    batched presentation translator. A translator call that outlives
+    ``provider_timeout_seconds`` keeps running so the next read finds its
+    result cached; this read keeps the names it already has.
     """
     if translation_service is None or not categories:
         return tuple(categories)
 
-    if language != "en":
-        persisted_loader = getattr(
-            translation_service, "get_grocery_translations", None
+    translations: dict[str, str] = {}
+    persisted_loader = getattr(translation_service, "get_grocery_translations", None)
+    if callable(persisted_loader):
+        translations.update(
+            await persisted_loader(categories, language, recipe_ids=tuple(recipe_ids))
         )
-        if callable(persisted_loader):
-            persisted_translations = await persisted_loader(categories, language)
+        if language != "en":
             return tuple(
                 replace(
                     cat,
                     items=tuple(
-                        replace(
-                            item, name=persisted_translations.get(item.name, item.name)
-                        )
+                        replace(item, name=translations.get(item.name, item.name))
                         for item in cat.items
                     ),
                 )
@@ -463,7 +467,8 @@ async def localize_grocery_categories(
     texts: list[str] = []
     for category in categories:
         for item in category.items:
-            _append_unique(texts, item.name)
+            if item.name not in translations:
+                _append_unique(texts, item.name)
             if language == "en":
                 unit = getattr(item, "unit", "") or ""
                 if unit and _english_grocery_unit(unit) is None:
@@ -471,7 +476,6 @@ async def localize_grocery_categories(
     if not texts and language != "en":
         return tuple(categories)
 
-    translations: dict[str, str] = {}
     missing: list[str] = []
     for text in texts:
         if language == "vi" and _is_vietnamese_text(text):
@@ -490,30 +494,26 @@ async def localize_grocery_categories(
         missing.append(text)
 
     if missing:
-        try:
-            for batch in iter_translation_batches(missing):
-                result = await translate_for_presentation(
-                    translation_service,
-                    batch,
-                    language,
-                    source_language="vi" if language == "en" else "en",
-                )
-                if result.outcome is TranslationOutcome.UNAVAILABLE:
-                    _remember_grocery_translation_misses(language, batch)
-                    continue
-                cacheable = translation_is_cacheable(result)
-                for index, text in enumerate(batch):
-                    translated = (
-                        result.items[index] if index < len(result.items) else text
-                    )
-                    translations[text] = translated
-                    if cacheable:
-                        _CATALOG_TRANSLATION_CACHE[(language, text)] = translated
-        except Exception as exc:
-            logger.warning("grocery localization failed: %s", exc)
-            _remember_grocery_translation_misses(
-                language, [text for text in missing if text not in translations]
+        found: dict[str, str] = {}
+        task = asyncio.ensure_future(
+            _translate_grocery_texts(
+                missing,
+                language=language,
+                translation_service=translation_service,
+                found=found,
             )
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=provider_timeout_seconds
+            )
+        except TimeoutError:
+            logger.info("Grocery translation is still running; serving known names")
+            _keep_background_translation(task)
+        except asyncio.CancelledError:
+            _keep_background_translation(task)
+            raise
+        translations.update(found)
 
     return tuple(
         replace(
@@ -525,6 +525,44 @@ async def localize_grocery_categories(
         )
         for cat in categories
     )
+
+
+async def _translate_grocery_texts(
+    missing: list[str],
+    *,
+    language: str,
+    translation_service: TextTranslationService,
+    found: dict[str, str],
+) -> None:
+    """Fill ``found`` and the process cache batch by batch."""
+    try:
+        for batch in iter_translation_batches(missing):
+            result = await translate_for_presentation(
+                translation_service,
+                batch,
+                language,
+                source_language="vi" if language == "en" else "en",
+            )
+            if result.outcome is TranslationOutcome.UNAVAILABLE:
+                _remember_grocery_translation_misses(language, batch)
+                continue
+            cacheable = translation_is_cacheable(result)
+            for index, text in enumerate(batch):
+                translated = result.items[index] if index < len(result.items) else text
+                found[text] = translated
+                if cacheable:
+                    _CATALOG_TRANSLATION_CACHE[(language, text)] = translated
+    except Exception as exc:
+        logger.warning("grocery localization failed: %s", exc)
+        _remember_grocery_translation_misses(
+            language, [text for text in missing if text not in found]
+        )
+
+
+def _keep_background_translation(task: asyncio.Future[None]) -> None:
+    # Hold a reference until the task ends; the loop keeps only weak ones.
+    _BACKGROUND_GROCERY_TRANSLATIONS.add(task)
+    task.add_done_callback(_BACKGROUND_GROCERY_TRANSLATIONS.discard)
 
 
 def _english_grocery_unit(unit: str) -> str | None:

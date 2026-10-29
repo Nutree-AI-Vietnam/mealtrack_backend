@@ -450,7 +450,61 @@ def test_hung_grocery_translator_returns_original_names_within_timeout():
     assert elapsed < 3
     grocery = response.json()["categories"][0]["items"][0]
     assert grocery["name"] == "Hành tím"
-    assert grocery["unit"] == "củ"
+    # Known Vietnamese units map without the translator.
+    assert grocery["unit"] == "piece"
+
+
+def test_english_groceries_read_prepared_labels_for_the_plan_recipes():
+    class _Prepared:
+        def __init__(self) -> None:
+            self.requests = []
+
+        async def get_grocery_translations(self, categories, language, recipe_ids=()):
+            self.requests.append((language, recipe_ids))
+            return {"Hành tím": "Shallot"}
+
+        async def translate_texts(self, *_args):
+            pytest.fail("a prepared English label still called the translator")
+
+    item = GroceryItem(
+        ingredient_id=7,
+        name="Hành tím",
+        category="fresh_produce",
+        total_needed=2,
+        unit="củ",
+        stock_amount=None,
+        status="needed",
+        quantity_confidence="exact",
+        remaining=2,
+    )
+    plan = _plan()
+    plan = replace(
+        plan,
+        slots=tuple(
+            replace(slot, recipe_id="recipe-b" if index == 0 else "recipe-a")
+            if index < 2
+            else slot
+            for index, slot in enumerate(plan.slots)
+        ),
+    )
+
+    class _GroceryBus(_Bus):
+        async def send(self, query):
+            if query.__class__.__name__ == "GetWeeklyGroceriesQuery":
+                return (plan, (GroceryCategory("fresh_produce", (item,)),))
+            return await super().send(query)
+
+    service = _Prepared()
+    response = TestClient(_app(bus=_GroceryBus(), translation_service=service)).get(
+        "/v1/meal-plans/plan-1/groceries",
+        headers={"Accept-Language": "en"},
+    )
+
+    assert response.status_code == 200
+    grocery = response.json()["categories"][0]["items"][0]
+    assert grocery["name"] == "Shallot"
+    assert grocery["unit"] == "piece"
+    assert service.requests == [("en", ("recipe-a", "recipe-b"))]
 
 
 def test_vietnamese_ai_proposal_uses_catalog_grocery_name_vi():

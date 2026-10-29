@@ -15,7 +15,8 @@ class _Uow:
             get_display_projections=self._projections
         )
         self.catalog_preparation = SimpleNamespace(
-            load_ingredient_translations=self._prepared
+            load_ingredient_translations=self._prepared,
+            load_translations=self._recipe_texts,
         )
 
     async def __aenter__(self):
@@ -30,7 +31,16 @@ class _Uow:
 
     async def _prepared(self, ids, locale):
         self.calls.append(("prepared", tuple(ids), locale))
+        if locale == "en":
+            return {1: "Steamed rice"}
         return {1: "Cơm", 2: "Bông cải xanh"}
+
+    async def _recipe_texts(self, ids, locale):
+        self.calls.append(("recipe_texts", tuple(ids), locale))
+        return {
+            "recipe-1": {"Hạt nêm": "Seasoning powder", "Rice": "Rice"},
+            "recipe-2": {"Rice": "White rice"},
+        }
 
 
 def _categories():
@@ -66,12 +76,36 @@ async def test_grocery_names_use_prepared_overlay_for_other_locales():
 
 
 @pytest.mark.asyncio
-async def test_english_grocery_names_skip_database_reads():
+async def test_english_grocery_names_use_prepared_labels_without_food_reference_names():
     calls = []
     service = CatalogPersistedPresentationService(lambda: _Uow(calls))
 
-    assert await service.get_grocery_translations(_categories(), "en") == {}
-    assert calls == []
+    assert await service.get_grocery_translations(_categories(), "en") == {
+        "Rice": "Steamed rice"
+    }
+    assert calls == [("prepared", (1, 2, 3), "en")]
+
+
+@pytest.mark.asyncio
+async def test_plan_recipe_texts_cover_rows_without_a_food_reference():
+    calls = []
+    service = CatalogPersistedPresentationService(lambda: _Uow(calls))
+    categories = (
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(ingredient_id=1, name="Rice"),
+                SimpleNamespace(ingredient_id=1_000_000_123, name="Hạt nêm"),
+            )
+        ),
+    )
+
+    translated = await service.get_grocery_translations(
+        categories, "en", recipe_ids=("recipe-1", "recipe-2", "recipe-1")
+    )
+
+    # The plan's own recipe text beats the food-reference label.
+    assert translated == {"Rice": "Rice", "Hạt nêm": "Seasoning powder"}
+    assert ("recipe_texts", ("recipe-1", "recipe-2"), "en") in calls
 
 
 @pytest.mark.asyncio
