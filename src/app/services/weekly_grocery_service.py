@@ -16,8 +16,13 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     GrocerySlot,
     PantryAvailability,
     aggregate_grocery,
+    is_pantry_staple,
 )
 from src.planner_observability import planner_timed
+
+# Seasonings most kitchens already hold. The group sorts last and clients can
+# fold it; older clients file an unknown group by the item's name.
+STAPLES_CATEGORY = "staples"
 
 
 @dataclass(frozen=True)
@@ -120,6 +125,8 @@ class WeeklyGroceryService:
 
 
 def _resolve_grocery_category(name: str, category: str | None) -> str:
+    if is_pantry_staple(name):
+        return STAPLES_CATEGORY
     cat = (category or "").strip().lower()
     if cat in {"produce", "fresh_produce", "vegetable", "fruit"}:
         return "fresh_produce"
