@@ -24,6 +24,9 @@ from src.domain.model.meal import Meal
 from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import merge_micros
+from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
+    normalize_food_name,
+)
 from src.domain.services.nutrition_calculation_service import (
     MASS_VOLUME_CANONICAL_UNITS,
     UNIT_TO_GRAMS,
@@ -779,6 +782,34 @@ def _retotal_meal_nutrition(meal: Meal) -> None:
     nutrition.micros = merge_micros(*(item.micros for item in items))
 
 
+def local_catalog_lookup_keys(name: str) -> tuple[str, ...]:
+    """Keys to try against ``food_reference.name_normalized``.
+
+    Meal scan and parse-text used to query only ``normalize_food_lookup_name``.
+    Seeds persist ``normalize_food_name``, which drops preparation qualifiers
+    such as "grilled", so those rows missed. Return the lookup key first, then
+    the seed key. Identical output is one key, so a matching name is not
+    queried or applied twice.
+    """
+    keys: list[str] = []
+    for key in (normalize_food_lookup_name(name), normalize_food_name(name)):
+        if key and key not in keys:
+            keys.append(key)
+    return tuple(keys)
+
+
+def local_catalog_hit(
+    hits: dict[str, Any],
+    keys: tuple[str, ...],
+) -> dict[str, Any] | None:
+    """First catalog row for ``keys``: lookup key, then the seed key."""
+    for key in keys:
+        row = hits.get(key)
+        if row:
+            return row
+    return None
+
+
 async def ground_scan_meal(
     meal: Meal,
     *,
@@ -807,14 +838,14 @@ async def ground_scan_meal(
     async def _run() -> None:
         nonlocal macros_changed
         food_items = nutrition.food_items or []
-        keys_by_item: dict[str, str] = {}
+        keys_by_item: dict[str, tuple[str, ...]] = {}
         lookup_keys: list[str] = []
         for food_item in food_items:
-            key = normalize_food_lookup_name(str(food_item.name or ""))
-            if not key:
+            keys = local_catalog_lookup_keys(str(food_item.name or ""))
+            if not keys:
                 continue
-            keys_by_item[food_item.id] = key
-            lookup_keys.append(key)
+            keys_by_item[food_item.id] = keys
+            lookup_keys.extend(keys)
 
         local_hits: dict[str, dict[str, Any]] = {}
         if batch_lookup is not None and lookup_keys and time.monotonic() < deadline:
@@ -853,7 +884,10 @@ async def ground_scan_meal(
                 resolved = await cascade_lookup(
                     _scan_item_dict(food_item),
                     budget=budget,
-                    local_reference=local_hits.get(keys_by_item.get(food_item.id, "")),
+                    local_reference=local_catalog_hit(
+                        local_hits,
+                        keys_by_item.get(food_item.id, ()),
+                    ),
                     provider=provider,
                     structured_reference_enabled=True,
                     on_unresolved=mark_ai_estimate,

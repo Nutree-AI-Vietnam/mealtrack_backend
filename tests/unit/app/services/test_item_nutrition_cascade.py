@@ -9,13 +9,19 @@ import pytest
 from src.app.services.food_reference_validation_service import (
     FoodReferenceValidationService,
 )
-from src.app.services.item_nutrition_cascade import ground_scan_meal
+from src.app.services.item_nutrition_cascade import (
+    ground_scan_meal,
+    local_catalog_lookup_keys,
+)
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
+from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
+    normalize_food_name,
+)
 from src.domain.services.nutrition_resolver import normalize_food_lookup_name
 
 
-def _meal() -> Meal:
+def _meal(name: str = "White Rice", quantity: float = 150) -> Meal:
     timestamp = datetime(2026, 10, 29, 12, 0)
     return Meal(
         meal_id="00000000-0000-0000-0000-000000000301",
@@ -36,8 +42,8 @@ def _meal() -> Meal:
             food_items=[
                 FoodItem(
                     id="food-1",
-                    name="White Rice",
-                    quantity=150,
+                    name=name,
+                    quantity=quantity,
                     unit="g",
                     macros=Macros(protein=4, carbs=45, fat=1),
                 )
@@ -221,3 +227,105 @@ async def test_validate_meal_does_not_replace_macros():
     assert report.meal is meal
     assert meal.nutrition.food_items[0].macros.protein == 4
     assert meal.nutrition.food_items[0].source_kind is None
+
+
+def test_local_catalog_keys_collapse_when_normalizers_agree():
+    assert normalize_food_lookup_name("White Rice") == "white rice"
+    assert normalize_food_name("White Rice") == "white rice"
+    assert local_catalog_lookup_keys("White Rice") == ("white rice",)
+
+
+def test_local_catalog_keys_try_lookup_then_seed_when_they_differ():
+    assert normalize_food_lookup_name("Grilled Chicken") == "grilled chicken"
+    assert normalize_food_name("Grilled Chicken") == "chicken"
+    assert local_catalog_lookup_keys("Grilled Chicken") == (
+        "grilled chicken",
+        "chicken",
+    )
+
+
+def _verified_reference(**overrides) -> dict:
+    row = {
+        "id": 7,
+        "name": "Chicken",
+        "is_verified": True,
+        "source": "usda",
+        "protein_100g": 20.0,
+        "carbs_100g": 0.0,
+        "fat_100g": 5.0,
+        "fiber_100g": 0.0,
+        "sugar_100g": 0.0,
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_grounding_hits_seed_key_when_lookup_key_misses():
+    """normalize_food_lookup_name misses; the seed name_normalized still hits."""
+    seed = _verified_reference()
+
+    async def batch_lookup(names):
+        assert names == ["chicken", "grilled chicken"]
+        return {"chicken": seed}
+
+    provider = MagicMock()
+    provider.search_food_candidates = AsyncMock()
+    meal = _meal(name="Grilled Chicken", quantity=100)
+
+    report = await ground_scan_meal(
+        meal,
+        batch_lookup=batch_lookup,
+        provider=provider,
+        timeout_seconds=1.0,
+    )
+
+    item = meal.nutrition.food_items[0]
+    assert report.outcome == "match"
+    assert report.items[0].source == "local"
+    assert item.food_reference_id == 7
+    assert item.source_kind == "local"
+    assert item.macros.protein == pytest.approx(20.0)
+    assert item.macros.fat == pytest.approx(5.0)
+    provider.search_food_candidates.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_grounding_queries_an_identical_key_once():
+    batch_lookup = AsyncMock(
+        return_value={normalize_food_lookup_name("White Rice"): _local_rice()}
+    )
+    meal = _meal()
+
+    report = await ground_scan_meal(
+        meal,
+        batch_lookup=batch_lookup,
+        provider=MagicMock(),
+        timeout_seconds=1.0,
+    )
+
+    batch_lookup.assert_awaited_once_with(["white rice"])
+    assert report.items[0].source == "local"
+    assert meal.nutrition.food_items[0].macros.protein == pytest.approx(4.05)
+
+
+@pytest.mark.asyncio
+async def test_grounding_prefers_existing_lookup_key_when_both_rows_exist():
+    lookup_row = _verified_reference(id=1, name="Grilled Chicken", protein_100g=31.0)
+    seed_row = _verified_reference(id=2, name="Chicken", protein_100g=20.0)
+
+    async def batch_lookup(names):
+        assert names == ["chicken", "grilled chicken"]
+        return {"grilled chicken": lookup_row, "chicken": seed_row}
+
+    meal = _meal(name="Grilled Chicken", quantity=100)
+    await ground_scan_meal(
+        meal,
+        batch_lookup=batch_lookup,
+        provider=MagicMock(),
+        timeout_seconds=1.0,
+    )
+
+    item = meal.nutrition.food_items[0]
+    assert item.food_reference_id == 1
+    assert item.macros.protein == pytest.approx(31.0)

@@ -570,6 +570,133 @@ async def test_parse_text_keeps_local_reference_beside_fatsecret():
 
 
 @pytest.mark.asyncio
+async def test_parse_text_local_lookup_hits_seed_normalized_name():
+    """Lookup key misses; the seed-style name_normalized still grounds the item."""
+    requested: dict[str, list[str]] = {}
+
+    async def local_lookup(names):
+        requested["names"] = list(names)
+        return {
+            "chicken": {
+                "id": 7,
+                "food_reference_id": 7,
+                "name": "Chicken",
+                "source": "usda",
+                "is_verified": True,
+                "protein_100g": 20.0,
+                "carbs_100g": 0.0,
+                "fat_100g": 5.0,
+                "fiber_100g": 0.0,
+                "sugar_100g": 0.0,
+                "allowed_units": [
+                    {"unit": "g", "gram_weight": 1.0, "description": "1 g"}
+                ],
+            }
+        }
+
+    class _LocaleSpy(_FakeFoodReferenceAdoptRepository):
+        def __init__(self):
+            super().__init__()
+            self.locale_calls: list[list[str]] = []
+
+        async def find_by_locale_names(self, language, names):
+            self.locale_calls.append(list(names))
+            return {}
+
+    locale = _LocaleSpy()
+    provider = _StagedFatSecretService()
+    handler = ParseMealTextHandler(
+        meal_generation_service=_FakeMealGenerationService(
+            responses=[
+                {
+                    "items": [
+                        {
+                            "name": "Grilled Chicken",
+                            "lookup_name": "Grilled Chicken",
+                            "quantity": 100,
+                            "unit": "g",
+                            "english_unit": "g",
+                            "protein": 1,
+                            "carbs": 0,
+                            "fat": 1,
+                        }
+                    ]
+                }
+            ]
+        ),
+        fat_secret_service=provider,
+        food_reference_batch_lookup=local_lookup,
+        uow_factory=_FakeUowFactory(locale),
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="grilled chicken", user_id="user-1", language="en")
+    )
+
+    assert requested["names"] == ["chicken", "grilled chicken"]
+    assert response.items[0].origin == "local"
+    assert response.items[0].food_reference_id == 7
+    assert response.items[0].protein == pytest.approx(20.0)
+    assert provider.search_calls == []
+    assert locale.locale_calls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_text_local_lookup_queries_one_key_when_normalizers_agree():
+    requested: dict[str, list[str]] = {}
+
+    async def local_lookup(names):
+        requested["names"] = list(names)
+        return {
+            name: {
+                "id": 42,
+                "food_reference_id": 42,
+                "name": "White Rice",
+                "source": "usda",
+                "is_verified": True,
+                "protein_100g": 2.7,
+                "carbs_100g": 28.0,
+                "fat_100g": 0.3,
+                "fiber_100g": 0.4,
+                "sugar_100g": 0.1,
+            }
+            for name in names
+        }
+
+    handler = ParseMealTextHandler(
+        meal_generation_service=_FakeMealGenerationService(
+            responses=[
+                {
+                    "items": [
+                        {
+                            "name": "White Rice",
+                            "lookup_name": "White Rice",
+                            "quantity": 100,
+                            "unit": "g",
+                            "english_unit": "g",
+                            "protein": 1,
+                            "carbs": 1,
+                            "fat": 1,
+                        }
+                    ]
+                }
+            ]
+        ),
+        fat_secret_service=_StagedFatSecretService(),
+        food_reference_batch_lookup=local_lookup,
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="white rice", user_id="user-1", language="en")
+    )
+
+    assert requested["names"] == ["white rice"]
+    assert response.items[0].origin == "local"
+    assert response.items[0].food_reference_id == 42
+    assert response.items[0].protein == pytest.approx(2.7)
+
+
+@pytest.mark.asyncio
 async def test_parse_text_unit_stays_compatible_with_prompt_manual_save():
     meal_generation_service = _FakeMealGenerationService()
     handler = ParseMealTextHandler(

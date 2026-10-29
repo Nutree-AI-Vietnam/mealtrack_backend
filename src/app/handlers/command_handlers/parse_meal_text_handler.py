@@ -39,6 +39,12 @@ from src.app.services.item_nutrition_cascade import (
     extract_english_name as _shared_extract_english_name,
 )
 from src.app.services.item_nutrition_cascade import (
+    local_catalog_hit as _local_catalog_hit,
+)
+from src.app.services.item_nutrition_cascade import (
+    local_catalog_lookup_keys as _local_catalog_lookup_keys,
+)
+from src.app.services.item_nutrition_cascade import (
     provider_call as _shared_provider_call,
 )
 from src.app.services.item_nutrition_cascade import (
@@ -79,7 +85,6 @@ from src.domain.services.nutrition_calculation_service import (
 from src.domain.services.nutrition_integrity_policy import (
     NUTRITION_INTEGRITY_POLICY_VERSION,
 )
-from src.domain.services.nutrition_resolver import normalize_food_lookup_name
 from src.domain.services.prompts.input_sanitizer import (
     sanitize_user_description,
     validate_refinement_items,
@@ -271,10 +276,11 @@ class ParseMealTextHandler(
                 return await self._cascade_lookup(
                     copy.deepcopy(item),
                     budget=budget,
-                    local_reference=local_references.get(
-                        normalize_food_lookup_name(
-                            item.get("lookup_name") or item.get("name", "")
-                        )
+                    local_reference=_local_catalog_hit(
+                        local_references,
+                        _local_catalog_lookup_keys(
+                            str(item.get("lookup_name") or item.get("name", "") or "")
+                        ),
                     ),
                 )
 
@@ -755,18 +761,18 @@ class ParseMealTextHandler(
         budget: _ParseTextRequestBudget,
         language: str,
     ) -> dict[str, dict[str, Any]]:
-        key_by_display_name: dict[str, str] = {}
+        keys_by_display_name: dict[str, tuple[str, ...]] = {}
         keys: set[str] = set()
         for item in items:
             display_name = str(item.get("lookup_name") or item.get("name", "") or "")
-            key = normalize_food_lookup_name(display_name)
-            if not key:
+            item_keys = _local_catalog_lookup_keys(display_name)
+            if not item_keys:
                 continue
-            keys.add(key)
+            keys.update(item_keys)
             for candidate in (display_name, str(item.get("name") or "")):
                 candidate = candidate.strip()
                 if candidate:
-                    key_by_display_name.setdefault(candidate, key)
+                    keys_by_display_name.setdefault(candidate, item_keys)
         if not keys:
             return {}
         deadline = budget.deadline
@@ -785,33 +791,36 @@ class ParseMealTextHandler(
                     "parse_text local reference lookup failed: %s", type(exc).__name__
                 )
                 hits = {}
+        if not isinstance(hits, dict):
+            hits = {}
 
-        missing_keys = keys - set(hits)
-        if missing_keys and self._uow_factory is not None:
-            missing_names = sorted(
-                {
-                    display_name
-                    for display_name, key in key_by_display_name.items()
-                    if key in missing_keys
-                }
-            )
-            if missing_names and time.monotonic() < deadline:
-                try:
-                    remaining = max(0.01, deadline - time.monotonic())
-                    locale_hits = await asyncio.wait_for(
-                        self._locale_reference_lookup(language, missing_names),
-                        timeout=remaining,
-                    )
-                except Exception as exc:
-                    logger.debug(
-                        "parse_text locale reference lookup failed: %s",
-                        type(exc).__name__,
-                    )
-                    locale_hits = {}
-                for display_name, row in (locale_hits or {}).items():
-                    target_key = key_by_display_name.get(display_name)
-                    if target_key and target_key not in hits:
-                        hits[target_key] = row
+        missing_names = sorted(
+            display_name
+            for display_name, item_keys in keys_by_display_name.items()
+            if not _local_catalog_hit(hits, item_keys)
+        )
+        if (
+            missing_names
+            and self._uow_factory is not None
+            and time.monotonic() < deadline
+        ):
+            try:
+                remaining = max(0.01, deadline - time.monotonic())
+                locale_hits = await asyncio.wait_for(
+                    self._locale_reference_lookup(language, missing_names),
+                    timeout=remaining,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "parse_text locale reference lookup failed: %s",
+                    type(exc).__name__,
+                )
+                locale_hits = {}
+            for display_name, row in (locale_hits or {}).items():
+                item_keys = keys_by_display_name.get(display_name)
+                if not item_keys or _local_catalog_hit(hits, item_keys):
+                    continue
+                hits[item_keys[0]] = row
         return hits
 
     async def _locale_reference_lookup(
