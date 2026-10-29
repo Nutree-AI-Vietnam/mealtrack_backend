@@ -98,3 +98,6 @@ profile*.svg
 # Restricted accuracy pool. Production metadata, meal ids, and image URLs.
 # The shared-box copy lives at /workspace/ai-accuracy-eval and must not be committed.
 /ai-accuracy-eval/
+
+# Live accuracy baseline reports. Provider timings stay out of git.
+/artifacts/accuracy-baseline/
