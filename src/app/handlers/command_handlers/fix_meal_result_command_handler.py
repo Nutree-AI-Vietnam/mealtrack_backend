@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from src.api.exceptions import (
@@ -14,7 +16,7 @@ from src.api.exceptions import (
 from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
 from src.app.events.base import EventHandler, handles
 from src.app.events.meal.meal_events import publish_meal_event
-from src.domain.model.meal import MealStatus
+from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.parsers.vision_response_parser import VisionResponseParsingError
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -31,12 +33,36 @@ from src.domain.services.nutrition_calculation_service import (
     NutritionCalculationService,
 )
 from src.domain.strategies.meal_analysis_strategy import AnalysisStrategyFactory
-from src.domain.utils.timezone_utils import utc_now
+from src.domain.utils.timezone_utils import format_iso_utc, utc_now
 
 logger = logging.getLogger(__name__)
 
 _SCAN_SOURCES = frozenset({"scanner", "scan", "scan_by_url"})
 _FOOD_LABEL_SOURCES = frozenset({"food_label", "scan_food_label"})
+_MAX_FIX_HISTORY = 10
+
+
+def append_fix_result_correction(meal: Meal, correction: str) -> Meal:
+    """Keep recent Fix result notes on the meal for review/export pipelines."""
+    try:
+        raw = json.loads(meal.raw_gpt_json or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    history = raw.get("_fix_result_corrections")
+    if not isinstance(history, list):
+        history = []
+    history.append(
+        {
+            "correction": correction,
+            "at": format_iso_utc(utc_now()),
+            "edit_count_after": meal.edit_count,
+        }
+    )
+    raw["_fix_result_corrections"] = history[-_MAX_FIX_HISTORY:]
+    return replace(meal, raw_gpt_json=json.dumps(raw, ensure_ascii=False))
 
 
 @handles(FixMealResultCommand)
@@ -210,9 +236,12 @@ class FixMealResultCommandHandler(EventHandler[FixMealResultCommand, Any]):
                     error_code="MEAL_NOT_READY",
                 )
 
-            updated_meal = meal.mark_edited(
-                nutrition=updated_nutrition,
-                dish_name=final_dish_name,
+            updated_meal = append_fix_result_correction(
+                meal.mark_edited(
+                    nutrition=updated_nutrition,
+                    dish_name=final_dish_name,
+                ),
+                command.correction,
             )
             saved_meal = await uow.meals.save(updated_meal)
             await uow.commit()

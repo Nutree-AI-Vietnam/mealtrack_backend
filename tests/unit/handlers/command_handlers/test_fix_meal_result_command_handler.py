@@ -10,6 +10,7 @@ from src.api.exceptions import ValidationException
 from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
 from src.app.handlers.command_handlers.fix_meal_result_command_handler import (
     FixMealResultCommandHandler,
+    append_fix_result_correction,
 )
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
@@ -123,3 +124,18 @@ async def test_handler_rejects_food_label_source():
         )
 
     assert exc.value.error_code == "FIX_RESULT_UNSUPPORTED_SOURCE"
+
+
+def test_append_fix_result_correction_keeps_history():
+    import json
+
+    meal = _meal()
+    meal = meal.mark_edited(
+        nutrition=meal.nutrition, dish_name=meal.dish_name or "Meal"
+    )
+    updated = append_fix_result_correction(meal, "it was fish not chicken")
+    payload = json.loads(updated.raw_gpt_json or "{}")
+    assert payload["_fix_result_corrections"][-1]["correction"] == (
+        "it was fish not chicken"
+    )
+    assert payload["_fix_result_corrections"][-1]["edit_count_after"] == meal.edit_count
