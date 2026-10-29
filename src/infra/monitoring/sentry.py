@@ -7,6 +7,7 @@ import logging
 import os
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
+from urllib.parse import urlparse
 
 try:
     import sentry_sdk
@@ -30,6 +31,19 @@ from src.infra.monitoring.connectors import (
 
 logger = logging.getLogger(__name__)
 
+
+def add_connect_retry_breadcrumb(error_type: str) -> None:
+    """Attach one connect-retry breadcrumb. ``error_type`` is a class name."""
+    if sentry_sdk is None:
+        return
+    sentry_sdk.add_breadcrumb(
+        category="db.connect",
+        level="warning",
+        message="Database connect attempt failed; retrying once",
+        data={"error_type": error_type},
+    )
+
+
 # Opt out only when ENVIRONMENT is explicitly one of these. An unset or blank
 # variable must still send when a DSN is set, so a missing env var cannot
 # silence production (settings defaults ENVIRONMENT to "development").
@@ -39,6 +53,14 @@ SentryMessageLevel = Literal["fatal", "critical", "error", "warning", "info", "d
 SentryLogLevel = Literal["fatal", "error", "warning", "info", "debug", "trace"]
 _SENTRY_MESSAGE_LEVELS = {"fatal", "critical", "error", "warning", "info", "debug"}
 _SENTRY_LOG_LEVELS = {"fatal", "error", "warning", "info", "debug", "trace"}
+_CHAT_MESSAGE_TRANSACTIONS = frozenset(
+    {
+        "/v1/chat/messages",
+        "/v1/chat/threads/{thread_id}/messages",
+    }
+)
+_LANGCHAIN_ORIGIN = "auto.ai.langchain"
+_CONNECTION_TERMINATE_MESSAGE = "Exception terminating connection"
 
 
 class SentryObservabilityConnector:
@@ -128,6 +150,19 @@ class SentryObservabilityConnector:
 
         self._apply_safe_context(context)
         sentry_sdk.capture_exception(error)
+
+    def capture_database_unavailable(self, error: BaseException) -> None:
+        """Send one outage event. 503 is outside the FastAPI status filter."""
+        if sentry_sdk is None or not sentry_sdk.get_client().is_active():
+            return
+        with sentry_sdk.new_scope() as scope:
+            # The request scope may already carry the user. This event must not.
+            scope.set_user(None)
+            scope.remove_context("mealtrack")
+            scope.add_event_processor(_strip_database_unavailable_user_data)
+            scope.set_tag("error_code", "DB_UNAVAILABLE")
+            scope.fingerprint = ["db-unavailable", type(error).__name__]
+            sentry_sdk.capture_exception(error)
 
     def capture_message(
         self,
@@ -281,10 +316,24 @@ def _drop_expected_events(
     but the LangChain integration captures the raw provider error before that
     mapping, so those events are dropped here.
 
-    A direct ``asyncio.CancelledError`` on ``POST /v1/chat/messages`` is the
-    ASGI request task cancelling in-flight streaming after the client
-    disconnects. Chained non-cancellation causes and contexts stay visible,
-    as do other routes and events with no original exception.
+    Database connect and pool timeouts captured for ``DB_UNAVAILABLE`` are
+    not in the list below, so they are sent. FastAPI does not report 503.
+
+    A client disconnect on the chat message routes is an
+    ``asyncio.CancelledError`` whose visible chain is only cancellation.
+    ``raise exc from None`` (httpcore's pool) sets ``__suppress_context__``
+    and leaves ``__context__`` in place. Sentry omits that context, so the
+    stored event is one ``CancelledError``. The same shape is dropped when
+    ``hint`` has no ``exc_info`` and the event's exception values are only
+    ``CancelledError``. Routes are ``POST /v1/chat/messages`` and
+    ``POST /v1/chat/threads/{thread_id}/messages``, from the transaction or,
+    when that is absent, the request URL. A visible non-cancellation cause
+    or context stays, as do other routes and events with no exception.
+
+    Any ``GeneratorExit`` during an active LangChain span (origin
+    ``auto.ai.langchain``) is dropped. SQLAlchemy's "Exception terminating
+    connection" log is dropped when its visible exception is only
+    cancellation.
     """
     exc_info = hint.get("exc_info")
     exc = exc_info[1] if exc_info else None
@@ -292,28 +341,209 @@ def _drop_expected_events(
         return None
     if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
         return None
+    if _is_langchain_generator_exit(event, exc_info):
+        return None
     if _is_expected_chat_cancellation(event, exc_info):
+        return None
+    if _is_expected_connection_terminate(event, exc_info):
         return None
     return event
 
 
+def _strip_database_unavailable_user_data(
+    event: dict[str, Any], _hint: dict[str, Any]
+) -> dict[str, Any]:
+    """Drop user, request, and frame locals from a database-outage event."""
+    event.pop("user", None)
+    event.pop("request", None)
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        contexts.pop("mealtrack", None)
+    exception = event.get("exception")
+    if isinstance(exception, dict):
+        values = exception.get("values")
+        if isinstance(values, list):
+            for value in values:
+                if not isinstance(value, dict):
+                    continue
+                stack = value.get("stacktrace")
+                if not isinstance(stack, dict):
+                    continue
+                frames = stack.get("frames")
+                if not isinstance(frames, list):
+                    continue
+                for frame in frames:
+                    if isinstance(frame, dict):
+                        frame.pop("vars", None)
+    return event
+
+
 def _is_expected_chat_cancellation(event: dict[str, Any], exc_info: Any) -> bool:
-    """True for a direct client disconnect on the chat messages route only."""
-    if event.get("transaction") != "/v1/chat/messages":
+    """True for a client disconnect on a chat messages route.
+
+    The live exception is used when ``hint["exc_info"]`` has one. A missing
+    hint falls back to the stored exception values, which is all Sentry keeps
+    after ``from None``.
+    """
+    if not _is_chat_message_event(event):
         return False
+    error = _hint_exception(exc_info)
+    if error is not None:
+        return _visible_chain_is_only_cancellation(error)
+    return _event_exceptions_are_only_cancellations(event)
+
+
+def _is_langchain_generator_exit(event: dict[str, Any], exc_info: Any) -> bool:
+    """True for any ``GeneratorExit`` during an active LangChain span.
+
+    The span origin is ``auto.ai.langchain``. The same origin on the
+    exception mechanism counts. Other ``GeneratorExit`` events and other
+    exceptions on that span stay visible.
+    """
+    if not _is_generator_exit(exc_info):
+        return False
+    return _has_langchain_origin(event)
+
+
+def _is_generator_exit(exc_info: Any) -> bool:
     if not isinstance(exc_info, tuple) or len(exc_info) < 2:
         return False
+    return isinstance(exc_info[1], GeneratorExit)
 
-    error = exc_info[1]
-    if not isinstance(error, asyncio.CancelledError):
+
+def _has_langchain_origin(event: dict[str, Any]) -> bool:
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        trace = contexts.get("trace")
+        if isinstance(trace, dict) and trace.get("origin") == _LANGCHAIN_ORIGIN:
+            return True
+    for value in _exception_values(event):
+        mechanism = value.get("mechanism")
+        if not isinstance(mechanism, dict):
+            continue
+        if mechanism.get("type") == _LANGCHAIN_ORIGIN:
+            return True
+        data = mechanism.get("data")
+        if isinstance(data, dict) and data.get("origin") == _LANGCHAIN_ORIGIN:
+            return True
+    return False
+
+
+def _is_expected_connection_terminate(event: dict[str, Any], exc_info: Any) -> bool:
+    """True for SQLAlchemy's pool log of a cancel during connection close.
+
+    The logging integration records mechanism type ``logging`` and the
+    message "Exception terminating connection". A different exception on
+    that log line stays visible.
+    """
+    error = _hint_exception(exc_info)
+    if error is None or not _visible_chain_is_only_cancellation(error):
         return False
+    if not _has_logging_mechanism(event):
+        return False
+    return _CONNECTION_TERMINATE_MESSAGE in _event_log_message(event)
 
-    for related_error in (error.__cause__, error.__context__):
-        if related_error is not None and not isinstance(
-            related_error, asyncio.CancelledError
-        ):
+
+def _has_logging_mechanism(event: dict[str, Any]) -> bool:
+    for value in _exception_values(event):
+        mechanism = value.get("mechanism")
+        if isinstance(mechanism, dict) and mechanism.get("type") == "logging":
+            return True
+    return False
+
+
+def _event_log_message(event: dict[str, Any]) -> str:
+    parts: list[str] = []
+    message = event.get("message")
+    if isinstance(message, str):
+        parts.append(message)
+    logentry = event.get("logentry")
+    if isinstance(logentry, dict):
+        for key in ("message", "formatted"):
+            value = logentry.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+    return "\n".join(parts)
+
+
+def _exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
+    exception = event.get("exception")
+    if not isinstance(exception, dict):
+        return []
+    values = exception.get("values")
+    if not isinstance(values, list):
+        return []
+    return [value for value in values if isinstance(value, dict)]
+
+
+def _is_chat_message_event(event: dict[str, Any]) -> bool:
+    transaction = event.get("transaction")
+    if isinstance(transaction, str) and transaction:
+        return transaction in _CHAT_MESSAGE_TRANSACTIONS
+    return _request_path_is_chat_message(event)
+
+
+def _request_path_is_chat_message(event: dict[str, Any]) -> bool:
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return False
+    url = request.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return False
+    path = urlparse(url).path.rstrip("/") or "/"
+    if path == "/v1/chat/messages":
+        return True
+    parts = [part for part in path.split("/") if part]
+    return (
+        len(parts) == 5
+        and parts[0] == "v1"
+        and parts[1] == "chat"
+        and parts[2] == "threads"
+        and parts[4] == "messages"
+        and bool(parts[3])
+    )
+
+
+def _hint_exception(exc_info: Any) -> BaseException | None:
+    if not isinstance(exc_info, tuple) or len(exc_info) < 2:
+        return None
+    error = exc_info[1]
+    if not isinstance(error, BaseException):
+        return None
+    return error
+
+
+def _visible_chain_is_only_cancellation(error: BaseException) -> bool:
+    """Walk the chain Sentry keeps, including ``ExceptionGroup`` children.
+
+    ``from None`` suppresses ``__context__``. That hidden context is not a
+    reason to keep the event. A visible non-cancellation is.
+    """
+    seen: set[int] = set()
+
+    def walk(exc: BaseException | None) -> bool:
+        if exc is None or id(exc) in seen:
+            return True
+        seen.add(id(exc))
+        if isinstance(exc, BaseExceptionGroup):
+            if not all(walk(child) for child in exc.exceptions):
+                return False
+        elif not isinstance(exc, asyncio.CancelledError):
             return False
-    return True
+        if not walk(exc.__cause__):
+            return False
+        if getattr(exc, "__suppress_context__", False):
+            return True
+        return walk(exc.__context__)
+
+    return walk(error)
+
+
+def _event_exceptions_are_only_cancellations(event: dict[str, Any]) -> bool:
+    values = _exception_values(event)
+    if not values:
+        return False
+    return all(value.get("type") == "CancelledError" for value in values)
 
 
 def _env_value(name: str) -> str | None:

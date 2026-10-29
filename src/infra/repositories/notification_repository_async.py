@@ -46,6 +46,10 @@ class AsyncNotificationRepository:
             existing.hydration_reminders_enabled = (
                 preferences.hydration_reminders_enabled
             )
+            existing.streak_reminders_enabled = preferences.streak_reminders_enabled
+            existing.reengagement_enabled = preferences.reengagement_enabled
+            existing.progress_updates_enabled = preferences.progress_updates_enabled
+            existing.offers_enabled = preferences.offers_enabled
             existing.breakfast_time_minutes = preferences.breakfast_time_minutes
             existing.lunch_time_minutes = preferences.lunch_time_minutes
             existing.dinner_time_minutes = preferences.dinner_time_minutes
@@ -67,6 +71,10 @@ class AsyncNotificationRepository:
                 dinner_reminder_enabled=preferences.dinner_reminder_enabled,
                 daily_summary_enabled=preferences.daily_summary_enabled,
                 hydration_reminders_enabled=preferences.hydration_reminders_enabled,
+                streak_reminders_enabled=preferences.streak_reminders_enabled,
+                reengagement_enabled=preferences.reengagement_enabled,
+                progress_updates_enabled=preferences.progress_updates_enabled,
+                offers_enabled=preferences.offers_enabled,
                 breakfast_time_minutes=preferences.breakfast_time_minutes,
                 lunch_time_minutes=preferences.lunch_time_minutes,
                 dinner_time_minutes=preferences.dinner_time_minutes,

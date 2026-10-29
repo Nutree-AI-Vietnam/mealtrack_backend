@@ -1,4 +1,4 @@
-"""GET/PUT /v1/notifications/preferences carry the per-meal and water fields."""
+"""GET/PUT /v1/notifications/preferences carry the per-meal, water and engagement fields."""
 
 from __future__ import annotations
 
@@ -17,6 +17,12 @@ from src.app.queries.notification import GetNotificationPreferencesQuery
 from src.domain.model.notification import NotificationPreferences
 
 USER_ID = "00000000-0000-0000-0000-0000000000b2"
+TOGGLES = (
+    "streak_reminders_enabled",
+    "reengagement_enabled",
+    "progress_updates_enabled",
+    "offers_enabled",
+)
 
 
 class _RecordingBus:
@@ -38,6 +44,7 @@ class _RecordingBus:
             dinner_reminder_enabled=message.dinner_reminder_enabled,
             hydration_reminder_time_minutes=message.hydration_reminder_time_minutes,
             daily_summary_time_minutes=message.daily_summary_time_minutes,
+            **{name: getattr(message, name) for name in TOGGLES},
         )
         return {"success": True, "preferences": self.prefs.to_dict()}
 
@@ -52,6 +59,10 @@ def api():
     app.dependency_overrides[get_configured_event_bus] = lambda: bus
     yield TestClient(app), bus
     app.dependency_overrides.clear()
+
+
+def _toggles(body: dict[str, Any]) -> dict[str, Any]:
+    return {name: body[name] for name in TOGGLES}
 
 
 def test_get_returns_meal_switches_and_water_time(api):
@@ -111,6 +122,71 @@ def test_put_rejects_a_water_time_outside_the_day(api, minutes: int):
         "/v1/notifications/preferences",
         json={"hydration_reminder_time_minutes": minutes},
     )
+
+    assert response.status_code == 422
+    assert bus.sent == []
+
+
+def test_get_returns_the_toggle_defaults(api):
+    client, _ = api
+
+    response = client.get("/v1/notifications/preferences")
+
+    assert response.status_code == 200
+    assert _toggles(response.json()) == {
+        "streak_reminders_enabled": True,
+        "reengagement_enabled": True,
+        "progress_updates_enabled": True,
+        "offers_enabled": False,
+    }
+
+
+def test_put_passes_every_toggle_to_the_command(api):
+    client, bus = api
+    body = {
+        "streak_reminders_enabled": False,
+        "reengagement_enabled": False,
+        "progress_updates_enabled": False,
+        "offers_enabled": True,
+    }
+
+    response = client.put("/v1/notifications/preferences", json=body)
+
+    assert response.status_code == 200
+    [command] = bus.sent
+    assert isinstance(command, UpdateNotificationPreferencesCommand)
+    assert command.user_id == USER_ID
+    assert {name: getattr(command, name) for name in TOGGLES} == body
+    assert response.json()["success"] is True
+    assert _toggles(response.json()["preferences"]) == body
+
+
+def test_put_without_the_toggles_leaves_them_unchanged(api):
+    client, bus = api
+    bus.prefs = bus.prefs.update_preferences(
+        reengagement_enabled=False, offers_enabled=True
+    )
+
+    response = client.put(
+        "/v1/notifications/preferences", json={"meal_reminders_enabled": False}
+    )
+
+    assert response.status_code == 200
+    [command] = bus.sent
+    assert all(getattr(command, name) is None for name in TOGGLES)
+    assert _toggles(response.json()["preferences"]) == {
+        "streak_reminders_enabled": True,
+        "reengagement_enabled": False,
+        "progress_updates_enabled": True,
+        "offers_enabled": True,
+    }
+
+
+@pytest.mark.parametrize("toggle", TOGGLES)
+def test_put_rejects_a_toggle_that_is_not_a_boolean(api, toggle):
+    client, bus = api
+
+    response = client.put("/v1/notifications/preferences", json={toggle: "maybe"})
 
     assert response.status_code == 422
     assert bus.sent == []

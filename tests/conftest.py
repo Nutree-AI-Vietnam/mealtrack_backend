@@ -23,7 +23,12 @@ from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutr
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.parsers.gpt_response_parser import GPTResponseParser
-from src.domain.utils.timezone_utils import get_zone_info, utc_now
+from src.domain.utils.timezone_utils import (
+    ensure_utc,
+    get_zone_info,
+    is_backdated_local,
+    utc_now,
+)
 from src.infra.database.base import Base
 
 # Import all models to ensure they're registered with Base metadata
@@ -405,6 +410,30 @@ class TestMealRepository:
                 out.append(day_val)
         return out
 
+    def get_streak_log_days(
+        self, user_id: str, user_timezone: str | None = None
+    ) -> list[tuple[date, bool]]:
+        rows = (
+            self.db.query(MealORM.created_at, MealORM.logged_on_day)
+            .filter(
+                MealORM.user_id == user_id,
+                _test_domain_hydratable_active_meal_filter(),
+            )
+            .all()
+        )
+        days: dict[date, bool] = {}
+        for created_at, logged_on_day in rows:
+            local = created_at
+            if user_timezone and user_timezone != "UTC":
+                local = ensure_utc(created_at).astimezone(get_zone_info(user_timezone))
+            same_day = (
+                logged_on_day
+                if logged_on_day is not None
+                else not is_backdated_local(local)
+            )
+            days[local.date()] = days.get(local.date(), False) or same_day
+        return sorted(days.items(), reverse=True)
+
     def count_by_source(self, user_id: str, source: str) -> int:
         return (
             self.db.query(MealORM)
@@ -629,6 +658,9 @@ class AsyncTestMealRepository:
 
     async def get_dates_with_meals(self, *args, **kwargs):
         return self._repo.get_dates_with_meals(*args, **kwargs)
+
+    async def get_streak_log_days(self, *args, **kwargs):
+        return self._repo.get_streak_log_days(*args, **kwargs)
 
     async def count_by_source(self, *args, **kwargs):
         return self._repo.count_by_source(*args, **kwargs)

@@ -27,6 +27,7 @@ from .unfavorite_meal_command_handler import UnfavoriteMealCommandHandler
 
 # Hydration handlers
 from .log_hydration_command_handler import LogHydrationCommandHandler
+from .restore_streak_command_handler import RestoreStreakCommandHandler
 
 # Movement handlers
 from .log_movement_command_handler import LogMovementCommandHandler
@@ -117,6 +118,7 @@ __all__ = [
     "DeleteSavedSuggestionCommandHandler",
     # Hydration handlers
     "LogHydrationCommandHandler",
+    "RestoreStreakCommandHandler",
     "LogCaloricDrinkCommandHandler",
     "DeleteHydrationEntryCommandHandler",
     "DescribeHydrationCommandHandler",

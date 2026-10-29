@@ -17,6 +17,7 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
 from src.domain.utils.timezone_utils import (
+    is_same_day_log,
     noon_utc_for_date,
     resolve_user_timezone_async,
     user_today,
@@ -131,6 +132,7 @@ class SaveMealSuggestionCommandHandler(EventHandler[SaveMealSuggestionCommand, s
                 cuisine_type=command.cuisine_type,
                 origin_country=command.origin_country,
                 emoji=command.emoji,
+                logged_on_day=is_same_day_log(meal_date, user_tz, now),
             )
             saved_meal = await uow.meals.save(meal)
 

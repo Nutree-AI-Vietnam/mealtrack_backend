@@ -132,8 +132,10 @@ class AiJobService:
         fingerprint = ai_job_request_fingerprint(job_type, request)
         payload = dict(request)
         if job_type == AiJobType.MEAL_SCAN:
-            # Every attempt saves the same meal row.
+            # Every attempt saves the same meal row, and judges whether it was
+            # logged on its own day from when the request arrived.
             payload["meal_id"] = str(uuid4())
+            payload["received_at"] = utc_now().isoformat()
         async with self._uow_factory() as uow:
             job, created = await uow.ai_jobs.create(
                 NewAiJob(

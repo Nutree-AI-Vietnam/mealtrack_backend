@@ -122,3 +122,23 @@ def test_food_search_integrity_and_chat_threads_merge_to_one_head() -> None:
         ]
         assert revision not in pending_ids
         assert pending_ids[-1] == head
+
+
+def test_engagement_toggles_avatar_and_scan_feedback_merge_to_one_head() -> None:
+    """Three branches off the same parent must leave one stampable head."""
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    parent = "20261013115453616929"
+    engagement_toggles = "20261026185557393061"
+    user_avatar = "20261026102822211100"
+    scan_feedback = "20261027154254949604"
+    head = script_dir.get_current_head()
+    assert head is not None
+    assert script_dir.get_heads() == [head]
+    assert head not in {engagement_toggles, user_avatar, scan_feedback}
+
+    pending_ids = [
+        rev.revision
+        for rev in reversed(pending_upgrade_revisions(script_dir, parent, head))
+    ]
+    assert {engagement_toggles, user_avatar, scan_feedback} <= set(pending_ids)
+    assert pending_ids[-1] == head

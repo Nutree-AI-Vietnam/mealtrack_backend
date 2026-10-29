@@ -46,7 +46,8 @@ from src.domain.services.prompts.system_prompts import SystemPrompts
 from src.domain.utils.timezone_utils import (
     format_iso_utc,
     get_zone_info,
-    noon_utc_for_date,
+    is_same_day_log,
+    log_moment,
     resolve_user_timezone_async,
     utc_now,
 )
@@ -84,7 +85,7 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
 
     async def _log(self, cmd: DescribeHydrationCommand, reservation: Any) -> dict:
         started = time.monotonic()
-        log_date, log_dt = await self._log_moment(cmd)
+        log_date, log_dt, logged_on_day = await self._log_moment(cmd)
         parse = await parse_describe_sentence(
             self.meal_generation_service,
             sentence=cmd.text,
@@ -104,7 +105,9 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
         async with self.uow_factory() as uow:
             for drink in described.drinks:
                 saved.append(
-                    await self._save(uow, cmd.user_id, drink, log_dt, log_date)
+                    await self._save(
+                        uow, cmd.user_id, drink, log_dt, log_date, logged_on_day
+                    )
                 )
             response = {
                 "entries": [
@@ -128,8 +131,10 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
         )
         return response
 
-    async def _log_moment(self, cmd: DescribeHydrationCommand) -> tuple[date, datetime]:
-        """The day and instant every entry is logged at, checked before the model runs."""
+    async def _log_moment(
+        self, cmd: DescribeHydrationCommand
+    ) -> tuple[date, datetime, bool]:
+        """The day, instant and same-day flag of every entry, fixed before the model runs."""
         async with self.uow_factory() as uow:
             user_tz = await resolve_user_timezone_async(
                 cmd.user_id, uow, cmd.header_timezone
@@ -137,13 +142,17 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
         now = utc_now()
         today = now.astimezone(get_zone_info(user_tz)).date()
         if cmd.target_date is None:
-            return today, now
+            return today, now, True
         if cmd.target_date > today + timedelta(days=1):
             raise ValidationException(
                 "Hydration date cannot be more than one day in the future",
                 "INVALID_DATE",
             )
-        return cmd.target_date, noon_utc_for_date(cmd.target_date, user_tz)
+        return (
+            cmd.target_date,
+            log_moment(cmd.target_date, user_tz, now),
+            is_same_day_log(cmd.target_date, user_tz, now),
+        )
 
     async def _save(
         self,
@@ -152,13 +161,20 @@ class DescribeHydrationCommandHandler(EventHandler[DescribeHydrationCommand, dic
         drink: DescribedDrink,
         log_dt: datetime,
         log_date: date,
+        logged_on_day: bool,
     ) -> tuple[HydrationEntry, str | None, IntegrationEvent]:
         catalog = drink.drink
         meal_id = None
         if catalog is not None and catalog.category == DrinkCategory.HYDRATION:
             # Same legacy meal + entry path as POST /v1/hydration/log.
             meal = await uow.meals.save(
-                water_meal_for(catalog, drink.volume_ml, log_dt, user_id)
+                water_meal_for(
+                    catalog,
+                    drink.volume_ml,
+                    log_dt,
+                    user_id,
+                    logged_on_day=logged_on_day,
+                )
             )
             macros = (
                 meal.nutrition.macros

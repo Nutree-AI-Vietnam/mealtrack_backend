@@ -1,6 +1,7 @@
 import logging
 import os
 from collections.abc import Callable
+from functools import lru_cache
 from importlib import import_module
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
@@ -13,6 +14,7 @@ from src.app.services.catalog_food_reference_review_service import (
 )
 from src.app.services.catalog_meal_seed_import_service import CatalogMealSeedImporter
 from src.app.services.catalog_meal_snapshot_service import CatalogMealSnapshotService
+from src.domain.model.streak import StreakRestorePolicy
 from src.domain.parsers.vision_response_parser import VisionResponseParser
 from src.domain.ports.food_cache_service_port import FoodCacheServicePort
 from src.domain.ports.food_mapping_service_port import FoodMappingServicePort
@@ -499,6 +501,9 @@ def get_meal_analyze_graph_settings():
         "fatsecret_validation_enabled": (
             current_settings.AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED
         ),
+        "reference_grounding_enabled": (
+            current_settings.AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED
+        ),
         "graph_enabled": current_settings.AI_MEAL_ANALYZE_GRAPH_ENABLED,
         "graph_version": current_settings.AI_MEAL_ANALYZE_GRAPH_VERSION,
     }
@@ -517,6 +522,25 @@ def get_parse_text_settings() -> dict[str, bool]:
             getattr(current_settings, "PARSE_TEXT_PURE_AI_ENABLED", False)
         ),
     }
+
+
+@lru_cache(maxsize=1)
+def get_streak_restore_policy() -> StreakRestorePolicy:
+    """Streak restore switches and the sandbox allow-list, read once."""
+    from src.infra.config.settings import get_settings
+
+    current_settings = get_settings()
+    return StreakRestorePolicy(
+        production=current_settings.ENVIRONMENT == "production",
+        sandbox_user_ids=frozenset(
+            user_id.strip()
+            for user_id in current_settings.STREAK_RESTORE_SANDBOX_USER_IDS.split(",")
+            if user_id.strip()
+        ),
+        spend_enabled=current_settings.STREAK_RESTORE_SPEND_ENABLED,
+        claim_enabled=current_settings.STREAK_RESTORE_CLAIM_ENABLED,
+        same_day_logs_from=current_settings.STREAK_SAME_DAY_LOGS_FROM,
+    )
 
 
 # Food Reference Repository (replaces barcode_product_repository)

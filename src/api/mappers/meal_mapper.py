@@ -23,9 +23,11 @@ from src.api.schemas.response import (
     SimpleMealResponse,
 )
 from src.api.schemas.response.daily_nutrition_response import DailyNutritionResponse
+from src.api.schemas.response.meal_responses import NutritionSourceSummaryResponse
 from src.app.services.serving_label import overlay_serving_labels
 from src.domain.constants.languages import normalize_language
 from src.domain.model.meal import Meal
+from src.domain.model.meal.meal_accuracy import meal_accuracy_fields
 from src.domain.model.meal.meal_response_localization import (
     MealResponseLocalization,
     parse_meal_response_localization,
@@ -399,6 +401,8 @@ class MealMapper:
                         )
 
         value_insights_response = MealMapper._value_insights_response(value_insights)
+        accuracy = meal_accuracy_fields(meal)
+        source_summary = accuracy["nutrition_source_summary"]
 
         # --- Build translations dict for the response ---
         translations_response = None
@@ -464,6 +468,15 @@ class MealMapper:
             cuisine_type=getattr(meal, "cuisine_type", None),
             origin_country=getattr(meal, "origin_country", None),
             **meal_nrf_fields(meal),
+            ai_generated=accuracy["ai_generated"],
+            ai_confidence=accuracy["ai_confidence"],
+            nutrition_source_summary=NutritionSourceSummaryResponse(
+                local=source_summary["local"],
+                usda=source_summary["usda"],
+                provider=source_summary["provider"],
+                custom=source_summary["custom"],
+                unknown=source_summary["unknown"],
+            ),
         )
 
     @staticmethod

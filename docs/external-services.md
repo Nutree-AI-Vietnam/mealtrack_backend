@@ -235,6 +235,34 @@ optional caches.
 - Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
 - Premium feature gates are planned, not enforced on routes.
 
+### Payment-failed push
+
+The only engagement notification the server sends; the app plans the rest
+(`plans/261026-notification-catalog/README.md`).
+
+- `ENGAGEMENT_PUSH_ENABLED` (default `false`) gates both halves: the webhook
+  queues nothing while it is off, so turning it on never sends a backlog at
+  night. With it on, every API process runs the dispatcher; claims use
+  `FOR UPDATE SKIP LOCKED`, so processes share the queue safely.
+- `BILLING_ISSUE` queues one `billing_issue` row in the `notifications`
+  outbox, due now if it is 09:00–20:00 in `users.timezone`, else at the next
+  09:00 there, and expiring 48 h later. A repeat `BILLING_ISSUE` while the
+  subscription is already `billing_issue` queues nothing (one push per
+  episode); the outbox also keeps at most one row per user, kind and local
+  date.
+- `RENEWAL`, `INITIAL_PURCHASE` and `PRODUCT_CHANGE` delete the user's pending
+  `billing_issue` row. Outbox writes run in a savepoint and never fail the
+  webhook.
+- The dispatcher polls every 30 s, 20 rows at a time. A claimed row is
+  committed as `processing` before the push goes out (a crash can lose a
+  push, never repeat it), then ends `sent` or `failed` (no device, or no
+  device accepted it); rows past `expires_at` become `expired`. Copy is in
+  `src/domain/model/notification/engagement_push_copy.py`; FCM data is
+  `{"type": "engagement", "kind": "billing_issue", "route": "/profile"}`
+  with collapse key `billing_issue`.
+- Not built yet: retrying a temporary FCM failure, and deleting old outbox
+  rows.
+
 ### Sentry ownership
 
 - Runtime code uses the `src.observability` facade only. Direct `sentry_sdk`

@@ -25,7 +25,8 @@ def score_foods(expected: tuple[dict[str, Any], ...], actual: list[Any]):
             continue
         unmatched.remove(match)
         true_positive += 1
-        grams.append(interval_error(float(food.quantity), match["quantity_g"]))
+        if "quantity_g" in match:
+            grams.append(interval_error(float(food.quantity), match["quantity_g"]))
     return true_positive, false_positive, len(unmatched), grams
 
 

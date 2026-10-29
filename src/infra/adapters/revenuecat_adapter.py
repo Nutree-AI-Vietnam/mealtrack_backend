@@ -13,6 +13,8 @@ import httpx
 
 from src.domain.ports.subscription_service_port import (
     EntitlementCheck,
+    OneTimePurchase,
+    OneTimePurchaseLookup,
     SubscriptionServicePort,
 )
 
@@ -45,6 +47,11 @@ def _standard_entitlement_active(subscriber_info: dict | None) -> bool:
     except Exception as e:
         logger.error(f"Error parsing expires_date: {e}")
         return False
+
+
+def _base_product_id(product_id: str) -> str:
+    """The id without a Play base-plan suffix (``id:plan``)."""
+    return product_id.split(":", 1)[0]
 
 
 class RevenueCatAdapter(SubscriptionServicePort):
@@ -116,6 +123,41 @@ class RevenueCatAdapter(SubscriptionServicePort):
         if _standard_entitlement_active(subscriber_info):
             return EntitlementCheck.ENTITLED
         return EntitlementCheck.NOT_ENTITLED
+
+    async def find_one_time_purchase(
+        self,
+        app_user_id: str,
+        product_id: str,
+        store_transaction_id: str,
+        *,
+        timeout_seconds: float = 3.0,
+    ) -> OneTimePurchase:
+        """Look the transaction up in the subscriber's ``non_subscriptions``."""
+        try:
+            subscriber_info = await self._fetch_subscriber(
+                app_user_id, timeout=timeout_seconds
+            )
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning(
+                "RevenueCat purchase lookup unavailable: %s", type(e).__name__
+            )
+            return OneTimePurchase(OneTimePurchaseLookup.UNAVAILABLE)
+        purchases = ((subscriber_info or {}).get("subscriber") or {}).get(
+            "non_subscriptions"
+        ) or {}
+        wanted = _base_product_id(product_id)
+        for key, entries in purchases.items():
+            if _base_product_id(key) != wanted:
+                continue
+            for entry in entries or []:
+                if entry.get("store_transaction_id") == store_transaction_id:
+                    return OneTimePurchase(
+                        OneTimePurchaseLookup.FOUND,
+                        store=(entry.get("store") or "").lower() or None,
+                        store_transaction_id=store_transaction_id,
+                        is_sandbox=bool(entry.get("is_sandbox")),
+                    )
+        return OneTimePurchase(OneTimePurchaseLookup.NOT_FOUND)
 
     async def get_subscription_info(self, app_user_id: str) -> dict | None:
         """

@@ -335,7 +335,7 @@ the [catalog rollout runbook](./runbooks/meal-catalog-release.md#weekly-planner-
 3. `EventBus.send()` calls `UploadMealImageImmediatelyHandler`.
 4. Handler uploads to Cloudinary, runs `VisionAIService`, parses nutrition, and persists a READY `Meal(source="scanner")` with **no hydration side effects**.
 5. If `AI_MEAL_ANALYZE_GRAPH_ENABLED=true`, the handler enters `MealAnalyzeWorkflow`; the app-layer graph owns image acquisition, vision parsing, persistence, generic cache invalidation publication, and Worker insight-event publication.
-6. If `AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED=true`, optional reference validation may run after meal creation. Provider timeout or mismatch keeps the original meal result.
+6. If `AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED=true`, scan items take macros from the shared cascade (local food reference, then FatSecret, otherwise the vision estimate). A provider timeout keeps the vision macros as `ai_estimate`. If that flag is off and `AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED=true`, the older closeness audit may still run after meal creation and does not replace macros. Provider timeout or mismatch keeps the original meal result.
 7. Meal value insight publication is best-effort after persistence. The Worker generates and caches the result under `meal_insight:{meal_id}`; the backend only reads that cache, re-requests an overdue insight from the status endpoint, and never blocks the READY meal response on AI completion.
 8. Handler returns `DetailedMealResponse` synchronously.
 

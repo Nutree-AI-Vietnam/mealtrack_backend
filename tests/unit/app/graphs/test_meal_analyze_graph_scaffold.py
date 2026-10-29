@@ -55,6 +55,7 @@ class _FakeGraphUow:
 def test_meal_analyze_graph_settings_default_to_disabled(monkeypatch):
     monkeypatch.delenv("AI_MEAL_ANALYZE_GRAPH_ENABLED", raising=False)
     monkeypatch.delenv("AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED", raising=False)
+    monkeypatch.delenv("AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED", raising=False)
     monkeypatch.delenv(
         "AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS", raising=False
     )
@@ -63,6 +64,7 @@ def test_meal_analyze_graph_settings_default_to_disabled(monkeypatch):
 
     assert settings.AI_MEAL_ANALYZE_GRAPH_ENABLED is False
     assert settings.AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED is False
+    assert settings.AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED is False
     assert settings.AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS == 5.0
     assert settings.AI_MEAL_ANALYZE_GRAPH_VERSION == "v1"
 

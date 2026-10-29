@@ -1,5 +1,7 @@
 """Unit tests for DB connection policy resolution."""
 
+import logging
+
 import pytest
 from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
 
@@ -63,6 +65,67 @@ def test_direct_pool_mode_selected_for_non_pooler_url():
     )
     assert policy.mode == "direct_pool"
     assert policy.pool_class is AsyncAdaptedQueuePool
+
+
+@pytest.mark.parametrize("use_queue_pool", [False, True])
+def test_neon_pooler_connect_args_include_asyncpg_timeout(use_queue_pool):
+    """asyncpg's default connect timeout is 60s. Pooler mode must shorten it."""
+    env = {
+        "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
+        "DB_CONNECTION_MODE": "neon_pooler",
+    }
+    if use_queue_pool:
+        env["NEON_POOLER_USE_QUEUE_POOL"] = "true"
+    policy = resolve_connection_policy(env)
+    assert policy.connect_args.get("prepared_statement_cache_size") == 0
+    assert policy.connect_args.get("timeout") == 10
+
+
+def test_neon_pooler_connect_timeout_is_configurable():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
+            "DB_CONNECTION_MODE": "neon_pooler",
+            "ASYNC_CONNECT_TIMEOUT": "4",
+        }
+    )
+    assert policy.connect_args.get("timeout") == 4
+
+
+@pytest.mark.parametrize("raw", ["", "0", "-5", "abc"])
+def test_bad_connect_timeout_falls_back_to_10(raw, caplog):
+    """Blank is unset. Zero, negative, and non-integers use 10 and do not crash."""
+    with caplog.at_level(logging.WARNING):
+        policy = resolve_connection_policy(
+            {
+                "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
+                "DB_CONNECTION_MODE": "neon_pooler",
+                "ASYNC_CONNECT_TIMEOUT": raw,
+            }
+        )
+    assert policy.connect_args.get("timeout") == 10
+    warnings = [
+        record for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    if raw.strip() == "":
+        assert warnings == []
+    else:
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        if raw == "abc":
+            assert message == "ASYNC_CONNECT_TIMEOUT is not an integer; using 10"
+        else:
+            assert message == "ASYNC_CONNECT_TIMEOUT is below 1; using 10"
+
+
+def test_direct_pool_does_not_set_asyncpg_connect_timeout():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx.neon.tech/db",
+            "DB_CONNECTION_MODE": "direct_pool",
+        }
+    )
+    assert "timeout" not in policy.connect_args
 
 
 def test_neon_pooler_mode_uses_null_pool_and_prepared_statement_cache_zero():

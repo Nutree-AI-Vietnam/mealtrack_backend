@@ -36,9 +36,9 @@ class ParseTextEvalCase:
     text: str
     language: str
     expected_lookup_name: str
-    expected_quantity_g: float
+    expected_quantity_g: float | None
     expected_source: str
-    expected_calorie_range: tuple[float, float]
+    expected_calorie_range: tuple[float, float] | None
     expected_candidate_id: str | None = None
     ai_payload: dict[str, Any] = field(default_factory=dict)
     provider_candidates: list[dict[str, Any]] = field(default_factory=list)

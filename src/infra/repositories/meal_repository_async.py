@@ -2,8 +2,21 @@
 
 import logging
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import DateTime, and_, cast, delete, func, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    DateTime,
+    Time,
+    and_,
+    bindparam,
+    cast,
+    delete,
+    func,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, joinedload, noload, selectinload
 
@@ -18,7 +31,11 @@ from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.services.meal_recommendation.ingredient_affinity_service import (
     IngredientHistoryBucket,
 )
-from src.domain.utils.timezone_utils import get_zone_info, utc_now
+from src.domain.utils.timezone_utils import (
+    BACKDATED_LOCAL_TIME,
+    get_zone_info,
+    utc_now,
+)
 from src.infra.database.models.enums import MealStatusEnum
 from src.infra.database.models.meal.food_item_translation_model import (
     FoodItemTranslationORM,
@@ -669,6 +686,43 @@ class AsyncMealRepository(MealRepositoryPort):
                 day_val = date.fromisoformat(day_val)
             if isinstance(day_val, date):
                 out.append(day_val)
+        return out
+
+    async def get_streak_log_days(
+        self, user_id: str, user_timezone: str | None = None
+    ) -> list[tuple[date, bool]]:
+        """Each local day with a log, and whether one was made on the day itself.
+
+        ``logged_on_day`` is stored when a log is created. Older rows fall back
+        to the stamp: a log made later for a past day sits at local noon
+        (``BACKDATED_LOCAL_TIME``). Water counts, as it saves a meal row too.
+        """
+        local_ts: ColumnElement[Any] = MealORM.created_at
+        if user_timezone and user_timezone != "UTC":
+            created_at = cast(MealORM.created_at, DateTime(timezone=True))
+            local_ts = func.timezone(user_timezone, created_at)
+        local_day = func.date(local_ts)
+        same_day = func.bool_or(
+            func.coalesce(
+                MealORM.logged_on_day,
+                cast(local_ts, Time) != bindparam("noon", BACKDATED_LOCAL_TIME, Time),
+            )
+        )
+        result = await self.session.execute(
+            select(local_day, same_day)
+            .where(
+                MealORM.user_id == user_id,
+                _domain_hydratable_active_meal_filter(),
+            )
+            .group_by(local_day)
+            .order_by(local_day.desc())
+        )
+        out: list[tuple[date, bool]] = []
+        for day_val, has_same_day in result.all():
+            if isinstance(day_val, str):
+                day_val = date.fromisoformat(day_val)
+            if isinstance(day_val, date):
+                out.append((day_val, bool(has_same_day)))
         return out
 
     async def count_by_source(self, user_id: str, source: str) -> int:

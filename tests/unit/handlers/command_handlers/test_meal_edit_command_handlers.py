@@ -269,6 +269,40 @@ class TestEditMealCommandHandler:
         assert purged == [(meal.user_id, date(2026, 10, 27), date(2026, 10, 28))]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("logged_on_day", "new_time"),
+        [
+            # A real log moved to exactly noon looks like a backfill stamp.
+            (True, datetime(2026, 10, 28, 12, 0)),
+            # A backfill moved off noon looks like a real-time log.
+            (False, datetime(2026, 10, 28, 8, 17)),
+        ],
+    )
+    async def test_an_edit_of_the_meal_time_keeps_whether_it_was_logged_on_its_day(
+        self,
+        event_bus,
+        sample_meal_with_nutrition,
+        test_session,
+        logged_on_day,
+        new_time,
+    ):
+        meal = sample_meal_with_nutrition
+        row = test_session.query(MealORM).filter(MealORM.meal_id == meal.meal_id).one()
+        row.logged_on_day = logged_on_day
+        test_session.commit()
+
+        result = await event_bus.send(
+            EditMealCommand(
+                meal_id=meal.meal_id, created_at=new_time, food_item_changes=[]
+            )
+        )
+
+        assert result["success"] is True
+        test_session.expire_all()
+        row = test_session.query(MealORM).filter(MealORM.meal_id == meal.meal_id).one()
+        assert row.logged_on_day is logged_on_day
+
+    @pytest.mark.asyncio
     async def test_edit_meal_unauthorized_user(
         self, event_bus, sample_meal_with_nutrition
     ):

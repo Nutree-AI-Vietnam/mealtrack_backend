@@ -33,7 +33,7 @@ from src.domain.services.weekly_meal_planner.meal_log_snapshot import (
     build_logged_meal_snapshot,
     select_logged_nutrition,
 )
-from src.domain.utils.timezone_utils import noon_utc_for_date
+from src.domain.utils.timezone_utils import is_same_day_log, log_moment, utc_now
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
     allow_unverified=True,
@@ -106,7 +106,8 @@ class RecommendedMealMaterializationService:
             _ingredient_micro_portions(catalog_meal, projections)
         )
         recipe_micros = scale_micros(recipe_micros, portion_multiplier)
-        meal_time = noon_utc_for_date(meal_date, timezone)
+        now = utc_now()
+        meal_time = log_moment(meal_date, timezone, now)
         verified_nutrition = {
             "calories": int(round(catalog_meal.calories * portion_multiplier)),
             "protein_g": float(catalog_meal.protein_g) * portion_multiplier,
@@ -147,6 +148,7 @@ class RecommendedMealMaterializationService:
             catalog_meal_content_hash=logged.catalog_meal_content_hash,
             recipe_snapshot=logged.recipe_snapshot,
             nutrition_snapshot=logged.nutrition_snapshot,
+            logged_on_day=is_same_day_log(meal_date, timezone, now),
         )
         return await uow.meals.save(meal)
 

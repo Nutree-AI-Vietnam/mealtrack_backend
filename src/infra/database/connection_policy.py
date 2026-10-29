@@ -1,10 +1,16 @@
 """Database connection mode resolution and pool configuration."""
 
+import logging
 import os
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
+
+logger = logging.getLogger(__name__)
+
+# asyncpg.connect defaults to 60s. Pooler handshakes use this instead.
+DEFAULT_ASYNC_CONNECT_TIMEOUT = 10
 
 
 class ConnectionPolicyError(ValueError):
@@ -31,6 +37,48 @@ class DatabaseConnectionPolicy:
         if self.pool_class is NullPool:
             return 0
         return self.worker_count * (self.pool_size + self.max_overflow)
+
+
+def interpret_async_connect_timeout(raw: object) -> tuple[int | None, str | None]:
+    """Return ``(seconds, warning)``.
+
+    ``None`` seconds means the value was unset. Blank is unset and does not
+    warn. Values below 1 and non-integers fall back to 10. The warning does
+    not include the raw value.
+    """
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        return None, None
+    if isinstance(raw, bool):
+        return (
+            DEFAULT_ASYNC_CONNECT_TIMEOUT,
+            "ASYNC_CONNECT_TIMEOUT is below 1; using 10",
+        )
+    if isinstance(raw, int):
+        value = raw
+    else:
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return (
+                DEFAULT_ASYNC_CONNECT_TIMEOUT,
+                "ASYNC_CONNECT_TIMEOUT is not an integer; using 10",
+            )
+    if value < 1:
+        return (
+            DEFAULT_ASYNC_CONNECT_TIMEOUT,
+            "ASYNC_CONNECT_TIMEOUT is below 1; using 10",
+        )
+    return value, None
+
+
+def async_connect_timeout_seconds(env: dict) -> int:
+    """Effective neon_pooler connect timeout. Blank is the default of 10."""
+    seconds, warning = interpret_async_connect_timeout(env.get("ASYNC_CONNECT_TIMEOUT"))
+    if warning:
+        logger.warning("%s", warning)
+    if seconds is None:
+        return DEFAULT_ASYNC_CONNECT_TIMEOUT
+    return seconds
 
 
 def _int_env(env: dict, *keys: str, default: int) -> int:
@@ -128,15 +176,19 @@ def resolve_connection_policy(env: dict | None = None) -> DatabaseConnectionPoli
         env, "ASYNC_POOL_TIMEOUT", "POOL_TIMEOUT", default=default_timeout
     )
     pool_recycle = _int_env(env, "ASYNC_POOL_RECYCLE", default=120)
+    # A stalled TLS handshake to the Neon pooler held the request for
+    # asyncpg's 60s default (PYTHON-K6 and siblings).
+    connect_timeout = async_connect_timeout_seconds(env)
 
     if mode == "neon_pooler":
         # Check if local queue pool is explicitly enabled for neon_pooler to avoid TLS handshake per checkout.
         # prepared_statement_cache_size=0 disables asyncpg caching, which is
         # required for PgBouncer transaction-mode compatibility.
-        use_queue_pool = (
-            env.get("NEON_POOLER_USE_QUEUE_POOL", "").strip().lower()
-            in {"1", "true", "yes"}
-        )
+        use_queue_pool = env.get("NEON_POOLER_USE_QUEUE_POOL", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         if use_queue_pool:
             return DatabaseConnectionPolicy(
                 mode="neon_pooler",
@@ -146,7 +198,10 @@ def resolve_connection_policy(env: dict | None = None) -> DatabaseConnectionPoli
                 max_overflow=max_overflow,
                 pool_timeout=pool_timeout,
                 pool_recycle=pool_recycle,
-                connect_args={"prepared_statement_cache_size": 0},
+                connect_args={
+                    "prepared_statement_cache_size": 0,
+                    "timeout": connect_timeout,
+                },
                 worker_count=workers,
             )
 
@@ -155,7 +210,10 @@ def resolve_connection_policy(env: dict | None = None) -> DatabaseConnectionPoli
             mode="neon_pooler",
             app_url=raw_url,
             pool_class=NullPool,
-            connect_args={"prepared_statement_cache_size": 0},
+            connect_args={
+                "prepared_statement_cache_size": 0,
+                "timeout": connect_timeout,
+            },
             worker_count=workers,
         )
 

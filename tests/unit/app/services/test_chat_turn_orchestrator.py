@@ -3389,6 +3389,58 @@ async def _next_meal_block(chunks: list[str]):
 
 
 @pytest.mark.asyncio
+async def test_number_check_rejection_acloses_provider_stream_and_sets_blocked():
+    """A rejected number chunk breaks the provider stream.
+
+    ``aclosing`` then calls ``aclose()``. On the LangChain async generator
+    that injects ``GeneratorExit`` into ``astream`` (PYTHON-HF). This test
+    does not change which chunks the number check rejects.
+    """
+    rejected = "This plate is 999 kcal. "
+    trailing = "Trailing text the safety stop must not read. "
+    completion = _TrackedCompletion(
+        [
+            [
+                ChatCompletionDelta(text=rejected),
+                ChatCompletionDelta(
+                    text=trailing,
+                    done=True,
+                    usage=ChatUsage(
+                        input_tokens=4, output_tokens=8, model="gpt-5.6-luna"
+                    ),
+                ),
+            ]
+        ]
+    )
+    orchestrator = _orchestrator(_FakeRepo(claim=_claim()), completion=completion)
+    context = await orchestrator.test_context.build(locale="en")
+    generation: dict = {
+        "text": "",
+        "blocked": False,
+        "truncated": False,
+        "usage": None,
+        "tools": None,
+    }
+
+    yielded: list[str] = []
+    async for sentence in orchestrator._iter_validated_sentences(
+        context=context,
+        chunks=[],
+        history=[],
+        user_message="What should I eat next?",
+        generation=generation,
+    ):
+        yielded.append(sentence)
+
+    stream = completion.streams[0]
+    assert stream.closed
+    assert stream.consumed == 1
+    assert generation["blocked"] is True
+    assert trailing not in "".join(yielded)
+    assert "999" not in "".join(yielded)
+
+
+@pytest.mark.asyncio
 async def test_untraceable_calorie_blocks_stream_and_records_number_check(
     caplog, monkeypatch
 ):
@@ -3460,9 +3512,7 @@ async def test_invalid_citation_records_citation_check(caplog, monkeypatch):
     assert _log_payload(records[0])["check"] == "citation"
     assert rejected not in repr(_log_payload(records[0]))
     assert [
-        attributes
-        for name, attributes in metrics
-        if name == "chat.turn.stream_blocked"
+        attributes for name, attributes in metrics if name == "chat.turn.stream_blocked"
     ] == [{"check": "citation"}]
 
 
@@ -3486,9 +3536,7 @@ async def test_allergy_sentence_records_sentence_check(caplog, monkeypatch):
     assert rejected not in repr(_log_payload(records[0]))
     assert "peanut" not in repr(_log_payload(records[0])).casefold()
     assert [
-        attributes
-        for name, attributes in metrics
-        if name == "chat.turn.stream_blocked"
+        attributes for name, attributes in metrics if name == "chat.turn.stream_blocked"
     ] == [{"check": "sentence"}]
 
 

@@ -12,6 +12,7 @@ def create_worker_engine(*, capacity):
     from src.infra.database.config_async import (
         _normalize_asyncpg_url,
         _sanitize_asyncpg_url_and_connect_args,
+        build_async_connect_args,
     )
 
     env = dict(os.environ)
@@ -37,5 +38,5 @@ def create_worker_engine(*, capacity):
         pool_timeout=5,
         pool_recycle=policy.pool_recycle,
         pool_pre_ping=True,
-        connect_args={**url_args, **policy.connect_args},
+        connect_args=build_async_connect_args(policy, url_args),
     )

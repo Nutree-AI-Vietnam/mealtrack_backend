@@ -58,7 +58,11 @@ from .meal_recommendation import (
 from .meal_write_operation import MealWriteOperationORM
 
 # Notification models
-from .notification import NotificationPreferencesORM, UserFcmTokenORM
+from .notification import (
+    NotificationOutboxORM,
+    NotificationPreferencesORM,
+    UserFcmTokenORM,
+)
 from .nutrition.food_item import FoodItemORM
 
 # Nutrition models
@@ -74,6 +78,7 @@ from .saved_suggestion import SavedSuggestionModel
 from .saved_suggestion_item import SavedSuggestionItemModel
 from .saved_suggestion_step import SavedSuggestionStepModel
 from .serving_phrase_translation import ServingPhraseTranslationModel
+from .streak_restore import StreakRestoreLedgerORM
 from .subscription import Subscription
 from .user.body_fat_visual_profile import BodyFatVisualProfile
 from .user.profile import UserProfile
@@ -183,6 +188,7 @@ __all__ = [
     "FoodItemTranslationORM",
     # Test models
     # Notification models
+    "NotificationOutboxORM",
     "NotificationPreferencesORM",
     "UserFcmTokenORM",
     # Feature flags
@@ -228,6 +234,8 @@ __all__ = [
     "DurableWriteRecordORM",
     # Movement tracking
     "MovementEntryORM",
+    # Streak restores
+    "StreakRestoreLedgerORM",
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",
     "WeeklyPlanLateLegacySlotRepairORM",

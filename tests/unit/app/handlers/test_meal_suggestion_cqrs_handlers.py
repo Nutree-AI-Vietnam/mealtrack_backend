@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -584,6 +585,56 @@ def test_save_meal_suggestion_handler_preserves_food_reference_id_in_items():
     assert distributed_items[0].food_reference_id == 1002
     assert distributed_items[0].macros.carbs == 28
     assert distributed_items[0].macros.fiber == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("days_ago", "logged_on_day"), [(0, True), (1, False)])
+async def test_only_a_suggestion_saved_for_today_counts_as_logged_on_its_day(
+    days_ago, logged_on_day
+) -> None:
+    saved = []
+
+    class _Meals:
+        async def find_by_id(self, meal_id, projection=None):
+            return None
+
+        async def save(self, meal):
+            saved.append(meal)
+            return meal
+
+    class _Uow:
+        def __init__(self) -> None:
+            self.meals = _Meals()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    meal_date = utc_now().date() - timedelta(days=days_ago)
+    handler = SaveMealSuggestionCommandHandler(uow=_Uow(), environment="development")
+    await handler.handle(
+        SaveMealSuggestionCommand(
+            user_id="11111111-1111-1111-1111-111111111111",
+            suggestion_id="disc_not_a_uuid",
+            name="Rice Bean Plate",
+            meal_type="lunch",
+            calories=500,
+            protein=30,
+            carbs=50,
+            fat=10,
+            fiber=8,
+            description="Lunch bowl",
+            estimated_cook_time_minutes=20,
+            ingredients=[IngredientItem(name="rice", amount=100, unit="g")],
+            instructions=["Cook"],
+            portion_multiplier=1,
+            meal_date=meal_date.isoformat(),
+        )
+    )
+
+    assert saved[0].logged_on_day is logged_on_day
 
 
 def _recipe(recipe_id: str, name: str, calories: float) -> MealSuggestion:

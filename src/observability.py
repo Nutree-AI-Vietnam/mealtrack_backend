@@ -54,6 +54,15 @@ def capture_exception(
     get_observability_connector().capture_exception(error, context=context)
 
 
+def capture_database_unavailable(error: BaseException) -> None:
+    """Capture a database outage that the HTTP layer answers with 503.
+
+    FastAPI's Sentry integration does not report 503, and this path is logged
+    at WARNING, so nothing else sends it.
+    """
+    get_observability_connector().capture_database_unavailable(error)
+
+
 def capture_message(
     message: str,
     *,
