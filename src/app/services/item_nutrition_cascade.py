@@ -24,9 +24,6 @@ from src.domain.model.meal import Meal
 from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import merge_micros
-from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
-    normalize_food_name,
-)
 from src.domain.services.nutrition_calculation_service import (
     MASS_VOLUME_CANONICAL_UNITS,
     UNIT_TO_GRAMS,
@@ -782,20 +779,44 @@ def _retotal_meal_nutrition(meal: Meal) -> None:
     nutrition.micros = merge_micros(*(item.micros for item in items))
 
 
-def local_catalog_lookup_keys(name: str) -> tuple[str, ...]:
-    """Keys to try against ``food_reference.name_normalized``.
+# These tokens do not rename the food. Preparation and preservation words
+# (fried, dried, raw, cooked, canned, boiled, baked, ...) stay on the lookup
+# key so "fried rice" cannot resolve to a plain "rice" row.
+_NEUTRAL_CATALOG_TOKENS = frozenset(
+    {
+        "grilled",
+        "sliced",
+        "chopped",
+        "boneless",
+        "skinless",
+        "large",
+        "medium",
+        "small",
+    }
+)
 
-    Meal scan and parse-text used to query only ``normalize_food_lookup_name``.
-    Seeds persist ``normalize_food_name``, which drops preparation qualifiers
-    such as "grilled", so those rows missed. Return the lookup key first, then
-    the seed key. Identical output is one key, so a matching name is not
-    queried or applied twice.
+
+def local_catalog_lookup_keys(name: str) -> tuple[str, ...]:
+    """Keys for scan grounding against ``food_reference.name_normalized``.
+
+    Always query ``normalize_food_lookup_name``. Also query that key with
+    nutrition-neutral tokens removed, which is the seed key for names such as
+    "grilled chicken". Do not query ``normalize_food_name``: it also strips
+    fried/dried/raw/cooked/canned and drops non-ascii letters, so "Fried Rice"
+    would hit ``rice`` and "Phở bò" would hit ``ph b``.
+
+    One key when nothing neutral was removed, so the same name is not queried
+    twice. Parse-text does not use this helper.
     """
-    keys: list[str] = []
-    for key in (normalize_food_lookup_name(name), normalize_food_name(name)):
-        if key and key not in keys:
-            keys.append(key)
-    return tuple(keys)
+    lookup_key = normalize_food_lookup_name(name)
+    if not lookup_key:
+        return ()
+    alternate = " ".join(
+        token for token in lookup_key.split() if token not in _NEUTRAL_CATALOG_TOKENS
+    )
+    if not alternate or alternate == lookup_key:
+        return (lookup_key,)
+    return (lookup_key, alternate)
 
 
 def local_catalog_hit(

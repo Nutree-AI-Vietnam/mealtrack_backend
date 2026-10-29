@@ -154,10 +154,11 @@ def aggregate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
 def summarize_grounding_items(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Count local-catalog misses and lookup-key mismatches.
 
-    ``product_local_hit`` is whether the batch result contained either
-    ``normalize_food_lookup_name`` or ``normalize_food_name``. Meal scan and
-    parse-text query both. Seeds store the second key on ``name_normalized``.
-    ``catalog_key_would_hit`` is that seed key for rows that missed both.
+    ``product_local_hit`` is whether the product batch result contained the
+    lookup key or the seed key. Scan grounding adds the seed key only when it
+    is the lookup key with nutrition-neutral tokens removed. Parse-text queries
+    the lookup key only. ``catalog_key_would_hit`` is ``normalize_food_name``
+    for rows that product query missed.
     """
     mismatch_misses = [
         row

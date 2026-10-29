@@ -244,6 +244,20 @@ def test_local_catalog_keys_try_lookup_then_seed_when_they_differ():
     )
 
 
+@pytest.mark.parametrize(
+    ("name", "dangerous_key"),
+    [
+        ("Fried Rice", "rice"),
+        ("Dried Mango", "mango"),
+        ("Phở bò", "ph b"),
+    ],
+)
+def test_local_catalog_keys_skip_nutrition_changing_seed_keys(name, dangerous_key):
+    assert normalize_food_name(name) == dangerous_key
+    assert dangerous_key not in local_catalog_lookup_keys(name)
+    assert local_catalog_lookup_keys(name) == (normalize_food_lookup_name(name),)
+
+
 def _verified_reference(**overrides) -> dict:
     row = {
         "id": 7,
@@ -329,3 +343,46 @@ async def test_grounding_prefers_existing_lookup_key_when_both_rows_exist():
     item = meal.nutrition.food_items[0]
     assert item.food_reference_id == 1
     assert item.macros.protein == pytest.approx(31.0)
+
+
+@pytest.mark.parametrize(
+    ("name", "dangerous_key"),
+    [
+        ("Fried Rice", "rice"),
+        ("Dried Mango", "mango"),
+        ("Phở bò", "ph b"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_grounding_does_not_apply_an_unsafe_seed_key(name, dangerous_key):
+    """Seed name_normalized must not replace macros for a different food."""
+    dangerous = _verified_reference(
+        id=99,
+        name=dangerous_key,
+        protein_100g=50.0,
+        carbs_100g=80.0,
+        fat_100g=30.0,
+    )
+
+    async def batch_lookup(names):
+        assert dangerous_key not in names
+        return {dangerous_key: dangerous}
+
+    meal = _meal(name=name, quantity=100)
+    meal.nutrition.food_items[0].macros = Macros(protein=11, carbs=22, fat=3)
+
+    report = await ground_scan_meal(
+        meal,
+        batch_lookup=batch_lookup,
+        provider=None,
+        timeout_seconds=1.0,
+    )
+
+    item = meal.nutrition.food_items[0]
+    assert report.outcome == "unresolved"
+    assert report.items[0].reason_code == "ai_estimate"
+    assert item.source_kind == "ai_estimate"
+    assert item.food_reference_id is None
+    assert item.macros.protein == 11
+    assert item.macros.carbs == 22
+    assert item.macros.fat == 3
