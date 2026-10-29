@@ -151,6 +151,19 @@ class SentryObservabilityConnector:
         self._apply_safe_context(context)
         sentry_sdk.capture_exception(error)
 
+    def capture_database_unavailable(self, error: BaseException) -> None:
+        """Send one outage event. 503 is outside the FastAPI status filter."""
+        if sentry_sdk is None or not sentry_sdk.get_client().is_active():
+            return
+        with sentry_sdk.new_scope() as scope:
+            # The request scope may already carry the user. This event must not.
+            scope.set_user(None)
+            scope.remove_context("mealtrack")
+            scope.add_event_processor(_strip_database_unavailable_user_data)
+            scope.set_tag("error_code", "DB_UNAVAILABLE")
+            scope.fingerprint = ["db-unavailable", type(error).__name__]
+            sentry_sdk.capture_exception(error)
+
     def capture_message(
         self,
         message: str,
@@ -303,6 +316,9 @@ def _drop_expected_events(
     but the LangChain integration captures the raw provider error before that
     mapping, so those events are dropped here.
 
+    Database connect and pool timeouts captured for ``DB_UNAVAILABLE`` are
+    not in the list below, so they are sent. FastAPI does not report 503.
+
     A client disconnect on the chat message routes is an
     ``asyncio.CancelledError`` whose visible chain is only cancellation.
     ``raise exc from None`` (httpcore's pool) sets ``__suppress_context__``
@@ -331,6 +347,34 @@ def _drop_expected_events(
         return None
     if _is_expected_connection_terminate(event, exc_info):
         return None
+    return event
+
+
+def _strip_database_unavailable_user_data(
+    event: dict[str, Any], _hint: dict[str, Any]
+) -> dict[str, Any]:
+    """Drop user, request, and frame locals from a database-outage event."""
+    event.pop("user", None)
+    event.pop("request", None)
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        contexts.pop("mealtrack", None)
+    exception = event.get("exception")
+    if isinstance(exception, dict):
+        values = exception.get("values")
+        if isinstance(values, list):
+            for value in values:
+                if not isinstance(value, dict):
+                    continue
+                stack = value.get("stacktrace")
+                if not isinstance(stack, dict):
+                    continue
+                frames = stack.get("frames")
+                if not isinstance(frames, list):
+                    continue
+                for frame in frames:
+                    if isinstance(frame, dict):
+                        frame.pop("vars", None)
     return event
 
 

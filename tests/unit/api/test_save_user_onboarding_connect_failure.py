@@ -1,8 +1,9 @@
 """Onboarding save stays retryable when the DB connect attempts are exhausted.
 
-``POST /v1/user-profiles/`` sends ``SaveUserOnboardingCommand``. A connect
-failure surfaces as ``TimeoutError`` (asyncpg's ``compat.timeout``). The route
-converts that through ``handle_exception`` before the client sees it.
+``POST /v1/user-profiles/`` sends ``SaveUserOnboardingCommand``. Two failed
+connects (the pooler retry in ``connect_with_one_retry``) must surface as
+503 ``DB_UNAVAILABLE``, not as an AI outage. The route converts the error
+through ``handle_exception`` before the client sees it.
 """
 
 import pytest
@@ -11,15 +12,17 @@ from fastapi import HTTPException
 from src.api.routes.v1.user_profiles import save_user_onboarding
 from src.api.schemas.request.onboarding_requests import OnboardingCompleteRequest
 from src.app.commands.user import SaveUserOnboardingCommand
+from src.infra.database.config_async import connect_with_one_retry
 
 
 class _ConnectFailedBus:
-    def __init__(self) -> None:
+    def __init__(self, error: BaseException) -> None:
         self.commands: list[object] = []
+        self._error = error
 
     async def send(self, message: object) -> None:
         self.commands.append(message)
-        raise TimeoutError("handshake stalled")
+        raise self._error
 
 
 def _request() -> OnboardingCompleteRequest:
@@ -38,8 +41,19 @@ def _request() -> OnboardingCompleteRequest:
 
 
 @pytest.mark.asyncio
-async def test_onboarding_save_returns_503_when_connect_fails():
-    bus = _ConnectFailedBus()
+async def test_onboarding_save_after_two_failed_connects_returns_db_unavailable():
+    attempts = 0
+
+    async def connect(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise TimeoutError("handshake stalled")
+
+    with pytest.raises(Exception) as connect_error:
+        await connect_with_one_retry(connect)
+
+    assert attempts == 2
+    bus = _ConnectFailedBus(connect_error.value)
 
     with pytest.raises(HTTPException) as exc_info:
         await save_user_onboarding(_request(), user_id="user-1", event_bus=bus)
@@ -48,6 +62,10 @@ async def test_onboarding_save_returns_503_when_connect_fails():
     assert isinstance(bus.commands[0], SaveUserOnboardingCommand)
     error = exc_info.value
     assert error.status_code == 503
-    assert error.detail["error_code"] == "AI_UNAVAILABLE"
+    assert error.detail["error_code"] == "DB_UNAVAILABLE"
+    assert error.detail["message"] == (
+        "The database is temporarily unavailable. Please try again."
+    )
     assert error.detail["details"] == {}
     assert "handshake stalled" not in str(error.detail)
+    assert "AI meal generation" not in str(error.detail)

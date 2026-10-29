@@ -11,11 +11,13 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
+from src.domain.exceptions.database_exceptions import DatabaseUnavailableError
 from src.infra.database.connection_policy import (
     DatabaseConnectionPolicy,
     resolve_connection_policy,
 )
 from src.infra.database.planner_pool import PlannerNullPool, PlannerQueuePool
+from src.infra.monitoring.sentry import add_connect_retry_breadcrumb
 
 load_dotenv()
 
@@ -85,8 +87,6 @@ def _record_connect_retry(error_type: str) -> None:
         "Database connect attempt failed (%s); retrying once",
         error_type,
     )
-    from src.infra.monitoring.sentry import add_connect_retry_breadcrumb
-
     add_connect_retry_breadcrumb(error_type)
 
 
@@ -101,13 +101,19 @@ async def connect_with_one_retry(
     ``connect`` is the driver entry point (``asyncpg.connect``). It returns
     only after TCP/TLS and startup succeed, and before any application
     statement, so a retry cannot run a write twice. ``TimeoutError`` is an
-    ``OSError``. The second failure propagates unchanged.
+    ``OSError``. The second failure is ``DatabaseUnavailableError``, chained
+    from the driver error, so a connect timeout is not reported as an AI
+    timeout. The Sentry breadcrumb import is module-level: an import failure
+    must not replace this driver error.
     """
     try:
         return await connect(*args, **kwargs)
     except OSError as exc:
         _record_connect_retry(type(exc).__name__)
-        return await connect(*args, **kwargs)
+        try:
+            return await connect(*args, **kwargs)
+        except OSError as retry_exc:
+            raise DatabaseUnavailableError() from retry_exc
 
 
 async def _retrying_asyncpg_connect(*args: Any, **kwargs: Any) -> Any:
