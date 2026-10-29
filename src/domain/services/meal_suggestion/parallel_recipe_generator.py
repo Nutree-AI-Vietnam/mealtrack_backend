@@ -238,6 +238,7 @@ class ParallelRecipeGenerator:
                     "protein": macros["protein"],
                     "carbs": macros["carbs"],
                     "fat": macros["fat"],
+                    "nutrition_status": "estimated",
                 }
             )
 
@@ -324,11 +325,7 @@ class ParallelRecipeGenerator:
                 timeout=SELECTED_RECIPE_ATTEMPT_TIMEOUT,
             )
             localized_name = selected.get("name")
-            if (
-                generated is not None
-                and localized_name
-                and localized_name != meal_name
-            ):
+            if generated is not None and localized_name and localized_name != meal_name:
                 generated = replace(generated, meal_name=localized_name)
             return generated
 
@@ -341,7 +338,10 @@ class ParallelRecipeGenerator:
         ]
         pass1_raw = await asyncio.gather(*pass1_tasks, return_exceptions=True)
         for i, result in enumerate(pass1_raw):
-            if not isinstance(result, Exception) and result is not None:
+            if isinstance(result, BaseException):
+                if not isinstance(result, Exception):
+                    raise result
+            elif result is not None:
                 results[i] = result
 
         # Pass 2: retry any failed slots
@@ -353,7 +353,10 @@ class ParallelRecipeGenerator:
             ]
             pass2_raw = await asyncio.gather(*pass2_tasks, return_exceptions=True)
             for i, result in zip(failed_indices, pass2_raw):
-                if not isinstance(result, Exception) and result is not None:
+                if isinstance(result, BaseException):
+                    if not isinstance(result, Exception):
+                        raise result
+                elif result is not None:
                     results[i] = result
 
         for i, result in enumerate(results):
@@ -476,7 +479,9 @@ class ParallelRecipeGenerator:
             # pairs results to selected meal names by index position.
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
+                    if not isinstance(result, Exception):
+                        raise result
                     logger.warning(
                         "[RECIPE-ERROR] error_type=%s", type(result).__name__
                     )
@@ -504,7 +509,7 @@ class ParallelRecipeGenerator:
 
         logger.debug(
             f"[PHASE-2-COMPLETE] session={session.id} | "
-            f"success={len(successful)}/{total_attempts} | elapsed={time.time()-gen_start:.2f}s"
+            f"success={len(successful)}/{total_attempts} | elapsed={time.time() - gen_start:.2f}s"
         )
         if len(successful) < min_acceptable:
             if not successful:
@@ -589,7 +594,9 @@ class ParallelRecipeGenerator:
         self, suggestion: MealSuggestion, language: str
     ) -> SuggestionTranslationResult:
         if self._translation_service is None:
-            return SuggestionTranslationResult(suggestion, TranslationOutcome.PASSTHROUGH)
+            return SuggestionTranslationResult(
+                suggestion, TranslationOutcome.PASSTHROUGH
+            )
         result_method = getattr(
             self._translation_service, "translate_meal_suggestion_result", None
         )
@@ -659,7 +666,7 @@ class ParallelRecipeGenerator:
 
         logger.debug(
             f"[PHASE-2-PIPELINE-COMPLETE] session={session.id} | "
-            f"success={gen_successes}/{len(meal_names)} | elapsed={time.time()-gen_start:.2f}s"
+            f"success={gen_successes}/{len(meal_names)} | elapsed={time.time() - gen_start:.2f}s"
         )
 
         if gen_successes < min_acceptable:

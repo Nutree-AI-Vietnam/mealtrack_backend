@@ -88,6 +88,7 @@ def build_discovery_fallback_meals(
                 "protein": macros["protein"],
                 "carbs": macros["carbs"],
                 "fat": macros["fat"],
+                "nutrition_status": "estimated",
             }
         )
         if len(meals) >= count:
@@ -110,6 +111,7 @@ def build_discovery_fallback_meals(
                 "protein": macros["protein"],
                 "carbs": macros["carbs"],
                 "fat": macros["fat"],
+                "nutrition_status": "estimated",
             }
         )
 

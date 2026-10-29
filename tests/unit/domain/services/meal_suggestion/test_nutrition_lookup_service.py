@@ -5,8 +5,8 @@ Covers:
 - T1 hit (food_reference exact match)
 - T1 miss → T2 hit (fatsecret resolver)
 - T1+T2 miss → T3 AI fallback (with logging)
-- T3 AI failure → zero macros, no exception
-- T3 uses asyncio.to_thread + wait_for (C2/C3: non-blocking, 10s timeout)
+- T3 AI failure → explicit unresolved result, no exception
+- T3 uses an async deadline without blocking the event loop
 - Fiber-aware calorie derivation
 - _aggregate sums and tier counts
 - calculate_meal_macros runs lookups in parallel
@@ -16,7 +16,7 @@ Covers:
 import asyncio
 import json
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -201,23 +201,41 @@ async def test_t1_t2_miss_uses_t3_ai_fallback(caplog):
 
 
 # ---------------------------------------------------------------------------
-# T3 AI failure → zero macros, no exception
+# T3 AI failure → explicit unresolved result, no exception
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_t3_ai_failure_returns_zero_macros_no_exception():
-    """T3 AI failure → zero macros returned, no exception bubbled."""
+async def test_t3_ai_failure_returns_explicit_unresolved_no_exception():
+    """T3 AI failure stays unresolved instead of becoming a zero-valued hit."""
     svc = _make_service(ref_result=None, resolver_result=None, gen_result=None)
     # gen_result=None causes generate_meal_plan_async to raise RuntimeError
 
     result = await svc._lookup_ingredient("mystery ingredient", 50.0)
 
-    assert result.source_tier == "T3_ai_estimate"
-    assert result.calories == 0.0
-    assert result.protein == 0.0
-    assert result.carbs == 0.0
-    assert result.fat == 0.0
+    assert result.source_tier == "unresolved"
+    assert result.failure_reason == "providers_unavailable_or_invalid"
+    assert result.calories is None
+    assert result.protein is None
+    assert result.carbs is None
+    assert result.fat is None
+
+
+@pytest.mark.asyncio
+async def test_failed_nutrition_is_not_written_to_success_cache():
+    cache = MagicMock()
+    cache.set = AsyncMock()
+    svc = _make_service(
+        ref_result=None,
+        resolver_result=None,
+        gen_result=None,
+        cache_service=cache,
+    )
+
+    result = await svc._lookup_ingredient("unknown ingredient", 100.0)
+
+    assert result.source_tier == "unresolved"
+    cache.set.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +390,101 @@ async def test_calculate_meal_macros_awaits_async_t1_batch_lookup():
 
 
 @pytest.mark.asyncio
+async def test_calculate_meals_macros_deduplicates_and_scales_each_portion():
+    repo = MagicMock()
+    repo.find_batch_by_normalized_names.return_value = {}
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(
+        side_effect=lambda name, **kwargs: {
+            "chicken": PerHundredGramsMacros(protein=20.0, carbs=0.0, fat=5.0),
+            "rice": PerHundredGramsMacros(protein=2.0, carbs=28.0, fat=0.3),
+        }[kwargs.get("name_normalized", name)]
+    )
+    svc = NutritionLookupService(
+        food_ref_repo=repo,
+        ingredient_nutrition_resolver=resolver,
+        generation_service=MagicMock(),
+    )
+
+    meals = await svc.calculate_meals_macros(
+        [
+            [{"name": "chicken", "amount": 50, "unit": "g"}],
+            [{"name": "chicken", "amount": 200, "unit": "g"}],
+            [
+                {"name": "chicken", "amount": 100, "unit": "g"},
+                {"name": "rice", "amount": 50, "unit": "g"},
+            ],
+        ]
+    )
+
+    assert resolver.resolve.await_count == 2
+    assert meals[0].ingredients[0].protein == pytest.approx(10.0)
+    assert meals[1].ingredients[0].protein == pytest.approx(40.0)
+    assert meals[2].ingredients[0].protein == pytest.approx(20.0)
+    assert meals[2].ingredients[1].carbs == pytest.approx(14.0)
+    assert all(meal.is_complete for meal in meals)
+
+
+@pytest.mark.asyncio
+async def test_partial_lookup_keeps_totals_unresolved_and_cannot_be_scaled():
+    repo = MagicMock()
+    repo.find_batch_by_normalized_names.return_value = {
+        "rice": {**_make_ref(protein=2.0, carbs=28.0, fat=0.3), "name": "rice"}
+    }
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(return_value=None)
+    gen = MagicMock()
+    gen.generate_meal_plan_async = AsyncMock(side_effect=RuntimeError("offline"))
+    svc = NutritionLookupService(
+        food_ref_repo=repo,
+        ingredient_nutrition_resolver=resolver,
+        generation_service=gen,
+    )
+
+    meal = await svc.calculate_meal_macros(
+        [
+            {"name": "rice", "amount": 100, "unit": "g"},
+            {"name": "unknown spice", "amount": 10, "unit": "g"},
+        ]
+    )
+
+    assert meal.is_complete is False
+    assert meal.calories is None
+    assert meal.protein is None
+    assert meal.unresolved_ingredients == ("unknown spice",)
+    assert meal.ingredients[0].is_resolved is True
+    assert meal.ingredients[1].source_tier == "unresolved"
+    assert svc.scale_to_target(meal, 500) is None
+
+
+@pytest.mark.asyncio
+async def test_zero_calorie_reference_is_a_valid_complete_result():
+    repo = MagicMock()
+    repo.find_batch_by_normalized_names.return_value = {
+        "water": {
+            **_make_ref(protein=0.0, carbs=0.0, fat=0.0, fiber=0.0, sugar=0.0),
+            "name": "water",
+        }
+    }
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock()
+    svc = NutritionLookupService(
+        food_ref_repo=repo,
+        ingredient_nutrition_resolver=resolver,
+        generation_service=MagicMock(),
+    )
+
+    meal = await svc.calculate_meal_macros(
+        [{"name": "water", "amount": 100, "unit": "g"}]
+    )
+
+    assert meal.is_complete is True
+    assert meal.calories == 0.0
+    assert meal.ingredients[0].is_resolved is True
+    resolver.resolve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_lookup_ingredient_awaits_async_t1_single_lookup():
     repo = MagicMock()
     repo.find_by_normalized_name = AsyncMock(return_value=_make_ref(ref_id=9))
@@ -488,26 +601,29 @@ async def test_t3_ai_estimate_does_not_block_event_loop():
 
 
 @pytest.mark.asyncio
-async def test_t3_ai_estimate_respects_10s_timeout():
-    """_ai_estimate wraps generate_meal_plan_async in wait_for(timeout=10.0).
+async def test_t3_ai_estimate_respects_configured_timeout(monkeypatch):
+    """A T3 call exceeding its deadline returns unresolved nutrition."""
+    import src.domain.services.meal_suggestion.nutrition_lookup_service as lookup_module
 
-    Verify that when wait_for raises TimeoutError (the internal 10s budget),
-    _ai_estimate catches it and returns zero-macro fallback instead of propagating.
-    """
+    monkeypatch.setattr(lookup_module, "T3_TIMEOUT", 0.001)
     repo = MagicMock()
     repo.find_by_normalized_name.return_value = None
     resolver = MagicMock()
     resolver.resolve = AsyncMock(return_value=None)
     gen = MagicMock()
-    gen.generate_meal_plan_async = AsyncMock(
-        return_value={
+
+    async def slow_generate(*args, **kwargs):
+        del args, kwargs
+        await asyncio.sleep(0.05)
+        return {
             "protein": 5.0,
             "carbs": 5.0,
             "fat": 1.0,
             "fiber": 0.0,
             "sugar": 0.0,
         }
-    )
+
+    gen.generate_meal_plan_async = slow_generate
 
     svc = NutritionLookupService(
         food_ref_repo=repo,
@@ -515,21 +631,11 @@ async def test_t3_ai_estimate_respects_10s_timeout():
         generation_service=gen,
     )
 
-    # Patch wait_for in the service module to raise TimeoutError immediately,
-    # simulating the internal 10s budget being exceeded.
-    async def timed_out_wait_for(coro, timeout):
-        coro.close()  # clean up the coroutine to avoid ResourceWarning
-        raise TimeoutError("simulated 10s timeout")
+    result = await svc._lookup_ingredient("slow ingredient", 50.0)
 
-    with patch(
-        "src.domain.services.meal_suggestion.nutrition_lookup_service.asyncio.wait_for",
-        side_effect=timed_out_wait_for,
-    ):
-        result = await svc._lookup_ingredient("slow ingredient", 50.0)
-
-    # TimeoutError caught → zero macros fallback, no exception propagated
-    assert result.source_tier == "T3_ai_estimate"
-    assert result.calories == 0.0
+    assert result.source_tier == "unresolved"
+    assert result.calories is None
+    assert result.protein is None
 
 
 @pytest.mark.asyncio
@@ -595,6 +701,7 @@ async def test_chicken_fried_rice_realistic_totals():
         "oil": _make_ref(protein=0.0, carbs=0.0, fat=100.0, fiber=0.0),
         "soy sauce": _make_ref(protein=10.0, carbs=17.0, fat=0.0, fiber=0.0),
     }
+    refs["rice"]["name"] = "cooked rice"
 
     # Map normalized names to refs
     def find_ref(normalized_name: str):

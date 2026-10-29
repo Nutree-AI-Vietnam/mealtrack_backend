@@ -200,6 +200,20 @@ def test_allergy_suggestion_is_blocked():
     assert decision.reason == "allergy_conflict"
 
 
+def test_allergy_matching_handles_plural_aliases_and_plant_milk():
+    peanut = inspect_sentence("Try roasted peanuts tonight.", allergies=["peanut"])
+    oat_milk = inspect_sentence("Try oat milk in your coffee.", allergies=["milk"])
+
+    assert peanut.reason == "allergy_conflict"
+    assert oat_milk.allowed is True
+
+
+def test_educational_allergen_mention_is_not_a_recommendation_conflict():
+    decision = inspect_sentence("Peanuts are a common allergen.", allergies=["peanut"])
+
+    assert decision.allowed is True
+
+
 def test_mutation_and_leak_sentences_are_blocked():
     assert (
         inspect_sentence("I've updated your meal.", allergies=[]).reason

@@ -238,6 +238,18 @@ class Settings(BaseSettings):
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
     OPENAI_REQUEST_TIMEOUT_SECONDS: int = Field(default=20)
     OPENAI_MAX_RETRIES: int = Field(default=1)
+    MEAL_NUTRITION_LOOKUP_TIMEOUT_SECONDS: float = Field(
+        default=20.0,
+        gt=0,
+        le=120,
+        description="Total deadline for resolving all ingredients in a recipe batch.",
+    )
+    MEAL_NUTRITION_MAX_CONCURRENCY: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        description="Maximum concurrent per-ingredient cache/provider resolutions per request.",
+    )
     OPENAI_STORE_RESPONSES: bool = Field(
         default=False,
         description="Whether OpenAI may store Responses API payloads.",
