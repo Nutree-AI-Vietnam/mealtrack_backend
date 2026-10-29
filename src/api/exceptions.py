@@ -27,6 +27,7 @@ from src.domain.services.nutrition_calculation_service import (
     AuthoritativeUnitMismatchError,
 )
 from src.domain.services.nutrition_integrity_policy import NutritionIntegrityError
+from src.observability import capture_database_unavailable
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,9 @@ def handle_exception(exc: Exception) -> HTTPException:
                 "error_type": type(exc).__name__,
             },
         )
+        # 503 is outside FastAPI's Sentry status filter, and this log is
+        # WARNING, so the logging integration does not send it either.
+        capture_database_unavailable(exc)
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
