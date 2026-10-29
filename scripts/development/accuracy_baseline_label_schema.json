@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "status": "draft",
-  "audience": "QA labeling after dual privacy review trims the pool to 100 scan and 100 prompt cases",
+  "status": "applied_to_committed_fixtures",
+  "audience": "Committed QA labels in tests/fixtures/accuracy_baseline. Case ids keep qa_case_id and use hyphenated case_id.",
   "working_copy": "/workspace/ai-accuracy-eval/qa_label_schema.json",
   "case_id_rule": "Keep the synthetic case id. When promoting a surviving pool row into a reviewed manifest, rewrite eval_scan_001 to eval-scan-001 and eval_prompt_001 to eval-prompt-001. Never substitute meal_id or user_id.",
   "forbidden_fields": [

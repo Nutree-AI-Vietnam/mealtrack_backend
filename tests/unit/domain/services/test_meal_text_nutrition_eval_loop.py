@@ -273,5 +273,43 @@ async def test_contract_fixtures_do_not_publish_quality_or_token_metrics():
     assert summary.output_tokens is None
 
 
+@pytest.mark.asyncio
+async def test_unscored_case_does_not_invent_calorie_or_portion_error():
+    case = ParseTextEvalCase(
+        case_id="unscored-snack",
+        text="Snack",
+        language="en",
+        expected_lookup_name="Snack",
+        expected_quantity_g=None,
+        expected_source="ai_estimate",
+        expected_calorie_range=None,
+        reference_source_required=False,
+        expected_items=({"aliases": ["Snack"]},),
+    )
+    observation = ParseTextEvalObservation(
+        response=SimpleNamespace(
+            items=[SimpleNamespace(calories=50, data_source="ai_estimate", quantity=80)]
+        ),
+        extracted_lookup_name="Snack",
+        extracted_quantity_g=80,
+        selected_candidate_id=None,
+        provider_searches=0,
+        provider_details=0,
+        duration_ms=1,
+    )
+
+    summary = await ParseTextNutritionEvalLoop().evaluate(
+        [case], lambda _case: _ready(observation)
+    )
+
+    result = summary.cases[0]
+    assert result.identity_pass is True
+    assert result.quantity_pass is True
+    assert result.catastrophic_outlier is False
+    assert result.calories_error_kcal is None
+    assert result.raw_model_calories_error_kcal is None
+    assert result.portion_mae_g is None
+
+
 async def _ready(observation):
     return observation

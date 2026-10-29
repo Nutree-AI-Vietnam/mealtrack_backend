@@ -17,14 +17,23 @@ def _validate_expected_food(case_id: str, food: Any) -> dict[str, Any]:
         or any(not str(alias).strip() for alias in aliases)
     ):
         raise ValueError(f"{case_id}: each expected food requires reviewed aliases")
+    parsed: dict[str, Any] = {"aliases": [str(alias) for alias in aliases]}
+    if "quantity_g" not in food:
+        return parsed
     quantity = food.get("quantity_g")
     if isinstance(quantity, list):
-        quantity = _interval(quantity, f"{case_id}.food.quantity_g")
-    elif not isinstance(quantity, (int, float)) or quantity <= 0:
+        parsed["quantity_g"] = _interval(quantity, f"{case_id}.food.quantity_g")
+    elif isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
         raise ValueError(
             f"{case_id}: expected food quantity_g must be positive or an interval"
         )
-    return {"aliases": [str(alias) for alias in aliases], "quantity_g": quantity}
+    elif quantity <= 0:
+        raise ValueError(
+            f"{case_id}: expected food quantity_g must be positive or an interval"
+        )
+    else:
+        parsed["quantity_g"] = quantity
+    return parsed
 
 
 def _validate_macro_refs(raw: Any, case_id: str) -> dict[str, Any]:
