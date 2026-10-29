@@ -92,8 +92,15 @@ def load_reviewed_manifest(path: str | Path) -> list[ReviewedMealCase]:
             if calorie_value is not None
             else None
         )
-        if expected_is_food and expected_calories is None:
-            raise ValueError(f"{case_id}: food cases require expected_calories_kcal")
+        if (
+            expected_is_food
+            and expected_calories is None
+            and entry.get("label_status") != "unscored"
+        ):
+            raise ValueError(
+                f"{case_id}: food cases require expected_calories_kcal "
+                "unless label_status is unscored"
+            )
         expected_macros = _validate_macro_refs(
             entry.get("expected_macros", {}), case_id
         )
@@ -164,7 +171,7 @@ def _corpus_status(cases: list[ReviewedMealCase]) -> str:
 
 
 def load_scan_scaffold_manifest(path: str | Path | None = None):
-    """Load the synthetic scan scaffold. This is not a reviewed photo corpus."""
+    """Load the QA-labeled scan manifest and its stripped JPEGs."""
     from scripts.development.accuracy_baseline_scaffold import (
         SCAN_FIXTURE,
         ScaffoldManifest,

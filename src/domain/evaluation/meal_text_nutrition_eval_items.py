@@ -39,13 +39,16 @@ def score_items(
             identity_pass = quantity_pass = candidate_pass = False
             continue
         unmatched.remove(match)
-        amount = actual_item.get("quantity_g")
-        if amount is None:
-            quantity_pass = False
-        else:
-            error = interval_error(float(amount), match.get("quantity_g", 0.0))
-            errors.append(error)
-            quantity_pass = quantity_pass and error <= max(1.0, float(amount) * 0.01)
+        if "quantity_g" in match:
+            amount = actual_item.get("quantity_g")
+            if amount is None:
+                quantity_pass = False
+            else:
+                error = interval_error(float(amount), match["quantity_g"])
+                errors.append(error)
+                quantity_pass = quantity_pass and error <= max(
+                    1.0, float(amount) * 0.01
+                )
         expected_id = match.get("candidate_id")
         actual_id = actual_item.get("candidate_id")
         if actual_id is None and len(expected) == 1:

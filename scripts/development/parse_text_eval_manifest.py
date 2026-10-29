@@ -79,11 +79,10 @@ def load_reviewed_provider_manifest(
                 or not isinstance(item.get("aliases"), list)
                 or not item["aliases"]
                 or any(not str(alias).strip() for alias in item["aliases"])
-                or "quantity_g" not in item
             ):
-                raise ValueError(
-                    f"{case_id}: each expected item requires aliases and quantity_g"
-                )
+                raise ValueError(f"{case_id}: each expected item requires aliases")
+            if "quantity_g" not in item:
+                continue
             quantity = item["quantity_g"]
             if isinstance(quantity, list):
                 if (
@@ -92,11 +91,20 @@ def load_reviewed_provider_manifest(
                     or float(quantity[1]) < float(quantity[0])
                 ):
                     raise ValueError(f"{case_id}: item quantity interval is invalid")
-            elif float(quantity) <= 0:
+            elif isinstance(quantity, bool) or float(quantity) <= 0:
                 raise ValueError(f"{case_id}: item quantity_g must be positive")
-        calories = _validated_reference(
-            entry.get("expected_calories_kcal"), f"{case_id}.expected_calories_kcal"
-        )
+        calorie_value = entry.get("expected_calories_kcal")
+        if calorie_value is None:
+            if entry.get("label_status") != "unscored":
+                raise ValueError(
+                    f"{case_id}: expected_calories_kcal is required "
+                    "unless label_status is unscored"
+                )
+            calories = None
+        else:
+            calories = _validated_reference(
+                calorie_value, f"{case_id}.expected_calories_kcal"
+            )
         micros = _validated_micro_references(
             entry.get("expected_micros") or {}, case_id
         )
@@ -104,17 +112,20 @@ def load_reviewed_provider_manifest(
             entry.get("expected_macros") or {}, case_id
         )
         first_item = expected_items[0]
+        first_quantity = first_item.get("quantity_g")
+        if isinstance(first_quantity, list):
+            expected_quantity_g = float(first_quantity[0])
+        elif first_quantity is None:
+            expected_quantity_g = None
+        else:
+            expected_quantity_g = float(first_quantity)
         cases.append(
             ParseTextEvalCase(
                 case_id=case_id,
                 text=text,
                 language=str(entry.get("language") or "en"),
                 expected_lookup_name=str(first_item["aliases"][0]),
-                expected_quantity_g=float(
-                    first_item["quantity_g"]
-                    if not isinstance(first_item["quantity_g"], list)
-                    else first_item["quantity_g"][0]
-                ),
+                expected_quantity_g=expected_quantity_g,
                 expected_source="ai_estimate",
                 expected_calorie_range=calories,
                 expected_items=tuple(expected_items),
@@ -172,7 +183,7 @@ def _text_corpus_status(cases: list[ParseTextEvalCase], splits: dict[str, str]) 
 
 
 def load_text_scaffold_manifest(path: str | Path | None = None):
-    """Load the synthetic text scaffold. This is not a reviewed text corpus."""
+    """Load the QA-labeled text manifest."""
     from scripts.development.accuracy_baseline_scaffold import (
         TEXT_FIXTURE,
         ScaffoldManifest,

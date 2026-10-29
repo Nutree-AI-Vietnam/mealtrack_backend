@@ -45,35 +45,76 @@ def _scaffold():
     return sys.modules["scripts.development.accuracy_baseline_scaffold"]
 
 
-def test_scaffolds_are_synthetic_placeholders_not_the_pool():
+def test_labeled_fixtures_load_and_keep_qa_case_ids():
     module = _load_harness()
     scaffold = _scaffold()
+    scan_manifest_module = sys.modules["scripts.development.meal_scan_eval_manifest"]
+    text_manifest_module = sys.modules["scripts.development.parse_text_eval_manifest"]
     scan = module.load_scan_scaffold_manifest()
     text = module.load_text_scaffold_manifest()
-    assert json.loads(scaffold.SCAN_FIXTURE.read_text()) == (
-        scaffold.build_scaffold_payload("meal_scan")
-    )
-    assert json.loads(scaffold.TEXT_FIXTURE.read_text()) == (
-        scaffold.build_scaffold_payload("parse_text")
+    scan_cases = scan_manifest_module.load_reviewed_manifest(scaffold.SCAN_FIXTURE)
+    text_cases, _splits = text_manifest_module.load_reviewed_provider_manifest(
+        scaffold.TEXT_FIXTURE
     )
 
-    assert scan.case_count == 100
-    assert text.case_count == 100
-    assert scan.privacy_reviewed is False
-    assert text.sample_collection_status == "placeholders_only"
+    assert scan.case_count == text.case_count == 100
+    assert len(scan_cases) == len(text_cases) == 100
+    assert scan.privacy_reviewed is True
+    assert text.privacy_reviewed is True
+    assert scan.label_status == text.label_status == "qa_labeled"
+    assert scan.sample_collection_status == "qa_labeled_exif_stripped"
     assert scan.quality_evaluation_status == module.QUALITY_STATUS
-    assert scan.splits == {"development": 70, "held_out": 30}
-    assert scan.languages["development"] == {"en": 35, "vi": 35}
-    assert text.languages["held_out"] == {"en": 15, "vi": 15}
-    assert scan.case_ids[0] == "scan-en-dev-001"
-    assert text.case_ids[-1] == "text-vi-hold-015"
+    assert scan.splits == text.splits == {"development": 70, "held_out": 30}
+    assert scan.case_ids[0] == "eval-scan-001"
+    assert "eval-scan-196" in scan.unscored_case_ids
+    assert scan.partial_case_ids == ("eval-scan-113",)
+    assert scan.non_food_case_ids == ("eval-scan-144",)
+    assert text.unscored_case_ids == ("eval-prompt-121",)
+    assert scan.gold_source_counts == {"db_lookup": 20, "estimate": 64, "label": 16}
+    assert text.gold_source_counts == {"db_lookup": 60, "estimate": 40}
+    assert scan.macro_case_counts["fiber_g"] == 0
+    assert text.macro_case_counts["sugar_g"] == 0
+    assert scan.known_micro_case_count == text.known_micro_case_count == 0
+    assert scan.corpus_gate_status == "blocked_incomplete_reviewed_corpus"
     assert "eval_scan_001" not in scan.case_ids
-    assert "eval_prompt_001" not in text.case_ids
+    assert "eval_prompt_003" not in text.case_ids
+    raw_scan = json.loads(scaffold.SCAN_FIXTURE.read_text())
+    raw_text = json.loads(scaffold.TEXT_FIXTURE.read_text())
+    for case in raw_scan["cases"]:
+        assert case["case_id"] == case["qa_case_id"].replace("_", "-")
+        assert case["image_path"] == f"scan_images/{case['qa_case_id']}.jpg"
+        assert not Path(case["image_path"]).is_absolute()
+    for case in raw_text["cases"]:
+        assert case["case_id"] == case["qa_case_id"].replace("_", "-")
+        assert "image_path" not in case
     blob = (
         scaffold.SCAN_FIXTURE.read_text() + scaffold.TEXT_FIXTURE.read_text()
     ).lower()
     for forbidden in ("user_id", "meal_id", "http://", "https://", "@"):
         assert forbidden not in blob
+    for image in scaffold.SCAN_IMAGE_DIR.glob("*.jpg"):
+        data = image.read_bytes()
+        assert data.startswith(b"\xff\xd8\xff")
+        for forbidden in (
+            b"user_id",
+            b"meal_id",
+            b"http://",
+            b"https://",
+            b"Exif\x00\x00",
+        ):
+            assert forbidden not in data
+
+
+def test_labeled_loader_rejects_unreviewed_privacy_flag(tmp_path):
+    _load_harness()
+    scaffold = _scaffold()
+    payload = json.loads(scaffold.SCAN_FIXTURE.read_text())
+    payload["privacy_reviewed"] = False
+    path = tmp_path / "unreviewed.json"
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="privacy_reviewed must be true"):
+        scaffold.load_scaffold_manifest(path)
 
 
 def test_scaffold_rejects_production_identifiers(tmp_path):
@@ -104,14 +145,24 @@ def test_baseline_report_is_reproducible_and_does_not_claim_accuracy():
     assert first["grounding_arm"]["requested"] == "not-implemented"
     assert first["candidate_pool"]["resampled"] is False
     assert first["candidate_pool"]["loaded_into_fixtures"] is False
+    assert first["candidate_pool"]["qa_labeled_fixtures_loaded"] is True
+    assert first["candidate_pool"]["status"] == (
+        "qa_labels_committed_production_ids_not_copied"
+    )
     assert first["candidate_pool"]["path"] == "/workspace/ai-accuracy-eval"
     assert first["candidate_pool"]["selection_sql"].endswith("README.md")
     assert first["scan"]["contract"]["mode"] == "offline_contract_only"
     assert first["scan"]["contract"]["parse_success_rate"] == 1.0
     assert first["scan"]["contract"]["validation_success_rate"] == 1.0
     assert first["scan"]["contract"]["prompt_accuracy"] is None
+    assert first["scan"]["contract"]["quality_evaluation_status"] == (
+        "contract_only_labeled_photos_not_scored"
+    )
     assert first["scan"]["scaffold"]["case_count"] == 100
+    assert first["scan"]["scaffold"]["privacy_reviewed"] is True
     assert first["text"]["scaffold"]["case_count"] == 100
+    assert first["text"]["scaffold"]["privacy_reviewed"] is True
+    assert first["quality_evaluation_status"] == module.QUALITY_STATUS
     assert first["text"]["offline_contract"]["contract_pass_rate"] == 1.0
     assert first["text"]["offline_contract"]["quality_metrics"] is None
     assert "latency" not in json.dumps(first["text"]["offline_contract"])

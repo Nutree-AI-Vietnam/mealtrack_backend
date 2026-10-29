@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Reproduce the accuracy baseline report from the existing eval paths.
+"""Reproduce the accuracy baseline report from the QA-labeled fixtures.
 
 One command:
 
     python scripts/development/run_accuracy_baseline.py
 
-The report is contract evidence plus the synthetic 100+100 scaffolds. It does
-not call a provider, does not read the candidate pool, and does not switch
-reference grounding. ``--grounding on|off`` is item #2
+The report loads the committed 100 scan and 100 prompt labels, then runs the
+existing offline contract paths. It does not call a provider, so photo and text
+accuracy stay unmeasured. It does not read the restricted candidate pool and
+does not switch reference grounding. ``--grounding on|off`` is item #2
 (``AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED``) and is rejected here.
 """
 
@@ -85,7 +86,7 @@ def _scan_contract() -> dict[str, Any]:
         "mode": "offline_contract_only",
         "parse_success_rate": result.parse_success_rate,
         "prompt_accuracy": None,
-        "quality_evaluation_status": "blocked_no_reviewed_photo_corpus",
+        "quality_evaluation_status": "contract_only_labeled_photos_not_scored",
         "validation_success_rate": result.validation_success_rate,
     }
 
@@ -127,15 +128,25 @@ def _scaffold_section(manifest: Any) -> dict[str, Any]:
     return {
         "case_count": manifest.case_count,
         "case_ids_sha256": _case_id_digest(manifest.case_ids),
+        "corpus_gate_status": manifest.corpus_gate_status,
+        "gold_source_counts": manifest.gold_source_counts,
+        "known_micro_case_count": manifest.known_micro_case_count,
         "label_status": manifest.label_status,
         "languages": manifest.languages,
+        "macro_case_counts": manifest.macro_case_counts,
         "manifest_sha256": manifest.manifest_sha256,
+        "non_food_case_ids": list(manifest.non_food_case_ids),
+        "partial_case_ids": list(manifest.partial_case_ids),
         "privacy_reviewed": manifest.privacy_reviewed,
         "quality_evaluation_status": manifest.quality_evaluation_status,
+        "quality_flag_counts": manifest.quality_flag_counts,
+        "quantity_labeled_items": manifest.quantity_labeled_items,
+        "quantity_unlabeled_items": manifest.quantity_unlabeled_items,
         "sample_collection_status": manifest.sample_collection_status,
         "source_provenance": manifest.source_provenance,
         "splits": manifest.splits,
         "surface": manifest.surface,
+        "unscored_case_ids": list(manifest.unscored_case_ids),
     }
 
 
@@ -145,7 +156,11 @@ def _case_id_digest(case_ids: tuple[str, ...]) -> str:
 
 
 def build_baseline_report() -> dict[str, Any]:
-    """Run the existing offline eval paths and attach the synthetic scaffolds."""
+    """Load the QA-labeled fixtures and attach the offline contract paths.
+
+    Contract success is not photo or text accuracy. Scoring the labels needs a
+    live provider run, which this command does not start.
+    """
     scan_scaffold = load_scan_scaffold_manifest()
     text_scaffold = load_text_scaffold_manifest()
     reference_cases, drop_cases = load_corpus()
@@ -156,14 +171,15 @@ def build_baseline_report() -> dict[str, Any]:
         "accuracy_claim": None,
         "candidate_pool": {
             "image_fetch": (
-                "Backend is EXIF-stripping scan images in the restricted store. "
-                "This report does not download images."
+                "Not performed. Scan fixtures are the committed EXIF-stripped "
+                "JPEGs under tests/fixtures/accuracy_baseline/scan_images/."
             ),
             "loaded_into_fixtures": False,
             "path": POOL_PATH,
+            "qa_labeled_fixtures_loaded": True,
             "resampled": False,
             "selection_sql": POOL_SQL,
-            "status": "privacy_review_before_trim_to_100",
+            "status": "qa_labels_committed_production_ids_not_copied",
             "trim_target": {"parse_text": 100, "scan": 100},
         },
         "candidate_quality_measured": False,

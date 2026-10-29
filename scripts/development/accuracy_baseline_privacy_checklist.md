@@ -1,7 +1,8 @@
 # Accuracy baseline privacy checklist
 
-Required before any scan photo or meal text is published to QA or committed as a
-reviewed fixture. This PR does not publish samples and does not draw a new pool.
+Required before any scan photo or meal text is committed as a reviewed fixture.
+The committed fixtures are the finalized QA labels. This checklist does not
+draw a new pool.
 
 ## FACT — candidate pool already pulled
 
@@ -50,13 +51,14 @@ by accident.
 2. `internal_meal_id_map.csv` stays on the restricted path. The mapping step
    discards `meal_id` before any fixture, report, or QA packet is written.
 3. Reviewed-manifest loaders require hyphenated ids matching
-   `^[a-z0-9]+(?:-[a-z0-9]+)+$`. When a row survives trim, rewrite
-   `eval_scan_001` → `eval-scan-001` and `eval_prompt_001` → `eval-prompt-001`.
-   Do not hash or embed `meal_id` or `user_id`.
-4. Git fixtures in this PR (`scan-en-dev-001`, `text-en-dev-001`, and the rest
-   of the 100 + 100) are placeholders. They are not the first 100 pool rows
-   and they are not the post-review trim. Replace them only after dual privacy
-   review, still with synthetic ids and no `meal_id`, `user_id`, or URL.
+   `^[a-z0-9]+(?:-[a-z0-9]+)+$`. The committed fixtures keep the QA id on
+   `qa_case_id` and rewrite `eval_scan_001` → `eval-scan-001` and
+   `eval_prompt_001` → `eval-prompt-001` for `case_id`. Do not hash or embed
+   `meal_id` or `user_id`.
+4. Git fixtures are those rewritten QA ids. They are the post-review trim, not
+   the placeholder ids `scan-en-dev-001` / `text-en-dev-001`, and not a copy of
+   the restricted pool. Scan bytes are `scan_images/eval_scan_NNN.jpg` relative
+   to the manifest. No `meal_id`, `user_id`, or URL.
 
 ## CTO policy — before any sample is published
 
@@ -86,17 +88,26 @@ folder. QA labeling starts after the trimmed set and this schema are both
 ready. Ping Niels at that handoff. Labeling capacity this sprint is about
 two to three days once the sample set and schema are in their hands.
 
-## This PR's fixtures
+## Committed fixtures
 
 `tests/fixtures/accuracy_baseline/meal_scan_scaffold_manifest.json` and
-`parse_text_scaffold_manifest.json` are 100 + 100 synthetic placeholders:
+`parse_text_scaffold_manifest.json` are the 100 + 100 QA labels:
 
-- `privacy_reviewed` is false and `review_status` is `unreviewed`
-- `loaded_into_this_manifest` is false
+- `privacy_reviewed` is true and `review_status` is `reviewed`
+- `label_status` is `qa_labeled`
+- scan JPEGs live under `scan_images/` and are addressed by relative paths
+- production pool rows are not loaded (`loaded_into_fixtures` stays false)
 - no `user_id`, `meal_id`, image id, or URL
 
-The harness refuses those keys, UUID-shaped strings, email addresses, and
-`http` URLs anywhere in a scaffold document.
+The harness still refuses those keys, UUID-shaped strings, email addresses, and
+`http` URLs anywhere in a fixture document. Gram weights are copied only when
+the QA item text states grams. Calorie gold is omitted only for the two
+unscored rows (`eval-scan-196`, `eval-prompt-121`). Fiber, sugar, and the ten
+micronutrients were not in the QA tables, so fiber and sugar are absent and
+every micro status is `unknown`.
+
+Prompt CSV privacy columns were blank. Scan rows are `privacy_usable=yes` with
+both reviewer marks `keep`. The finalization note records zero privacy drops.
 
 ## Grounding
 
@@ -110,14 +121,14 @@ The harness refuses those keys, UUID-shaped strings, email addresses, and
 python scripts/development/run_accuracy_baseline.py
 ```
 
-That prints one JSON report to stdout. It runs the existing scan contract
-path and the existing parse-text offline path, then attaches the scaffold
-counts. It does not read `/workspace/ai-accuracy-eval/`. Optional `--output`
-refuses to overwrite a file and, inside the repo, requires a gitignored path.
+That prints one JSON report to stdout. It loads the QA-labeled fixtures, runs
+the existing scan contract path and the existing parse-text offline path, and
+attaches label counts. It does not call a provider and does not read
+`/workspace/ai-accuracy-eval/`. Optional `--output` refuses to overwrite a file
+and, inside the repo, requires a gitignored path.
 
 The report's `accuracy_claim` is null. Contract success is not photo or text
-accuracy. Real sample trim, dual privacy review, and QA labeling are the next
-handoff.
+accuracy. Scoring the labeled photos and prompts needs a live provider run.
 
 ## HYPOTHESIS — not established by the pull
 
