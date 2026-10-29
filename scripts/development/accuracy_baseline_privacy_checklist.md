@@ -111,11 +111,24 @@ both reviewer marks `keep`. The finalization note records zero privacy drops.
 
 ## Grounding
 
-`--grounding on|off` is accuracy package item #2
-(`AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED`). This harness accepts only
-`--grounding not-implemented` and records that arm as not implemented.
+`AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED` stays off in production. Offline
+mode still accepts only `--grounding not-implemented` and does not call a
+provider.
 
-## Reproduce the report
+Live mode does not set that flag. `--arm both` (the live default) scores
+vision nutrition with grounding off, then calls
+`FoodReferenceValidationService.ground_meal` on a copy of the same vision
+nutrition. That is the production branch the flag selects. `--grounding off`
+or `--grounding on` limits the run to one arm. Parse-text does not read the
+flag.
+
+The ON arm counts local-catalog misses. The cascade looks up
+`normalize_food_lookup_name`. Catalog rows are stored under
+`normalize_food_name`. When those keys differ and the product key misses, a
+diagnostic read checks whether the catalog key would have hit. That read is
+not fed back into the meal.
+
+## Reproduce the offline report
 
 ```bash
 python scripts/development/run_accuracy_baseline.py
@@ -128,7 +141,40 @@ attaches label counts. It does not call a provider and does not read
 and, inside the repo, requires a gitignored path.
 
 The report's `accuracy_claim` is null. Contract success is not photo or text
-accuracy. Scoring the labeled photos and prompts needs a live provider run.
+accuracy.
+
+## Live provider run
+
+Requires `OPENAI_API_KEY`. The command fails before any provider call when
+the key is missing. It does not print the key. Concurrency defaults to 2 and
+cannot exceed 4.
+
+```bash
+python scripts/development/run_accuracy_baseline.py --mode live --confirm-live
+```
+
+`--live` is the same switch. The JSON report and a short summary are written
+under `artifacts/accuracy-baseline/`, which is gitignored. The report records
+MAE, MAPE where the gold midpoint is not zero, the share of scored cases
+within ±10% and ±20%, per-case latency, and token totals from provider
+`usage_metadata`. USD stays empty unless
+`ACCURACY_BASELINE_INPUT_USD_PER_MILLION` and
+`ACCURACY_BASELINE_OUTPUT_USD_PER_MILLION` are set. FatSecret searches and
+detail reads are counted. They get a USD figure only when
+`ACCURACY_BASELINE_FATSECRET_USD_PER_CALL` is set.
+
+Both arm totals include the shared vision and parse-text model call. Adding
+those two USD figures double-counts that call. `incremental_on` is the
+grounding-only FatSecret traffic.
+
+The parse-text handler is given a 45 second floor so a slow answer can still
+be scored. Cases slower than `PARSE_TEXT_AI_TIMEOUT_SECONDS` are flagged
+`exceeded_product_deadline`. The eval does not open a unit of work, so it
+does not persist serving translations. Local catalog lookup runs only when a
+database URL is configured. FatSecret runs only when its credentials are
+configured. Unscored labels stay out of MAE. Partial labels score only the
+nutrients QA recorded. A vision `not food` result is not scored as zero
+calories.
 
 ## HYPOTHESIS — not established by the pull
 

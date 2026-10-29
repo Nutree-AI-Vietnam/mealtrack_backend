@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Reproduce the accuracy baseline report from the QA-labeled fixtures.
 
-One command:
+Offline, the default:
 
     python scripts/development/run_accuracy_baseline.py
 
-The report loads the committed 100 scan and 100 prompt labels, then runs the
-existing offline contract paths. It does not call a provider, so photo and text
-accuracy stay unmeasured. It does not read the restricted candidate pool and
-does not switch reference grounding. ``--grounding on|off`` is item #2
-(``AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED``) and is rejected here.
+That command loads the committed 100 scan and 100 prompt labels and runs the
+existing offline contract paths. It does not call a provider. ``--grounding``
+other than ``not-implemented`` is rejected so the offline report stays stable.
+
+Live, one shared vision pass plus the product parse-text handler. The default
+live arm is both: grounding off, then ``FoodReferenceValidationService.ground_meal``
+on a copy of that same vision nutrition. The process does not set
+``AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED``.
+
+    python scripts/development/run_accuracy_baseline.py --mode live --confirm-live
 """
 
 from __future__ import annotations
@@ -28,6 +33,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.development.accuracy_baseline_live import (
+    default_live_output,
+    render_live_summary,
+    require_live_provider_keys,
+    run_product_live,
+)
 from scripts.development.accuracy_baseline_scaffold import (
     POOL_PATH,
     POOL_SQL,
@@ -52,8 +63,8 @@ from src.domain.services.meal_analysis.prompt_eval_loop import PromptEvalLoop
 # Same cap as evaluate_parse_text_nutrition.py --mode offline.
 _OFFLINE_TEXT_CAP = 25
 _GROUNDING_FOLLOW_UP = (
-    "Item #2 AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED. "
-    "This harness does not switch grounding."
+    "Offline report does not switch AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED. "
+    "Live mode calls ground_meal without setting the flag."
 )
 
 
@@ -227,41 +238,123 @@ def _open_report(path: str):
     return target, os.fdopen(fd, "w", encoding="utf-8")
 
 
+def _live_arms(args: argparse.Namespace) -> str:
+    if args.arm != "default":
+        return str(args.arm)
+    if args.grounding == "on":
+        return "on"
+    if args.grounding == "off":
+        return "off"
+    return "both"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--mode",
+        choices=("offline", "live"),
+        default="offline",
+        help="offline is the contract report. live calls the product providers.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Same as --mode live.",
+    )
+    parser.add_argument(
+        "--confirm-live",
+        action="store_true",
+        help="Required with live mode. Acknowledges provider spend.",
+    )
+    parser.add_argument(
+        "--arm",
+        choices=("default", "off", "on", "both"),
+        default="default",
+        help=(
+            "Live only. default with no --grounding runs off and on. "
+            "--grounding off or on selects that arm."
+        ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=2,
+        help="Live provider concurrency. Clamped to 1..4.",
+    )
+    parser.add_argument(
         "--grounding",
-        choices=("not-implemented",),
+        choices=("not-implemented", "off", "on"),
         default="not-implemented",
-        help=("Reserved slot. on|off grounding is item #2 and is not accepted."),
+        help=(
+            "Offline accepts only not-implemented. Live off skips ground_meal. "
+            "Live on calls it. The production flag is not changed."
+        ),
     )
     parser.add_argument(
         "--output",
-        help="Write the report here. Omit to print the report on stdout.",
+        help=(
+            "Write the report here. Live mode defaults to a gitignored path. "
+            "Omit offline to print the report on stdout."
+        ),
     )
     args = parser.parse_args(argv)
     try:
-        report = build_baseline_report()
-        if args.grounding != "not-implemented":
-            raise RuntimeError(_GROUNDING_FOLLOW_UP)
-        rendered = render_report(report)
-        if args.output:
-            target, handle = _open_report(args.output)
-            with handle:
-                handle.write(rendered)
-            os.chmod(target, 0o600)
-            print(
-                "mode=accuracy_baseline "
-                f"quality={report['quality_evaluation_status']} report={target}"
+        live = args.mode == "live" or args.live
+        if not live and args.grounding != "not-implemented":
+            raise RuntimeError(
+                "Offline mode does not switch grounding. "
+                "Use --mode live --confirm-live. " + _GROUNDING_FOLLOW_UP
             )
-        else:
-            sys.stdout.write(rendered)
-        scan_ok = (
-            report["scan"]["contract"]["parse_success_rate"] == 1.0
-            and report["scan"]["contract"]["validation_success_rate"] == 1.0
+        if not live:
+            report = build_baseline_report()
+            rendered = render_report(report)
+            if args.output:
+                target, handle = _open_report(args.output)
+                with handle:
+                    handle.write(rendered)
+                os.chmod(target, 0o600)
+                print(
+                    "mode=accuracy_baseline "
+                    f"quality={report['quality_evaluation_status']} report={target}"
+                )
+            else:
+                sys.stdout.write(rendered)
+            scan_ok = (
+                report["scan"]["contract"]["parse_success_rate"] == 1.0
+                and report["scan"]["contract"]["validation_success_rate"] == 1.0
+            )
+            text_ok = report["text"]["offline_contract"]["contract_pass_rate"] == 1.0
+            return 0 if scan_ok and text_ok else 1
+        if not args.confirm_live:
+            raise RuntimeError(
+                "live mode requires --confirm-live. No provider call was made."
+            )
+        if args.concurrency < 1 or args.concurrency > 4:
+            raise RuntimeError("concurrency must be from 1 to 4")
+        require_live_provider_keys()
+        output = args.output or default_live_output()
+        report = asyncio.run(
+            run_product_live(
+                arms=_live_arms(args),
+                concurrency=args.concurrency,
+                metadata={"git_sha": _git_sha()},
+            )
         )
-        text_ok = report["text"]["offline_contract"]["contract_pass_rate"] == 1.0
-        return 0 if scan_ok and text_ok else 1
+        rendered = render_report(report)
+        target, handle = _open_report(output)
+        with handle:
+            handle.write(rendered)
+        os.chmod(target, 0o600)
+        summary_path = target.with_suffix(".summary.txt")
+        summary_path.write_text(render_live_summary(report), encoding="utf-8")
+        os.chmod(summary_path, 0o600)
+        sys.stdout.write(render_live_summary(report))
+        print(f"mode=accuracy_baseline_live report={target}")
+        scored = (
+            report["scan"]["grounding_off"]["nutrients"]["kcal"]["scored_cases"] > 0
+            and report["text"]["nutrients"]["kcal"]["scored_cases"] > 0
+        )
+        return 0 if scored else 1
     except (
         RuntimeError,
         ValueError,

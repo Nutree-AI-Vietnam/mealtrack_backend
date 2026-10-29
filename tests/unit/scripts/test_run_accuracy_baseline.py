@@ -184,11 +184,13 @@ def test_cli_writes_the_same_report(tmp_path, capsys):
     assert written["scan"]["scaffold"]["case_count"] == 100
 
 
-def test_grounding_on_is_rejected():
+def test_grounding_on_without_live_is_rejected(capsys):
     module = _load_harness()
 
-    with pytest.raises(SystemExit):
-        module.main(["--grounding", "on"])
+    assert module.main(["--grounding", "on"]) == 1
+
+    captured = capsys.readouterr()
+    assert "Offline mode does not switch grounding" in captured.err
 
 
 def test_label_schema_matches_eval_nutrients_and_checklist_points_at_pool():
