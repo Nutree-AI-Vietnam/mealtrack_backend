@@ -280,7 +280,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 strategy = AnalysisStrategyFactory.create_user_context_strategy(
                     command.user_description,
                     language=command.language,
-                    correction_hints=correction_hints,
+                    correction_hints=correction_hints or None,
                 )
                 vision_result = await self.vision_service.analyze_with_strategy(
                     image_bytes, strategy
@@ -296,10 +296,12 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     user_id=command.user_id,
                     uow_factory=self.uow_factory,
                 )
+                analyze_kwargs: dict = {"language": command.language}
+                if correction_hints:
+                    analyze_kwargs["correction_hints"] = correction_hints
                 vision_result = await self.vision_service.analyze(
                     image_bytes,
-                    language=command.language,
-                    correction_hints=correction_hints,
+                    **analyze_kwargs,
                 )
 
             vision_elapsed = time.time() - start

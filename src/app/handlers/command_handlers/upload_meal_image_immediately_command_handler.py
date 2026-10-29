@@ -121,7 +121,7 @@ class UploadMealImageImmediatelyHandler(
                     strategy = AnalysisStrategyFactory.create_user_context_strategy(
                         command.user_description,
                         language=command.language,
-                        correction_hints=correction_hints,
+                        correction_hints=correction_hints or None,
                     )
                     result = await self.vision_service.analyze_with_strategy(
                         command.file_contents, strategy
@@ -133,10 +133,12 @@ class UploadMealImageImmediatelyHandler(
                     f"[PHASE-1-START] meal={meal_id} | "
                     f"vision analysis | attempt={attempt}/{max_attempts}"
                 )
+                analyze_kwargs: dict = {"language": command.language}
+                if correction_hints:
+                    analyze_kwargs["correction_hints"] = correction_hints
                 result = await self.vision_service.analyze(
                     command.file_contents,
-                    language=command.language,
-                    correction_hints=correction_hints,
+                    **analyze_kwargs,
                 )
                 self._validate_localized_vision_result(result, command.language)
                 return result

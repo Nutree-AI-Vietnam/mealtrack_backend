@@ -16,8 +16,8 @@ from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 
 logger = logging.getLogger(__name__)
 
-# Keep scan hot path snappy; memory is best-effort only.
-_DEFAULT_TIMEOUT_S = 0.05
+# Best-effort only: enough budget for a small indexed read, fail-open on miss.
+_DEFAULT_TIMEOUT_S = 0.25
 _MEAL_LIMIT = 30
 _HINT_LIMIT = 3
 

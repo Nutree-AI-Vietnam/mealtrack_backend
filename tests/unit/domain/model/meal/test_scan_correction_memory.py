@@ -55,3 +55,29 @@ def test_hint_block_and_line_include_wrong_to_right():
 
 def test_format_empty_hints_is_blank():
     assert format_correction_hint_block([]) == ""
+
+
+def test_grape_correction_lands_in_basic_scan_prompt():
+    """End-to-end shape: Fix memory → ranked hint → vision user message."""
+    from src.domain.strategies.meal_analysis_strategy import BasicAnalysisStrategy
+
+    raw = json.dumps(
+        {
+            "_fix_result_corrections": [
+                {
+                    "correction": "that is grape not indian date",
+                    "wrong_dish": "Indian date",
+                    "right_dish": "Grape",
+                    "wrong_names": ["Indian date"],
+                    "right_names": ["Grape"],
+                }
+            ]
+        }
+    )
+    memories = extract_fix_result_corrections(raw, meal_id="m-grape")
+    ranked = rank_scan_corrections(memories, user_description=None, limit=3)
+    hints = [memory.hint_line() for memory in ranked]
+    msg = BasicAnalysisStrategy(correction_hints=hints).get_user_message()
+    assert "Past user corrections" in msg
+    assert "Grape" in msg
+    assert "Indian date" in msg

@@ -210,7 +210,7 @@ async def analyze_vision(
             strategy = AnalysisStrategyFactory.create_user_context_strategy(
                 command.user_description,
                 language=command.language,
-                correction_hints=correction_hints,
+                correction_hints=correction_hints or None,
             )
             runtime.vision_result = await _run_vision_with_retry(
                 runtime,
@@ -223,14 +223,16 @@ async def analyze_vision(
                 ),
             )
         else:
+            analyze_kwargs: dict = {"language": command.language}
+            if correction_hints:
+                analyze_kwargs["correction_hints"] = correction_hints
             runtime.vision_result = await _run_vision_with_retry(
                 runtime,
                 lambda: _analyze_and_validate_locale(
                     runtime,
                     lambda: runtime.vision_service.analyze(
                         image_bytes,
-                        language=command.language,
-                        correction_hints=correction_hints,
+                        **analyze_kwargs,
                     ),
                 ),
             )
