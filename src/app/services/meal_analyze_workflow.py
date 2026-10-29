@@ -94,7 +94,8 @@ class MealAnalyzeWorkflow:
             or self._food_reference_validation_service is None
         ):
             return meal
-        return await self._food_reference_validation_service.validate_meal(meal)
+        report = await self._food_reference_validation_service.validate_meal(meal)
+        return report.meal
 
     def _configure_runtime(self, runtime: MealAnalyzeRuntime) -> None:
         runtime.food_reference_validation_service = (

@@ -1,6 +1,7 @@
 """Tests for optional food reference validation."""
 
 import asyncio
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -61,9 +62,9 @@ async def test_local_reference_match_avoids_provider():
     )
     meal = _meal()
 
-    result = await service.validate_meal(meal)
+    report = await service.validate_meal(meal)
 
-    assert result is meal
+    assert report.meal is meal
     repository.find_batch_by_normalized_names.assert_awaited_once_with(["white rice"])
     provider.search_food_candidates.assert_not_awaited()
 
@@ -79,9 +80,9 @@ async def test_batch_local_reference_lookup_avoids_provider():
     )
     meal = _meal()
 
-    result = await service.validate_meal(meal)
+    report = await service.validate_meal(meal)
 
-    assert result is meal
+    assert report.meal is meal
     batch_lookup.assert_awaited_once_with(["white rice"])
     provider.search_food_candidates.assert_not_awaited()
 
@@ -97,9 +98,9 @@ async def test_local_reference_lookup_callable_avoids_provider():
     )
     meal = _meal()
 
-    result = await service.validate_meal(meal)
+    report = await service.validate_meal(meal)
 
-    assert result is meal
+    assert report.meal is meal
     lookup.assert_awaited_once_with("white rice")
     provider.search_food_candidates.assert_not_awaited()
 
@@ -133,9 +134,14 @@ async def test_provider_details_only_selected_candidate():
     )
     meal = _meal()
 
-    result = await service.validate_meal(meal)
+    report = await service.validate_meal(meal)
 
-    assert result is meal
+    assert report.meal is meal
+    assert report.outcome == "match"
+    assert report.error_type is None
+    assert report.items[0].outcome == "match"
+    assert report.items[0].source == "provider"
+    assert report.items[0].reason_code == "matched"
     provider.search_food_candidates.assert_awaited_once_with(
         "White Rice", max_results=3
     )
@@ -148,9 +154,9 @@ async def test_provider_details_only_selected_candidate():
     assert micros is not None
     assert micros.iron == pytest.approx(0.6)
     assert micros.sodium == pytest.approx(3)
-    assert meal.nutrition.food_items[0].source_snapshot["extra_nutrients"]["iron_mg"] == (
-        0.4
-    )
+    assert meal.nutrition.food_items[0].source_snapshot["extra_nutrients"][
+        "iron_mg"
+    ] == (0.4)
 
 
 @pytest.mark.asyncio
@@ -173,9 +179,9 @@ async def test_divergent_provider_details_do_not_enrich_item():
     meal = _meal()
     original_units = meal.nutrition.food_items[0].allowed_units
 
-    result = await service.validate_meal(meal)
+    report = await service.validate_meal(meal)
 
-    assert result is meal
+    assert report.meal is meal
     assert meal.nutrition.food_items[0].allowed_units == original_units
 
 
@@ -193,9 +199,64 @@ async def test_provider_timeout_returns_original_meal():
     )
     meal = _meal()
 
-    result = await service.validate_meal(meal)
+    report = await service.validate_meal(meal)
 
-    assert result is meal
+    assert report.meal is meal
+    assert report.outcome == "timeout"
+    assert report.reason_code == "timeout"
+    assert report.error_type == "TimeoutError"
+    assert report.items == ()
+
+
+@pytest.mark.asyncio
+async def test_macro_divergence_is_reported_without_enriching():
+    provider = MagicMock()
+    provider.search_food_candidates = AsyncMock(
+        return_value=[
+            {"food_id": "selected", "description": "White Rice", "source": "fatsecret"}
+        ]
+    )
+    provider.get_food_details = AsyncMock(
+        return_value={
+            "source": "fatsecret",
+            "protein_100g": 20,
+            "carbs_100g": 10,
+            "fat_100g": 5,
+        }
+    )
+    service = FoodReferenceValidationService(nutrition_reference_provider=provider)
+    meal = _meal()
+    original_units = meal.nutrition.food_items[0].allowed_units
+
+    report = await service.validate_meal(meal)
+
+    assert report.outcome == "diverge"
+    assert report.meal is meal
+    assert report.items[0].outcome == "diverge"
+    assert report.items[0].source == "fatsecret"
+    assert report.items[0].reason_code == "macro_divergence"
+    assert meal.nutrition.food_items[0].allowed_units == original_units
+    assert meal.nutrition.food_items[0].micros is None
+
+
+@pytest.mark.asyncio
+async def test_provider_exception_is_reported_without_its_message():
+    provider = MagicMock()
+    provider.search_food_candidates = AsyncMock(
+        side_effect=RuntimeError("provider token secret-value")
+    )
+    service = FoodReferenceValidationService(nutrition_reference_provider=provider)
+    meal = _meal()
+
+    report = await service.validate_meal(meal)
+
+    assert report.outcome == "error"
+    assert report.error_type == "RuntimeError"
+    assert report.reason_code == "provider_error"
+    assert report.meal is meal
+    dumped = json.dumps(report.to_audit_dict())
+    assert "secret-value" not in dumped
+    assert "provider token" not in dumped
 
 
 @pytest.mark.asyncio
@@ -205,7 +266,9 @@ async def test_food_label_meal_skips_reference_validation():
     service = FoodReferenceValidationService(nutrition_reference_provider=provider)
     meal = _meal(source="food_label")
 
-    result = await service.validate_meal(meal)
+    report = await service.validate_meal(meal)
 
-    assert result is meal
+    assert report.meal is meal
+    assert report.outcome == "skipped"
+    assert report.reason_code == "food_label"
     provider.search_food_candidates.assert_not_awaited()
