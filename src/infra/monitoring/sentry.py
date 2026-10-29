@@ -30,6 +30,19 @@ from src.infra.monitoring.connectors import (
 
 logger = logging.getLogger(__name__)
 
+
+def add_connect_retry_breadcrumb(error_type: str) -> None:
+    """Attach one connect-retry breadcrumb. ``error_type`` is a class name."""
+    if sentry_sdk is None:
+        return
+    sentry_sdk.add_breadcrumb(
+        category="db.connect",
+        level="warning",
+        message="Database connect attempt failed; retrying once",
+        data={"error_type": error_type},
+    )
+
+
 # Opt out only when ENVIRONMENT is explicitly one of these. An unset or blank
 # variable must still send when a DSN is set, so a missing env var cannot
 # silence production (settings defaults ENVIRONMENT to "development").

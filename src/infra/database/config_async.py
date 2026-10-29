@@ -79,6 +79,17 @@ def _normalize_asyncpg_url(raw_url: str) -> str:
     return raw_url
 
 
+def _record_connect_retry(error_type: str) -> None:
+    """Log one connect retry. No exception text and no connect arguments."""
+    logger.warning(
+        "Database connect attempt failed (%s); retrying once",
+        error_type,
+    )
+    from src.infra.monitoring.sentry import add_connect_retry_breadcrumb
+
+    add_connect_retry_breadcrumb(error_type)
+
+
 async def connect_with_one_retry(
     connect: Callable[..., Awaitable[Any]],
     /,
@@ -95,15 +106,30 @@ async def connect_with_one_retry(
     try:
         return await connect(*args, **kwargs)
     except OSError as exc:
-        logger.warning(
-            "Database connect attempt failed (%s); retrying once",
-            type(exc).__name__,
-        )
+        _record_connect_retry(type(exc).__name__)
         return await connect(*args, **kwargs)
 
 
 async def _retrying_asyncpg_connect(*args: Any, **kwargs: Any) -> Any:
     return await connect_with_one_retry(asyncpg.connect, *args, **kwargs)
+
+
+def build_async_connect_args(
+    policy: DatabaseConnectionPolicy,
+    url_connect_args: dict | None = None,
+) -> dict:
+    """Connect kwargs for every async engine.
+
+    Callers are the app engine in this module (``PlannerQueuePool`` and
+    ``PlannerNullPool``) and the catalog worker engine. Pooler mode attaches
+    the one-shot connect retry here so those engines cannot drift.
+    """
+    connect_args = {**(url_connect_args or {}), **policy.connect_args}
+    if policy.mode == "neon_pooler":
+        # SQLAlchemy pops this and calls it with the remaining connect kwargs,
+        # including timeout. It replaces only asyncpg.connect, not statements.
+        connect_args["async_creator_fn"] = _retrying_asyncpg_connect
+    return connect_args
 
 
 # Resolve connection policy from environment.
@@ -117,18 +143,13 @@ ASYNC_DATABASE_URL, _url_connect_args = _sanitize_asyncpg_url_and_connect_args(
     ASYNC_DATABASE_URL
 )
 
-# Merge connect_args: url-level (ssl from sslmode) first, then policy-level
-# (prepared_statement_cache_size=0 for pooler) so policy settings take precedence.
-_connect_args = {**_url_connect_args, **_policy.connect_args}
+# URL-level kwargs (ssl from sslmode) first, then policy-level, so policy
+# settings take precedence. The same helper feeds the worker engine.
+_connect_args = build_async_connect_args(_policy, _url_connect_args)
 
 # Expose connection mode for health endpoint and observability
 CONNECTION_MODE = _policy.mode
 _IS_NEON_POOLER = _policy.mode == "neon_pooler"  # backward-compat alias
-if _IS_NEON_POOLER:
-    # SQLAlchemy pops this and calls it with the remaining connect kwargs,
-    # including timeout. It replaces only asyncpg.connect, not statement
-    # execution.
-    _connect_args["async_creator_fn"] = _retrying_asyncpg_connect
 
 _UVICORN_WORKERS = _policy.worker_count
 _ASYNC_POOL_SIZE = _policy.pool_size

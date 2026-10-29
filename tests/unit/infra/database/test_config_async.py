@@ -406,7 +406,9 @@ def test_engine_actual_pool_settings_and_driver_safety(monkeypatch, caplog, mode
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error_type", [TimeoutError, OSError])
-async def test_connect_retries_once_after_connect_failure(error_type, caplog):
+async def test_connect_retries_once_after_connect_failure(
+    error_type, caplog, monkeypatch
+):
     """A stalled handshake is retried once. The log has no user data."""
     import src.infra.database.config_async as cfg
 
@@ -421,6 +423,16 @@ async def test_connect_retries_once_after_connect_failure(error_type, caplog):
             raise error_type("user-secret-must-not-log")
         return sentinel
 
+    breadcrumbs: list[str] = []
+
+    def add_connect_retry_breadcrumb(error_type: str) -> None:
+        breadcrumbs.append(error_type)
+
+    monkeypatch.setattr(
+        "src.infra.monitoring.sentry.add_connect_retry_breadcrumb",
+        add_connect_retry_breadcrumb,
+    )
+
     with caplog.at_level(logging.WARNING):
         result = await cfg.connect_with_one_retry(connect, password="s3cret-user-data")
 
@@ -433,6 +445,7 @@ async def test_connect_retries_once_after_connect_failure(error_type, caplog):
     assert "user-secret-must-not-log" not in message
     assert "s3cret-user-data" not in message
     assert warnings[0].exc_info in (None, (None, None, None))
+    assert breadcrumbs == [error_type.__name__]
 
 
 @pytest.mark.asyncio
@@ -466,3 +479,45 @@ async def test_connect_does_not_retry_non_connect_errors():
     with pytest.raises(RuntimeError, match="statement already started"):
         await cfg.connect_with_one_retry(connect)
     assert calls == 1
+
+
+def _driver_kwargs(engine, monkeypatch) -> dict:
+    captured: dict = {}
+
+    def capture_connect(*args, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(engine.sync_engine.dialect, "connect", capture_connect)
+    assert engine.sync_engine.pool._creator() is not None
+    return captured
+
+
+def test_worker_engine_shares_pooler_connect_setup_with_app_engine(monkeypatch):
+    """The catalog worker must get the same timeout and retry creator as the app."""
+    url = "postgresql://user:pw@ep-xxx-pooler.neon.tech/db?sslmode=require"
+    monkeypatch.setenv("APP_DATABASE_URL", url)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "neon_pooler")
+    monkeypatch.setenv("CATALOG_WORKER_DATABASE_URL", url)
+    monkeypatch.setenv("CATALOG_WORKER_DB_CONNECTION_MODE", "neon_pooler")
+    monkeypatch.delenv("ASYNC_CONNECT_TIMEOUT", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL_DIRECT", raising=False)
+
+    import src.infra.database.config_async as cfg
+    from src.infra.workers.catalog_preparation_runtime import create_worker_engine
+
+    importlib.reload(cfg)
+    worker = create_worker_engine(capacity=2)
+    try:
+        app_kwargs = _driver_kwargs(cfg.async_engine, monkeypatch)
+        worker_kwargs = _driver_kwargs(worker, monkeypatch)
+    finally:
+        worker.sync_engine.dispose()
+
+    assert app_kwargs["timeout"] == 10
+    assert worker_kwargs["timeout"] == app_kwargs["timeout"]
+    assert worker_kwargs["prepared_statement_cache_size"] == 0
+    assert worker_kwargs["async_creator_fn"] is app_kwargs["async_creator_fn"]
+    assert worker_kwargs["async_creator_fn"] is cfg._retrying_asyncpg_connect
+    assert worker_kwargs["ssl"] is True

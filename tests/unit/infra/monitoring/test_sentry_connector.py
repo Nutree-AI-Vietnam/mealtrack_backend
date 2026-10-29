@@ -17,6 +17,7 @@ from src.infra.monitoring.connectors import (
 from src.infra.monitoring.sentry import (
     SentryObservabilityConnector,
     _drop_expected_events,
+    add_connect_retry_breadcrumb,
 )
 
 
@@ -614,4 +615,18 @@ def test_metrics_route_to_sentry_metrics_with_safe_attributes(monkeypatch):
         25.5,
         unit="millisecond",
         attributes=safe_attrs,
+    )
+
+
+def test_connect_retry_breadcrumb_has_no_user_data(monkeypatch):
+    mock_sdk = MagicMock()
+    monkeypatch.setattr("src.infra.monitoring.sentry.sentry_sdk", mock_sdk)
+
+    add_connect_retry_breadcrumb("TimeoutError")
+
+    mock_sdk.add_breadcrumb.assert_called_once_with(
+        category="db.connect",
+        level="warning",
+        message="Database connect attempt failed; retrying once",
+        data={"error_type": "TimeoutError"},
     )
