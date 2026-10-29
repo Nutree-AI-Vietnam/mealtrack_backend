@@ -99,6 +99,15 @@ class UploadMealImageImmediatelyHandler(
 
         for attempt in range(1, max_attempts + 1):
             try:
+                from src.app.services.scan_correction_hints import (
+                    load_correction_hints_for_scan,
+                )
+
+                correction_hints = await load_correction_hints_for_scan(
+                    user_id=command.user_id,
+                    user_description=command.user_description,
+                    uow_factory=self.uow_factory,
+                )
                 if command.user_description:
                     from src.domain.strategies.meal_analysis_strategy import (
                         AnalysisStrategyFactory,
@@ -112,6 +121,7 @@ class UploadMealImageImmediatelyHandler(
                     strategy = AnalysisStrategyFactory.create_user_context_strategy(
                         command.user_description,
                         language=command.language,
+                        correction_hints=correction_hints or None,
                     )
                     result = await self.vision_service.analyze_with_strategy(
                         command.file_contents, strategy
@@ -123,9 +133,12 @@ class UploadMealImageImmediatelyHandler(
                     f"[PHASE-1-START] meal={meal_id} | "
                     f"vision analysis | attempt={attempt}/{max_attempts}"
                 )
+                analyze_kwargs: dict = {"language": command.language}
+                if correction_hints:
+                    analyze_kwargs["correction_hints"] = correction_hints
                 result = await self.vision_service.analyze(
                     command.file_contents,
-                    language=command.language,
+                    **analyze_kwargs,
                 )
                 self._validate_localized_vision_result(result, command.language)
                 return result

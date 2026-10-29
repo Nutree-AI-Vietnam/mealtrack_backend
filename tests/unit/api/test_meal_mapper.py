@@ -167,9 +167,12 @@ class TestMealMapper:
         assert result.food_items[0].canonical_name == "Chicken Breast"
         assert result.food_items[0].fdc_id == 123456
         assert result.food_items[0].food_reference_id == 321
+        assert result.food_items[0].confidence == pytest.approx(0.95)
         assert result.food_items[1].name == "Rice"
         assert result.food_items[1].display_name == "Rice"
         assert result.food_items[1].canonical_name == "Rice"
+        assert result.food_items[1].confidence == pytest.approx(0.90)
+        assert result.ai_confidence == pytest.approx(1.0)
         assert result.translation_language is None
         assert result.image_url == "https://example.com/image.jpg"
         # total_weight_grams is calculated from food items
