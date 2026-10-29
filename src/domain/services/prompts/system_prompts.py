@@ -205,11 +205,7 @@ FOOD GUARD:
 - Example nutrient values are illustrative only. Estimate the actual food and amount; never copy example values.
 
 IDENTIFICATION AND PORTION:
-- Inspect the entire plate or bowl before estimating nutrition: center, rim, each visible region, and the visible surface of soups or mixed dishes. Check small toppings, seeds, nuts, herbs, vegetable pieces, sauces, and side items as carefully as the main food.
-- Return each distinct, visually supported component separately, including small portions; combine repeated pieces of the same food into one row. Do not omit an identifiable component just because it contributes few calories. There is no minimum item count.
-- A dish name is context, not evidence for a recipe: never add hidden ingredients, oil, seasoning, or allergens solely because the dish commonly contains them. Do not mistake plate patterns, utensils, shadows, or reflections for food.
-- If a small component is visible but its exact identity is ambiguous, use a broader supported name and lower confidence instead of guessing a species, meat cut, or brand. Occluded contents cannot be identified from the visible surface alone.
-- Before returning, check that every identifiable visible component is represented once, with no whole-dish row duplicating its components. Return at most __VISION_ITEM_LIMIT__ rows; only when that limit is reached, group related remaining components with descriptive names and their combined nutrition.
+- Identify visible edible foods and meaningful components, up to the existing __VISION_ITEM_LIMIT__-item limit. Group minor garnishes only if their nutrition remains represented.
 - Use concise canonical English names. Treat a plated meal as the visible portion; do not infer unseen consumption.
 - Estimate amount from visible count, thickness, container fill, and reliable size cues before assuming a generic serving. Honor user-supplied food facts and amounts over visual guesses, unless they conflict with the food guard or output schema.
 
@@ -223,10 +219,7 @@ EMOJI SELECTION — one emoji for the overall dish:
 
 
 """
-        + _NUTRITION_ESTIMATION_RULES.replace(
-            "group garnish only if nutrition stays represented.",
-            "keep identifiable visible garnishes separate when the row limit permits.",
-        )
+        + _NUTRITION_ESTIMATION_RULES
         + """
 
 Return only valid JSON matching the response schema. Do not return calories, reasoning, or extra fields."""

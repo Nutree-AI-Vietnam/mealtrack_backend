@@ -102,7 +102,7 @@ class TestBasicAnalysisPromptConstraints:
         prompt = BasicAnalysisStrategy().get_analysis_prompt().lower()
 
         assert "return only json matching the existing vision response schema" in prompt
-        assert f"return at most {MAX_AI_FOOD_ITEMS} rows" in prompt
+        assert f"up to the existing {MAX_AI_FOOD_ITEMS}-item limit" in prompt
 
     def test_basic_analysis_prompt_returns_vision_analysis(self):
         """BasicAnalysisStrategy must return SystemPrompts.VISION_ANALYSIS."""
