@@ -146,6 +146,15 @@ def _ends_with_any(value: str, phrases: tuple[str, ...]) -> bool:
     return any(value == phrase or value.endswith(f" {phrase}") for phrase in phrases)
 
 
+def fresh_ingredient_id(food_reference_id: int | None, name: str) -> int | None:
+    """The grocery id a recipe line is bought under, or None for a staple."""
+    if is_pantry_staple(name):
+        return None
+    if food_reference_id is not None:
+        return int(food_reference_id)
+    return deterministic_ingredient_id(name)
+
+
 @dataclass(frozen=True)
 class GroceryIngredient:
     position: int

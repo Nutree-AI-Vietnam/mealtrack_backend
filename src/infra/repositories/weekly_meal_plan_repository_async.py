@@ -117,6 +117,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         daily_calories: int | None = None,
         catalog_revision: str | None = None,
         recipe_ids: dict[tuple[int, int], str | None] | None = None,
+        algorithm_version: str | None = None,
     ) -> WeeklyMealPlan:
         plan = WeeklyMealPlanORM(
             id=str(uuid.uuid4()),
@@ -128,7 +129,8 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             timezone=timezone,
             daily_calories=daily_calories,
             catalog_revision=catalog_revision,
-            algorithm_version=WeeklyPlanGenerationService.algorithm_version,
+            algorithm_version=algorithm_version
+            or WeeklyPlanGenerationService.algorithm_version,
         )
         selected = recipe_ids or {}
         plan.slots = [

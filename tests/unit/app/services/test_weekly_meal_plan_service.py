@@ -12,6 +12,7 @@ from src.app.commands.meal_planner import (
     GenerateWeeklyMealPlanCommand,
     UpdateWeeklyMealPlanCommand,
 )
+from src.app.services import weekly_meal_plan_service
 from src.app.services.weekly_meal_plan_service import (
     WeeklyMealPlanService,
     _fingerprint,
@@ -28,6 +29,7 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanSlotAdjustment,
     WeeklyMealPlanStatus,
 )
+from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
 
 
 def _meal(
@@ -970,6 +972,105 @@ async def test_generate_rejects_a_reused_key_for_a_different_request():
 
     assert exc_info.value.error_code == "IDEMPOTENCY_KEY_REUSED"
     assert uow.reopened is False
+
+
+@pytest.fixture
+def empty_basket_cache(monkeypatch):
+    monkeypatch.setattr(weekly_meal_plan_service, "_basket_ids_cache", None)
+
+
+class _IngredientLinesUow(_Uow):
+    def __init__(self, plan, meals, lines):
+        super().__init__(plan, meals)
+        self.lines = lines
+        self.line_reads = 0
+        self.version = _CATALOG_VERSION
+
+    async def capture_catalog_publication_version(self):
+        return self.version
+
+    async def lock_catalog_publication(self, *, shared=True):
+        return self.version
+
+    async def list_selection_ingredient_lines(self):
+        self.line_reads += 1
+        return self.lines
+
+
+class _RecordingGenerator(WeeklyPlanGenerationService):
+    basket_ids = None
+
+    def generate(self, meals, **kwargs):
+        self.basket_ids = kwargs.get("basket_ids")
+        return super().generate(meals, **kwargs)
+
+
+def test_reuse_arm_is_a_stable_share_of_users_that_only_grows():
+    users = [f"user-{index}" for index in range(400)]
+
+    def arm(percent):
+        service = WeeklyMealPlanService(None, ingredient_reuse_percent=percent)
+        return {user for user in users if service._reuses_ingredients(user)}
+
+    assert arm(0) == set()
+    assert arm(100) == set(users)
+    assert 150 < len(arm(50)) < 250
+    assert arm(50) == arm(50)
+    assert arm(20) <= arm(50)
+
+
+@pytest.mark.asyncio
+async def test_generation_outside_the_reuse_arm_reads_no_ingredient_lines(
+    empty_basket_cache,
+):
+    plan = _plan(recipe_id=None)
+    uow = _IngredientLinesUow(plan, (_meal("tofu", "Tofu"),), [])
+    generator = _RecordingGenerator()
+
+    await WeeklyMealPlanService(lambda: uow, generator=generator).generate(
+        _generate_command(plan)
+    )
+
+    assert uow.line_reads == 0
+    assert generator.basket_ids is None
+    assert uow.update_args["algorithm_version"] == "v2"
+
+
+@pytest.mark.asyncio
+async def test_reuse_arm_counts_fresh_ingredients_once_per_catalog_version(
+    empty_basket_cache,
+):
+    plan = _plan(recipe_id=None)
+    uow = _IngredientLinesUow(
+        plan,
+        (_meal("tofu", "Tofu"), _meal("lentils", "Lentil bowl")),
+        [
+            ("tofu", 7, "Đậu hũ"),
+            ("tofu", None, "Muối"),
+            ("lentils", 9, "Lentils"),
+            ("plain-rice", None, "Gạo"),
+        ],
+    )
+    generator = _RecordingGenerator()
+    service = WeeklyMealPlanService(
+        lambda: uow, generator=generator, ingredient_reuse_percent=100
+    )
+
+    await service.generate(_generate_command(plan))
+    await service.generate(_generate_command(plan))
+
+    assert generator.basket_ids == {
+        "tofu": frozenset({7}),
+        "lentils": frozenset({9}),
+        "plain-rice": frozenset(),
+    }
+    assert uow.update_args["algorithm_version"] == "v2-reuse"
+    assert uow.line_reads == 1
+
+    uow.version = SimpleNamespace(selection=1, ingredients=2)
+    await service.generate(_generate_command(plan))
+
+    assert uow.line_reads == 2
 
 
 def test_week_shortlist_preserves_dinner_coverage_and_named_recipe():

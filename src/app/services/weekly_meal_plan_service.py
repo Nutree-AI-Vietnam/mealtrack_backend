@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from time import monotonic
@@ -40,6 +42,7 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
 )
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
+    fresh_ingredient_id,
 )
 from src.domain.services.weekly_meal_planner.slot_rules import (
     ensure_base_revision,
@@ -52,6 +55,10 @@ from src.planner_request_policy import (
     planner_retry_budget,
     remaining_budget,
 )
+
+# Fresh ingredient ids per recipe, for the catalog ingredient version they
+# were read at. One process-wide copy: the catalog changes rarely.
+_basket_ids_cache: tuple[tuple[int, int], Mapping[str, frozenset[int]]] | None = None
 
 
 @dataclass(frozen=True)
@@ -73,11 +80,21 @@ class WeeklyMealPlanService:
         *,
         generator: WeeklyPlanGenerationService | None = None,
         ai_adjustment_provider=None,
+        ingredient_reuse_percent: int = 0,
     ):
         self.uow_factory = uow_factory
         self.generator = generator or WeeklyPlanGenerationService()
         self.ai_adjustment_provider = ai_adjustment_provider
         self.grocery_service = WeeklyGroceryService()
+        # Share of users whose generated weeks reuse ingredients (A/B arm).
+        self.ingredient_reuse_percent = max(0, min(100, int(ingredient_reuse_percent)))
+
+    def _reuses_ingredients(self, user_id: str) -> bool:
+        """Stable per-user A/B bucket for ingredient-reusing generation."""
+        if self.ingredient_reuse_percent <= 0:
+            return False
+        digest = hashlib.sha256(f"ingredient-reuse:{user_id}".encode()).hexdigest()
+        return int(digest[:8], 16) % 100 < self.ingredient_reuse_percent
 
     def _select_recipes(self, *args, **kwargs):
         with planner_phase("selection_cpu"):
@@ -127,12 +144,27 @@ class WeeklyMealPlanService:
                 )
                 revision = await uow.catalog_recipes.get_active_catalog_revision()
                 meals = await uow.catalog_recipes.list_selection_candidates()
+                reuse = self._reuses_ingredients(command.user_id)
+                basket_ids = (
+                    await _basket_ids(
+                        uow.catalog_recipes,
+                        (captured_version.selection, captured_version.ingredients),
+                    )
+                    if reuse
+                    else None
+                )
+            algorithm_version = (
+                self.generator.reuse_algorithm_version
+                if reuse
+                else self.generator.algorithm_version
+            )
             selected = self._select_recipes(
                 meals,
                 user_id=command.user_id,
                 week_start_date=command.week_start_date.isoformat(),
                 daily_calories=command.daily_calories,
                 preferences=command.preferences,
+                basket_ids=basket_ids,
             )
             recipe_ids = {
                 (item.day_index, item.slot_index): item.recipe_id for item in selected
@@ -199,6 +231,7 @@ class WeeklyMealPlanService:
                         daily_calories=command.daily_calories,
                         catalog_revision=_revision_key(revision),
                         recipe_ids=recipe_ids,
+                        algorithm_version=algorithm_version,
                     )
                 else:
                     logged = {
@@ -216,7 +249,7 @@ class WeeklyMealPlanService:
                             for key, value in recipe_ids.items()
                             if key not in logged
                         },
-                        algorithm_version=self.generator.algorithm_version,
+                        algorithm_version=algorithm_version,
                         expected_revision=current.revision,
                     )
                 await uow.meal_write_operations.complete(
@@ -883,6 +916,30 @@ class WeeklyMealPlanService:
                 "The same weekly plan write is already in progress",
                 error_code="IDEMPOTENCY_IN_PROGRESS",
             )
+
+
+async def _basket_ids(
+    catalog_recipes, catalog_version: tuple[int, int]
+) -> Mapping[str, frozenset[int]]:
+    """Each active recipe's fresh ingredient ids, staples left out.
+
+    A recipe whose lines are all staples maps to an empty set; a recipe with
+    no lines is absent, so the generator treats it as unknown.
+    """
+    global _basket_ids_cache
+    cached = _basket_ids_cache
+    if cached is not None and cached[0] == catalog_version:
+        return cached[1]
+    lines = await catalog_recipes.list_selection_ingredient_lines()
+    ids: dict[str, set[int]] = {}
+    for recipe_id, food_reference_id, name in lines:
+        fresh = fresh_ingredient_id(food_reference_id, name)
+        recipe_ids = ids.setdefault(recipe_id, set())
+        if fresh is not None:
+            recipe_ids.add(fresh)
+    basket = {recipe_id: frozenset(values) for recipe_id, values in ids.items()}
+    _basket_ids_cache = (catalog_version, basket)
+    return basket
 
 
 def _fingerprint(command) -> str:

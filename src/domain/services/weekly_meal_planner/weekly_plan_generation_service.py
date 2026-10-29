@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -29,6 +29,14 @@ from src.domain.services.weekly_meal_planner.recipe_publication import (
     is_planner_eligible,
 )
 
+# Meals whose calories sit this close to a slot's target count as equally
+# good, so the generator can pick among them the one adding fewest new fresh
+# ingredients to the week.
+_REUSE_CALORIE_BAND_KCAL = 80
+_REUSE_CALORIE_BAND_SHARE = 0.15
+# A meal with no known ingredients must not look like it adds nothing.
+_UNKNOWN_FRESH_COUNT = 99
+
 
 @dataclass(frozen=True)
 class GeneratedSlot:
@@ -41,6 +49,7 @@ class WeeklyPlanGenerationService:
     """Generate stable selections without provider calls or persistence."""
 
     algorithm_version = "v2"
+    reuse_algorithm_version = "v2-reuse"
 
     def generate(
         self,
@@ -50,7 +59,15 @@ class WeeklyPlanGenerationService:
         week_start_date: str,
         daily_calories: int,
         preferences: WeeklyMealPlanPreferences,
+        basket_ids: Mapping[str, frozenset[int]] | None = None,
     ) -> tuple[GeneratedSlot, ...]:
+        """Select a recipe for every slot of the week.
+
+        ``basket_ids`` maps a recipe to the grocery ids of its fresh
+        ingredients. When given, a slot prefers, among meals equally close to
+        its calorie target, the one adding fewest ingredients the week does
+        not already buy. Without it, selection is unchanged.
+        """
         all_meals = tuple(meals)
         hard_candidates = [
             meal for meal in all_meals if self._hard_eligible(meal, preferences)
@@ -77,6 +94,7 @@ class WeeklyPlanGenerationService:
         ]
         result: list[GeneratedSlot] = []
         used_counts: dict[str, int] = {}
+        basket: set[int] = set()
         for day in range(WEEKLY_DAYS):
             day_used: set[str] = set()
             for slot in range(WEEKLY_SLOTS_PER_DAY):
@@ -90,6 +108,9 @@ class WeeklyPlanGenerationService:
                         1 if item[0].id in day_used else 0,
                         *_practicality(item[0], slot),
                         used_counts.get(item[0].id, 0),
+                        *_reuse_rank(
+                            item[0].id, item[1], targets[slot], basket_ids, basket
+                        ),
                         item[1],
                         self._stable_rank(item[0], user_id, week_start_date, day, slot),
                         item[0].id,
@@ -97,6 +118,8 @@ class WeeklyPlanGenerationService:
                 )
                 used_counts[selected.id] = used_counts.get(selected.id, 0) + 1
                 day_used.add(selected.id)
+                if basket_ids is not None:
+                    basket.update(basket_ids.get(selected.id, ()))
                 result.append(GeneratedSlot(day, slot, selected.id))
         return tuple(result)
 
@@ -331,6 +354,22 @@ def _practicality(meal: CatalogMeal, slot_index: int) -> tuple[int, int]:
         ingredient_count=len(meal.ingredients),
         non_meal=non_meal,
     )
+
+
+def _reuse_rank(
+    meal_id: str,
+    calorie_gap: float,
+    target: int,
+    basket_ids: Mapping[str, frozenset[int]] | None,
+    basket: set[int],
+) -> tuple[int, int]:
+    """Rank by calorie band, then by fresh ingredients new to the week."""
+    if basket_ids is None:
+        return (0, 0)
+    band_width = max(_REUSE_CALORIE_BAND_KCAL, target * _REUSE_CALORIE_BAND_SHARE)
+    fresh = basket_ids.get(meal_id)
+    new_count = len(fresh - basket) if fresh is not None else _UNKNOWN_FRESH_COUNT
+    return (int(calorie_gap // band_width), new_count)
 
 
 def _slot_calorie_targets(daily_calories: int) -> tuple[int, ...]:

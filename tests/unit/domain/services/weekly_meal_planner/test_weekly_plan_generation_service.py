@@ -12,7 +12,14 @@ from src.domain.model.weekly_meal_planner import (
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
 
 
-def _meal(meal_id: str, name: str, meal_types=("lunch", "dinner"), *, popularity=1):
+def _meal(
+    meal_id: str,
+    name: str,
+    meal_types=("lunch", "dinner"),
+    *,
+    popularity=1,
+    carbs="40",
+):
     return CatalogMeal(
         id=meal_id,
         catalog_key=meal_id,
@@ -22,7 +29,7 @@ def _meal(meal_id: str, name: str, meal_types=("lunch", "dinner"), *, popularity
         description=None,
         image_url=None,
         protein_g=Decimal("30"),
-        carbs_g=Decimal("40"),
+        carbs_g=Decimal(carbs),
         fat_g=Decimal("10"),
         fiber_g=Decimal("5"),
         meal_types=meal_types,
@@ -170,3 +177,79 @@ def test_vegetarian_generation_excludes_all_catalogued_seafood(name):
     )
 
     assert all(slot.recipe_id is None for slot in generated)
+
+
+def _week(meals, **kwargs):
+    return WeeklyPlanGenerationService().generate(
+        meals,
+        user_id="user-1",
+        week_start_date="2026-09-21",
+        daily_calories=2000,
+        preferences=WeeklyMealPlanPreferences(),
+        **kwargs,
+    )
+
+
+def test_ingredient_reuse_buys_fewer_fresh_items_without_repeating_a_recipe():
+    # Sixteen dishes share one set of fresh ingredients; twenty need their own.
+    basket_ids = {f"shared-{i:02d}": frozenset({1, 2, 3}) for i in range(16)} | {
+        f"own-{i:02d}": frozenset({100 + 3 * i, 101 + 3 * i, 102 + 3 * i})
+        for i in range(20)
+    }
+    meals = [
+        _meal(meal_id, meal_id, meal_types=("breakfast", "lunch", "dinner"))
+        for meal_id in basket_ids
+    ]
+
+    def fresh_items(week):
+        return set().union(*(basket_ids[slot.recipe_id] for slot in week))
+
+    plain = _week(meals)
+    reused = _week(meals, basket_ids=basket_ids)
+
+    assert len({slot.recipe_id for slot in plain}) == WEEKLY_PLAN_SLOT_COUNT
+    assert len({slot.recipe_id for slot in reused}) == WEEKLY_PLAN_SLOT_COUNT
+    assert sum(slot.recipe_id.startswith("shared") for slot in reused) == 16
+    assert len(fresh_items(reused)) < len(fresh_items(plain)) // 2
+
+
+def test_ingredient_reuse_never_trades_away_the_calorie_band():
+    # Lunch targets 750 kcal at 2000 kcal a day; meals within 112.5 kcal of it
+    # share a band. These macros give 200 + 4 * carbs kcal.
+    meals = [
+        _meal("anchor", "Anchor", meal_types=("lunch",), carbs="137.5"),
+        _meal("closer-new", "Closer new", meal_types=("lunch",), carbs="140"),
+        _meal("near-reuse", "Near reuse", meal_types=("lunch",), carbs="160"),
+        _meal("far-reuse", "Far reuse", meal_types=("lunch",), carbs="197.5"),
+    ]
+    basket_ids = {
+        "anchor": frozenset({1, 2, 3}),
+        "closer-new": frozenset({4, 5, 6}),
+        "near-reuse": frozenset({1, 2, 3}),
+        "far-reuse": frozenset({1, 2, 3}),
+    }
+
+    def lunches(week):
+        return [slot.recipe_id for slot in week if slot.slot_index == 1][:4]
+
+    assert lunches(_week(meals)) == ["anchor", "closer-new", "near-reuse", "far-reuse"]
+    assert lunches(_week(meals, basket_ids=basket_ids)) == [
+        "anchor",
+        "near-reuse",
+        "closer-new",
+        "far-reuse",
+    ]
+
+
+def test_a_meal_with_unknown_ingredients_does_not_look_free():
+    meals = [
+        _meal("anchor", "Anchor", meal_types=("lunch",), carbs="137.5"),
+        _meal("unknown", "Unknown", meal_types=("lunch",), carbs="137.5"),
+        _meal("one-new", "One new", meal_types=("lunch",), carbs="137.5"),
+    ]
+    basket_ids = {"anchor": frozenset({1, 2}), "one-new": frozenset({1, 9})}
+
+    week = _week(meals, basket_ids=basket_ids)
+
+    lunches = [slot.recipe_id for slot in week if slot.slot_index == 1][:3]
+    assert lunches.index("one-new") < lunches.index("unknown")
