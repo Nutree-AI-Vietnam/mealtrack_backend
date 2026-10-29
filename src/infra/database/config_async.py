@@ -2,8 +2,11 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import asyncpg
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
@@ -76,6 +79,33 @@ def _normalize_asyncpg_url(raw_url: str) -> str:
     return raw_url
 
 
+async def connect_with_one_retry(
+    connect: Callable[..., Awaitable[Any]],
+    /,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Open a driver connection, retrying once if the handshake fails.
+
+    ``connect`` is the driver entry point (``asyncpg.connect``). It returns
+    only after TCP/TLS and startup succeed, and before any application
+    statement, so a retry cannot run a write twice. ``TimeoutError`` is an
+    ``OSError``. The second failure propagates unchanged.
+    """
+    try:
+        return await connect(*args, **kwargs)
+    except OSError as exc:
+        logger.warning(
+            "Database connect attempt failed (%s); retrying once",
+            type(exc).__name__,
+        )
+        return await connect(*args, **kwargs)
+
+
+async def _retrying_asyncpg_connect(*args: Any, **kwargs: Any) -> Any:
+    return await connect_with_one_retry(asyncpg.connect, *args, **kwargs)
+
+
 # Resolve connection policy from environment.
 # URL priority: APP_DATABASE_URL > DATABASE_URL > component fallback.
 # DATABASE_URL_DIRECT is reserved for migration tooling; it is NOT used here.
@@ -94,6 +124,11 @@ _connect_args = {**_url_connect_args, **_policy.connect_args}
 # Expose connection mode for health endpoint and observability
 CONNECTION_MODE = _policy.mode
 _IS_NEON_POOLER = _policy.mode == "neon_pooler"  # backward-compat alias
+if _IS_NEON_POOLER:
+    # SQLAlchemy pops this and calls it with the remaining connect kwargs,
+    # including timeout. It replaces only asyncpg.connect, not statement
+    # execution.
+    _connect_args["async_creator_fn"] = _retrying_asyncpg_connect
 
 _UVICORN_WORKERS = _policy.worker_count
 _ASYNC_POOL_SIZE = _policy.pool_size

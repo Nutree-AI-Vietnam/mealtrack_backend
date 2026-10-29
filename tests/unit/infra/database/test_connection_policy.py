@@ -65,6 +65,41 @@ def test_direct_pool_mode_selected_for_non_pooler_url():
     assert policy.pool_class is AsyncAdaptedQueuePool
 
 
+@pytest.mark.parametrize("use_queue_pool", [False, True])
+def test_neon_pooler_connect_args_include_asyncpg_timeout(use_queue_pool):
+    """asyncpg's default connect timeout is 60s. Pooler mode must shorten it."""
+    env = {
+        "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
+        "DB_CONNECTION_MODE": "neon_pooler",
+    }
+    if use_queue_pool:
+        env["NEON_POOLER_USE_QUEUE_POOL"] = "true"
+    policy = resolve_connection_policy(env)
+    assert policy.connect_args.get("prepared_statement_cache_size") == 0
+    assert policy.connect_args.get("timeout") == 10
+
+
+def test_neon_pooler_connect_timeout_is_configurable():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx-pooler.neon.tech/db",
+            "DB_CONNECTION_MODE": "neon_pooler",
+            "ASYNC_CONNECT_TIMEOUT": "4",
+        }
+    )
+    assert policy.connect_args.get("timeout") == 4
+
+
+def test_direct_pool_does_not_set_asyncpg_connect_timeout():
+    policy = resolve_connection_policy(
+        {
+            "APP_DATABASE_URL": "postgresql://user:pw@ep-xxx.neon.tech/db",
+            "DB_CONNECTION_MODE": "direct_pool",
+        }
+    )
+    assert "timeout" not in policy.connect_args
+
+
 def test_neon_pooler_mode_uses_null_pool_and_prepared_statement_cache_zero():
     policy = resolve_connection_policy(
         {

@@ -351,6 +351,7 @@ def test_engine_actual_pool_settings_and_driver_safety(monkeypatch, caplog, mode
     monkeypatch.setenv("ASYNC_POOL_MAX_OVERFLOW", "2")
     monkeypatch.setenv("ASYNC_POOL_TIMEOUT", "17")
     monkeypatch.setenv("ASYNC_POOL_RECYCLE", "91")
+    monkeypatch.delenv("ASYNC_CONNECT_TIMEOUT", raising=False)
     import src.infra.database.config_async as cfg
 
     with caplog.at_level("INFO"):
@@ -387,8 +388,12 @@ def test_engine_actual_pool_settings_and_driver_safety(monkeypatch, caplog, mode
     assert "channel_binding" not in driver_kwargs
     if neon:
         assert driver_kwargs["prepared_statement_cache_size"] == 0
+        assert driver_kwargs["timeout"] == 10
+        assert driver_kwargs["async_creator_fn"] is cfg._retrying_asyncpg_connect
     else:
         assert "prepared_statement_cache_size" not in driver_kwargs
+        assert "timeout" not in driver_kwargs
+        assert "async_creator_fn" not in driver_kwargs
     engine_logs = [
         r.message for r in caplog.records if r.message.startswith("Async engine:")
     ]
@@ -397,3 +402,67 @@ def test_engine_actual_pool_settings_and_driver_safety(monkeypatch, caplog, mode
         for m in engine_logs
     )
     assert all("pw" not in m and host not in m for m in engine_logs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [TimeoutError, OSError])
+async def test_connect_retries_once_after_connect_failure(error_type, caplog):
+    """A stalled handshake is retried once. The log has no user data."""
+    import src.infra.database.config_async as cfg
+
+    calls = 0
+    sentinel = object()
+
+    async def connect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        assert kwargs["password"] == "s3cret-user-data"
+        if calls == 1:
+            raise error_type("user-secret-must-not-log")
+        return sentinel
+
+    with caplog.at_level(logging.WARNING):
+        result = await cfg.connect_with_one_retry(connect, password="s3cret-user-data")
+
+    assert result is sentinel
+    assert calls == 2
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert error_type.__name__ in message
+    assert "user-secret-must-not-log" not in message
+    assert "s3cret-user-data" not in message
+    assert warnings[0].exc_info in (None, (None, None, None))
+
+
+@pytest.mark.asyncio
+async def test_connect_retry_surfaces_the_second_timeout():
+    import src.infra.database.config_async as cfg
+
+    calls = 0
+
+    async def connect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("handshake stalled")
+
+    with pytest.raises(TimeoutError, match="handshake stalled"):
+        await cfg.connect_with_one_retry(connect)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_connect_does_not_retry_non_connect_errors():
+    """Errors that are not TimeoutError or OSError are not retried."""
+    import src.infra.database.config_async as cfg
+
+    calls = 0
+
+    async def connect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("statement already started")
+
+    with pytest.raises(RuntimeError, match="statement already started"):
+        await cfg.connect_with_one_retry(connect)
+    assert calls == 1

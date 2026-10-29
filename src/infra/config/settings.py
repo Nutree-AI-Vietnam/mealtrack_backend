@@ -85,6 +85,13 @@ class Settings(BaseSettings):
         default=None,
         description="Async pool connection timeout seconds (overrides POOL_TIMEOUT)",
     )
+    ASYNC_CONNECT_TIMEOUT: int | None = Field(
+        default=None,
+        description=(
+            "asyncpg TCP/TLS connect timeout seconds for neon_pooler. "
+            "Unset uses 10. direct_pool keeps the driver default."
+        ),
+    )
     ASYNC_POOL_RECYCLE: int = Field(
         default=120,
         description="Async pool connection recycle interval seconds",
