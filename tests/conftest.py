@@ -132,6 +132,7 @@ class TestMealRepository:
         if existing_meal:
             existing_meal.status = MealStatusMapper.to_db(meal.status)
             existing_meal.dish_name = meal.dish_name
+            existing_meal.created_at = meal.created_at
             existing_meal.meal_type = meal.meal_type
             existing_meal.ready_at = meal.ready_at
             existing_meal.error_message = meal.error_message
