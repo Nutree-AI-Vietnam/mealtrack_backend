@@ -121,6 +121,17 @@ def test_timeouts_keep_their_own_code_unlike_the_synchronous_endpoints():
     assert handle_exception(TimeoutError()).detail["error_code"] == "AI_UNAVAILABLE"
 
 
+def test_database_connect_failure_is_not_an_ai_timeout():
+    from src.domain.exceptions.database_exceptions import DatabaseUnavailableError
+    from src.domain.model.ai_jobs.enums import AiJobErrorKind
+    from src.domain.model.ai_jobs.policies import TRANSIENT_CODES, classify_ai_job_error
+
+    assert ai_job_error_code(DatabaseUnavailableError()) == "DB_UNAVAILABLE"
+    assert "DB_UNAVAILABLE" in TRANSIENT_CODES
+    assert classify_ai_job_error("DB_UNAVAILABLE").kind is AiJobErrorKind.TRANSIENT
+    assert classify_ai_job_error("DB_UNAVAILABLE").retryable is True
+
+
 @pytest.mark.asyncio
 async def test_an_attempt_cut_off_by_wait_for_is_a_timeout():
     with pytest.raises(TimeoutError) as excinfo:

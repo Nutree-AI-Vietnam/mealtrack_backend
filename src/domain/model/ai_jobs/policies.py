@@ -42,6 +42,7 @@ TRANSIENT_CODES = frozenset(
     {
         "AI_UNAVAILABLE",
         "AI_TIMEOUT",
+        "DB_UNAVAILABLE",
         "NUTRITION_PROVIDER_UNAVAILABLE",
         "CHAT_PROVIDER_UNAVAILABLE",
         "CHAT_BUSY",

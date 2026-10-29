@@ -1,7 +1,9 @@
 """Unit tests for async database config."""
 
+import ast
 import asyncio
 import importlib
+import inspect
 import logging
 
 import pytest
@@ -404,6 +406,31 @@ def test_engine_actual_pool_settings_and_driver_safety(monkeypatch, caplog, mode
     assert all("pw" not in m and host not in m for m in engine_logs)
 
 
+def test_connect_retry_sentry_import_is_module_level():
+    """An import inside the connect except-block can replace the driver error."""
+    import src.infra.database.config_async as cfg
+
+    tree = ast.parse(inspect.getsource(cfg))
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in {"_record_connect_retry", "connect_with_one_retry"}:
+            continue
+        for child in ast.walk(node):
+            if isinstance(child, ast.ImportFrom) and "sentry" in (child.module or ""):
+                raise AssertionError(f"{node.name} imports {child.module}")
+            if isinstance(child, ast.Import) and any(
+                "sentry" in alias.name for alias in child.names
+            ):
+                raise AssertionError(f"{node.name} imports sentry")
+    module_imports = [
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module
+    ]
+    assert "src.infra.monitoring.sentry" in module_imports
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error_type", [TimeoutError, OSError])
 async def test_connect_retries_once_after_connect_failure(
@@ -429,7 +456,8 @@ async def test_connect_retries_once_after_connect_failure(
         breadcrumbs.append(error_type)
 
     monkeypatch.setattr(
-        "src.infra.monitoring.sentry.add_connect_retry_breadcrumb",
+        cfg,
+        "add_connect_retry_breadcrumb",
         add_connect_retry_breadcrumb,
     )
 
@@ -449,19 +477,26 @@ async def test_connect_retries_once_after_connect_failure(
 
 
 @pytest.mark.asyncio
-async def test_connect_retry_surfaces_the_second_timeout():
+@pytest.mark.parametrize("error_type", [TimeoutError, OSError])
+async def test_connect_retry_surfaces_the_second_failure_as_database_unavailable(
+    error_type,
+):
     import src.infra.database.config_async as cfg
+    from src.domain.exceptions.database_exceptions import DatabaseUnavailableError
 
     calls = 0
 
     async def connect(*args, **kwargs):
         nonlocal calls
         calls += 1
-        raise TimeoutError("handshake stalled")
+        raise error_type("handshake stalled")
 
-    with pytest.raises(TimeoutError, match="handshake stalled"):
+    with pytest.raises(DatabaseUnavailableError) as exc_info:
         await cfg.connect_with_one_retry(connect)
     assert calls == 2
+    assert type(exc_info.value.__cause__) is error_type
+    assert "handshake stalled" in str(exc_info.value.__cause__)
+    assert "handshake stalled" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio
