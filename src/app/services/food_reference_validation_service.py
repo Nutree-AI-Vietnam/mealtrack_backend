@@ -137,6 +137,21 @@ class FoodReferenceValidationService:
             items=tuple(item_results),
         )
 
+    async def ground_meal(self, meal: Meal) -> ValidationReport:
+        """Replace scan macros from the shared reference cascade.
+
+        This is the ``AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED`` path.
+        ``validate_meal`` stays the closeness audit and does not call this.
+        """
+        from src.app.services.item_nutrition_cascade import ground_scan_meal
+
+        return await ground_scan_meal(
+            meal,
+            batch_lookup=self._find_local_references,
+            provider=self._nutrition_reference_provider,
+            timeout_seconds=self._timeout_seconds,
+        )
+
     async def _validate_items(
         self,
         meal: Meal,

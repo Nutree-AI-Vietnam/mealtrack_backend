@@ -501,6 +501,9 @@ def get_meal_analyze_graph_settings():
         "fatsecret_validation_enabled": (
             current_settings.AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED
         ),
+        "reference_grounding_enabled": (
+            current_settings.AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED
+        ),
         "graph_enabled": current_settings.AI_MEAL_ANALYZE_GRAPH_ENABLED,
         "graph_version": current_settings.AI_MEAL_ANALYZE_GRAPH_VERSION,
     }

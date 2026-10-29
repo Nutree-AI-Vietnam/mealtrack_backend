@@ -260,6 +260,7 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     class _Settings:
         AI_MEAL_ANALYZE_GRAPH_ENABLED = True
         AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED = True
+        AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED = False
         AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS = 7.0
         AI_MEAL_ANALYZE_GRAPH_VERSION = "test-v2"
         CLOUDFLARE_QUEUE_ACCOUNT_ID = "test-account"
@@ -359,6 +360,7 @@ def test_configured_event_bus_wires_meal_analyze_validation(monkeypatch):
     workflow = upload_handler.meal_analyze_workflow
     assert workflow is scan_handler.meal_analyze_workflow
     assert workflow._fatsecret_validation_enabled is True
+    assert workflow._reference_grounding_enabled is False
     assert workflow._food_reference_validation_service is not None
     assert workflow._graph_version == "test-v2"
 

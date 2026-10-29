@@ -66,6 +66,7 @@ class MealAnalyzeRuntime:
     text_translation_service: Any | None = None
     food_reference_validation_service: FoodReferenceValidationService | None = None
     fatsecret_validation_enabled: bool = False
+    reference_grounding_enabled: bool = False
     max_vision_attempts: int = 1
     cloudflare_custom_domain: str | None = None
     cloudflare_flexible_variants_enabled: bool = False
