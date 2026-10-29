@@ -85,6 +85,14 @@ class Settings(BaseSettings):
         default=None,
         description="Async pool connection timeout seconds (overrides POOL_TIMEOUT)",
     )
+    ASYNC_CONNECT_TIMEOUT: int | None = Field(
+        default=None,
+        description=(
+            "asyncpg TCP/TLS connect timeout seconds for neon_pooler. "
+            "Blank is unset (the engine uses 10). Values below 1 and "
+            "non-integers fall back to 10. direct_pool keeps the driver default."
+        ),
+    )
     ASYNC_POOL_RECYCLE: int = Field(
         default=120,
         description="Async pool connection recycle interval seconds",
@@ -558,6 +566,17 @@ class Settings(BaseSettings):
     @classmethod
     def unset_blank_date(cls, value: Any) -> Any:
         return None if value == "" else value
+
+    @field_validator("ASYNC_CONNECT_TIMEOUT", mode="before")
+    @classmethod
+    def normalize_async_connect_timeout(cls, value: Any) -> int | None:
+        """Blank stays unset. Invalid values fall back to 10 without crashing."""
+        from src.infra.database.connection_policy import (
+            interpret_async_connect_timeout,
+        )
+
+        seconds, _warning = interpret_async_connect_timeout(value)
+        return seconds
 
     @field_validator("NUTRITION_PROVIDER_GLOBAL_RPM", mode="before")
     @classmethod
