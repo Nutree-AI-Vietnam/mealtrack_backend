@@ -32,25 +32,15 @@ Families:
 | Breakfast | `eggs`, `oatmeal`, `toast`, `yogurt`, `breakfast_sandwich` |
 | Lunch and dinner | `sandwich`, `salad`, `grain_bowl`, `pasta`, `grilled_plate`, `soup_stew`, `taco` |
 
-The last catalog was slow because a person had to find the dishes and then shape them for the importer. `scripts/convert_excel_recipes_to_manifest.py` only converts a spreadsheet column named `Structured JSON`. `docs/meal-catalog-import-schema.md` still expects that manifest. Saved suggestions never enter `meal_catalog`. That research-and-format loop is not the path for a new country.
+The last catalog was slow because a person had to find the dishes and then shape them for the importer. `scripts/convert_excel_recipes_to_manifest.py` only converts a spreadsheet column named `Structured JSON`. That research-and-format loop is not how new meals arrive.
 
-One command fills a country:
+A daily job finds 5 to 10 meals and imports them. The default is 8. The Saigon day is the cap, so a second run the same day imports nothing more. Vietnam and the United States alternate inside the batch. Render cron `everyday-catalog-import` runs at 01:15 Asia/Saigon (`15 18 * * *` UTC):
 
 ```bash
-python scripts/fill_country_catalog.py --market US
+python scripts/import_everyday_meals.py
 ```
 
-The same command with `--market VN` can top up Vietnam later. The person running it does not pick dishes, open a spreadsheet, or write JSON.
-
-What the command does, in order, with code that already exists:
-
-1. Ask the existing suggestion generator for one everyday dish per family and meal time, using the country prompt in this phase. The model is the thing that finds the dishes. If a reply is incomplete, it asks again for that family until the slot minimum is met or the retry cap is hit.
-2. Map that reply onto the importer's manifest in memory: `recipe_key`, `cuisine`, `name`, `meal_types`, `dish_family`, and ingredients as `name`, `quantity`, `unit`. The script owns that shape. It is not a file someone edits.
-3. Resolve each ingredient through `NutritionLookupService` and `IngredientNutritionResolver`. Those already match `food_reference` and, on a miss, search FatSecret and store the food. Calories stay backend-derived from that match.
-4. Call `CatalogMealSeedImporter` in process with partial import and best-effort resolution. Near-duplicates are skipped and another dish is requested for that family. The command does not stop for a resolver-map file or a review disposition.
-5. Generate photos with the existing catalog image generator for the rows it inserted, then enqueue the existing micronutrient enrichment.
-
-The command prints one report: inserted, skipped as duplicate, skipped as unresolved, and whether breakfast, lunch, and dinner each reached five meals. A US week stays on `market_catalog_not_ready` until that minimum is in the catalog. The production manifest target of 60 is how many the command aims to insert, not a file someone prepares beforehand. Re-running the command continues from what is already imported. It does not replace rows.
+The model finds each dish. `EverydayCatalogImportService` builds the one-recipe manifest in memory, resolves ingredients through the catalog importer and FatSecret, and commits only meals the importer accepts. A near-duplicate or an unresolved ingredient is skipped and the job asks for another dish. Re-running the same day continues only until the cap. It does not replace rows. Photos and micronutrients follow the existing catalog preparation jobs created by the insert trigger.
 
 Japan and Korea stay at 60. They are not selectable in this phase.
 
@@ -80,7 +70,7 @@ The discovery fallback builder must use the same family list. A provider failure
 
 ## Tests
 
-- `fill_country_catalog.py --market US` builds the importer payload itself, imports without a hand-written manifest, and stops at five meals per slot or the retry cap. A fixture generator response is enough. No spreadsheet and no resolver-map file.
+- The daily job builds each importer payload itself. A fixture model response is enough to prove a meal is inserted, a duplicate is skipped, and a second run the same Saigon day stops at the cap.
 - Seed validator accepts a full American manifest and rejects production when American coverage is short, once American is required. Until the manifest exists, the runtime empty reason is what US users hit; do not weaken the Vietnam/Japan/Korea counts to ship the column.
 - Generator fixture: 3 Vietnamese + 3 Japanese meals, market `VN`, 21 slots. Every selected id is Vietnamese. No fallback.
 - Prompt snapshot tests: Vietnam discovery contains the family list and does not contain "Asian, Mediterranean, Latin, American". Vietnamese-language discovery does not contain the English-only name ban. US discovery does not mention phở or kimchi as required variety.

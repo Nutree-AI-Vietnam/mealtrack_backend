@@ -20,3 +20,38 @@ services:
         sync: false
       - key: UVICORN_WORKERS
         sync: false
+
+  # 01:15 Asia/Saigon. Finds 8 everyday meals and imports them.
+  # A second run the same Saigon day stops at the daily cap.
+  - type: cron
+    name: everyday-catalog-import
+    runtime: docker
+    schedule: "15 18 * * *"
+    dockerCommand: python scripts/import_everyday_meals.py
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: APP_DATABASE_URL
+        fromService:
+          name: mealtrack-backend
+          type: web
+          envVarKey: APP_DATABASE_URL
+      - key: DB_CONNECTION_MODE
+        fromService:
+          name: mealtrack-backend
+          type: web
+          envVarKey: DB_CONNECTION_MODE
+      - key: OPENAI_API_KEY
+        fromService:
+          name: mealtrack-backend
+          type: web
+          envVarKey: OPENAI_API_KEY
+      - key: FATSECRET_CLIENT_ID
+        fromService:
+          name: mealtrack-backend
+          type: web
+          envVarKey: FATSECRET_CLIENT_ID
+      - key: FATSECRET_CLIENT_SECRET
+        fromService:
+          name: mealtrack-backend
+          type: web
+          envVarKey: FATSECRET_CLIENT_SECRET
