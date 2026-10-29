@@ -25,9 +25,9 @@ toggles and sends the one server push (payment failed).
 |---|---|
 | D1 | Cap: **3 engagement notifications per local day**, and **10 per rolling 7 days**. Account notices (trial ending, payment failed) and AI results are exempt. |
 | D2 | Only **one** notification may fire in the evening window (17:30–21:30). Every notification is **at least 60 min** apart from the previous one. |
-| D3 | Quiet hours: notifications the system picks a time for fire only between 07:00 and 21:30 local. User-chosen meal times are kept but clamped to 06:00–21:30. |
+| D3 | Quiet hours: notifications the system picks a time for fire only between 07:00 and 21:30 local. User-chosen meal and water times are kept but clamped to 06:00–21:30. |
 | D4 | Every reminder **cancels itself** once the user logs. The device rebuilds the plan on every app open, log, settings change and day change. |
-| D5 | Copy rotates. A pool of variants per type, picked deterministically per day, and a template used in the last 14 days is skipped. Titles are dynamic and hooky; the app name already shows on iOS and Android. The voice is a small, dramatic buddy ("I" / "tui") that begs and sulks about itself, never about the user's food or body. The buddy word (`bro` / `bestie`) appears in about 1 of every 4 variants. Unknown gender gets neutral copy. |
+| D5 | Copy rotates. A pool of variants per type, picked deterministically per day, and a template used in the last 14 days is skipped. Titles are dynamic and hooky; the app name already shows on iOS and Android. The voice is a small, dramatic buddy ("I" / "tui") that begs and sulks about itself, never about the user's food or body. All seven languages use it, each with its own slang. In English and Vietnamese, the buddy word (`bro` / `bestie`) appears in about 1 of every 4 variants. Unknown gender gets neutral copy. |
 | D6 | No shaming numbers. The under/over-goal summaries are retired. The evening check-in is either an on-plan celebration (at most 2 a week) or a neutral "day closed" note. |
 | D7 | Promotional items (renewal offer, paywall follow-up) require the **Offers & new features** toggle, **off by default**, per Apple 4.5.4. Paywall hooks no longer replace meal reminders. |
 | D8 | Users without access can't log, so they get no logging reminders. They get only the paywall follow-up, and only after opting in to offers. |
@@ -44,13 +44,13 @@ Times are local. "Slot" means the user's meal-reminder time.
 
 | Kind | When | Frequency | Toggle |
 |---|---|---|---|
-| `meal_breakfast` / `meal_lunch` / `meal_dinner` | Meal slot; skipped once that meal is logged; only on D0–D1 | ≤1 per meal per day | Meal reminders |
+| `meal_breakfast` / `meal_lunch` / `meal_dinner` | Meal slot, when that meal's own switch is on; skipped once that meal is logged; only on D0–D1 | ≤1 per meal per day | Meal reminders |
 | `evening_checkin` | Summary time, only on logged days and only if the evening slot is free; on-plan or day-close copy | ≤1/day; on-plan ≤2/week | Daily summary |
 | `win_the_day` | 20:00 when nothing is logged today (streak 0–2), or after an app open on a lapse day. At streak 2 the copy names the 3-day medal only if the best streak never reached 3 | ≤1/day | Streak alerts |
 | `streak_saver` | Streak ≥3 with nothing logged today, at 20:30 (later for late loggers, ≤21:15) | ≤1/day, ≤4/week | Streak alerts |
 | `first_meal` | Never logged: anchor +2h, then the next day's lunch, then day 3 lunch | 3 total | Meal reminders |
 | `lapse_fresh_start` (D2), `lapse_paused` (D7), `lapse_final` (D30) | Around lunch | Once per lapse | Comeback nudges |
-| `hydration` | 15:30, for water trackers under 50% of goal | ≤1/day, ≤3/week | Water reminders |
+| `hydration` | The user's water reminder time (default 15:30), for water trackers under 50% of goal | ≤1/day, ≤3/week | Water reminders |
 | `trial_ending` | ~24h before a trial converts (the paywall promises this reminder) | Once per trial | Account (always on) |
 | `renewal_offer` | 14:00 the day before a monthly renewal (needs the one-time-offer flag) | Once per billing cycle | Offers |
 | `paywall_follow_up` | 1 and 8 days after access is first seen missing, at 14:00 | 2 per episode | Offers |
@@ -93,7 +93,7 @@ Times are local. "Slot" means the user's meal-reminder time.
 | Area | Where | Status |
 |---|---|---|
 | Planner, kinds, caps, overlays | `nutree_ai/lib/features/notifications/domain/engagement/` | Done; persona tests in `test/features/notifications/domain/engagement/` |
-| Copy pools (≈190 variants per language) | `.../engagement/copy/engagement_copy_{en,vi,es,fr,de,ja,zh}.dart` | Done; EN is the master, a parity test checks the other languages |
+| Copy pools (172 variants per language) | `.../engagement/copy/engagement_copy_{en,vi,es,fr,de,ja,zh}.dart` | Done; EN is the master, a parity test checks the other languages |
 | Memory (history, anchors) | `.../engagement/engagement_memory.dart`, `data/engagement_memory_store.dart` | Done; stored in SharedPreferences and cleared on sign-out |
 | Scheduler (one-shots, diff, legacy cleanup) | `application/notification_scheduler_service.dart` | Done |
 | Android receivers | `android/app/src/main/AndroidManifest.xml`, `MainApplication.kt` | Done. At startup, before the boot/update receiver re-arms the plugin's cache, `ScheduledNotificationCacheCleaner` drops the old daily reminders (ids 1001–1007, alarms included) and one-shots more than 15 minutes past. An update or a reboot therefore does not fire a burst of stale reminders |
@@ -107,9 +107,6 @@ Follow-ups (not done):
 - Nothing cleans up old outbox rows.
 - Turn on `ENGAGEMENT_PUSH_ENABLED` on the API service. Every API process runs
   the dispatcher, and the webhook queues nothing while the flag is off.
-- The app does not read the per-meal switches or the water reminder time
-  (PR #803) yet. The planner still uses the single meal switch and 15:30
-  for water, which is also the server default.
 
 ## Rotation and the per-day cap
 
