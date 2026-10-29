@@ -129,6 +129,37 @@ async def test_workflow_runs_validation_when_enabled(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_grounding_replaces_validation_when_enabled(monkeypatch):
+    monkeypatch.setattr(
+        "src.app.services.meal_analyze_workflow.run_meal_analyze_graph",
+        lambda state: None,
+    )
+    meal = SimpleNamespace(source="scanner")
+    grounded_meal = SimpleNamespace(source="scanner")
+    validation_service = AsyncMock()
+    validation_service.ground_meal = AsyncMock(
+        return_value=SimpleNamespace(meal=grounded_meal)
+    )
+    validation_service.validate_meal = AsyncMock()
+    legacy_handler = AsyncMock(return_value=meal)
+    command = UploadMealImageImmediatelyCommand(
+        user_id="00000000-0000-0000-0000-000000000001",
+        file_contents=b"image-bytes",
+        content_type="image/jpeg",
+    )
+
+    result = await MealAnalyzeWorkflow(
+        food_reference_validation_service=validation_service,
+        fatsecret_validation_enabled=True,
+        reference_grounding_enabled=True,
+    ).run_uploaded(command, legacy_handler)
+
+    assert result is grounded_meal
+    validation_service.ground_meal.assert_awaited_once_with(meal)
+    validation_service.validate_meal.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_uploaded_workflow_with_runtime_returns_graph_result_without_legacy(
     monkeypatch,
 ):

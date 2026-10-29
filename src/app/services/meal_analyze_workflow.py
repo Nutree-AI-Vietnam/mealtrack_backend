@@ -28,10 +28,12 @@ class MealAnalyzeWorkflow:
         *,
         food_reference_validation_service: FoodReferenceValidationService | None = None,
         fatsecret_validation_enabled: bool = False,
+        reference_grounding_enabled: bool = False,
         graph_version: str = "v1",
     ):
         self._food_reference_validation_service = food_reference_validation_service
         self._fatsecret_validation_enabled = fatsecret_validation_enabled
+        self._reference_grounding_enabled = reference_grounding_enabled
         self._graph_version = graph_version
 
     async def run_uploaded(
@@ -90,6 +92,13 @@ class MealAnalyzeWorkflow:
 
     async def _validate_if_enabled(self, meal: Meal) -> Meal:
         if (
+            self._reference_grounding_enabled
+            and self._food_reference_validation_service is not None
+            and meal.source != "food_label"
+        ):
+            report = await self._food_reference_validation_service.ground_meal(meal)
+            return report.meal
+        if (
             not self._fatsecret_validation_enabled
             or self._food_reference_validation_service is None
         ):
@@ -102,3 +111,4 @@ class MealAnalyzeWorkflow:
             self._food_reference_validation_service
         )
         runtime.fatsecret_validation_enabled = self._fatsecret_validation_enabled
+        runtime.reference_grounding_enabled = self._reference_grounding_enabled

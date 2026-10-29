@@ -381,6 +381,15 @@ async def maybe_validate_reference(
     runtime: MealAnalyzeRuntime,
 ) -> MealAnalyzeGraphState:
     """Run optional nutrition reference validation for meal scans only."""
+    if runtime.reference_grounding_enabled:
+        if runtime.food_reference_validation_service is None:
+            return {"reference_validated": False}
+        if (
+            isinstance(runtime.command, ScanByUrlCommand)
+            and runtime.command.scan_mode == "food_label"
+        ):
+            return {"reference_validated": False}
+        return {"reference_grounding_pending": True}
     if not runtime.fatsecret_validation_enabled:
         return {"reference_validated": False}
     if runtime.food_reference_validation_service is None:
@@ -426,6 +435,14 @@ async def persist_meal(
 
     validation_report: ValidationReport | None = None
     if (
+        state.get("reference_grounding_pending")
+        and runtime.food_reference_validation_service is not None
+    ):
+        validation_report = await runtime.food_reference_validation_service.ground_meal(
+            meal
+        )
+        meal = validation_report.meal
+    elif (
         state.get("reference_validation_pending")
         and runtime.food_reference_validation_service is not None
     ):

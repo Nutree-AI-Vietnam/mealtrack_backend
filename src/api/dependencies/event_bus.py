@@ -581,6 +581,7 @@ def get_configured_event_bus() -> EventBus:
     meal_analyze_workflow = MealAnalyzeWorkflow(
         food_reference_validation_service=food_reference_validation_service,
         fatsecret_validation_enabled=graph_settings["fatsecret_validation_enabled"],
+        reference_grounding_enabled=graph_settings["reference_grounding_enabled"],
         graph_version=graph_settings["graph_version"],
     )
     parse_text_settings = get_parse_text_settings()

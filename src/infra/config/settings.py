@@ -494,7 +494,20 @@ class Settings(BaseSettings):
     )
     AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED: bool = Field(
         default=False,
-        description="Enable optional FatSecret nutrition reference validation for meal analysis.",
+        description=(
+            "Audit meal-scan items against a nutrition reference and attach "
+            "micros when macros are already close. Does not replace macros. "
+            "AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED is the macro-replacement path."
+        ),
+    )
+    AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Replace meal-scan item macros through the shared nutrition cascade: "
+            "local food reference, then FatSecret, otherwise the vision estimate. "
+            "Off leaves scan output unchanged. When on, this path is used instead "
+            "of the closeness-only FatSecret validation flag."
+        ),
     )
     AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS: float = Field(
         default=5.0,
