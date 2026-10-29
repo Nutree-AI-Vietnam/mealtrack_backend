@@ -4,6 +4,10 @@ import asyncio
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
+import sentry_sdk
+from sentry_sdk.envelope import Envelope
+from sentry_sdk.transport import Transport
+
 from src.domain.exceptions.ai_exceptions import AIContentRejectedError
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
@@ -81,6 +85,366 @@ def test_before_send_drops_expected_chat_cancellations():
     assert _drop_expected_events(event, _hint(scoped)) is None
     assert _drop_expected_events(event, _hint(empty)) is None
     assert _drop_expected_events(event, _hint(nested)) is None
+
+
+def test_before_send_drops_langchain_generator_exit():
+    """PYTHON-HF: aclose() throws GeneratorExit into the LangChain span.
+
+    The integration's span origin is ``auto.ai.langchain``. The exception
+    mechanism stays generic. Either the span origin or the same origin on
+    the mechanism identifies that capture. A safety stop is not a failure.
+    """
+    exit_error = GeneratorExit()
+    span_event = {
+        "level": "error",
+        "transaction": "/v1/chat/threads/{thread_id}/messages",
+        "exception": {
+            "values": [
+                {
+                    "type": "GeneratorExit",
+                    "value": "",
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+        "contexts": {
+            "trace": {
+                "op": "gen_ai.chat",
+                "origin": "auto.ai.langchain",
+            }
+        },
+    }
+    mechanism_event = {
+        "level": "error",
+        "exception": {
+            "values": [
+                {
+                    "type": "GeneratorExit",
+                    "value": "",
+                    "mechanism": {
+                        "type": "generic",
+                        "handled": True,
+                        "data": {"origin": "auto.ai.langchain"},
+                    },
+                }
+            ]
+        },
+    }
+
+    assert _drop_expected_events(span_event, _hint(exit_error)) is None
+    assert _drop_expected_events(mechanism_event, _hint(GeneratorExit())) is None
+
+
+def test_before_send_keeps_generator_exit_without_langchain_origin():
+    event = {
+        "level": "error",
+        "exception": {
+            "values": [
+                {
+                    "type": "GeneratorExit",
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+        "contexts": {"trace": {"op": "http.server", "origin": "auto.http.starlette"}},
+    }
+
+    assert _drop_expected_events(event, _hint(GeneratorExit())) is event
+
+
+def test_before_send_keeps_langchain_errors_that_are_not_generator_exit():
+    event = {
+        "level": "error",
+        "transaction": "/v1/chat/threads/{thread_id}/messages",
+        "contexts": {"trace": {"op": "gen_ai.chat", "origin": "auto.ai.langchain"}},
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+    }
+
+    assert _drop_expected_events(event, _hint(RuntimeError("boom"))) is event
+
+
+def test_before_send_drops_cancelled_error_on_both_chat_message_routes():
+    """PYTHON-HW / PYTHON-HP use the thread route. PYTHON-HY uses /messages."""
+    plain = asyncio.CancelledError("Cancelled via cancel scope")
+    for transaction in (
+        "/v1/chat/messages",
+        "/v1/chat/threads/{thread_id}/messages",
+    ):
+        event = {"level": "error", "transaction": transaction}
+        assert _drop_expected_events(event, _hint(plain)) is None
+
+    other_route = {
+        "level": "error",
+        "transaction": "/v1/meals/scan-by-url",
+    }
+    assert _drop_expected_events(other_route, _hint(plain)) is other_route
+
+
+# PYTHON-HY 4a3e4fffd79b40988114d36f392fe5dc and PYTHON-HW
+# 902c8dd97b364019a75445ef473e3f39. Task ids only; no user or model text.
+_HY_CANCEL_MESSAGE = (
+    "Cancelled via cancel scope 799b40ad3f70 by "
+    "<Task pending name='Task-196336' "
+    "coro=<RequestResponseCycle.run_asgi() "
+    "running at uvicorn/protocols/http/httptools_impl.py:421> "
+    "cb=[set.discard()]>"
+)
+_HW_CANCEL_MESSAGE = (
+    "Cancelled via cancel scope 799b40143750 by "
+    "<Task pending name='Task-246698' "
+    "coro=<RequestResponseCycle.run_asgi() "
+    "running at uvicorn/protocols/http/httptools_impl.py:421> "
+    "cb=[set.discard()]>"
+)
+_HY_URL = "http://api.nutreeai.com/v1/chat/messages"
+_HW_URL = (
+    "http://api.nutreeai.com/v1/chat/threads/"
+    "00000000-0000-4000-8000-000000000001/messages"
+)
+
+
+def _disconnect_cancelled(message: str) -> asyncio.CancelledError:
+    """httpcore ``raise exc from None`` (pool.py 256 for HY, 407 for HW).
+
+    ``from None`` sets ``__suppress_context__`` and leaves ``__context__``.
+    Sentry stores only the CancelledError. A bare check of ``__context__``
+    still sees the cleanup error.
+    """
+    try:
+        raise RuntimeError("connection cleanup")
+    except RuntimeError:
+        try:
+            raise asyncio.CancelledError(message)
+        except asyncio.CancelledError as exc:
+            try:
+                raise exc from None
+            except asyncio.CancelledError as hidden:
+                return hidden
+
+
+def _stored_disconnect_event(*, transaction: str, url: str, message: str) -> dict:
+    return {
+        "level": "error",
+        "transaction": transaction,
+        "request": {"method": "POST", "url": url},
+        "exception": {
+            "values": [
+                {
+                    "type": "CancelledError",
+                    "value": message,
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+    }
+
+
+def test_before_send_drops_hy_and_hw_when_context_is_suppressed():
+    """The live object is not a bare CancelledError. Sentry still shows one."""
+    cases = (
+        (
+            "/v1/chat/messages",
+            _HY_URL,
+            _HY_CANCEL_MESSAGE,
+        ),
+        (
+            "/v1/chat/threads/{thread_id}/messages",
+            _HW_URL,
+            _HW_CANCEL_MESSAGE,
+        ),
+    )
+    for transaction, url, message in cases:
+        cancelled = _disconnect_cancelled(message)
+        assert cancelled.__cause__ is None
+        assert cancelled.__suppress_context__ is True
+        assert isinstance(cancelled.__context__, RuntimeError)
+        event = _stored_disconnect_event(
+            transaction=transaction, url=url, message=message
+        )
+        assert _drop_expected_events(event, _hint(cancelled)) is None
+
+    other = _stored_disconnect_event(
+        transaction="/v1/meals/scan-by-url",
+        url="http://api.nutreeai.com/v1/meals/scan-by-url",
+        message=_HY_CANCEL_MESSAGE,
+    )
+    assert (
+        _drop_expected_events(other, _hint(_disconnect_cancelled(_HY_CANCEL_MESSAGE)))
+        is other
+    )
+
+    caused = _disconnect_cancelled(_HY_CANCEL_MESSAGE)
+    caused.__suppress_context__ = False
+    caused.__cause__ = RuntimeError("provider failed")
+    chat = _stored_disconnect_event(
+        transaction="/v1/chat/messages",
+        url=_HY_URL,
+        message=_HY_CANCEL_MESSAGE,
+    )
+    assert _drop_expected_events(chat, _hint(caused)) is chat
+
+
+def test_before_send_drops_stored_disconnect_when_hint_has_no_exc_info():
+    """LangChain capture can reach before_send with the payload and no hint."""
+    for transaction, url, message in (
+        ("/v1/chat/messages", _HY_URL, _HY_CANCEL_MESSAGE),
+        (
+            "/v1/chat/threads/{thread_id}/messages",
+            _HW_URL,
+            _HW_CANCEL_MESSAGE,
+        ),
+    ):
+        event = _stored_disconnect_event(
+            transaction=transaction, url=url, message=message
+        )
+        assert _drop_expected_events(event, {}) is None
+
+    url_only = {
+        "level": "error",
+        "request": {"method": "POST", "url": _HW_URL},
+        "exception": {
+            "values": [
+                {
+                    "type": "CancelledError",
+                    "value": _HW_CANCEL_MESSAGE,
+                    "mechanism": {"type": "generic", "handled": True},
+                }
+            ]
+        },
+    }
+    assert _drop_expected_events(url_only, {}) is None
+
+    chained = _stored_disconnect_event(
+        transaction="/v1/chat/messages",
+        url=_HY_URL,
+        message=_HY_CANCEL_MESSAGE,
+    )
+    chained["exception"]["values"].append(
+        {
+            "type": "RuntimeError",
+            "value": "provider failed",
+            "mechanism": {"type": "chained", "source": "__cause__"},
+        }
+    )
+    assert _drop_expected_events(chained, {}) is chained
+
+
+class _CapturingTransport(Transport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.envelopes: list[Envelope] = []
+
+    def capture_envelope(self, envelope: Envelope) -> None:
+        self.envelopes.append(envelope)
+
+
+def _error_events(envelopes: list[Envelope]) -> list[dict]:
+    events = []
+    for envelope in envelopes:
+        event = envelope.get_event()
+        if event is not None and event.get("type") != "transaction":
+            events.append(event)
+    return events
+
+
+def test_sdk_before_send_drops_hy_and_hw_payloads():
+    """Push the production captures through a real client, as before_send runs."""
+    transport = _CapturingTransport()
+    sentry_sdk.init(
+        dsn="https://public@example.ingest.sentry.io/1",
+        transport=transport,
+        before_send=_drop_expected_events,
+        default_integrations=False,
+        traces_sample_rate=0,
+    )
+    try:
+        captures = (
+            (
+                "/v1/chat/messages",
+                _HY_URL,
+                _HY_CANCEL_MESSAGE,
+            ),
+            (
+                "/v1/chat/threads/{thread_id}/messages",
+                _HW_URL,
+                _HW_CANCEL_MESSAGE,
+            ),
+        )
+        for transaction, url, message in captures:
+            with sentry_sdk.isolation_scope() as scope:
+                scope.set_transaction_name(transaction)
+
+                def _add_request(event, hint, request_url=url):
+                    event["request"] = {"method": "POST", "url": request_url}
+                    return event
+
+                scope.add_event_processor(_add_request)
+                sentry_sdk.capture_exception(_disconnect_cancelled(message))
+
+        with sentry_sdk.isolation_scope() as scope:
+            scope.set_transaction_name("/v1/chat/messages")
+            visible = _disconnect_cancelled(_HY_CANCEL_MESSAGE)
+            visible.__suppress_context__ = False
+            visible.__cause__ = RuntimeError("provider failed")
+            sentry_sdk.capture_exception(visible)
+    finally:
+        sentry_sdk.get_client().close()
+
+    errors = _error_events(transport.envelopes)
+    assert len(errors) == 1
+    assert errors[0]["transaction"] == "/v1/chat/messages"
+    assert {value["type"] for value in errors[0]["exception"]["values"]} == {
+        "CancelledError",
+        "RuntimeError",
+    }
+
+
+def _connection_terminate_event(*, exc_type: str) -> dict:
+    return {
+        "level": "error",
+        "logger": "src.infra.database.planner_pool.PlannerQueuePool",
+        "logentry": {
+            "message": "Exception terminating connection %r",
+            "formatted": (
+                "Exception terminating connection "
+                "<AdaptedConnection <asyncpg.connection.Connection object>>"
+            ),
+        },
+        "exception": {
+            "values": [
+                {
+                    "type": exc_type,
+                    "mechanism": {"type": "logging", "handled": True},
+                }
+            ]
+        },
+    }
+
+
+def test_before_send_drops_logging_connection_terminate_cancelled_error():
+    """PYTHON-HP f3faf05d: pool logger, logging mechanism, bare CancelledError."""
+    event = _connection_terminate_event(exc_type="CancelledError")
+    cancelled = asyncio.CancelledError(
+        "Cancelled via cancel scope 799b40143750 by "
+        "<Task pending name='Task-246698' "
+        "coro=<RequestResponseCycle.run_asgi() "
+        "running at uvicorn/protocols/http/httptools_impl.py:421>"
+    )
+
+    assert _drop_expected_events(event, _hint(cancelled)) is None
+
+
+def test_before_send_keeps_connection_terminate_that_is_not_cancelled():
+    event = _connection_terminate_event(exc_type="RuntimeError")
+
+    assert _drop_expected_events(event, _hint(RuntimeError("close failed"))) is event
 
 
 def test_before_send_keeps_chat_cancellations_that_are_not_client_disconnects():
