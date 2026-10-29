@@ -345,6 +345,25 @@ class SimpleMealResponse(BaseModel):
     model_config = ConfigDict(json_encoders={datetime: _serialize_datetime_utc})
 
 
+class NutritionSourceSummaryResponse(BaseModel):
+    """Counts of food items by the logical nutrition origin on each item.
+
+    Keys match item ``origin`` (local, usda, provider, custom). ``unknown``
+    is items whose stored origin is missing or not one of those four.
+    This is not a meal-level origin.
+    """
+
+    local: int = Field(0, ge=0, description="Items with origin local")
+    usda: int = Field(0, ge=0, description="Items with origin usda")
+    provider: int = Field(0, ge=0, description="Items with origin provider")
+    custom: int = Field(0, ge=0, description="Items with origin custom")
+    unknown: int = Field(
+        0,
+        ge=0,
+        description="Items with no stored origin, or an unrecognized one",
+    )
+
+
 class DetailedMealResponse(SimpleMealResponse):
     """Response DTO for detailed meal information with nutrition."""
 
@@ -390,6 +409,31 @@ class DetailedMealResponse(SimpleMealResponse):
         None, description="Per-item nutrient quality when coverage >= 1"
     )
     nrf_coverage: int = Field(0, description="Count of logged NRF micro/limit fields")
+    ai_generated: bool = Field(
+        ...,
+        description=(
+            "True when source is scanner, food_label, prompt, or "
+            "ai_suggestion. False for every other source, including null."
+        ),
+    )
+    ai_confidence: float | None = Field(
+        ...,
+        ge=0,
+        le=1,
+        description=(
+            "Stored vision confidence_score when source is scanner. "
+            "Null for every other source, and null when a scanner meal "
+            "has no nutrition yet. Not a calibrated probability. "
+            "Food-label confidence stays on food_label_metadata.confidence."
+        ),
+    )
+    nutrition_source_summary: NutritionSourceSummaryResponse = Field(
+        ...,
+        description=(
+            "Counts of food items by logical nutrition origin. "
+            "Reconciles with each item's origin field."
+        ),
+    )
 
 
 class MealListResponse(BaseModel):
