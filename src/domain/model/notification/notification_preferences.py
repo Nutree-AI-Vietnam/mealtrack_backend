@@ -54,6 +54,13 @@ class NotificationPreferences:
     meal_reminders_enabled: bool = True
     daily_summary_enabled: bool = True
     hydration_reminders_enabled: bool = True
+    # Engagement toggles for notifications the device plans (streak saver,
+    # lapse ladder, recaps). Offers stay off until the user opts in, per App
+    # Store guideline 4.5.4.
+    streak_reminders_enabled: bool = True
+    reengagement_enabled: bool = True
+    progress_updates_enabled: bool = True
+    offers_enabled: bool = False
     breakfast_time_minutes: int | None = None  # minutes from midnight (0-1439)
     lunch_time_minutes: int | None = None
     dinner_time_minutes: int | None = None
@@ -102,6 +109,10 @@ class NotificationPreferences:
             dinner_reminder_enabled=True,
             daily_summary_enabled=True,
             hydration_reminders_enabled=True,
+            streak_reminders_enabled=True,
+            reengagement_enabled=True,
+            progress_updates_enabled=True,
+            offers_enabled=False,
             breakfast_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["breakfast"],
             lunch_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["lunch"],
             dinner_time_minutes=DEFAULT_MEAL_REMINDER_MINUTES["dinner"],
@@ -117,6 +128,10 @@ class NotificationPreferences:
         meal_reminders_enabled: bool | None = None,
         daily_summary_enabled: bool | None = None,
         hydration_reminders_enabled: bool | None = None,
+        streak_reminders_enabled: bool | None = None,
+        reengagement_enabled: bool | None = None,
+        progress_updates_enabled: bool | None = None,
+        offers_enabled: bool | None = None,
         breakfast_time_minutes: int | None = None,
         lunch_time_minutes: int | None = None,
         dinner_time_minutes: int | None = None,
@@ -131,6 +146,10 @@ class NotificationPreferences:
         requested = {
             "daily_summary_enabled": daily_summary_enabled,
             "hydration_reminders_enabled": hydration_reminders_enabled,
+            "streak_reminders_enabled": streak_reminders_enabled,
+            "reengagement_enabled": reengagement_enabled,
+            "progress_updates_enabled": progress_updates_enabled,
+            "offers_enabled": offers_enabled,
             "breakfast_time_minutes": breakfast_time_minutes,
             "lunch_time_minutes": lunch_time_minutes,
             "dinner_time_minutes": dinner_time_minutes,
@@ -213,6 +232,10 @@ class NotificationPreferences:
             "dinner_reminder_enabled": self.dinner_reminder_enabled,
             "daily_summary_enabled": self.daily_summary_enabled,
             "hydration_reminders_enabled": self.hydration_reminders_enabled,
+            "streak_reminders_enabled": self.streak_reminders_enabled,
+            "reengagement_enabled": self.reengagement_enabled,
+            "progress_updates_enabled": self.progress_updates_enabled,
+            "offers_enabled": self.offers_enabled,
             "breakfast_time_minutes": self.breakfast_time_minutes,
             "lunch_time_minutes": self.lunch_time_minutes,
             "dinner_time_minutes": self.dinner_time_minutes,

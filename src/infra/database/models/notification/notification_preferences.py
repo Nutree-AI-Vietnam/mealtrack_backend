@@ -3,6 +3,7 @@ Notification preferences model for user notification settings.
 """
 
 from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
 
 from src.infra.database.base import Base
 from src.infra.database.models.base import BaseMixin
@@ -38,6 +39,23 @@ class NotificationPreferencesORM(Base, BaseMixin):
     daily_summary_enabled = Column(Boolean, default=True, nullable=False)
     hydration_reminders_enabled = Column(
         Boolean, default=True, nullable=False, server_default="true"
+    )
+    # Engagement toggles; the device plans these notifications itself.
+    # Streak saver and "win the day".
+    streak_reminders_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    # Lapse ladder ("comeback nudges").
+    reengagement_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    # Weekly recap, protein gap and other progress notes.
+    progress_updates_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    # Promotional items need an opt-in (App Store guideline 4.5.4).
+    offers_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
     )
 
     # Meal Reminder Timing (minutes from midnight: 0-1439)

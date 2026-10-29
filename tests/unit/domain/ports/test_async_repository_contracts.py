@@ -2,6 +2,9 @@ import inspect
 
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
+from src.domain.ports.engagement_push_repository_port import (
+    EngagementPushRepositoryPort,
+)
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.ports.notification_repository_port import NotificationRepositoryPort
 from src.domain.ports.saved_suggestion_repository_port import (
@@ -91,6 +94,17 @@ def test_repository_ports_are_async_contracts():
         ],
     )
     _assert_async_methods(
+        EngagementPushRepositoryPort,
+        [
+            "enqueue",
+            "claim_due",
+            "mark_sent",
+            "mark_failed",
+            "expire_stale",
+            "delete_pending",
+        ],
+    )
+    _assert_async_methods(
         ChatRepositoryPort,
         [
             "get_or_create_thread",
@@ -133,6 +147,8 @@ def test_async_unit_of_work_contract_declares_runtime_repositories():
         "food_references",
         "meal_translations",
         "chat",
+        "push_tokens",
+        "engagement_pushes",
     }
 
     assert expected_repositories <= set(AsyncUnitOfWorkPort.__annotations__)

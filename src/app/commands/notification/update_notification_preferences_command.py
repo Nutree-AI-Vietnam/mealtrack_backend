@@ -16,6 +16,10 @@ class UpdateNotificationPreferencesCommand(Command):
     meal_reminders_enabled: Optional[bool] = None
     daily_summary_enabled: Optional[bool] = None
     hydration_reminders_enabled: Optional[bool] = None
+    streak_reminders_enabled: bool | None = None
+    reengagement_enabled: bool | None = None
+    progress_updates_enabled: bool | None = None
+    offers_enabled: bool | None = None
     breakfast_time_minutes: Optional[int] = None
     lunch_time_minutes: Optional[int] = None
     dinner_time_minutes: Optional[int] = None

@@ -3,6 +3,7 @@
 import logging
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import text
@@ -19,6 +20,11 @@ from src.api.routes.v1.webhook_referral_funnel import (
 )
 from src.app.events.affiliate.affiliate_events import (
     SubscriptionLifecycleEvent,
+)
+from src.bootstrap.engagement_push import engagement_push_enabled
+from src.domain.model.notification import (
+    EngagementPushKind,
+    plan_billing_issue_push,
 )
 from src.domain.ports.integration_event_publisher_port import require_event_publisher
 from src.domain.utils.timezone_utils import utc_now
@@ -139,6 +145,7 @@ async def handle_purchase(
         event_publisher=event_publisher,
         user_id=str(user.id),
     )
+    await _drop_billing_issue_push(uow, user)
 
 
 async def handle_renewal(
@@ -194,6 +201,8 @@ async def handle_renewal(
         logger.exception(
             "Failed to purge stale trial pushes for user %s after renewal", user.id
         )
+
+    await _drop_billing_issue_push(uow, user)
 
 
 async def handle_cancellation(
@@ -259,6 +268,8 @@ async def handle_billing_issue(
 ):
     """Handle billing issues."""
     subscription = await get_or_create_subscription(uow, user, event)
+    # A repeat BILLING_ISSUE in the same episode must not push again.
+    already_flagged = getattr(subscription, "status", None) == "billing_issue"
 
     if subscription:
         subscription.status = "billing_issue"
@@ -280,6 +291,9 @@ async def handle_billing_issue(
         event_publisher=event_publisher,
         user_id=str(user.id),
     )
+
+    if not already_flagged:
+        await _queue_billing_issue_push(uow, user)
 
 
 async def handle_product_change(
@@ -309,6 +323,7 @@ async def handle_product_change(
         event_publisher=event_publisher,
         user_id=str(user.id),
     )
+    await _drop_billing_issue_push(uow, user)
 
 
 async def handle_refund(uow, user, event, affiliate_handler=None, event_publisher=None):
@@ -334,6 +349,58 @@ async def handle_refund(uow, user, event, affiliate_handler=None, event_publishe
         user_id=str(user.id),
     )
     await revoke_referral_on_refund(uow, str(user.id))
+
+
+async def _queue_billing_issue_push(uow, user) -> None:
+    """Queue the payment-failed push for the user's next 09:00–20:00 window."""
+    if not engagement_push_enabled():
+        return
+    push = plan_billing_issue_push(
+        user_id=str(user.id),
+        timezone=_text_attr(user, "timezone"),
+        language=_text_attr(user, "language_code"),
+        now=utc_now(),
+    )
+
+    async def enqueue() -> None:
+        if await uow.engagement_pushes.enqueue(push):
+            logger.info(
+                "Billing-issue push for user %s due at %s",
+                user.id,
+                push.scheduled_for_utc.isoformat(),
+            )
+
+    await _write_push_outbox(uow, user, "queue", enqueue)
+
+
+async def _drop_billing_issue_push(uow, user) -> None:
+    """The billing issue is resolved, so its pending push must not go out."""
+
+    async def delete() -> None:
+        await uow.engagement_pushes.delete_pending(
+            user_id=str(user.id), kind=EngagementPushKind.BILLING_ISSUE
+        )
+
+    await _write_push_outbox(uow, user, "drop", delete)
+
+
+async def _write_push_outbox(
+    uow, user, action: str, write: Callable[[], Awaitable[None]]
+) -> None:
+    # The savepoint keeps a failed outbox write from aborting the subscription
+    # update: the webhook must still ACK so RevenueCat doesn't retry.
+    try:
+        async with uow.session.begin_nested():
+            await write()
+    except Exception:
+        logger.exception(
+            "Failed to %s the billing-issue push for user %s", action, user.id
+        )
+
+
+def _text_attr(obj: Any, name: str) -> str | None:
+    value = getattr(obj, name, None)
+    return value if isinstance(value, str) and value else None
 
 
 async def get_or_create_subscription(uow, user, event):

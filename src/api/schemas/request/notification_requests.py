@@ -46,6 +46,19 @@ class NotificationPreferencesUpdateRequest(BaseModel):
     hydration_reminders_enabled: Optional[bool] = Field(
         None, description="Enable/disable hydration reminder notifications"
     )
+    streak_reminders_enabled: bool | None = Field(
+        None, description="Enable/disable streak alerts (streak saver, win the day)"
+    )
+    reengagement_enabled: bool | None = Field(
+        None, description="Enable/disable comeback nudges after the user stops logging"
+    )
+    progress_updates_enabled: bool | None = Field(
+        None, description="Enable/disable progress notes and recaps"
+    )
+    offers_enabled: bool | None = Field(
+        None,
+        description="Opt in to promotional offers and new-feature news (off by default)",
+    )
 
     # Meal timing (minutes from midnight: 0-1439)
     breakfast_time_minutes: Optional[int] = Field(

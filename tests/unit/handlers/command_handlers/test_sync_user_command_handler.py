@@ -631,6 +631,29 @@ class TestSyncUserReRegistration:
             "Notification preferences should be created for new user"
         )
 
+    @pytest.mark.asyncio
+    async def test_new_user_gets_engagement_notification_defaults(self, handler):
+        """Streak, comeback and progress alerts start on; offers start off."""
+        fake_uow = FakeUnitOfWork()
+        handler.uow = fake_uow
+
+        result = await handler.handle(
+            SyncUserCommand(
+                firebase_uid="firebase_engagement",
+                email="engagement@example.com",
+                provider="google",
+            )
+        )
+
+        prefs = await fake_uow.notifications.find_notification_preferences_by_user(
+            str(result["user"]["id"])
+        )
+        assert prefs is not None
+        assert prefs.streak_reminders_enabled is True
+        assert prefs.reengagement_enabled is True
+        assert prefs.progress_updates_enabled is True
+        assert prefs.offers_enabled is False
+
 
 @pytest.mark.asyncio
 async def test_sync_leaves_the_chosen_avatar_untouched(handler):

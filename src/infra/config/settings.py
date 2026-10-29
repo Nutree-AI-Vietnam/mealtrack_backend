@@ -302,6 +302,14 @@ class Settings(BaseSettings):
         default=True,
         description="Let chat turns with ai_job_id keep generating after disconnect.",
     )
+    # Server-sent engagement pushes (payment failed) through the notifications outbox
+    ENGAGEMENT_PUSH_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Queue the payment-failed push on RevenueCat BILLING_ISSUE and run "
+            "the dispatcher that sends it in this process."
+        ),
+    )
     # Image search (meal discovery photos)
     PEXELS_API_KEY: str | None = Field(
         default=None, description="Pexels API key for food photos"
