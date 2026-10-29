@@ -169,3 +169,17 @@ def _text_corpus_status(cases: list[ParseTextEvalCase], splits: dict[str, str]) 
         ):
             return "blocked_incomplete_nutrition_references"
     return "reviewed_corpus_complete"
+
+
+def load_text_scaffold_manifest(path: str | Path | None = None):
+    """Load the synthetic text scaffold. This is not a reviewed text corpus."""
+    from scripts.development.accuracy_baseline_scaffold import (
+        TEXT_FIXTURE,
+        ScaffoldManifest,
+        load_scaffold_manifest,
+    )
+
+    manifest: ScaffoldManifest = load_scaffold_manifest(path or TEXT_FIXTURE)
+    if manifest.surface != "parse_text":
+        raise ValueError("text scaffold surface must be parse_text")
+    return manifest
