@@ -589,6 +589,68 @@ async def test_async_graph_treats_malformed_localization_container_as_non_retrya
     assert vision_service.analyze.await_count == 1
 
 
+class _RepositoriesInsideContextUow:
+    """Like AsyncUnitOfWork: repositories exist only inside ``async with``."""
+
+    def __init__(self, meals):
+        self._meals = meals
+
+    async def __aenter__(self):
+        self.meals = self._meals
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        del self.meals
+        return False
+
+
+@pytest.mark.asyncio
+async def test_analyze_vision_passes_personal_correction_hints():
+    class _Meals:
+        async def list_recent_fix_result_raw_payloads(self, user_id, *, limit=30):
+            return [
+                (
+                    "m1",
+                    "Indian date",
+                    (
+                        '{"_fix_result_corrections":[{"correction":"that is grape",'
+                        '"wrong_dish":"Indian date","right_dish":"Grape",'
+                        '"wrong_names":["Indian date"],"right_names":["Grape"]}]}'
+                    ),
+                )
+            ]
+
+    vision_service = AsyncMock()
+    vision_service.analyze = AsyncMock(
+        return_value={"structured_data": {"is_food": False}}
+    )
+    runtime = MealAnalyzeRuntime(
+        command=UploadMealImageImmediatelyCommand(
+            user_id="user-123",
+            file_contents=b"upload-bytes",
+            content_type="image/jpeg",
+        ),
+        vision_service=vision_service,
+        gpt_parser=VisionResponseParser(),
+        uow=_RepositoriesInsideContextUow(_Meals()),
+    )
+    runtime.acquired_image = AcquiredImage(
+        image_id="image-123",
+        image_url="https://example.com/image-123.jpg",
+        persisted_image_id="image-123",
+        persisted_image_url="https://example.com/image-123.jpg",
+        source_bytes=b"upload-bytes",
+        analysis_bytes=b"upload-bytes",
+        content_type="image/jpeg",
+        content_kind="meal_image",
+    )
+
+    await analyze_vision({}, runtime)
+
+    hints = vision_service.analyze.await_args.kwargs.get("correction_hints")
+    assert hints and "Grape" in hints[0]
+
+
 @pytest.mark.asyncio
 async def test_async_graph_upload_vision_retries_transient_failure():
     image_id = "1325c7ca-e012-4df3-b0b4-55bfaeb55eb0"
