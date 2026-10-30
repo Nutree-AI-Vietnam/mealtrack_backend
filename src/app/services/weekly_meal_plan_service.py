@@ -8,7 +8,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from time import monotonic
 
 from pydantic import ValidationError
@@ -143,6 +143,10 @@ class WeeklyMealPlanService:
                 if current is not None and current.status.value == "confirmed":
                     raise WeeklyMealPlanConflictError()
                 captured_state = _generation_state(current)
+                previous = await uow.weekly_meal_plans.get_current(
+                    user_id=command.user_id,
+                    week_start_date=command.week_start_date - timedelta(days=7),
+                )
                 captured_version = (
                     await uow.catalog_recipes.capture_catalog_publication_version()
                 )
@@ -161,6 +165,12 @@ class WeeklyMealPlanService:
                 "week_start_date": command.week_start_date.isoformat(),
                 "daily_calories": command.daily_calories,
                 "preferences": command.preferences,
+                # Last week's dishes come later so next week is not a copy.
+                "last_week": frozenset(
+                    slot.recipe_id
+                    for slot in (previous.slots if previous else ())
+                    if slot.recipe_id
+                ),
             }
             if basket_ids is None:
                 algorithm_version = self.generator.algorithm_version

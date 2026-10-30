@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -998,7 +998,12 @@ class _IngredientLinesUow(_Uow):
 
 
 class _RecordingGenerator(WeeklyPlanGenerationService):
+    kwargs = None
     compact_kwargs = None
+
+    def generate(self, meals, **kwargs):
+        self.kwargs = kwargs
+        return super().generate(meals, **kwargs)
 
     def generate_compact(self, meals, **kwargs):
         self.compact_kwargs = kwargs
@@ -1065,6 +1070,7 @@ async def test_compact_arm_keeps_logged_meals_and_reads_lines_once_per_catalog(
         "plain-rice": frozenset(),
     }
     assert generator.compact_kwargs["fixed"] == {(0, 0): "tofu"}
+    assert generator.compact_kwargs["last_week"] == frozenset({"tofu"})
     assert uow.update_args["algorithm_version"] == "v3-compact"
     assert (0, 0) not in uow.update_args["slots"]
     assert uow.line_reads == 1
@@ -1143,3 +1149,47 @@ async def test_shortlist_widens_once_to_reach_lower_ranked_target_recipe():
     )
     assert target_slot.recipe_id == "desired"
     assert provider.calls == 2
+
+
+class _TwoWeeksUow(_Uow):
+    """This week's plan and last week's, told apart by week start."""
+
+    def __init__(self, plan, last_week_plan, meals):
+        super().__init__(plan, meals)
+        self.last_week_plan = last_week_plan
+        self.requested_weeks = []
+
+    async def get_current(self, *, user_id, week_start_date):
+        self.requested_weeks.append(week_start_date)
+        if week_start_date == self.plan.week_start_date:
+            return self.plan
+        return self.last_week_plan
+
+
+@pytest.mark.asyncio
+async def test_generation_hands_last_weeks_dishes_to_the_generator():
+    plan = _plan(recipe_id=None)
+    uow = _TwoWeeksUow(
+        plan,
+        _plan(recipe_id="tofu"),
+        (_meal("tofu", "Tofu"), _meal("lentils", "Lentil bowl")),
+    )
+    generator = _RecordingGenerator()
+    service = WeeklyMealPlanService(lambda: uow, generator=generator)
+
+    await service.generate(_generate_command(plan))
+
+    assert plan.week_start_date - timedelta(days=7) in uow.requested_weeks
+    assert generator.kwargs["last_week"] == frozenset({"tofu"})
+
+
+@pytest.mark.asyncio
+async def test_a_first_week_has_nothing_to_avoid():
+    plan = _plan(recipe_id=None)
+    uow = _TwoWeeksUow(plan, None, (_meal("tofu", "Tofu"),))
+    generator = _RecordingGenerator()
+    service = WeeklyMealPlanService(lambda: uow, generator=generator)
+
+    await service.generate(_generate_command(plan))
+
+    assert generator.kwargs["last_week"] == frozenset()
