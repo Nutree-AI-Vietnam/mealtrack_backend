@@ -18,6 +18,9 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     aggregate_grocery,
     is_pantry_staple,
 )
+from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
+    leftover_lunch_cook_days,
+)
 from src.planner_observability import planner_timed
 
 # Seasonings most kitchens already hold. The group sorts last and clients can
@@ -57,12 +60,15 @@ class WeeklyGroceryService:
     def project(self, plan: WeeklyMealPlan, meals) -> tuple[DerivedGroceryItem, ...]:
         """Project proposed-plan requirements without pantry deductions or writes."""
         meals_by_id = {meal.id: meal for meal in meals}
+        cook_days = leftover_lunch_cook_days(plan)
         slots = [
             _slot_from_meal(
                 meals_by_id[slot.recipe_id],
                 plan_people=plan.people,
                 override=getattr(slot, "recipe_override", None),
-                day_index=slot.day_index,
+                day_index=cook_days.get(
+                    (slot.day_index, slot.slot_index), slot.day_index
+                ),
             )
             for slot in plan.slots
             if slot.recipe_id is not None and slot.recipe_id in meals_by_id
@@ -79,6 +85,7 @@ class WeeklyGroceryService:
         if hasattr(uow.catalog_recipes, "get_meals"):
             fetched = await uow.catalog_recipes.get_meals(needed_ids)
             meals_cache = {meal.id: meal for meal in fetched if meal is not None}
+        cook_days = leftover_lunch_cook_days(plan)
         for slot in plan.slots:
             if slot.recipe_id is None:
                 continue
@@ -96,7 +103,9 @@ class WeeklyGroceryService:
                     meal,
                     plan_people=plan.people,
                     override=getattr(slot, "recipe_override", None),
-                    day_index=slot.day_index,
+                    day_index=cook_days.get(
+                        (slot.day_index, slot.slot_index), slot.day_index
+                    ),
                 )
             )
         pantry_rows = await uow.weekly_meal_plans.list_pantry(

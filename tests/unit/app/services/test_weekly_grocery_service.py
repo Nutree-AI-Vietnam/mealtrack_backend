@@ -251,6 +251,38 @@ def test_eggplant_is_produce_while_eggs_are_protein():
     assert _resolve_grocery_category("2 eggs", None) == "protein"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("algorithm_version", "expected_days"),
+    [("v3-compact", {0: 600}), ("v2", {0: 300, 1: 300})],
+)
+async def test_a_compact_week_buys_the_leftover_lunch_with_its_dinner(
+    algorithm_version, expected_days
+):
+    dinner_then_lunch = {(0, 2), (1, 1)}
+    plan = replace(
+        _plan(),
+        algorithm_version=algorithm_version,
+        slots=tuple(
+            replace(
+                slot,
+                recipe_id="recipe-1"
+                if (slot.day_index, slot.slot_index) in dinner_then_lunch
+                else None,
+            )
+            for slot in _plan().slots
+        ),
+    )
+
+    categories = await WeeklyGroceryService().calculate(_Uow(), plan)
+
+    item = categories[0].items[0]
+    assert item.total_needed == 600
+    assert {
+        day["day_index"]: day["total_needed"] for day in item.daily_amounts
+    } == expected_days
+
+
 def test_seasonings_are_staples_whatever_the_catalog_category():
     assert _resolve_grocery_category("Nước mắm", "pantry") == "staples"
     assert _resolve_grocery_category("Tỏi băm", "produce") == "staples"

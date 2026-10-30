@@ -80,25 +80,29 @@ class WeeklyMealPlanService:
         *,
         generator: WeeklyPlanGenerationService | None = None,
         ai_adjustment_provider=None,
-        ingredient_reuse_percent: int = 0,
+        compact_week_percent: int = 0,
     ):
         self.uow_factory = uow_factory
         self.generator = generator or WeeklyPlanGenerationService()
         self.ai_adjustment_provider = ai_adjustment_provider
         self.grocery_service = WeeklyGroceryService()
-        # Share of users whose generated weeks reuse ingredients (A/B arm).
-        self.ingredient_reuse_percent = max(0, min(100, int(ingredient_reuse_percent)))
+        # Share of users whose generated weeks are compact (A/B arm).
+        self.compact_week_percent = max(0, min(100, int(compact_week_percent)))
 
-    def _reuses_ingredients(self, user_id: str) -> bool:
-        """Stable per-user A/B bucket for ingredient-reusing generation."""
-        if self.ingredient_reuse_percent <= 0:
+    def _plans_compact_week(self, user_id: str) -> bool:
+        """Stable per-user A/B bucket for compact week generation."""
+        if self.compact_week_percent <= 0:
             return False
-        digest = hashlib.sha256(f"ingredient-reuse:{user_id}".encode()).hexdigest()
-        return int(digest[:8], 16) % 100 < self.ingredient_reuse_percent
+        digest = hashlib.sha256(f"compact-week:{user_id}".encode()).hexdigest()
+        return int(digest[:8], 16) % 100 < self.compact_week_percent
 
     def _select_recipes(self, *args, **kwargs):
         with planner_phase("selection_cpu"):
             return self.generator.generate(*args, **kwargs)
+
+    def _select_compact_week(self, *args, **kwargs):
+        with planner_phase("selection_cpu"):
+            return self.generator.generate_compact(*args, **kwargs)
 
     @planner_timed("service")
     async def generate(self, command: GenerateWeeklyMealPlanCommand) -> WeeklyMealPlan:
@@ -144,28 +148,35 @@ class WeeklyMealPlanService:
                 )
                 revision = await uow.catalog_recipes.get_active_catalog_revision()
                 meals = await uow.catalog_recipes.list_selection_candidates()
-                reuse = self._reuses_ingredients(command.user_id)
                 basket_ids = (
                     await _basket_ids(
                         uow.catalog_recipes,
                         (captured_version.selection, captured_version.ingredients),
                     )
-                    if reuse
+                    if self._plans_compact_week(command.user_id)
                     else None
                 )
-            algorithm_version = (
-                self.generator.reuse_algorithm_version
-                if reuse
-                else self.generator.algorithm_version
-            )
-            selected = self._select_recipes(
-                meals,
-                user_id=command.user_id,
-                week_start_date=command.week_start_date.isoformat(),
-                daily_calories=command.daily_calories,
-                preferences=command.preferences,
-                basket_ids=basket_ids,
-            )
+            selection = {
+                "user_id": command.user_id,
+                "week_start_date": command.week_start_date.isoformat(),
+                "daily_calories": command.daily_calories,
+                "preferences": command.preferences,
+            }
+            if basket_ids is None:
+                algorithm_version = self.generator.algorithm_version
+                selected = self._select_recipes(meals, **selection)
+            else:
+                algorithm_version = self.generator.compact_algorithm_version
+                selected = self._select_compact_week(
+                    meals,
+                    **selection,
+                    basket_ids=basket_ids,
+                    fixed={
+                        (slot.day_index, slot.slot_index): slot.recipe_id
+                        for slot in (current.slots if current else ())
+                        if slot.is_logged and slot.recipe_id
+                    },
+                )
             recipe_ids = {
                 (item.day_index, item.slot_index): item.recipe_id for item in selected
             }

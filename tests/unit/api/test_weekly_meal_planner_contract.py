@@ -180,6 +180,16 @@ def test_current_plan_returns_three_meals_each_day():
     assert body["plan"][0][2]["slot_name"] == "dinner"
 
 
+def test_current_plan_says_how_the_week_was_selected():
+    plan = replace(_plan(), algorithm_version="v3-compact")
+
+    response = TestClient(_app(bus=_Bus(plan=plan))).get(
+        "/v1/meal-plans/current?week_start_date=2026-09-21"
+    )
+
+    assert response.json()["algorithm_version"] == "v3-compact"
+
+
 def test_current_plan_without_week_start_resolves_to_current_monday():
     response = TestClient(_app()).get("/v1/meal-plans/current")
 

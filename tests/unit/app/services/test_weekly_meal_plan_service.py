@@ -998,19 +998,19 @@ class _IngredientLinesUow(_Uow):
 
 
 class _RecordingGenerator(WeeklyPlanGenerationService):
-    basket_ids = None
+    compact_kwargs = None
 
-    def generate(self, meals, **kwargs):
-        self.basket_ids = kwargs.get("basket_ids")
-        return super().generate(meals, **kwargs)
+    def generate_compact(self, meals, **kwargs):
+        self.compact_kwargs = kwargs
+        return super().generate_compact(meals, **kwargs)
 
 
-def test_reuse_arm_is_a_stable_share_of_users_that_only_grows():
+def test_compact_week_arm_is_a_stable_share_of_users_that_only_grows():
     users = [f"user-{index}" for index in range(400)]
 
     def arm(percent):
-        service = WeeklyMealPlanService(None, ingredient_reuse_percent=percent)
-        return {user for user in users if service._reuses_ingredients(user)}
+        service = WeeklyMealPlanService(None, compact_week_percent=percent)
+        return {user for user in users if service._plans_compact_week(user)}
 
     assert arm(0) == set()
     assert arm(100) == set(users)
@@ -1020,7 +1020,7 @@ def test_reuse_arm_is_a_stable_share_of_users_that_only_grows():
 
 
 @pytest.mark.asyncio
-async def test_generation_outside_the_reuse_arm_reads_no_ingredient_lines(
+async def test_generation_outside_the_compact_arm_reads_no_ingredient_lines(
     empty_basket_cache,
 ):
     plan = _plan(recipe_id=None)
@@ -1032,15 +1032,15 @@ async def test_generation_outside_the_reuse_arm_reads_no_ingredient_lines(
     )
 
     assert uow.line_reads == 0
-    assert generator.basket_ids is None
+    assert generator.compact_kwargs is None
     assert uow.update_args["algorithm_version"] == "v2"
 
 
 @pytest.mark.asyncio
-async def test_reuse_arm_counts_fresh_ingredients_once_per_catalog_version(
+async def test_compact_arm_keeps_logged_meals_and_reads_lines_once_per_catalog(
     empty_basket_cache,
 ):
-    plan = _plan(recipe_id=None)
+    plan = _plan(recipe_id="tofu")  # breakfast on day 0 is logged
     uow = _IngredientLinesUow(
         plan,
         (_meal("tofu", "Tofu"), _meal("lentils", "Lentil bowl")),
@@ -1053,18 +1053,20 @@ async def test_reuse_arm_counts_fresh_ingredients_once_per_catalog_version(
     )
     generator = _RecordingGenerator()
     service = WeeklyMealPlanService(
-        lambda: uow, generator=generator, ingredient_reuse_percent=100
+        lambda: uow, generator=generator, compact_week_percent=100
     )
 
     await service.generate(_generate_command(plan))
     await service.generate(_generate_command(plan))
 
-    assert generator.basket_ids == {
+    assert generator.compact_kwargs["basket_ids"] == {
         "tofu": frozenset({7}),
         "lentils": frozenset({9}),
         "plain-rice": frozenset(),
     }
-    assert uow.update_args["algorithm_version"] == "v2-reuse"
+    assert generator.compact_kwargs["fixed"] == {(0, 0): "tofu"}
+    assert uow.update_args["algorithm_version"] == "v3-compact"
+    assert (0, 0) not in uow.update_args["slots"]
     assert uow.line_reads == 1
 
     uow.version = SimpleNamespace(selection=1, ingredients=2)

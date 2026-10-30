@@ -554,9 +554,10 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Weekly meal planner. Share of users (0-100, stable per user) whose
-    # generated weeks prefer recipes reusing the week's fresh ingredients.
-    MEAL_PLAN_INGREDIENT_REUSE_PERCENT: int = Field(default=0, ge=0, le=100)
+    # Weekly meal planner. Share of users (0-100, stable per user) who get a
+    # compact week: two alternating breakfasts, each dinner eaten again at the
+    # next lunch, and dishes that share fresh ingredients. 0 turns it off.
+    MEAL_PLAN_COMPACT_WEEK_PERCENT: int = Field(default=0, ge=0, le=100)
 
     # Referral system (multi-currency)
     REFERRAL_COMMISSIONS: dict = Field(

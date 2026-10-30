@@ -42,6 +42,9 @@ class WeeklyMealPlanResponse(BaseModel):
     plan: list[list[WeeklyMealSlotResponse]]
     total_meals_planned: int
     to_buy_count: int | None = None
+    # How the week was selected: "v2", or "v3-compact" when each dinner is
+    # eaten again at the next lunch.
+    algorithm_version: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

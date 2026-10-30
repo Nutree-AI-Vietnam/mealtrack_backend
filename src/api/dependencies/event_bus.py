@@ -978,7 +978,7 @@ def get_configured_event_bus() -> EventBus:
         GenerateWeeklyMealPlanCommand,
         GenerateWeeklyMealPlanCommandHandler(
             AsyncUnitOfWork,
-            ingredient_reuse_percent=settings.MEAL_PLAN_INGREDIENT_REUSE_PERCENT,
+            compact_week_percent=settings.MEAL_PLAN_COMPACT_WEEK_PERCENT,
         ),
     )
     event_bus.register_handler(

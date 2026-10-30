@@ -752,6 +752,7 @@ async def _plan_response(
         plan=grouped,
         total_meals_planned=sum(slot.recipe_id is not None for slot in plan.slots),
         to_buy_count=to_buy_count,
+        algorithm_version=getattr(plan, "algorithm_version", None),
         created_at=plan.created_at,
         updated_at=plan.updated_at,
     )
