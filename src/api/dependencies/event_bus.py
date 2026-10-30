@@ -976,7 +976,10 @@ def get_configured_event_bus() -> EventBus:
     # Register weekly meal planner commands and queries.
     event_bus.register_handler(
         GenerateWeeklyMealPlanCommand,
-        GenerateWeeklyMealPlanCommandHandler(AsyncUnitOfWork),
+        GenerateWeeklyMealPlanCommandHandler(
+            AsyncUnitOfWork,
+            compact_week_percent=settings.MEAL_PLAN_COMPACT_WEEK_PERCENT,
+        ),
     )
     event_bus.register_handler(
         UpdateWeeklyMealPlanCommand,

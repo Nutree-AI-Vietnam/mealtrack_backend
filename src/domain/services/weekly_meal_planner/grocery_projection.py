@@ -6,6 +6,7 @@ applied to a copy of the lines and do not rewrite the catalog payload.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 import zlib
 from collections import defaultdict
@@ -29,6 +30,129 @@ def deterministic_ingredient_id(name: str) -> int:
     norm = unicodedata.normalize("NFC", (name or "").strip().lower())
     val = zlib.crc32(norm.encode("utf-8")) % 1_000_000_000
     return SYNTHETIC_INGREDIENT_ID_OFFSET + val
+
+
+# Seasonings and staples a Vietnamese kitchen usually already has. Grocery
+# lists fold them under their own group, and the weekly generator leaves them
+# out when it counts how many fresh ingredients a week needs.
+#
+# Vietnamese names lead with the head noun ("muối hột", "tiêu xay"). Matching
+# keeps accents: "dầu" (oil) is not "đậu" (beans).
+_VI_HEADS = (
+    "muối",
+    "đường",
+    "nước mắm",
+    "tiêu",
+    "hạt tiêu",
+    "dầu",
+    "hạt nêm",
+    "bột nêm",
+    "bột ngọt",
+    "mì chính",
+    "nước tương",
+    "xì dầu",
+    "giấm",
+    "dấm",
+    "tỏi",
+    "hành tím",
+    "hành khô",
+    "hành phi",
+    "ớt",
+    "gạo",
+    "bột năng",
+    "bột bắp",
+)
+# Whole names only: "nước dừa" is coconut water, not tap water.
+_VI_EXACT = frozenset(
+    {"nước", "nước lọc", "nước sôi", "nước ấm", "nước lạnh", "cơm", "cơm trắng"}
+)
+# Look like a staple head but are fresh food bought for one dish.
+_VI_EXCEPTIONS = ("ớt chuông", "ớt đà lạt", "tỏi tây", "gạo nếp", "dầu cá")
+
+# English names end with the head noun ("sea salt", "brown sugar").
+_EN_TAILS = (
+    "salt",
+    "sugar",
+    "black pepper",
+    "white pepper",
+    "ground pepper",
+    "peppercorns",
+    "fish sauce",
+    "soy sauce",
+    "oyster sauce",
+    "oil",
+    "vinegar",
+    "msg",
+    "seasoning powder",
+    "garlic",
+    "shallot",
+    "shallots",
+    "cornstarch",
+    "corn starch",
+    "tapioca starch",
+)
+_EN_EXACT = frozenset(
+    {
+        "pepper",
+        "rice",
+        "white rice",
+        "jasmine rice",
+        "steamed rice",
+        "chili",
+        "chilli",
+        "chilies",
+        "chillies",
+        "water",
+        "hot water",
+        "warm water",
+        "cold water",
+        "boiling water",
+    }
+)
+_EN_EXCEPTIONS = ("fish oil",)
+
+_PARENTHESES = re.compile(r"\([^)]*\)")
+_SPACES = re.compile(r"\s+")
+_FILLERS = ("to taste", "for garnish", "optional")
+
+
+def is_pantry_staple(name: str) -> bool:
+    """Return whether a recipe ingredient is a seasoning or kitchen staple."""
+    folded = _staple_name(name)
+    if not folded:
+        return False
+    if folded in _VI_EXACT or folded in _EN_EXACT:
+        return True
+    if _starts_with_any(folded, _VI_EXCEPTIONS) or _ends_with_any(
+        folded, _EN_EXCEPTIONS
+    ):
+        return False
+    return _starts_with_any(folded, _VI_HEADS) or _ends_with_any(folded, _EN_TAILS)
+
+
+def _staple_name(name: str) -> str:
+    value = unicodedata.normalize("NFC", name or "").casefold()
+    value = _PARENTHESES.sub(" ", value).split(",", 1)[0]
+    for filler in _FILLERS:
+        value = value.replace(filler, " ")
+    return _SPACES.sub(" ", value).strip(" .:-")
+
+
+def _starts_with_any(value: str, phrases: tuple[str, ...]) -> bool:
+    return any(value == phrase or value.startswith(f"{phrase} ") for phrase in phrases)
+
+
+def _ends_with_any(value: str, phrases: tuple[str, ...]) -> bool:
+    return any(value == phrase or value.endswith(f" {phrase}") for phrase in phrases)
+
+
+def fresh_ingredient_id(food_reference_id: int | None, name: str) -> int | None:
+    """The grocery id a recipe line is bought under, or None for a staple."""
+    if is_pantry_staple(name):
+        return None
+    if food_reference_id is not None:
+        return int(food_reference_id)
+    return deterministic_ingredient_id(name)
 
 
 @dataclass(frozen=True)

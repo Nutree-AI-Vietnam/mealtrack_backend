@@ -252,6 +252,70 @@ def test_eggplant_is_produce_while_eggs_are_protein():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("algorithm_version", "expected_days"),
+    [("v3-compact", {0: 600}), ("v2", {0: 300, 1: 300})],
+)
+async def test_a_compact_week_buys_the_leftover_lunch_with_its_dinner(
+    algorithm_version, expected_days
+):
+    dinner_then_lunch = {(0, 2), (1, 1)}
+    plan = replace(
+        _plan(),
+        algorithm_version=algorithm_version,
+        slots=tuple(
+            replace(
+                slot,
+                recipe_id="recipe-1"
+                if (slot.day_index, slot.slot_index) in dinner_then_lunch
+                else None,
+            )
+            for slot in _plan().slots
+        ),
+    )
+
+    categories = await WeeklyGroceryService().calculate(_Uow(), plan)
+
+    item = categories[0].items[0]
+    assert item.total_needed == 600
+    assert {
+        day["day_index"]: day["total_needed"] for day in item.daily_amounts
+    } == expected_days
+
+
+def test_seasonings_are_staples_whatever_the_catalog_category():
+    assert _resolve_grocery_category("Nước mắm", "pantry") == "staples"
+    assert _resolve_grocery_category("Tỏi băm", "produce") == "staples"
+    assert _resolve_grocery_category("Ớt chuông", "produce") == "fresh_produce"
+
+
+@pytest.mark.asyncio
+async def test_staples_follow_the_food_to_buy():
+    class CatalogWithSalt(_Catalog):
+        async def get_meal(self, recipe_id):
+            meal = await super().get_meal(recipe_id)
+            salt = CatalogMealIngredient(
+                food_reference_id=None,
+                display_name="Muối",
+                quantity=Decimal("5"),
+                unit="g",
+            )
+            return replace(meal, ingredients=(salt, *meal.ingredients))
+
+    uow = type(
+        "Uow", (), {"catalog_recipes": CatalogWithSalt(), "weekly_meal_plans": _Plans()}
+    )()
+
+    categories = await WeeklyGroceryService().calculate(uow, _plan())
+
+    assert [category.category for category in categories] == [
+        "fresh_produce",
+        "staples",
+    ]
+    assert [item.name for item in categories[-1].items] == ["Muối"]
+
+
+@pytest.mark.asyncio
 async def test_groceries_exclude_vietnamese_equipment_from_catalog_and_payload():
     class CatalogWithEquipment(_Catalog):
         async def get_meal(self, recipe_id):

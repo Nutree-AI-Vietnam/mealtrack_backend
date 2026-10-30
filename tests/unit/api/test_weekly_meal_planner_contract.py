@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from time import perf_counter
 from types import SimpleNamespace
@@ -178,6 +178,31 @@ def test_current_plan_returns_three_meals_each_day():
     assert body["plan"][0][0]["slot_name"] == "breakfast"
     assert body["plan"][0][1]["slot_name"] == "lunch"
     assert body["plan"][0][2]["slot_name"] == "dinner"
+
+
+def test_current_plan_opens_next_week_but_not_the_one_after():
+    today = datetime.now(UTC).date()
+    monday = today - timedelta(days=today.weekday())
+    client = TestClient(_app())
+
+    def status_for(week_start):
+        return client.get(
+            f"/v1/meal-plans/current?week_start_date={week_start.isoformat()}",
+            headers={"X-Timezone": "UTC"},
+        ).status_code
+
+    assert status_for(monday + timedelta(days=7)) == 200
+    assert status_for(monday + timedelta(days=14)) == 400
+
+
+def test_current_plan_says_how_the_week_was_selected():
+    plan = replace(_plan(), algorithm_version="v3-compact")
+
+    response = TestClient(_app(bus=_Bus(plan=plan))).get(
+        "/v1/meal-plans/current?week_start_date=2026-09-21"
+    )
+
+    assert response.json()["algorithm_version"] == "v3-compact"
 
 
 def test_current_plan_without_week_start_resolves_to_current_monday():

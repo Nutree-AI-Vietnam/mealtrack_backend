@@ -124,6 +124,26 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             after_id=after_id, limit=limit
         )
 
+    async def list_selection_ingredient_lines(
+        self,
+    ) -> list[tuple[str, int | None, str]]:
+        result = await self._execute_catalog(
+            select(
+                MealCatalogIngredientORM.catalog_meal_id,
+                MealCatalogIngredientORM.food_reference_id,
+                MealCatalogIngredientORM.display_name,
+            )
+            .join(
+                MealCatalogORM,
+                MealCatalogORM.id == MealCatalogIngredientORM.catalog_meal_id,
+            )
+            .where(MealCatalogORM.is_active.is_(True))
+        )
+        return [
+            (str(meal_id), food_reference_id, str(name or ""))
+            for meal_id, food_reference_id, name in result.all()
+        ]
+
     async def list_active_ingredient_names(self) -> list[str]:
         result = await self._execute_catalog(
             select(MealCatalogIngredientORM.display_name)

@@ -670,12 +670,15 @@ def _resolve_week(value: date | None, timezone: str) -> date:
                     "message": "week_start_date must be a Monday",
                 },
             )
-        if value > current_monday:
+        # Next week is open so the app can get it ready before the weekend
+        # shop; anything later stays closed.
+        if value > current_monday + timedelta(days=7):
             raise HTTPException(
                 status_code=400,
                 detail={
                     "error_code": "WEEK_PLAN_FUTURE_NOT_ALLOWED",
-                    "message": "Only current or past week meal plans are available.",
+                    "message": "Only past, current or next week meal plans "
+                    "are available.",
                 },
             )
         return value
@@ -752,6 +755,7 @@ async def _plan_response(
         plan=grouped,
         total_meals_planned=sum(slot.recipe_id is not None for slot in plan.slots),
         to_buy_count=to_buy_count,
+        algorithm_version=getattr(plan, "algorithm_version", None),
         created_at=plan.created_at,
         updated_at=plan.updated_at,
     )
