@@ -87,7 +87,7 @@ class UpdateMetricsRequest(BaseModel):
     )
     weight_loss_kg_per_week: float | None = Field(
         None,
-        gt=0,
+        ge=0.01,
         le=1.0,
         description="Lose-weight pace in kg per week. Omitted keeps the current pace.",
     )
