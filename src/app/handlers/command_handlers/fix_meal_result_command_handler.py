@@ -10,6 +10,7 @@ from typing import Any
 
 from src.api.exceptions import (
     AuthorizationException,
+    ConflictException,
     ResourceNotFoundException,
     ValidationException,
 )
@@ -142,6 +143,7 @@ class FixMealResultCommandHandler(EventHandler[FixMealResultCommand, Any]):
             old_calories = float(effective_meal_calories(meal))
             old_meal_date = (meal.created_at or utc_now()).date()
             dish_name = meal.dish_name
+            analyzed_edit_count = meal.edit_count
 
         try:
             image_bytes = await self._download_image_bytes(image_url)
@@ -247,6 +249,13 @@ class FixMealResultCommandHandler(EventHandler[FixMealResultCommand, Any]):
                 raise ValidationException(
                     "Meal must be in READY status to fix",
                     error_code="MEAL_NOT_READY",
+                )
+            # The merge was built from the meal as it was before vision ran;
+            # an edit saved since then would be silently overwritten.
+            if meal.edit_count != analyzed_edit_count:
+                raise ConflictException(
+                    "The meal was edited during re-analysis. Meal was not changed.",
+                    error_code="FIX_RESULT_MEAL_CHANGED",
                 )
 
             updated_meal = append_fix_result_correction(

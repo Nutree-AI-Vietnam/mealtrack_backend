@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.api.exceptions import ValidationException
+from src.api.exceptions import ConflictException, ValidationException
 from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
 from src.app.handlers.command_handlers.fix_meal_result_command_handler import (
     FixMealResultCommandHandler,
@@ -124,6 +124,74 @@ async def test_handler_rejects_food_label_source():
         )
 
     assert exc.value.error_code == "FIX_RESULT_UNSUPPORTED_SOURCE"
+
+
+@pytest.mark.asyncio
+async def test_handler_does_not_overwrite_an_edit_made_during_analysis():
+    meal = _meal()
+    stored = {"meal": meal}
+    uow = AsyncMock()
+    uow.meals.find_by_id = AsyncMock(side_effect=lambda *_args, **_kw: stored["meal"])
+    uow.meals.save = AsyncMock(side_effect=lambda saved: saved)
+    uow.__aenter__ = AsyncMock(return_value=uow)
+    uow.__aexit__ = AsyncMock(return_value=None)
+
+    async def analyze_while_user_edits(*_args):
+        # Another request halves the portion while vision is running.
+        edited_item = FoodItem(
+            id=meal.nutrition.food_items[0].id,
+            name="Chicken",
+            quantity=60,
+            unit="g",
+            macros=Macros(protein=15, carbs=20, fat=5),
+            confidence=0.5,
+        )
+        stored["meal"] = meal.mark_edited(
+            nutrition=Nutrition(
+                macros=edited_item.macros,
+                food_items=[edited_item],
+                confidence_score=0.5,
+            ),
+            dish_name="Chicken bowl",
+        )
+        return {"structured_data": {"is_food": True}}
+
+    vision = AsyncMock()
+    vision.analyze_with_strategy = AsyncMock(side_effect=analyze_while_user_edits)
+    fish = FoodItem(
+        id=str(uuid4()),
+        name="Fish",
+        quantity=120,
+        unit="g",
+        macros=Macros(protein=28, carbs=0, fat=4),
+        confidence=0.9,
+    )
+    parser = MagicMock()
+    parser.parse_is_food.return_value = True
+    parser.parse_to_nutrition.return_value = Nutrition(
+        macros=fish.macros, food_items=[fish], confidence_score=0.9
+    )
+    parser.parse_dish_name.return_value = "Fish bowl"
+
+    handler = FixMealResultCommandHandler(
+        uow_factory=lambda: uow,
+        vision_service=vision,
+        gpt_parser=parser,
+        download_image_bytes=AsyncMock(return_value=b"img"),
+        event_publisher=AsyncMock(),
+    )
+
+    with pytest.raises(ConflictException) as exc:
+        await handler.handle(
+            FixMealResultCommand(
+                meal_id=meal.meal_id,
+                user_id=meal.user_id,
+                correction="it was fish not chicken",
+            )
+        )
+
+    assert exc.value.error_code == "FIX_RESULT_MEAL_CHANGED"
+    uow.meals.save.assert_not_awaited()
 
 
 def test_append_fix_result_correction_keeps_history():
