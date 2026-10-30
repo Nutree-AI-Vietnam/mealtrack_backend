@@ -362,3 +362,82 @@ def test_a_logged_dinner_the_user_can_no_longer_eat_is_not_repeated():
     )
 
     assert _grid(compact)[1][1] != "chicken-curry"
+
+
+def _varied_pool():
+    """Sixteen breakfasts and 40 mains, each a few calories apart."""
+    return [
+        _meal(
+            f"breakfast-{i:02d}",
+            f"breakfast-{i:02d}",
+            ("breakfast",),
+            carbs=str(40 + i),
+        )
+        for i in range(16)
+    ] + [
+        _meal(f"main-{i:02d}", f"main-{i:02d}", carbs=str(60 + 3 * i))
+        for i in range(40)
+    ]
+
+
+def _next_week(meals, **kwargs):
+    return WeeklyPlanGenerationService().generate(
+        meals,
+        user_id="user-1",
+        week_start_date="2026-09-28",
+        daily_calories=2000,
+        preferences=WeeklyMealPlanPreferences(),
+        **kwargs,
+    )
+
+
+def _recipes(week):
+    return {slot.recipe_id for slot in week if slot.recipe_id}
+
+
+def test_next_week_is_not_a_copy_of_last_week():
+    meals = _varied_pool()
+    this_week = _week(meals)
+
+    # The calorie gap decides before the week's tie-break, so on its own the
+    # same profile and catalog plan the same week again.
+    assert _grid(_next_week(meals)) == _grid(this_week)
+
+    next_week = _next_week(meals, last_week=frozenset(_recipes(this_week)))
+
+    assert not _recipes(next_week) & _recipes(this_week)
+    assert all(slot.recipe_id for slot in next_week)
+
+
+def test_a_small_catalog_still_fills_the_week_from_last_weeks_dishes():
+    meals = [
+        _meal("breakfast-only", "breakfast-only", ("breakfast",)),
+        *(_meal(f"main-{i}", f"main-{i}", carbs=str(60 + 3 * i)) for i in range(3)),
+    ]
+    this_week = _week(meals)
+
+    next_week = _next_week(meals, last_week=frozenset(_recipes(this_week)))
+
+    assert all(slot.recipe_id for slot in next_week)
+    assert _recipes(next_week) == _recipes(this_week)
+
+
+def test_a_compact_next_week_cooks_new_dishes_and_keeps_its_leftovers():
+    meals, basket_ids = _mixed_pool()
+    this_week = _compact_week(meals, basket_ids)
+
+    next_week = WeeklyPlanGenerationService().generate_compact(
+        meals,
+        user_id="user-1",
+        week_start_date="2026-09-28",
+        daily_calories=2000,
+        preferences=WeeklyMealPlanPreferences(),
+        basket_ids=basket_ids,
+        last_week=frozenset(_recipes(this_week)),
+    )
+
+    assert not _recipes(next_week) & _recipes(this_week)
+    grid = _grid(next_week)
+    for day in range(1, 7):
+        assert grid[day][1] == grid[day - 1][2]
+    assert len({day[0] for day in grid}) == 2

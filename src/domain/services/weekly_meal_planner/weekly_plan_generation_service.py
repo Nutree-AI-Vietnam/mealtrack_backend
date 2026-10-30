@@ -70,6 +70,7 @@ class WeeklyPlanGenerationService:
         week_start_date: str,
         daily_calories: int,
         preferences: WeeklyMealPlanPreferences,
+        last_week: frozenset[str] = frozenset(),
     ) -> tuple[GeneratedSlot, ...]:
         prepared = self._slot_candidates(
             meals,
@@ -96,6 +97,9 @@ class WeeklyPlanGenerationService:
                         1 if item[0].id in day_used else 0,
                         *_practicality(item[0], slot),
                         used_counts.get(item[0].id, 0),
+                        # Without this the same profile and catalog give the
+                        # same week every week: the calorie gap below decides.
+                        1 if item[0].id in last_week else 0,
                         item[1],
                         self._stable_rank(item[0], user_id, week_start_date, day, slot),
                         item[0].id,
@@ -116,6 +120,7 @@ class WeeklyPlanGenerationService:
         preferences: WeeklyMealPlanPreferences,
         basket_ids: Mapping[str, frozenset[int]],
         fixed: Mapping[tuple[int, int], str] | None = None,
+        last_week: frozenset[str] = frozenset(),
     ) -> tuple[GeneratedSlot, ...]:
         """Plan a week around fewer dishes and one shared grocery basket.
 
@@ -130,7 +135,8 @@ class WeeklyPlanGenerationService:
 
         ``fixed`` holds logged meals by (day, slot). They stay in place and
         count toward the basket, and a logged dinner still feeds the next
-        lunch.
+        lunch. Dishes in ``last_week`` come after ones the user has not just
+        had, so consecutive weeks differ while the catalog allows it.
         """
         prepared = self._slot_candidates(
             meals,
@@ -173,6 +179,7 @@ class WeeklyPlanGenerationService:
                     1
                     if feeds_next_lunch and item[0].id not in eligible_ids[_LUNCH]
                     else 0,
+                    1 if item[0].id in last_week else 0,
                     *_reuse_rank(
                         item[0].id,
                         item[1],
