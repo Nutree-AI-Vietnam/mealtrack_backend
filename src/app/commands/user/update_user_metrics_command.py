@@ -27,3 +27,4 @@ class UpdateUserMetricsCommand:
     goal_started_at: datetime | None = None
     daily_water_goal_ml: int | None = None
     reset_water_goal: bool = False
+    weight_loss_kg_per_week: float | None = None

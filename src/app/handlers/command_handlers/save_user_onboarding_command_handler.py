@@ -4,6 +4,7 @@ Auto-extracted for better maintainability.
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -19,7 +20,15 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
 )
-from src.domain.utils.timezone_utils import utc_now
+from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
+    build_tdee_request,
+)
+from src.domain.services.tdee_service import allowed_pace
+from src.domain.utils.timezone_utils import (
+    get_zone_info,
+    resolve_user_timezone_async,
+    utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +71,8 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
 
                 # Get or create user profile
                 profile = await uow.users.get_profile(UUID(command.user_id))
+                timezone_name = await resolve_user_timezone_async(command.user_id, uow)
+                today = datetime.now(get_zone_info(timezone_name)).date()
 
                 if not profile:
                     goal_started_at = utc_now() if command.target_weight_kg else None
@@ -90,6 +101,9 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                         referral_sources=command.referral_sources,
                         challenge_duration=command.challenge_duration,
                         training_types=command.training_types,
+                        pace_clinician_disclaimer=bool(
+                            command.pace_clinician_disclaimer
+                        ),
                     )
                 else:
                     target_inputs_before = (
@@ -106,6 +120,7 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                         profile.custom_protein_g,
                         profile.custom_carbs_g,
                         profile.custom_fat_g,
+                        profile.weight_loss_kg_per_week,
                     )
                     previous_target = profile.target_weight_kg
                     # Update existing profile
@@ -140,6 +155,24 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                         profile.referral_sources = command.referral_sources
                     profile.challenge_duration = command.challenge_duration
                     profile.training_types = command.training_types
+                    if command.pace_clinician_disclaimer is not None:
+                        profile.pace_clinician_disclaimer = (
+                            command.pace_clinician_disclaimer
+                        )
+
+                # A chosen pace is capped where the target would drop below the
+                # floor, after the metrics it depends on are in place.
+                if command.weight_loss_kg_per_week is not None:
+                    try:
+                        pace = allowed_pace(
+                            build_tdee_request(profile), command.weight_loss_kg_per_week
+                        )
+                    except ValueError as exc:
+                        raise ValidationException(str(exc)) from exc
+                    if pace != profile.weight_loss_kg_per_week:
+                        profile.weight_loss_kg_per_week = pace
+                        if pace is not None:
+                            profile.weight_loss_pace_reset_on = today
 
                 # Save custom macro overrides if all three provided
                 custom_values = [
@@ -170,6 +203,7 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                         profile.custom_protein_g,
                         profile.custom_carbs_g,
                         profile.custom_fat_g,
+                        profile.weight_loss_kg_per_week,
                     )
                     if target_inputs_before != target_inputs_after:
                         profile.profile_target_revision = (

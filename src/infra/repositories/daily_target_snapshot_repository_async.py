@@ -11,7 +11,7 @@ from src.infra.database.models.daily_target_snapshot import DailyTargetSnapshotO
 
 
 class AsyncDailyTargetSnapshotRepository:
-    """Never updates a stored snapshot. Callers must not commit."""
+    """Write-once snapshots, plus a same-day replace for a pace change."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -28,6 +28,26 @@ class AsyncDailyTargetSnapshotRepository:
                 created_at=utc_now(),
             )
             .on_conflict_do_nothing(index_elements=["user_id", "date"])
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def replace_calories(
+        self, user_id: str, target_date: date, adjusted_calories: float
+    ) -> None:
+        """Replace today's snapshot only. The conflict key is user and date."""
+        stmt = (
+            pg_insert(DailyTargetSnapshotORM)
+            .values(
+                user_id=user_id,
+                date=target_date,
+                adjusted_target_calories=adjusted_calories,
+                created_at=utc_now(),
+            )
+            .on_conflict_do_update(
+                index_elements=["user_id", "date"],
+                set_={"adjusted_target_calories": adjusted_calories},
+            )
         )
         await self.session.execute(stmt)
         await self.session.flush()

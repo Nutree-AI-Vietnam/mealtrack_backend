@@ -112,8 +112,18 @@ class TDEEConstants:
     }
 
     # Goal adjustments (calories)
-    # 300 deficit = ~0.3 kg/week, sustainable for small users
+    # 300 deficit = ~0.3 kg/week, sustainable for small users. Used when no pace is chosen.
     CUTTING_DEFICIT = 300
+    # Lose-weight pace slider, kg of body weight per week. Slow end: Nackers 2010
+    # (under ~0.23 kg/week early, much less lost at 18 months). Fast end: Noom's
+    # "up to 2 lbs or ~1 kg", within CDC's 1-2 lb a week.
+    PACE_MIN_KG_PER_WEEK = 0.25
+    PACE_MAX_KG_PER_WEEK = 1.0
+    # Recommended band, Helms 2014: 0.5-1% of body weight per week.
+    PACE_RECOMMENDED_LOW_PERCENT = 0.005
+    PACE_RECOMMENDED_HIGH_PERCENT = 0.01
+    # About 7,700 kcal per kg of body weight lost.
+    KCAL_PER_KG_BODY_WEIGHT = 7700
     BULKING_SURPLUS = 300  # 300 calorie surplus (lean bulk)
     # MAINTENANCE_ADJUSTMENT removed - use RECOMP_ADJUSTMENT instead
     RECOMP_ADJUSTMENT = 0  # No calorie adjustment for recomposition

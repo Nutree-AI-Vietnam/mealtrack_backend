@@ -48,6 +48,7 @@ def build_tdee_request(profile: Any) -> TdeeRequest:
         body_fat_pct=profile.body_fat_percentage,
         unit_system=UnitSystem.METRIC,
         macro_preset=preset,
+        weight_loss_kg_per_week=getattr(profile, "weight_loss_kg_per_week", None),
     )
 
 

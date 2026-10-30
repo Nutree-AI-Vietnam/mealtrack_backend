@@ -62,6 +62,7 @@ class TdeeRequest:
     unit_system: UnitSystem = UnitSystem.METRIC
     training_level: TrainingLevel | None = None
     macro_preset: MacroPreset = MacroPreset.STANDARD
+    weight_loss_kg_per_week: float | None = None
 
     def __post_init__(self):
         """Validate invariants."""
@@ -132,6 +133,28 @@ class MacroTargets:
 
 
 @dataclass
+class PaceRange:
+    """Lose-weight paces this person can pick, in kg per week.
+
+    max_kg_per_week is below min_kg_per_week when the calorie floor allows less
+    than the slow limit, and 0 when it allows no deficit at all.
+    """
+
+    min_kg_per_week: float
+    max_kg_per_week: float
+    recommended_low_kg: float
+    recommended_high_kg: float
+
+    def to_dict(self) -> dict:
+        return {
+            "min_kg_per_week": self.min_kg_per_week,
+            "max_kg_per_week": self.max_kg_per_week,
+            "recommended_low_kg": self.recommended_low_kg,
+            "recommended_high_kg": self.recommended_high_kg,
+        }
+
+
+@dataclass
 class TdeeResponse:
     """Domain model for TDEE calculation response matching Flutter TdeeResult."""
 
@@ -143,6 +166,8 @@ class TdeeResponse:
         None  # BMR formula used (e.g., "Mifflin-St Jeor", "Katch-McArdle")
     )
     macro_preset: MacroPreset = MacroPreset.STANDARD
+    # Only for a cut goal.
+    pace_range: PaceRange | None = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary format for API response."""
@@ -160,4 +185,6 @@ class TdeeResponse:
         }
         if self.formula_used:
             result["formula_used"] = self.formula_used
+        if self.pace_range:
+            result["pace_range"] = self.pace_range.to_dict()
         return result

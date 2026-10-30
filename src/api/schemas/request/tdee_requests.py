@@ -83,6 +83,12 @@ class TdeeCalculationRequest(BaseModel):
     custom_carbs_g: float | None = Field(None, gt=0)
     custom_fat_g: float | None = Field(None, gt=0)
     requested_calories: float | None = Field(None, gt=0, le=10000)
+    weight_loss_kg_per_week: float | None = Field(
+        None,
+        gt=0,
+        le=1.0,
+        description="Lose-weight pace in kg per week. Omitted keeps the flat cutting deficit.",
+    )
 
     @model_validator(mode="after")
     def validate_measurements_with_units(self):

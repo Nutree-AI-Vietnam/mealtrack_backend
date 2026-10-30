@@ -70,6 +70,12 @@ class UserProfile(Base, BaseMixin):
     daily_water_goal_ml = Column(Integer, nullable=True, default=None)
     # Monotonic fence for cached and weekly target materializations.
     profile_target_revision = Column(Integer, nullable=False, default=1)
+    # Chosen lose-weight pace in kg per week. Null keeps the flat cutting deficit.
+    weight_loss_kg_per_week = Column(Float, nullable=True, default=None)
+    pace_clinician_disclaimer = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    weight_loss_pace_reset_on = Column(Date, nullable=True, default=None)
 
     @property
     def has_custom_macros(self) -> bool:
@@ -112,6 +118,11 @@ class UserProfile(Base, BaseMixin):
         CheckConstraint(
             "journey_progress_seed_percent >= 0 AND journey_progress_seed_percent <= 100",
             name="check_journey_progress_seed_percent_range",
+        ),
+        CheckConstraint(
+            "weight_loss_kg_per_week IS NULL "
+            "OR (weight_loss_kg_per_week > 0 AND weight_loss_kg_per_week <= 1)",
+            name="check_weight_loss_kg_per_week",
         ),
     )
 

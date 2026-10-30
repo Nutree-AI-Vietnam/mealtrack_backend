@@ -73,6 +73,7 @@ class PreviewTdeeQueryHandler(EventHandler[PreviewTdeeQuery, dict[str, Any]]):
             macro_preset=(
                 MacroPreset.KETO if query.diet_type == "keto" else MacroPreset.STANDARD
             ),
+            weight_loss_kg_per_week=query.weight_loss_kg_per_week,
         )
 
         # Calculate TDEE
@@ -92,6 +93,7 @@ class PreviewTdeeQueryHandler(EventHandler[PreviewTdeeQuery, dict[str, Any]]):
             "is_custom": self._has_custom_macros(query),
             "macro_preset": result.macro_preset.value,
             "target_revision": 0,
+            "pace_range": result.pace_range.to_dict() if result.pace_range else None,
             "macros": {
                 "protein": macros.protein,
                 "carbs": macros.carbs,

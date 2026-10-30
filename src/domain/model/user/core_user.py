@@ -50,6 +50,9 @@ class UserProfileDomainModel(BaseDomainModel):
     journey_progress_seed_percent: float = 0.0
     daily_water_goal_ml: int | None = None
     profile_target_revision: int = 1
+    weight_loss_kg_per_week: float | None = None
+    pace_clinician_disclaimer: bool = False
+    weight_loss_pace_reset_on: date | None = None
 
 
 @dataclass(kw_only=True)
