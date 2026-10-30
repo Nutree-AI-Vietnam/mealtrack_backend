@@ -148,7 +148,7 @@ def merge_fix_result_items(
     new_items: Iterable[Any],
     correction: str,
 ) -> list[Any]:
-    """Keep old items the model dropped unless the correction mentioned them.
+    """Keep old items the model forgot, without duplicating renamed ones.
 
     Matched names keep the new estimate (portion/identity may have changed) but
     reuse the old id so clients can track the same row. Calories always come
@@ -204,15 +204,21 @@ def merge_fix_result_items(
             merged.append(item)
             _ = effective_food_item_calories(merged[-1])
 
-    for old in old_list:
-        key = normalize_food_name(old.name)
-        if key in seen_old:
-            continue
-        if _name_mentioned(old.name, correction_lower):
-            # Correction referenced this food and the model omitted it —
-            # treat as intentional removal/replacement.
-            continue
-        merged.append(old)
+    added = [
+        item for item in new_list if normalize_food_name(item.name) not in old_by_name
+    ]
+    missing = [old for old in old_list if normalize_food_name(old.name) not in seen_old]
+    # A missing item the correction names was removed or replaced on purpose.
+    unnamed_missing = [
+        old for old in missing if not _name_mentioned(old.name, correction_lower)
+    ]
+    # The model returns the complete plate, so each added name replaces one
+    # missing item: "fish not chicken" pairs the named ones, and any other
+    # added name is a rename (scans store localized names, the model answers
+    # in English). Unnamed items left over were forgotten, so keep them.
+    named_added = sum(_name_mentioned(item.name, correction_lower) for item in added)
+    paired_by_name = min(named_added, len(missing) - len(unnamed_missing))
+    merged.extend(unnamed_missing[len(added) - paired_by_name :])
 
     return merged
 
