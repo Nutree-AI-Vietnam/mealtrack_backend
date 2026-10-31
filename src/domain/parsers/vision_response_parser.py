@@ -4,9 +4,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from src.domain.model.ai.full_micros_contracts import (
+    FoodLabelNutritionResponseFull,
+    VisionNutritionResponseFull,
+)
 from src.domain.model.ai.nutrition_contracts import (
     MAX_AI_FOOD_ITEMS,
-    FoodLabelNutritionResponse,
     VisionNutritionResponse,
 )
 from src.domain.model.nutrition import (
@@ -100,7 +103,7 @@ class VisionResponseParser:
                     "No structured data found in GPT response"
                 )
 
-            canonical = FoodLabelNutritionResponse.model_validate(dict(data))
+            canonical = FoodLabelNutritionResponseFull.model_validate(dict(data))
             macros = Macros(
                 protein=float(canonical.macros_per_serving.protein_g),
                 carbs=float(canonical.macros_per_serving.carbs_g),
@@ -161,7 +164,9 @@ class VisionResponseParser:
         """Return client-facing label metadata after schema validation."""
         try:
             structured_data = gpt_response.get("structured_data", {})
-            canonical = FoodLabelNutritionResponse.model_validate(dict(structured_data))
+            canonical = FoodLabelNutritionResponseFull.model_validate(
+                dict(structured_data)
+            )
             return canonical.model_dump()
         except (KeyError, TypeError, ValidationError, ValueError) as e:
             raise VisionResponseParsingError(
@@ -173,7 +178,7 @@ class VisionResponseParser:
         try:
             normalized_data = self._normalize_structured_data(data)
             self._reject_legacy_food_item_shape(normalized_data)
-            return VisionNutritionResponse.model_validate(normalized_data)
+            return VisionNutritionResponseFull.model_validate(normalized_data)
         except (KeyError, ValueError, TypeError, ValidationError) as e:
             raise VisionResponseParsingError(
                 f"Failed to validate GPT response: {str(e)}"

@@ -238,3 +238,48 @@ async def test_scan_provenance_is_stored_without_changing_model_output():
         == hashlib.sha256(strategy.get_analysis_prompt().encode()).hexdigest()
     )
     assert "_scan_provenance" not in result["structured_data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_micros", [False, True])
+async def test_full_micros_flag_picks_the_contract_and_prompt(monkeypatch, full_micros):
+    from src.domain.model.ai.full_micros_contracts import (
+        FoodLabelNutritionResponseFull,
+        VisionNutritionResponseFull,
+    )
+    from src.domain.model.ai.nutrition_contracts import (
+        FoodLabelNutritionResponse,
+        VisionNutritionResponse,
+    )
+    from src.domain.strategies.meal_analysis_strategy import (
+        AnalysisStrategyFactory,
+        FoodLabelImageAnalysisStrategy,
+    )
+    from src.infra.config.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "AI_SCAN_FULL_MICROS_ENABLED", full_micros)
+    service = _make_service()
+    meal = AnalysisStrategyFactory.create_basic_strategy()
+    await service.analyze_with_strategy(_make_jpeg(400, 300), meal)
+    kwargs = service._ai_manager.generate_with_vision.call_args.kwargs
+    assert kwargs["schema"] is (
+        VisionNutritionResponseFull if full_micros else VisionNutritionResponse
+    )
+    assert ("all 21 keys" in kwargs["system_message"]) is full_micros
+    if not full_micros:
+        assert kwargs["system_message"] == meal.get_analysis_prompt()
+
+    label_service = _make_service(
+        response={
+            "is_food_label": True,
+            "macros_per_serving": {"protein_g": 1, "carbs_g": 2, "fat_g": 0},
+        }
+    )
+    await label_service.analyze_with_strategy(
+        _make_jpeg(400, 300), FoodLabelImageAnalysisStrategy()
+    )
+    label_kwargs = label_service._ai_manager.generate_with_vision.call_args.kwargs
+    assert label_kwargs["schema"] is (
+        FoodLabelNutritionResponseFull if full_micros else FoodLabelNutritionResponse
+    )
+    assert ("selenium" in label_kwargs["system_message"]) is full_micros

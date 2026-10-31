@@ -2406,3 +2406,68 @@ async def test_cache_separates_reference_mode_guest_model_and_prompt_policy():
     assert all(len(generation.calls) == 1 for generation in generations)
     assert len(set(cache.get_keys)) == len(contexts)
     assert all("granola" not in key and "user-1" not in key for key in cache.get_keys)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_micros", [False, True])
+async def test_full_micros_flag_picks_the_text_contract_and_prompt(full_micros):
+    from src.domain.model.ai.full_micros_contracts import (
+        MealTextNutritionResponseFull,
+    )
+
+    service = _FakeMealGenerationService()
+    handler = ParseMealTextHandler(
+        meal_generation_service=service,
+        structured_reference_enabled=False,
+        full_micros=full_micros,
+    )
+
+    await handler.handle(
+        ParseMealTextCommand(text="1 bowl pho", user_id="user-1", language="vi")
+    )
+
+    assert service.call_kwargs["schema"] is (
+        MealTextNutritionResponseFull if full_micros else MealTextNutritionResponse
+    )
+    assert ("all 21 keys" in service.call_kwargs["system_message"]) is full_micros
+
+
+@pytest.mark.asyncio
+async def test_full_micros_keep_the_new_keys_in_the_snapshot():
+    service = _FakeMealGenerationService(
+        responses=[
+            {
+                "items": [
+                    {
+                        "name": "Chicken breast",
+                        "lookup_name": "chicken breast",
+                        "quantity": 100,
+                        "unit": "g",
+                        "quantity_g": 100,
+                        "macros": {
+                            "protein_g": 31,
+                            "carbs_g": 0,
+                            "fat_g": 3.6,
+                            "fiber_g": 0,
+                            "sugar_g": 0,
+                        },
+                        "micros": {"iron": 1.1, "niacin": 13.7, "selenium": 27.6},
+                    }
+                ]
+            }
+        ]
+    )
+    handler = ParseMealTextHandler(
+        meal_generation_service=service,
+        structured_reference_enabled=False,
+        full_micros=True,
+    )
+
+    response = await handler.handle(
+        ParseMealTextCommand(text="100g chicken breast", user_id="u", language="en")
+    )
+
+    extras = response.items[0].source_snapshot["extra_nutrients"]
+    assert extras["niacin"] == pytest.approx(13.7)
+    assert extras["selenium"] == pytest.approx(27.6)
+    assert "folate" not in extras

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .prompt_eval_models import MICRO_ERROR_FLOORS, MICRO_UNITS
+from .meal_text_nutrition_eval_models import FULL_MICRO_FLOORS, FULL_MICRO_UNITS
 
 
 def score_foods(expected: tuple[dict[str, Any], ...], actual: list[Any]):
@@ -31,14 +31,14 @@ def score_foods(expected: tuple[dict[str, Any], ...], actual: list[Any]):
 
 
 def validate_micro_reference(nutrient: str, reference: dict[str, Any]) -> None:
-    if nutrient not in MICRO_UNITS:
+    if nutrient not in FULL_MICRO_UNITS:
         raise ValueError(f"unsupported micronutrient: {nutrient}")
     if reference.get("status") not in {"known", "unknown", "masked"}:
         raise ValueError(
             f"{nutrient} reference status must be known, unknown, or masked"
         )
-    if reference.get("unit") != MICRO_UNITS[nutrient]:
-        raise ValueError(f"{nutrient} unit must be {MICRO_UNITS[nutrient]}")
+    if reference.get("unit") != FULL_MICRO_UNITS[nutrient]:
+        raise ValueError(f"{nutrient} unit must be {FULL_MICRO_UNITS[nutrient]}")
     if reference["status"] == "known" and "value" not in reference:
         raise ValueError(f"known {nutrient} reference requires a value or interval")
 
@@ -67,9 +67,9 @@ def meal_macros(macros: Any) -> dict[str, float]:
 def whole_meal_micros(structured: dict[str, Any]) -> dict[str, float | None]:
     foods = structured.get("foods")
     if not isinstance(foods, list) or not foods:
-        return dict.fromkeys(MICRO_UNITS)
+        return dict.fromkeys(FULL_MICRO_UNITS)
     totals: dict[str, float | None] = {}
-    for name in MICRO_UNITS:
+    for name in FULL_MICRO_UNITS:
         values = []
         for food in foods:
             micros = food.get("micros") if isinstance(food, dict) else None
@@ -107,7 +107,7 @@ def score_micro_references(
             continue
         hits[nutrient] = hits.get(nutrient, 0) + 1
         interval = reference["value"]
-        denominator = max(midpoint(interval), MICRO_ERROR_FLOORS[nutrient])
+        denominator = max(midpoint(interval), FULL_MICRO_FLOORS[nutrient])
         errors.setdefault(nutrient, []).append(
             interval_error(actual, interval) / denominator
         )

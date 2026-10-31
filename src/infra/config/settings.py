@@ -509,6 +509,13 @@ class Settings(BaseSettings):
             "of the closeness-only FatSecret validation flag."
         ),
     )
+    AI_SCAN_FULL_MICROS_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Ask photo, label and text logging for all 21 micronutrient keys "
+            "instead of ten. Off sends today's ten-key contract and prompts."
+        ),
+    )
     AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS: float = Field(
         default=5.0,
         description="Timeout for optional external reference providers in meal analysis.",

@@ -11,6 +11,7 @@ from src.domain.exceptions.ai_exceptions import (
     AIOutputValidationError,
     AIUnavailableError,
 )
+from src.domain.model.ai.full_micros_contracts import scan_schema
 from src.domain.model.ai.nutrition_contracts import (
     FoodLabelNutritionResponse,
     VisionNutritionResponse,
@@ -19,6 +20,7 @@ from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.ai_output_validation_service import (
     validate_ai_output,
 )
+from src.domain.services.prompts.system_prompts import SystemPrompts
 from src.domain.strategies.meal_analysis_strategy import (
     AnalysisStrategyFactory,
     FoodLabelImageAnalysisStrategy,
@@ -85,9 +87,16 @@ class VisionAIService(VisionAIServicePort):
 
         try:
             is_food_label = isinstance(strategy, FoodLabelImageAnalysisStrategy)
-            schema = (
-                FoodLabelNutritionResponse if is_food_label else VisionNutritionResponse
+            full_micros = get_settings().AI_SCAN_FULL_MICROS_ENABLED
+            schema = scan_schema(
+                FoodLabelNutritionResponse
+                if is_food_label
+                else VisionNutritionResponse,
+                full_micros=full_micros,
             )
+            system_prompt = strategy.get_analysis_prompt()
+            if full_micros:
+                system_prompt = SystemPrompts.with_full_micros(system_prompt)
             validation_purpose = (
                 "food_label_scan" if is_food_label else VISION_VALIDATION_PURPOSE
             )
@@ -97,9 +106,7 @@ class VisionAIService(VisionAIServicePort):
                 else ModelPurpose.MEAL_SCAN
             )
             provenance: dict[str, Any] = {
-                "prompt_sha256": hashlib.sha256(
-                    strategy.get_analysis_prompt().encode()
-                ).hexdigest(),
+                "prompt_sha256": hashlib.sha256(system_prompt.encode()).hexdigest(),
                 "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
                 "strategy": strategy.get_strategy_name(),
             }
@@ -107,7 +114,7 @@ class VisionAIService(VisionAIServicePort):
                 purpose=model_purpose,
                 prompt=strategy.get_user_message(),
                 image_data=image_bytes,
-                system_message=strategy.get_analysis_prompt(),
+                system_message=system_prompt,
                 max_tokens=self._max_output_tokens,
                 schema=schema,
                 result_metadata=provenance,
