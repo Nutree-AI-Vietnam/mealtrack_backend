@@ -58,6 +58,7 @@ from src.domain.exceptions.ai_exceptions import (
     AIOutputValidationError,
     AIUnavailableError,
 )
+from src.domain.model.ai.full_micros_contracts import scan_schema
 from src.domain.model.ai.nutrition_contracts import (
     MealTextNutritionResponse,
 )
@@ -119,6 +120,7 @@ class ParseMealTextHandler(
         ai_timeout_seconds: float = 10.0,
         cache_namespace: str = "",
         reference_timeout_seconds: float | None = None,
+        full_micros: bool = False,
     ):
         self._meal_generation_service = meal_generation_service
         self._fat_secret_service = fat_secret_service
@@ -130,6 +132,11 @@ class ParseMealTextHandler(
         self._ai_timeout_seconds = ai_timeout_seconds
         self._cache_namespace = cache_namespace
         self._reference_timeout_seconds = reference_timeout_seconds
+        # Ask for all 21 micros keys instead of ten (AI_SCAN_FULL_MICROS_ENABLED).
+        self._full_micros = full_micros
+        self._response_schema = scan_schema(
+            MealTextNutritionResponse, full_micros=full_micros
+        )
         self._pure_ai_mode = (
             pure_ai_mode
             if pure_ai_mode is not None
@@ -181,6 +188,8 @@ class ParseMealTextHandler(
         system_prompt = SystemPrompts.get_meal_text_parsing_prompt(
             language=command.language
         )
+        if self._full_micros:
+            system_prompt = SystemPrompts.with_full_micros(system_prompt)
         cache_context = (
             f"{self._cache_namespace}:{self._pure_ai_mode}:"
             f"{self._structured_reference_enabled}:{command.user_id is None}:"
@@ -553,7 +562,7 @@ class ParseMealTextHandler(
                     system_message=retry_system_prompt,
                     response_type="json",
                     max_tokens=8192,
-                    schema=MealTextNutritionResponse,
+                    schema=self._response_schema,
                     model_purpose="parse_text",
                     thinking_budget=0,
                 )
@@ -561,7 +570,7 @@ class ParseMealTextHandler(
                 previous_response = raw_payload
                 validated_payload = validate_ai_output(
                     raw_payload,
-                    schema=MealTextNutritionResponse,
+                    schema=self._response_schema,
                     purpose=PARSE_TEXT_VALIDATION_PURPOSE,
                     attempt_count=attempt,
                 )

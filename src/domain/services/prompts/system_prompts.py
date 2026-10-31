@@ -33,6 +33,33 @@ When reasonably supported, estimate all ten micros: `vitamin_a` (mcg RAE); `vita
 Values are nonnegative; fiber/sugar ≤ carbs, saturated_fat ≤ fat, added_sugar ≤ total sugar, protein + carbs + fat ≤ edible mass (rounding allowed). Use concise names/realistic precision; retain small meaningful micros."""
 
 
+# Ten-key scan wording and its 21-key replacement, applied when full micros
+# are on. Units match ``Micros``; the label line also reads printed vitamins.
+_FULL_MICROS_REPLACEMENTS = (
+    (
+        "When reasonably supported, estimate all ten micros: `vitamin_a` (mcg RAE); `vitamin_c`, `vitamin_e`, `calcium`, `iron`, `magnesium`, `potassium`, `sodium` (mg); `saturated_fat`, `added_sugar` (g).",
+        "When reasonably supported, estimate all 21 micros: `vitamin_a` (mcg RAE), `folate` (mcg DFE), `vitamin_d`, `vitamin_k`, `vitamin_b12`, `selenium` (mcg); `vitamin_c`, `vitamin_e`, `thiamin`, `riboflavin`, `niacin`, `vitamin_b6`, `calcium`, `iron`, `magnesium`, `phosphorus`, `potassium`, `sodium`, `zinc` (mg); `saturated_fat`, `added_sugar` (g). Base each vitamin and mineral on the identified foods' usual composition; use null when those foods give no basis for it.",
+    ),
+    ("as an object with all ten keys", "as an object with all 21 keys"),
+    (
+        "`micros`: all ten keys; null only if none can be estimated.",
+        "`micros`: all 21 keys; null only if none can be estimated.",
+    ),
+    (
+        '"micros": {"vitamin_a": 9, "vitamin_c": 0, "vitamin_e": 0.4, "calcium": 22, "iron": 1.6, "magnesium": 44, "potassium": 384, "sodium": 111, "saturated_fat": 1.5, "added_sugar": 0}',
+        '"micros": {"vitamin_a": 9, "vitamin_c": 0, "vitamin_d": 0.2, "vitamin_e": 0.4, "vitamin_k": 0.5, "thiamin": 0.1, "riboflavin": 0.17, "niacin": 20.6, "vitamin_b6": 0.9, "vitamin_b12": 0.5, "folate": 6, "calcium": 22, "iron": 1.6, "magnesium": 44, "phosphorus": 342, "potassium": 384, "sodium": 111, "zinc": 1.5, "selenium": 41.4, "saturated_fat": 1.5, "added_sugar": 0}',
+    ),
+    (
+        '"micros":{"vitamin_a":6,"vitamin_c":0,"vitamin_e":0.3,"calcium":15,"iron":1.1,"magnesium":29,"potassium":256,"sodium":74,"saturated_fat":1,"added_sugar":0}',
+        '"micros":{"vitamin_a":6,"vitamin_c":0,"vitamin_d":0.1,"vitamin_e":0.3,"vitamin_k":0.3,"thiamin":0.07,"riboflavin":0.11,"niacin":13.7,"vitamin_b6":0.6,"vitamin_b12":0.3,"folate":4,"calcium":15,"iron":1.1,"magnesium":29,"phosphorus":228,"potassium":256,"sodium":74,"zinc":1,"selenium":27.6,"saturated_fat":1,"added_sugar":0}',
+    ),
+    (
+        "include sodium (mg), saturated_fat (g), added_sugar (g), potassium (mg), calcium (mg), iron (mg), vitamin_a (mcg), vitamin_c (mg), vitamin_e (mg), magnesium (mg).",
+        "include sodium (mg), saturated_fat (g), added_sugar (g), potassium (mg), calcium (mg), iron (mg), magnesium (mg), phosphorus (mg), zinc (mg), selenium (mcg), vitamin_a (mcg RAE), vitamin_c (mg), vitamin_d (mcg; IU / 40), vitamin_e (mg), vitamin_k (mcg), thiamin (mg), riboflavin (mg), niacin (mg), vitamin_b6 (mg), vitamin_b12 (mcg), folate (mcg DFE).",
+    ),
+)
+
+
 class SystemPrompts:
     """
     Manages system prompts for different AI contexts.
@@ -381,6 +408,18 @@ Realistic ranges: one activity lasts 1 to 600 minutes, and MET values run from 1
             for activity in get_all_activities()
         )
         return SystemPrompts.ACTIVITY_LOG_PARSING.format(catalog=catalog)
+
+    @staticmethod
+    def with_full_micros(prompt: str) -> str:
+        """Widen a ten-micros scan prompt to all 21 keys. Raises when the
+        prompt has none of the ten-key wording, so a drifted prompt never
+        silently keeps asking for ten."""
+        widened = prompt
+        for ten_keys, all_keys in _FULL_MICROS_REPLACEMENTS:
+            widened = widened.replace(ten_keys, all_keys)
+        if widened == prompt:
+            raise ValueError("prompt has no ten-micros wording to widen")
+        return widened
 
     @staticmethod
     def get_meal_text_parsing_prompt(language: str = "en") -> str:
