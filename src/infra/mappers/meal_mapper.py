@@ -143,7 +143,11 @@ def nutrition_orm_to_domain(orm: NutritionORM) -> DomainNutrition:
         ),
         micros=micros_from_mapping(getattr(orm, "micros", None)),
         food_items=food_items,
-        confidence_score=orm.confidence_score,
+        # Column is nullable (legacy rows); fall back to the domain default.
+        # Use `is not None` so an explicit stored 0.0 is preserved.
+        confidence_score=(
+            orm.confidence_score if orm.confidence_score is not None else 1.0
+        ),
         nutrition_override=_nutrition_override_from_orm(orm.nutrition_override),
     )
 
