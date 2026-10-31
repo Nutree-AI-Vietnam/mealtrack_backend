@@ -12,6 +12,7 @@ from src.api.routes.v1.webhook_subscription_lifecycle import (
     _notify_affiliate,
     _publish_subscription_event,
 )
+from src.api.routes.v1.webhook_subscription_rows import RenewingTarget
 from src.api.routes.v1.webhooks import (
     _credit_referral_on_purchase,
     _revoke_referral_on_refund,
@@ -213,9 +214,9 @@ class TestWebhookHandler:
 
                 # Mock no existing subscription (async)
                 with patch(
-                    "src.api.routes.v1.webhook_subscription_lifecycle.get_subscription_by_revenuecat_id",
+                    "src.api.routes.v1.webhook_subscription_lifecycle.find_renewing_target",
                     new_callable=AsyncMock,
-                    return_value=None,
+                    return_value=RenewingTarget(None, False, False),
                 ):
                     result = await revenuecat_webhook(
                         mock_request, authorization="test_secret"
@@ -460,6 +461,9 @@ class TestWebhookHandler:
                 mock_uow.subscriptions.find_by_revenuecat_id = AsyncMock(
                     side_effect=[None, None, None]
                 )
+                mock_uow.subscriptions.find_all_by_revenuecat_id = AsyncMock(
+                    return_value=[]
+                )
                 no_user = MagicMock()
                 no_user.scalars.return_value.first.return_value = None
                 found_user = MagicMock()
@@ -516,6 +520,9 @@ class TestWebhookHandler:
                 mock_uow.subscriptions = MagicMock()
                 mock_uow.subscriptions.find_by_revenuecat_id = AsyncMock(
                     return_value=None
+                )
+                mock_uow.subscriptions.find_all_by_revenuecat_id = AsyncMock(
+                    return_value=[]
                 )
                 found_user = MagicMock()
                 found_user.scalars.return_value.first.return_value = target_user
@@ -589,9 +596,9 @@ class TestWebhookHandler:
         # Mock no existing subscription (async) and referral credit side effect
         with (
             patch(
-                "src.api.routes.v1.webhook_subscription_lifecycle.get_subscription_by_revenuecat_id",
+                "src.api.routes.v1.webhook_subscription_lifecycle.find_renewing_target",
                 new_callable=AsyncMock,
-                return_value=None,
+                return_value=RenewingTarget(None, False, False),
             ),
             patch(
                 "src.api.routes.v1.webhook_subscription_lifecycle.credit_referral_on_purchase",
@@ -617,9 +624,9 @@ class TestWebhookHandler:
 
         # Mock existing subscription (async)
         with patch(
-            "src.api.routes.v1.webhook_subscription_lifecycle.get_subscription_by_revenuecat_id",
+            "src.api.routes.v1.webhook_subscription_lifecycle.find_renewing_target",
             new_callable=AsyncMock,
-            return_value=subscription,
+            return_value=RenewingTarget(subscription, False, False),
         ):
             await handle_renewal(
                 mock_uow, user, event, event_publisher=MagicMock(publish=AsyncMock())
@@ -692,9 +699,10 @@ class TestWebhookHandler:
             "transferred_to": ["firebase_uid_123", "$RCAnonymousID:new"],
         }
         mock_uow.subscriptions = MagicMock()
-        mock_uow.subscriptions.find_by_revenuecat_id = AsyncMock(
-            return_value=subscription
+        mock_uow.subscriptions.find_all_by_revenuecat_id = AsyncMock(
+            return_value=[subscription]
         )
+        mock_uow.session.flush = AsyncMock()
 
         await handle_transfer(mock_uow, event)
 
@@ -958,6 +966,9 @@ class TestWebhookHandler:
                 mock_result = MagicMock()
                 mock_result.scalars.return_value.first.return_value = mock_user
                 mock_uow.session.execute = AsyncMock(return_value=mock_result)
+                mock_uow.subscriptions.find_all_by_revenuecat_id = AsyncMock(
+                    return_value=[subscription]
+                )
                 mock_uow_class.return_value = mock_uow
 
                 with (

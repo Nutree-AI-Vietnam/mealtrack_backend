@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
+from src.api.routes.v1.webhook_subscription_rows import RenewingTarget
 from src.api.routes.v1.webhooks import (
     handle_billing_issue,
     handle_cancellation,
@@ -178,9 +179,9 @@ async def test_renewal_drops_the_push_and_still_purges_trial_pushes():
     subscription = _subscription(status="billing_issue")
 
     with patch(
-        f"{LIFECYCLE}.get_subscription_by_revenuecat_id",
+        f"{LIFECYCLE}.find_renewing_target",
         new_callable=AsyncMock,
-        return_value=subscription,
+        return_value=RenewingTarget(subscription, False, False),
     ):
         await handle_renewal(
             uow,
@@ -204,9 +205,9 @@ async def test_failed_drop_never_fails_the_webhook(caplog):
 
     with (
         patch(
-            f"{LIFECYCLE}.get_subscription_by_revenuecat_id",
+            f"{LIFECYCLE}.find_renewing_target",
             new_callable=AsyncMock,
-            return_value=subscription,
+            return_value=RenewingTarget(subscription, False, False),
         ),
         caplog.at_level("ERROR", logger=LIFECYCLE),
     ):
@@ -222,9 +223,9 @@ async def test_new_purchase_drops_the_push():
 
     with (
         patch(
-            f"{LIFECYCLE}.get_subscription_by_revenuecat_id",
+            f"{LIFECYCLE}.find_renewing_target",
             new_callable=AsyncMock,
-            return_value=None,
+            return_value=RenewingTarget(None, False, False),
         ),
         patch(f"{LIFECYCLE}.credit_referral_on_purchase", new_callable=AsyncMock),
     ):
@@ -238,9 +239,11 @@ async def test_purchase_of_a_known_subscription_drops_the_push_once():
     uow = _uow()
 
     with patch(
-        f"{LIFECYCLE}.get_subscription_by_revenuecat_id",
+        f"{LIFECYCLE}.find_renewing_target",
         new_callable=AsyncMock,
-        return_value=_subscription(status="billing_issue"),
+        return_value=RenewingTarget(
+            _subscription(status="billing_issue"), False, False
+        ),
     ):
         await handle_purchase(uow, _user(), dict(EVENT), event_publisher=_publisher())
 
