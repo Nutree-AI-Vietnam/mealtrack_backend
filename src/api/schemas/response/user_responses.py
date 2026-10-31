@@ -159,6 +159,16 @@ class UserMetricsResponse(BaseModel):
         0.0, description="Starting journey percent granted from historical actions"
     )
     updated_at: datetime = Field(..., description="Last update timestamp")
+    weight_loss_kg_per_week: Optional[float] = Field(
+        None, description="Saved lose-weight pace in kg per week, or unset"
+    )
+    weight_loss_lb_per_week: Optional[float] = Field(
+        None, description="Display conversion of the same kg per week"
+    )
+    pace_clinician_disclaimer: bool = Field(
+        False,
+        description="Show the clinician disclaimer when the user answered yes",
+    )
 
 
 class UserDeleteResponse(BaseModel):

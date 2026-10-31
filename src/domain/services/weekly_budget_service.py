@@ -16,9 +16,10 @@ from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly import WeeklyMacroBudget
-from src.domain.services.daily_target_snapshot_service import maybe_write_today_snapshot
+from src.domain.services.daily_target_snapshot_service import persist_today_snapshot
 from src.domain.services.hydration_intake import add_unrepresented_drink_totals
 from src.domain.services.meal_calorie_service import effective_meal_calories
+from src.domain.services.tdee_service import pace_reset_on_for_user
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
 
 logger = logging.getLogger(__name__)
@@ -448,6 +449,7 @@ class WeeklyBudgetService:
         consumed_before_today: dict[str, float],
         consumed_for_redistribution: dict[str, float],
         auto_adjust: bool = True,
+        fresh_base: bool = False,
     ) -> EffectiveAdjustedResult:
         """Shared effective-adjusted policy for async and batch-preloaded callers."""
         calc = WeeklyBudgetService
@@ -466,6 +468,37 @@ class WeeklyBudgetService:
                 and past_days_count >= 3
             ):
                 show_logging_prompt = True
+
+        if fresh_base:
+            # A pace change rebuilds today from the new standard daily.
+            # Earlier days in the week do not reduce or raise that target.
+            adjusted = calc.calculate_adjusted_daily(
+                replace(
+                    weekly_budget,
+                    target_calories=base_daily_cal * remaining_days,
+                    target_protein=base_daily_protein * remaining_days,
+                    target_carbs=base_daily_carbs * remaining_days,
+                    target_fat=base_daily_fat * remaining_days,
+                    consumed_calories=0,
+                    consumed_protein=0,
+                    consumed_carbs=0,
+                    consumed_fat=0,
+                ),
+                standard_daily_calories=base_daily_cal,
+                standard_daily_carbs=base_daily_carbs,
+                standard_daily_fat=base_daily_fat,
+                standard_daily_protein=base_daily_protein,
+                bmr=bmr,
+                remaining_days=remaining_days,
+            )
+            return EffectiveAdjustedResult(
+                adjusted=adjusted,
+                consumed_before_today=consumed_before_today,
+                consumed_total=consumed_total,
+                logged_past_days=logged_past_days,
+                skipped_days=skipped_days,
+                show_logging_prompt=False,
+            )
 
         if not calc.auto_adjust_enabled(auto_adjust):
             return EffectiveAdjustedResult(
@@ -564,6 +597,8 @@ class WeeklyBudgetService:
     ) -> EffectiveAdjustedResult:
         """Async version of get_effective_adjusted_daily for AsyncUnitOfWork."""
         calc = WeeklyBudgetService
+        reset_on = await pace_reset_on_for_user(uow, user_id)
+        fresh_base = reset_on is not None and reset_on == target_date
 
         if cheat_dates is None:
             cheat_day_records = await uow.cheat_days.find_by_user_and_date_range(
@@ -589,9 +624,15 @@ class WeeklyBudgetService:
                 consumed_before_today=weekly_preload.consumed_before_today,
                 consumed_for_redistribution=weekly_preload.consumed_for_redistribution,
                 auto_adjust=auto_adjust,
+                fresh_base=fresh_base,
             )
-            await maybe_write_today_snapshot(
-                uow, user_id, target_date, result.adjusted.calories, user_timezone
+            await persist_today_snapshot(
+                uow,
+                user_id,
+                target_date,
+                result.adjusted.calories,
+                user_timezone,
+                replace=fresh_base,
             )
             return result
 
@@ -719,9 +760,15 @@ class WeeklyBudgetService:
             consumed_before_today=consumed_before_today,
             consumed_for_redistribution=consumed_for_redistribution,
             auto_adjust=auto_adjust,
+            fresh_base=fresh_base,
         )
-        await maybe_write_today_snapshot(
-            uow, user_id, target_date, result.adjusted.calories, user_timezone
+        await persist_today_snapshot(
+            uow,
+            user_id,
+            target_date,
+            result.adjusted.calories,
+            user_timezone,
+            replace=fresh_base,
         )
         return result
 

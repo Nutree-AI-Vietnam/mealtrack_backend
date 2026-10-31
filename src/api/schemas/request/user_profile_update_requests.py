@@ -85,6 +85,12 @@ class UpdateMetricsRequest(BaseModel):
         False,
         description="Reset daily water goal to weight-based calculation (35 ml/kg)",
     )
+    weight_loss_kg_per_week: float | None = Field(
+        None,
+        ge=0.01,
+        le=1.0,
+        description="Lose-weight pace in kg per week. Omitted keeps the current pace.",
+    )
 
     @model_validator(mode="after")
     def validate_pair_when_complete(self):

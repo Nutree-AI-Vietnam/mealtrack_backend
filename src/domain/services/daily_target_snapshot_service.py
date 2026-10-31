@@ -11,6 +11,39 @@ from src.domain.utils.timezone_utils import get_zone_info
 logger = logging.getLogger(__name__)
 
 
+async def persist_today_snapshot(
+    uow: Any,
+    user_id: str,
+    target_date: date,
+    adjusted_calories: float,
+    user_timezone: str,
+    *,
+    replace: bool = False,
+) -> None:
+    """Write today's target. Other dates stay untouched.
+
+    The default insert is write-once. A pace change passes replace=True so
+    today's stored target matches the new base. Earlier dates are not rewritten.
+    """
+    today = datetime.now(get_zone_info(user_timezone)).date()
+    if target_date != today:
+        return
+    repo = getattr(uow, "daily_target_snapshots", None)
+    if repo is None:
+        return
+    try:
+        if replace:
+            await repo.replace_calories(user_id, target_date, adjusted_calories)
+        else:
+            await repo.insert_if_absent(user_id, target_date, adjusted_calories)
+    except Exception:
+        logger.exception(
+            "Failed to persist daily target snapshot for user %s on %s",
+            user_id,
+            target_date,
+        )
+
+
 async def maybe_write_today_snapshot(
     uow: Any,
     user_id: str,
@@ -19,17 +52,6 @@ async def maybe_write_today_snapshot(
     user_timezone: str,
 ) -> None:
     """Insert today's adjusted target if absent. Never updates, never backfills."""
-    today = datetime.now(get_zone_info(user_timezone)).date()
-    if target_date != today:
-        return
-    repo = getattr(uow, "daily_target_snapshots", None)
-    if repo is None:
-        return
-    try:
-        await repo.insert_if_absent(user_id, target_date, adjusted_calories)
-    except Exception:
-        logger.exception(
-            "Failed to persist daily target snapshot for user %s on %s",
-            user_id,
-            target_date,
-        )
+    await persist_today_snapshot(
+        uow, user_id, target_date, adjusted_calories, user_timezone
+    )

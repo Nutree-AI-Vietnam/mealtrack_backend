@@ -27,3 +27,4 @@ class PreviewTdeeQuery(Query):
     custom_carbs_g: float | None = None
     custom_fat_g: float | None = None
     requested_calories: float | None = None
+    weight_loss_kg_per_week: float | None = None

@@ -119,6 +119,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                 unit_system=UnitSystem.METRIC,
                 training_level=training_level,
                 macro_preset=macro_preset,
+                weight_loss_kg_per_week=profile.weight_loss_kg_per_week,
             )
 
             # Calculate TDEE
@@ -146,6 +147,9 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                 "macro_preset": result.macro_preset.value,
                 "profile_target_revision": profile.profile_target_revision,
                 "target_revision": profile.profile_target_revision,
+                "pace_range": (
+                    result.pace_range.to_dict() if result.pace_range else None
+                ),
                 "macros": macros,
                 "profile_data": {
                     "age": profile.age,
@@ -207,6 +211,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
             "macro_preset": macro_preset.value,
             "profile_target_revision": profile.profile_target_revision,
             "target_revision": profile.profile_target_revision,
+            "pace_range": result.pace_range.to_dict() if result.pace_range else None,
             "macros": macros,
             "profile_data": {
                 "age": profile.age,

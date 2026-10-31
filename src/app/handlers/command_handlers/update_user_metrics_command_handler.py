@@ -3,6 +3,7 @@ Command handler for updating user metrics.
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from src.api.exceptions import ResourceNotFoundException, ValidationException
@@ -18,8 +19,16 @@ from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
 )
+from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
+    build_tdee_request,
+)
+from src.domain.services.tdee_service import allowed_pace
 from src.domain.services.training_policy import normalize_training_pair
-from src.domain.utils.timezone_utils import utc_now
+from src.domain.utils.timezone_utils import (
+    get_zone_info,
+    resolve_user_timezone_async,
+    utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +61,7 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         )
         or command.body_fat_percent_provided
         or command.reset_water_goal
+        or command.weight_loss_kg_per_week is not None
     )
 
 
@@ -93,6 +103,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.training_minutes_per_session,
                 profile.fitness_goal,
                 profile.training_level,
+                profile.weight_loss_kg_per_week,
             )
             journey_inputs_before = (
                 profile.target_weight_kg,
@@ -249,6 +260,24 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                     raise ValidationException("Daily water goal must be greater than 0")
                 profile.daily_water_goal_ml = command.daily_water_goal_ml
 
+            if command.weight_loss_kg_per_week is not None:
+                # Capped where the target would drop below the floor, using the
+                # metrics this same update just set.
+                try:
+                    pace = allowed_pace(
+                        build_tdee_request(profile), command.weight_loss_kg_per_week
+                    )
+                except ValueError as exc:
+                    raise ValidationException(str(exc)) from exc
+                if profile.weight_loss_kg_per_week != pace:
+                    timezone_name = await resolve_user_timezone_async(
+                        command.user_id, uow
+                    )
+                    profile.weight_loss_kg_per_week = pace
+                    profile.weight_loss_pace_reset_on = datetime.now(
+                        get_zone_info(timezone_name)
+                    ).date()
+
             # Ensure this profile is marked as current
             profile.is_current = True
 
@@ -262,6 +291,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.training_minutes_per_session,
                 profile.fitness_goal,
                 profile.training_level,
+                profile.weight_loss_kg_per_week,
             )
             journey_inputs_after = (
                 profile.target_weight_kg,

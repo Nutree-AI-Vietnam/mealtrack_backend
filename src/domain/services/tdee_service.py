@@ -1,9 +1,16 @@
+import inspect
+import math
+from datetime import date, datetime
+from typing import Any
+from uuid import UUID
+
 from src.domain.constants import NutritionConstants, TDEEConstants
 from src.domain.model.user import (
     Goal,
     JobType,
     MacroPreset,
     MacroTargets,
+    PaceRange,
     Sex,
     TdeeRequest,
     TdeeResponse,
@@ -33,6 +40,7 @@ class TdeeCalculationService:
             bmr=bmr,
             sex=request.sex,
             macro_preset=request.macro_preset,
+            weight_loss_kg_per_week=request.weight_loss_kg_per_week,
         )
         return TdeeResponse(
             bmr=round(bmr, 1),
@@ -41,6 +49,11 @@ class TdeeCalculationService:
             macros=macro_targets,
             formula_used=formula_name,
             macro_preset=request.macro_preset,
+            pace_range=(
+                pace_range(request.weight_kg, tdee, bmr, request.sex)
+                if request.goal == Goal.CUT
+                else None
+            ),
         )
 
     def _calculate_bmr(self, request: TdeeRequest) -> tuple[float, str]:
@@ -84,6 +97,7 @@ class TdeeCalculationService:
         bmr: float = None,
         sex: Sex = None,
         macro_preset: MacroPreset = MacroPreset.STANDARD,
+        weight_loss_kg_per_week: float | None = None,
     ) -> MacroTargets:
         """Calculate macro targets using weight-based approach.
 
@@ -102,7 +116,12 @@ class TdeeCalculationService:
         """
         # Determine target calories based on goal
         if goal == Goal.CUT:
-            calories = tdee - TDEEConstants.CUTTING_DEFICIT
+            deficit = (
+                daily_deficit_kcal(weight_loss_kg_per_week)
+                if weight_loss_kg_per_week
+                else TDEEConstants.CUTTING_DEFICIT
+            )
+            calories = tdee - deficit
             goal_key = "cut"
         elif goal == Goal.BULK:
             calories = tdee + TDEEConstants.BULKING_SURPLUS
@@ -117,12 +136,7 @@ class TdeeCalculationService:
         # Apply calorie floor: never below BMR or clinical minimum (1200F/1500M)
         # Industry standard used by MyFitnessPal, Noom, Lose It
         if bmr is not None and sex is not None:
-            clinical_min = (
-                TDEEConstants.MIN_CALORIES_FEMALE
-                if sex == Sex.FEMALE
-                else TDEEConstants.MIN_CALORIES_MALE
-            )
-            calories = max(calories, bmr, clinical_min)
+            calories = max(calories, calorie_floor(bmr, sex))
 
         # Diet presets (e.g. keto) are labels for meal guidance only — they must
         # not rewrite base daily macros. Weight-based allocation always wins.
@@ -259,3 +273,103 @@ class TdeeCalculationService:
                 f"{TDEEConstants.MAX_WEIGHT_KG}, got {weight_kg}"
             )
         return self._calculate_all_macro_targets(tdee, weight_kg, goal, training_level)
+
+
+# Weight-loss pace: a chosen kg per week between the research limits, capped
+# where the daily target would drop below the calorie floor.
+
+# Same factor the mobile app uses in WeightConstants.kgToLbFactor.
+KG_TO_LB = 2.20462
+
+
+def daily_deficit_kcal(kg_per_week: float) -> float:
+    """Daily deficit for a weekly loss: ~7,700 kcal per kg, spread over 7 days."""
+    return kg_per_week * TDEEConstants.KCAL_PER_KG_BODY_WEIGHT / 7
+
+
+def calorie_floor(bmr: float, sex: Sex) -> float:
+    """Lowest daily target: BMR, and never under 1200 kcal (women) / 1500 (men)."""
+    clinical_min = (
+        TDEEConstants.MIN_CALORIES_FEMALE
+        if sex == Sex.FEMALE
+        else TDEEConstants.MIN_CALORIES_MALE
+    )
+    return max(bmr, clinical_min)
+
+
+def _round_down_to_step(kg: float) -> float:
+    # The slider moves in 0.01 kg steps; rounding down keeps the end above the floor.
+    return math.floor(kg * 100 + 1e-9) / 100
+
+
+def pace_range(weight_kg: float, tdee: float, bmr: float, sex: Sex) -> PaceRange:
+    """The paces this person can pick, from the slow limit to their own maximum."""
+    cap_kg = max(0.0, tdee - calorie_floor(bmr, sex)) / daily_deficit_kcal(1)
+    max_kg = _round_down_to_step(min(TDEEConstants.PACE_MAX_KG_PER_WEEK, cap_kg))
+
+    def within_limits(kg: float) -> float:
+        return round(
+            min(
+                max(kg, TDEEConstants.PACE_MIN_KG_PER_WEEK),
+                TDEEConstants.PACE_MAX_KG_PER_WEEK,
+            ),
+            2,
+        )
+
+    return PaceRange(
+        min_kg_per_week=TDEEConstants.PACE_MIN_KG_PER_WEEK,
+        max_kg_per_week=max_kg,
+        recommended_low_kg=within_limits(
+            weight_kg * TDEEConstants.PACE_RECOMMENDED_LOW_PERCENT
+        ),
+        recommended_high_kg=within_limits(
+            weight_kg * TDEEConstants.PACE_RECOMMENDED_HIGH_PERCENT
+        ),
+    )
+
+
+def clamp_pace(kg_per_week: float | None, allowed: PaceRange) -> float | None:
+    """Keep a chosen pace at or under this person's maximum.
+
+    The slow limit is a screen limit, not a safety one, so slower paces stay.
+    None when no deficit fits, which keeps the flat cut.
+    """
+    if kg_per_week is None or allowed.max_kg_per_week <= 0:
+        return None
+    return round(min(kg_per_week, allowed.max_kg_per_week), 2)
+
+
+def allowed_pace(request: TdeeRequest, kg_per_week: float | None) -> float | None:
+    """The requested pace capped by this person's floor; None for a non-cut goal."""
+    if kg_per_week is None:
+        return None
+    allowed = TdeeCalculationService().calculate_tdee(request).pace_range
+    return clamp_pace(kg_per_week, allowed) if allowed else None
+
+
+def kg_to_lb(kg_per_week: float | None) -> float | None:
+    return None if kg_per_week is None else round(kg_per_week * KG_TO_LB, 2)
+
+
+async def pace_reset_on_for_user(uow: Any, user_id: str) -> date | None:
+    """Local date of the latest pace change, if the profile stores one."""
+    try:
+        user_uuid = UUID(str(user_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    users = getattr(uow, "users", None)
+    getter = getattr(users, "get_profile", None) if users is not None else None
+    if not callable(getter):
+        return None
+    try:
+        profile = getter(user_uuid)
+        if inspect.iscoroutine(profile):
+            profile = await profile
+    except Exception:
+        return None
+    reset_on = getattr(profile, "weight_loss_pace_reset_on", None)
+    if isinstance(reset_on, datetime):
+        return reset_on.date()
+    if isinstance(reset_on, date):
+        return reset_on
+    return None

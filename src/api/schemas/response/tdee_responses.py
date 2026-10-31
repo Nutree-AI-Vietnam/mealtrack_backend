@@ -9,6 +9,24 @@ from src.api.schemas.request.tdee_requests import GoalEnum
 TDEE_PREVIEW_CALCULATION_CONTRACT = "onboarding_preview_v2"
 
 
+class PaceRangeResponse(BaseModel):
+    """Lose-weight paces this person can pick, in kg per week (cut goal only)."""
+
+    min_kg_per_week: float = Field(..., description="Slow limit of the slider")
+    max_kg_per_week: float = Field(
+        ...,
+        description="Fastest pace before the target drops below the calorie floor; "
+        "can be under min_kg_per_week, and 0 when no deficit fits",
+    )
+    recommended_low_kg: float = Field(..., description="0.5% of body weight per week")
+    recommended_high_kg: float = Field(..., description="1% of body weight per week")
+
+    @classmethod
+    def from_result(cls, result: dict) -> "PaceRangeResponse | None":
+        pace_range = result.get("pace_range")
+        return cls(**pace_range) if pace_range else None
+
+
 class MacroTargetsResponse(BaseModel):
     """Response DTO for macro targets matching Flutter MacroTargets."""
 
@@ -60,6 +78,9 @@ class TdeeCalculationResponse(BaseModel):
     )
     profile_target_revision: int | None = Field(
         None, description="Profile target revision for cache validation"
+    )
+    pace_range: PaceRangeResponse | None = Field(
+        None, description="Lose-weight pace range; present for a cut goal"
     )
 
     class Config:
