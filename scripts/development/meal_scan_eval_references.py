@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.domain.services.meal_analysis.prompt_eval_loop import MICRO_UNITS
+from src.domain.evaluation.meal_text_nutrition_eval_models import (
+    FULL_MICRO_UNITS,
+)
 
 
 def _validate_expected_food(case_id: str, food: Any) -> dict[str, Any]:
@@ -47,7 +49,7 @@ def _validate_macro_refs(raw: Any, case_id: str) -> dict[str, Any]:
 
 
 def _validate_micro_refs(raw: Any, case_id: str) -> dict[str, dict[str, Any]]:
-    if not isinstance(raw, dict) or set(raw) - set(MICRO_UNITS):
+    if not isinstance(raw, dict) or set(raw) - set(FULL_MICRO_UNITS):
         raise ValueError(f"{case_id}: expected_micros contains invalid fields")
     result: dict[str, dict[str, Any]] = {}
     for name, reference in raw.items():
@@ -59,8 +61,8 @@ def _validate_micro_refs(raw: Any, case_id: str) -> dict[str, dict[str, Any]]:
             raise ValueError(
                 f"{case_id}: {name} status must be known, unknown, or masked"
             )
-        if reference.get("unit") != MICRO_UNITS[name]:
-            raise ValueError(f"{case_id}: {name} unit must be {MICRO_UNITS[name]}")
+        if reference.get("unit") != FULL_MICRO_UNITS[name]:
+            raise ValueError(f"{case_id}: {name} unit must be {FULL_MICRO_UNITS[name]}")
         item = {"status": reference["status"], "unit": reference["unit"]}
         if reference["status"] == "known":
             item["value"] = _interval_or_value(

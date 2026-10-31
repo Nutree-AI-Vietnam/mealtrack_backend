@@ -165,7 +165,7 @@ def _text_corpus_status(cases: list[ParseTextEvalCase], splits: dict[str, str]) 
 
     if any(
         set(case.expected_meal_macros) != set(TEXT_MACROS)
-        or set(case.expected_meal_micros) != set(TEXT_MICRO_UNITS)
+        or not set(TEXT_MICRO_UNITS) <= set(case.expected_meal_micros)
         for case in cases
     ):
         return "blocked_incomplete_nutrition_references"

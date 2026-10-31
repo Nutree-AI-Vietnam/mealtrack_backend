@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -52,6 +53,7 @@ from src.domain.services.meal_text_nutrition_eval_loop import (
     ParseTextNutritionEvalLoop,
 )
 from src.domain.services.nutrition_resolver import normalize_food_lookup_name
+from src.domain.services.prompts.system_prompts import SystemPrompts
 
 CORPUS_PATH = (
     REPO_ROOT / "tests" / "fixtures" / "parse_text_nutrition_golden_cases.json"
@@ -507,6 +509,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline-prompt")
     parser.add_argument("--candidate-prompt")
     parser.add_argument("--confirm-live-staging", action="store_true")
+    parser.add_argument(
+        "--candidate-full-micros",
+        action="store_true",
+        help="Run the candidate with the 21-micros prompt and contract "
+        "(AI_SCAN_FULL_MICROS_ENABLED); without --candidate-prompt it widens "
+        "the baseline prompt.",
+    )
     args = parser.parse_args(argv)
     try:
         if args.mode == "provider-only":
@@ -516,18 +525,30 @@ def main(argv: list[str] | None = None) -> int:
             if (
                 not args.manifest
                 or not args.baseline_prompt
-                or not args.candidate_prompt
+                or not (args.candidate_prompt or args.candidate_full_micros)
             ):
                 raise ValueError(
-                    "provider-only mode requires --manifest, --baseline-prompt, and --candidate-prompt"
+                    "provider-only mode requires --manifest, --baseline-prompt, and "
+                    "--candidate-prompt or --candidate-full-micros"
                 )
             reviewed_cases, splits = load_reviewed_provider_manifest(args.manifest)
             baseline, baseline_hash = load_prompt_bundle(
                 args.baseline_prompt, family="parse_text"
             )
-            candidate, candidate_hash = load_prompt_bundle(
-                args.candidate_prompt, family="parse_text"
-            )
+            if args.candidate_full_micros and not args.candidate_prompt:
+                # The flag-on side: the same prompt asking for all 21 micros,
+                # sent with the 21-key contract.
+                candidate = {
+                    language: SystemPrompts.with_full_micros(prompt)
+                    for language, prompt in baseline.items()
+                }
+                candidate_hash = hashlib.sha256(
+                    json.dumps(candidate, sort_keys=True).encode()
+                ).hexdigest()
+            else:
+                candidate, candidate_hash = load_prompt_bundle(
+                    args.candidate_prompt, family="parse_text"
+                )
             if baseline == candidate:
                 raise ValueError("baseline and candidate prompt bundles are identical")
             evaluated_cases = [
@@ -541,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.repetitions,
                     max(1, min(args.max_cases, LIVE_MAX_CASES)),
                     case_offset=args.case_offset,
+                    candidate_full_micros=args.candidate_full_micros,
                 )
             )
             report["corpus_version"] = json.loads(

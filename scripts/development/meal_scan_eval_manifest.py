@@ -152,7 +152,7 @@ def _corpus_status(cases: list[ReviewedMealCase]) -> str:
     food_cases = [case for case in cases if case.evaluation.expected_is_food]
     if not food_cases or any(
         set(case.evaluation.expected_macros) != set(MACRO_FIELDS)
-        or set(case.evaluation.expected_micros) != set(MICRO_UNITS)
+        or not set(MICRO_UNITS) <= set(case.evaluation.expected_micros)
         for case in food_cases
     ):
         return "blocked_incomplete_nutrition_references"

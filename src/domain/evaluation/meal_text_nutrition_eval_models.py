@@ -27,6 +27,37 @@ TEXT_MICRO_FLOORS = {
     "saturated_fat": 0.01,
     "added_sugar": 0.01,
 }
+# Everything a scan can report once AI_SCAN_FULL_MICROS_ENABLED asks for all
+# 21 keys. References may name any of these; labelled baselines still name
+# exactly TEXT_MICRO_UNITS.
+FULL_MICRO_UNITS = {
+    **TEXT_MICRO_UNITS,
+    "vitamin_d": "mcg",
+    "vitamin_k": "mcg",
+    "thiamin": "mg",
+    "riboflavin": "mg",
+    "niacin": "mg",
+    "vitamin_b6": "mg",
+    "vitamin_b12": "mcg",
+    "folate": "mcg",
+    "phosphorus": "mg",
+    "zinc": "mg",
+    "selenium": "mcg",
+}
+FULL_MICRO_FLOORS = {
+    **TEXT_MICRO_FLOORS,
+    "vitamin_d": 0.1,
+    "vitamin_k": 1.0,
+    "thiamin": 0.01,
+    "riboflavin": 0.01,
+    "niacin": 0.1,
+    "vitamin_b6": 0.01,
+    "vitamin_b12": 0.1,
+    "folate": 1.0,
+    "phosphorus": 0.1,
+    "zinc": 0.1,
+    "selenium": 1.0,
+}
 TEXT_MACROS = ("protein_g", "carbs_g", "fat_g", "fiber_g", "sugar_g")
 
 
