@@ -64,9 +64,16 @@ class SupplementCatalogPort(ABC):
 
     @abstractmethod
     async def review_queue(
-        self, limit: int, offset: int, kind: ReviewKind | None = None
+        self,
+        limit: int,
+        offset: int,
+        kind: ReviewKind | None = None,
+        q: str | None = None,
     ) -> tuple[list[ReviewItem], int]:
-        """Products waiting for review, oldest first, and their total."""
+        """Products waiting for review, oldest first, and their total.
+
+        ``q`` matches a catalog key exactly, or part of the name or brand.
+        """
 
     @abstractmethod
     async def review_item(self, product_id: str) -> ReviewItem | None:
@@ -89,5 +96,9 @@ class SupplementCatalogPort(ABC):
         """
 
     @abstractmethod
-    async def move_list_rows(self, user_id: str, from_id: str, to_id: str) -> None:
-        """Point the user's list row at another product (dropping a duplicate)."""
+    async def move_to_shared(self, user_id: str, from_id: str, to_id: str) -> None:
+        """Move the user's list row and doses to another product.
+
+        A list row already on that product wins, and the moved one is dropped.
+        Each dose keeps its own nutrient snapshot.
+        """

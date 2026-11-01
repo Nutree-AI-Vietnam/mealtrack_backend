@@ -89,6 +89,16 @@ class AdminSupplementReviewRequest(BaseModel):
     changes: AdminSupplementEdits | None = None
 
 
+class AdminSupplementBarcodeMatch(BaseModel):
+    """The shared row a scan's barcode already belongs to."""
+
+    id: str
+    name: str
+    brand: str | None = None
+    catalog_key: str | None = None
+    review_status: str
+
+
 class AdminSupplementReviewItem(BaseModel):
     id: str
     kind: Literal["catalog", "scan"]
@@ -115,6 +125,9 @@ class AdminSupplementReviewItem(BaseModel):
     reviewed_at: datetime | None = None
     reviewed_by: str | None = None
     created_at: datetime | None = None
+    updated_at: datetime | None = None
+    # Approved: approving merges into it. Waiting: decide that row first.
+    barcode_match: AdminSupplementBarcodeMatch | None = None
 
 
 class AdminSupplementReviewListResponse(BaseModel):

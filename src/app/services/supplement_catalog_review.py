@@ -20,6 +20,7 @@ from src.domain.model.supplement.catalog_review import (
 )
 from src.domain.ports.supplement_catalog_port import (
     ReviewItem,
+    ReviewKind,
     SupplementCatalogPort,
 )
 from src.domain.utils.timezone_utils import utc_now
@@ -48,11 +49,10 @@ async def review_product(
 ) -> ReviewOutcome:
     """Edit, approve or reject a product waiting for review.
 
-    Approving a held-back catalog row shares it, unless an approved product
-    already has its barcode (then it is a duplicate to reject). Approving a
-    person's scan shares their row in place, so their list and doses keep it;
-    when an approved row already has its barcode, their list moves there and
-    the scan stays theirs. A barcode on a catalog row still waiting must be
+    Approving a held-back catalog row shares it. Approving a person's scan
+    shares their row in place, so their list and doses keep it; when an
+    approved row already has its barcode, their list row and doses move there
+    and the scan stays theirs. A barcode on a catalog row still waiting must be
     decided there first. Rejecting hides a catalog row (and frees its
     barcodes) and leaves a scan private.
     """
@@ -60,6 +60,9 @@ async def review_product(
     if found is None:
         raise SupplementProductNotFoundError(product_id)
     require_reviewable(found.product)
+    if changes and "macro_bearing" in changes and not found.product.shared:
+        # The owner could no longer log a dose of their own product.
+        raise ValueError("a person's scan cannot be marked as food; reject it instead")
     product = with_edits(found.product, changes) if changes else found.product
 
     if action is ReviewAction.EDIT:
@@ -70,30 +73,53 @@ async def review_product(
     if action is ReviewAction.REJECT:
         rejected = replace(product, review_status=ReviewStatus.REJECTED)
         return await _saved(catalog, found, rejected, reviewer)
-    match = await catalog.shared_with_barcode(product.barcodes, exclude_id=product.id)
-    if match is not None and match.review_status is ReviewStatus.PENDING_REVIEW:
-        # Deciding that row first keeps one shared row per barcode: approving it
-        # makes this a duplicate, rejecting it frees the barcode.
-        raise SupplementNotReviewableError(
-            f"catalog row {match.name!r} ({match.id}) has this barcode and is"
-            " waiting for review; review it first"
-        )
     if product.shared:
-        if match is not None:
-            raise SupplementNotReviewableError(
-                f"approved product {match.name!r} ({match.id}) already has this"
-                " barcode; reject this row as a duplicate"
-            )
+        # A shared row's barcodes are its own: the unique index allows no other.
         approved = replace(product, review_status=ReviewStatus.APPROVED)
         return await _saved(catalog, found, approved, reviewer)
 
-    owner = product.owner_user_id or ""
-    if match is not None:
-        await catalog.move_list_rows(owner, product.id, match.id)
-        kept = replace(product, review_status=ReviewStatus.PRIVATE)
-        outcome = await _saved(catalog, found, kept, reviewer)
-        return replace(outcome, merged_into=match.id)
-    return await _saved(catalog, found, promoted(product), reviewer)
+    match = await catalog.shared_with_barcode(product.barcodes, exclude_id=product.id)
+    if match is not None and match.review_status is ReviewStatus.PENDING_REVIEW:
+        # Deciding that row first keeps one shared row per barcode: approving it
+        # turns this into a merge, rejecting it frees the barcode.
+        raise SupplementNotReviewableError(
+            f"catalog row {match.name!r} ({match.catalog_key or match.id}) has this"
+            " barcode and is waiting for review; decide it first"
+        )
+    if match is None:
+        return await _saved(catalog, found, promoted(product), reviewer)
+    if match.macro_bearing and not product.macro_bearing:
+        raise SupplementNotReviewableError(
+            f"{match.name!r} has this barcode and logs as food; reject this scan"
+        )
+    await catalog.move_to_shared(product.owner_user_id or "", product.id, match.id)
+    kept = replace(product, review_status=ReviewStatus.PRIVATE)
+    outcome = await _saved(catalog, found, kept, reviewer)
+    return replace(outcome, merged_into=match.id)
+
+
+async def review_page(
+    catalog: SupplementCatalogPort,
+    limit: int,
+    offset: int,
+    kind: ReviewKind | None = None,
+    q: str | None = None,
+) -> tuple[list[tuple[ReviewItem, SupplementProduct | None]], int]:
+    """The queue, each scan with the shared row its barcode already belongs to.
+
+    The admin then sees before approving whether it shares, merges, or waits.
+    """
+    items, total = await catalog.review_queue(limit, offset, kind, q)
+    page = []
+    for item in items:
+        product = item.product
+        match = (
+            None
+            if product.shared
+            else await catalog.shared_with_barcode(product.barcodes, product.id)
+        )
+        page.append((item, match))
+    return page, total
 
 
 async def _saved(

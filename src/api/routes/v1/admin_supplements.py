@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.dependencies.auth import require_admin_or_local
 from src.api.schemas.response.admin_supplement_responses import (
+    AdminSupplementBarcodeMatch,
     AdminSupplementBarcodeSkip,
     AdminSupplementImportRequest,
     AdminSupplementImportResponse,
@@ -25,7 +26,11 @@ from src.bootstrap.supplement_catalog import (
     review_supplement,
     supplement_review_queue,
 )
-from src.domain.model.supplement import ProductSource, SupplementProductNotFoundError
+from src.domain.model.supplement import (
+    ProductSource,
+    SupplementProduct,
+    SupplementProductNotFoundError,
+)
 from src.domain.model.supplement.catalog_review import SupplementNotReviewableError
 from src.domain.ports.supplement_catalog_port import ReviewItem
 
@@ -71,15 +76,21 @@ async def list_supplement_review(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     kind: Literal["catalog", "scan"] | None = Query(None),
+    q: str | None = Query(None, max_length=120),
     _admin: str = Depends(require_admin_or_local),
 ) -> AdminSupplementReviewListResponse:
     """Held-back catalog rows and people's label scans waiting for review."""
     try:
-        items, total = await supplement_review_queue(limit, offset, kind)
+        items, total = await supplement_review_queue(
+            limit, offset, kind, (q or "").strip() or None
+        )
     except SupplementCatalogUnavailableError as error:
         raise _unavailable(error) from error
     return AdminSupplementReviewListResponse(
-        items=[_item(item) for item in items], total=total, limit=limit, offset=offset
+        items=[_item(item, match) for item, match in items],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -116,7 +127,9 @@ async def review_admin_supplement(
     )
 
 
-def _item(item: ReviewItem) -> AdminSupplementReviewItem:
+def _item(
+    item: ReviewItem, match: SupplementProduct | None = None
+) -> AdminSupplementReviewItem:
     product = item.product
     return AdminSupplementReviewItem(
         id=product.id,
@@ -148,6 +161,16 @@ def _item(item: ReviewItem) -> AdminSupplementReviewItem:
         reviewed_at=item.reviewed_at,
         reviewed_by=item.reviewed_by,
         created_at=product.created_at,
+        updated_at=product.updated_at,
+        barcode_match=None
+        if match is None
+        else AdminSupplementBarcodeMatch(
+            id=match.id,
+            name=match.name,
+            brand=match.brand,
+            catalog_key=match.catalog_key,
+            review_status=match.review_status.value,
+        ),
     )
 
 

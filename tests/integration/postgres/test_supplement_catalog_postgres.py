@@ -6,6 +6,7 @@ on unique indexes and constraints, so they are checked against the database.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -26,6 +27,7 @@ from src.domain.model.supplement import (
     ProductSource,
     ReviewStatus,
     SupplementForm,
+    SupplementIntake,
     SupplementNutrients,
     SupplementProduct,
     UserSupplement,
@@ -76,6 +78,7 @@ def _record(key: str, **overrides) -> dict:
         "barcodes": [],
         "origin_country": "US",
         "sold_in_vn": True,
+        "is_medicine_in_vn": False,
         "source_name": "NIH Dietary Supplement Label Database",
         "source_url": f"https://dsld.od.nih.gov/label/{key}",
         "label_rows": [{"name": "Vitamin D3", "amount": 1000, "unit": "IU"}],
@@ -206,7 +209,7 @@ async def test_a_scan_waits_for_the_catalog_row_holding_its_barcode(
     [(held_id,)] = await _rows("SELECT id FROM supplement_products")
     scan = await _scan(alice)
 
-    with pytest.raises(SupplementNotReviewableError, match="review it first"):
+    with pytest.raises(SupplementNotReviewableError, match="decide it first"):
         await review_supplement(scan.id, ReviewAction.APPROVE, "admin@x")
     await review_supplement(held_id, ReviewAction.REJECT, "admin@x")
     outcome = await review_supplement(scan.id, ReviewAction.APPROVE, "admin@x")
@@ -214,6 +217,26 @@ async def test_a_scan_waits_for_the_catalog_row_holding_its_barcode(
     assert outcome.item.product.barcodes == (GTIN,)
     async with AsyncUnitOfWork() as uow:
         assert (await uow.supplements.find_by_barcode(UPC, bob)).id == scan.id
+
+
+async def test_the_queue_filters_by_catalog_key_name_or_brand(factory):
+    await import_supplement_catalog(
+        [
+            _record("dsld:1", name="GABA Pure Powder", brand="NOW", issues=["x"]),
+            _record("dsld:2", name="Zinc 50 mg", brand="Solgar", issues=["x"]),
+        ]
+    )
+
+    async def keys(q: str) -> list[str | None]:
+        items, _ = await supplement_review_queue(10, 0, q=q)
+        return [item.product.catalog_key for item, _ in items]
+
+    assert await keys("dsld:1") == ["dsld:1"]
+    assert await keys("gaba") == ["dsld:1"]
+    assert await keys("solgar") == ["dsld:2"]
+    # LIKE wildcards in the text are matched literally, so they match nothing.
+    assert await keys("%") == []
+    assert await keys("_") == []
 
 
 async def test_a_rejected_catalog_row_gives_up_its_barcodes(factory):
@@ -236,7 +259,7 @@ async def test_approving_a_scan_shares_it_in_place(factory, pg_session):
     scan = await _scan(alice)
 
     queue, total = await supplement_review_queue(10, 0, "scan")
-    assert (total, [item.product.id for item in queue]) == (1, [scan.id])
+    assert (total, [item.product.id for item, _ in queue]) == (1, [scan.id])
     outcome = await review_supplement(scan.id, ReviewAction.APPROVE, "admin@x")
 
     assert outcome.merged_into is None
@@ -265,6 +288,22 @@ async def test_approving_a_scan_of_a_shared_barcode_moves_the_list(factory, pg_s
         )
         await uow.commit()
 
+    # Alice took a dose when she scanned the label.
+    async with AsyncUnitOfWork() as uow:
+        now = datetime.now(UTC)
+        await uow.supplements.add_intake(
+            SupplementIntake.log(
+                id=str(uuid4()),
+                user_id=alice,
+                product=alices,
+                units=1,
+                taken_at=now,
+                local_date=now.date(),
+                logged_on_day=True,
+            )
+        )
+        await uow.commit()
+
     outcome = await review_supplement(alices.id, ReviewAction.APPROVE, "admin@x")
     await review_supplement(carols.id, ReviewAction.APPROVE, "admin@x")
 
@@ -277,6 +316,10 @@ async def test_approving_a_scan_of_a_shared_barcode_moves_the_list(factory, pg_s
     # Carol already had the shared product listed; her duplicate row goes.
     assert [(e.product_id, e.units_per_dose) for e in carol_list] == [(shared_id, 2)]
     assert alice_scan.review_status is ReviewStatus.PRIVATE
+    # Her dose follows her list row, so today still shows it as taken.
+    assert await _rows(
+        "SELECT product_id FROM supplement_intakes WHERE user_id = :u", u=alice
+    ) == [(shared_id,)]
 
 
 async def test_rejecting_hides_catalog_rows_and_keeps_scans_private(

@@ -153,6 +153,20 @@ def test_preformed_vitamin_a_is_dropped_without_a_vitamin_a_amount():
         ({"units_per_serving": 10**400}, "units_per_serving is too large"),
         ({"nutrients": {"zinc": 10**400}}, "zinc is too large"),
         ({"sold_in_vn": "yes"}, "sold_in_vn must be true or false"),
+        ({"sold_in_vn": None}, "missing sold_in_vn"),
+        ({"is_medicine_in_vn": None}, "missing is_medicine_in_vn"),
+        (
+            {
+                "label_rows": [
+                    {
+                        "name": "Calcium carbonate",
+                        "amount": 1,
+                        "equivalent": {"name": "calcium", "amount": 10**400},
+                    }
+                ]
+            },
+            "equivalent of 'Calcium carbonate' is too large",
+        ),
         ({"barcodes": "9300807362341"}, "barcodes must be a list"),
         ({"key": "x" * 129}, "key is longer than 128"),
         ({"label_rows": [{"name": "", "amount": 1}]}, "needs a name"),

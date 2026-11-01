@@ -27,13 +27,15 @@ Each record is one product. Every record has these fields:
 - `barcodes`: any form of GTIN. The import stores each one as GTIN-14.
 - `nutrients`: per unit, in the app's units. Use the 19 tracked keys, plus `vitamin_a_preformed` beside them.
 - `label_rows`: as printed, `{name, name_original, amount, unit, equivalent}`.
-- `origin_country`, `is_medicine_in_vn` and `sold_in_vn`.
+- `origin_country`, `is_medicine_in_vn` and `sold_in_vn`. Both flags are required; a missing one would quietly rank the product as foreign, so the import refuses the record.
 - `source_name` and `source_url`.
 - `macro_bearing` (optional): true marks a product the app logs as food, never as a dose.
 
 The build leaves food out of both files. It uses phase 4's label-scan rule:
 - A powder, liquid or sachet is food at 10 g of protein or 100 kcal a serving.
 - Any product is food at 10 g of protein or 50 kcal a unit.
+
+The build also keeps each barcode on one record: one sold in Vietnam first, then one from a brand or registry page, then the newest DSLD label.
 
 A record with a non-empty `issues` list is held back for review. Its `issues` are shown in the queue as the reasons.
 
@@ -76,9 +78,10 @@ The queue holds held-back catalog rows and people's readable label scans. It nev
 - `GET /v1/admin/supplements/review?kind=catalog|scan&limit&offset` returns the queue, oldest first. Each item shows:
   - its `reasons`;
   - its `source_url`, or for a scan its `label_image_url`;
-  - the label rows and the nutrients read from them.
+  - the label rows and the nutrients read from them;
+  - for a scan, `barcode_match`: the shared row its barcode already belongs to. When it is approved, approving merges into it. When it is waiting, decide that row first.
 - `POST /v1/admin/supplements/review/{id}` takes `{action: "approve" | "edit" | "reject", changes?}`. The `changes` are applied first.
-  - Fields you can edit: `brand`, `name`, `form`, `unit_label`, `units_per_serving`, `nutrients`, `label_rows`, `sold_in_vn`, `is_medicine_in_vn` and `macro_bearing`.
+  - Fields you can edit: `brand`, `name`, `form`, `unit_label`, `units_per_serving`, `nutrients`, `label_rows`, `sold_in_vn`, `is_medicine_in_vn` and `macro_bearing`. `macro_bearing` is for catalog rows only: a person marked as food could no longer log their own product, so reject such a scan instead.
   - Only `brand` can be cleared. An `edit` that changes nothing answers 422.
 
 What each action does:
@@ -87,16 +90,16 @@ What each action does:
 | --- | --- | --- |
 | `edit` | Saves the changes. The row stays in the queue. | Same as for a catalog row. |
 | `approve` | Shares the row. | Promotes the person's row to shared, in place, with its barcodes. Their list row and doses keep the same product. |
-| `approve`, when an approved shared row already has the barcode | Answers 409: the row is a duplicate to reject. | Moves the person's list row to that shared row (`merged_into`). The scan stays theirs. |
-| `approve`, when a catalog row still waiting has the barcode | Answers 409. | Answers 409. |
+| `approve`, when an approved shared row already has the barcode | Cannot happen: a shared barcode belongs to one row. | Moves the person's list row and doses to that shared row (`merged_into`). The scan stays theirs. Answers 409 when that row logs as food. |
+| `approve`, when a catalog row still waiting has the barcode | Cannot happen. | Answers 409 naming that row. |
 | `reject` | Hides the row and frees its barcodes. | The scan stays private to its owner. |
 
-When a catalog row still waiting holds the barcode, decide that row first. Approving it makes the other product a duplicate, or a merge for a scan. Rejecting it frees the barcode. This keeps one shared row per barcode.
+When a catalog row still waiting holds a scan's barcode, decide that row first. Approving it turns the scan's approval into a merge. Rejecting it frees the barcode. This keeps one shared row per barcode.
 
 Every action records `reviewed_by` and `reviewed_at`. These cases also answer 409:
 - A product that is not waiting for review. Rejecting is final.
 - A Ghi nhanh estimate.
-- Two reviews racing on the same barcode, or on the same person's list. Reload and retry.
+- Two reviews racing on the same barcode, or on the same person's list. Reload and retry. Any other integrity error is a server error, not a 409.
 
 ## Rebuilding the catalog
 

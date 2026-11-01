@@ -240,7 +240,10 @@ handler/schema when implementing; the bullets below are the durable WHY.
   the day's doses of products since taken off the list.
 - `GET /search?q=` (30/min) folds accents ("dau ca" finds "Dầu cá"); one- and
   two-letter words match only at a word start, so "vitamin k" does not match
-  every brand with a "k" in it. It lists approved catalog rows first, those
+  every brand with a "k" in it. Vietnamese nutrient names ("sắt", "canxi",
+  "dầu cá", "kẽm") also find the English label words ("Iron", "Calcium",
+  "Fish Oil", "Zinc") and match only as whole words, so "sắt" never finds
+  "Satiety". It lists approved catalog rows first, those
   sold in Vietnam ahead, then the user's own; at most 20. `macro_bearing: true`
   marks a product the app logs as food: adding it or logging it as a dose is
   400 `SUPPLEMENT_IS_FOOD`.

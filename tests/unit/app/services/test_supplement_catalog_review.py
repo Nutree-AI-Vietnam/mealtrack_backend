@@ -6,7 +6,11 @@ from dataclasses import replace
 
 import pytest
 
-from src.app.services.supplement_catalog_review import ReviewAction, review_product
+from src.app.services.supplement_catalog_review import (
+    ReviewAction,
+    review_page,
+    review_product,
+)
 from src.domain.model.supplement import (
     ProductSource,
     ReviewStatus,
@@ -39,8 +43,11 @@ class _Catalog:
         self.saved.append((product, reviewer))
         return product.barcodes
 
-    async def move_list_rows(self, user_id, from_id, to_id):
+    async def move_to_shared(self, user_id, from_id, to_id):
         self.moved.append((user_id, from_id, to_id))
+
+    async def review_queue(self, limit, offset, kind=None, q=None):
+        return list(self.items.values()), len(self.items)
 
 
 def _scan(**overrides) -> SupplementProduct:
@@ -161,23 +168,51 @@ async def test_edit_saves_changes_and_keeps_the_row_waiting():
     assert saved.review_status is ReviewStatus.PENDING_REVIEW
 
 
-async def test_a_catalog_row_whose_barcode_is_already_approved_is_a_duplicate():
-    shared = replace(_held_back(), id="shared-1", review_status=ReviewStatus.APPROVED)
-    catalog = _Catalog(ReviewItem(_held_back()), match=shared)
-
-    with pytest.raises(SupplementNotReviewableError, match="duplicate"):
-        await review_product(catalog, "cat-1", ReviewAction.APPROVE, "a@x")
-    assert catalog.saved == []
-
-
-@pytest.mark.parametrize("item", [_scan(), _held_back()])
-async def test_a_barcode_on_a_waiting_catalog_row_is_decided_there_first(item):
+async def test_a_scan_whose_barcode_a_waiting_catalog_row_has_waits_for_it():
     waiting = replace(_held_back(), id="cat-2")
-    catalog = _Catalog(ReviewItem(item), match=waiting)
+    catalog = _Catalog(ReviewItem(_scan()), match=waiting)
 
-    with pytest.raises(SupplementNotReviewableError, match="review it first"):
-        await review_product(catalog, item.id, ReviewAction.APPROVE, "a@x")
+    with pytest.raises(SupplementNotReviewableError, match="dsld:2959.*decide it"):
+        await review_product(catalog, "scan-1", ReviewAction.APPROVE, "a@x")
     assert (catalog.saved, catalog.moved) == ([], [])
+
+
+async def test_a_catalog_row_approves_without_a_barcode_lookup():
+    # A shared row's barcodes are its own: the unique index allows no other.
+    other = replace(_held_back(), id="cat-2", review_status=ReviewStatus.APPROVED)
+    catalog = _Catalog(ReviewItem(_held_back()), match=other)
+
+    await review_product(catalog, "cat-1", ReviewAction.APPROVE, "a@x")
+
+    assert catalog.saved[0][0].review_status is ReviewStatus.APPROVED
+    assert catalog.moved == []
+
+
+async def test_a_scan_never_merges_into_a_product_that_logs_as_food():
+    shared = replace(
+        _held_back(),
+        id="shared-1",
+        review_status=ReviewStatus.APPROVED,
+        macro_bearing=True,
+    )
+    catalog = _Catalog(ReviewItem(_scan()), match=shared)
+
+    with pytest.raises(SupplementNotReviewableError, match="logs as food"):
+        await review_product(catalog, "scan-1", ReviewAction.APPROVE, "a@x")
+    assert (catalog.saved, catalog.moved) == ([], [])
+
+
+async def test_the_queue_shows_where_each_scans_barcode_already_is():
+    shared = replace(_held_back(), id="shared-1", review_status=ReviewStatus.APPROVED)
+    catalog = _Catalog(ReviewItem(_scan()), ReviewItem(_held_back()), match=shared)
+
+    page, total = await review_page(catalog, 50, 0)
+
+    assert total == 2
+    assert [(item.product.id, match and match.id) for item, match in page] == [
+        ("scan-1", "shared-1"),
+        ("cat-1", None),
+    ]
 
 
 async def test_an_edit_that_changes_nothing_is_refused():
@@ -190,14 +225,25 @@ async def test_an_edit_that_changes_nothing_is_refused():
     assert catalog.saved == []
 
 
-async def test_an_admin_can_mark_a_product_as_food():
-    catalog = _Catalog(ReviewItem(_scan()))
+async def test_an_admin_can_mark_a_catalog_row_as_food():
+    catalog = _Catalog(ReviewItem(_held_back()))
 
     await review_product(
-        catalog, "scan-1", ReviewAction.REJECT, "a@x", {"macro_bearing": True}
+        catalog, "cat-1", ReviewAction.REJECT, "a@x", {"macro_bearing": True}
     )
 
     assert catalog.saved[0][0].macro_bearing is True
+
+
+async def test_a_persons_scan_is_never_marked_as_food():
+    # They could no longer log a dose of their own product.
+    catalog = _Catalog(ReviewItem(_scan()))
+
+    with pytest.raises(ValueError, match="reject it instead"):
+        await review_product(
+            catalog, "scan-1", ReviewAction.EDIT, "a@x", {"macro_bearing": True}
+        )
+    assert catalog.saved == []
 
 
 async def test_a_ghi_nhanh_estimate_can_never_be_approved():

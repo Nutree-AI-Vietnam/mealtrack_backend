@@ -5,6 +5,7 @@ Each call is one transaction; the admin routes and the seed script share them.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -17,8 +18,10 @@ from src.app.services.supplement_catalog_import import (
 from src.app.services.supplement_catalog_review import (
     ReviewAction,
     ReviewOutcome,
+    review_page,
     review_product,
 )
+from src.domain.model.supplement import SupplementProduct
 from src.domain.model.supplement.catalog_review import SupplementReviewConflictError
 from src.domain.ports.supplement_catalog_port import (
     ReviewItem,
@@ -26,6 +29,10 @@ from src.domain.ports.supplement_catalog_port import (
     SupplementCatalogPort,
 )
 from src.infra.database.uow_async import AsyncUnitOfWork
+
+logger = logging.getLogger(__name__)
+
+_UNIQUE_VIOLATION = "23505"
 
 
 class SupplementCatalogUnavailableError(RuntimeError):
@@ -47,11 +54,14 @@ async def import_supplement_catalog(
 
 
 async def supplement_review_queue(
-    limit: int, offset: int, kind: ReviewKind | None = None
-) -> tuple[list[ReviewItem], int]:
+    limit: int,
+    offset: int,
+    kind: ReviewKind | None = None,
+    q: str | None = None,
+) -> tuple[list[tuple[ReviewItem, SupplementProduct | None]], int]:
     async with AsyncUnitOfWork() as uow:
         catalog = await _catalog(uow)
-        return await catalog.review_queue(limit, offset, kind)
+        return await review_page(catalog, limit, offset, kind, q)
 
 
 async def review_supplement(
@@ -69,7 +79,15 @@ async def review_supplement(
             await uow.commit()
             return outcome
     except IntegrityError as error:
-        # Two approvals of one barcode, or the person listing the same product.
+        # Only a unique clash is a race worth retrying: two approvals of one
+        # barcode, or the person listing the same product meanwhile.
+        if _sqlstate(error) != _UNIQUE_VIOLATION:
+            raise
+        logger.warning(
+            "Supplement review %s lost a race on %s",
+            product_id,
+            _constraint(error),
+        )
         raise SupplementReviewConflictError(
             "another change to this barcode or list landed first; reload and retry"
         ) from error
@@ -80,3 +98,17 @@ async def _catalog(uow: AsyncUnitOfWork) -> SupplementCatalogPort:
     if not await catalog.schema_ready():
         raise SupplementCatalogUnavailableError("supplement tables are not migrated")
     return catalog
+
+
+def _sqlstate(error: IntegrityError) -> str | None:
+    orig = error.orig
+    return getattr(orig, "sqlstate", None) or getattr(
+        getattr(orig, "__cause__", None), "sqlstate", None
+    )
+
+
+def _constraint(error: IntegrityError) -> str | None:
+    cause = getattr(error.orig, "__cause__", None)
+    return getattr(cause, "constraint_name", None) or getattr(
+        error.orig, "constraint_name", None
+    )

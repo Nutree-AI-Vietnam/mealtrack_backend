@@ -6,7 +6,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.model.supplement import ReviewStatus, SupplementProduct
@@ -18,6 +18,9 @@ from src.domain.ports.supplement_catalog_port import (
     SupplementCatalogPort,
 )
 from src.domain.utils.timezone_utils import utc_now
+from src.infra.database.models.supplement import (
+    SupplementIntakeORM as Intake,
+)
 from src.infra.database.models.supplement import (
     SupplementProductBarcodeORM as Barcode,
 )
@@ -54,13 +57,25 @@ class AsyncSupplementCatalogRepository(SupplementCatalogPort):
         return await upsert_curated_rows(self.session, entries)
 
     async def review_queue(
-        self, limit: int, offset: int, kind: ReviewKind | None = None
+        self,
+        limit: int,
+        offset: int,
+        kind: ReviewKind | None = None,
+        q: str | None = None,
     ) -> tuple[list[ReviewItem], int]:
         waiting = [Product.review_status == ReviewStatus.PENDING_REVIEW.value]
         if kind == "catalog":
             waiting.append(Product.owner_user_id.is_(None))
         elif kind == "scan":
             waiting.append(Product.owner_user_id.is_not(None))
+        if q:
+            waiting.append(
+                or_(
+                    Product.catalog_key == q,
+                    Product.name.icontains(q, autoescape=True),
+                    Product.brand.icontains(q, autoescape=True),
+                )
+            )
         total = await self.session.scalar(
             select(func.count()).select_from(Product).where(*waiting)
         )
@@ -137,7 +152,7 @@ class AsyncSupplementCatalogRepository(SupplementCatalogPort):
         )
         return tuple(sorted(kept.scalars().all()))
 
-    async def move_list_rows(self, user_id: str, from_id: str, to_id: str) -> None:
+    async def move_to_shared(self, user_id: str, from_id: str, to_id: str) -> None:
         mine = (ListEntry.user_id == user_id, ListEntry.product_id == from_id)
         duplicate = await self.session.scalar(
             select(ListEntry.id).where(
@@ -149,6 +164,13 @@ class AsyncSupplementCatalogRepository(SupplementCatalogPort):
         else:
             statement = update(ListEntry).where(*mine).values(product_id=to_id)
         await self.session.execute(statement.execution_options(**NO_SYNC))
+        # Doses follow, so the list row still shows what was taken today.
+        await self.session.execute(
+            update(Intake)
+            .where(Intake.user_id == user_id, Intake.product_id == from_id)
+            .values(product_id=to_id)
+            .execution_options(**NO_SYNC)
+        )
 
     async def _items(self, rows: Sequence[Any]) -> list[ReviewItem]:
         if not rows:

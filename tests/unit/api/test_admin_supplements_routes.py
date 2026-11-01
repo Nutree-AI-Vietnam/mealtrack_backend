@@ -106,11 +106,22 @@ def test_import_returns_counts_and_passes_dry_run(monkeypatch):
 
 
 def test_review_queue_lists_items_with_their_source(monkeypatch):
-    queue = AsyncMock(return_value=([_item()], 1))
+    shared = SupplementProduct(
+        id="shared-1",
+        name="Vitamin D3 1000 IU",
+        brand="Nature Made",
+        form=SupplementForm.SOFTGEL,
+        unit_label="viên nang mềm",
+        source=ProductSource.CURATED,
+        review_status=ReviewStatus.APPROVED,
+        catalog_key="dsld:2959",
+    )
+    queue = AsyncMock(return_value=([(_item(), shared)], 1))
     monkeypatch.setattr(route_mod, "supplement_review_queue", queue)
 
     response = _client().get(
-        "/v1/admin/supplements/review", params={"kind": "scan", "limit": 10}
+        "/v1/admin/supplements/review",
+        params={"kind": "scan", "limit": 10, "q": " dsld:2959 "},
     )
 
     assert response.status_code == 200
@@ -122,7 +133,14 @@ def test_review_queue_lists_items_with_their_source(monkeypatch):
     assert item["label_image_url"] == "https://img.test/label.jpg"
     assert item["nutrients"] == {"vitamin_d": 25.0}
     assert item["label_rows"][0]["unit"] == "IU"
-    queue.assert_awaited_once_with(10, 0, "scan")
+    assert item["barcode_match"] == {
+        "id": "shared-1",
+        "name": "Vitamin D3 1000 IU",
+        "brand": "Nature Made",
+        "catalog_key": "dsld:2959",
+        "review_status": "approved",
+    }
+    queue.assert_awaited_once_with(10, 0, "scan", "dsld:2959")
 
 
 def test_review_passes_only_the_fields_sent(monkeypatch):

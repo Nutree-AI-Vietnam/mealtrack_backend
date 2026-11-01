@@ -19,6 +19,8 @@ def _record(key: str, **overrides) -> dict:
         "nutrients": {"zinc": 8.0},
         "label_rows": [],
         "barcodes": [],
+        "sold_in_vn": True,
+        "is_medicine_in_vn": False,
         **overrides,
     }
 

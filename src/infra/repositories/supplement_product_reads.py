@@ -16,6 +16,10 @@ from src.domain.model.supplement import (
     SupplementProductNotFoundError,
     gtin14,
 )
+from src.domain.model.supplement.search_terms import (
+    SearchTerm,
+    supplement_search_terms,
+)
 from src.domain.utils.food_search_text import (
     MAX_FOOD_SEARCH_WORDS,
     clip_food_search_query,
@@ -54,6 +58,22 @@ def visible_to(user_id: str) -> ColumnElement[bool]:
     )
 
 
+def _term_matches(term: SearchTerm) -> ColumnElement[bool]:
+    if not term.translated:
+        return and_(
+            *(Product.name_search.like(search_word_pattern(w)) for w in term.typed)
+        )
+    # A Vietnamese term matches whole words only: "sat" must not hit "satiety".
+    padded = Product.name_search.concat(" ")
+    return or_(
+        padded.like(f"% {' '.join(term.typed)} %"),
+        *(
+            and_(*(Product.name_search.like(search_word_pattern(w)) for w in words))
+            for words in term.alternatives
+        ),
+    )
+
+
 class SupplementProductReads:
     """Every product read that takes an id, a barcode or a search term."""
 
@@ -89,19 +109,19 @@ class SupplementProductReads:
         words = words[:MAX_FOOD_SEARCH_WORDS]
         if not words:
             return []
+        terms = supplement_search_terms(words)
+        # Rank by the English label words a Vietnamese term stands for.
+        ranked = " ".join(
+            " ".join(term.alternatives[0] if term.translated else term.typed)
+            for term in terms
+        )
         return await self._products(
             select(Product)
-            .where(
-                visible_to(user_id),
-                *(
-                    Product.name_search.like(search_word_pattern(word))
-                    for word in words
-                ),
-            )
+            .where(visible_to(user_id), *(_term_matches(term) for term in terms))
             .order_by(
                 Product.owner_user_id.is_(None).desc(),
                 Product.sold_in_vn.desc(),
-                func.similarity(Product.name_search, " ".join(words)).desc(),
+                func.similarity(Product.name_search, ranked).desc(),
                 Product.brand,
                 Product.name,
             )

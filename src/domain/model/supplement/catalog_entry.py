@@ -78,8 +78,8 @@ def catalog_entry(record: Mapping[str, object]) -> CatalogEntry:
             barcodes=barcodes,
             catalog_key=_required_text(record, "key"),
             origin_country=origin,
-            is_medicine_in_vn=_flag(record, "is_medicine_in_vn"),
-            sold_in_vn=_flag(record, "sold_in_vn"),
+            is_medicine_in_vn=_flag(record, "is_medicine_in_vn", required=True),
+            sold_in_vn=_flag(record, "sold_in_vn", required=True),
             source_name=_text(record, "source_name"),
             source_url=_text(record, "source_url"),
             macro_bearing=_flag(record, "macro_bearing"),
@@ -147,7 +147,9 @@ def _row_name(item: Mapping[str, object], origin: str | None) -> str:
         amount = equivalent.get("amount")
         parts = (
             str(equivalent["name"]).strip(),
-            f"{amount:g}" if isinstance(amount, int | float) else "",
+            f"{_amount(amount, f'the equivalent of {name!r}', allow_zero=True):g}"
+            if isinstance(amount, int | float) and not isinstance(amount, bool)
+            else "",
             str(equivalent.get("unit") or "").strip(),
         )
         # "Calcium carbonate (= calcium 600 mg)" keeps the printed equivalent.
@@ -178,9 +180,12 @@ def _form(raw: object) -> SupplementForm:
         raise CatalogRecordError(f"unknown form {raw!r}") from None
 
 
-def _flag(record: Mapping[str, object], field: str) -> bool:
+def _flag(record: Mapping[str, object], field: str, *, required: bool = False) -> bool:
     value = record.get(field)
     if value is None:
+        # A missing Vietnam flag would quietly rank the product as foreign.
+        if required:
+            raise CatalogRecordError(f"missing {field}")
         return False
     if not isinstance(value, bool):
         raise CatalogRecordError(f"{field} must be true or false")
