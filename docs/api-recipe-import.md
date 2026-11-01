@@ -145,10 +145,23 @@ captions only. The job type needs migration `20261101091406080591`.
   requests sent the whole site to Google's CAPTCHA page (HTTP 429) for that
   IP. Reliable YouTube imports from a server need one of: cookies, a
   residential proxy, or the YouTube Data API (descriptions only).
-- Tested live on one TikTok video whose amounts are never stated (speech and
-  on-screen ingredient lists only) and one YouTube video (blocked as above).
-  Instagram, Facebook and web pages have not been tried live yet. Amounts and servings the source does
-  not state are AI estimates and vary between runs; the draft says so in
-  `warnings` and per line in `amount_estimated`.
+- YouTube Shorts are no safer: `/shorts/<id>` is the same video and player
+  API. In the live test a Short whose description holds the recipe imported
+  in 10 s (description and subtitles, no download); the same link hit the
+  bot check half an hour later, then the CAPTCHA page.
+- Live-tested from a cloud IP: one TikTok video with no stated amounts
+  (speech and on-screen lists, 31–51 s), one Instagram reel (yt-dlp read it
+  without login; caption had no amounts, so speech and on-screen text were
+  used, 20 s), and two web pages read from schema.org JSON-LD (Cookpad, BBC
+  Good Food, 8–9 s). Simply Recipes answered the server with 402 (bot
+  protection), which fails as `RECIPE_SOURCE_REJECTED`. Facebook has not
+  been tried.
+- A link to the full recipe in a caption ("full recipe: https://…") is not
+  followed; the recipe is read from the caption and the video only.
+- A schema.org yield that counts pieces ("Makes 12" pancakes) is taken as 12
+  servings.
+- Amounts and servings the source does not state are AI estimates and vary
+  between runs; the draft says so in `warnings` and per line in
+  `amount_estimated`.
 - No edit endpoint for a saved import: delete it and save again.
 - Push copy for languages other than English and Vietnamese.
