@@ -2,7 +2,6 @@
 Daily nutrition summary response DTO.
 """
 
-
 from pydantic import BaseModel, Field
 
 
@@ -44,7 +43,7 @@ class WeeklyContextResponse(BaseModel):
 
 
 class MicronutrientTargetsResponse(BaseModel):
-    """Individual DRI daily goals for Home / Progress beakers."""
+    """Personal daily goals for Home / Progress beakers (Vietnam 2016 table)."""
 
     iron_mg: float
     fiber_g: float
@@ -98,5 +97,5 @@ class DailyNutritionResponse(BaseModel):
         None, description="Logged added sugar; null if not logged"
     )
     micro_targets: MicronutrientTargetsResponse | None = Field(
-        None, description="DRI daily goals for the five Home highlight nutrients"
+        None, description="Personal daily goals for the five Home highlight nutrients"
     )

@@ -2,7 +2,7 @@
 
 NRF scoring still uses the constants in ``nrf_score.py``. This table is the
 single source for display percents, including vitamins/minerals NRF does not
-blend. Fiber is not listed — clients use IOM ``fiber_target_g``.
+blend. Fiber is not listed — clients use the personal ``fiber_target_g``.
 """
 
 from __future__ import annotations
