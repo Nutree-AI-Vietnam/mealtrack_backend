@@ -1,9 +1,10 @@
 """Import a recipe from a link, pasted text or a photo into a draft.
 
-Web pages are read once. Videos are read caption-first; the video itself
-(speech and on-screen text) is downloaded only when the caption does not
-hold a usable recipe. The draft is priced by the backend nutrition lookup
-and nothing is saved until the user saves it.
+Web pages are read once. Videos are read caption-first; when the caption
+does not hold a usable recipe, a full-recipe page it links to is read next,
+and the video itself (speech and on-screen text) is downloaded last. The
+draft is priced by the backend nutrition lookup and nothing is saved until
+the user saves it.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from src.domain.model.recipe_import.limits import (
     MIN_RECIPE_TEXT_LENGTH,
 )
 from src.domain.model.recipe_import.link_policy import (
+    caption_recipe_links,
     classify_recipe_url,
     extract_recipe_url,
 )
@@ -48,6 +50,7 @@ from src.domain.model.recipe_import.quality import (
     has_substantial_caption,
     require_recipe,
 )
+from src.domain.model.recipe_import.servings import with_source_servings
 from src.domain.model.recipe_import.source_material import RecipeSourceMaterial
 from src.domain.model.recipe_import.text import clean_text
 from src.domain.ports.recipe_import_ports import (
@@ -101,9 +104,13 @@ class RecipeImportService:
 
     async def import_recipe(self, request: RecipeImportRequest) -> ImportedRecipe:
         read = await self._read(request)
-        extracted = await self._size(require_recipe(read.extracted))
+        extracted = await self._size(
+            with_source_servings(
+                require_recipe(read.extracted), read.material.structured_recipe
+            )
+        )
         priced = await self._pricer.price(
-            extracted.ingredients, servings=_servings(extracted, read.material)
+            extracted.ingredients, servings=extracted.servings
         )
         return build_imported_recipe(
             import_id=self._id_factory(),
@@ -115,7 +122,7 @@ class RecipeImportService:
         )
 
     async def _size(self, recipe: ExtractedRecipe) -> ExtractedRecipe:
-        """Fill missing amounts and eaten shares in a focused second AI pass.
+        """Fill missing amounts, eaten shares and servings in a second AI pass.
 
         A failed pass keeps the amounts as read: the draft is still useful
         and the review screen shows which lines have no nutrition.
@@ -166,6 +173,12 @@ class RecipeImportService:
             extracted = await self._extractor.extract(material, language=language)
             if caption_is_enough(extracted):
                 return _Read(material, extracted, RecipeImportSourceType.URL)
+        linked = await self._linked_recipe(material)
+        if linked is not None:
+            material = linked
+            extracted = await self._extractor.extract(material, language=language)
+            if caption_is_enough(extracted):
+                return _Read(material, extracted, RecipeImportSourceType.URL)
         analysis_error: RecipeImportError | None = None
         if can_analyze:
             try:
@@ -204,6 +217,36 @@ class RecipeImportService:
             (RecipeImportWarning.VIDEO_NOT_ANALYZED,),
         )
 
+    async def _linked_recipe(
+        self, material: RecipeSourceMaterial
+    ) -> RecipeSourceMaterial | None:
+        """The material plus the recipe of a page its caption links to.
+
+        Only a page with a complete schema.org recipe counts; any failure
+        just means the video is read instead.
+        """
+        if material.structured_recipe is not None:
+            return None
+        links = caption_recipe_links(material.description)
+        if not links:
+            return None
+        pages = await asyncio.gather(*(self._linked_page(link) for link in links))
+        for page in pages:
+            if (
+                page is not None
+                and page.structured_recipe is not None
+                and page.structured_recipe.is_complete
+            ):
+                return material.with_linked_recipe(page)
+        return None
+
+    async def _linked_page(self, url: str) -> RecipeSourceMaterial | None:
+        try:
+            return await self._web.read_page(url)
+        except Exception as exc:  # noqa: BLE001 - the video is read instead
+            logger.info("Caption recipe link skipped: %s", type(exc).__name__)
+            return None
+
     async def _from_text(self, text: str, language: str) -> _Read:
         cleaned = clean_text(text, max_chars=MAX_RECIPE_TEXT_LENGTH, multiline=True)
         if not cleaned or len(cleaned) < MIN_RECIPE_TEXT_LENGTH:
@@ -227,15 +270,6 @@ class RecipeImportService:
         )
         material = RecipeSourceMaterial(platform=RecipeSourcePlatform.IMAGE)
         return _Read(material, extracted, RecipeImportSourceType.IMAGE)
-
-
-def _servings(extracted: ExtractedRecipe, material: RecipeSourceMaterial) -> int | None:
-    if extracted.servings_stated and extracted.servings:
-        return extracted.servings
-    structured = material.structured_recipe
-    if structured is not None and structured.servings:
-        return structured.servings
-    return extracted.servings
 
 
 def _link_only(text: str) -> str | None:

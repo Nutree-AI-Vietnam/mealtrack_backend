@@ -86,6 +86,9 @@ DRAFT = ImportedRecipe(
         signals=(RecipeSignal.CAPTION,),
     ),
     warnings=(RecipeImportWarning.SERVINGS_ESTIMATED,),
+    servings_estimated=True,
+    serving_description="1 đĩa, 5 cánh",
+    makes="10 cánh gà",
 )
 
 
@@ -177,8 +180,15 @@ class TestExtract:
             "author": None,
             "site_name": None,
             "signals": ["caption"],
+            "linked_recipe_url": None,
         }
         assert body["warnings"] == ["servings_estimated"]
+        assert (
+            body["servings"],
+            body["servings_estimated"],
+            body["serving_description"],
+            body["makes"],
+        ) == (2, True, "1 đĩa, 5 cánh", "10 cánh gà")
 
     @pytest.mark.parametrize(
         "body",
@@ -332,6 +342,30 @@ class TestSave:
         )
         assert command.recipe["ingredients"][0]["english_name"] == "chicken wing, raw"
         assert "import_id" not in command.recipe
+
+    def test_keeps_the_imported_servings_next_to_the_users_choice(self, make_client):
+        bus = FakeBus({"id": "row"})
+
+        response = make_client(bus).post(
+            "/v1/recipe-imports/save",
+            json=self._body(
+                servings=3,
+                original_servings=2,
+                servings_estimated=True,
+                serving_description="1 đĩa, 5 cánh",
+                makes="10 cánh gà",
+            ),
+        )
+
+        assert response.status_code == 200
+        recipe = bus.sent[0].recipe
+        assert (
+            recipe["servings"],
+            recipe["original_servings"],
+            recipe["servings_estimated"],
+            recipe["serving_description"],
+            recipe["makes"],
+        ) == (3, 2, True, "1 đĩa, 5 cánh", "10 cánh gà")
 
     @pytest.mark.parametrize(
         "overrides",

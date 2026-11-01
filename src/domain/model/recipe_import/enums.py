@@ -39,6 +39,8 @@ class RecipeSignal(StrEnum):
     """Pieces of the source the recipe was actually read from."""
 
     STRUCTURED_DATA = "structured_data"
+    # Structured data of a full-recipe page a video's caption links to.
+    LINKED_RECIPE = "linked_recipe"
     PAGE_TEXT = "page_text"
     CAPTION = "caption"
     SUBTITLES = "subtitles"

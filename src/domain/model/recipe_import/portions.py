@@ -17,6 +17,7 @@ from src.domain.model.recipe_import.extracted_recipe import ExtractedRecipe
 from src.domain.model.recipe_import.limits import (
     MAX_INGREDIENT_GRAMS,
     MAX_INGREDIENT_QUANTITY,
+    MAX_LABEL_CHARS,
     MAX_UNIT_CHARS,
     MIN_EATEN_SHARE,
 )
@@ -34,8 +35,10 @@ class PortionLine:
 
 @dataclass(frozen=True, slots=True)
 class PortionEstimate:
+    # How many people the recipe feeds, and what one serving is.
     servings: int | None
     lines: tuple[PortionLine, ...]
+    serving_description: str | None = None
 
 
 def sanitize_portion_estimate(
@@ -65,13 +68,20 @@ def sanitize_portion_estimate(
         if isinstance(servings, int) and not isinstance(servings, bool)
         else None,
         lines=tuple(lines[index] for index in sorted(lines)),
+        serving_description=clean_text(
+            raw.get("serving_description"), max_chars=MAX_LABEL_CHARS
+        ),
     )
 
 
 def apply_portion_estimate(
     recipe: ExtractedRecipe, estimate: PortionEstimate
 ) -> ExtractedRecipe:
-    """Fill missing amounts and set eaten shares; stated amounts are kept."""
+    """Fill missing amounts and set eaten shares; stated amounts are kept.
+
+    The servings estimate replaces the reader's guess unless the source
+    states the servings.
+    """
     by_index = {line.index: line for line in estimate.lines}
     items = []
     for index, item in enumerate(recipe.ingredients):
@@ -110,7 +120,12 @@ def apply_portion_estimate(
     servings = recipe.servings
     if not (recipe.servings_stated and recipe.servings) and estimate.servings:
         servings = estimate.servings
-    return replace(recipe, ingredients=tuple(items), servings=servings)
+    return replace(
+        recipe,
+        ingredients=tuple(items),
+        servings=servings,
+        serving_description=estimate.serving_description or recipe.serving_description,
+    )
 
 
 def eaten_share(value: Any) -> float:

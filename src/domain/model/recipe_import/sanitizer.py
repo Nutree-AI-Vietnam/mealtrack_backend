@@ -55,6 +55,7 @@ def sanitize_extracted_recipe(
         description=clean_text(raw.get("description"), max_chars=MAX_DESCRIPTION_CHARS),
         servings=clamp_servings(_int(raw.get("servings"))),
         servings_stated=bool(raw.get("servings_stated")),
+        makes=clean_text(raw.get("makes"), max_chars=MAX_LABEL_CHARS),
         quantities_stated=bool(raw.get("quantities_stated")),
         prep_time_minutes=_minutes(raw.get("prep_time_minutes"), MAX_MINUTES),
         cook_time_minutes=_minutes(raw.get("cook_time_minutes"), MAX_MINUTES),

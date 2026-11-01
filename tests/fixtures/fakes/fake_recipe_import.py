@@ -142,11 +142,16 @@ class FakeExtractor:
 class FakeWeb:
     material: RecipeSourceMaterial | None = None
     urls: list[str] = field(default_factory=list)
+    # Per-link answers (pages linked from captions); an exception is raised.
+    pages: dict[str, RecipeSourceMaterial | Exception] = field(default_factory=dict)
 
     async def read_page(self, url: str) -> RecipeSourceMaterial:
         self.urls.append(url)
-        assert self.material is not None
-        return self.material
+        page = self.pages.get(url, self.material)
+        if isinstance(page, Exception):
+            raise page
+        assert page is not None
+        return page
 
 
 @dataclass

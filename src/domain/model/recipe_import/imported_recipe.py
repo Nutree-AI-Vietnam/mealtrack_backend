@@ -74,11 +74,18 @@ class RecipeSourceInfo:
     author: str | None = None
     site_name: str | None = None
     signals: tuple[RecipeSignal, ...] = ()
+    # The full-recipe page a video's caption linked to, when it was read.
+    linked_recipe_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ImportedRecipe:
-    """A recipe ready to review; nothing is saved until the user saves it."""
+    """A recipe ready to review; nothing is saved until the user saves it.
+
+    Ingredient amounts are always for the whole recipe; ``servings`` is how
+    many people it feeds, and nutrition per serving divides by it. Changing
+    the servings never rescales the ingredients.
+    """
 
     import_id: str
     language: str
@@ -99,3 +106,11 @@ class ImportedRecipe:
     total_time_minutes: int | None = None
     image_url: str | None = None
     warnings: tuple[RecipeImportWarning, ...] = ()
+    # True when the source does not say how many people the recipe feeds.
+    servings_estimated: bool = False
+    # What one serving is ("3 pancakes"), for the servings first imported.
+    serving_description: str | None = None
+    # What the recipe makes when the source counts pieces ("12 pancakes").
+    makes: str | None = None
+    # Servings in the draft, kept when the user saves a different count.
+    original_servings: int | None = None

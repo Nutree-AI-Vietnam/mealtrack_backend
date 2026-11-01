@@ -64,7 +64,10 @@ class ImportedIngredientRequest(BaseModel):
     )
     amount_estimated: bool = False
     eaten_share: float | None = Field(
-        default=None, gt=0, le=1, description="Part of the line that is eaten; 1 when omitted"
+        default=None,
+        gt=0,
+        le=1,
+        description="Part of the line that is eaten; 1 when omitted",
     )
     note: str | None = Field(default=None, max_length=200)
     optional: bool = False
@@ -83,6 +86,7 @@ class ImportedSourceRequest(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     author: str | None = Field(default=None, max_length=80)
     site_name: str | None = Field(default=None, max_length=80)
+    linked_recipe_url: str | None = Field(default=None, max_length=2048)
 
 
 class SaveImportedRecipeRequest(BaseModel):
@@ -96,7 +100,21 @@ class SaveImportedRecipeRequest(BaseModel):
     emoji: str | None = Field(default=None, max_length=8)
     cuisine_type: str | None = Field(default=None, max_length=80)
     origin_country: str | None = Field(default=None, max_length=80)
-    servings: int | None = Field(default=None, ge=1, le=100)
+    servings: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="How many people the saved amounts feed; ingredients are not rescaled",
+    )
+    original_servings: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="servings in the draft, when the user changed it before saving",
+    )
+    servings_estimated: bool = False
+    serving_description: str | None = Field(default=None, max_length=80)
+    makes: str | None = Field(default=None, max_length=80)
     prep_time_minutes: int | None = Field(default=None, ge=0, le=2880)
     cook_time_minutes: int | None = Field(default=None, ge=0, le=2880)
     total_time_minutes: int | None = Field(default=None, ge=0, le=2880)

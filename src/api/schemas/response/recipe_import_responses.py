@@ -104,6 +104,10 @@ class RecipeSourceResponse(BaseModel):
     author: str | None
     site_name: str | None
     signals: list[str] = Field(..., description="What the recipe was read from")
+    linked_recipe_url: str | None = Field(
+        default=None,
+        description="Full-recipe page a video's caption linked to, when it was read",
+    )
 
 
 class ImportedRecipeResponse(BaseModel):
@@ -118,7 +122,25 @@ class ImportedRecipeResponse(BaseModel):
     cuisine_type: str | None
     origin_country: str | None
     meal_type: str | None
-    servings: int
+    servings: int = Field(
+        ...,
+        description=(
+            "How many people the whole recipe feeds; nutrition.per_serving is "
+            "nutrition.total divided by it. Ingredient amounts are for the "
+            "whole recipe and do not change with servings."
+        ),
+    )
+    servings_estimated: bool = Field(
+        ..., description="The source does not say how many people it feeds"
+    )
+    serving_description: str | None = Field(
+        default=None,
+        description='What one serving is ("3 bánh", "1 tô") for this servings count',
+    )
+    makes: str | None = Field(
+        default=None,
+        description='What the recipe makes when the source counts pieces ("12 bánh")',
+    )
     prep_time_minutes: int | None
     cook_time_minutes: int | None
     total_time_minutes: int | None
@@ -149,6 +171,9 @@ class ImportedRecipeResponse(BaseModel):
             origin_country=recipe.origin_country,
             meal_type=recipe.meal_type.value if recipe.meal_type else None,
             servings=recipe.servings,
+            servings_estimated=recipe.servings_estimated,
+            serving_description=recipe.serving_description,
+            makes=recipe.makes,
             prep_time_minutes=recipe.prep_time_minutes,
             cook_time_minutes=recipe.cook_time_minutes,
             total_time_minutes=recipe.total_time_minutes,
@@ -180,6 +205,7 @@ class ImportedRecipeResponse(BaseModel):
                 author=recipe.source.author,
                 site_name=recipe.source.site_name,
                 signals=[signal.value for signal in recipe.source.signals],
+                linked_recipe_url=recipe.source.linked_recipe_url,
             ),
             warnings=[warning.value for warning in recipe.warnings],
         )

@@ -150,6 +150,45 @@ async def test_save_reprices_archives_the_image_and_saves_a_suggestion():
 
 
 @pytest.mark.asyncio
+async def test_save_keeps_amounts_as_imported_and_divides_by_the_chosen_servings():
+    send = AsyncMock(side_effect=lambda command: command.suggestion_data)
+    handler = _save_handler(send)
+
+    as_imported = await handler.handle(_command())
+    halved = await handler.handle(
+        _command(
+            servings=4,
+            original_servings=2,
+            servings_estimated=True,
+            serving_description="1 đĩa, 5 cánh",
+            makes="10 cánh gà",
+            source={**DRAFT["source"], "linked_recipe_url": "https://chef.blog/ga/"},
+        )
+    )
+
+    assert [i["amount"] for i in halved["ingredients"]] == [
+        i["amount"] for i in as_imported["ingredients"]
+    ]
+    assert halved["total_macros"] == as_imported["total_macros"]
+    assert halved["macros"]["protein"] == pytest.approx(
+        as_imported["macros"]["protein"] / 2, abs=0.1
+    )
+    assert halved["servings"] == 4
+    assert (
+        halved["recipe_import"]
+        | {
+            "original_servings": 2,
+            "servings_estimated": True,
+            "serving_description": "1 đĩa, 5 cánh",
+            "makes": "10 cánh gà",
+            "linked_recipe_url": "https://chef.blog/ga/",
+        }
+        == halved["recipe_import"]
+    )
+    assert as_imported["recipe_import"]["original_servings"] == 2
+
+
+@pytest.mark.asyncio
 async def test_saved_snapshot_projects_to_the_shape_the_app_parses():
     send = AsyncMock(side_effect=lambda command: command.suggestion_data)
     data = await _save_handler(send).handle(_command(image_url=None))

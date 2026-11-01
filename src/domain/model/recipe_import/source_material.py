@@ -72,6 +72,9 @@ class RecipeSourceMaterial:
     duration_seconds: int | None = None
     # Set when the video could not be read and only page metadata is known.
     metadata_only: bool = False
+    # The page a video's caption links to, whose recipe ``structured_recipe``
+    # then holds.
+    linked_recipe_url: str | None = None
     notes: tuple[str, ...] = field(default=())
 
     @property
@@ -92,6 +95,15 @@ class RecipeSourceMaterial:
             )
         )
 
+    def with_linked_recipe(self, page: RecipeSourceMaterial) -> RecipeSourceMaterial:
+        """Add the structured recipe of a page the caption links to."""
+        return replace(
+            self,
+            structured_recipe=page.structured_recipe,
+            linked_recipe_url=page.canonical_url or page.source_url,
+            image_url=self.image_url or page.image_url,
+        )
+
     def with_media(self, media: VideoMediaAnalysis) -> RecipeSourceMaterial:
         return replace(
             self,
@@ -103,7 +115,11 @@ class RecipeSourceMaterial:
         """Which kinds of text this material carries, in reading order."""
         found: list[RecipeSignal] = []
         if self.structured_recipe is not None:
-            found.append(RecipeSignal.STRUCTURED_DATA)
+            found.append(
+                RecipeSignal.LINKED_RECIPE
+                if self.linked_recipe_url
+                else RecipeSignal.STRUCTURED_DATA
+            )
         if self.page_text:
             found.append(RecipeSignal.PAGE_TEXT)
         if self.is_video and self.description:

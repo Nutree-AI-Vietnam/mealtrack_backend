@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import unicodedata
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from src.domain.exceptions.recipe_import_exceptions import (
@@ -32,6 +33,36 @@ _PLATFORM_DOMAINS: tuple[tuple[RecipeSourcePlatform, tuple[str, ...]], ...] = (
     (RecipeSourcePlatform.FACEBOOK, ("facebook.com", "fb.watch", "fb.com")),
 )
 _YOUTUBE_DOMAINS = ("youtube.com", "youtube-nocookie.com")
+# Caption links worth opening for the full recipe: at most this many, and
+# never to hosts that hold no recipe pages (shops, link lists, socials).
+MAX_CAPTION_LINKS = 3
+_NOT_RECIPE_DOMAINS = (
+    "youtu.be",
+    "youtube.com",
+    "tiktok.com",
+    "instagram.com",
+    "facebook.com",
+    "fb.watch",
+    "threads.net",
+    "twitter.com",
+    "x.com",
+    "pinterest.com",
+    "pin.it",
+    "linktr.ee",
+    "beacons.ai",
+    "amazon.com",
+    "amzn.to",
+    "shopee.vn",
+    "lazada.vn",
+    "patreon.com",
+    "spotify.com",
+    "apple.com",
+    "google.com",
+)
+_RECIPE_LINK_WORDS = re.compile(
+    r"recipe|recette|receta|rezept|ricetta|resep|cong-thuc|cach-lam",
+    re.IGNORECASE,
+)
 
 
 def extract_recipe_url(raw: str) -> str:
@@ -39,7 +70,7 @@ def extract_recipe_url(raw: str) -> str:
     text = (raw or "").strip()
     match = _URL_IN_TEXT.search(text)
     if match:
-        candidate = match.group(0).rstrip(_TRAILING_PUNCTUATION)
+        candidate = _trim_link(match.group(0))
     elif text and " " not in text and "." in text and "://" not in text:
         candidate = f"https://{text}"
     else:
@@ -47,6 +78,39 @@ def extract_recipe_url(raw: str) -> str:
             RecipeImportFailure.INVALID_SOURCE, "No http or https link was found."
         )
     return normalize_recipe_url(candidate)
+
+
+def caption_recipe_links(caption: str | None) -> tuple[str, ...]:
+    """Links in a video caption that may lead to the full recipe, best first.
+
+    Creators often write "full recipe: https://…". Links to video platforms,
+    shops and link lists, and links the server must not fetch, are skipped;
+    links that look like recipe pages come first.
+    """
+    found: list[str] = []
+    for match in _URL_IN_TEXT.finditer(caption or ""):
+        try:
+            url = normalize_recipe_url(_trim_link(match.group(0)))
+        except RecipeImportError:
+            continue
+        host = (urlsplit(url).hostname or "").lower()
+        if _matches(host, _NOT_RECIPE_DOMAINS) or url in found:
+            continue
+        found.append(url)
+    found.sort(key=lambda url: _RECIPE_LINK_WORDS.search(url) is None)
+    return tuple(found[:MAX_CAPTION_LINKS])
+
+
+def _trim_link(raw: str) -> str:
+    """Cut a link found in text at the first character a URL never holds.
+
+    Captions glue invisible separators, emoji and punctuation to links.
+    """
+    for index, char in enumerate(raw):
+        if unicodedata.category(char)[0] in ("C", "S", "Z") and not char.isascii():
+            raw = raw[:index]
+            break
+    return raw.rstrip(_TRAILING_PUNCTUATION + "…")
 
 
 def normalize_recipe_url(url: str) -> str:

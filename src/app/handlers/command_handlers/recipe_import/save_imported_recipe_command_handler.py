@@ -3,6 +3,8 @@
 Saved recipes reuse saved suggestions, so they appear in the app's saved
 list and open in the existing recipe screen. The snapshot is rebuilt from
 the edited ingredients with backend nutrition; client macros are ignored.
+Ingredient amounts are stored as reviewed, for the whole recipe; the
+servings only set how the totals are divided.
 """
 
 from __future__ import annotations
@@ -133,6 +135,12 @@ class SaveImportedRecipeCommandHandler(
             total_time_minutes=_minutes(raw.get("total_time_minutes")),
             image_url=await self._image(raw.get("image_url")),
             warnings=tuple(warnings),
+            servings_estimated=bool(raw.get("servings_estimated")),
+            serving_description=clean_text(
+                raw.get("serving_description"), max_chars=MAX_LABEL_CHARS
+            ),
+            makes=clean_text(raw.get("makes"), max_chars=MAX_LABEL_CHARS),
+            original_servings=_servings(raw.get("original_servings")),
         )
 
     async def _image(self, value: Any) -> str | None:
@@ -159,6 +167,7 @@ def _source(raw: Any) -> RecipeSourceInfo:
         title=clean_text(data.get("title"), max_chars=MAX_NAME_CHARS),
         author=clean_text(data.get("author"), max_chars=MAX_LABEL_CHARS),
         site_name=clean_text(data.get("site_name"), max_chars=MAX_LABEL_CHARS),
+        linked_recipe_url=_http_url(data.get("linked_recipe_url")),
     )
 
 

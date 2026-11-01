@@ -76,7 +76,7 @@ def _reset_fake(monkeypatch):
     FakeYdl.flakes = []
 
 
-def _reader(handler) -> VideoRecipeSourceReader:
+def _reader(handler, *, youtube_api: Any = None) -> VideoRecipeSourceReader:
     async def resolver(host: str, port: int) -> list[str]:
         return ["93.184.215.14"]
 
@@ -85,8 +85,19 @@ def _reader(handler) -> VideoRecipeSourceReader:
         fetcher=fetcher,
         page_reader=WebRecipePageReader(fetcher),
         media_analyzer=None,
+        youtube_api=youtube_api,
         ytdlp_factory=FakeYdl,
     )
+
+
+class FakeYouTubeApi:
+    def __init__(self, material: RecipeSourceMaterial | None) -> None:
+        self.material = material
+        self.ids: list[str] = []
+
+    async def read_video(self, video_id: str) -> RecipeSourceMaterial | None:
+        self.ids.append(video_id)
+        return self.material
 
 
 @pytest.mark.asyncio
@@ -312,3 +323,70 @@ def test_retryable_errors():
     assert not is_retryable_video_error(
         RecipeImportError(RecipeImportFailure.VIDEO_UNAVAILABLE, "x")
     )
+
+
+@pytest.mark.asyncio
+async def test_a_bot_checked_youtube_video_reads_its_description_from_the_api():
+    FakeYdl.error = RuntimeError("ERROR: Sign in to confirm you're not a bot")
+    api = FakeYouTubeApi(
+        RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.YOUTUBE,
+            source_url="https://www.youtube.com/watch?v=zMUNG9KXmrE",
+            canonical_url="https://www.youtube.com/watch?v=zMUNG9KXmrE",
+            description="Ingredients - 400g spaghetti, 4 egg yolks",
+            metadata_only=True,
+        )
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("oEmbed and the page are not needed")
+
+    material = await _reader(handler, youtube_api=api).read_video(
+        "https://www.youtube.com/watch?v=zMUNG9KXmrE",
+        RecipeSourcePlatform.YOUTUBE,
+        language="vi",
+    )
+
+    assert api.ids == ["zMUNG9KXmrE"]
+    assert material.description == "Ingredients - 400g spaghetti, 4 egg yolks"
+    assert material.metadata_only
+
+
+@pytest.mark.asyncio
+async def test_without_an_api_answer_youtube_falls_back_to_oembed():
+    FakeYdl.error = RuntimeError("ERROR: Sign in to confirm you're not a bot")
+    api = FakeYouTubeApi(None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oembed":
+            return httpx.Response(200, json={"title": "Carbonara", "author_name": "c"})
+        return httpx.Response(429)
+
+    material = await _reader(handler, youtube_api=api).read_video(
+        "https://www.youtube.com/watch?v=zMUNG9KXmrE",
+        RecipeSourcePlatform.YOUTUBE,
+        language="vi",
+    )
+
+    assert api.ids == ["zMUNG9KXmrE"]
+    assert (material.description, material.metadata_only) == ("Carbonara", True)
+
+
+@pytest.mark.asyncio
+async def test_the_youtube_api_is_not_asked_about_other_platforms():
+    FakeYdl.error = RuntimeError("ERROR: login required")
+    api = FakeYouTubeApi(None)
+    page = (
+        b'<html><head><meta property="og:description" content="Caption"></head></html>'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=page)
+
+    await _reader(handler, youtube_api=api).read_video(
+        "https://www.instagram.com/reel/1/",
+        RecipeSourcePlatform.INSTAGRAM,
+        language="en",
+    )
+
+    assert api.ids == []

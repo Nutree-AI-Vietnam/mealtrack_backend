@@ -313,6 +313,13 @@ class Settings(BaseSettings):
     # Recipe import (docs/api-recipe-import.md). Its limits are fixed in code;
     # only the speech-to-text model for video imports is configurable.
     RECIPE_IMPORT_TRANSCRIPTION_MODEL: str = Field(default="gpt-4o-mini-transcribe")
+    YOUTUBE_API_KEY: str | None = Field(
+        default=None,
+        description=(
+            "YouTube Data API v3 key. Reads a video's full description when "
+            "YouTube refuses yt-dlp from the server; unset skips that fallback."
+        ),
+    )
     # Server-sent engagement pushes (payment failed) through the notifications outbox
     ENGAGEMENT_PUSH_ENABLED: bool = Field(
         default=False,

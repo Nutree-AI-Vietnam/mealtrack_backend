@@ -117,7 +117,7 @@ class TestSchemaOrg:
             "Simmer 3 hours.",
             "Serve hot.",
         )
-        assert (recipe.servings, recipe.recipe_yield) == (4, "4")
+        assert (recipe.servings, recipe.recipe_yield) == (4, "4 servings")
         assert (recipe.prep_time_minutes, recipe.cook_time_minutes) == (20, 180)
         assert recipe.image_url == "https://x.com/a.jpg"
         assert (recipe.author, recipe.cuisine) == ("Chef A", "Vietnamese")

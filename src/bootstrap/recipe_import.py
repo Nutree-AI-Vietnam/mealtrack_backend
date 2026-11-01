@@ -27,6 +27,7 @@ from src.infra.adapters.recipe_import.video_source_reader import (
     VideoRecipeSourceReader,
 )
 from src.infra.adapters.recipe_import.web_page_reader import WebRecipePageReader
+from src.infra.adapters.recipe_import.youtube_data_api import YouTubeDataApi
 from src.infra.config.settings import get_settings
 from src.infra.http.image_download import ScanImageDownloadAdapter
 from src.infra.services.ai.ai_model_manager import AIModelManager
@@ -65,6 +66,9 @@ def get_recipe_video_reader() -> VideoRecipeSourceReader:
         media_analyzer=VideoMediaAnalyzer(
             reader=get_recipe_ai_reader(), transcriber=transcriber
         ),
+        youtube_api=YouTubeDataApi(api_key=settings.YOUTUBE_API_KEY)
+        if settings.YOUTUBE_API_KEY
+        else None,
     )
 
 

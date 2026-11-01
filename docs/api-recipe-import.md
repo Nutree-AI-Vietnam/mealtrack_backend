@@ -22,8 +22,9 @@ user reviews and edits it, then saves it. Nothing is stored before the save.
    text: the first link inside it is used. Pasted text that is little more
    than a link is imported as that link.
 2. The response is the draft: `import_id`, ingredients with `grams`,
-   per-ingredient macros, `nutrition.per_serving` / `nutrition.total`,
-   `source`, and `warnings`.
+   per-ingredient macros, `servings` (people) with `servings_estimated`,
+   `serving_description` and `makes`, `nutrition.per_serving` /
+   `nutrition.total`, `source`, and `warnings`.
 3. `POST /save` with the edited draft. The server prices every ingredient
    again; macros sent by the app are ignored.
 
@@ -39,12 +40,18 @@ text, photos and testing.
 - **Video:** caption, title and subtitles through yt-dlp, without
   downloading. When the caption does not hold a usable recipe (fewer than 3
   required ingredients, no steps, or under half with amounts the source
-  states; hashtags, mentions and links do not count as caption), the video is
-  downloaded (up to 15 minutes and 150 MB), speech is transcribed, and one
-  frame every 2 s (at most 48) is read for on-screen captions, 4 frames per
-  vision call. Short videos show each caption for only 2–6 s, so frames are
-  dense. If the platform refuses yt-dlp, oEmbed (TikTok, YouTube) and Open
-  Graph tags supply the caption, and the video itself is not analyzed.
+  states; hashtags, mentions and links do not count as caption), up to 3
+  links in the caption are opened ("full recipe: https://…"; video
+  platforms, shops and link lists skipped, recipe-looking links first). A
+  linked page with a complete schema.org `Recipe` is read with the caption
+  (`source.linked_recipe_url`, signal `linked_recipe`); the AI ignores it
+  when it is another dish. Only then is the video downloaded (up to 15
+  minutes and 150 MB), speech transcribed, and one frame every 2 s (at most
+  48) read for on-screen captions, 4 frames per vision call. Short videos
+  show each caption for only 2–6 s, so frames are dense. If the platform
+  refuses yt-dlp, a YouTube video's full description comes from the YouTube
+  Data API when `YOUTUBE_API_KEY` is set; otherwise oEmbed (TikTok, YouTube)
+  and Open Graph tags supply the caption. A refused video is never analyzed.
   yt-dlp steps are tried up to 3 times when the platform answers with a bot
   check or a transient error, since YouTube's bot check on server IPs comes
   and goes between requests. YouTube serves picture and sound apart; ffmpeg
@@ -56,9 +63,28 @@ text, photos and testing.
   lines by part of the dish (marinade, filling, dipping sauce).
 - **Portion pass:** a second, smaller AI call sizes every line: the weight
   of lines whose amount the source does not give (`amount_estimated`), the
-  `eaten_share` of each part, and the servings when the source has none.
-  Stated amounts are kept. If this call fails, the draft keeps the amounts
-  as read and lists unweighed lines in `nutrition.unpriced_ingredients`.
+  `eaten_share` of each part, the servings when the source has none, and
+  `serving_description` (what one serving is: "3 bánh", "1 tô"). Stated
+  amounts are kept. If this call fails, the draft keeps the amounts as read
+  and lists unweighed lines in `nutrition.unpriced_ingredients`.
+
+## Servings
+
+- `servings` always counts people: how many the whole recipe feeds, one
+  serving each. `nutrition.per_serving` is `nutrition.total / servings`.
+- Stated servings win: "Serves 4", "cho 4 người", a schema.org yield that
+  counts people or is a bare number. A yield that counts pieces ("Makes 12",
+  `["24", "24 cookies"]`) is not servings: it is returned as `makes`, and
+  the portion pass estimates how many people that feeds (12 pancakes ≈ 4
+  servings of 3) from typical portions (a main dish is one plate or bowl,
+  about 75–100 g dry pasta or rice, or 120–200 g raw meat, per person).
+- `servings_estimated` (and warning `servings_estimated`) marks an AI
+  estimate. With no estimate at all, servings fall back to total kcal / 550
+  (1–12).
+- When the user changes servings, the app recomputes per serving as
+  `nutrition.total / servings`; ingredient amounts stay those of the whole
+  recipe and are never rescaled. `serving_description` describes one serving
+  of the imported count; hide it or scale it once servings change.
 
 ## Nutrition (backend is the source of truth)
 
@@ -72,8 +98,6 @@ text, photos and testing.
 - Those grams go through the shared lookup: food reference, then FatSecret,
   then an AI estimate (`nutrition_source`). Calories always come from the
   backend formula over the summed macros.
-- `servings`: as stated by the source, else schema.org yield, else the AI
-  estimate; with none of these, total kcal / 550 (1–12).
 - When the user changes the amount of a count ingredient, the app should
   scale `grams` in proportion, or send `grams: null` to drop the line from
   nutrition. `/save` takes `amount_estimated` and `eaten_share` back as the
@@ -85,9 +109,17 @@ text, photos and testing.
   recipe_import_<import_id>`, so it appears in `GET /v1/saved-suggestions`
   and opens with the existing recipe screen. Saving the same `import_id`
   again returns the first save.
-- `macros` is one serving; ingredient amounts are for the whole recipe and
-  `servings` says how many it feeds. `recipe_import` holds the source link,
-  platform and warnings.
+- The recipe is stored as imported (with the user's edits): ingredient
+  amounts for the whole recipe, `servings` as saved, `total_macros`, and
+  `macros` for one serving (`total_macros / servings`). A different serving
+  count never rescales ingredients. `recipe_import` holds the source link,
+  `linked_recipe_url`, platform, warnings, `original_servings` (the draft's
+  count when the user saved another), `servings_estimated`,
+  `serving_description` and `makes`.
+- Rows: `saved_suggestions` (snapshot JSON in `suggestion_data`, plus name
+  and macros columns), `saved_suggestion_items` (ingredients) and
+  `saved_suggestion_steps`. Drafts are never stored, except as the result of
+  a `recipe_import` job.
 - Third-party images (expiring video thumbnails) are copied to the image
   store on save; if that fails the original link is kept.
 
@@ -130,8 +162,11 @@ Recipe import is always on. Its limits are fixed in code, not settings:
 | Frames read for on-screen captions | 1 every 2 s, at most 48 | `video_media_analyzer.py` |
 | Videos analyzed at once per process | 2 | `video_media_analyzer.py` |
 
-The only setting is `RECIPE_IMPORT_TRANSCRIPTION_MODEL` (default
-`gpt-4o-mini-transcribe`), the OpenAI speech-to-text model.
+Settings: `RECIPE_IMPORT_TRANSCRIPTION_MODEL` (default
+`gpt-4o-mini-transcribe`), the OpenAI speech-to-text model, and
+`YOUTUBE_API_KEY` (optional), a YouTube Data API v3 key used only when
+YouTube refuses yt-dlp. Each lookup costs 1 unit of the 10,000-unit default
+daily quota; it gives the description only, never subtitles or the video.
 
 Video analysis needs `ffmpeg` and `ffprobe` (installed in the Docker image);
 without them `capabilities.video_media_analysis` is false and imports use
@@ -143,23 +178,24 @@ captions only. The job type needs migration `20261101091406080591`.
   or a proxy are not supported. In the live test, YouTube answered every
   other metadata request with its bot check, then after a few dozen
   requests sent the whole site to Google's CAPTCHA page (HTTP 429) for that
-  IP. Reliable YouTube imports from a server need one of: cookies, a
-  residential proxy, or the YouTube Data API (descriptions only).
+  IP. `YOUTUBE_API_KEY` restores the description only; reading a refused
+  video's subtitles or speech from a server needs cookies or a residential
+  proxy, or the text read on the user's device.
 - YouTube Shorts are no safer: `/shorts/<id>` is the same video and player
   API. In the live test a Short whose description holds the recipe imported
   in 10 s (description and subtitles, no download); the same link hit the
   bot check half an hour later, then the CAPTCHA page.
 - Live-tested from a cloud IP: one TikTok video with no stated amounts
-  (speech and on-screen lists, 31–51 s), one Instagram reel (yt-dlp read it
-  without login; caption had no amounts, so speech and on-screen text were
-  used, 20 s), and two web pages read from schema.org JSON-LD (Cookpad, BBC
-  Good Food, 8–9 s). Simply Recipes answered the server with 402 (bot
-  protection), which fails as `RECIPE_SOURCE_REJECTED`. Facebook has not
-  been tried.
-- A link to the full recipe in a caption ("full recipe: https://…") is not
-  followed; the recipe is read from the caption and the video only.
-- A schema.org yield that counts pieces ("Makes 12" pancakes) is taken as 12
-  servings.
+  (speech and on-screen lists, 31–51 s); one Instagram reel, read by yt-dlp
+  without login, whose caption has no amounts but links to the creator's
+  recipe page (20 s from speech and on-screen text before links were
+  followed; 15 s and all 12 amounts after); web pages read from schema.org
+  JSON-LD (Cookpad, BBC Good Food, 7–9 s; "Makes 12" pancakes became 4
+  servings of 3, "Makes 10" cookies 5 servings of 2). Simply Recipes
+  answered the server with 402 (bot protection), which fails as
+  `RECIPE_SOURCE_REJECTED`. Facebook has not been tried. The YouTube Data
+  API fallback is tested with a stubbed API only (no key in the test
+  environment).
 - Amounts and servings the source does not state are AI estimates and vary
   between runs; the draft says so in `warnings` and per line in
   `amount_estimated`.

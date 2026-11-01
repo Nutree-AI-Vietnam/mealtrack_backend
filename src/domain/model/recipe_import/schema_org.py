@@ -13,12 +13,9 @@ from src.domain.model.recipe_import.limits import (
     MAX_STEPS,
     MAX_STRUCTURED_LINE_CHARS,
 )
+from src.domain.model.recipe_import.servings import yield_servings
 from src.domain.model.recipe_import.source_material import StructuredRecipe
-from src.domain.model.recipe_import.text import (
-    clean_text,
-    parse_duration_minutes,
-    parse_servings,
-)
+from src.domain.model.recipe_import.text import clean_text, parse_duration_minutes
 
 _MAX_DEPTH = 6
 _MAX_NODES = 400
@@ -79,8 +76,8 @@ def _to_structured(node: dict[str, Any]) -> StructuredRecipe:
         ),
         ingredients=_ingredients(node),
         instructions=_instructions(node.get("recipeInstructions")),
-        recipe_yield=_first_text(raw_yield, MAX_LABEL_CHARS),
-        servings=parse_servings(raw_yield),
+        recipe_yield=_yield_text(raw_yield),
+        servings=yield_servings(raw_yield),
         prep_time_minutes=parse_duration_minutes(node.get("prepTime")),
         cook_time_minutes=parse_duration_minutes(node.get("cookTime")),
         total_time_minutes=parse_duration_minutes(node.get("totalTime")),
@@ -168,6 +165,19 @@ def _person_name(raw: Any) -> str | None:
     if isinstance(raw, dict):
         return clean_text(raw.get("name"), max_chars=MAX_LABEL_CHARS)
     return clean_text(raw, max_chars=MAX_LABEL_CHARS)
+
+
+def _yield_text(raw: Any) -> str | None:
+    """The most telling yield text: "24 cookies" rather than "24"."""
+    values = raw if isinstance(raw, list) else [raw]
+    texts = [
+        text
+        for text in (clean_text(value, max_chars=MAX_LABEL_CHARS) for value in values)
+        if text
+    ]
+    worded = [text for text in texts if any(char.isalpha() for char in text)]
+    chosen = worded or texts
+    return chosen[0] if chosen else None
 
 
 def _first_text(raw: Any, max_chars: int) -> str | None:

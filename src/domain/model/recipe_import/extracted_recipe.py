@@ -47,7 +47,12 @@ class RecipeStep:
 
 @dataclass(frozen=True, slots=True)
 class ExtractedRecipe:
-    """Structured recipe text; ``is_recipe`` False means the source had none."""
+    """Structured recipe text; ``is_recipe`` False means the source had none.
+
+    ``servings`` counts people; ``servings_stated`` says the source gave that
+    count. ``makes`` is what the recipe makes when the source counts pieces
+    ("12 pancakes"). ``serving_description`` says what one serving is.
+    """
 
     is_recipe: bool
     name: str
@@ -57,6 +62,8 @@ class ExtractedRecipe:
     description: str | None = None
     servings: int | None = None
     servings_stated: bool = False
+    makes: str | None = None
+    serving_description: str | None = None
     quantities_stated: bool = False
     prep_time_minutes: int | None = None
     cook_time_minutes: int | None = None

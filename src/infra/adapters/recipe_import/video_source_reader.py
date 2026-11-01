@@ -1,8 +1,9 @@
 """Read a recipe video's caption and subtitles without downloading it.
 
 yt-dlp gives the caption, thumbnail, duration and subtitle tracks. When the
-platform refuses yt-dlp, oEmbed (TikTok, YouTube) and the page's Open Graph
-tags still carry the caption of most public posts.
+platform refuses yt-dlp, the YouTube Data API (with a key) gives a YouTube
+video's full description; otherwise oEmbed (TikTok, YouTube) and the page's
+Open Graph tags still carry the caption of most public posts.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from src.domain.model.recipe_import.limits import (
     MAX_NAME_CHARS,
     MAX_SUBTITLE_CHARS,
 )
+from src.domain.model.recipe_import.link_policy import youtube_video_id
 from src.domain.model.recipe_import.source_material import (
     RecipeSourceMaterial,
     VideoMediaAnalysis,
@@ -31,6 +33,7 @@ from src.domain.model.recipe_import.text import clean_text
 from src.infra.adapters.recipe_import.safe_fetch import SafeHttpFetcher
 from src.infra.adapters.recipe_import.video_media_analyzer import VideoMediaAnalyzer
 from src.infra.adapters.recipe_import.web_page_reader import WebRecipePageReader
+from src.infra.adapters.recipe_import.youtube_data_api import YouTubeDataApi
 from src.infra.adapters.recipe_import.ytdlp_support import (
     choose_subtitle_track,
     subtitle_text,
@@ -57,12 +60,14 @@ class VideoRecipeSourceReader:
         fetcher: SafeHttpFetcher,
         page_reader: WebRecipePageReader,
         media_analyzer: VideoMediaAnalyzer | None,
+        youtube_api: YouTubeDataApi | None = None,
         metadata_timeout_seconds: float = 30.0,
         ytdlp_factory: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self._fetcher = fetcher
         self._pages = page_reader
         self._media = media_analyzer
+        self._youtube_api = youtube_api
         self._timeout = metadata_timeout_seconds
         self._ytdlp_factory = ytdlp_factory or _default_ytdlp
 
@@ -150,6 +155,13 @@ class VideoRecipeSourceReader:
     async def _fallback(
         self, url: str, platform: RecipeSourcePlatform
     ) -> RecipeSourceMaterial | None:
+        video_id = (
+            youtube_video_id(url) if platform == RecipeSourcePlatform.YOUTUBE else None
+        )
+        if video_id and self._youtube_api is not None:
+            material = await self._youtube_api.read_video(video_id)
+            if material is not None and material.description:
+                return replace(material, source_url=url)
         oembed = await self._oembed(url, platform)
         try:
             page = await self._pages.read(url, platform=platform)

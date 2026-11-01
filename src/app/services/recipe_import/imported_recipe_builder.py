@@ -32,9 +32,8 @@ def build_imported_recipe(
 ) -> ImportedRecipe:
     structured = material.structured_recipe
     found = list(warnings)
-    if priced.servings_estimated or not (
-        extracted.servings_stated or (structured and structured.servings)
-    ):
+    servings_estimated = priced.servings_estimated or not extracted.servings_stated
+    if servings_estimated:
         found.append(RecipeImportWarning.SERVINGS_ESTIMATED)
     if (
         not extracted.quantities_stated
@@ -64,6 +63,7 @@ def build_imported_recipe(
             author=material.author or (structured.author if structured else None),
             site_name=material.site_name,
             signals=material.signals(),
+            linked_recipe_url=material.linked_recipe_url,
         ),
         english_name=extracted.english_name,
         description=extracted.description
@@ -81,6 +81,9 @@ def build_imported_recipe(
         or (structured.total_time_minutes if structured else None),
         image_url=material.image_url or (structured.image_url if structured else None),
         warnings=tuple(dict.fromkeys(found)),
+        servings_estimated=servings_estimated,
+        serving_description=extracted.serving_description,
+        makes=extracted.makes,
     )
 
 
@@ -100,8 +103,9 @@ def saved_suggestion_id(import_id: str) -> str:
 def saved_suggestion_payload(recipe: ImportedRecipe) -> dict[str, Any]:
     """Snapshot in the saved-suggestion shape the app already renders.
 
-    ``macros`` is one serving; ingredient amounts are for the whole recipe,
-    which ``servings`` makes explicit.
+    ``macros`` is one serving; ingredient amounts are for the whole recipe as
+    imported, which ``servings`` makes explicit. A different serving count
+    only divides ``total_macros`` differently; ingredients are never scaled.
     """
     return {
         "id": saved_suggestion_id(recipe.import_id),
@@ -155,6 +159,11 @@ def saved_suggestion_payload(recipe: ImportedRecipe) -> dict[str, Any]:
             "source_url": recipe.source.url,
             "source_title": recipe.source.title,
             "source_author": recipe.source.author,
+            "linked_recipe_url": recipe.source.linked_recipe_url,
+            "original_servings": recipe.original_servings or recipe.servings,
+            "servings_estimated": recipe.servings_estimated,
+            "serving_description": recipe.serving_description,
+            "makes": recipe.makes,
             "prep_time_minutes": recipe.prep_time_minutes,
             "cook_time_minutes": recipe.cook_time_minutes,
             "total_time_minutes": recipe.total_time_minutes,

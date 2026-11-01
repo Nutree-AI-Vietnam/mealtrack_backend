@@ -126,3 +126,20 @@ def test_a_count_without_a_unit_shows_the_weight():
     )
 
     assert (sized.ingredients[0].quantity, sized.ingredients[0].unit) == (140.0, "g")
+
+
+def test_the_serving_description_is_cleaned_and_kept():
+    estimate = sanitize_portion_estimate(
+        {"servings": 4, "serving_description": "  3 bánh <b>pancake</b> ", "lines": []},
+        line_count=0,
+    )
+
+    sized = apply_portion_estimate(_recipe(ExtractedIngredient("a", "a")), estimate)
+
+    assert (sized.servings, sized.serving_description) == (4, "3 bánh pancake")
+
+
+def test_a_missing_serving_description_is_none():
+    estimate = sanitize_portion_estimate({"servings": 2, "lines": []}, line_count=0)
+
+    assert estimate.serving_description is None

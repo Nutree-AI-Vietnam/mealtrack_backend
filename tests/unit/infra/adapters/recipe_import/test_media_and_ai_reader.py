@@ -533,5 +533,43 @@ async def test_portion_pass_sends_numbered_lines_and_sanitises_the_answer():
     }
     assert sent["lines"][1]["stated"] is True and sent["lines"][1]["unit"] == "cup"
     assert sent["steps"] == []
+    assert (sent["response_language"], sent["servings"], sent["makes"]) == (
+        "Vietnamese",
+        None,
+        None,
+    )
     assert estimate.servings == 4
     assert [line.eaten_share for line in estimate.lines] == [1.0, 0.3]
+
+
+def test_portion_schema_asks_for_people_and_a_serving_description():
+    from src.infra.adapters.recipe_import.recipe_prompts import (
+        PORTIONS_SYSTEM,
+        PortionOutput,
+        RecipeExtractionOutput,
+    )
+
+    assert {"servings", "serving_description"} <= set(PortionOutput.model_fields)
+    assert "makes" in RecipeExtractionOutput.model_fields
+    assert "12 pancakes make 4 servings of 3" in " ".join(PORTIONS_SYSTEM.split())
+    _openai_json_schema(PortionOutput)
+    _openai_json_schema(RecipeExtractionOutput)
+
+
+def test_a_caption_linked_recipe_page_is_labelled_as_such():
+    from src.domain.model.recipe_import import StructuredRecipe
+
+    material = RecipeSourceMaterial(
+        platform=RecipeSourcePlatform.INSTAGRAM,
+        description="Full recipe: https://chef.blog/ga/",
+        structured_recipe=StructuredRecipe(
+            name="Gà", ingredients=("500 g gà", "nước mắm"), instructions=("Chiên.",)
+        ),
+        linked_recipe_url="https://chef.blog/ga/",
+    )
+
+    prompt = extraction_prompt(material, "vi")
+
+    assert "FULL RECIPE PAGE LINKED IN THE CAPTION (schema.org):\nname: Gà" in prompt
+    assert "STRUCTURED RECIPE (schema.org)" not in prompt
+    assert "CAPTION:\nFull recipe: https://chef.blog/ga/" in prompt

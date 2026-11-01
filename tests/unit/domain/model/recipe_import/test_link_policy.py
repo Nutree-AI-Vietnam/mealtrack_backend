@@ -8,6 +8,7 @@ from src.domain.exceptions.recipe_import_exceptions import (
 )
 from src.domain.model.recipe_import.enums import RecipeSourcePlatform
 from src.domain.model.recipe_import.link_policy import (
+    caption_recipe_links,
     classify_recipe_url,
     extract_recipe_url,
     normalize_recipe_url,
@@ -118,3 +119,49 @@ class TestClassify:
 
         assert classify_recipe_url(url) == (RecipeSourcePlatform.WEBSITE, url)
         assert youtube_video_id(url) is None
+
+
+class TestCaptionRecipeLinks:
+    def test_finds_the_full_recipe_link_glued_to_invisible_characters(self):
+        caption = (
+            "Vegan roast chicken😋\u2063\nFull recipe instructions with long video: "
+            "https://woonheng.com/asian-style-vegan-roast-chicken/\u2063\n"
+            "or watch it on my YouTube channel"
+        )
+
+        assert caption_recipe_links(caption) == (
+            "https://woonheng.com/asian-style-vegan-roast-chicken/",
+        )
+
+    def test_skips_platforms_shops_link_lists_and_unsafe_links(self):
+        caption = (
+            "Shop: https://amzn.to/abc 🛒 Links: https://linktr.ee/chef "
+            "Full video https://youtu.be/dQw4w9WgXcQ IG https://instagram.com/chef "
+            "Local http://192.168.1.1/recipe and http://localhost/recipe"
+        )
+
+        assert caption_recipe_links(caption) == ()
+
+    def test_recipe_looking_links_come_first_and_at_most_three(self):
+        caption = (
+            "https://chef.blog/about https://chef.blog/shop "
+            "https://chef.blog/recipes/pho/ https://chef.blog/press "
+            "https://chef.blog/recipes/pho/"
+        )
+
+        assert caption_recipe_links(caption) == (
+            "https://chef.blog/recipes/pho/",
+            "https://chef.blog/about",
+            "https://chef.blog/shop",
+        )
+
+    def test_no_caption_no_links(self):
+        assert caption_recipe_links(None) == ()
+        assert caption_recipe_links("Ngon quá #pho") == ()
+
+    def test_share_text_links_lose_trailing_emoji_and_ellipsis(self):
+        assert (
+            extract_recipe_url("Xem https://chef.blog/pho👇 nhé")
+            == "https://chef.blog/pho"
+        )
+        assert extract_recipe_url("https://chef.blog/pho…") == "https://chef.blog/pho"

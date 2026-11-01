@@ -408,3 +408,221 @@ async def test_a_refused_video_with_only_a_title_reports_the_refusal(nutrition):
         )
 
     assert caught.value.failure == RecipeImportFailure.VIDEO_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_makes_pieces_gets_servings_counted_in_people(nutrition):
+    from src.domain.model.recipe_import.portions import PortionEstimate
+
+    page = RecipeSourceMaterial(
+        platform=RecipeSourcePlatform.WEBSITE,
+        source_url="https://example.com/pancakes",
+        structured_recipe=StructuredRecipe(
+            name="Easy pancakes",
+            ingredients=("100g flour", "2 eggs", "300ml milk"),
+            instructions=("Whisk.", "Fry."),
+            recipe_yield="Makes 12",
+            servings=None,
+        ),
+    )
+    # The reader copied "Makes 12" as 12 stated servings.
+    extractor = FakeExtractor(
+        results=[wings_recipe(servings=12, servings_stated=True)],
+        portions=PortionEstimate(
+            servings=4, lines=(), serving_description="3 bánh pancake"
+        ),
+    )
+
+    recipe = await _service(
+        web=FakeWeb(material=page), extractor=extractor, nutrition=nutrition
+    ).import_recipe(
+        RecipeImportRequest(language="vi", url="https://example.com/pancakes")
+    )
+
+    assert extractor.sized[0].servings_stated is False
+    assert (recipe.servings, recipe.nutrition.servings) == (4, 4)
+    assert recipe.servings_estimated
+    assert RecipeImportWarning.SERVINGS_ESTIMATED in recipe.warnings
+    assert (recipe.serving_description, recipe.makes) == ("3 bánh pancake", "Makes 12")
+    assert recipe.nutrition.per_serving.protein == pytest.approx(
+        recipe.nutrition.total.protein / 4, abs=0.1
+    )
+
+
+@pytest.mark.asyncio
+async def test_stated_servings_are_not_estimated(nutrition):
+    recipe = await _service(
+        extractor=FakeExtractor(results=[wings_recipe()]), nutrition=nutrition
+    ).import_recipe(
+        RecipeImportRequest(
+            language="vi", text="Cánh gà 500g, nước mắm 2 muỗng, chiên 12 phút"
+        )
+    )
+
+    assert (recipe.servings, recipe.servings_estimated) == (2, False)
+    assert RecipeImportWarning.SERVINGS_ESTIMATED not in recipe.warnings
+
+
+BLOG_URL = "https://chef.blog/recipes/ga-chien/"
+CAPTION_WITH_LINK = (
+    "Cánh gà chiên nước mắm siêu giòn, ai cũng mê, làm cho cả nhà ăn cuối tuần "
+    f"nhé. Công thức đầy đủ: {BLOG_URL}\u2063 #ganuocmam #anngon"
+)
+BLOG_PAGE = RecipeSourceMaterial(
+    platform=RecipeSourcePlatform.WEBSITE,
+    source_url=BLOG_URL,
+    canonical_url=BLOG_URL,
+    image_url="https://chef.blog/ga.jpg",
+    structured_recipe=StructuredRecipe(
+        name="Cánh gà chiên nước mắm",
+        ingredients=("500 g cánh gà", "2 muỗng nước mắm", "3 tép tỏi"),
+        instructions=("Ướp gà 15 phút.", "Chiên 12 phút."),
+        recipe_yield="2 người",
+        servings=2,
+    ),
+)
+
+
+@pytest.mark.asyncio
+async def test_a_caption_link_to_the_full_recipe_is_read_before_the_video(nutrition):
+    video = FakeVideo(
+        material=RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.INSTAGRAM,
+            source_url="https://www.instagram.com/reel/abc/",
+            description=CAPTION_WITH_LINK,
+        )
+    )
+    web = FakeWeb(pages={BLOG_URL: BLOG_PAGE})
+    extractor = FakeExtractor(results=[NOT_ENOUGH, wings_recipe()])
+
+    recipe = await _service(
+        web=web, video=video, extractor=extractor, nutrition=nutrition
+    ).import_recipe(
+        RecipeImportRequest(language="vi", url="https://www.instagram.com/reel/abc/")
+    )
+
+    assert web.urls == [BLOG_URL]
+    assert video.analyzed == 0
+    linked = extractor.materials[1]
+    assert linked.structured_recipe == BLOG_PAGE.structured_recipe
+    assert linked.description == CAPTION_WITH_LINK
+    assert recipe.source.url == "https://www.instagram.com/reel/abc/"
+    assert recipe.source.linked_recipe_url == BLOG_URL
+    assert recipe.source.signals[:2] == (
+        RecipeSignal.LINKED_RECIPE,
+        RecipeSignal.CAPTION,
+    )
+    assert recipe.servings == 2 and not recipe.servings_estimated
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_caption_link_falls_back_to_the_video(nutrition):
+    video = FakeVideo(
+        material=RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.TIKTOK,
+            source_url="https://www.tiktok.com/@chef/video/1",
+            description=CAPTION_WITH_LINK,
+        ),
+        media=VideoMediaAnalysis(transcript="500 gam cánh gà, hai muỗng nước mắm"),
+    )
+    web = FakeWeb(
+        pages={
+            BLOG_URL: RecipeImportError(
+                RecipeImportFailure.SOURCE_REJECTED, "403 from the blog"
+            )
+        }
+    )
+    extractor = FakeExtractor(results=[NOT_ENOUGH, wings_recipe()])
+
+    recipe = await _service(
+        web=web, video=video, extractor=extractor, nutrition=nutrition
+    ).import_recipe(
+        RecipeImportRequest(language="vi", url="https://www.tiktok.com/@chef/video/1")
+    )
+
+    assert web.urls == [BLOG_URL]
+    assert video.analyzed == 1
+    assert recipe.source.linked_recipe_url is None
+    assert RecipeSignal.SPEECH in recipe.source.signals
+
+
+@pytest.mark.asyncio
+async def test_a_linked_page_without_a_full_recipe_is_ignored(nutrition):
+    video = FakeVideo(
+        material=RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.TIKTOK,
+            source_url="https://www.tiktok.com/@chef/video/1",
+            description=CAPTION_WITH_LINK,
+        ),
+        media=VideoMediaAnalysis(transcript="500 gam cánh gà"),
+    )
+    shop = RecipeSourceMaterial(
+        platform=RecipeSourcePlatform.WEBSITE,
+        source_url=BLOG_URL,
+        structured_recipe=StructuredRecipe(name="Shop", ingredients=("pan",)),
+    )
+    extractor = FakeExtractor(results=[NOT_ENOUGH, wings_recipe()])
+
+    await _service(
+        web=FakeWeb(pages={BLOG_URL: shop}),
+        video=video,
+        extractor=extractor,
+        nutrition=nutrition,
+    ).import_recipe(
+        RecipeImportRequest(language="vi", url="https://www.tiktok.com/@chef/video/1")
+    )
+
+    assert video.analyzed == 1
+    assert all(m.linked_recipe_url is None for m in extractor.materials)
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_video_still_reads_the_linked_recipe(nutrition):
+    video = FakeVideo(
+        material=RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.YOUTUBE,
+            source_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            description=CAPTION_WITH_LINK,
+            metadata_only=True,
+        )
+    )
+    extractor = FakeExtractor(results=[NOT_ENOUGH, wings_recipe()])
+
+    recipe = await _service(
+        web=FakeWeb(pages={BLOG_URL: BLOG_PAGE}),
+        video=video,
+        extractor=extractor,
+        nutrition=nutrition,
+    ).import_recipe(
+        RecipeImportRequest(
+            language="vi", url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        )
+    )
+
+    assert video.analyzed == 0
+    assert recipe.source.linked_recipe_url == BLOG_URL
+    assert RecipeImportWarning.VIDEO_NOT_ANALYZED not in recipe.warnings
+
+
+@pytest.mark.asyncio
+async def test_a_short_caption_with_a_link_goes_to_the_linked_page_first(nutrition):
+    video = FakeVideo(
+        material=RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.TIKTOK,
+            source_url="https://www.tiktok.com/@chef/video/1",
+            description=f"Gà chiên 😋 công thức: {BLOG_URL}",
+        )
+    )
+    extractor = FakeExtractor(results=[wings_recipe()])
+
+    recipe = await _service(
+        web=FakeWeb(pages={BLOG_URL: BLOG_PAGE}),
+        video=video,
+        extractor=extractor,
+        nutrition=nutrition,
+    ).import_recipe(
+        RecipeImportRequest(language="vi", url="https://www.tiktok.com/@chef/video/1")
+    )
+
+    assert len(extractor.materials) == 1 and video.analyzed == 0
+    assert recipe.source.linked_recipe_url == BLOG_URL
