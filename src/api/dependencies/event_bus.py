@@ -1341,6 +1341,7 @@ def get_configured_event_bus() -> EventBus:
         DeleteSupplementIntakeCommand,
         LogSupplementIntakeCommand,
         RemoveSupplementCommand,
+        ScanSupplementLabelCommand,
         UpdateSupplementCommand,
     )
     from src.app.handlers.command_handlers.supplement_command_handlers import (
@@ -1349,6 +1350,9 @@ def get_configured_event_bus() -> EventBus:
         LogSupplementIntakeCommandHandler,
         RemoveSupplementCommandHandler,
         UpdateSupplementCommandHandler,
+    )
+    from src.app.handlers.command_handlers.supplement_scan_handler import (
+        ScanSupplementLabelCommandHandler,
     )
     from src.app.handlers.query_handlers.supplement_query_handlers import (
         GetMySupplementsQueryHandler,
@@ -1375,6 +1379,16 @@ def get_configured_event_bus() -> EventBus:
             command,
             handler_class(uow_factory=AsyncUnitOfWork, purge_day=purge_supplement_day),
         )
+    event_bus.register_handler(
+        ScanSupplementLabelCommand,
+        ScanSupplementLabelCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            vision_service=vision_service,
+            download_image_bytes=ScanImageDownloadAdapter(),
+            event_bus=event_bus,
+            purge_day=purge_supplement_day,
+        ),
+    )
     for query, query_handler_class in (
         (GetMySupplementsQuery, GetMySupplementsQueryHandler),
         (SearchSupplementsQuery, SearchSupplementsQueryHandler),

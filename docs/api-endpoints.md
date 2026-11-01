@@ -256,6 +256,23 @@ handler/schema when implementing; the bullets below are the durable WHY.
   deleted one) is 409 `SUPPLEMENT_INTAKE_ID_TAKEN`; the same
   `Idempotency-Key` replays the stored reply instead. `DELETE /intakes/{id}`
   removes one of the user's doses.
+- `POST /scan-label` `{image_url, image_id, intake_id, taken_at?}` with a
+  required `Idempotency-Key` reads an uploaded label photo (5/min) with an
+  OpenAI-only model chain (`supplement_label_scan`). It saves
+  the user's own product (`pending_review` when it has a brand and a tracked
+  nutrient, else `private`), lists it and logs one dose: `{route:
+  "supplement", product, entry, intake}`. A protein powder, gainer or meal
+  shake (by kind; by 10 g protein or 50 kcal per unit; or, for powders,
+  liquids and sachets, by 10 g protein or 100 kcal per serving) is saved as a
+  meal from the same read, with `intake_id` as the meal id: `{route: "food",
+  meal: {meal_id, dish_name, calories, protein, carbs, fat}}`. The same key replays the stored
+  reply. A label barcode already in the catalog or on the user's earlier scan
+  reuses that product. Checks run rate limit, replay, Premium (402
+  `SUBSCRIPTION_REQUIRED`), then `SUPPLEMENT_LABEL_SCANS_PER_DAY` (default 20,
+  429 `SUPPLEMENT_LABEL_SCAN_DAILY_LIMIT`). An unreadable photo is 400
+  `SUPPLEMENT_LABEL_UNREADABLE`; food without a printed serving weight is 400
+  `SUPPLEMENT_LABEL_IS_FOOD`; a read past 90 s is `SUPPLEMENT_LABEL_TIMEOUT`.
+  Label photos stay in storage after account deletion, as meal photos do.
 - A dose stores its nutrients at log time (per-unit amounts × units) and
   never carries calories. It counts as a logged day for the streak and the
   weekly recap, and appears in `GET /v1/activities/daily` as

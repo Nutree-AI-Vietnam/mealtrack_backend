@@ -56,6 +56,21 @@ class LogSupplementIntakeCommand(Command):
 
 
 @dataclass
+class ScanSupplementLabelCommand(Command):
+    """Read a label photo into the user's own product, list it and log a dose.
+
+    A protein powder, gainer or meal shake is saved as a meal instead.
+    """
+
+    user_id: str
+    image_url: str
+    intake_id: str
+    taken_at: datetime | None = None
+    header_timezone: str | None = None
+    replay_key: Any = None
+
+
+@dataclass
 class DeleteSupplementIntakeCommand(Command):
     user_id: str
     intake_id: str
@@ -66,5 +81,6 @@ __all__ = [
     "DeleteSupplementIntakeCommand",
     "LogSupplementIntakeCommand",
     "RemoveSupplementCommand",
+    "ScanSupplementLabelCommand",
     "UpdateSupplementCommand",
 ]

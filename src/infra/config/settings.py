@@ -216,6 +216,11 @@ class Settings(BaseSettings):
         default=False,
         description="Advertise supplement logging in GET /v1/capabilities/supplements.",
     )
+    SUPPLEMENT_LABEL_SCANS_PER_DAY: int = Field(
+        default=20,
+        ge=1,
+        description="Supplement label photos per user per local day.",
+    )
     # Streak restore: a restored day bridges a streak; packs are store consumables.
     STREAK_SAME_DAY_LOGS_FROM: date | None = Field(
         default=None,
