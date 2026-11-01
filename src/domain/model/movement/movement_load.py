@@ -7,9 +7,16 @@ they still took effort. Kinds pick the art in the card's 7-day strip.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Final
+
+from src.domain.services.movement_catalog_service import (
+    activity_id_for_name,
+    get_activity,
+)
 
 _INTENSITY_FACTORS: Final[dict[str, float]] = {
     "light": 1.0,
@@ -26,14 +33,35 @@ _KIND_BY_ACTIVITY_ID: Final[dict[str, str]] = {
     "swimming": "swim",
     "cycling": "cycle",
 }
-# For sessions without a catalog id (custom names, Health imports), English
-# and Vietnamese words in the name, checked in this order.
-_KIND_BY_NAME_WORD: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
-    ("run", ("run", "jog", "chạy")),
-    ("walk", ("walk", "hike", "đi bộ", "leo núi")),
-    ("swim", ("swim", "bơi")),
-    ("cycle", ("cycl", "bike", "biking", "đạp xe")),
-    ("gym", ("strength", "gym", "weight", "hiit", "tạ")),
+# For sessions without a catalog id or name (custom names, Health imports),
+# words in the name, checked in this order. English stems match at the start
+# of a word ("running"); Vietnamese words match whole, so "tạ" skips "tại"
+# and "run" skips "trung".
+_ENGLISH_STEMS: Final[dict[str, tuple[str, ...]]] = {
+    "run": ("run", "jog"),
+    "walk": ("walk", "hike", "hiking"),
+    "swim": ("swim",),
+    "cycle": ("cycl", "bike", "biking"),
+    "gym": ("strength", "gym", "weight", "hiit"),
+}
+_VIETNAMESE_WORDS: Final[dict[str, tuple[str, ...]]] = {
+    "run": ("chạy",),
+    "walk": ("đi bộ", "leo núi"),
+    "swim": ("bơi",),
+    "cycle": ("đạp xe",),
+    "gym": ("tạ",),
+}
+_KIND_BY_NAME_PATTERN: Final[tuple[tuple[str, re.Pattern[str]], ...]] = tuple(
+    (
+        kind,
+        re.compile(
+            "|".join(
+                [rf"\b{re.escape(stem)}" for stem in _ENGLISH_STEMS[kind]]
+                + [rf"\b{re.escape(word)}\b" for word in _VIETNAMESE_WORDS[kind]]
+            )
+        ),
+    )
+    for kind in ("run", "walk", "swim", "cycle", "gym")
 )
 KINDS: Final = ("run", "walk", "gym", "swim", "cycle", "other")
 
@@ -51,13 +79,14 @@ def intensity_factor(intensity: str | None) -> float:
 
 
 def movement_kind(activity_id: str | None, activity_name: str | None) -> str:
-    kind = _KIND_BY_ACTIVITY_ID.get(activity_id or "")
-    if kind:
-        return kind
-    name = (activity_name or "").casefold()
-    for candidate, words in _KIND_BY_NAME_WORD:
-        if any(word in name for word in words):
-            return candidate
+    catalog_id = activity_id if get_activity(activity_id) else None
+    catalog_id = catalog_id or activity_id_for_name(activity_name)
+    if catalog_id:
+        return _KIND_BY_ACTIVITY_ID.get(catalog_id, "other")
+    name = unicodedata.normalize("NFC", activity_name or "").casefold()
+    for kind, pattern in _KIND_BY_NAME_PATTERN:
+        if pattern.search(name):
+            return kind
     return "other"
 
 

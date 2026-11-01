@@ -1,3 +1,4 @@
+import unicodedata
 from datetime import UTC, datetime
 
 import pytest
@@ -73,6 +74,19 @@ def test_unknown_intensity_counts_as_moderate():
         (None, "Evening walk", "walk"),
         ("custom", "Weight training", "gym"),
         (None, "Dancing", "other"),
+        # Catalog names in any app language, without an id.
+        (None, "Correr", "run"),
+        (None, "Yoga / Giãn cơ", "other"),
+        ("yoga_stretching", "Yoga", "other"),
+        # Whole words: "trung" is not "run", "tại" is not "tạ".
+        (None, "Đạp xe cường độ trung bình", "cycle"),
+        (None, "Yoga tại nhà", "other"),
+        (None, "Brunch walk", "walk"),
+        (None, "Bodyweight yoga", "other"),
+        (None, "Weightlifting", "gym"),
+        (None, "Tập tạ", "gym"),
+        # Decomposed accents (NFD) match like typed ones.
+        (None, unicodedata.normalize("NFD", "Tập tạ"), "gym"),
     ],
 )
 def test_kind_from_catalog_id_then_name(activity_id, name, kind):

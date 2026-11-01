@@ -3,11 +3,12 @@
 from datetime import date
 from unittest.mock import AsyncMock
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.middleware.rate_limit import create_limiter
 from src.api.routes.v1 import progress
 from src.api.routes.v1.progress import router
 
@@ -160,6 +161,23 @@ def test_long_default_window_is_still_allowed():
 def test_summary_route_is_rate_limited():
     assert progress.PROGRESS_SUMMARY_LIMIT == "60/minute"
     assert getattr(progress.get_progress_summary, "__wrapped__", None) is not None
+
+
+def test_only_trends_requests_count_toward_the_limit():
+    limited = create_limiter(None)
+    app = FastAPI()
+
+    @app.get("/summary")
+    @limited.limit("1/minute", exempt_when=progress._without_trends)
+    async def summary(request: Request):
+        return {"ok": True}
+
+    client = TestClient(app)
+    for _ in range(3):
+        assert client.get("/summary").status_code == 200
+        assert client.get("/summary", params={"include": "other"}).status_code == 200
+    assert client.get("/summary", params={"include": "trends"}).status_code == 200
+    assert client.get("/summary", params={"include": "x, trends"}).status_code == 429
 
 
 def test_default_payload_has_no_trends_keys():

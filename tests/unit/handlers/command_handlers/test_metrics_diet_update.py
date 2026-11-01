@@ -73,6 +73,16 @@ async def test_same_diet_keeps_the_revision():
 
 
 @pytest.mark.asyncio
+async def test_reordered_or_recased_diets_keep_the_revision():
+    profile = _profile(dietary_preferences=["vegan", "keto"])
+
+    await _update(profile, ["Keto", "vegan", "VEGAN"])
+
+    assert profile.dietary_preferences == ["Keto", "vegan"]
+    assert profile.profile_target_revision == 4
+
+
+@pytest.mark.asyncio
 async def test_diet_alone_counts_as_a_metric_update():
     profile = _profile(dietary_preferences=[])
 

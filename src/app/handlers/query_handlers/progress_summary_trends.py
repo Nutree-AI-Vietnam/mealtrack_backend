@@ -12,7 +12,8 @@ from src.domain.model.meal import MealStatus
 from src.domain.model.movement.movement_load import daily_movement_load
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.micros import Micros
-from src.domain.services.meal_nrf_fields import meal_nrf_fields
+from src.domain.model.nutrition.micros_ops import merge_micros
+from src.domain.services.meal_nrf_fields import nutrition_nrf_fields
 from src.domain.services.micronutrient_dri_targets import micronutrient_daily_goals
 from src.domain.utils.timezone_utils import ensure_utc
 
@@ -57,28 +58,32 @@ def included_burn_by_day(entries_by_day: dict[date, list[Any]]) -> dict[date, fl
 
 
 def trends_day_fields(
-    meals: list[Any], day_micros: Micros | None, movement_entries: list[Any]
+    meals: list[Any], drink_micros: Micros | None, movement_entries: list[Any]
 ) -> dict[str, Any]:
+    """Trends fields for one day; micros here include the food items' own."""
+    day_micros: Micros | None = None
     micro_meal_counts: dict[str, int] = {}
     quality_counts = {"good": 0, "fair": 0, "low": 0}
     quality_by_type: dict[str, list[float]] = {}
     for meal in meals:
-        if meal.meal_type == "hydration" or meal.status not in _SCORED_STATUSES:
-            continue
-        if not meal.nutrition:
+        if not meal.nutrition or meal.status not in _SCORED_STATUSES:
             continue
         reported = merge_meal_micros(
             getattr(meal.nutrition, "micros", None),
             getattr(meal.nutrition, "food_items", None),
         )
+        day_micros = merge_micros(day_micros, reported)
+        if meal.meal_type == "hydration":
+            continue
         for key in reported.to_dict() if reported else {}:
             micro_meal_counts[key] = micro_meal_counts.get(key, 0) + 1
-        quality = meal_nrf_fields(meal)["nrf_quality"]
+        quality = nutrition_nrf_fields(meal.nutrition, reported)["nrf_quality"]
         if quality is None:
             continue
         quality_counts[_quality_band(float(quality))] += 1
         if meal.meal_type:
             quality_by_type.setdefault(meal.meal_type, []).append(float(quality))
+    day_micros = merge_micros(day_micros, drink_micros)
     load = daily_movement_load(movement_entries)
     return {
         "micros": {

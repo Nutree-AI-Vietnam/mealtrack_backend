@@ -25,7 +25,17 @@ from src.domain.services.progress_summary_window import TRENDS_MAX_DAYS
 
 router = APIRouter(prefix="/v1/progress", tags=["Progress"])
 
+# Counts only include=trends requests; the plain summary stays unlimited for
+# the builds that already call it.
 PROGRESS_SUMMARY_LIMIT = "60/minute"
+
+
+def _wants_trends(include: str | None) -> bool:
+    return "trends" in {part.strip() for part in (include or "").split(",")}
+
+
+def _without_trends(request: Request) -> bool:
+    return not _wants_trends(request.query_params.get("include"))
 
 
 @router.get("/journey", response_model=JourneyProgressResponse)
@@ -61,7 +71,7 @@ def _unprocessable(detail: str) -> JSONResponse:
 
 
 @router.get("/summary", response_model=ProgressSummaryResponse)
-@limiter.limit(PROGRESS_SUMMARY_LIMIT)
+@limiter.limit(PROGRESS_SUMMARY_LIMIT, exempt_when=_without_trends)
 async def get_progress_summary(
     request: Request,
     start_date: date | None = Query(None),
@@ -73,7 +83,7 @@ async def get_progress_summary(
     event_bus: Any = Depends(get_configured_event_bus),
 ):
     """Per-day macros, targets, burn, and hydration for an inclusive range."""
-    include_trends = "trends" in {part.strip() for part in (include or "").split(",")}
+    include_trends = _wants_trends(include)
     error = _summary_error(start_date, end_date, include_trends)
     if error is not None:
         return error

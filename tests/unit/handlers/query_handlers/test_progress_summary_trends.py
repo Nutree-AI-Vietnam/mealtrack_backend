@@ -11,7 +11,7 @@ from src.app.handlers.query_handlers.progress_summary_trends import (
 )
 from src.domain.model.meal import Meal, MealStatus
 from src.domain.model.movement import MovementEntry
-from src.domain.model.nutrition import Nutrition
+from src.domain.model.nutrition import FoodItem, Nutrition
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros import Micros
 
@@ -24,6 +24,7 @@ def _meal(
     protein: float = 20.0,
     fiber: float = 5.0,
     status: MealStatus = MealStatus.READY,
+    food_items: list[FoodItem] | None = None,
 ) -> Meal:
     created = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
     return Meal(
@@ -36,6 +37,7 @@ def _meal(
         nutrition=Nutrition(
             macros=Macros(protein=protein, carbs=30.0, fat=10.0, fiber=fiber),
             micros=micros,
+            food_items=food_items,
         ),
         ready_at=created,
         meal_type=meal_type,
@@ -69,6 +71,28 @@ def _row(meals, movement=None, trends=True):
         is_cheat_day=False,
         trends_movement=(movement or []) if trends else None,
     )
+
+
+def test_food_items_feed_trends_micros_but_not_the_day_score():
+    item = FoodItem(
+        id="item-1",
+        name="Rau muong",
+        quantity=100,
+        unit="g",
+        macros=Macros(protein=3, carbs=4, fat=0),
+        micros=Micros(iron=4.0, calcium=200.0),
+    )
+    with_items = [_meal(Micros(iron=1.0), food_items=[item])]
+    without_items = [_meal(Micros(iron=1.0))]
+
+    trends = _row(with_items)
+    plain = _row(without_items, trends=False)
+
+    for field in ("nrf_quality", "nrf_coverage", "iron_mg"):
+        assert trends[field] == plain[field]
+    assert trends["iron_mg"] == 1.0
+    assert trends["micros"] == {"iron": 4.0, "calcium": 200.0}
+    assert trends["micro_meal_counts"] == {"iron": 1, "calcium": 1}
 
 
 def test_counts_how_many_food_meals_reported_each_nutrient():

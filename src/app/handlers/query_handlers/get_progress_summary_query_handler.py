@@ -126,8 +126,9 @@ class GetProgressSummaryQueryHandler(
         include_trends: bool = False,
     ) -> dict[str, Any]:
         base_cal, protein_t, _c, _f, revision, bmr = targets
-        # Only Trends needs food items, whose micros fill the nutrients that
-        # the meal-level totals leave out.
+        # Only the Trends fields use food items, whose micros fill the
+        # nutrients the meal-level totals leave out. The day's score keeps
+        # meal-level micros either way (see build_progress_day_row).
         meals = await uow.meals.find_by_date_range(
             user_id,
             start,

@@ -44,8 +44,10 @@ class CacheKeys:
 
     @staticmethod
     def daily_macros(user_id: str, target_date: date) -> tuple[str, int]:
+        # v2 payloads carry dietary_preferences, which the iron goal needs;
+        # older entries without it are left to expire.
         return (
-            f"user:{user_id}:macros:{target_date.isoformat()}",
+            f"user:{user_id}:macros:v2:{target_date.isoformat()}",
             CacheKeys.TTL_1_DAY,
         )
 

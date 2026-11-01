@@ -58,12 +58,11 @@ def build_progress_day_row(
                 fat += macros.fat or 0.0
                 fiber += macros.fiber or 0.0
                 calories += effective_meal_calories(meal)
+            # Meal-level micros only, even when include=trends loaded the food
+            # items, so a day's score and highlights match on both shapes.
             day_micros = merge_micros(
                 day_micros,
-                merge_meal_micros(
-                    getattr(meal.nutrition, "micros", None),
-                    getattr(meal.nutrition, "food_items", None),
-                ),
+                merge_meal_micros(getattr(meal.nutrition, "micros", None), None),
             )
     if drink_macros is not None:
         protein += drink_macros.protein or 0.0
@@ -98,5 +97,5 @@ def build_progress_day_row(
         **highlight_amounts(day_micros),
     }
     if trends_movement is not None:
-        row.update(trends_day_fields(meals, day_micros, trends_movement))
+        row.update(trends_day_fields(meals, drink_micros, trends_movement))
     return row
