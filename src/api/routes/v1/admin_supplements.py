@@ -58,6 +58,7 @@ async def import_admin_supplements(
         unchanged=summary.unchanged,
         kept_reviewed=summary.kept_reviewed,
         kept_approved=summary.kept_approved,
+        kept_approved_keys=summary.kept_approved_keys,
         invalid=[
             AdminSupplementInvalidRecord(record=i.record, error=i.error)
             for i in summary.invalid
@@ -77,12 +78,13 @@ async def list_supplement_review(
     offset: int = Query(0, ge=0),
     kind: Literal["catalog", "scan"] | None = Query(None),
     q: str | None = Query(None, max_length=120),
+    status: Literal["pending_review", "approved"] = Query("pending_review"),
     _admin: str = Depends(require_admin_or_local),
 ) -> AdminSupplementReviewListResponse:
     """Held-back catalog rows and people's label scans waiting for review."""
     try:
         items, total = await supplement_review_queue(
-            limit, offset, kind, (q or "").strip() or None
+            limit, offset, kind, (q or "").strip() or None, status
         )
     except SupplementCatalogUnavailableError as error:
         raise _unavailable(error) from error

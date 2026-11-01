@@ -54,6 +54,7 @@ async def upsert_curated_rows(
             continue
         if row is not None and not _file_owns(row, entry):
             counts.kept_approved += 1
+            counts.kept_approved_keys.append(key)
             continue
         product_id = row.id if row is not None else entry.product.id
         values = product_values(replace(entry.product, id=product_id))

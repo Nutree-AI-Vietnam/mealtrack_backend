@@ -48,6 +48,7 @@ class AdminSupplementImportResponse(BaseModel):
     unchanged: int
     kept_reviewed: int
     kept_approved: int
+    kept_approved_keys: list[str]
     invalid: list[AdminSupplementInvalidRecord]
     barcode_skips: list[AdminSupplementBarcodeSkip]
 

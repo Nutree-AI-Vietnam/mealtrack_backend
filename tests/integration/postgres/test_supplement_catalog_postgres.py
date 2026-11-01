@@ -196,9 +196,33 @@ async def test_reimport_never_takes_an_approved_row_out(factory):
     )
 
     assert (summary.kept_approved, summary.updated) == (1, 0)
+    assert summary.kept_approved_keys == ["1"]
     assert await _rows("SELECT name, review_status FROM supplement_products") == [
         ("Vitamin D3 1", "approved")
     ]
+
+
+async def test_a_live_product_can_be_corrected_and_keeps_the_fix(factory):
+    await import_supplement_catalog([_record("1", nutrients={"vitamin_d": 250.0})])
+    queue, _ = await supplement_review_queue(10, 0, q="1", status="approved")
+    [(item, _)] = queue
+
+    await review_supplement(
+        item.product.id,
+        ReviewAction.EDIT,
+        "admin@x",
+        {"nutrients": {"vitamin_d": 25.0}},
+    )
+    again = await import_supplement_catalog(
+        [_record("1", nutrients={"vitamin_d": 250.0})]
+    )
+
+    assert again.kept_reviewed == 1
+    assert await _rows(
+        "SELECT review_status, nutrients->>'vitamin_d' FROM supplement_products"
+    ) == [("approved", "25.0")]
+    with pytest.raises(SupplementNotReviewableError, match="only be edited"):
+        await review_supplement(item.product.id, ReviewAction.REJECT, "admin@x")
 
 
 async def test_a_scan_waits_for_the_catalog_row_holding_its_barcode(
@@ -234,6 +258,7 @@ async def test_the_queue_filters_by_catalog_key_name_or_brand(factory):
     assert await keys("dsld:1") == ["dsld:1"]
     assert await keys("gaba") == ["dsld:1"]
     assert await keys("solgar") == ["dsld:2"]
+    assert await keys("now gaba") == ["dsld:1"]
     # LIKE wildcards in the text are matched literally, so they match nothing.
     assert await keys("%") == []
     assert await keys("_") == []
@@ -315,7 +340,11 @@ async def test_approving_a_scan_of_a_shared_barcode_moves_the_list(factory, pg_s
     assert [e.product_id for e in alice_list] == [shared_id]
     # Carol already had the shared product listed; her duplicate row goes.
     assert [(e.product_id, e.units_per_dose) for e in carol_list] == [(shared_id, 2)]
-    assert alice_scan.review_status is ReviewStatus.PRIVATE
+    # Nothing points at her scan any more, so it is gone, barcode and all.
+    assert alice_scan is None
+    assert await _rows(
+        "SELECT count(*) FROM supplement_products WHERE id = :p", p=alices.id
+    ) == [(0,)]
     # Her dose follows her list row, so today still shows it as taken.
     assert await _rows(
         "SELECT product_id FROM supplement_intakes WHERE user_id = :u", u=alice

@@ -38,14 +38,25 @@ class SupplementReviewConflictError(SupplementNotReviewableError):
     """Another write to the same barcode or list row landed first; retry."""
 
 
-def require_reviewable(product: SupplementProduct) -> None:
+def require_reviewable(product: SupplementProduct, *, editing: bool = False) -> None:
+    """A row waiting for review takes any action; a live shared row only edits.
+
+    A live row is never withdrawn: people may list it and log doses of it.
+    """
     # A Ghi nhanh estimate is a guess from a sentence, never a catalog entry.
     if product.source is ProductSource.DESCRIBE or product.estimated:
         raise SupplementNotReviewableError("a Ghi nhanh estimate is never shared")
-    if product.review_status is not ReviewStatus.PENDING_REVIEW:
+    if product.review_status is ReviewStatus.PENDING_REVIEW:
+        return
+    if product.review_status is ReviewStatus.APPROVED and product.shared:
+        if editing:
+            return
         raise SupplementNotReviewableError(
-            f"the product is {product.review_status.value}, not waiting for review"
+            "the product is already in the catalog; it can only be edited"
         )
+    raise SupplementNotReviewableError(
+        f"the product is {product.review_status.value}, not waiting for review"
+    )
 
 
 def with_edits(

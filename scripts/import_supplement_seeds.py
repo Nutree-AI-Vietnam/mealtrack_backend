@@ -66,6 +66,7 @@ def main() -> int:
                     {"record": i.record, "error": i.error}
                     for i in summary.invalid[:shown]
                 ],
+                "kept_approved_keys": summary.kept_approved_keys[:shown],
                 "skipped_barcodes": [
                     {"key": s.catalog_key, "barcode": s.barcode, "reason": s.reason}
                     for s in summary.barcode_skips[:shown]

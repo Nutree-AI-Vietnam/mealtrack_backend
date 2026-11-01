@@ -32,6 +32,7 @@ class _Catalog:
         self.match = match
         self.saved: list[tuple[SupplementProduct, str]] = []
         self.moved: list[tuple[str, str, str]] = []
+        self.deleted: list[str] = []
 
     async def review_item(self, product_id):
         return self.items.get(product_id)
@@ -46,7 +47,13 @@ class _Catalog:
     async def move_to_shared(self, user_id, from_id, to_id):
         self.moved.append((user_id, from_id, to_id))
 
-    async def review_queue(self, limit, offset, kind=None, q=None):
+    async def delete_product(self, product_id):
+        self.deleted.append(product_id)
+
+    async def review_queue(
+        self, limit, offset, kind=None, q=None, status="pending_review"
+    ):
+        self.queue_status = status
         return list(self.items.values()), len(self.items)
 
 
@@ -112,10 +119,12 @@ async def test_approving_a_scan_with_a_shared_barcode_moves_the_list_there():
     outcome = await review_product(catalog, "scan-1", ReviewAction.APPROVE, "a@x")
 
     assert catalog.moved == [(OWNER, "scan-1", "shared-1")]
-    saved = catalog.saved[0][0]
-    assert saved.owner_user_id == OWNER
-    assert saved.review_status is ReviewStatus.PRIVATE
+    # Nothing points at the scan any more, so it goes rather than linger in
+    # the owner's own search next to the shared product.
+    assert catalog.deleted == ["scan-1"]
+    assert catalog.saved == []
     assert outcome.merged_into == "shared-1"
+    assert outcome.item.reviewed_by == "a@x"
 
 
 async def test_rejecting_a_scan_leaves_it_private_to_its_owner():
@@ -206,7 +215,7 @@ async def test_the_queue_shows_where_each_scans_barcode_already_is():
     shared = replace(_held_back(), id="shared-1", review_status=ReviewStatus.APPROVED)
     catalog = _Catalog(ReviewItem(_scan()), ReviewItem(_held_back()), match=shared)
 
-    page, total = await review_page(catalog, 50, 0)
+    page, total = await review_page(catalog, 50, 0, status="pending_review")
 
     assert total == 2
     assert [(item.product.id, match and match.id) for item, match in page] == [
@@ -257,12 +266,37 @@ async def test_a_ghi_nhanh_estimate_can_never_be_approved():
     assert catalog.saved == []
 
 
-async def test_a_decided_product_is_not_reviewed_again():
+@pytest.mark.parametrize("action", [ReviewAction.APPROVE, ReviewAction.REJECT])
+async def test_a_live_product_is_never_approved_or_withdrawn_again(action):
     approved = replace(_held_back(), review_status=ReviewStatus.APPROVED)
     catalog = _Catalog(ReviewItem(approved))
 
-    with pytest.raises(SupplementNotReviewableError, match="approved"):
-        await review_product(catalog, "cat-1", ReviewAction.REJECT, "a@x")
+    with pytest.raises(SupplementNotReviewableError, match="only be edited"):
+        await review_product(catalog, "cat-1", action, "a@x")
+    assert catalog.saved == []
+
+
+async def test_a_live_product_can_be_corrected():
+    approved = replace(_held_back(), review_status=ReviewStatus.APPROVED)
+    catalog = _Catalog(ReviewItem(approved))
+
+    await review_product(
+        catalog, "cat-1", ReviewAction.EDIT, "a@x", {"nutrients": {"vitamin_d": 10.0}}
+    )
+
+    saved = catalog.saved[0][0]
+    assert saved.nutrients.amounts == {"vitamin_d": 10.0}
+    assert saved.review_status is ReviewStatus.APPROVED
+
+
+async def test_a_rejected_product_is_not_reviewed_again():
+    rejected = replace(_held_back(), review_status=ReviewStatus.REJECTED)
+    catalog = _Catalog(ReviewItem(rejected))
+
+    with pytest.raises(SupplementNotReviewableError, match="rejected"):
+        await review_product(
+            catalog, "cat-1", ReviewAction.EDIT, "a@x", {"name": "Renamed"}
+        )
 
 
 async def test_an_unknown_product_is_not_found():

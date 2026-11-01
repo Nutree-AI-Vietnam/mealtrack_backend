@@ -12,6 +12,7 @@ from src.domain.model.supplement import SupplementProduct
 from src.domain.model.supplement.catalog_entry import CatalogEntry
 
 ReviewKind = Literal["catalog", "scan"]
+QueueStatus = Literal["pending_review", "approved"]
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class CatalogWriteCounts:
     kept_reviewed: int = 0
     # Approved rows the file now holds back; people may list them, so they stay.
     kept_approved: int = 0
+    kept_approved_keys: list[str] = field(default_factory=list)
     barcode_skips: list[BarcodeSkip] = field(default_factory=list)
 
 
@@ -69,8 +71,9 @@ class SupplementCatalogPort(ABC):
         offset: int,
         kind: ReviewKind | None = None,
         q: str | None = None,
+        status: QueueStatus = "pending_review",
     ) -> tuple[list[ReviewItem], int]:
-        """Products waiting for review, oldest first, and their total.
+        """Products waiting for review (or live, approved ones), oldest first.
 
         ``q`` matches a catalog key exactly, or part of the name or brand.
         """
@@ -94,6 +97,10 @@ class SupplementCatalogPort(ABC):
         An approved shared row shares its barcodes (a shared holder makes the
         write fail); a rejected shared row gives its barcodes up.
         """
+
+    @abstractmethod
+    async def delete_product(self, product_id: str) -> None:
+        """Delete a product nothing refers to any more; its barcodes go with it."""
 
     @abstractmethod
     async def move_to_shared(self, user_id: str, from_id: str, to_id: str) -> None:

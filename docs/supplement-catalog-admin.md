@@ -53,7 +53,7 @@ What the import does:
 
 - **Upserts by `key`.** A second run of the same file changes nothing. When a product changes, its row keeps the same id.
 - **Leaves reviewed rows alone.** Once an admin has edited, approved or rejected a row, re-imports skip it and count it as `kept_reviewed`.
-- **Never takes an approved row back out.** When a rebuild holds back a product that is already approved, the import leaves the row as it is and counts it as `kept_approved`. People may already list that product and log doses of it.
+- **Never takes an approved row back out.** When a rebuild holds back a product that is already approved, the import leaves the row as it is and lists its key under `kept_approved_keys`. People may already list that product and log doses of it. To correct it, find the key in the Approved view and edit it.
 - **Checks every record.** It refuses a record and reports the reason when any of these is true:
   - `unit_label` is missing.
   - The `form` is unknown.
@@ -75,7 +75,7 @@ Run the catalog file before the review file. The build never puts the same key i
 
 The queue holds held-back catalog rows and people's readable label scans. It never holds Ghi nhanh estimates.
 
-- `GET /v1/admin/supplements/review?kind=catalog|scan&limit&offset` returns the queue, oldest first. Each item shows:
+- `GET /v1/admin/supplements/review?kind=catalog|scan&q&status&limit&offset` returns the queue, oldest first. `status=approved` lists live catalog products instead of those waiting. `q` matches a catalog key exactly, or part of a name or brand. Each item shows:
   - its `reasons`;
   - its `source_url`, or for a scan its `label_image_url`;
   - the label rows and the nutrients read from them;
@@ -90,14 +90,16 @@ What each action does:
 | --- | --- | --- |
 | `edit` | Saves the changes. The row stays in the queue. | Same as for a catalog row. |
 | `approve` | Shares the row. | Promotes the person's row to shared, in place, with its barcodes. Their list row and doses keep the same product. |
-| `approve`, when an approved shared row already has the barcode | Cannot happen: a shared barcode belongs to one row. | Moves the person's list row and doses to that shared row (`merged_into`). The scan stays theirs. Answers 409 when that row logs as food. |
+| `approve`, when an approved shared row already has the barcode | Cannot happen: a shared barcode belongs to one row. | Moves the person's list row and doses to that shared row (`merged_into`), then deletes the scan, which nothing refers to any more. Answers 409 when that row logs as food. |
 | `approve`, when a catalog row still waiting has the barcode | Cannot happen. | Answers 409 naming that row. |
 | `reject` | Hides the row and frees its barcodes. | The scan stays private to its owner. |
 
 When a catalog row still waiting holds a scan's barcode, decide that row first. Approving it turns the scan's approval into a merge. Rejecting it frees the barcode. This keeps one shared row per barcode.
 
-Every action records `reviewed_by` and `reviewed_at`. These cases also answer 409:
-- A product that is not waiting for review. Rejecting is final.
+A live (approved) catalog product can only be edited, never approved again or withdrawn: people may list it and log doses of it. Its edits apply to future doses; past doses keep their own amounts. Marking it `macro_bearing` makes doses of it answer `SUPPLEMENT_IS_FOOD`, so the app offers to log it as food.
+
+Every action records `reviewed_by` and `reviewed_at`, so re-imports leave the row alone. These cases also answer 409:
+- Approving or rejecting a live product. Rejecting is final too: a rejected row takes no further action.
 - A Ghi nhanh estimate.
 - Two reviews racing on the same barcode, or on the same person's list. Reload and retry. Any other integrity error is a server error, not a 409.
 

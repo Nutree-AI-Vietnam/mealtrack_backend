@@ -24,6 +24,7 @@ from src.app.services.supplement_catalog_review import (
 from src.domain.model.supplement import SupplementProduct
 from src.domain.model.supplement.catalog_review import SupplementReviewConflictError
 from src.domain.ports.supplement_catalog_port import (
+    QueueStatus,
     ReviewItem,
     ReviewKind,
     SupplementCatalogPort,
@@ -58,10 +59,11 @@ async def supplement_review_queue(
     offset: int,
     kind: ReviewKind | None = None,
     q: str | None = None,
+    status: QueueStatus = "pending_review",
 ) -> tuple[list[tuple[ReviewItem, SupplementProduct | None]], int]:
     async with AsyncUnitOfWork() as uow:
         catalog = await _catalog(uow)
-        return await review_page(catalog, limit, offset, kind, q)
+        return await review_page(catalog, limit, offset, kind, q, status)
 
 
 async def review_supplement(

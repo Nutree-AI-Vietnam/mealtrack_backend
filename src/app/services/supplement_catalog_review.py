@@ -19,6 +19,7 @@ from src.domain.model.supplement.catalog_review import (
     with_edits,
 )
 from src.domain.ports.supplement_catalog_port import (
+    QueueStatus,
     ReviewItem,
     ReviewKind,
     SupplementCatalogPort,
@@ -47,19 +48,20 @@ async def review_product(
     reviewer: str,
     changes: Mapping[str, Any] | None = None,
 ) -> ReviewOutcome:
-    """Edit, approve or reject a product waiting for review.
+    """Edit, approve or reject a product waiting for review, or edit a live one.
 
     Approving a held-back catalog row shares it. Approving a person's scan
     shares their row in place, so their list and doses keep it; when an
     approved row already has its barcode, their list row and doses move there
-    and the scan stays theirs. A barcode on a catalog row still waiting must be
-    decided there first. Rejecting hides a catalog row (and frees its
-    barcodes) and leaves a scan private.
+    and the scan, left with nothing pointing at it, is deleted. A barcode on a
+    catalog row still waiting must be decided there first. Rejecting hides a
+    catalog row (and frees its barcodes) and leaves a scan private. Editing a
+    live row changes future doses; past doses keep their own amounts.
     """
     found = await catalog.review_item(product_id)
     if found is None:
         raise SupplementProductNotFoundError(product_id)
-    require_reviewable(found.product)
+    require_reviewable(found.product, editing=action is ReviewAction.EDIT)
     if changes and "macro_bearing" in changes and not found.product.shared:
         # The owner could no longer log a dose of their own product.
         raise ValueError("a person's scan cannot be marked as food; reject it instead")
@@ -93,9 +95,13 @@ async def review_product(
             f"{match.name!r} has this barcode and logs as food; reject this scan"
         )
     await catalog.move_to_shared(product.owner_user_id or "", product.id, match.id)
-    kept = replace(product, review_status=ReviewStatus.PRIVATE)
-    outcome = await _saved(catalog, found, kept, reviewer)
-    return replace(outcome, merged_into=match.id)
+    # Its list row and doses now sit on the shared row; a leftover copy would
+    # only show up twice in the owner's own search.
+    await catalog.delete_product(product.id)
+    return ReviewOutcome(
+        item=replace(found, reviewed_at=utc_now(), reviewed_by=reviewer),
+        merged_into=match.id,
+    )
 
 
 async def review_page(
@@ -104,12 +110,13 @@ async def review_page(
     offset: int,
     kind: ReviewKind | None = None,
     q: str | None = None,
+    status: QueueStatus = "pending_review",
 ) -> tuple[list[tuple[ReviewItem, SupplementProduct | None]], int]:
     """The queue, each scan with the shared row its barcode already belongs to.
 
     The admin then sees before approving whether it shares, merges, or waits.
     """
-    items, total = await catalog.review_queue(limit, offset, kind, q)
+    items, total = await catalog.review_queue(limit, offset, kind, q, status)
     page = []
     for item in items:
         product = item.product

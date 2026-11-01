@@ -31,6 +31,7 @@ class SupplementImportSummary:
     unchanged: int = 0
     kept_reviewed: int = 0
     kept_approved: int = 0
+    kept_approved_keys: list[str] = field(default_factory=list)
     invalid: list[InvalidRecord] = field(default_factory=list)
     barcode_skips: list[BarcodeSkip] = field(default_factory=list)
 
@@ -82,6 +83,7 @@ async def import_catalog(
         unchanged=counts.unchanged,
         kept_reviewed=counts.kept_reviewed,
         kept_approved=counts.kept_approved,
+        kept_approved_keys=counts.kept_approved_keys,
         invalid=invalid,
         barcode_skips=unreadable + counts.barcode_skips,
     )

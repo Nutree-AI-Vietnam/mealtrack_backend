@@ -87,7 +87,11 @@ def test_non_admins_are_refused(monkeypatch, method, path, body):
 
 def test_import_returns_counts_and_passes_dry_run(monkeypatch):
     summary = SupplementImportSummary(
-        received=2, inserted=1, invalid=[InvalidRecord("b", "missing unit_label")]
+        received=2,
+        inserted=1,
+        kept_approved=1,
+        kept_approved_keys=["a"],
+        invalid=[InvalidRecord("b", "missing unit_label")],
     )
     run = AsyncMock(return_value=summary)
     monkeypatch.setattr(route_mod, "import_supplement_catalog", run)
@@ -102,6 +106,7 @@ def test_import_returns_counts_and_passes_dry_run(monkeypatch):
     assert payload["applied"] is False
     assert payload["inserted"] == 1
     assert payload["invalid"] == [{"record": "b", "error": "missing unit_label"}]
+    assert payload["kept_approved_keys"] == ["a"]
     assert run.await_args.kwargs == {"dry_run": True}
 
 
@@ -121,7 +126,7 @@ def test_review_queue_lists_items_with_their_source(monkeypatch):
 
     response = _client().get(
         "/v1/admin/supplements/review",
-        params={"kind": "scan", "limit": 10, "q": " dsld:2959 "},
+        params={"kind": "scan", "limit": 10, "q": " dsld:2959 ", "status": "approved"},
     )
 
     assert response.status_code == 200
@@ -140,7 +145,7 @@ def test_review_queue_lists_items_with_their_source(monkeypatch):
         "catalog_key": "dsld:2959",
         "review_status": "approved",
     }
-    queue.assert_awaited_once_with(10, 0, "scan", "dsld:2959")
+    queue.assert_awaited_once_with(10, 0, "scan", "dsld:2959", "approved")
 
 
 def test_review_passes_only_the_fields_sent(monkeypatch):
