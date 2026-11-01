@@ -1,6 +1,8 @@
 import logging
+import traceback
 from dataclasses import dataclass
 
+import httpx
 import pytest
 
 from src.api.exceptions import ResourceNotFoundException
@@ -175,6 +177,46 @@ async def test_weekly_meal_plan_conflict_is_logged_at_warning_not_error(caplog):
         and "Logged weekly meal slots cannot be replaced" in record.message
         for record in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_unexpected_http_status_log_omits_api_key(caplog):
+    """PYTHON-KJ: raise_for_status embeds api_key in the exception text.
+
+    The event bus logs that text at ERROR, which Sentry uses as the issue title.
+    """
+    secret = "synthetic-fdc-key-not-real"
+
+    class _StatusHandler(EventHandler[_CrashingQuery, None]):
+        async def handle(self, event: _CrashingQuery) -> None:
+            request = httpx.Request(
+                "GET",
+                "https://api.nal.usda.gov/fdc/v1/food/12345",
+                params={"api_key": secret},
+            )
+            httpx.Response(404, request=request).raise_for_status()
+
+    bus = PyMediatorEventBus()
+    bus.register_handler(_CrashingQuery, _StatusHandler())
+
+    with caplog.at_level(
+        logging.DEBUG,
+        logger="src.infra.event_bus.pymediator_event_bus",
+    ):
+        with pytest.raises(httpx.HTTPStatusError) as raised:
+            await bus.send(_CrashingQuery(name="missing"))
+
+    rendered = "\n".join(
+        (
+            str(raised.value),
+            repr(raised.value),
+            caplog.text,
+            "".join(traceback.format_exception(raised.value)),
+        )
+    )
+    assert secret not in rendered
+    assert f"api_key={secret}" not in rendered
+    assert "api_key=[Filtered]" in str(raised.value)
 
 
 @pytest.mark.asyncio
