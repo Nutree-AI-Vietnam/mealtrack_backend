@@ -714,18 +714,16 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
 
-    event_bus.register_handler(
-        CreateManualMealCommand,
-        CreateManualMealCommandHandler(
-            uow_factory=AsyncUnitOfWork,
-            event_publisher=queue_publisher,
-            event_bus=event_bus,
-            environment=settings.ENVIRONMENT,
-            provider=fat_secret_service,
-            provider_budget=provider_budget,
-            provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
-        ),
+    manual_meal_handler = CreateManualMealCommandHandler(
+        uow_factory=AsyncUnitOfWork,
+        event_publisher=queue_publisher,
+        event_bus=event_bus,
+        environment=settings.ENVIRONMENT,
+        provider=fat_secret_service,
+        provider_budget=provider_budget,
+        provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
     )
+    event_bus.register_handler(CreateManualMealCommand, manual_meal_handler)
 
     # Register meal text parsing command handler
     event_bus.register_handler(
@@ -1387,6 +1385,46 @@ def get_configured_event_bus() -> EventBus:
             download_image_bytes=ScanImageDownloadAdapter(),
             event_bus=event_bus,
             purge_day=purge_supplement_day,
+        ),
+    )
+    # The + panel's Ghi nhanh: one sentence for every kind of log, and its undo.
+    from src.app.commands.describe_any import (
+        DescribeAnyCommand,
+        UndoDescribeAnyCommand,
+    )
+    from src.app.handlers.command_handlers.describe_any_command_handler import (
+        DescribeAnyCommandHandler,
+    )
+    from src.app.handlers.command_handlers.supplement_command_handlers import (
+        SupplementWrite,
+    )
+    from src.app.handlers.command_handlers.undo_describe_any_command_handler import (
+        UndoDescribeAnyCommandHandler,
+    )
+    from src.bootstrap.supplements import supplements_available
+
+    event_bus.register_handler(
+        DescribeAnyCommand,
+        DescribeAnyCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            meal_generation_service=meal_generation_service,
+            event_bus=event_bus,
+            meal_writer=manual_meal_handler,
+            supplement_writer=SupplementWrite(AsyncUnitOfWork, purge_supplement_day),
+            supplements_available=supplements_available,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+            ai_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
+            food_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
+        ),
+    )
+    event_bus.register_handler(
+        UndoDescribeAnyCommand,
+        UndoDescribeAnyCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+            purge_supplement_day=purge_supplement_day,
         ),
     )
     for query, query_handler_class in (

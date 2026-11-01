@@ -1,6 +1,7 @@
 """Command handler for soft-deleting a hydration log entry."""
 
 import logging
+from datetime import date
 from typing import Any
 
 from src.api.exceptions import ResourceNotFoundException
@@ -17,6 +18,7 @@ from src.app.events.hydration.hydration_deleted_event import (
 from src.app.events.hydration.local_cache_invalidation import (
     invoke_local_hydration_cache_invalidation_hook,
 )
+from src.app.events.integration_event import IntegrationEvent
 from src.domain.model.hydration import DrinkCategory
 from src.domain.model.meal import MealStatus
 from src.domain.ports.integration_event_publisher_port import (
@@ -50,49 +52,11 @@ class DeleteHydrationEntryCommandHandler(
 
     async def handle(self, cmd: DeleteHydrationEntryCommand) -> dict:
         async with self.uow_factory() as uow:
-            entry = await uow.hydration_entries.find_by_id_or_legacy_meal_id(
-                cmd.user_id,
-                cmd.entry_id,
+            removed = await remove_drink_entry(
+                uow, cmd.user_id, cmd.entry_id, self.environment
             )
-            if entry is not None:
-                await uow.hydration_entries.delete_by_id_or_legacy_meal_id(
-                    cmd.user_id,
-                    cmd.entry_id,
-                )
-                meal = (
-                    await uow.meals.find_by_id(entry.legacy_meal_id)
-                    if entry.legacy_meal_id
-                    else None
-                )
-                if meal is not None and meal.status != MealStatus.INACTIVE:
-                    await uow.meals.save(meal.mark_inactive())
-
-                user_tz = await resolve_user_timezone_async(cmd.user_id, uow)
-                tz = get_zone_info(user_tz)
-                log_date = entry.logged_at.astimezone(tz).date()
-
-                drink = find_by_id(entry.drink_id)
-                is_caloric = (
-                    drink is not None and drink.category == DrinkCategory.CALORIC
-                ) or (entry.carbs_g > 0 or entry.fat_g > 0 or entry.protein_g > 0)
-                if is_caloric:
-                    integration_event = HydrationCaloricDeletedEvent(
-                        environment=self.environment,
-                        aggregate_id=entry.id,
-                        data={
-                            "user_id": cmd.user_id,
-                            "log_date": log_date.isoformat(),
-                        },
-                    )
-                else:
-                    integration_event = HydrationDeletedEvent(
-                        environment=self.environment,
-                        aggregate_id=entry.id,
-                        data={
-                            "user_id": cmd.user_id,
-                            "log_date": log_date.isoformat(),
-                        },
-                    )
+            if removed is not None:
+                integration_event, log_date = removed
             else:
                 meal = await uow.meals.find_by_id(cmd.entry_id)
                 if meal is None or meal.user_id != cmd.user_id:
@@ -126,3 +90,40 @@ class DeleteHydrationEntryCommandHandler(
         await invoke_local_hydration_cache_invalidation_hook(cmd.user_id, log_date)
 
         return {"success": True}
+
+
+async def remove_drink_entry(
+    uow: Any, user_id: str, entry_id: str, environment: str
+) -> tuple[IntegrationEvent, date] | None:
+    """Delete one drink entry and retire its legacy meal row, in the caller's
+    unit of work; None when the user has no such entry. The caller publishes
+    the event and purges the day after commit."""
+    entry = await uow.hydration_entries.find_by_id_or_legacy_meal_id(user_id, entry_id)
+    if entry is None:
+        return None
+    await uow.hydration_entries.delete_by_id_or_legacy_meal_id(user_id, entry_id)
+    meal = (
+        await uow.meals.find_by_id(entry.legacy_meal_id)
+        if entry.legacy_meal_id
+        else None
+    )
+    if meal is not None and meal.status != MealStatus.INACTIVE:
+        await uow.meals.save(meal.mark_inactive())
+
+    user_tz = await resolve_user_timezone_async(user_id, uow)
+    log_date = entry.logged_at.astimezone(get_zone_info(user_tz)).date()
+    data = {"user_id": user_id, "log_date": log_date.isoformat()}
+    drink = find_by_id(entry.drink_id)
+    is_caloric = (drink is not None and drink.category == DrinkCategory.CALORIC) or (
+        entry.carbs_g > 0 or entry.fat_g > 0 or entry.protein_g > 0
+    )
+    event: IntegrationEvent
+    if is_caloric:
+        event = HydrationCaloricDeletedEvent(
+            environment=environment, aggregate_id=entry.id, data=data
+        )
+    else:
+        event = HydrationDeletedEvent(
+            environment=environment, aggregate_id=entry.id, data=data
+        )
+    return event, log_date

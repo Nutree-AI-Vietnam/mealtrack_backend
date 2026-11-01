@@ -7,6 +7,7 @@ change history. Writes that touch a day purge its caches before returning.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -50,6 +51,15 @@ def _not_found(what: str) -> ResourceNotFoundException:
     return ResourceNotFoundException(f"{what} not found", "SUPPLEMENT_NOT_FOUND")
 
 
+@dataclass(frozen=True)
+class SavedDose:
+    entry: UserSupplement
+    intake: SupplementIntake
+    # The list row before this dose: "absent", "inactive" or "active", so an
+    # undo can put the list back the way it was.
+    listed_before: str
+
+
 class SupplementWrite:
     def __init__(
         self, uow_factory: Callable[[], Any], purge_day: DayPurge | None = None
@@ -74,16 +84,52 @@ class SupplementWrite:
             )
         return product
 
+    async def save_dose(
+        self,
+        uow: Any,
+        *,
+        user_id: str,
+        product: SupplementProduct,
+        intake_id: str,
+        units: float | None,
+        taken_at: datetime | None,
+        header_timezone: str | None,
+    ) -> SavedDose:
+        """List the product and log one dose in the caller's unit of work.
+
+        ``units`` None logs the list's dose. The caller commits, then purges.
+        """
+        listed = {
+            e.product_id: e for e in await uow.supplements.list_supplements(user_id)
+        }
+        before = listed.get(product.id)
+        entry = await self._put_on_list(uow, user_id, product, listed=listed)
+        intake = await self._log(
+            uow,
+            user_id=user_id,
+            product=product,
+            intake_id=intake_id,
+            units=units or entry.units_per_dose,
+            taken_at=taken_at,
+            header_timezone=header_timezone,
+        )
+        state = (
+            "absent" if before is None else "active" if before.active else "inactive"
+        )
+        return SavedDose(entry, intake, state)
+
     async def _put_on_list(
         self,
         uow: Any,
         user_id: str,
         product: SupplementProduct,
         units_per_dose: float | None = None,
+        listed: dict[str, UserSupplement] | None = None,
     ) -> UserSupplement:
         """Add the product to the list, or reactivate its row keeping its dose."""
         repo = uow.supplements
-        listed = {e.product_id: e for e in await repo.list_supplements(user_id)}
+        if listed is None:
+            listed = {e.product_id: e for e in await repo.list_supplements(user_id)}
         current = listed.get(product.id)
         return await repo.save_list_entry(
             UserSupplement(

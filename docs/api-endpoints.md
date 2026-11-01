@@ -446,6 +446,42 @@ handler/schema when implementing; the bullets below are the durable WHY.
   in one unit of work; events and the cache purge follow, and their failures
   are logged, not returned.
 
+### Ghi nhanh for every kind (`POST /v1/log/describe`, `DELETE /v1/log/describe/{request_id}`)
+
+- The + panel's field: one sentence saves food, drinks, activities and
+  supplement doses together. Same limiter, switch, Premium and shared daily
+  quota as the two routes above; the body's `request_id` is the replay key
+  (same rules as `Idempotency-Key`; the fingerprint is the text, `local_date`
+  and `kinds`, not `local_time`).
+- Read first, with no transaction open: one OpenAI-only model call
+  (`describe_log`, never Workers AI) splits the sentence, the person's own
+  supplements are sent with it as refs, and the food part runs through
+  parse-text (a second model call), so a sentence with food can take about
+  20 s. Then one unit of work saves the meal (source `prompt`), the drinks, the
+  activities and the doses, plus the reply and the ids it created.
+- Supplements match the person's list, then a named brand in what they may see
+  (approved catalog rows, then their own), else a new private product from the
+  model's guess (`source=describe`, `estimated=true`, never reviewed or shared).
+  A per-unit guess above 10 times the adult upper limit, or above a fixed
+  ceiling for nutrients with no limit, is dropped as a unit slip. Protein powders, gainers and shakes, by the model's kind or a matched
+  product with calories, are logged as food.
+- `kinds` (default all four) limits what is saved. Items of other kinds, and
+  supplements until `SUPPLEMENTS_ENABLED` is on and the tables exist, come back
+  in `skipped` with a reason; the rest still saves. `nothing_found` is a 200,
+  not 422, and is replayed like any reply.
+- Each `saved` item carries its kind's own payload: `meal` (as
+  `POST /v1/meals/manual` returns it, read fresh, null once deleted), `drink`
+  and `activity` (the two routes above), `intake`, `entry` and `product`
+  (the supplement routes). `local_date` may be tomorrow at most and a year
+  back at most (400 `INVALID_DATE`); today's entries keep their real time,
+  and a dose is never stamped in the future.
+- DELETE deletes everything the sentence saved in one transaction (meal, drink
+  entries with their legacy water meal rows retired, activities, doses) and
+  takes products off the list only if the sentence put them there. 404
+  `DESCRIBE_REQUEST_NOT_FOUND` when no finished sentence has that id, 409
+  while it is still running. A sentence that saved nothing, or a repeated
+  undo, answers zero counts; undos of one id run one after the other.
+
 ### GET meal food item display names
 
 - `Accept-Language: en` (or English primary) → live `food_reference.name`.

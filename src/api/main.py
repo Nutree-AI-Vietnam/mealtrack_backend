@@ -59,6 +59,7 @@ from src.api.routes.v1.health import root_router as root_health_router
 from src.api.routes.v1.health import router as health_router
 from src.api.routes.v1.hydration import router as hydration_router
 from src.api.routes.v1.ingredients import router as ingredients_router
+from src.api.routes.v1.log_describe import router as log_describe_router
 from src.api.routes.v1.meal_catalog import router as meal_catalog_router
 from src.api.routes.v1.meal_catalog_log import router as meal_catalog_log_router
 from src.api.routes.v1.meal_plans import router as meal_plans_router
@@ -398,6 +399,7 @@ app.include_router(recaps_router)
 app.include_router(weight_entries_router)
 app.include_router(movement_router)
 app.include_router(supplements_router)
+app.include_router(log_describe_router)
 app.include_router(well_known_router)
 app.include_router(app_download_router)
 
