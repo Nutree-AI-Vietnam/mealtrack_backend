@@ -1351,6 +1351,39 @@ def get_configured_event_bus() -> EventBus:
         GetSavedSuggestionsQuery,
         GetSavedSuggestionsQueryHandler(cache_service=cache_service),
     )
+    _register_recipe_import_handlers(event_bus)
 
     _configured_event_bus = event_bus
     return _configured_event_bus
+
+
+def _register_recipe_import_handlers(event_bus: EventBus) -> None:
+    """Recipe import: drafts from links, text and photos; saving reuses saved suggestions."""
+    from src.api.dependencies.recipe_import import (
+        get_recipe_image_archive,
+        get_recipe_import_pricer,
+        get_recipe_import_service,
+    )
+    from src.app.commands.recipe_import import (
+        ImportRecipeCommand,
+        SaveImportedRecipeCommand,
+    )
+    from src.app.handlers.command_handlers.recipe_import import (
+        ImportRecipeCommandHandler,
+        SaveImportedRecipeCommandHandler,
+    )
+
+    event_bus.register_handler(
+        ImportRecipeCommand,
+        ImportRecipeCommandHandler(service=get_recipe_import_service()),
+    )
+    event_bus.register_handler(
+        SaveImportedRecipeCommand,
+        SaveImportedRecipeCommandHandler(
+            pricer=get_recipe_import_pricer(),
+            # Resolved per call: the bus is still being assembled here.
+            send=lambda command: event_bus.send(command),
+            uow_factory=AsyncUnitOfWork,
+            image_archive=get_recipe_image_archive(),
+        ),
+    )

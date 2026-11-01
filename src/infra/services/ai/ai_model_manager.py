@@ -31,11 +31,13 @@ TEXT_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.RECIPE,
     ModelPurpose.DISCOVERY,
     ModelPurpose.GENERAL,
+    ModelPurpose.RECIPE_IMPORT,
 }
 VISION_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.MEAL_SCAN,
     ModelPurpose.FOOD_LABEL_SCAN,
     ModelPurpose.INGREDIENT_SCAN,
+    ModelPurpose.RECIPE_IMAGE_SCAN,
 }
 
 FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
@@ -49,6 +51,10 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
         DEFAULT_OPENAI_MODEL,
     ],
     ModelPurpose.INGREDIENT_SCAN: [
+        DEFAULT_OPENAI_MODEL,
+    ],
+    # Recipe photos (cookbook pages, screenshots) and video frame text.
+    ModelPurpose.RECIPE_IMAGE_SCAN: [
         DEFAULT_OPENAI_MODEL,
     ],
     # ==========================================================================
@@ -66,6 +72,8 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
     ],
     ModelPurpose.GENERAL: [DEFAULT_OPENAI_MODEL],
     ModelPurpose.MEAL_PLAN_ADJUSTMENT: [DEFAULT_OPENAI_MODEL],
+    # Reading a recipe out of a page, caption or transcript (long input).
+    ModelPurpose.RECIPE_IMPORT: [DEFAULT_OPENAI_MODEL],
     # ==========================================================================
     # RECIPE TASKS: Luna primary with the general OpenAI model as fallback.
     # ==========================================================================

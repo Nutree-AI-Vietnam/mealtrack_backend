@@ -49,6 +49,7 @@ from src.infra.repositories.food_reference_repository_async import (
 
 if TYPE_CHECKING:
     from src.app.services.describe_log_guard import DescribeLogGuard
+    from src.app.services.recipe_import import RecipeImportGuard
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
 
 # Note: Old handler imports removed - using event-driven architecture now
@@ -812,6 +813,13 @@ def get_describe_log_guard() -> "DescribeLogGuard":
         require_subscription=require_subscription,
         increment_counter=_increment_counter_with_expiry,
     )
+
+
+def get_recipe_import_guard() -> "RecipeImportGuard":
+    """Recipe import switch and per-user daily quota."""
+    from src.bootstrap.recipe_import import build_recipe_import_guard
+
+    return build_recipe_import_guard(_increment_counter_with_expiry)
 
 
 async def _increment_counter_with_expiry(key: str, ttl_seconds: int) -> int | None:

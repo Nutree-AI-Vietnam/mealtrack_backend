@@ -25,6 +25,7 @@ from src.app.services.ai_jobs import (
     MealScanJobExecutor,
     ParseTextJobExecutor,
     PushTokenService,
+    RecipeImportJobExecutor,
 )
 from src.app.services.ai_jobs.executors import AiJobExecutor, Send
 from src.app.services.chat_turn_orchestrator import ChatTurnOrchestrator
@@ -100,6 +101,7 @@ def build_ai_job_executors(
     send: Send,
     orchestrator_factory: Callable[[], ChatTurnOrchestrator],
     parse_text_result: Callable[[Any], dict[str, Any]],
+    recipe_import_result: Callable[[Any], dict[str, Any]],
 ) -> dict[AiJobType, AiJobExecutor]:
     return {
         AiJobType.MEAL_SCAN: MealScanJobExecutor(
@@ -109,6 +111,9 @@ def build_ai_job_executors(
             send=send, to_result=parse_text_result
         ),
         AiJobType.CHAT: ChatJobExecutor(orchestrator_factory=orchestrator_factory),
+        AiJobType.RECIPE_IMPORT: RecipeImportJobExecutor(
+            send=send, to_result=recipe_import_result
+        ),
     }
 
 
@@ -155,6 +160,13 @@ def start_ai_jobs_background(executors: Mapping[AiJobType, AiJobExecutor]) -> bo
         deadline_seconds=settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
         poll_seconds=settings.AI_JOBS_POLL_SECONDS,
         notify_grace_seconds=settings.AI_JOBS_NOTIFY_GRACE_SECONDS,
+        # A video import may download and transcribe before reading.
+        deadline_overrides={
+            AiJobType.RECIPE_IMPORT: max(
+                settings.AI_JOBS_EXECUTION_DEADLINE_SECONDS,
+                settings.RECIPE_IMPORT_TIMEOUT_SECONDS,
+            )
+        },
         ready=probe.ready,
     )
     notifier = AiJobNotifier(

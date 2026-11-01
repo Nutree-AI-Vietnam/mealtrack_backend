@@ -18,6 +18,7 @@ PURPOSE_MAP = {
     "parse_text": ModelPurpose.PARSE_TEXT,
     "general": ModelPurpose.GENERAL,
     "meal_plan_adjustment": ModelPurpose.MEAL_PLAN_ADJUSTMENT,
+    "recipe_import": ModelPurpose.RECIPE_IMPORT,
 }
 
 

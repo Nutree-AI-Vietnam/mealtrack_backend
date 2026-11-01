@@ -23,6 +23,10 @@ from src.domain.exceptions.ai_exceptions import (
     MealResponseLocalizationError,
 )
 from src.domain.exceptions.database_exceptions import DatabaseUnavailableError
+from src.domain.exceptions.recipe_import_exceptions import (
+    RecipeImportError,
+    RecipeImportFailure,
+)
 from src.domain.services.nutrition_calculation_service import (
     AuthoritativeUnitMismatchError,
 )
@@ -141,6 +145,30 @@ def create_http_exception(exc: MealTrackException) -> HTTPException:
     )
 
 
+_RECIPE_IMPORT_STATUS = {
+    RecipeImportFailure.INVALID_SOURCE: status.HTTP_400_BAD_REQUEST,
+    RecipeImportFailure.URL_NOT_ALLOWED: status.HTTP_400_BAD_REQUEST,
+    RecipeImportFailure.SOURCE_UNREACHABLE: status.HTTP_503_SERVICE_UNAVAILABLE,
+    RecipeImportFailure.SOURCE_REJECTED: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    RecipeImportFailure.VIDEO_UNAVAILABLE: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    RecipeImportFailure.NOT_A_RECIPE: status.HTTP_422_UNPROCESSABLE_CONTENT,
+}
+
+
+def recipe_import_http_exception(exc: RecipeImportError) -> HTTPException:
+    """Expected recipe-import outcome; converted without logging."""
+    return HTTPException(
+        status_code=_RECIPE_IMPORT_STATUS.get(
+            exc.failure, status.HTTP_422_UNPROCESSABLE_CONTENT
+        ),
+        detail={
+            "error_code": exc.code,
+            "message": exc.message,
+            "details": exc.details,
+        },
+    )
+
+
 def content_rejected_http_exception(exc: AIContentRejectedError) -> HTTPException:
     """422 for input the AI provider's safety filter refused to process."""
     logger.warning(
@@ -240,6 +268,9 @@ def handle_exception(exc: Exception) -> HTTPException:
 
     if isinstance(exc, AIContentRejectedError):
         return content_rejected_http_exception(exc)
+
+    if isinstance(exc, RecipeImportError):
+        return recipe_import_http_exception(exc)
 
     if isinstance(exc, AIOutputValidationError):
         logger.warning(

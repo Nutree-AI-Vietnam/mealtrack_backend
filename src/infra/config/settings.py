@@ -310,6 +310,53 @@ class Settings(BaseSettings):
         default=True,
         description="Let chat turns with ai_job_id keep generating after disconnect.",
     )
+    # Recipe import from links (web pages, YouTube, TikTok, Instagram,
+    # Facebook), pasted text and photos. See docs/api-recipe-import.md.
+    RECIPE_IMPORT_ENABLED: bool = Field(
+        default=True,
+        description="Accept recipe imports (sync route and recipe_import AI jobs).",
+    )
+    RECIPE_IMPORT_DAILY_LIMIT: int = Field(
+        default=30, ge=1, description="Recipe imports per user per UTC day."
+    )
+    RECIPE_IMPORT_TIMEOUT_SECONDS: float = Field(
+        default=120.0,
+        ge=10,
+        le=600,
+        description="Deadline of POST /v1/recipe-imports/extract, video included.",
+    )
+    RECIPE_IMPORT_FETCH_TIMEOUT_SECONDS: float = Field(
+        default=15.0, ge=2, le=60, description="Fetching one web page or file."
+    )
+    RECIPE_IMPORT_VIDEO_ENABLED: bool = Field(
+        default=True,
+        description="Read video captions with yt-dlp; off uses oEmbed and page tags only.",
+    )
+    RECIPE_IMPORT_VIDEO_MEDIA_ENABLED: bool = Field(
+        default=True,
+        description="Download a video for speech and on-screen text when its caption is not enough.",
+    )
+    RECIPE_IMPORT_VIDEO_MAX_SECONDS: int = Field(default=900, ge=30, le=3600)
+    RECIPE_IMPORT_VIDEO_MAX_BYTES: int = Field(
+        default=150 * 1024 * 1024, ge=1024 * 1024, le=1024 * 1024 * 1024
+    )
+    RECIPE_IMPORT_VIDEO_FRAMES: int = Field(
+        default=8,
+        ge=0,
+        le=16,
+        description="Frames read for on-screen text; 0 skips it.",
+    )
+    RECIPE_IMPORT_MEDIA_CONCURRENCY: int = Field(
+        default=2,
+        ge=1,
+        le=8,
+        description="Videos downloaded and analyzed at once per process.",
+    )
+    RECIPE_IMPORT_TRANSCRIPTION_MODEL: str = Field(default="gpt-4o-mini-transcribe")
+    RECIPE_IMPORT_YTDLP_COOKIES_FILE: str | None = Field(
+        default=None,
+        description="Optional Netscape cookies file for platforms that require a login.",
+    )
     # Server-sent engagement pushes (payment failed) through the notifications outbox
     ENGAGEMENT_PUSH_ENABLED: bool = Field(
         default=False,
