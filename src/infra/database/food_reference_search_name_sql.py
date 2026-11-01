@@ -15,8 +15,8 @@ from src.domain.utils.food_search_text import (
 )
 
 
-def food_reference_search_name_postgresql_sql() -> str:
-    """Postgres expression mirroring ``fold_food_search_text(name_vi + name)``.
+def folded_search_sql(text_sql: str) -> str:
+    """Postgres expression mirroring ``fold_food_search_text`` of ``text_sql``.
 
     ``translate`` drops characters listed past the end of its target string,
     which removes combining marks. Every function used is immutable, as a
@@ -25,10 +25,15 @@ def food_reference_search_name_postgresql_sql() -> str:
     source = FOLD_SOURCE_CHARS + FOLD_DELETED_CHARS
     return (
         "(' ' || btrim(regexp_replace(translate("
-        "coalesce(name_vi, '') || ' ' || name, "
+        f"{text_sql}, "
         f"'{source}', '{FOLD_TARGET_CHARS}'), "
         "'[^a-z0-9]+', ' ', 'g')))"
     )
+
+
+def food_reference_search_name_postgresql_sql() -> str:
+    """Postgres expression mirroring ``fold_food_search_text(name_vi + name)``."""
+    return folded_search_sql("coalesce(name_vi, '') || ' ' || name")
 
 
 class FoodReferenceSearchName(ColumnElement[str]):

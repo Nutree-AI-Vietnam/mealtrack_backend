@@ -75,6 +75,7 @@ from src.api.routes.v1.promo_codes import router as promo_codes_router
 from src.api.routes.v1.recaps import router as recaps_router
 from src.api.routes.v1.referrals import router as referrals_router
 from src.api.routes.v1.saved_suggestions import router as saved_suggestions_router
+from src.api.routes.v1.supplements import router as supplements_router
 from src.api.routes.v1.tdee import router as tdee_router
 from src.api.routes.v1.user_profiles import router as user_profiles_router
 from src.api.routes.v1.users import router as users_router
@@ -396,6 +397,7 @@ app.include_router(progress_router)
 app.include_router(recaps_router)
 app.include_router(weight_entries_router)
 app.include_router(movement_router)
+app.include_router(supplements_router)
 app.include_router(well_known_router)
 app.include_router(app_download_router)
 

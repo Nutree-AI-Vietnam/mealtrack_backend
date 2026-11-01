@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from datetime import date, datetime
 
 from src.domain.model.supplement import (
@@ -45,6 +46,13 @@ class SupplementRepositoryPort(ABC):
         """
 
     @abstractmethod
+    async def products_for(
+        self, user_id: str, product_ids: Iterable[str]
+    ) -> dict[str, SupplementProduct]:
+        """Products by id the user may see, plus those behind their own doses
+        and list rows, so history keeps its names if a shared row is withdrawn."""
+
+    @abstractmethod
     async def add_product(self, product: SupplementProduct) -> tuple[str, ...]:
         """Insert the product; returns the barcodes stored with it.
 
@@ -61,6 +69,18 @@ class SupplementRepositoryPort(ABC):
 
         Raises ``SupplementProductNotFoundError`` when the user may not see it.
         """
+
+    @abstractmethod
+    async def update_list_entry(
+        self,
+        user_id: str,
+        entry_id: str,
+        *,
+        units_per_dose: float | None = None,
+        active: bool | None = None,
+        sort_order: int | None = None,
+    ) -> UserSupplement | None:
+        """Change the given fields of the user's own row; None when it is not theirs."""
 
     @abstractmethod
     async def remove_list_entry(self, user_id: str, entry_id: str) -> bool: ...
@@ -81,7 +101,12 @@ class SupplementRepositoryPort(ABC):
     @abstractmethod
     async def soft_delete_intake(
         self, user_id: str, intake_id: str, deleted_at: datetime
-    ) -> bool: ...
+    ) -> SupplementIntake | None:
+        """Mark the user's own dose deleted; returns it, or None when not theirs."""
+
+    @abstractmethod
+    async def log_days(self, user_id: str) -> list[tuple[date, bool]]:
+        """Each local day with a dose, and whether one was logged on the day itself."""
 
     @abstractmethod
     async def delete_user_data(self, user_id: str) -> int:

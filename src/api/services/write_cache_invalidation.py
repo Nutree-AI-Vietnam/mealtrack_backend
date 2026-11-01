@@ -19,6 +19,7 @@ from src.domain.cache.cache_invalidation_operations import (
     build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
     build_movement_invalidation_operations,
+    build_supplement_invalidation_operations,
 )
 from src.domain.ports.cache_port import CachePort
 
@@ -145,6 +146,27 @@ async def apply_movement_write_cache_invalidation(
     except Exception:
         logger.warning(
             "movement write cache invalidation failed user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+
+async def apply_supplement_write_cache_invalidation(
+    cache: CachePort | None,
+    user_id: str,
+    log_date: date | datetime,
+) -> None:
+    """Purge activity, day-total and streak keys before a dose write returns."""
+    if cache is None or not user_id:
+        return
+    try:
+        await _apply_operations(
+            cache,
+            build_supplement_invalidation_operations(user_id, _as_date(log_date)),
+        )
+    except Exception:
+        logger.warning(
+            "supplement write cache invalidation failed user_id=%s",
             user_id,
             exc_info=True,
         )
