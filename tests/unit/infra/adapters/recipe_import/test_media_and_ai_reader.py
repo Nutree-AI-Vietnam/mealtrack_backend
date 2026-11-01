@@ -356,7 +356,12 @@ async def test_media_analysis_skips_videos_over_the_duration_limit():
 
 
 @pytest.mark.asyncio
-async def test_failed_downloads_raise_a_video_error():
+async def test_failed_downloads_raise_a_video_error(monkeypatch):
+    from src.infra.adapters.recipe_import import video_media_analyzer as module
+
+    monkeypatch.setattr(module, "VIDEO_RETRY_BACKOFF_SECONDS", (0.0, 0.0))
+    attempts: list[int] = []
+
     from src.domain.exceptions.recipe_import_exceptions import (
         RecipeImportError,
         RecipeImportFailure,
@@ -373,6 +378,7 @@ async def test_failed_downloads_raise_a_video_error():
             return False
 
         def download(self, urls: list[str]) -> None:
+            attempts.append(1)
             raise RuntimeError("ERROR: Sign in to confirm you're not a bot")
 
     with pytest.raises(RecipeImportError) as caught:
@@ -383,6 +389,7 @@ async def test_failed_downloads_raise_a_video_error():
         )
 
     assert caught.value.failure == RecipeImportFailure.VIDEO_UNAVAILABLE
+    assert len(attempts) == 3  # the bot check is tried three times
 
 
 def test_prompt_lists_structured_recipe_lines():

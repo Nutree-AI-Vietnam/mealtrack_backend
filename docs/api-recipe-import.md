@@ -45,6 +45,11 @@ text, photos and testing.
   vision call. Short videos show each caption for only 2–6 s, so frames are
   dense. If the platform refuses yt-dlp, oEmbed (TikTok, YouTube) and Open
   Graph tags supply the caption, and the video itself is not analyzed.
+  yt-dlp steps are tried up to 3 times when the platform answers with a bot
+  check or a transient error, since YouTube's bot check on server IPs comes
+  and goes between requests. YouTube serves picture and sound apart; ffmpeg
+  merges them for analysis. A refused video whose fallback yields only a
+  title fails with `RECIPE_VIDEO_UNAVAILABLE`, not `NOT_A_RECIPE`.
 - **Text / photo:** read directly by the AI.
 - The AI returns display text in the request language (`Accept-Language`),
   a canonical English name per ingredient for nutrition lookup, and groups
@@ -135,10 +140,14 @@ captions only. The job type needs migration `20261101091406080591`.
 ## Not built yet
 
 - Data-center IPs are often refused by YouTube and Instagram; login cookies
-  or a proxy are not supported.
+  or a proxy are not supported. In the live test, YouTube answered every
+  other metadata request with its bot check, then after a few dozen
+  requests sent the whole site to Google's CAPTCHA page (HTTP 429) for that
+  IP. Reliable YouTube imports from a server need one of: cookies, a
+  residential proxy, or the YouTube Data API (descriptions only).
 - Tested live on one TikTok video whose amounts are never stated (speech and
-  on-screen ingredient lists only). YouTube, Instagram, Facebook and web
-  pages have not been tried live yet. Amounts and servings the source does
+  on-screen ingredient lists only) and one YouTube video (blocked as above).
+  Instagram, Facebook and web pages have not been tried live yet. Amounts and servings the source does
   not state are AI estimates and vary between runs; the draft says so in
   `warnings` and per line in `amount_estimated`.
 - No edit endpoint for a saved import: delete it and save again.

@@ -35,6 +35,7 @@ from src.infra.adapters.recipe_import.ytdlp_support import (
     choose_subtitle_track,
     subtitle_text,
     video_error,
+    with_video_retries,
     ytdlp_options,
 )
 
@@ -73,10 +74,13 @@ class VideoRecipeSourceReader:
         self, url: str, platform: RecipeSourcePlatform, *, language: str
     ) -> RecipeSourceMaterial:
         try:
-            info = await asyncio.wait_for(
-                asyncio.to_thread(self._extract_info, url, platform), self._timeout
+            info = await with_video_retries(
+                lambda: asyncio.wait_for(
+                    asyncio.to_thread(self._extract_info, url, platform),
+                    self._timeout,
+                )
             )
-        except (RecipeImportError, TimeoutError) as exc:
+        except Exception as exc:
             failure = exc if isinstance(exc, RecipeImportError) else video_error(exc)
             logger.info(
                 "Recipe video metadata unavailable: platform=%s code=%s",
@@ -110,14 +114,13 @@ class VideoRecipeSourceReader:
             socket_timeout=min(self._timeout, 20.0),
             skip_download=True,
         )
-        try:
-            with self._ytdlp_factory(options) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if isinstance(info, dict) and hasattr(ydl, "sanitize_info"):
-                    # Materialise lazy playlist entries into plain lists.
-                    info = ydl.sanitize_info(info)
-        except Exception as exc:
-            raise video_error(exc) from exc
+        # yt-dlp errors propagate as they are, so the caller can tell a bot
+        # check or a flake (retried) from a private video.
+        with self._ytdlp_factory(options) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if isinstance(info, dict) and hasattr(ydl, "sanitize_info"):
+                # Materialise lazy playlist entries into plain lists.
+                info = ydl.sanitize_info(info)
         if not isinstance(info, dict):
             raise video_error(RuntimeError("no metadata"))
         return info

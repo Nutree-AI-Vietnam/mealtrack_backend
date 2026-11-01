@@ -32,7 +32,13 @@ from src.infra.adapters.recipe_import.media_tools import (
     media_tools_available,
 )
 from src.infra.adapters.recipe_import.recipe_ai_reader import RecipeAiReader
-from src.infra.adapters.recipe_import.ytdlp_support import video_error, ytdlp_options
+from src.infra.adapters.recipe_import.ytdlp_support import (
+    VIDEO_ATTEMPTS,
+    VIDEO_RETRY_BACKOFF_SECONDS,
+    is_retryable_video_error,
+    video_error,
+    ytdlp_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +53,12 @@ MAX_FRAMES = 48
 FRAME_READS_AT_ONCE = 12
 VIDEOS_AT_ONCE = 2
 
+# A file with sound and picture; sites that serve them apart (YouTube) are
+# merged by ffmpeg. 720p keeps on-screen captions legible.
 _DOWNLOAD_FORMAT = (
     "best[height<=720][vcodec!=none][acodec!=none]/"
-    "best[vcodec!=none][acodec!=none]/best"
+    "bv*[height<=720]+ba/"
+    "best[vcodec!=none][acodec!=none]/bv*+ba/b"
 )
 
 
@@ -205,14 +214,24 @@ class VideoMediaAnalyzer:
             outtmpl=str(work_dir / "video.%(ext)s"),
             progress_hooks=[stop_when_cancelled],
             concurrent_fragment_downloads=1,
+            merge_output_format="mp4",
         )
-        try:
-            with self._ytdlp_factory(options) as ydl:
-                ydl.download([url])
-        except _DownloadCancelled:
-            raise
-        except Exception as exc:
-            raise video_error(exc) from exc
+        for attempt in range(VIDEO_ATTEMPTS):
+            try:
+                with self._ytdlp_factory(options) as ydl:
+                    ydl.download([url])
+                break
+            except _DownloadCancelled:
+                raise
+            except Exception as exc:
+                last_try = attempt + 1 >= VIDEO_ATTEMPTS
+                if (
+                    last_try
+                    or not is_retryable_video_error(exc)
+                    # Waits out the backoff; True when the import was cancelled.
+                    or cancel.wait(VIDEO_RETRY_BACKOFF_SECONDS[attempt])
+                ):
+                    raise video_error(exc) from exc
         files = [path for path in work_dir.glob("video.*") if path.is_file()]
         if not files:
             raise video_error(RuntimeError("download produced no file"))

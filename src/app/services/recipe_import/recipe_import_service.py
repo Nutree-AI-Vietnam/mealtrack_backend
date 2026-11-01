@@ -185,6 +185,14 @@ class RecipeImportService:
         if extracted is None or not (extracted.is_recipe and extracted.ingredients):
             if analysis_error is not None:
                 raise analysis_error
+            if material.metadata_only:
+                # The platform refused the video (often its bot check on
+                # server IPs); a title alone says nothing about the recipe.
+                raise RecipeImportError(
+                    RecipeImportFailure.VIDEO_UNAVAILABLE,
+                    "The platform did not let us read this video. Try again "
+                    "later, or paste the recipe text instead.",
+                )
             raise RecipeImportError(
                 RecipeImportFailure.NOT_A_RECIPE,
                 "No recipe was found in this video's caption or speech.",

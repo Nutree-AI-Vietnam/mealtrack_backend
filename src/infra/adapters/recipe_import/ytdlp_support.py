@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from src.domain.exceptions.recipe_import_exceptions import (
@@ -31,6 +33,21 @@ _TRANSIENT_MARKERS = (
     "remote end closed",
     "http error 5",
 )
+# Worth another try: YouTube's bot check on data-center IPs comes and goes
+# from one request to the next, as do rate limits and page flakes.
+_RETRY_MARKERS = (
+    *_TRANSIENT_MARKERS,
+    "sign in to confirm",
+    "not a bot",
+    "http error 429",
+    "too many requests",
+    "unable to download webpage",
+    "unable to download api page",
+    "unable to extract",
+    "unexpected response from webpage",
+)
+VIDEO_ATTEMPTS = 3
+VIDEO_RETRY_BACKOFF_SECONDS = (1.0, 2.0)
 _VTT_TIMING = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3}\s+-->")
 _TAG = re.compile(r"<[^>]{0,500}>")
 SUBTITLE_FORMATS = ("json3", "vtt", "srv3", "srv2", "srv1", "ttml")
@@ -72,6 +89,25 @@ def ytdlp_options(
     }
     options.update(extra)
     return options
+
+
+def is_retryable_video_error(exc: BaseException) -> bool:
+    if isinstance(exc, RecipeImportError):
+        return False
+    lower = str(exc).lower()
+    return any(marker in lower for marker in _RETRY_MARKERS)
+
+
+async def with_video_retries[T](operation: Callable[[], Awaitable[T]]) -> T:
+    """Run a yt-dlp step, trying again after a bot check or a flake."""
+    for attempt in range(VIDEO_ATTEMPTS):
+        try:
+            return await operation()
+        except Exception as exc:
+            if attempt + 1 >= VIDEO_ATTEMPTS or not is_retryable_video_error(exc):
+                raise
+            await asyncio.sleep(VIDEO_RETRY_BACKOFF_SECONDS[attempt])
+    raise AssertionError("unreachable")
 
 
 def video_error(exc: BaseException) -> RecipeImportError:

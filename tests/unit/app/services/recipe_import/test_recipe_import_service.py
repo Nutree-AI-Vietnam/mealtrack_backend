@@ -384,3 +384,27 @@ async def test_a_failed_portion_pass_keeps_the_amounts_as_read(nutrition):
     )
 
     assert [item.grams for item in recipe.ingredients] == [500.0, 36.0, 9]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_video_with_only_a_title_reports_the_refusal(nutrition):
+    material = RecipeSourceMaterial(
+        platform=RecipeSourcePlatform.YOUTUBE,
+        source_url="https://www.youtube.com/watch?v=IANwP8_hwEk",
+        description="A Better Way To Cook Pasta? | Techniquely with Lan Lam",
+        metadata_only=True,
+    )
+    extractor = FakeExtractor(
+        results=[ExtractedRecipe(is_recipe=False, name="", language="vi")]
+    )
+
+    with pytest.raises(RecipeImportError) as caught:
+        await _service(
+            video=FakeVideo(material=material), extractor=extractor, nutrition=nutrition
+        ).import_recipe(
+            RecipeImportRequest(
+                language="vi", url="https://www.youtube.com/watch?v=IANwP8_hwEk"
+            )
+        )
+
+    assert caught.value.failure == RecipeImportFailure.VIDEO_UNAVAILABLE

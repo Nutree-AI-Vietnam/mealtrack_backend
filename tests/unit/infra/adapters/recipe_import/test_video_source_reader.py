@@ -39,6 +39,8 @@ class FakeYdl:
     calls: list[dict[str, Any]] = []
     info: Any = INFO
     error: Exception | None = None
+    # Errors raised by the first calls only, then the call succeeds.
+    flakes: list[Exception] = []
 
     def __init__(self, options: dict[str, Any]) -> None:
         self.options = options
@@ -52,6 +54,8 @@ class FakeYdl:
 
     def extract_info(self, url: str, download: bool = False) -> Any:
         assert download is False
+        if FakeYdl.flakes:
+            raise FakeYdl.flakes.pop(0)
         if FakeYdl.error is not None:
             raise FakeYdl.error
         return FakeYdl.info
@@ -62,10 +66,14 @@ class FakeYdl:
 
 
 @pytest.fixture(autouse=True)
-def _reset_fake():
+def _reset_fake(monkeypatch):
+    from src.infra.adapters.recipe_import import ytdlp_support
+
+    monkeypatch.setattr(ytdlp_support, "VIDEO_RETRY_BACKOFF_SECONDS", (0.0, 0.0))
     FakeYdl.calls = []
     FakeYdl.info = INFO
     FakeYdl.error = None
+    FakeYdl.flakes = []
 
 
 def _reader(handler) -> VideoRecipeSourceReader:
@@ -260,3 +268,47 @@ def test_subtitle_text_drops_timing_tags_and_rolling_repeats():
     assert subtitle_text(vtt, "vtt") == "first add onions\nthen 2 cups rice"
     assert subtitle_text(json3, "json3") == "hello world"
     assert subtitle_text("not json", "json3") == ""
+
+
+@pytest.mark.asyncio
+async def test_a_passing_bot_check_is_retried():
+    FakeYdl.flakes = [
+        RuntimeError("ERROR: [youtube] x: Sign in to confirm you're not a bot")
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/vtt"}, content=VTT)
+
+    material = await _reader(handler).read_video(
+        "https://www.tiktok.com/@chef/video/1", TIKTOK, language="vi"
+    )
+
+    assert len(FakeYdl.calls) == 2
+    assert material.description == INFO["description"] and not material.metadata_only
+
+
+@pytest.mark.asyncio
+async def test_a_private_video_is_not_retried():
+    FakeYdl.error = RuntimeError("ERROR: Private video")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    with pytest.raises(RecipeImportError):
+        await _reader(handler).read_video(
+            "https://www.tiktok.com/@a/video/1", TIKTOK, language="en"
+        )
+
+    assert len(FakeYdl.calls) == 1
+
+
+def test_retryable_errors():
+    from src.infra.adapters.recipe_import.ytdlp_support import is_retryable_video_error
+
+    assert is_retryable_video_error(RuntimeError("Sign in to confirm you’re not a bot"))
+    assert is_retryable_video_error(RuntimeError("HTTP Error 429: Too Many Requests"))
+    assert is_retryable_video_error(RuntimeError("Read timed out"))
+    assert not is_retryable_video_error(RuntimeError("Private video"))
+    assert not is_retryable_video_error(
+        RecipeImportError(RecipeImportFailure.VIDEO_UNAVAILABLE, "x")
+    )
