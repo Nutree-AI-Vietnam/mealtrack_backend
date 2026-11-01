@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from src.domain.exceptions.recipe_import_exceptions import (
     RecipeImportError,
     RecipeImportFailure,
@@ -46,12 +48,18 @@ def require_recipe(recipe: ExtractedRecipe) -> ExtractedRecipe:
     )
 
 
-# Caption plus subtitles shorter than this cannot hold a recipe; reading the
-# video directly saves an extraction call.
+# Caption plus subtitles shorter than this, hashtags, mentions and links
+# aside, cannot hold a recipe; reading the video directly saves an
+# extraction call.
 MIN_CAPTION_CHARS = 80
+_NOT_RECIPE_TEXT = re.compile(
+    r"(?:https?://\S+|[#@][\w.]+|[^\w\s,.:;()/%-])", re.UNICODE
+)
 
 
 def has_substantial_caption(material: RecipeSourceMaterial) -> bool:
-    caption = (material.description or "") + (material.subtitles or "")
-    structured = material.structured_recipe is not None
-    return structured or len(caption.strip()) >= MIN_CAPTION_CHARS
+    if material.structured_recipe is not None:
+        return True
+    caption = f"{material.description or ''} {material.subtitles or ''}"
+    text = " ".join(_NOT_RECIPE_TEXT.sub(" ", caption).split())
+    return len(text) >= MIN_CAPTION_CHARS

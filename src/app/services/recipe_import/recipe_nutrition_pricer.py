@@ -61,8 +61,14 @@ class RecipeNutritionPricer:
             )
             for item in ingredients
         ]
+        # Only the eaten part counts: a dipping sauce batch or frying oil is
+        # not all eaten.
         lines = [
-            {"name": item.english_name, "amount": grams, "unit": "g"}
+            {
+                "name": item.english_name,
+                "amount": round(grams * item.eaten_share, 1),
+                "unit": "g",
+            }
             for item, grams in weighed
             if grams is not None
         ]
@@ -110,6 +116,8 @@ def _imported(
         note=item.note,
         optional=item.optional,
         group=item.group,
+        amount_estimated=item.amount_estimated,
+        eaten_share=item.eaten_share,
         macros=(
             RecipeMacros(
                 calories=macros.calories,

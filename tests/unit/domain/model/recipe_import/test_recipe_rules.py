@@ -186,3 +186,73 @@ class TestIngredientWeight:
         assert canonical_unit("Grams") == "g"
         assert canonical_unit("") is None
         assert is_measured_unit("ml") and not is_measured_unit("piece")
+
+
+class TestEstimatedAmounts:
+    def test_sanitizer_keeps_estimates_and_bounds_eaten_share(self):
+        recipe = sanitize_extracted_recipe(
+            {
+                "is_recipe": True,
+                "name": "Cơm tấm",
+                "ingredients": [
+                    {
+                        "name": "sườn",
+                        "english_name": "pork chop",
+                        "quantity": 400,
+                        "unit": "g",
+                        "grams": 400,
+                        "amount_estimated": True,
+                        "eaten_share": None,
+                    },
+                    {
+                        "name": "nước mắm pha",
+                        "english_name": "fish sauce",
+                        "grams": 300,
+                        "eaten_share": 0.25,
+                    },
+                    {
+                        "name": "dầu chiên",
+                        "english_name": "vegetable oil",
+                        "grams": 500,
+                        "eaten_share": 0,
+                    },
+                    {
+                        "name": "nước ngâm",
+                        "english_name": "water",
+                        "grams": 500,
+                        "eaten_share": 7,
+                    },
+                ],
+            },
+            language="vi",
+        )
+
+        shares = [item.eaten_share for item in recipe.ingredients]
+        assert shares == [1.0, 0.25, 0.05, 1.0]
+        assert recipe.ingredients[0].amount_estimated is True
+        assert recipe.ingredients[1].amount_estimated is False
+
+    def test_estimated_amounts_do_not_count_as_stated(self):
+        estimated = ExtractedIngredient(
+            name="a", english_name="a", quantity=100, unit="g", amount_estimated=True
+        )
+        stated = ExtractedIngredient(
+            name="b", english_name="b", quantity=2, unit="piece"
+        )
+
+        recipe = _recipe(estimated, estimated, stated)
+
+        assert recipe.quantified_share == pytest.approx(1 / 3)
+        assert not caption_is_enough(recipe)
+
+    def test_hashtags_and_links_do_not_make_a_caption_substantial(self):
+        caption = (
+            "Làm dĩa cơm tấm siêu sườn ngon quá ạ #ancungtiktok #reviewanngon "
+            "#anngonnaugon #tranquocthai #gdlfamily 😋 @bon.tq1 https://example.com/x"
+        )
+
+        material = RecipeSourceMaterial(
+            platform=RecipeSourcePlatform.TIKTOK, description=caption
+        )
+
+        assert not has_substantial_caption(material)

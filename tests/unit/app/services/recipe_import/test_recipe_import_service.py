@@ -330,3 +330,57 @@ async def test_unsafe_links_are_refused_before_any_read(nutrition):
 
     assert caught.value.failure == RecipeImportFailure.URL_NOT_ALLOWED
     assert web.urls == []
+
+
+@pytest.mark.asyncio
+async def test_the_portion_pass_sizes_lines_before_pricing(nutrition):
+    from src.domain.model.recipe_import.portions import PortionEstimate, PortionLine
+
+    sauce = wings_recipe(
+        servings=None,
+        servings_stated=False,
+        quantities_stated=False,
+        ingredients=(
+            ingredient("cánh gà", "chicken wing, raw", None, None),
+            ingredient("nước mắm", "fish sauce", 1, "cup"),
+        ),
+    )
+    extractor = FakeExtractor(
+        results=[sauce],
+        portions=PortionEstimate(
+            servings=4,
+            lines=(
+                PortionLine(0, 800.0, 800.0, "g", 1.0),
+                PortionLine(1, 288.0, None, None, 0.25),
+            ),
+        ),
+    )
+
+    recipe = await _service(extractor=extractor, nutrition=nutrition).import_recipe(
+        RecipeImportRequest(
+            language="vi", text="Cánh gà chiên nước mắm, chấm kèm nước mắm pha"
+        )
+    )
+
+    assert extractor.sized and extractor.sized[0] is not None
+    assert [line["amount"] for line in nutrition.calls[0]] == [800.0, 72.0]
+    wings, fish_sauce = recipe.ingredients
+    assert (wings.quantity, wings.unit, wings.amount_estimated) == (800.0, "g", True)
+    assert fish_sauce.eaten_share == 0.25
+    assert recipe.servings == 4
+    assert RecipeImportWarning.QUANTITIES_ESTIMATED in recipe.warnings
+
+
+@pytest.mark.asyncio
+async def test_a_failed_portion_pass_keeps_the_amounts_as_read(nutrition):
+    extractor = FakeExtractor(
+        results=[wings_recipe()], portions=RuntimeError("AI down")
+    )
+
+    recipe = await _service(extractor=extractor, nutrition=nutrition).import_recipe(
+        RecipeImportRequest(
+            language="vi", text="Cánh gà 500g, nước mắm 2 muỗng, chiên 12 phút"
+        )
+    )
+
+    assert [item.grams for item in recipe.ingredients] == [500.0, 36.0, 9]

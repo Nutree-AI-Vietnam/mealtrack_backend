@@ -42,6 +42,7 @@ from src.domain.model.recipe_import.link_policy import (
     classify_recipe_url,
     extract_recipe_url,
 )
+from src.domain.model.recipe_import.portions import apply_portion_estimate
 from src.domain.model.recipe_import.quality import (
     caption_is_enough,
     has_substantial_caption,
@@ -100,7 +101,7 @@ class RecipeImportService:
 
     async def import_recipe(self, request: RecipeImportRequest) -> ImportedRecipe:
         read = await self._read(request)
-        extracted = require_recipe(read.extracted)
+        extracted = await self._size(require_recipe(read.extracted))
         priced = await self._pricer.price(
             extracted.ingredients, servings=_servings(extracted, read.material)
         )
@@ -112,6 +113,19 @@ class RecipeImportService:
             source_type=read.source_type,
             warnings=read.warnings,
         )
+
+    async def _size(self, recipe: ExtractedRecipe) -> ExtractedRecipe:
+        """Fill missing amounts and eaten shares in a focused second AI pass.
+
+        A failed pass keeps the amounts as read: the draft is still useful
+        and the review screen shows which lines have no nutrition.
+        """
+        try:
+            estimate = await self._extractor.estimate_portions(recipe)
+        except Exception as exc:  # noqa: BLE001 - sizing is an improvement only
+            logger.warning("Recipe portion pass failed: %s", type(exc).__name__)
+            return recipe
+        return apply_portion_estimate(recipe, estimate)
 
     async def _read(self, request: RecipeImportRequest) -> _Read:
         if request.url:

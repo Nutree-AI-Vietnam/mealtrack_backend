@@ -62,6 +62,10 @@ class ImportedIngredientRequest(BaseModel):
         le=20_000,
         description="Weight of the whole line; scale it when changing a count amount",
     )
+    amount_estimated: bool = False
+    eaten_share: float | None = Field(
+        default=None, gt=0, le=1, description="Part of the line that is eaten; 1 when omitted"
+    )
     note: str | None = Field(default=None, max_length=200)
     optional: bool = False
     group: str | None = Field(default=None, max_length=80)

@@ -39,6 +39,9 @@ def build_imported_recipe(
     if (
         not extracted.quantities_stated
         or extracted.quantified_share < MIN_QUANTIFIED_SHARE_FOR_CAPTION
+        or any(
+            item.amount_estimated for item in extracted.ingredients if not item.optional
+        )
     ):
         found.append(RecipeImportWarning.QUANTITIES_ESTIMATED)
     if priced.nutrition.unpriced_ingredients:
@@ -113,6 +116,8 @@ def saved_suggestion_payload(recipe: ImportedRecipe) -> dict[str, Any]:
                 "amount": item.quantity if item.quantity is not None else 0.0,
                 "unit": item.unit or "",
                 "grams": item.grams,
+                "amount_estimated": item.amount_estimated,
+                "eaten_share": item.eaten_share,
                 "english_name": item.english_name,
                 "note": item.note,
                 "optional": item.optional,

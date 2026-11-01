@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from src.domain.model.recipe_import.enums import RecipeSourcePlatform
 from src.domain.model.recipe_import.extracted_recipe import ExtractedRecipe
+from src.domain.model.recipe_import.portions import PortionEstimate
 from src.domain.model.recipe_import.source_material import (
     RecipeSourceMaterial,
     VideoMediaAnalysis,
@@ -52,6 +53,10 @@ class RecipeExtractorPort(Protocol):
     async def read_photo(
         self, image_bytes: bytes, *, language: str, note: str | None = None
     ) -> ExtractedRecipe: ...
+
+    async def estimate_portions(self, recipe: ExtractedRecipe) -> PortionEstimate:
+        """Weight and eaten share of every line, and the servings."""
+        ...
 
 
 class IngredientNutritionPort(Protocol):

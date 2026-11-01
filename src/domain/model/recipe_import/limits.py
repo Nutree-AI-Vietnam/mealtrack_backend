@@ -39,6 +39,8 @@ MAX_MINUTES = 2_880
 MAX_STEP_MINUTES = 1_440
 MAX_INGREDIENT_GRAMS = 20_000.0
 MAX_INGREDIENT_QUANTITY = 100_000.0
+# Below this, a line hardly counts; keeps a bad estimate from erasing it.
+MIN_EATEN_SHARE = 0.05
 
 # A caption is good enough when the recipe it yields has this much in it;
 # otherwise the video itself is read (speech and on-screen text).

@@ -65,3 +65,31 @@ async def test_nothing_to_weigh_skips_the_lookup(nutrition):
     assert nutrition.calls == []
     assert priced.nutrition.total.calories == 0
     assert priced.nutrition.servings == 4
+
+
+@pytest.mark.asyncio
+async def test_only_the_eaten_share_of_a_line_is_priced(nutrition):
+    items = (
+        ingredient("cánh gà", "chicken wing, raw", 500, "g"),
+        ingredient(
+            "nước mắm pha",
+            "fish sauce",
+            300,
+            "g",
+            eaten_share=0.25,
+            amount_estimated=True,
+        ),
+    )
+
+    priced = await RecipeNutritionPricer(nutrition).price(items, servings=2)
+
+    assert [line["amount"] for line in nutrition.calls[0]] == [500.0, 75.0]
+    sauce = priced.ingredients[1]
+    assert (sauce.grams, sauce.eaten_share, sauce.amount_estimated) == (
+        300.0,
+        0.25,
+        True,
+    )
+    assert sauce.macros is not None and sauce.macros.carbs == pytest.approx(
+        2.7, abs=0.1
+    )

@@ -34,6 +34,7 @@ from src.domain.model.recipe_import.limits import (
     MAX_STEPS,
     MAX_UNIT_CHARS,
 )
+from src.domain.model.recipe_import.portions import eaten_share
 from src.domain.model.recipe_import.text import clamp_servings, clean_text
 
 _MEAL_TYPES = {meal_type.value: meal_type for meal_type in MealType}
@@ -80,18 +81,24 @@ def sanitize_ingredients(raw: Any) -> tuple[ExtractedIngredient, ...]:
         english = clean_text(
             entry.get("english_name"), max_chars=MAX_INGREDIENT_NAME_CHARS
         )
+        quantity = _positive_float(entry.get("quantity"), MAX_INGREDIENT_QUANTITY)
+        unit = clean_text(entry.get("unit"), max_chars=MAX_UNIT_CHARS)
+        grams = _positive_float(entry.get("grams"), MAX_INGREDIENT_GRAMS)
+        if quantity is None and grams is not None:
+            # A weight with no count reads as grams ("300 g pork").
+            quantity, unit = grams, "g"
         items.append(
             ExtractedIngredient(
                 name=name,
                 english_name=english or name,
-                quantity=_positive_float(
-                    entry.get("quantity"), MAX_INGREDIENT_QUANTITY
-                ),
-                unit=clean_text(entry.get("unit"), max_chars=MAX_UNIT_CHARS),
-                grams=_positive_float(entry.get("grams"), MAX_INGREDIENT_GRAMS),
+                quantity=quantity,
+                unit=unit,
+                grams=grams,
                 note=clean_text(entry.get("note"), max_chars=MAX_NOTE_CHARS),
                 optional=bool(entry.get("optional")),
                 group=clean_text(entry.get("group"), max_chars=MAX_GROUP_CHARS),
+                amount_estimated=bool(entry.get("amount_estimated")),
+                eaten_share=eaten_share(entry.get("eaten_share")),
             )
         )
         if len(items) >= MAX_INGREDIENTS:

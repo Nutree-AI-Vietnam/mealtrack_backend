@@ -36,7 +36,15 @@ class ImportedIngredientResponse(BaseModel):
     english_name: str
     quantity: float | None
     unit: str | None
-    grams: float | None = Field(None, description="Weight used for nutrition")
+    grams: float | None = Field(None, description="Weight of the whole line")
+    amount_estimated: bool = Field(
+        ..., description="The source gave no amount; the AI estimated it"
+    )
+    eaten_share: float = Field(
+        ...,
+        description="Part of the line that is eaten (below 1 for a dipping sauce "
+        "batch, frying oil, a drained marinade); macros cover grams * eaten_share",
+    )
     note: str | None
     optional: bool
     group: str | None
@@ -56,6 +64,8 @@ class ImportedIngredientResponse(BaseModel):
             quantity=item.quantity,
             unit=item.unit,
             grams=item.grams,
+            amount_estimated=item.amount_estimated,
+            eaten_share=item.eaten_share,
             note=item.note,
             optional=item.optional,
             group=item.group,

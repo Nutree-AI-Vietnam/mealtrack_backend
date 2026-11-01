@@ -110,16 +110,24 @@ async def extract_frames(
     video: Path,
     work_dir: Path,
     *,
-    count: int,
+    interval_seconds: float,
+    max_frames: int,
     duration: float | None,
-    timeout: float = 60.0,
+    timeout: float = 90.0,
 ) -> list[Path]:
-    """``count`` frames spread evenly over the video, 720 px on the long edge."""
+    """One frame every ``interval_seconds``, spread wider for long videos.
+
+    Short videos show each caption for only a few seconds, so frames are
+    taken densely rather than a fixed handful per video. Frames are 720 px on
+    the long edge.
+    """
+    if max_frames <= 0:
+        return []
     if duration is None:
         duration = await probe_duration(video)
     span = max(duration or 0.0, 1.0)
-    fps = count / span
-    pattern = work_dir / "frame_%02d.jpg"
+    fps = min(1 / interval_seconds, max_frames / span)
+    pattern = work_dir / "frame_%03d.jpg"
     await _run(
         "ffmpeg",
         [
@@ -129,7 +137,7 @@ async def extract_frames(
             "-vf",
             f"fps={fps:.6f},scale='if(gt(iw,ih),720,-2)':'if(gt(iw,ih),-2,720)'",
             "-frames:v",
-            str(count),
+            str(max_frames),
             "-q:v",
             "3",
             "-y",
@@ -137,16 +145,18 @@ async def extract_frames(
         ],
         timeout=timeout,
     )
-    return sorted(work_dir.glob("frame_*.jpg"))[:count]
+    return sorted(work_dir.glob("frame_*.jpg"))[:max_frames]
 
 
 def build_contact_sheets(
     frames: list[Path], *, frames_per_sheet: int = _SHEET_FRAMES
 ) -> list[bytes]:
-    """JPEG grids of up to ``frames_per_sheet`` frames, in video order.
+    """JPEG strips of up to ``frames_per_sheet`` frames, in video order.
 
-    Few frames per sheet keep on-screen text legible after the vision model
-    downsizes the image.
+    Portrait frames sit side by side and landscape frames one above the
+    other: after the vision model scales the image down to 768 px on its
+    short side, each frame keeps the most pixels, so small captions stay
+    readable.
     """
     sheets: list[bytes] = []
     for start in range(0, len(frames), frames_per_sheet):
@@ -156,22 +166,21 @@ def build_contact_sheets(
             with Image.open(frame) as image:
                 images.append(image.convert("RGB"))
         if images:
-            sheets.append(_grid(images))
+            sheets.append(_strip(images))
     return sheets
 
 
-def _grid(images: list[Image.Image]) -> bytes:
+def _strip(images: list[Image.Image]) -> bytes:
     width, height = images[0].size
     portrait = height >= width
-    columns = min(len(images), 2 if portrait or len(images) > 2 else len(images))
-    columns = max(columns, 1)
-    rows = math.ceil(len(images) / columns)
-    cell_w = 540 if portrait else 720
-    cell_h = max(1, round(cell_w * height / width))
-    sheet = Image.new("RGB", (cell_w * columns, cell_h * rows), "white")
+    count = len(images)
+    size = (width * count, height) if portrait else (width, height * count)
+    sheet = Image.new("RGB", size, "white")
     for index, image in enumerate(images):
-        resized = image.resize((cell_w, cell_h))
-        sheet.paste(resized, ((index % columns) * cell_w, (index // columns) * cell_h))
+        if image.size != (width, height):
+            image = image.resize((width, height))
+        offset = (index * width, 0) if portrait else (0, index * height)
+        sheet.paste(image, offset)
     buffer = io.BytesIO()
     sheet.save(buffer, format="JPEG", quality=_JPEG_QUALITY)
     return buffer.getvalue()

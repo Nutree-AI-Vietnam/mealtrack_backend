@@ -37,11 +37,14 @@ class ImportedIngredient:
     english_name: str
     quantity: float | None
     unit: str | None
-    # Weight used for nutrition; None means the line is not counted.
+    # Weight of the whole line; None means the line is not counted.
     grams: float | None
     note: str | None = None
     optional: bool = False
     group: str | None = None
+    amount_estimated: bool = False
+    # Macros cover grams * eaten_share.
+    eaten_share: float = 1.0
     macros: RecipeMacros | None = None
     food_reference_id: int | None = None
     nutrition_source: IngredientNutritionSource | None = None

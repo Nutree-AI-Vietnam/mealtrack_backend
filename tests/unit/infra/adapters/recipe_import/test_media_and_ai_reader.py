@@ -46,17 +46,41 @@ def _frames(tmp_path: Path, count: int, size=(540, 960)) -> list[Path]:
     return paths
 
 
-def test_contact_sheets_hold_four_frames_each(tmp_path):
-    sheets = build_contact_sheets(_frames(tmp_path, 6))
+def test_portrait_frames_sit_side_by_side_four_per_strip(tmp_path):
+    sheets = build_contact_sheets(_frames(tmp_path, 6, size=(405, 720)))
 
     sizes = [Image.open(io.BytesIO(sheet)).size for sheet in sheets]
-    assert sizes == [(1080, 1920), (1080, 960)]
+    assert sizes == [(1620, 720), (810, 720)]
 
 
-def test_landscape_frames_use_wider_cells(tmp_path):
-    sheets = build_contact_sheets(_frames(tmp_path, 2, size=(1280, 720)))
+def test_landscape_frames_stack_vertically(tmp_path):
+    sheets = build_contact_sheets(_frames(tmp_path, 2, size=(720, 405)))
 
-    assert Image.open(io.BytesIO(sheets[0])).size == (1440, 405)
+    assert Image.open(io.BytesIO(sheets[0])).size == (720, 810)
+
+
+def test_captions_merge_in_video_order():
+    from src.infra.adapters.recipe_import.video_media_analyzer import (
+        _merge_frame_texts,
+    )
+
+    merged = _merge_frame_texts(
+        [
+            ["Vắt tỏi, hành tím"],
+            ["Vắt tỏi, hành tím\nBột ngọt\nNước mắm", "Ướp 30 phút"],
+            ["ướp  30 PHÚT", "Thịt xay\n2 trứng"],
+            None,
+            ["Hạt nêm\nBột ngọt\nNước mắm"],
+        ]
+    )
+
+    # The growing list keeps its longest form; the caption shown across two
+    # strips is kept once; items repeated in another caption stay.
+    assert merged == (
+        "Vắt tỏi, hành tím\nBột ngọt\nNước mắm\n\nƯớp 30 phút\n\n"
+        "Thịt xay\n2 trứng\n\nHạt nêm\nBột ngọt\nNước mắm"
+    )
+    assert _merge_frame_texts([None, []]) is None
 
 
 @needs_ffmpeg
@@ -91,10 +115,17 @@ async def test_ffmpeg_extracts_audio_and_even_frames(tmp_path):
     (tmp_path / "f").mkdir()
 
     audio = await extract_audio(video, tmp_path / "a", max_seconds=60)
-    frames = await extract_frames(video, tmp_path / "f", count=4, duration=None)
+    frames = await extract_frames(
+        video, tmp_path / "f", interval_seconds=2.0, max_frames=48, duration=None
+    )
+    (tmp_path / "g").mkdir()
+    capped = await extract_frames(
+        video, tmp_path / "g", interval_seconds=0.5, max_frames=2, duration=6.0
+    )
 
     assert audio is not None and audio.stat().st_size > 0
-    assert len(frames) == 4
+    assert len(frames) == 3  # one every 2 s of a 6 s clip
+    assert len(capped) == len(list((tmp_path / "g").glob("*.jpg"))) == 2
     assert max(Image.open(frames[0]).size) == 720
 
 
@@ -121,7 +152,9 @@ def test_prompt_fences_untrusted_text_and_names_the_language():
     assert "CAPTION:\nNguyên liệu: 500g gà" in prompt
     assert "SPEECH TRANSCRIPT:\nfirst marinate" in prompt
     assert prompt.endswith("Response language: Vietnamese (vi).")
-    assert "Vietnamese" in extraction_system("vi")
+    system = extraction_system("vi")
+    assert "Vietnamese" in system
+    assert "amount_estimated=true" in system and "eaten_share" in system
     assert "{language}" not in extraction_system("vi")
 
 
@@ -146,7 +179,7 @@ async def test_reader_sanitises_ai_output_and_routes_purposes():
     }
     vision = AsyncMock()
     vision.generate_with_vision.return_value = {
-        "lines": ["500g gà", "500g gà", " ", "2 thìa nước mắm"]
+        "captions": ["500g gà\n2 thìa nước mắm", "500g gà\n2 thìa nước mắm", " "]
     }
     reader = RecipeAiReader(generation_service=generation, vision_manager=vision)
 
@@ -160,7 +193,7 @@ async def test_reader_sanitises_ai_output_and_routes_purposes():
     kwargs = generation.generate_meal_plan_async.await_args.kwargs
     assert kwargs["model_purpose"] == "recipe_import"
     assert kwargs["schema"] is RecipeExtractionOutput
-    assert frames == "500g gà\n2 thìa nước mắm"
+    assert frames == ["500g gà\n2 thìa nước mắm"]
     assert (
         vision.generate_with_vision.await_args.kwargs["purpose"]
         == ModelPurpose.RECIPE_IMAGE_SCAN
@@ -236,7 +269,7 @@ def _analyzer(reader: Any, transcriber: Any, ydl_factory: Any, **overrides: Any)
         "transcriber": transcriber,
         "max_seconds": 900,
         "max_bytes": 50 * 1024 * 1024,
-        "frame_count": 4,
+        "max_frames": 4,
         "concurrency": 1,
         "ytdlp_factory": ydl_factory,
     }
@@ -290,7 +323,7 @@ async def test_media_analysis_reads_speech_and_frames_then_cleans_up(tmp_path):
             shutil.copy(source, target)
 
     reader = AsyncMock()
-    reader.read_frames.return_value = "500g gà"
+    reader.read_frames.return_value = ["500g gà"]
     transcriber = AsyncMock()
     transcriber.transcribe.return_value = "ướp gà với nước mắm"
 
@@ -432,9 +465,66 @@ def test_media_analysis_limits_are_fixed_defaults():
 
     analyzer = module.VideoMediaAnalyzer(reader=AsyncMock(), transcriber=None)
 
-    assert (analyzer._max_seconds, analyzer._max_bytes, analyzer._frame_count) == (
+    assert (analyzer._max_seconds, analyzer._max_bytes, analyzer._max_frames) == (
         900,
         150 * 1024 * 1024,
-        8,
+        48,
     )
-    assert module.VIDEOS_AT_ONCE == 2
+    assert (module.FRAME_INTERVAL_SECONDS, module.VIDEOS_AT_ONCE) == (2.0, 2)
+
+
+@pytest.mark.asyncio
+async def test_portion_pass_sends_numbered_lines_and_sanitises_the_answer():
+    import json
+
+    from src.domain.model.recipe_import import ExtractedIngredient, ExtractedRecipe
+    from src.infra.adapters.recipe_import.recipe_prompts import PortionOutput
+
+    generation = AsyncMock()
+    generation.generate_meal_plan_async.return_value = {
+        "servings": 4,
+        "lines": [
+            {"index": 0, "grams": 600, "quantity": 600, "unit": "g", "eaten_share": 1},
+            {
+                "index": 1,
+                "grams": 288,
+                "quantity": None,
+                "unit": None,
+                "eaten_share": 0.3,
+            },
+        ],
+    }
+    reader = RecipeAiReader(generation_service=generation, vision_manager=AsyncMock())
+    recipe = ExtractedRecipe(
+        is_recipe=True,
+        name="Cơm tấm",
+        english_name="Broken rice plate",
+        language="vi",
+        ingredients=(
+            ExtractedIngredient("sườn", "pork chop", group="Sườn"),
+            ExtractedIngredient(
+                "nước mắm", "fish sauce", quantity=1, unit="cup", group="Nước chấm"
+            ),
+        ),
+    )
+
+    estimate = await reader.estimate_portions(recipe)
+
+    kwargs = generation.generate_meal_plan_async.await_args.kwargs
+    assert kwargs["schema"] is PortionOutput
+    sent = json.loads(kwargs["prompt"])
+    assert sent["dish"] == "Broken rice plate"
+    assert sent["lines"][0] == {
+        "index": 0,
+        "part": "Sườn",
+        "name": "sườn",
+        "food": "pork chop",
+        "stated": False,
+        "quantity": None,
+        "unit": None,
+        "optional": False,
+    }
+    assert sent["lines"][1]["stated"] is True and sent["lines"][1]["unit"] == "cup"
+    assert sent["steps"] == []
+    assert estimate.servings == 4
+    assert [line.eaten_share for line in estimate.lines] == [1.0, 0.3]

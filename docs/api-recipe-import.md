@@ -38,28 +38,41 @@ text, photos and testing.
   Long blog posts are cut around the first "ingredients" heading.
 - **Video:** caption, title and subtitles through yt-dlp, without
   downloading. When the caption does not hold a usable recipe (fewer than 3
-  required ingredients, no steps, or under half with amounts), the video is
-  downloaded (up to 15 minutes and 150 MB), speech is transcribed and 8
-  frames are read for on-screen text. If the platform
-  refuses yt-dlp, oEmbed (TikTok, YouTube) and Open Graph tags supply the
-  caption, and the video itself is not analyzed.
+  required ingredients, no steps, or under half with amounts the source
+  states; hashtags, mentions and links do not count as caption), the video is
+  downloaded (up to 15 minutes and 150 MB), speech is transcribed, and one
+  frame every 2 s (at most 48) is read for on-screen captions, 4 frames per
+  vision call. Short videos show each caption for only 2–6 s, so frames are
+  dense. If the platform refuses yt-dlp, oEmbed (TikTok, YouTube) and Open
+  Graph tags supply the caption, and the video itself is not analyzed.
 - **Text / photo:** read directly by the AI.
-- The AI returns display text in the request language (`Accept-Language`)
-  and a canonical English name per ingredient for nutrition lookup.
+- The AI returns display text in the request language (`Accept-Language`),
+  a canonical English name per ingredient for nutrition lookup, and groups
+  lines by part of the dish (marinade, filling, dipping sauce).
+- **Portion pass:** a second, smaller AI call sizes every line: the weight
+  of lines whose amount the source does not give (`amount_estimated`), the
+  `eaten_share` of each part, and the servings when the source has none.
+  Stated amounts are kept. If this call fails, the draft keeps the amounts
+  as read and lists unweighed lines in `nutrition.unpriced_ingredients`.
 
 ## Nutrition (backend is the source of truth)
 
 - Each line is weighed: weights convert exactly; volumes of liquids the
   density table knows convert by density; anything else (2 cloves, 1 can,
   1 cup flour) uses the AI's gram estimate for that line.
-- Grams go through the shared lookup: food reference, then FatSecret, then
-  an AI estimate (`nutrition_source`). Calories always come from the
+- `eaten_share` (0–1) is the part of a line that is eaten: below 1 for a
+  dipping sauce or dressing made as a batch (a serving eats about 30–60 g),
+  deep-frying oil (~0.1) or a drained marinade (~0.3). Macros cover
+  `grams × eaten_share`; `grams` stays the weight the cook uses.
+- Those grams go through the shared lookup: food reference, then FatSecret,
+  then an AI estimate (`nutrition_source`). Calories always come from the
   backend formula over the summed macros.
 - `servings`: as stated by the source, else schema.org yield, else the AI
   estimate; with none of these, total kcal / 550 (1–12).
 - When the user changes the amount of a count ingredient, the app should
   scale `grams` in proportion, or send `grams: null` to drop the line from
-  nutrition.
+  nutrition. `/save` takes `amount_estimated` and `eaten_share` back as the
+  draft gave them.
 
 ## Saving
 
@@ -109,7 +122,7 @@ Recipe import is always on. Its limits are fixed in code, not settings:
 | `/extract` deadline; minimum `recipe_import` job attempt deadline | 120 s | `IMPORT_DEADLINE_SECONDS`, same file |
 | One page, file or subtitle fetch | 15 s | `FETCH_TIMEOUT_SECONDS`, `safe_fetch.py` |
 | Longest / largest video analyzed | 15 min / 150 MB | `video_media_analyzer.py` |
-| Frames read for on-screen text | 8 | `video_media_analyzer.py` |
+| Frames read for on-screen captions | 1 every 2 s, at most 48 | `video_media_analyzer.py` |
 | Videos analyzed at once per process | 2 | `video_media_analyzer.py` |
 
 The only setting is `RECIPE_IMPORT_TRANSCRIPTION_MODEL` (default
@@ -122,6 +135,11 @@ captions only. The job type needs migration `20261101091406080591`.
 ## Not built yet
 
 - Data-center IPs are often refused by YouTube and Instagram; login cookies
-  or a proxy are not supported. Not verified against live platforms.
+  or a proxy are not supported.
+- Tested live on one TikTok video whose amounts are never stated (speech and
+  on-screen ingredient lists only). YouTube, Instagram, Facebook and web
+  pages have not been tried live yet. Amounts and servings the source does
+  not state are AI estimates and vary between runs; the draft says so in
+  `warnings` and per line in `amount_estimated`.
 - No edit endpoint for a saved import: delete it and save again.
 - Push copy for languages other than English and Vietnamese.

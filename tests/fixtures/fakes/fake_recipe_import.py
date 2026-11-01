@@ -13,6 +13,7 @@ from src.domain.model.recipe_import import (
     RecipeStep,
     VideoMediaAnalysis,
 )
+from src.domain.model.recipe_import.portions import PortionEstimate
 from src.domain.services.meal_suggestion.nutrition_lookup_service import (
     IngredientMacros,
     MealMacros,
@@ -114,6 +115,15 @@ class FakeExtractor:
     results: list[ExtractedRecipe] = field(default_factory=list)
     materials: list[RecipeSourceMaterial] = field(default_factory=list)
     photos: list[bytes] = field(default_factory=list)
+    # None leaves amounts as read; an exception makes the pass fail.
+    portions: PortionEstimate | Exception | None = None
+    sized: list[ExtractedRecipe] = field(default_factory=list)
+
+    async def estimate_portions(self, recipe: ExtractedRecipe) -> PortionEstimate:
+        self.sized.append(recipe)
+        if isinstance(self.portions, Exception):
+            raise self.portions
+        return self.portions or PortionEstimate(servings=None, lines=())
 
     async def extract(
         self, material: RecipeSourceMaterial, *, language: str

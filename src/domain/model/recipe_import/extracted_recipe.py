@@ -14,7 +14,10 @@ class ExtractedIngredient:
     ``name`` is for display in the requested language. ``english_name`` is
     the canonical food the nutrition lookup searches for. ``grams`` is the
     weight of the whole line, estimated when the unit is not a weight or a
-    volume (2 cloves, 1 can).
+    volume (2 cloves, 1 can). ``amount_estimated`` marks an amount the
+    source did not give. ``eaten_share`` is the part of the line that is
+    eaten: below 1 for a dipping sauce made in a batch, frying oil, or a
+    marinade that is drained.
     """
 
     name: str
@@ -25,6 +28,15 @@ class ExtractedIngredient:
     note: str | None = None
     optional: bool = False
     group: str | None = None
+    amount_estimated: bool = False
+    eaten_share: float = 1.0
+
+    @property
+    def stated_amount(self) -> bool:
+        """The source itself gave an amount for this line."""
+        return not self.amount_estimated and (
+            self.quantity is not None or self.grams is not None
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,13 +70,8 @@ class ExtractedRecipe:
 
     @property
     def quantified_share(self) -> float:
-        """Share of required ingredients with an amount or weight."""
+        """Share of required ingredients whose amount the source gave."""
         required = [item for item in self.ingredients if not item.optional]
         if not required:
             return 0.0
-        quantified = [
-            item
-            for item in required
-            if item.quantity is not None or item.grams is not None
-        ]
-        return len(quantified) / len(required)
+        return sum(1 for item in required if item.stated_amount) / len(required)
