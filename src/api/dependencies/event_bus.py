@@ -96,6 +96,7 @@ from src.app.handlers.command_handlers import (
     DescribeMovementCommandHandler,
     DiscoverMealsCommandHandler,
     EditMealCommandHandler,
+    FixMealResultCommandHandler,
     FavoriteMealCommandHandler,
     GenerateMealRecipesCommandHandler,
     LogMovementCommandHandler,
@@ -642,6 +643,21 @@ def get_configured_event_bus() -> EventBus:
             provider=fat_secret_service,
             provider_budget=provider_budget,
             provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
+        ),
+    )
+
+    from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
+
+    event_bus.register_handler(
+        FixMealResultCommand,
+        FixMealResultCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            vision_service=vision_service,
+            gpt_parser=gpt_parser,
+            download_image_bytes=ScanImageDownloadAdapter(),
+            event_publisher=queue_publisher,
+            event_bus=event_bus,
+            environment=settings.ENVIRONMENT,
         ),
     )
 

@@ -520,6 +520,36 @@ class AsyncMealRepository(MealRepositoryPort):
         )
         return _map_domain_hydratable_meals(list(result.unique().scalars().all()))
 
+    async def list_recent_fix_result_raw_payloads(
+        self,
+        user_id: str,
+        *,
+        limit: int = 30,
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Newest Fix-result scanner meals with raw AI payload for memory hints."""
+        result = await self.session.execute(
+            select(MealORM.meal_id, MealORM.dish_name, MealORM.raw_ai_response)
+            .where(
+                MealORM.user_id == user_id,
+                MealORM.status == MealStatusEnum.READY,
+                MealORM.is_manually_edited.is_(True),
+                MealORM.source.in_(("scanner", "scan", "scan_by_url")),
+                MealORM.raw_ai_response.is_not(None),
+                MealORM.raw_ai_response.contains("_fix_result_corrections"),
+                _domain_hydratable_active_meal_filter(),
+            )
+            .order_by(
+                func.coalesce(
+                    MealORM.last_edited_at, MealORM.updated_at, MealORM.created_at
+                ).desc()
+            )
+            .limit(limit)
+        )
+        rows: list[tuple[str, str | None, str | None]] = []
+        for meal_id, dish_name, raw in result.all():
+            rows.append((str(meal_id), dish_name, raw))
+        return rows
+
     async def aggregate_linked_ingredient_history(
         self,
         *,
