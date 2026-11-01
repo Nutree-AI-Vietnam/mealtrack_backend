@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
@@ -55,7 +54,6 @@ def ytdlp_options(
     platform: RecipeSourcePlatform,
     *,
     socket_timeout: float,
-    cookies_file: str | None,
     **extra: Any,
 ) -> dict[str, Any]:
     options: dict[str, Any] = {
@@ -72,8 +70,6 @@ def ytdlp_options(
         "logger": _QuietLogger(),
         "allowed_extractors": _EXTRACTORS[platform],
     }
-    if cookies_file and os.path.isfile(cookies_file):
-        options["cookiefile"] = cookies_file
     options.update(extra)
     return options
 

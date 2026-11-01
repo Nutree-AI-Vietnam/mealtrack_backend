@@ -33,6 +33,12 @@ from src.infra.adapters.recipe_import.ytdlp_support import video_error, ytdlp_op
 
 logger = logging.getLogger(__name__)
 
+# Fixed limits: a recipe video is short, and analysis runs in the API process.
+MAX_VIDEO_SECONDS = 900
+MAX_VIDEO_BYTES = 150 * 1024 * 1024
+FRAMES_PER_VIDEO = 8
+VIDEOS_AT_ONCE = 2
+
 _DOWNLOAD_FORMAT = (
     "best[height<=720][vcodec!=none][acodec!=none]/"
     "best[vcodec!=none][acodec!=none]/best"
@@ -49,17 +55,15 @@ class VideoMediaAnalyzer:
         *,
         reader: RecipeAiReader,
         transcriber: OpenAIAudioTranscriber | None,
-        cookies_file: str | None,
-        max_seconds: int,
-        max_bytes: int,
-        frame_count: int,
-        concurrency: int,
+        max_seconds: int = MAX_VIDEO_SECONDS,
+        max_bytes: int = MAX_VIDEO_BYTES,
+        frame_count: int = FRAMES_PER_VIDEO,
+        concurrency: int = VIDEOS_AT_ONCE,
         socket_timeout: float = 20.0,
         ytdlp_factory: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self._reader = reader
         self._transcriber = transcriber
-        self._cookies_file = cookies_file
         self._max_seconds = max_seconds
         self._max_bytes = max_bytes
         self._frame_count = frame_count
@@ -180,7 +184,6 @@ class VideoMediaAnalyzer:
         options = ytdlp_options(
             platform,
             socket_timeout=self._socket_timeout,
-            cookies_file=self._cookies_file,
             format=_DOWNLOAD_FORMAT,
             max_filesize=self._max_bytes,
             outtmpl=str(work_dir / "video.%(ext)s"),

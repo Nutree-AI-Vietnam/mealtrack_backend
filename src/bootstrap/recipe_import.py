@@ -11,6 +11,10 @@ from src.app.services.recipe_import import (
     RecipeImportService,
     RecipeNutritionPricer,
 )
+from src.domain.model.recipe_import.limits import (
+    DAILY_IMPORTS_PER_USER,
+    IMPORT_DEADLINE_SECONDS,
+)
 from src.domain.ports.image_store_port import ImageStorePort
 from src.domain.ports.recipe_import_ports import IngredientNutritionPort
 from src.infra.adapters.meal_generation_service import MealGenerationService
@@ -32,9 +36,7 @@ CounterIncrement = Callable[[str, int], Awaitable[int | None]]
 
 @lru_cache
 def get_recipe_fetcher() -> SafeHttpFetcher:
-    return SafeHttpFetcher(
-        timeout_seconds=get_settings().RECIPE_IMPORT_FETCH_TIMEOUT_SECONDS
-    )
+    return SafeHttpFetcher()
 
 
 @lru_cache
@@ -49,34 +51,20 @@ def get_recipe_ai_reader() -> RecipeAiReader:
 def get_recipe_video_reader() -> VideoRecipeSourceReader:
     settings = get_settings()
     fetcher = get_recipe_fetcher()
-    media: VideoMediaAnalyzer | None = None
-    if (
-        settings.RECIPE_IMPORT_VIDEO_ENABLED
-        and settings.RECIPE_IMPORT_VIDEO_MEDIA_ENABLED
-    ):
-        transcriber = (
-            OpenAIAudioTranscriber(
-                api_key=settings.OPENAI_API_KEY,
-                model=settings.RECIPE_IMPORT_TRANSCRIPTION_MODEL,
-            )
-            if settings.OPENAI_API_KEY
-            else None
+    transcriber = (
+        OpenAIAudioTranscriber(
+            api_key=settings.OPENAI_API_KEY,
+            model=settings.RECIPE_IMPORT_TRANSCRIPTION_MODEL,
         )
-        media = VideoMediaAnalyzer(
-            reader=get_recipe_ai_reader(),
-            transcriber=transcriber,
-            cookies_file=settings.RECIPE_IMPORT_YTDLP_COOKIES_FILE,
-            max_seconds=settings.RECIPE_IMPORT_VIDEO_MAX_SECONDS,
-            max_bytes=settings.RECIPE_IMPORT_VIDEO_MAX_BYTES,
-            frame_count=settings.RECIPE_IMPORT_VIDEO_FRAMES,
-            concurrency=settings.RECIPE_IMPORT_MEDIA_CONCURRENCY,
-        )
+        if settings.OPENAI_API_KEY
+        else None
+    )
     return VideoRecipeSourceReader(
         fetcher=fetcher,
         page_reader=WebRecipePageReader(fetcher),
-        media_analyzer=media,
-        cookies_file=settings.RECIPE_IMPORT_YTDLP_COOKIES_FILE,
-        ytdlp_enabled=settings.RECIPE_IMPORT_VIDEO_ENABLED,
+        media_analyzer=VideoMediaAnalyzer(
+            reader=get_recipe_ai_reader(), transcriber=transcriber
+        ),
     )
 
 
@@ -102,27 +90,15 @@ def build_recipe_image_archive(
 
 
 def build_recipe_import_guard(increment_counter: CounterIncrement) -> RecipeImportGuard:
-    settings = get_settings()
-    return RecipeImportGuard(
-        enabled=settings.RECIPE_IMPORT_ENABLED,
-        daily_limit=settings.RECIPE_IMPORT_DAILY_LIMIT,
-        increment_counter=increment_counter,
-    )
-
-
-def recipe_import_timeout_seconds() -> float:
-    return get_settings().RECIPE_IMPORT_TIMEOUT_SECONDS
+    return RecipeImportGuard(increment_counter=increment_counter)
 
 
 def recipe_import_capabilities() -> dict[str, Any]:
-    settings = get_settings()
-    video = get_recipe_video_reader()
     return {
-        "enabled": settings.RECIPE_IMPORT_ENABLED,
         "sources": ["url", "text", "image"],
         "video_platforms": ["youtube", "tiktok", "instagram", "facebook"],
-        "video_captions": settings.RECIPE_IMPORT_VIDEO_ENABLED,
-        "video_media_analysis": video.media_analysis_enabled,
-        "daily_limit": settings.RECIPE_IMPORT_DAILY_LIMIT,
-        "timeout_seconds": settings.RECIPE_IMPORT_TIMEOUT_SECONDS,
+        # False when ffmpeg is missing: videos are then read from captions only.
+        "video_media_analysis": get_recipe_video_reader().media_analysis_enabled,
+        "daily_limit": DAILY_IMPORTS_PER_USER,
+        "timeout_seconds": IMPORT_DEADLINE_SECONDS,
     }

@@ -32,6 +32,7 @@ BROWSER_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36 "
     "NutreeRecipeImport/1.0"
 )
+FETCH_TIMEOUT_SECONDS = 15.0
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _TRANSIENT_STATUSES = frozenset({408, 425, 429})
 
@@ -84,7 +85,7 @@ class SafeHttpFetcher:
         *,
         resolver: Resolver = resolve_host,
         transport: httpx.AsyncBaseTransport | None = None,
-        timeout_seconds: float = 15.0,
+        timeout_seconds: float = FETCH_TIMEOUT_SECONDS,
         max_redirects: int = 5,
         user_agent: str = BROWSER_USER_AGENT,
     ) -> None:

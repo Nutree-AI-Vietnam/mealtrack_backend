@@ -1,6 +1,12 @@
-"""Size limits for recipe import; every source is untrusted input."""
+"""Fixed limits for recipe import; every source is untrusted input."""
 
 from __future__ import annotations
+
+# Imports per user per UTC day (extract calls and queued jobs).
+DAILY_IMPORTS_PER_USER = 30
+# Longest synchronous import, and the minimum attempt deadline of a
+# recipe_import job: a video may be downloaded and transcribed first.
+IMPORT_DEADLINE_SECONDS = 120.0
 
 MAX_RECIPE_URL_LENGTH = 2048
 MIN_RECIPE_TEXT_LENGTH = 20

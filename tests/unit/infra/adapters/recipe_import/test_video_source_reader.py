@@ -68,7 +68,7 @@ def _reset_fake():
     FakeYdl.error = None
 
 
-def _reader(handler, *, ytdlp_enabled: bool = True) -> VideoRecipeSourceReader:
+def _reader(handler) -> VideoRecipeSourceReader:
     async def resolver(host: str, port: int) -> list[str]:
         return ["93.184.215.14"]
 
@@ -77,8 +77,6 @@ def _reader(handler, *, ytdlp_enabled: bool = True) -> VideoRecipeSourceReader:
         fetcher=fetcher,
         page_reader=WebRecipePageReader(fetcher),
         media_analyzer=None,
-        cookies_file=None,
-        ytdlp_enabled=ytdlp_enabled,
         ytdlp_factory=FakeYdl,
     )
 
@@ -161,19 +159,20 @@ async def test_blocked_video_falls_back_to_oembed_caption():
 
 
 @pytest.mark.asyncio
-async def test_switched_off_ytdlp_uses_page_tags():
+async def test_blocked_instagram_falls_back_to_page_tags():
+    FakeYdl.error = RuntimeError("ERROR: login required")
     page = b'<html><head><meta property="og:description" content="Caption from the page"></head></html>'
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "text/html"}, content=page)
 
-    material = await _reader(handler, ytdlp_enabled=False).read_video(
+    material = await _reader(handler).read_video(
         "https://www.instagram.com/reel/1/",
         RecipeSourcePlatform.INSTAGRAM,
         language="en",
     )
 
-    assert FakeYdl.calls == []
+    assert FakeYdl.calls[0]["allowed_extractors"] == ["instagram"]
     assert material.description == "Caption from the page"
     assert material.metadata_only
 
@@ -220,20 +219,13 @@ def test_errors_are_classified():
     )
 
 
-def test_options_only_enable_the_platform_extractors(tmp_path):
-    cookies = tmp_path / "cookies.txt"
-    cookies.write_text("# Netscape HTTP Cookie File\n")
-
-    options = ytdlp_options(
-        RecipeSourcePlatform.YOUTUBE, socket_timeout=5, cookies_file=str(cookies)
-    )
-    missing = ytdlp_options(
-        RecipeSourcePlatform.FACEBOOK, socket_timeout=5, cookies_file="/nope"
-    )
+def test_options_only_enable_the_platform_extractors():
+    options = ytdlp_options(RecipeSourcePlatform.YOUTUBE, socket_timeout=5)
+    facebook = ytdlp_options(RecipeSourcePlatform.FACEBOOK, socket_timeout=5)
 
     assert options["allowed_extractors"] == ["youtube"]
-    assert options["cookiefile"] == str(cookies)
-    assert "cookiefile" not in missing
+    assert facebook["allowed_extractors"] == ["facebook", "facebook:reel"]
+    assert "cookiefile" not in options
     assert options["cachedir"] is False
 
 

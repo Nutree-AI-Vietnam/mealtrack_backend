@@ -39,8 +39,8 @@ text, photos and testing.
 - **Video:** caption, title and subtitles through yt-dlp, without
   downloading. When the caption does not hold a usable recipe (fewer than 3
   required ingredients, no steps, or under half with amounts), the video is
-  downloaded (≤ `RECIPE_IMPORT_VIDEO_MAX_SECONDS`, ≤ `_MAX_BYTES`), speech
-  is transcribed and frames are read for on-screen text. If the platform
+  downloaded (up to 15 minutes and 150 MB), speech is transcribed and 8
+  frames are read for on-screen text. If the platform
   refuses yt-dlp, oEmbed (TikTok, YouTube) and Open Graph tags supply the
   caption, and the video itself is not analyzed.
 - **Text / photo:** read directly by the AI.
@@ -83,9 +83,8 @@ text, photos and testing.
 | 422 | `RECIPE_VIDEO_UNAVAILABLE` | Private video, login required, or the platform blocked the request |
 | 422 | `NOT_A_RECIPE` | The source holds no recipe; `details.reason` when the AI gave one |
 | 503 | `RECIPE_SOURCE_UNREACHABLE` | Network failure, timeout, or 5xx/429 from the site |
-| 503 | `RECIPE_IMPORT_TIMEOUT` | `/extract` passed `RECIPE_IMPORT_TIMEOUT_SECONDS` |
-| 503 | `RECIPE_IMPORT_DISABLED` | `RECIPE_IMPORT_ENABLED=false` |
-| 429 | `RECIPE_IMPORT_DAILY_LIMIT` | More than `RECIPE_IMPORT_DAILY_LIMIT` imports this UTC day |
+| 503 | `RECIPE_IMPORT_TIMEOUT` | `/extract` took longer than 120 s |
+| 429 | `RECIPE_IMPORT_DAILY_LIMIT` | More than 30 imports this UTC day |
 
 AI failures keep their shared codes (`AI_UNAVAILABLE`, `AI_OUTPUT_INVALID`,
 `AI_CONTENT_REJECTED`). Rate limits: `/extract` 10 a minute, `/save` 30.
@@ -100,21 +99,21 @@ AI failures keep their shared codes (`AI_UNAVAILABLE`, `AI_OUTPUT_INVALID`,
 - Source text is passed to the AI as fenced, untrusted data.
 - The daily quota counts each `/extract` call and each queued job.
 
-## Configuration
+## Limits and configuration
 
-| Setting | Default | Use |
-|---------|---------|-----|
-| `RECIPE_IMPORT_ENABLED` | `true` | Accept imports and saves |
-| `RECIPE_IMPORT_DAILY_LIMIT` | `30` | Imports per user per UTC day |
-| `RECIPE_IMPORT_TIMEOUT_SECONDS` | `120` | `/extract` deadline; also the `recipe_import` job attempt deadline when longer than `AI_JOBS_EXECUTION_DEADLINE_SECONDS` |
-| `RECIPE_IMPORT_FETCH_TIMEOUT_SECONDS` | `15` | One page, file or subtitle fetch |
-| `RECIPE_IMPORT_VIDEO_ENABLED` | `true` | Use yt-dlp; off uses oEmbed/page tags only |
-| `RECIPE_IMPORT_VIDEO_MEDIA_ENABLED` | `true` | Download videos for speech and on-screen text |
-| `RECIPE_IMPORT_VIDEO_MAX_SECONDS` / `_MAX_BYTES` | `900` / 150 MB | Longest/largest video analyzed |
-| `RECIPE_IMPORT_VIDEO_FRAMES` | `8` | Frames read for on-screen text (0 = none) |
-| `RECIPE_IMPORT_MEDIA_CONCURRENCY` | `2` | Videos analyzed at once per process |
-| `RECIPE_IMPORT_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | OpenAI speech-to-text model |
-| `RECIPE_IMPORT_YTDLP_COOKIES_FILE` | unset | Cookies for platforms that need a login |
+Recipe import is always on. Its limits are fixed in code, not settings:
+
+| Limit | Value | Where |
+|-------|-------|-------|
+| Imports per user per UTC day (`/extract` calls and queued jobs) | 30 | `DAILY_IMPORTS_PER_USER`, `src/domain/model/recipe_import/limits.py` |
+| `/extract` deadline; minimum `recipe_import` job attempt deadline | 120 s | `IMPORT_DEADLINE_SECONDS`, same file |
+| One page, file or subtitle fetch | 15 s | `FETCH_TIMEOUT_SECONDS`, `safe_fetch.py` |
+| Longest / largest video analyzed | 15 min / 150 MB | `video_media_analyzer.py` |
+| Frames read for on-screen text | 8 | `video_media_analyzer.py` |
+| Videos analyzed at once per process | 2 | `video_media_analyzer.py` |
+
+The only setting is `RECIPE_IMPORT_TRANSCRIPTION_MODEL` (default
+`gpt-4o-mini-transcribe`), the OpenAI speech-to-text model.
 
 Video analysis needs `ffmpeg` and `ffprobe` (installed in the Docker image);
 without them `capabilities.video_media_analysis` is false and imports use
@@ -122,7 +121,7 @@ captions only. The job type needs migration `20261101091406080591`.
 
 ## Not built yet
 
-- Data-center IPs are often refused by YouTube and Instagram; cookies or a
-  proxy may be needed in production. Not verified against live platforms.
+- Data-center IPs are often refused by YouTube and Instagram; login cookies
+  or a proxy are not supported. Not verified against live platforms.
 - No edit endpoint for a saved import: delete it and save again.
 - Push copy for languages other than English and Vietnamese.

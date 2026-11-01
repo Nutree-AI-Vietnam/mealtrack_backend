@@ -18,7 +18,6 @@ from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.dependencies.recipe_import import (
     get_recipe_import_guard,
     recipe_import_capabilities,
-    recipe_import_timeout_seconds,
 )
 from src.api.exceptions import ExternalServiceException
 from src.api.middleware.accept_language import get_request_language
@@ -37,6 +36,7 @@ from src.app.commands.recipe_import import (
     SaveImportedRecipeCommand,
 )
 from src.app.services.recipe_import import RecipeImportGuard
+from src.domain.model.recipe_import.limits import IMPORT_DEADLINE_SECONDS
 
 router = APIRouter(prefix="/v1/recipe-imports", tags=["Recipe Import"])
 
@@ -71,7 +71,7 @@ async def extract_recipe(
     )
     await guard.admit(user_id)
     try:
-        async with asyncio.timeout(recipe_import_timeout_seconds()):
+        async with asyncio.timeout(IMPORT_DEADLINE_SECONDS):
             recipe = await event_bus.send(command)
     except TimeoutError as exc:
         raise ExternalServiceException(
@@ -88,13 +88,11 @@ async def save_imported_recipe(
     payload: SaveImportedRecipeRequest,
     user_id: str = Depends(get_current_user_id),
     event_bus: Any = Depends(get_configured_event_bus),
-    guard: RecipeImportGuard = Depends(get_recipe_import_guard),
 ) -> dict[str, Any]:
     """Save the reviewed draft; returns the saved item as in GET /v1/saved-suggestions.
 
     Saving the same ``import_id`` again returns the first save.
     """
-    guard.require_enabled()
     command = SaveImportedRecipeCommand(
         user_id=user_id,
         import_id=payload.import_id,

@@ -25,8 +25,7 @@ app. A user who has left the app gets a push instead.
   retries come roughly 5 s, 10 s and 20 s apart.
 - An attempt that runs longer than `AI_JOBS_EXECUTION_DEADLINE_SECONDS`
   fails with `AI_TIMEOUT`, which is transient. A `recipe_import` attempt
-  gets `RECIPE_IMPORT_TIMEOUT_SECONDS` instead when that is longer, since a
-  video may be downloaded and transcribed.
+  gets at least 120 s, since a video may be downloaded and transcribed.
 - A worker that dies keeps its lease (`AI_JOBS_LEASE_SECONDS`) until the lease
   expires. Another worker then takes the job, and the lost attempt still
   counts. If it was the last attempt, the job fails with `WORKER_INTERRUPTED`.
@@ -65,8 +64,7 @@ Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text" | "recipe_impo
   `POST /v1/meals/parse-text` and `POST /v1/recipe-imports/extract`. Field
   errors are `422` with `loc` starting `["body", "input", …]`.
 - A `recipe_import` job also counts against the recipe import daily quota
-  (`429 RECIPE_IMPORT_DAILY_LIMIT`, `503 RECIPE_IMPORT_DISABLED`); see
-  [Recipe import](api-recipe-import.md).
+  (`429 RECIPE_IMPORT_DAILY_LIMIT`); see [Recipe import](api-recipe-import.md).
 - `chat` cannot be queued here (`400 INVALID_JOB_TYPE`); see
   [Chat turns](#chat-turns).
 - The job's language is the request's `Accept-Language`. It picks the push

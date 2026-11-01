@@ -56,16 +56,12 @@ class VideoRecipeSourceReader:
         fetcher: SafeHttpFetcher,
         page_reader: WebRecipePageReader,
         media_analyzer: VideoMediaAnalyzer | None,
-        cookies_file: str | None,
-        ytdlp_enabled: bool = True,
         metadata_timeout_seconds: float = 30.0,
         ytdlp_factory: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self._fetcher = fetcher
         self._pages = page_reader
-        self._media = media_analyzer if ytdlp_enabled else None
-        self._cookies_file = cookies_file
-        self._ytdlp_enabled = ytdlp_enabled
+        self._media = media_analyzer
         self._timeout = metadata_timeout_seconds
         self._ytdlp_factory = ytdlp_factory or _default_ytdlp
 
@@ -77,8 +73,6 @@ class VideoRecipeSourceReader:
         self, url: str, platform: RecipeSourcePlatform, *, language: str
     ) -> RecipeSourceMaterial:
         try:
-            if not self._ytdlp_enabled:
-                raise video_error(RuntimeError("yt-dlp is switched off"))
             info = await asyncio.wait_for(
                 asyncio.to_thread(self._extract_info, url, platform), self._timeout
             )
@@ -114,7 +108,6 @@ class VideoRecipeSourceReader:
         options = ytdlp_options(
             platform,
             socket_timeout=min(self._timeout, 20.0),
-            cookies_file=self._cookies_file,
             skip_download=True,
         )
         try:

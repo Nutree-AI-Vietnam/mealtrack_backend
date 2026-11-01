@@ -15,7 +15,6 @@ from src.bootstrap.recipe_import import (
     build_recipe_image_archive,
     build_recipe_import_service,
     recipe_import_capabilities,
-    recipe_import_timeout_seconds,
 )
 from src.domain.ports.recipe_import_ports import RecipeImageArchivePort
 
@@ -25,7 +24,6 @@ __all__ = [
     "get_recipe_import_pricer",
     "get_recipe_import_service",
     "recipe_import_capabilities",
-    "recipe_import_timeout_seconds",
 ]
 
 

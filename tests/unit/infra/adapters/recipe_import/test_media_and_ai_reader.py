@@ -234,7 +234,6 @@ def _analyzer(reader: Any, transcriber: Any, ydl_factory: Any, **overrides: Any)
     options = {
         "reader": reader,
         "transcriber": transcriber,
-        "cookies_file": None,
         "max_seconds": 900,
         "max_bytes": 50 * 1024 * 1024,
         "frame_count": 4,
@@ -426,3 +425,16 @@ async def test_transcriber_sends_audio_and_skips_empty_or_huge_files(tmp_path):
     assert await transcriber.transcribe(empty) is None
     assert await transcriber.transcribe(huge) is None
     assert client.audio.transcriptions.create.await_count == 1
+
+
+def test_media_analysis_limits_are_fixed_defaults():
+    from src.infra.adapters.recipe_import import video_media_analyzer as module
+
+    analyzer = module.VideoMediaAnalyzer(reader=AsyncMock(), transcriber=None)
+
+    assert (analyzer._max_seconds, analyzer._max_bytes, analyzer._frame_count) == (
+        900,
+        150 * 1024 * 1024,
+        8,
+    )
+    assert module.VIDEOS_AT_ONCE == 2

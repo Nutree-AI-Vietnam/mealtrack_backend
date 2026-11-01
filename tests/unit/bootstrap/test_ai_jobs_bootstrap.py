@@ -79,7 +79,6 @@ def _settings(**overrides) -> SimpleNamespace:
         "AI_JOBS_EXECUTION_DEADLINE_SECONDS": 90,
         "AI_JOBS_POLL_SECONDS": 1.0,
         "AI_JOBS_NOTIFY_GRACE_SECONDS": 8,
-        "RECIPE_IMPORT_TIMEOUT_SECONDS": 120.0,
     }
     return SimpleNamespace(**{**values, **overrides})
 

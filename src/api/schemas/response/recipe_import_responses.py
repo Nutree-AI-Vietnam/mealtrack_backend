@@ -176,10 +176,8 @@ class ImportedRecipeResponse(BaseModel):
 
 
 class RecipeImportCapabilitiesResponse(BaseModel):
-    enabled: bool
     sources: list[str]
     video_platforms: list[str]
-    video_captions: bool
     video_media_analysis: bool = Field(
         ...,
         description="Speech and on-screen text are read when a caption is not enough",

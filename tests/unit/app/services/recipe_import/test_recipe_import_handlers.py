@@ -10,7 +10,6 @@ import pytest
 from tests.fixtures.fakes.fake_recipe_import import FakeNutrition
 
 from src.api.exceptions import (
-    ExternalServiceException,
     TooManyRequestsException,
     handle_exception,
 )
@@ -233,9 +232,7 @@ class TestGuard:
     @pytest.mark.asyncio
     async def test_counts_each_import_against_the_daily_limit(self):
         counter = AsyncMock(side_effect=[1, 2, 3])
-        guard = RecipeImportGuard(
-            enabled=True, daily_limit=2, increment_counter=counter
-        )
+        guard = RecipeImportGuard(increment_counter=counter, daily_limit=2)
 
         await guard.admit("u1")
         await guard.admit("u1")
@@ -247,22 +244,17 @@ class TestGuard:
         assert key.startswith("recipe_import:quota:u1:")
 
     @pytest.mark.asyncio
-    async def test_switched_off_imports_fail_before_counting(self):
-        counter = AsyncMock()
-        guard = RecipeImportGuard(
-            enabled=False, daily_limit=5, increment_counter=counter
-        )
+    async def test_the_default_limit_is_thirty_a_day(self):
+        guard = RecipeImportGuard(increment_counter=AsyncMock(return_value=30))
 
-        with pytest.raises(ExternalServiceException) as caught:
-            await guard.admit("u1")
+        await guard.admit("u1")
 
-        assert caught.value.error_code == "RECIPE_IMPORT_DISABLED"
-        counter.assert_not_awaited()
+        assert guard.daily_limit == 30
 
     @pytest.mark.asyncio
     async def test_redis_outage_allows_the_import(self):
         guard = RecipeImportGuard(
-            enabled=True, daily_limit=1, increment_counter=AsyncMock(return_value=None)
+            increment_counter=AsyncMock(return_value=None), daily_limit=1
         )
 
         await guard.admit("u1")

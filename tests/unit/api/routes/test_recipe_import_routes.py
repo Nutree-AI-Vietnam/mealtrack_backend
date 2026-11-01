@@ -103,13 +103,10 @@ class FakeBus:
         return self.result
 
 
-def _guard(
-    *, enabled: bool = True, limit: int = 30, counter: AsyncMock | None = None
-) -> RecipeImportGuard:
+def _guard(*, limit: int = 30, counter: AsyncMock | None = None) -> RecipeImportGuard:
     return RecipeImportGuard(
-        enabled=enabled,
-        daily_limit=limit,
         increment_counter=counter or AsyncMock(return_value=1),
+        daily_limit=limit,
     )
 
 
@@ -247,14 +244,6 @@ class TestExtract:
             "detail": {"error_code": failure.value, "message": "nope", "details": {}}
         }
 
-    def test_switched_off_is_503(self, make_client):
-        response = make_client(FakeBus(), _guard(enabled=False)).post(
-            "/v1/recipe-imports/extract", json={"url": "https://a.com/x"}
-        )
-
-        assert response.status_code == 503
-        assert response.json()["detail"]["error_code"] == "RECIPE_IMPORT_DISABLED"
-
     def test_daily_quota_is_429(self, make_client):
         bus = FakeBus()
 
@@ -270,9 +259,7 @@ class TestExtract:
         async def slow(command: Any) -> Any:
             await asyncio.sleep(5)
 
-        monkeypatch.setattr(
-            recipe_imports_mod, "recipe_import_timeout_seconds", lambda: 0.05
-        )
+        monkeypatch.setattr(recipe_imports_mod, "IMPORT_DEADLINE_SECONDS", 0.05)
 
         response = make_client(FakeBus(slow)).post(
             "/v1/recipe-imports/extract", json={"url": "https://a.com/x"}
@@ -366,12 +353,15 @@ class TestSave:
         assert response.status_code == 422
         assert bus.sent == []
 
-    def test_switched_off_saves_fail(self, make_client):
-        response = make_client(FakeBus({}), _guard(enabled=False)).post(
+    def test_saving_does_not_count_against_the_import_quota(self, make_client):
+        counter = AsyncMock(return_value=99)
+
+        response = make_client(FakeBus({}), _guard(limit=1, counter=counter)).post(
             "/v1/recipe-imports/save", json=self._body()
         )
 
-        assert response.status_code == 503
+        assert response.status_code == 200
+        counter.assert_not_awaited()
 
 
 def test_capabilities(make_client, monkeypatch):
@@ -379,10 +369,8 @@ def test_capabilities(make_client, monkeypatch):
         recipe_imports_mod,
         "recipe_import_capabilities",
         lambda: {
-            "enabled": True,
             "sources": ["url", "text", "image"],
             "video_platforms": ["youtube", "tiktok", "instagram", "facebook"],
-            "video_captions": True,
             "video_media_analysis": False,
             "daily_limit": 30,
             "timeout_seconds": 120.0,
@@ -392,7 +380,22 @@ def test_capabilities(make_client, monkeypatch):
     response = make_client(FakeBus()).get("/v1/recipe-imports/capabilities")
 
     assert response.status_code == 200
-    assert response.json()["video_media_analysis"] is False
+    assert response.json() == {
+        "sources": ["url", "text", "image"],
+        "video_platforms": ["youtube", "tiktok", "instagram", "facebook"],
+        "video_media_analysis": False,
+        "daily_limit": 30,
+        "timeout_seconds": 120.0,
+    }
+
+
+def test_capabilities_report_the_fixed_limits():
+    from src.bootstrap.recipe_import import recipe_import_capabilities
+
+    capabilities = recipe_import_capabilities()
+
+    assert (capabilities["daily_limit"], capabilities["timeout_seconds"]) == (30, 120.0)
+    assert isinstance(capabilities["video_media_analysis"], bool)
 
 
 class TestRecipeImportJob:

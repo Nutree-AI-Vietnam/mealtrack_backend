@@ -1,4 +1,4 @@
-"""Pre-flight checks for recipe imports: the server switch and a daily quota.
+"""Daily quota for recipe imports.
 
 Each import may call the AI several times and download a video, so a
 per-user daily quota sits on top of the per-minute route limit.
@@ -11,7 +11,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
 
-from src.api.exceptions import ExternalServiceException, TooManyRequestsException
+from src.api.exceptions import TooManyRequestsException
+from src.domain.model.recipe_import.limits import DAILY_IMPORTS_PER_USER
 from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -27,19 +28,11 @@ def recipe_import_quota_key(user_id: str, day: date) -> str:
 
 @dataclass(frozen=True)
 class RecipeImportGuard:
-    enabled: bool
-    daily_limit: int
     increment_counter: CounterIncrement
-
-    def require_enabled(self) -> None:
-        if not self.enabled:
-            raise ExternalServiceException(
-                "Recipe import is switched off", "RECIPE_IMPORT_DISABLED"
-            )
+    daily_limit: int = DAILY_IMPORTS_PER_USER
 
     async def admit(self, user_id: str) -> None:
-        """Raise when the switch is off or today's imports are used up."""
-        self.require_enabled()
+        """Count this import; raise when today's imports are used up."""
         count = await self.increment_counter(
             recipe_import_quota_key(user_id, utc_now().date()),
             RECIPE_IMPORT_QUOTA_TTL_SECONDS,
