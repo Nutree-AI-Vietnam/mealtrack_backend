@@ -48,6 +48,7 @@ from src.api.routes.v1.admin_meal_catalog import router as admin_meal_catalog_ro
 from src.api.routes.v1.admin_meal_catalog_import import (
     router as admin_meal_catalog_import_router,
 )
+from src.api.routes.v1.admin_supplements import router as admin_supplements_router
 from src.api.routes.v1.ai_jobs import router as ai_jobs_router
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.api.routes.v1.chat import router as chat_router
@@ -363,6 +364,7 @@ app.include_router(root_health_router)
 app.include_router(health_router)
 app.include_router(admin_meal_catalog_router)
 app.include_router(admin_meal_catalog_import_router)
+app.include_router(admin_supplements_router)
 app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)

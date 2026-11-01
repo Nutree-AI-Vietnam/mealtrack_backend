@@ -50,6 +50,7 @@ BODY_LIMITS: dict[str, int] = {
     "/v1/admin/meal-catalog/import": CATALOG_MANIFEST_BODY_MAX_BYTES,
     "/v1/admin/meal-catalog/resolve": CATALOG_MANIFEST_BODY_MAX_BYTES,
     "/v1/admin/meal-catalog/enrich": CATALOG_MANIFEST_BODY_MAX_BYTES,
+    "/v1/admin/supplements/import": CATALOG_MANIFEST_BODY_MAX_BYTES,
     "/v1/users/avatar/photo": AVATAR_PHOTO_BODY_MAX_BYTES,
 }
 
