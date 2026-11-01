@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.api.dependencies.ai_jobs import get_ai_job_service
 from src.app.services.ai_jobs import AiJobService
+from src.bootstrap.supplements import supplements_available
 from src.domain.model.chat import (
     CHAT_CONTEXT_VERSION,
     CHAT_DAILY_TURN_BUDGET,
@@ -159,3 +160,20 @@ async def chat_capabilities() -> dict[str, object]:
         "prompt_version": CHAT_PROMPT_VERSION,
         "context_version": CHAT_CONTEXT_VERSION,
     }
+
+
+@router.get("/supplements")
+async def supplement_capabilities() -> dict[str, object]:
+    """Advertise supplement logging once it is switched on and migrated."""
+    try:
+        if not await supplements_available():
+            raise RuntimeError("supplement logging is off or not migrated")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "SUPPLEMENTS_UNAVAILABLE",
+                "message": "Supplement logging is not available",
+            },
+        ) from exc
+    return {"supplements": True}

@@ -211,6 +211,11 @@ class Settings(BaseSettings):
         ge=1,
         description="Describe sentences per user per local day, across both routes.",
     )
+    # Supplement logging: products, a person's list and doses (own tables).
+    SUPPLEMENTS_ENABLED: bool = Field(
+        default=False,
+        description="Advertise supplement logging in GET /v1/capabilities/supplements.",
+    )
     # Streak restore: a restored day bridges a streak; packs are store consumables.
     STREAK_SAME_DAY_LOGS_FROM: date | None = Field(
         default=None,

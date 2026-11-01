@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         StreakRestoreRepositoryPort,
     )
     from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
+    from src.domain.ports.supplement_repository_port import SupplementRepositoryPort
     from src.domain.ports.user_repository_port import UserRepositoryPort
     from src.domain.ports.weekly_recap_repository_port import (
         WeeklyRecapRepositoryPort,
@@ -73,6 +74,7 @@ class AsyncUnitOfWorkPort(ABC):
     push_tokens: PushTokenRepositoryPort
     engagement_pushes: EngagementPushRepositoryPort
     streak_restores: StreakRestoreRepositoryPort
+    supplements: SupplementRepositoryPort
 
     @abstractmethod
     async def __aenter__(self) -> AsyncUnitOfWorkPort:

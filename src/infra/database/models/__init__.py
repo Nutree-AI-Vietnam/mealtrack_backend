@@ -80,6 +80,12 @@ from .saved_suggestion_step import SavedSuggestionStepModel
 from .serving_phrase_translation import ServingPhraseTranslationModel
 from .streak_restore import StreakRestoreLedgerORM
 from .subscription import Subscription
+from .supplement import (
+    SupplementIntakeORM,
+    SupplementProductBarcodeORM,
+    SupplementProductORM,
+    UserSupplementORM,
+)
 from .user.body_fat_visual_profile import BodyFatVisualProfile
 from .user.profile import UserProfile
 from .user.profile_preference import UserProfilePreference
@@ -236,6 +242,11 @@ __all__ = [
     "MovementEntryORM",
     # Streak restores
     "StreakRestoreLedgerORM",
+    # Supplements
+    "SupplementIntakeORM",
+    "SupplementProductBarcodeORM",
+    "SupplementProductORM",
+    "UserSupplementORM",
     "WeeklyMealPlanORM",
     "WeeklyMealPlanSlotORM",
     "WeeklyPlanLateLegacySlotRepairORM",
