@@ -28,6 +28,7 @@ from src.infra.monitoring.connectors import (
     filter_safe_context,
     filter_safe_tags,
 )
+from src.infra.monitoring.secret_redaction import redact_sentry_event
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +336,7 @@ def _drop_expected_events(
     connection" log is dropped when its visible exception is only
     cancellation.
     """
+    redact_sentry_event(event)
     exc_info = hint.get("exc_info")
     exc = exc_info[1] if exc_info else None
     if isinstance(exc, AIContentRejectedError):
