@@ -300,6 +300,67 @@ async def test_summary_cached_before_a_meal_write_is_recomputed():
 
 
 @pytest.mark.asyncio
+async def test_tdee_checkout_does_not_overlap_the_summary_session():
+    """TDEE opens its own session. The summary session must already be closed."""
+    uow = _uow()
+    open_sessions = 0
+    open_during_tdee: int | None = None
+
+    async def enter():
+        nonlocal open_sessions
+        open_sessions += 1
+        return uow
+
+    async def exit_uow(*_args):
+        nonlocal open_sessions
+        open_sessions -= 1
+        return False
+
+    uow.__aenter__ = AsyncMock(side_effect=enter)
+    uow.__aexit__ = AsyncMock(side_effect=exit_uow)
+
+    async def load_targets(_user_id, _cache):
+        nonlocal open_during_tdee
+        open_during_tdee = open_sessions
+        return _targets()
+
+    handler = GetProgressSummaryQueryHandler()
+    with (
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.AsyncUnitOfWork",
+            return_value=uow,
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_user_timezone_async",
+            new=AsyncMock(return_value="UTC"),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.datetime"
+        ) as mock_dt,
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.load_tdee_targets",
+            new=AsyncMock(side_effect=load_targets),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_today_live_target",
+            new=AsyncMock(return_value=1850.0),
+        ),
+    ):
+        mock_dt.now.return_value = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+        await handler.handle(
+            GetProgressSummaryQuery(
+                user_id=USER_ID,
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 1),
+            )
+        )
+
+    assert open_during_tdee == 0
+    assert uow.__aenter__.await_count >= 2
+    assert open_sessions == 0
+
+
+@pytest.mark.asyncio
 async def test_another_user_id_is_passed_to_all_repos():
     other = "33333333-3333-3333-3333-333333333333"
     uow = _uow()

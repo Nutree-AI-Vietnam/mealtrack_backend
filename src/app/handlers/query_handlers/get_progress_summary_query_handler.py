@@ -66,7 +66,12 @@ class GetProgressSummaryQueryHandler(
             start, end = clamp_progress_window(
                 query.start_date, query.end_date, created_on=created_on, today=today
             )
-            targets = await load_tdee_targets(query.user_id, self.cache_service)
+
+        # TDEE opens its own session. Close this one first so a summary
+        # request never holds a connection while waiting for a second checkout.
+        targets = await load_tdee_targets(query.user_id, self.cache_service)
+
+        async with AsyncUnitOfWork() as uow:
             auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                 await uow.users.get_weekly_auto_adjust(query.user_id)
             )
