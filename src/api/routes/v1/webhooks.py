@@ -24,6 +24,10 @@ from src.api.routes.v1.webhook_lookup_parsing import (
     parse_platform,
     parse_timestamp,
 )
+from src.api.routes.v1.webhook_play_renewal_cancel import (
+    PlayRenewal,
+    cancel_play_renewals,
+)
 from src.api.routes.v1.webhook_referral_funnel import (
     _get_subscription_service,
     credit_referral_on_purchase,
@@ -194,6 +198,7 @@ async def revenuecat_webhook(
         event.get("product_id")
     )
     refund_plan = await fetch_revenuecat_plan(event) if lifetime_refund else None
+    play_renewals: list[PlayRenewal] = []
 
     # Get user
     async with AsyncUnitOfWork() as uow:
@@ -247,7 +252,7 @@ async def revenuecat_webhook(
         elif event_type == "NON_RENEWING_PURCHASE" and is_lifetime_product(
             event.get("product_id")
         ):
-            await handle_lifetime_purchase(
+            play_renewals = await handle_lifetime_purchase(
                 uow, user, event, affiliate_handler, event_publisher
             )
 
@@ -285,6 +290,9 @@ async def revenuecat_webhook(
     # After the commit, so a read that refills the cache sees the new balance.
     if pack is not None and pack.owner_id:
         await purge_streak_cache(get_cache_service(), pack.owner_id)
+
+    # After the commit too: the lifetime grant is stored whatever Google does.
+    await cancel_play_renewals(event, play_renewals)
 
     increment_metric(
         "webhook.revenuecat.processed",

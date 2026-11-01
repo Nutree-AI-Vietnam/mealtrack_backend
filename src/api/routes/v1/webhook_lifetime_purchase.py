@@ -5,7 +5,9 @@ A lifetime purchase arrives as a NON_RENEWING_PURCHASE and grants
 converts that plan's row; a lifetime bought outright gets its own row. A
 refund arrives as CANCELLATION (RevenueCat has no REFUND event type) and
 marks only the row of that purchase refunded. Renewing-product events leave
-lifetime rows alone; see ``webhook_subscription_rows``.
+lifetime rows alone; see ``webhook_subscription_rows``. A purchase made on
+Play also returns the buyer's Play plans that still renew, for the router to
+cancel after commit (``webhook_play_renewal_cancel``).
 """
 
 from __future__ import annotations
@@ -19,6 +21,10 @@ from src.api.base_dependencies import get_subscription_service
 from src.api.exceptions import ExternalServiceException
 from src.api.routes.v1.webhook_lifecycle_events import notify_affiliate
 from src.api.routes.v1.webhook_lookup_parsing import parse_platform, parse_timestamp
+from src.api.routes.v1.webhook_play_renewal_cancel import (
+    PlayRenewal,
+    play_renewals_to_cancel,
+)
 from src.api.routes.v1.webhook_referral_funnel import (
     credit_referral_on_purchase,
     revoke_referral_on_refund,
@@ -63,8 +69,12 @@ async def handle_lifetime_purchase(
     event: dict[str, Any],
     affiliate_handler: Any = None,
     event_publisher: Any = None,
-) -> None:
-    """Store a lifetime purchase on its own or the upgraded row, once per transaction."""
+) -> list[PlayRenewal]:
+    """Store a lifetime purchase on its own or the upgraded row, once per transaction.
+
+    Returns the buyer's Play plans that still renew when the purchase was
+    made on Play; none for a purchase stored before.
+    """
     product_id = lifetime_base_id(event.get("product_id"))
     subscriber_id = _subscriber_id(event)
     transaction_id = event.get("transaction_id")
@@ -72,7 +82,7 @@ async def handle_lifetime_purchase(
         # Rows are keyed by subscriber, so a retry could never store this one.
         # Premium still comes from RevenueCat's entitlement.
         logger.error("Lifetime purchase without app_user_id: user_id=%s", user.id)
-        return
+        return []
 
     await lock_subscriber(uow, subscriber_id)
     rows = await load_subscriber_rows(uow, subscriber_id)
@@ -83,10 +93,12 @@ async def handle_lifetime_purchase(
             user.id,
             transaction_id,
         )
-        return
+        return []
     if not transaction_id:
         logger.warning("Lifetime purchase has no transaction id: user_id=%s", user.id)
 
+    # Read before the upgrade turns the yearly row into lifetime.
+    play_renewals = play_renewals_to_cancel(rows, user, event)
     reported_before = had_paid_purchase(rows)
     subscription = _purchase_row(
         rows, product_id, user, sandbox=is_sandbox_event(event)
@@ -127,6 +139,7 @@ async def handle_lifetime_purchase(
             user_id=str(user.id),
         )
     await _drop_billing_issue_push(uow, user)
+    return play_renewals
 
 
 def _purchase_row(

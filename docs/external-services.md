@@ -27,6 +27,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | OpenAI translation | **Optional read-path localization** | Return canonical local/provider results without translated names; do not block startup or writes |
 | OpenAI, FatSecret, USDA, OFF, Brave, image stock APIs | **Optional enrichment** | Degrade to local/prior results when safe |
 | Sentry | **Optional observability** | Local logs only; facade no-ops without DSN |
+| Google Play Developer API | **Optional** (renewal cancel) | Log ERROR (Sentry); the webhook still answers 200 |
 | nutree-affiliate | **Optional partner** | Validate may return inactive; lifecycle events retry via outbox |
 
 **Redis rule:** optional caches are never the source of truth for nutrition,
@@ -70,6 +71,7 @@ durable.
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_lifetime_purchase.py`, `webhook_subscription_rows.py`, `webhook_lifecycle_events.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
+| Google Play Developer API | `src/infra/adapters/google_play_subscription_adapter.py`, `google_play_auth.py`; webhook side `webhook_play_renewal_cancel.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
@@ -270,6 +272,38 @@ optional caches.
   (`store_platform`: App Store, Play Store, and RC_BILLING, Paddle and Stripe
   for web); any other store moves every row. `parse_platform`, which records
   new rows, is unchanged.
+
+### Play renewal cancel on lifetime
+
+- A lifetime purchase or upgrade from `PLAY_STORE` turns off the renewal of
+  the event user's Play plan rows that still grant access (same environment,
+  not lifetime; `cancelled` rows already stopped). The rows are read before
+  the upgrade converts the yearly row and cancelled after the unit of work
+  commits, inline, within a 10 s budget. Every failure is logged at ERROR
+  (Sentry) and the webhook still answers 200. A redelivered purchase is
+  already stored and cancels nothing. App Store, web and plan events never
+  call Google.
+- RevenueCat names a Play subscription only by order id (`GPA.…`, the row's
+  `store_transaction_id`). `orders.get` returns its `purchaseToken`, then
+  `purchases.subscriptionsv2.cancel` with `DEVELOPER_REQUESTED_STOP_PAYMENTS`
+  stops the next payment; access lasts to the end of the paid period.
+- Signed in as the backend's Firebase service account (`FIREBASE_CREDENTIALS`
+  file, else `FIREBASE_SERVICE_ACCOUNT_JSON`), scope `androidpublisher`.
+- Settings: `GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED` (default `false`; off also
+  without a usable service account or package), `GOOGLE_PLAY_PACKAGE_NAME`
+  (`com.nutreeai.mobile` in production, `com.nutreeai.mobile.staging` on
+  staging), `GOOGLE_PLAY_CANCEL_SANDBOX` (default `false`; sandbox events are
+  skipped unless on), `GOOGLE_PLAY_API_TIMEOUT_SECONDS` (default 3).
+- Setup per environment, before turning the switch on:
+  1. In that backend's Firebase project's Google Cloud console, enable the
+     Google Play Android Developer API.
+  2. In Play Console, Users and permissions, invite the service account email
+     (`client_email` of the key) with app access to that environment's app,
+     and grant "View financial data" and "Manage orders and subscriptions".
+     A 401/403 right after the invite can be Play still applying it.
+- QA on staging: set `GOOGLE_PLAY_CANCEL_SANDBOX=true`, buy the yearly then
+  the upgrade on the Play internal build with a license tester, and check for
+  "Play renewal cancelled" in the logs and "Canceled" in Play's subscriptions.
 
 ### Payment-failed push
 
