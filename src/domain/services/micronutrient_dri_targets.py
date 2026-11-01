@@ -1,93 +1,76 @@
-"""Individual daily micronutrient goals from DRI tables.
+"""Personal daily goals and upper limits for the 22 tracked nutrients.
 
-Methodology: IOM (2000) Dietary Reference Intakes — Applications in Dietary
-Assessment. The individual goal is the RDA (or AI / CDRR when no RDA exists).
+Goals follow Vietnam's 2016 recommended intakes by sex, age and diet
+(``vn_nutrient_tables``); upper limits come from ``upper_limits``. Sodium,
+added sugar and saturated fat are limits to stay under, so their goal is the
+limit itself.
 
-Iron RDA: IOM 2001 micronutrients. Potassium AI and sodium CDRR: NASEM 2019.
-Fiber AI: IOM 14 g / 1000 kcal. Added sugar: DGA <10% of energy, not a DRI.
-
-NRF scoring still uses the FDA Daily Value table in ``nrf_score.py``.
+The Nutrition Score keeps its own fixed FDA Daily Values in ``nrf_score.py``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from src.domain.services.fiber_target import fiber_daily_target_g
+from src.domain.model.nutrition import vn_nutrient_tables as vn
+from src.domain.model.nutrition.upper_limits import UpperLimit, upper_limits_for
 
 _DEFAULT_AGE = 30
-_KCAL_PER_G_SUGAR = 4.0
-_ADDED_SUGAR_ENERGY_FRACTION = 0.10
-_ADDED_SUGAR_FALLBACK_G = 50.0
+_DEFAULT_PLAN_CALORIES = 2000.0
+_KCAL_PER_G_FAT = 9.0
+_PLANT_BASED_DIETS = frozenset({"vegetarian", "vegan"})
 
 
 @dataclass(frozen=True)
-class MicronutrientDailyTargets:
-    iron_mg: float
+class MicronutrientGoals:
+    """Goals keyed like ``Micros`` (21 keys) plus fiber, and the upper limits."""
+
+    goals: dict[str, float]
     fiber_g: float
-    potassium_mg: float
-    sodium_mg: float
-    added_sugar_g: float
+    upper_limits: dict[str, UpperLimit]
 
 
-def micronutrient_daily_targets(
+def micronutrient_daily_goals(
     *,
     gender: str | None,
-    age_years: int | None,
+    age: int | None,
     plan_calories: float,
-) -> MicronutrientDailyTargets:
-    age = age_years if age_years and age_years > 0 else _DEFAULT_AGE
-    male = _is_male(gender)
-    return MicronutrientDailyTargets(
-        iron_mg=_iron_rda_mg(male, age),
-        fiber_g=fiber_daily_target_g(plan_calories),
-        potassium_mg=_potassium_ai_mg(male, age),
-        sodium_mg=_sodium_cdrr_mg(age),
-        added_sugar_g=_added_sugar_limit_g(plan_calories),
+    dietary_preferences: Iterable[str] | None = None,
+) -> MicronutrientGoals:
+    years = age if age and age > 0 else _DEFAULT_AGE
+    male = is_male(gender)
+    goals = {
+        key: vn.lookup(table, years, male) for key, table in vn.GOAL_TABLES.items()
+    }
+    if is_plant_based(dietary_preferences):
+        goals["iron"] = vn.lookup(vn.IRON_PLANT_BASED_MG, years, male)
+    goals["sodium"] = vn.SODIUM_LIMIT_MG
+    goals["added_sugar"] = vn.ADDED_SUGAR_LIMIT_G
+    goals["saturated_fat"] = saturated_fat_limit_g(plan_calories)
+    return MicronutrientGoals(
+        goals=goals,
+        fiber_g=fiber_goal_g(gender, age),
+        upper_limits=upper_limits_for(years, male),
     )
 
 
-def _is_male(gender: str | None) -> bool:
+def fiber_goal_g(gender: str | None, age: int | None) -> float:
+    years = age if age and age > 0 else _DEFAULT_AGE
+    return vn.lookup(vn.FIBER_G, years, is_male(gender))
+
+
+def saturated_fat_limit_g(plan_calories: float) -> float:
+    kcal = plan_calories if plan_calories > 0 else _DEFAULT_PLAN_CALORIES
+    return round(vn.SATURATED_FAT_ENERGY_FRACTION * kcal / _KCAL_PER_G_FAT, 1)
+
+
+def is_male(gender: str | None) -> bool:
     return (gender or "").strip().lower() in {"male", "m"}
 
 
-def _iron_rda_mg(male: bool, age: int) -> float:
-    if age <= 3:
-        return 7.0
-    if age <= 8:
-        return 10.0
-    if age <= 13:
-        return 8.0
-    if age <= 18:
-        return 11.0 if male else 15.0
-    if age <= 50:
-        return 8.0 if male else 18.0
-    return 8.0
-
-
-def _potassium_ai_mg(male: bool, age: int) -> float:
-    if age <= 3:
-        return 2000.0
-    if age <= 8:
-        return 2300.0
-    if age <= 13:
-        return 2500.0 if male else 2300.0
-    if age <= 18:
-        return 3000.0 if male else 2300.0
-    return 3400.0 if male else 2600.0
-
-
-def _sodium_cdrr_mg(age: int) -> float:
-    if age <= 3:
-        return 1200.0
-    if age <= 8:
-        return 1500.0
-    if age <= 13:
-        return 1800.0
-    return 2300.0
-
-
-def _added_sugar_limit_g(plan_calories: float) -> float:
-    if plan_calories <= 0:
-        return _ADDED_SUGAR_FALLBACK_G
-    return round(_ADDED_SUGAR_ENERGY_FRACTION * plan_calories / _KCAL_PER_G_SUGAR, 1)
+def is_plant_based(dietary_preferences: Iterable[str] | None) -> bool:
+    return any(
+        str(value).strip().casefold() in _PLANT_BASED_DIETS
+        for value in (dietary_preferences or ())
+    )

@@ -272,7 +272,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                     auto_adjust,
                 )
 
-        result = {
+        result: dict[str, Any] = {
             "date": target_date.isoformat(),
             "user_id": query.user_id,
             "total_calories": round(net_calories, 1),
@@ -289,6 +289,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
         if user_profile is not None:
             result["gender"] = user_profile.gender
             result["age"] = user_profile.age
+            result["dietary_preferences"] = list(user_profile.dietary_preferences or [])
 
         if target_calories is not None:
             result["target_calories"] = target_calories

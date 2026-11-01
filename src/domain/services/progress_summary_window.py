@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 PROGRESS_SUMMARY_CAP_DAYS = 400
+# include=trends loads every food item and movement entry, so its window is
+# capped at the longest Trends period (3 weeks plus the 3 weeks before it).
+TRENDS_MAX_DAYS = 42
 
 
 def clamp_progress_window(

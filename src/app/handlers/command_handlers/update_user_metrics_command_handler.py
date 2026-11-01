@@ -62,7 +62,18 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         or command.body_fat_percent_provided
         or command.reset_water_goal
         or command.weight_loss_kg_per_week is not None
+        or command.dietary_preferences is not None
     )
+
+
+def _clean_diets(values: list[str]) -> list[str]:
+    """Trimmed, de-duplicated diets in the order given; blanks dropped."""
+    cleaned: list[str] = []
+    for value in values:
+        diet = str(value).strip()
+        if diet and diet not in cleaned:
+            cleaned.append(diet)
+    return cleaned
 
 
 @handles(UpdateUserMetricsCommand)
@@ -104,6 +115,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                tuple(profile.dietary_preferences or ()),
             )
             journey_inputs_before = (
                 profile.target_weight_kg,
@@ -278,6 +290,9 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                         get_zone_info(timezone_name)
                     ).date()
 
+            if command.dietary_preferences is not None:
+                profile.dietary_preferences = _clean_diets(command.dietary_preferences)
+
             # Ensure this profile is marked as current
             profile.is_current = True
 
@@ -292,6 +307,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                tuple(profile.dietary_preferences or ()),
             )
             journey_inputs_after = (
                 profile.target_weight_kg,

@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
@@ -31,7 +32,7 @@ class UpdateFitnessGoalRequest(BaseModel):
 
 
 class UpdateMetricsRequest(BaseModel):
-    """Unified update for weight, job type, training, body fat, fitness goal, and target weight."""
+    """Unified update for weight, job type, training, body fat, goal, target weight and diet."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -90,6 +91,11 @@ class UpdateMetricsRequest(BaseModel):
         ge=0.01,
         le=1.0,
         description="Lose-weight pace in kg per week. Omitted keeps the current pace.",
+    )
+    dietary_preferences: list[Annotated[str, Field(max_length=40)]] | None = Field(
+        None,
+        max_length=10,
+        description="Diets such as vegetarian or keto. Omitted keeps the saved list.",
     )
 
     @model_validator(mode="after")
