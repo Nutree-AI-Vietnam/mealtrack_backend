@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Any, cast
 
@@ -46,6 +47,8 @@ _TABLES = (
     "ix_supplement_products_name_search_trgm",
 )
 
+
+logger = logging.getLogger(__name__)
 
 # A positive answer is final for the process: tables are never dropped while
 # it runs. A negative one is checked again on the next call.
@@ -183,7 +186,16 @@ class AsyncSupplementRepository(SupplementProductReads, SupplementRepositoryPort
             )
             .order_by(Intake.taken_at)
         )
-        return [intake_to_domain(row) for row in rows.scalars().all()]
+        doses = []
+        for row in rows.scalars().all():
+            try:
+                doses.append(intake_to_domain(row))
+            except ValueError:
+                # One malformed snapshot must not take down Home or Trends.
+                logger.warning(
+                    "Skipping invalid supplement dose %s", row.id, exc_info=True
+                )
+        return doses
 
     async def soft_delete_intake(
         self, user_id: str, intake_id: str, deleted_at: datetime
@@ -202,6 +214,17 @@ class AsyncSupplementRepository(SupplementProductReads, SupplementRepositoryPort
             )
         ).scalar_one_or_none()
         return None if row is None else intake_to_domain(row)
+
+    async def max_updated_at_for_local_day(
+        self, target_date: date, user_id: str, user_tz: str | None = None
+    ) -> datetime | None:
+        # local_date is stored at log time, so the zone is not needed here.
+        result = await self.session.execute(
+            select(func.max(Intake.updated_at)).where(
+                Intake.user_id == user_id, Intake.local_date == target_date
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def log_days(self, user_id: str) -> list[tuple[date, bool]]:
         result = await self.session.execute(

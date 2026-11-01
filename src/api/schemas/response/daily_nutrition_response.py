@@ -96,6 +96,13 @@ class DailyNutritionResponse(BaseModel):
     added_sugar_g: float | None = Field(
         None, description="Logged added sugar; null if not logged"
     )
+    supplement_micros: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Supplement doses' share of the day's micros, already in the "
+            "highlights above (estimated doses leave sodium out)"
+        ),
+    )
     micro_targets: MicronutrientTargetsResponse | None = Field(
         None, description="Personal daily goals for the five Home highlight nutrients"
     )

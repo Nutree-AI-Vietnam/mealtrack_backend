@@ -12,6 +12,7 @@ from src.domain.model.meal import MealStatus
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import merge_micros
+from src.domain.model.supplement.day_totals import supplement_day_totals
 from src.domain.services.meal_calorie_service import effective_meal_calories
 from src.domain.services.nrf_score import highlight_amounts, nrf_progress_fields
 from src.domain.services.progress_summary_window import logged_status_for_meal_count
@@ -32,6 +33,7 @@ def build_progress_day_row(
     drink_macros: Macros | None = None,
     drink_micros: Any = None,
     trends_movement: list[Any] | None = None,
+    supplement_doses: list[Any] | None = None,
 ) -> dict[str, Any]:
     """One summary row; ``trends_movement`` (even empty) adds the Trends fields."""
     protein = 0.0
@@ -74,6 +76,9 @@ def build_progress_day_row(
         if meal_count == 0 and (protein or carbs or fat or fiber):
             meal_count = 1
     nrf = nrf_progress_fields(protein, fiber, day_micros)
+    # Highlights count doses as Home does; the food-quality score does not.
+    supplements = supplement_day_totals(supplement_doses or [])
+    highlights = merge_micros(day_micros, supplements.home_highlight_micros())
     row: dict[str, Any] = {
         "date": day.isoformat(),
         "protein_g": round(protein, 1),
@@ -94,8 +99,8 @@ def build_progress_day_row(
         "is_cheat_day": is_cheat_day,
         "nrf_quality": nrf["nrf_quality"],
         "nrf_coverage": nrf["nrf_coverage"],
-        **highlight_amounts(day_micros),
+        **highlight_amounts(highlights),
     }
     if trends_movement is not None:
-        row.update(trends_day_fields(meals, drink_micros, trends_movement))
+        row.update(trends_day_fields(meals, drink_micros, trends_movement, supplements))
     return row

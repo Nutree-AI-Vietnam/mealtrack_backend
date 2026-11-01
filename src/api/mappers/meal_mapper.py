@@ -1012,6 +1012,7 @@ class MealMapper:
             weekly_context=weekly_context,
             hydration=hydration,
             iron_mg=daily_macros_data.get("iron_mg"),
+            supplement_micros=daily_macros_data.get("supplement_micros") or {},
             potassium_mg=daily_macros_data.get("potassium_mg"),
             sodium_mg=daily_macros_data.get("sodium_mg"),
             added_sugar_g=daily_macros_data.get("added_sugar_g"),

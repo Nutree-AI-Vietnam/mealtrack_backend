@@ -261,6 +261,19 @@ handler/schema when implementing; the bullets below are the durable WHY.
   weekly recap, and appears in `GET /v1/activities/daily` as
   `type: "supplement"` with `title`, `brand`, `units`, `unit_label` and
   `estimated`.
+- Doses add vitamins and minerals, never calories, macros or meals. They
+  count in the iron, potassium and sodium highlights of
+  `GET /v1/meals/daily/macros` and of every `GET /v1/progress/summary` day,
+  except Ghi nhanh estimates toward sodium, which Home shows as a limit gauge.
+  The day-totals reply adds `supplement_micros`, the doses' share already in
+  those highlights, so the app can add it to totals it rebuilds from its meal
+  cache. The food-quality score (`nrf_*`) stays food-only.
+- With `include=trends`, day `micros` include every dose, and each day adds
+  `supplement_micros`, `supplement_estimated_micros` (the Ghi nhanh part,
+  which never warns), `supplement_vitamin_a_preformed` (µg from non-estimated
+  doses; an unknown vitamin A form counts in full) and `supplement_doses`.
+  Supplement folate is µg DFE (folic acid × 1.7). Amounts printed as 0 never
+  count.
 
 ### Meal recommendations (catalog)
 
