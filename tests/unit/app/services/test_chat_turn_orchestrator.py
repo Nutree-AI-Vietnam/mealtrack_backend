@@ -2639,6 +2639,35 @@ async def test_regenerate_reuses_the_stored_user_message():
 
 
 @pytest.mark.asyncio
+async def test_resume_regeneration_replays_a_finished_reply_without_a_new_turn():
+    claim = _claim(
+        kind=ChatClaimKind.REPLAY,
+        assistant_content="Already answered.",
+        status=ChatMessageStatus.COMPLETED,
+    )
+    repo = _FakeRepo(claim=claim)
+    repo.reopen_result = (claim, "next_meal")
+    orchestrator = _orchestrator(repo, completion=_FakeCompletion(["Do not call."]))
+
+    prepared = await orchestrator.prepare_regeneration(
+        user_id="u1",
+        assistant_message_id="m-asst",
+        content="How much is left?",
+        locale="en",
+        header_timezone="UTC",
+        user_language="en",
+        resume=True,
+    )
+
+    assert repo.reopened["resume"] is True
+    assert repo.reopened["assistant_message_id"] == "m-asst"
+    assert prepared.claim.kind is ChatClaimKind.REPLAY
+    assert prepared.slot_acquired is False
+    assert prepared.claim.assistant_message.id == "m-asst"
+    assert prepared.claim.user_message.id == "m-user"
+
+
+@pytest.mark.asyncio
 async def test_regenerate_with_new_text_edits_the_stored_question():
     claim = _claim()
     repo = _FakeRepo(claim=claim)

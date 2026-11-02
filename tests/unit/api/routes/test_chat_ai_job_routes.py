@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from slowapi.errors import RateLimitExceeded
-from tests.fixtures.fakes.fake_ai_jobs import JOB_ID, make_claim
+from tests.fixtures.fakes.fake_ai_jobs import JOB_ID, make_claim, make_error, make_job
 
 from src.api.dependencies.ai_jobs import get_ai_job_service, get_chat_job_runner
 from src.api.dependencies.auth import get_current_user_id
@@ -28,7 +28,7 @@ from src.domain.exceptions.ai_job_exceptions import (
     AiJobsUnavailableError,
 )
 from src.domain.exceptions.chat_exceptions import ChatBusyError
-from src.domain.model.ai_jobs import AiJobType, NewAiJob
+from src.domain.model.ai_jobs import AiJobStatus, AiJobType, NewAiJob
 from src.domain.model.ai_jobs.policies import ai_job_request_fingerprint
 from src.domain.model.chat import (
     ChatClaimKind,
@@ -64,14 +64,21 @@ class _StubOrchestrator:
         prepare_error=None,
         claim_kind=ChatClaimKind.NEW,
         thread_payload=None,
+        user_idempotency_key=None,
+        owns_row=True,
     ):
         self.prepare_error = prepare_error
         self.claim_kind = claim_kind
+        self.user_idempotency_key = user_idempotency_key
+        self.owns_row = owns_row
+        self.cleared_reply = False
+        self.replay_content: str | None = None
         self.events = ORCHESTRATOR_EVENTS
         self.thread_payload = thread_payload or _thread_payload()
         self.prepared: PreparedChatTurn | None = None
         self.prepare_kwargs: dict | None = None
         self.regenerated: str | None = None
+        self.regenerate_kwargs: dict | None = None
         self.streamed = False
         self.released: list[PreparedChatTurn] = []
         self.abandoned: list[tuple[PreparedChatTurn, str]] = []
@@ -99,6 +106,7 @@ class _StubOrchestrator:
             created_at=now,
             updated_at=now,
             content=kwargs["content"],
+            idempotency_key=self.user_idempotency_key,
         )
         assistant = ChatMessage(
             id="m-asst",
@@ -113,6 +121,7 @@ class _StubOrchestrator:
             thread=thread,
             user_message=user,
             assistant_message=assistant,
+            owns_row=self.owns_row,
         )
         self.prepared = PreparedChatTurn(
             claim=claim,
@@ -124,19 +133,72 @@ class _StubOrchestrator:
         return self.prepared
 
     async def prepare_regeneration(self, **kwargs):
-        self.regenerated = kwargs.pop("assistant_message_id")
-        return await self.prepare_turn(**kwargs)
+        self.regenerate_kwargs = dict(kwargs)
+        self.regenerated = kwargs.get("assistant_message_id")
+        if kwargs.get("resume"):
+            # The saved reply stays completed. Resume only reads it.
+            self.replay_content = "Saved coach reply"
+            now = utc_now()
+            thread = ChatThread(id="t1", user_id="u1", created_at=now, updated_at=now)
+            user = ChatMessage(
+                id="m-user",
+                thread_id="t1",
+                role=ChatMessageRole.USER,
+                status=ChatMessageStatus.COMPLETED,
+                created_at=now,
+                updated_at=now,
+                content=kwargs["content"],
+                idempotency_key=self.user_idempotency_key,
+            )
+            assistant = ChatMessage(
+                id="m-asst",
+                thread_id="t1",
+                role=ChatMessageRole.ASSISTANT,
+                status=ChatMessageStatus.COMPLETED,
+                created_at=now,
+                updated_at=now,
+                content=self.replay_content,
+            )
+            claim = ChatTurnClaim(
+                kind=ChatClaimKind.REPLAY,
+                thread=thread,
+                user_message=user,
+                assistant_message=assistant,
+                owns_row=False,
+            )
+            self.prepared = PreparedChatTurn(
+                claim=claim,
+                content=kwargs["content"],
+                locale="en",
+                header_timezone=kwargs.get("header_timezone"),
+                started=0.0,
+            )
+            return self.prepared
+        self.cleared_reply = True
+        forwarded = {
+            key: value
+            for key, value in kwargs.items()
+            if key not in {"assistant_message_id", "resume"}
+        }
+        return await self.prepare_turn(**forwarded)
 
     async def stream_prepared(self, **kwargs):
         self.streamed = True
+        if self.replay_content is not None:
+            yield ChatSseEvent(
+                event="message.completed",
+                data={"text": self.replay_content, "replayed": True},
+            )
+            return
         for event in self.events:
             yield event
 
 
 class _StubAiJobs:
-    def __init__(self, *, claim=None, error=None, active_job_id=None):
+    def __init__(self, *, claim=None, error=None, active_job_id=None, job=None):
         self.start_chat_job = AsyncMock(return_value=claim, side_effect=error)
         self.find_active_chat_job_id = AsyncMock(return_value=active_job_id)
+        self.get = AsyncMock(return_value=job)
 
 
 class _StubRunner:
@@ -324,7 +386,6 @@ class TestPostWithJob:
                 lambda: _StubAiJobs(error=RuntimeError("database is down")),
                 id="unexpected-error",
             ),
-            pytest.param(lambda: _StubAiJobs(claim=None), id="no-claim"),
         ],
     )
     def test_turn_without_a_claim_streams_directly(self, ai_jobs):
@@ -355,6 +416,42 @@ class TestPostWithJob:
         (record,) = [r for r in caplog.records if r.name == chat_mod.logger.name]
         assert record.getMessage() == "Chat turn streams without an AI job"
         assert isinstance(record.exc_info[1], RuntimeError)
+
+    def test_first_send_regenerate_conflict_abandons_the_reopened_row(self):
+        """The first send cleared the saved reply, so this request owns it.
+
+        A job id that belongs to another request must fail that row. A
+        reused row (owns_row false) is only released.
+        """
+        orchestrator = _StubOrchestrator()
+        ai_jobs = _StubAiJobs(error=AiJobConflictError(JOB_ID))
+
+        response = _post(
+            orchestrator,
+            ai_jobs,
+            _StubRunner(),
+            ai_job_id=JOB_ID,
+            regenerate_assistant_id="m-asst",
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "AI_JOB_CONFLICT"
+        assert orchestrator.cleared_reply is True
+        assert orchestrator.regenerate_kwargs["resume"] is False
+        assert orchestrator.prepared.claim.owns_row is True
+        assert orchestrator.abandoned == [(orchestrator.prepared, "CHAT_TURN_FAILED")]
+        assert orchestrator.released == []
+
+    def test_conflict_does_not_abandon_a_row_another_attempt_reused(self):
+        orchestrator = _StubOrchestrator(owns_row=False)
+        ai_jobs = _StubAiJobs(error=AiJobConflictError(JOB_ID))
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "AI_JOB_CONFLICT"
+        assert orchestrator.abandoned == []
+        assert orchestrator.released == [orchestrator.prepared]
 
     def test_job_id_used_by_another_request_abandons_the_turn(self):
         orchestrator = _StubOrchestrator()
@@ -404,8 +501,8 @@ class TestPostWithJob:
         assert response.json()["detail"]["error_code"] == "CHAT_BUSY"
         ai_jobs.start_chat_job.assert_not_awaited()
 
-    def test_regenerated_reply_streams_without_a_job(self):
-        orchestrator = _StubOrchestrator()
+    def test_regenerated_reply_streams_through_the_job_runner(self):
+        orchestrator = _StubOrchestrator(user_idempotency_key="original-turn")
         ai_jobs = _StubAiJobs(claim=make_claim(job_type=AiJobType.CHAT))
         runner = _StubRunner()
 
@@ -418,11 +515,234 @@ class TestPostWithJob:
         )
 
         assert response.status_code == 200
+        assert response.text == RUNNER_BODY
+        assert orchestrator.regenerated == "m-asst"
+        assert runner.start_kwargs is not None
+        assert orchestrator.released == []
+        assert orchestrator.streamed is False
+        (job,) = ai_jobs.start_chat_job.await_args.args
+        assert job.dedupe_key == "original-turn"
+        assert job.request_payload["idempotency_key"] == "k1"
+        assert job.request_payload["regenerate_assistant_id"] == "m-asst"
+        assert job.request_payload["prepare_regeneration"] is True
+        request = _chat_request(
+            thread_id="t1",
+            regenerate_assistant_id="m-asst",
+            prepare_regeneration=True,
+        )
+        assert job.request_fingerprint == ai_job_request_fingerprint(
+            AiJobType.CHAT, request
+        )
+
+    def test_resent_completed_regenerate_replays_the_saved_reply(self):
+        """Same Idempotency-Key and ai_job_id after the job finished.
+
+        The saved reply stays completed. Resume reads it; nothing is cleared
+        or failed.
+        """
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.COMPLETED,
+            request_payload={
+                "content": "What's left?",
+                "idempotency_key": "k1",
+                "regenerate_assistant_id": "m-asst",
+                "prepare_regeneration": True,
+            },
+            result={"thread_id": "t1", "assistant_message_id": "m-asst"},
+        )
+        ai_jobs = _StubAiJobs(claim=make_claim(job_type=AiJobType.CHAT), job=job)
+        runner = _StubRunner()
+
+        response = _post(
+            orchestrator,
+            ai_jobs,
+            runner,
+            ai_job_id=JOB_ID,
+            regenerate_assistant_id="m-asst",
+        )
+
+        assert response.status_code == 200
+        assert '"text": "Saved coach reply"' in response.text
+        assert '"replayed": true' in response.text
+        assert orchestrator.cleared_reply is False
+        assert orchestrator.regenerate_kwargs["resume"] is True
+        assert orchestrator.abandoned == []
+        assert orchestrator.prepared.claim.assistant_message.status is (
+            ChatMessageStatus.COMPLETED
+        )
+        assert orchestrator.prepared.claim.assistant_message.content == (
+            "Saved coach reply"
+        )
+        ai_jobs.start_chat_job.assert_not_awaited()
+        assert runner.start_kwargs is None
+
+    def test_second_regenerate_while_running_follows_the_job(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.RUNNING,
+            request_payload={
+                "content": "What's left?",
+                "idempotency_key": "k1",
+                "regenerate_assistant_id": "m-asst",
+                "prepare_regeneration": True,
+            },
+        )
+        ai_jobs = _StubAiJobs(job=job)
+
+        response = _post(
+            orchestrator,
+            ai_jobs,
+            _StubRunner(),
+            ai_job_id=JOB_ID,
+            regenerate_assistant_id="m-asst",
+        )
+
+        assert response.status_code == 200
+        assert f'"ai_job_id": "{JOB_ID}"' in response.text
+        assert '"ai_job_status": "running"' in response.text
+        assert orchestrator.regenerate_kwargs is None
+        assert orchestrator.cleared_reply is False
+        assert orchestrator.abandoned == []
+        assert orchestrator.streamed is False
+        ai_jobs.start_chat_job.assert_not_awaited()
+
+    def test_follow_does_not_abandon_a_row_another_attempt_owns(self):
+        orchestrator = _StubOrchestrator(owns_row=False)
+        job = make_job(job_type=AiJobType.CHAT, status=AiJobStatus.RUNNING)
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert response.status_code == 200
+        assert '"ai_job_status": "running"' in response.text
+        assert orchestrator.abandoned == []
+        assert orchestrator.released == [orchestrator.prepared]
+        assert orchestrator.streamed is False
+
+    def test_regenerate_without_a_job_id_keeps_the_legacy_stream(self):
+        orchestrator = _StubOrchestrator()
+        ai_jobs = _StubAiJobs(claim=make_claim(job_type=AiJobType.CHAT))
+        runner = _StubRunner()
+
+        response = _post(
+            orchestrator,
+            ai_jobs,
+            runner,
+            regenerate_assistant_id="m-asst",
+        )
+
+        assert response.status_code == 200
         assert response.text == ORCHESTRATOR_BODY
         assert orchestrator.regenerated == "m-asst"
         ai_jobs.start_chat_job.assert_not_awaited()
         assert runner.start_kwargs is None
         assert orchestrator.released == [orchestrator.prepared]
+
+    def test_owned_job_is_followed_instead_of_generated_again(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.RUNNING,
+            result=None,
+        )
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+        runner = _StubRunner()
+
+        response = _post(orchestrator, ai_jobs, runner, ai_job_id=JOB_ID)
+
+        assert response.status_code == 200
+        assert response.text == (
+            f'event: message.started\ndata: {{"ai_job_id": "{JOB_ID}"}}\n\n'
+            "event: message.error\n"
+            f'data: {{"ai_job_id": "{JOB_ID}", "ai_job_status": "running", '
+            '"code": "CHAT_BUSY", "retryable": true}\n\n'
+        )
+        assert orchestrator.streamed is False
+        assert runner.start_kwargs is None
+        assert orchestrator.abandoned == [(orchestrator.prepared, "CHAT_TURN_FAILED")]
+        ai_jobs.get.assert_awaited_once_with(user_id="u1", job_id=JOB_ID)
+
+    def test_completed_job_is_followed_with_its_saved_reply(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.COMPLETED,
+            result={"thread_id": "t1", "assistant_message_id": "m-saved"},
+        )
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert '"ai_job_status": "completed"' in response.text
+        assert '"assistant_message_id": "m-saved"' in response.text
+        assert "message.completed" in response.text
+        assert orchestrator.streamed is False
+
+    def test_failed_job_follow_keeps_the_job_error(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.FAILED,
+            error=make_error("CHAT_TURN_FAILED", retryable=True),
+        )
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert '"code": "CHAT_TURN_FAILED"' in response.text
+        assert '"ai_job_status": "failed"' in response.text
+        assert orchestrator.streamed is False
+
+    def test_unexpected_start_failure_is_counted_and_still_streams(self, monkeypatch):
+        metrics = []
+        crumbs = []
+        monkeypatch.setattr(
+            chat_mod,
+            "increment_metric",
+            lambda name, value=1.0, **kwargs: metrics.append((name, kwargs)),
+        )
+        monkeypatch.setattr(
+            chat_mod,
+            "add_breadcrumb",
+            lambda category, message, **kwargs: crumbs.append(
+                (category, message, kwargs)
+            ),
+        )
+        orchestrator = _StubOrchestrator()
+        ai_jobs = _StubAiJobs(error=RuntimeError("database is down"))
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert response.status_code == 200
+        assert response.text == ORCHESTRATOR_BODY
+        assert orchestrator.streamed is True
+        assert metrics == [
+            (
+                "chat.job.legacy_fallback",
+                {
+                    "attributes": {
+                        "operation": "start_chat_job",
+                        "error_type": "RuntimeError",
+                    }
+                },
+            )
+        ]
+        assert crumbs == [
+            (
+                "chat.job",
+                "Chat turn fell back to the legacy stream",
+                {
+                    "level": "warning",
+                    "data": {
+                        "operation": "start_chat_job",
+                        "error_type": "RuntimeError",
+                    },
+                },
+            )
+        ]
 
     def test_message_without_a_job_id_streams_plainly(self):
         orchestrator = _StubOrchestrator()

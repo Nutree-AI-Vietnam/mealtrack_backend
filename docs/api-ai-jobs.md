@@ -201,7 +201,9 @@ can finish what it already queued.
   also carries `ai_job_status`: `completed`, `queued` (an automatic retry is
   coming), `failed`, `cancelled`, `running` or `null`. Anything but
   `completed` means the app should follow `GET /v1/ai-jobs/{id}`, then reload
-  the thread.
+  the thread. There is no `interrupted` status. `WORKER_INTERRUPTED` is a
+  transient error code: while attempts remain the job is `queued` again and
+  retried after backoff.
 - Resending the same message with the same `Idempotency-Key` and `ai_job_id`
   takes over a queued or failed job, or a running one whose lease has
   expired. A replayed turn streams without `ai_job_id`.
@@ -211,20 +213,30 @@ can finish what it already queued.
   reply.
 - If jobs are off or not migrated, or background chat is disabled, the turn
   streams as a plain turn with no `ai_job_id`.
-- A regenerated reply (`regenerate_assistant_id`) never becomes a job: any
-  `ai_job_id` sent with it is ignored and the reply streams as a plain turn.
+- A regenerated or edited reply (`regenerate_assistant_id` plus `ai_job_id`)
+  is a chat job. The job stores `prepare_regeneration` and
+  `regenerate_assistant_id`, and a retry reopens that same turn. Its
+  `dedupe_key` is the stored user message's idempotency key, so
+  `in_flight.ai_job_id` still matches. Without `ai_job_id` the reply streams
+  the legacy way.
+- When `ai_job_id` already belongs to this same request and another attempt
+  owns it, the response does not generate again. It sends `message.started`
+  with `ai_job_id`, then a terminal event whose `ai_job_status` tells the
+  app to follow that job. A second regenerate of a running or queued job
+  gets that follow stream. Resending a completed regenerate replays the
+  saved reply and does not reopen it.
 - Stopping a chat job ends it `cancelled` with no `error`; the stream's final
   `message.error` has the code `CHAT_STOPPED`. Cancelled jobs are never
   pushed.
 
 ## Capabilities — `GET /v1/capabilities/ai-jobs`
 
-`{"ai_jobs", "types", "max_attempts", "poll_interval_ms", "chat_background"}`
+`{"ai_jobs", "types", "max_attempts", "poll_interval_ms", "chat_background", "chat_regenerate_background"}`
 
 - `ai_jobs` is false while `AI_JOBS_ENABLED` is off. The app then keeps using
   the synchronous endpoints.
-- `chat_background` is true only when both `AI_JOBS_ENABLED` and
-  `AI_JOBS_CHAT_BACKGROUND_ENABLED` are on.
+- `chat_background` and `chat_regenerate_background` are true only when both
+  `AI_JOBS_ENABLED` and `AI_JOBS_CHAT_BACKGROUND_ENABLED` are on.
 - `503 AI_JOBS_UNAVAILABLE` until the migration has run.
 
 ## Configuration

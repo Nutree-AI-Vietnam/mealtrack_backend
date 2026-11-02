@@ -22,8 +22,9 @@ from src.app.services.ai_jobs.executors import (
     run_chat_turn,
 )
 from src.domain.exceptions.ai_job_exceptions import AiJobExecutionError
+from src.domain.exceptions.chat_exceptions import ChatBusyError
 from src.domain.model.ai_jobs import AiJobType
-from src.domain.model.chat.models import ChatSseEvent
+from src.domain.model.chat.models import ChatClaimKind, ChatSseEvent
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.meal_repository_port import MealRepositoryPort
@@ -116,13 +117,19 @@ class FakeOrchestrator:
     """Streams scripted chat events; can block mid-stream like a slow model."""
 
     def __init__(
-        self, events=(), *, block=False, abandon_error=None, abandon_gate=None
+        self,
+        events=(),
+        *,
+        block=False,
+        abandon_error=None,
+        abandon_gate=None,
+        prepare_error=None,
     ):
         self._events = list(events)
         self._block = block
         self._abandon_error = abandon_error
         self._abandon_gate = abandon_gate
-        self.prepared = SimpleNamespace(name="prepared-turn")
+        self._prepare_error = prepare_error
         self.prepare_kwargs = None
         self.stream_calls = []
         self.abandoned = []
@@ -130,9 +137,26 @@ class FakeOrchestrator:
         self.streaming = asyncio.Event()
         self.abandon_started = asyncio.Event()
         self.abandon_done = asyncio.Event()
+        self.regenerate_kwargs = None
+        self.prepared = SimpleNamespace(
+            name="prepared-turn",
+            claim=SimpleNamespace(
+                kind=ChatClaimKind.NEW,
+                thread=SimpleNamespace(id="thread-1"),
+                assistant_message=SimpleNamespace(id="msg-2"),
+            ),
+        )
 
     async def prepare_turn(self, **kwargs):
         self.prepare_kwargs = kwargs
+        if self._prepare_error is not None:
+            raise self._prepare_error
+        return self.prepared
+
+    async def prepare_regeneration(self, **kwargs):
+        self.regenerate_kwargs = kwargs
+        if self._prepare_error is not None:
+            raise self._prepare_error
         return self.prepared
 
     async def stream_prepared(self, *, user_id, prepared):
@@ -562,6 +586,69 @@ async def test_chat_leaves_missing_optional_fields_empty():
         "function_name": None,
         "function_args": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_of_a_regenerate_reopens_the_same_turn():
+    orchestrator = FakeOrchestrator([COMPLETED])
+    payload = {
+        **FULL_CHAT_PAYLOAD,
+        "thread_id": "thread-9",
+        "regenerate_assistant_id": "m-asst",
+        "prepare_regeneration": True,
+    }
+
+    result = await _chat(orchestrator, payload)
+
+    assert result == {"thread_id": "thread-1", "assistant_message_id": "msg-2"}
+    assert orchestrator.prepare_kwargs is None
+    assert orchestrator.regenerate_kwargs == {
+        "user_id": USER_ID,
+        "assistant_message_id": "m-asst",
+        "content": FULL_CHAT_PAYLOAD["content"],
+        "locale": "vi",
+        "header_timezone": "Asia/Ho_Chi_Minh",
+        "user_language": "vi",
+        "thread_id": "thread-9",
+        "resume": True,
+    }
+    assert orchestrator.stream_calls == [(USER_ID, orchestrator.prepared)]
+
+
+@pytest.mark.asyncio
+async def test_requeue_does_not_generate_a_completed_turn_again():
+    """WORKER_INTERRUPTED puts the job back on the queue. A reply that
+    already finished is returned, not generated a second time."""
+    orchestrator = FakeOrchestrator([COMPLETED])
+    orchestrator.prepared.claim.kind = ChatClaimKind.REPLAY
+
+    result = await _chat(orchestrator, FULL_CHAT_PAYLOAD)
+
+    assert result == {"thread_id": "thread-1", "assistant_message_id": "msg-2"}
+    assert orchestrator.stream_calls == []
+    assert orchestrator.stream_closed is False
+
+
+@pytest.mark.asyncio
+async def test_requeue_does_not_generate_while_the_turn_is_in_flight():
+    orchestrator = FakeOrchestrator(prepare_error=ChatBusyError())
+
+    with pytest.raises(ChatBusyError):
+        await _chat(orchestrator, FULL_CHAT_PAYLOAD)
+
+    assert orchestrator.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_regenerate_retry_without_an_assistant_id_is_invalid_input():
+    orchestrator = FakeOrchestrator([COMPLETED])
+
+    with pytest.raises(AiJobExecutionError) as exc_info:
+        await _chat(orchestrator, {**FULL_CHAT_PAYLOAD, "prepare_regeneration": True})
+
+    assert exc_info.value.code == "INVALID_JOB_INPUT"
+    assert orchestrator.regenerate_kwargs is None
+    assert orchestrator.stream_calls == []
 
 
 @pytest.mark.asyncio

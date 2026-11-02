@@ -164,11 +164,16 @@ class ChatRepositoryPort(ABC):
         lease_expires_at: datetime,
         content: str | None = None,
         thread_id: str | None = None,
+        resume: bool = False,
     ) -> tuple[ChatTurnClaim, str | None, bool] | None:
         """Reopen the latest completed assistant so it can be generated again.
 
         The message must sit in one of the user's threads, and in *thread_id*
         when that is given.
+
+        ``resume`` is a job retry of a regenerate that already opened this
+        row. A completed reply is replayed, a live lease is left busy, and a
+        failed reply is generated again on the same row.
 
         Returns the claim, the previous reply intent, and whether the stored
         question text changed. None when the message cannot be regenerated.

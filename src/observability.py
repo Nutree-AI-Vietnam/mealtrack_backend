@@ -91,6 +91,21 @@ def log_event(
     )
 
 
+def add_breadcrumb(
+    category: str,
+    message: str,
+    *,
+    level: str = "info",
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Attach a breadcrumb when the active connector records them."""
+    connector = get_observability_connector()
+    record = getattr(connector, "add_breadcrumb", None)
+    if record is None:
+        return
+    record(category, message, level=level, data=data)
+
+
 def increment_metric(
     name: str,
     value: float = 1.0,
