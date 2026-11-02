@@ -127,7 +127,8 @@ def test_without_a_usable_service_account_it_stays_off(caplog, fields):
 
 # Sentry sends a traceback's frame variables, so the loader must never let
 # one out: no settings, no file content and no key in any log or frame.
-SECRET = "-----BEGIN PRIVATE KEY-----\nsuper-secret-key-material\n"
+# A plain sentinel: a PEM-looking literal would trip secret scanners.
+SECRET = "sentinel-key-material-that-must-never-be-logged"
 
 
 def _assert_logged_safely(caplog) -> None:
