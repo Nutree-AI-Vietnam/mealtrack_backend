@@ -5,6 +5,8 @@ from .ai_proposal import (
     WeeklyMealPlanSlotAdjustment,
 )
 from .weekly_meal_plan import (
+    SLOT_LOG_SOURCE_DIARY,
+    SLOT_LOG_SOURCE_PLAN,
     SLOT_MEAL_TYPES,
     WEEKLY_DAYS,
     WEEKLY_PLAN_SLOT_COUNT,
@@ -17,6 +19,8 @@ from .weekly_meal_plan import (
 )
 
 __all__ = [
+    "SLOT_LOG_SOURCE_DIARY",
+    "SLOT_LOG_SOURCE_PLAN",
     "SLOT_MEAL_TYPES",
     "WEEKLY_DAYS",
     "WEEKLY_PLAN_SLOT_COUNT",

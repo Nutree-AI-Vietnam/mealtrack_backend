@@ -50,6 +50,9 @@ class TestDeleteMealWithFakeUoW:
         mock_uow.meal_recommendation_plans.clear_links_for_deleted_meal = AsyncMock(
             return_value=None
         )
+        mock_uow.weekly_meal_plans.clear_links_for_deleted_meal = AsyncMock(
+            return_value=None
+        )
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
 
@@ -106,6 +109,13 @@ class TestDeleteMealWithFakeUoW:
         mock_uow.meal_recommendation_plans.clear_links_for_deleted_meal = AsyncMock(
             side_effect=clear_links
         )
+
+        async def clear_weekly_links(*, meal_id: str) -> None:
+            call_order.append(f"weekly:{meal_id}")
+
+        mock_uow.weekly_meal_plans.clear_links_for_deleted_meal = AsyncMock(
+            side_effect=clear_weekly_links
+        )
         mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
         mock_uow.__aexit__ = AsyncMock(return_value=False)
 
@@ -114,7 +124,13 @@ class TestDeleteMealWithFakeUoW:
         )
         await handler.handle(DeleteMealCommand(meal_id=meal.meal_id, user_id=user_id))
 
-        assert call_order == [f"clear:{meal.meal_id}", f"delete:{meal.meal_id}"]
+        # Weekly slots are released in the same unit of work, before the
+        # FK's ON DELETE SET NULL could leave them logged with no meal.
+        assert call_order == [
+            f"clear:{meal.meal_id}",
+            f"weekly:{meal.meal_id}",
+            f"delete:{meal.meal_id}",
+        ]
 
 
 # Removed TestSyncUserWithFakeUoW - SyncUserCommand not in scope for this demo

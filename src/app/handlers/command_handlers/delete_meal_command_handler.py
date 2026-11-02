@@ -183,6 +183,12 @@ async def remove_meal(
     plans = getattr(uow, "meal_recommendation_plans", None)
     if plans is not None:
         await plans.clear_links_for_deleted_meal(meal_id=meal_id)
+    # Weekly plan slots logged with this meal are released the same way, so
+    # the slot can be logged or swapped again.
+    weekly_plans = getattr(uow, "weekly_meal_plans", None)
+    clear_weekly = getattr(weekly_plans, "clear_links_for_deleted_meal", None)
+    if callable(clear_weekly):
+        await clear_weekly(meal_id=meal_id)
     await uow.meals.delete(meal_id)
     user_tz = await resolve_user_timezone_async(user_id, uow)
     created_at_dt = meal.created_at or utc_now()

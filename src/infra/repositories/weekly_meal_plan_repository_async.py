@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import Any, cast
 
 from sqlalchemy import select, text
+from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, noload, selectinload
 
@@ -15,6 +16,7 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
 from src.domain.model.weekly_meal_planner import (
+    SLOT_LOG_SOURCE_PLAN,
     WEEKLY_DAYS,
     WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlan,
@@ -403,6 +405,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slot_id: str,
         meal_id: str,
         slot: WeeklyMealPlanSlotORM | None = None,
+        log_source: str = SLOT_LOG_SOURCE_PLAN,
     ) -> None:
         if slot is None:
             result = await self.session.execute(
@@ -421,7 +424,85 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slot = cast(Any, slot)
         slot.is_logged = True
         slot.logged_meal_id = meal_id
+        slot.log_source = log_source
+        # Eating the meal ends a skip.
+        slot.is_skipped = False
         slot.version += 1
+        await self.session.flush()
+
+    async def get_plan_for_slot_write(
+        self, *, user_id: str, plan_id: str
+    ) -> WeeklyMealPlan | None:
+        """Lock the plan and its slots for a single-slot state change.
+
+        Same lock order as PATCH (parent, then slots). Follow with
+        update_slot_state in the same unit of work.
+        """
+        row = await self.get_for_update(
+            user_id=user_id, plan_id=plan_id, include_pantry=False
+        )
+        if row is None:
+            return None
+        await self._repair_late_legacy_slots(row)
+        return _to_domain(row)
+
+    async def update_slot_state(
+        self,
+        *,
+        user_id: str,
+        plan_id: str,
+        slot_id: str,
+        **changes: Any,
+    ) -> WeeklyMealPlan:
+        """Set log/skip columns on a slot locked by get_plan_for_slot_write."""
+        allowed = {"is_logged", "logged_meal_id", "log_source", "is_skipped"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unsupported slot state fields: {sorted(unknown)}")
+        row = cast(Any, await self.session.get(WeeklyMealPlanORM, plan_id))
+        if row is None or row.user_id != user_id:
+            raise ValueError("weekly meal plan is not locked for this write")
+        slot = next((item for item in row.slots if item.id == slot_id), None)
+        if slot is None:
+            raise ValueError("weekly meal slot not found")
+        for field, value in changes.items():
+            setattr(slot, field, value)
+        slot.version += 1
+        await self.session.flush()
+        return _to_domain(row)
+
+    async def find_slot_id_for_logged_meal(
+        self, *, user_id: str, meal_id: str
+    ) -> str | None:
+        """Return the owner's slot that a diary meal is logged against, if any."""
+        result = await self.session.execute(
+            select(WeeklyMealPlanSlotORM.id)
+            .join(WeeklyMealPlanORM)
+            .where(
+                WeeklyMealPlanSlotORM.logged_meal_id == meal_id,
+                WeeklyMealPlanORM.user_id == user_id,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def clear_links_for_deleted_meal(self, *, meal_id: str) -> None:
+        """Release slots logged with a meal that is about to be hard-deleted.
+
+        ``logged_meal_id`` is ON DELETE SET NULL, which alone leaves
+        ``is_logged`` true: the slot then refuses a new log or a swap.
+        """
+        await self.session.execute(
+            sql_update(WeeklyMealPlanSlotORM)
+            .where(WeeklyMealPlanSlotORM.logged_meal_id == meal_id)
+            .values(
+                is_logged=False,
+                logged_meal_id=None,
+                log_source=None,
+                version=WeeklyMealPlanSlotORM.version + 1,
+            )
+            .execution_options(synchronize_session="fetch")
+        )
         await self.session.flush()
 
     @planner_timed("lock")
@@ -536,6 +617,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                     day_index=day,
                     slot_index=0,
                     is_logged=False,
+                    is_skipped=False,
                     version=1,
                 )
             )
@@ -570,6 +652,8 @@ def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
             logged_meal_id=cast(str | None, slot.logged_meal_id),
             version=cast(int, slot.version),
             recipe_override=cast(dict | None, getattr(slot, "recipe_override", None)),
+            log_source=cast(str | None, getattr(slot, "log_source", None)),
+            is_skipped=bool(getattr(slot, "is_skipped", False)),
         )
         for slot in sorted(
             data.slots, key=lambda item: (item.day_index, item.slot_index)

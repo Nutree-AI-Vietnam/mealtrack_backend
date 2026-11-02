@@ -10,6 +10,7 @@ from typing import Any
 from src.domain.model.meal_recommendation.catalog_selection_features import (
     CatalogSelectionFeatures,
 )
+from src.domain.model.meal_recommendation.recipe_diet_labels import RecipeDietLabels
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros import Micros
 from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
@@ -131,6 +132,20 @@ class CatalogMeal:
     nutrition_micros_estimated: bool = False
     nutrition_micros_enrichment_loaded: bool = False
     selection_features: CatalogSelectionFeatures | None = None
+    # Browse diet labels taken before ingredients were dropped or names were
+    # translated. Set by catalog reads that return summaries.
+    browse_labels: RecipeDietLabels | None = None
+
+    @property
+    def diet_labels(self) -> RecipeDietLabels:
+        """Browse diet labels: the stored ones, else from this meal's own text."""
+        if self.browse_labels is not None:
+            return self.browse_labels
+        return RecipeDietLabels.for_recipe(
+            self.name,
+            self.description,
+            (ingredient.name for ingredient in self.ingredients),
+        )
 
     @property
     def calories(self) -> int:
@@ -150,7 +165,7 @@ class CatalogMeal:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
-        return {
+        payload: dict[str, Any] = {
             "id": self.id,
             "catalog_key": self.catalog_key,
             "content_hash": self.content_hash,
@@ -216,6 +231,10 @@ class CatalogMeal:
             "nutrition_micros_estimated": self.nutrition_micros_estimated,
             "nutrition_micros_enrichment_loaded": self.nutrition_micros_enrichment_loaded,
         }
+        if self.browse_labels is not None:
+            # Only when set, so stored projection payloads keep their digest.
+            payload["browse_labels"] = self.browse_labels.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CatalogMeal:
@@ -289,6 +308,7 @@ class CatalogMeal:
             nutrition_micros_enrichment_loaded=data.get(
                 "nutrition_micros_enrichment_loaded", False
             ),
+            browse_labels=RecipeDietLabels.from_dict(data.get("browse_labels")),
         )
 
 

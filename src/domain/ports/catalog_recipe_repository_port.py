@@ -159,6 +159,7 @@ class CatalogMealRepositoryPort(ABC):
         allergies: tuple[str, ...] = (),
         limit: int = 20,
         offset: int = 0,
+        min_protein: float | None = None,
     ) -> CatalogRecipePage:
         """Apply every eligibility filter before counting and paging."""
         raise NotImplementedError

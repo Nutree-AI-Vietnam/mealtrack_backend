@@ -29,7 +29,10 @@ from src.app.commands.meal_catalog import LogCatalogMealCommand
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
     GenerateWeeklyMealPlanCommand,
+    LinkMealPlanSlotCommand,
     LogMealPlanSlotCommand,
+    SetMealPlanSlotSkipCommand,
+    UnlogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
@@ -138,7 +141,10 @@ from src.app.handlers.command_handlers.meal_catalog import (
 from src.app.handlers.command_handlers.meal_planner import (
     AiAdjustMealPlanCommandHandler,
     GenerateWeeklyMealPlanCommandHandler,
+    LinkMealPlanSlotCommandHandler,
     LogMealPlanSlotCommandHandler,
+    SetMealPlanSlotSkipCommandHandler,
+    UnlogMealPlanSlotCommandHandler,
     UpdateGroceryDayLinesCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
     UpdateWeeklyMealPlanCommandHandler,
@@ -213,7 +219,9 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 )
 from src.app.handlers.query_handlers.meal_planner import (
     GetCurrentWeeklyPlanQueryHandler,
+    GetMealPlanSlotSuggestionsQueryHandler,
     GetRecipeDetailQueryHandler,
+    GetRecipeDetailsQueryHandler,
     GetRecipeSummariesQueryHandler,
     GetWeeklyGroceriesQueryHandler,
     ListRecipesQueryHandler,
@@ -242,7 +250,9 @@ from src.app.queries.meal import (
 from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
+    GetMealPlanSlotSuggestionsQuery,
     GetRecipeDetailQuery,
+    GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
@@ -1021,6 +1031,22 @@ def get_configured_event_bus() -> EventBus:
         LogMealPlanSlotCommandHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
+        UnlogMealPlanSlotCommand,
+        UnlogMealPlanSlotCommandHandler(
+            AsyncUnitOfWork,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+        ),
+    )
+    event_bus.register_handler(
+        LinkMealPlanSlotCommand,
+        LinkMealPlanSlotCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        SetMealPlanSlotSkipCommand,
+        SetMealPlanSlotSkipCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
         GetCurrentWeeklyPlanQuery,
         GetCurrentWeeklyPlanQueryHandler(AsyncUnitOfWork),
     )
@@ -1035,6 +1061,17 @@ def get_configured_event_bus() -> EventBus:
             AsyncUnitOfWork,
             micronutrient_enrichment=recipe_micronutrient_enrichment,
             redis_client=redis_client,
+        ),
+    )
+    event_bus.register_handler(
+        GetMealPlanSlotSuggestionsQuery,
+        GetMealPlanSlotSuggestionsQueryHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        GetRecipeDetailsQuery,
+        GetRecipeDetailsQueryHandler(
+            AsyncUnitOfWork,
+            micronutrient_enrichment=recipe_micronutrient_enrichment,
         ),
     )
     event_bus.register_handler(
