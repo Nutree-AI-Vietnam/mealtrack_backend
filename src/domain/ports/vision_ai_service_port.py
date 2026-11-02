@@ -20,12 +20,14 @@ class VisionAIServicePort(ABC):
         self,
         image_bytes: bytes,
         language: str = "en",
+        correction_hints: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Analyze a food image to extract nutritional information.
 
         Args:
             image_bytes: The raw bytes of the image to analyze
+            correction_hints: Optional personal Fix-result few-shot lines
 
         Returns:
             JSON-compatible dictionary with the raw AI response
