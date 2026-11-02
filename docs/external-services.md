@@ -278,11 +278,16 @@ optional caches.
 - A lifetime purchase or upgrade from `PLAY_STORE` turns off the renewal of
   the event user's Play plan rows that still grant access (same environment,
   not lifetime; `cancelled` rows already stopped). The rows are read before
-  the upgrade converts the yearly row and cancelled after the unit of work
-  commits, inline, within a 10 s budget. Every failure is logged at ERROR
-  (Sentry) and the webhook still answers 200. A redelivered purchase is
-  already stored and cancels nothing. App Store, web and plan events never
-  call Google.
+  the upgrade converts the yearly row. A redelivered purchase is already
+  stored and cancels nothing.
+- A Play `INITIAL_PURCHASE` or `RENEWAL` of a renewing plan while the event
+  user holds a Play lifetime row that grants access (same environment) is
+  cancelled too, by the event's own order id. This covers the upgrade's
+  webhook landing before the yearly's, when the yearly had no row to pick.
+- Either way the cancel runs after the unit of work commits, inline, within
+  a 10 s budget, behind the same switches. Every failure is logged at ERROR
+  (Sentry) and the webhook still answers 200. App Store and web events, and
+  plans beside an App Store lifetime, never call Google.
 - RevenueCat names a Play subscription only by order id (`GPA.…`, the row's
   `store_transaction_id`). `orders.get` returns its `purchaseToken`, then
   `purchases.subscriptionsv2.cancel` with `DEVELOPER_REQUESTED_STOP_PAYMENTS`

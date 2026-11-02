@@ -27,6 +27,7 @@ from src.api.routes.v1.webhook_lookup_parsing import (
 from src.api.routes.v1.webhook_play_renewal_cancel import (
     PlayRenewal,
     cancel_play_renewals,
+    play_plan_beside_lifetime,
 )
 from src.api.routes.v1.webhook_referral_funnel import (
     _get_subscription_service,
@@ -248,6 +249,7 @@ async def revenuecat_webhook(
             pass  # a streak restore pack never reaches the subscription handlers
         elif event_type == "INITIAL_PURCHASE":
             await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
+            play_renewals = await play_plan_beside_lifetime(uow, user, event)
 
         elif event_type == "NON_RENEWING_PURCHASE" and is_lifetime_product(
             event.get("product_id")
@@ -263,6 +265,7 @@ async def revenuecat_webhook(
 
         elif event_type == "RENEWAL":
             await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
+            play_renewals = await play_plan_beside_lifetime(uow, user, event)
 
         elif event_type == "CANCELLATION":
             await handle_cancellation(
@@ -291,7 +294,7 @@ async def revenuecat_webhook(
     if pack is not None and pack.owner_id:
         await purge_streak_cache(get_cache_service(), pack.owner_id)
 
-    # After the commit too: the lifetime grant is stored whatever Google does.
+    # After the commit too: the event is stored whatever Google does.
     await cancel_play_renewals(event, play_renewals)
 
     increment_metric(

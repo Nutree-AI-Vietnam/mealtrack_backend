@@ -1,16 +1,13 @@
 """Through the RevenueCat route: the grant commits first, then Play is asked."""
 
 import json
-from contextlib import ExitStack, contextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import respx
 from tests.fixtures.fakes.lifetime_webhook_db import (
     LIFETIME_UPGRADE_PRODUCT_ID,
-    USER,
-    commit,
     entitled,
     lifetime,
     rows,
@@ -19,10 +16,11 @@ from tests.fixtures.fakes.play_renewal_fakes import (
     YEARLY_ORDER,
     play_lifetime,
     play_yearly_purchase,
+    post_webhook,
+    webhook_route,
 )
 
-from src.api.routes.v1.webhooks import handle_purchase, revenuecat_webhook
-from src.domain.model.streak import StreakRestorePolicy
+from src.api.routes.v1.webhooks import handle_purchase
 from src.domain.ports.play_subscription_port import PlayBillingConfigurationError
 from src.infra.adapters.google_play_subscription_adapter import (
     API_ROOT,
@@ -32,50 +30,8 @@ from src.infra.adapters.google_play_subscription_adapter import (
 
 pytestmark = pytest.mark.asyncio
 
-ROUTE = "src.api.routes.v1.webhooks"
 PLAY_CANCEL = "src.api.routes.v1.webhook_play_renewal_cancel"
 UPGRADE = LIFETIME_UPGRADE_PRODUCT_ID
-
-
-@contextmanager
-def _route(uow, publisher, seen: list):
-    """The route over the SQLite unit of work; each unit commits on a clean exit."""
-
-    def unit_of_work():
-        unit = MagicMock()
-        unit.__aenter__ = AsyncMock(return_value=uow)
-
-        async def exit_(exc_type, exc, tb):
-            if exc_type is None:
-                commit(uow)
-                seen.append("commit")
-            return False
-
-        unit.__aexit__ = AsyncMock(side_effect=exit_)
-        return unit
-
-    with ExitStack() as stack:
-
-        def mock(name, **kwargs):
-            return stack.enter_context(patch(f"{ROUTE}.{name}", **kwargs))
-
-        mock("os.getenv", return_value="test_secret")
-        mock("AsyncUnitOfWork", side_effect=unit_of_work)
-        mock("record_web_funnel_redemption", new_callable=AsyncMock, return_value=False)
-        mock(
-            "find_user_for_revenuecat_event", new_callable=AsyncMock, return_value=USER
-        )
-        mock("_get_affiliate_handler", return_value=None)
-        mock("_get_event_publisher", return_value=publisher)
-        mock("get_streak_restore_policy", return_value=StreakRestorePolicy())
-        mock("get_cache_service", return_value=None)
-        mock("purge_streak_cache", new_callable=AsyncMock)
-        yield
-
-
-async def _post(payload):
-    request = MagicMock(json=AsyncMock(return_value={"event": payload}))
-    return await revenuecat_webhook(request, authorization="test_secret")
 
 
 async def test_the_grant_commits_before_play_is_asked(uow, deliver, publisher, play):
@@ -87,8 +43,8 @@ async def test_the_grant_commits_before_play_is_asked(uow, deliver, publisher, p
         seen.append(("cancel", order_id, uow.session.sync.in_transaction()))
 
     play.cancel_renewal.side_effect = cancel
-    with _route(uow, publisher, seen):
-        assert await _post(play_lifetime(UPGRADE)) == {"status": "success"}
+    with webhook_route(uow, publisher, seen):
+        assert await post_webhook(play_lifetime(UPGRADE)) == {"status": "success"}
 
     assert seen[-2:] == ["commit", ("cancel", YEARLY_ORDER, False)]
 
@@ -103,8 +59,8 @@ async def test_a_failing_cancel_still_answers_success_with_lifetime_stored(
     await deliver(handle_purchase, play_yearly_purchase())
     play.cancel_renewal.side_effect = failure
 
-    with _route(uow, publisher, []):
-        assert await _post(play_lifetime(UPGRADE)) == {"status": "success"}
+    with webhook_route(uow, publisher, []):
+        assert await post_webhook(play_lifetime(UPGRADE)) == {"status": "success"}
 
     (row,) = await rows(uow)
     assert (row.product_id, row.status, row.expires_at) == (UPGRADE, "active", None)
@@ -114,9 +70,9 @@ async def test_a_failing_cancel_still_answers_success_with_lifetime_stored(
 async def test_a_duplicate_webhook_cancels_once(uow, deliver, publisher, play):
     await deliver(handle_purchase, play_yearly_purchase())
 
-    with _route(uow, publisher, []):
+    with webhook_route(uow, publisher, []):
         for _ in range(2):
-            assert await _post(play_lifetime(UPGRADE)) == {"status": "success"}
+            assert await post_webhook(play_lifetime(UPGRADE)) == {"status": "success"}
 
     play.cancel_renewal.assert_awaited_once_with(YEARLY_ORDER)
     assert len(await rows(uow)) == 1
@@ -144,8 +100,8 @@ async def test_the_real_adapter_cancels_the_orders_token_in_the_package(
             client=client,
         )
         play.getter.return_value = adapter
-        with _route(uow, publisher, []):
-            assert await _post(play_lifetime(UPGRADE)) == {"status": "success"}
+        with webhook_route(uow, publisher, []):
+            assert await post_webhook(play_lifetime(UPGRADE)) == {"status": "success"}
 
     assert order_route.call_count == 1 and cancel_route.call_count == 1
     assert json.loads(cancel_route.calls.last.request.content) == CANCEL_BODY
@@ -153,7 +109,7 @@ async def test_the_real_adapter_cancels_the_orders_token_in_the_package(
 
 
 async def test_an_app_store_webhook_never_builds_the_adapter(uow, publisher, play):
-    with _route(uow, publisher, []):
-        assert await _post(lifetime()) == {"status": "success"}
+    with webhook_route(uow, publisher, []):
+        assert await post_webhook(lifetime()) == {"status": "success"}
 
     play.getter.assert_not_called()
