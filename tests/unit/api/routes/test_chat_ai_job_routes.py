@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from slowapi.errors import RateLimitExceeded
-from tests.fixtures.fakes.fake_ai_jobs import JOB_ID, make_claim
+from tests.fixtures.fakes.fake_ai_jobs import JOB_ID, make_claim, make_error, make_job
 
 from src.api.dependencies.ai_jobs import get_ai_job_service, get_chat_job_runner
 from src.api.dependencies.auth import get_current_user_id
@@ -28,7 +28,7 @@ from src.domain.exceptions.ai_job_exceptions import (
     AiJobsUnavailableError,
 )
 from src.domain.exceptions.chat_exceptions import ChatBusyError
-from src.domain.model.ai_jobs import AiJobType, NewAiJob
+from src.domain.model.ai_jobs import AiJobStatus, AiJobType, NewAiJob
 from src.domain.model.ai_jobs.policies import ai_job_request_fingerprint
 from src.domain.model.chat import (
     ChatClaimKind,
@@ -64,9 +64,11 @@ class _StubOrchestrator:
         prepare_error=None,
         claim_kind=ChatClaimKind.NEW,
         thread_payload=None,
+        user_idempotency_key=None,
     ):
         self.prepare_error = prepare_error
         self.claim_kind = claim_kind
+        self.user_idempotency_key = user_idempotency_key
         self.events = ORCHESTRATOR_EVENTS
         self.thread_payload = thread_payload or _thread_payload()
         self.prepared: PreparedChatTurn | None = None
@@ -99,6 +101,7 @@ class _StubOrchestrator:
             created_at=now,
             updated_at=now,
             content=kwargs["content"],
+            idempotency_key=self.user_idempotency_key,
         )
         assistant = ChatMessage(
             id="m-asst",
@@ -134,9 +137,10 @@ class _StubOrchestrator:
 
 
 class _StubAiJobs:
-    def __init__(self, *, claim=None, error=None, active_job_id=None):
+    def __init__(self, *, claim=None, error=None, active_job_id=None, job=None):
         self.start_chat_job = AsyncMock(return_value=claim, side_effect=error)
         self.find_active_chat_job_id = AsyncMock(return_value=active_job_id)
+        self.get = AsyncMock(return_value=job)
 
 
 class _StubRunner:
@@ -324,7 +328,6 @@ class TestPostWithJob:
                 lambda: _StubAiJobs(error=RuntimeError("database is down")),
                 id="unexpected-error",
             ),
-            pytest.param(lambda: _StubAiJobs(claim=None), id="no-claim"),
         ],
     )
     def test_turn_without_a_claim_streams_directly(self, ai_jobs):
@@ -404,8 +407,8 @@ class TestPostWithJob:
         assert response.json()["detail"]["error_code"] == "CHAT_BUSY"
         ai_jobs.start_chat_job.assert_not_awaited()
 
-    def test_regenerated_reply_streams_without_a_job(self):
-        orchestrator = _StubOrchestrator()
+    def test_regenerated_reply_streams_through_the_job_runner(self):
+        orchestrator = _StubOrchestrator(user_idempotency_key="original-turn")
         ai_jobs = _StubAiJobs(claim=make_claim(job_type=AiJobType.CHAT))
         runner = _StubRunner()
 
@@ -418,11 +421,146 @@ class TestPostWithJob:
         )
 
         assert response.status_code == 200
+        assert response.text == RUNNER_BODY
+        assert orchestrator.regenerated == "m-asst"
+        assert runner.start_kwargs is not None
+        assert orchestrator.released == []
+        assert orchestrator.streamed is False
+        (job,) = ai_jobs.start_chat_job.await_args.args
+        assert job.dedupe_key == "original-turn"
+        assert job.request_payload["idempotency_key"] == "k1"
+        assert job.request_payload["regenerate_assistant_id"] == "m-asst"
+        assert job.request_payload["prepare_regeneration"] is True
+        request = _chat_request(
+            thread_id="t1",
+            regenerate_assistant_id="m-asst",
+            prepare_regeneration=True,
+        )
+        assert job.request_fingerprint == ai_job_request_fingerprint(
+            AiJobType.CHAT, request
+        )
+
+    def test_regenerate_without_a_job_id_keeps_the_legacy_stream(self):
+        orchestrator = _StubOrchestrator()
+        ai_jobs = _StubAiJobs(claim=make_claim(job_type=AiJobType.CHAT))
+        runner = _StubRunner()
+
+        response = _post(
+            orchestrator,
+            ai_jobs,
+            runner,
+            regenerate_assistant_id="m-asst",
+        )
+
+        assert response.status_code == 200
         assert response.text == ORCHESTRATOR_BODY
         assert orchestrator.regenerated == "m-asst"
         ai_jobs.start_chat_job.assert_not_awaited()
         assert runner.start_kwargs is None
         assert orchestrator.released == [orchestrator.prepared]
+
+    def test_owned_job_is_followed_instead_of_generated_again(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.RUNNING,
+            result=None,
+        )
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+        runner = _StubRunner()
+
+        response = _post(orchestrator, ai_jobs, runner, ai_job_id=JOB_ID)
+
+        assert response.status_code == 200
+        assert response.text == (
+            f'event: message.started\ndata: {{"ai_job_id": "{JOB_ID}"}}\n\n'
+            "event: message.error\n"
+            f'data: {{"ai_job_id": "{JOB_ID}", "ai_job_status": "running", '
+            '"code": "CHAT_BUSY", "retryable": true}\n\n'
+        )
+        assert orchestrator.streamed is False
+        assert runner.start_kwargs is None
+        assert orchestrator.abandoned == [(orchestrator.prepared, "CHAT_TURN_FAILED")]
+        ai_jobs.get.assert_awaited_once_with(user_id="u1", job_id=JOB_ID)
+
+    def test_completed_job_is_followed_with_its_saved_reply(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.COMPLETED,
+            result={"thread_id": "t1", "assistant_message_id": "m-saved"},
+        )
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert '"ai_job_status": "completed"' in response.text
+        assert '"assistant_message_id": "m-saved"' in response.text
+        assert "message.completed" in response.text
+        assert orchestrator.streamed is False
+
+    def test_failed_job_follow_keeps_the_job_error(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.FAILED,
+            error=make_error("CHAT_TURN_FAILED", retryable=True),
+        )
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert '"code": "CHAT_TURN_FAILED"' in response.text
+        assert '"ai_job_status": "failed"' in response.text
+        assert orchestrator.streamed is False
+
+    def test_unexpected_start_failure_is_counted_and_still_streams(self, monkeypatch):
+        metrics = []
+        crumbs = []
+        monkeypatch.setattr(
+            chat_mod,
+            "increment_metric",
+            lambda name, value=1.0, **kwargs: metrics.append((name, kwargs)),
+        )
+        monkeypatch.setattr(
+            chat_mod,
+            "add_breadcrumb",
+            lambda category, message, **kwargs: crumbs.append(
+                (category, message, kwargs)
+            ),
+        )
+        orchestrator = _StubOrchestrator()
+        ai_jobs = _StubAiJobs(error=RuntimeError("database is down"))
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert response.status_code == 200
+        assert response.text == ORCHESTRATOR_BODY
+        assert orchestrator.streamed is True
+        assert metrics == [
+            (
+                "chat.job.legacy_fallback",
+                {
+                    "attributes": {
+                        "operation": "start_chat_job",
+                        "error_type": "RuntimeError",
+                    }
+                },
+            )
+        ]
+        assert crumbs == [
+            (
+                "chat.job",
+                "Chat turn fell back to the legacy stream",
+                {
+                    "level": "warning",
+                    "data": {
+                        "operation": "start_chat_job",
+                        "error_type": "RuntimeError",
+                    },
+                },
+            )
+        ]
 
     def test_message_without_a_job_id_streams_plainly(self):
         orchestrator = _StubOrchestrator()

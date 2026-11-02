@@ -193,6 +193,28 @@ def test_new_chat_job_fingerprint_changes_with_the_turn(change):
     assert _chat_job(**change).request_fingerprint != _chat_job().request_fingerprint
 
 
+def test_new_chat_job_carries_a_regenerate_so_a_retry_reuses_the_turn():
+    job = _chat_job(regenerate_assistant_id="m-asst", dedupe_key="original-turn")
+
+    assert job.dedupe_key == "original-turn"
+    assert job.request_payload["regenerate_assistant_id"] == "m-asst"
+    assert job.request_payload["prepare_regeneration"] is True
+    assert job.request_payload["idempotency_key"] == "idem-1"
+    assert job.request_fingerprint == ai_job_request_fingerprint(
+        AiJobType.CHAT,
+        {
+            "content": "What should I eat tonight?",
+            "idempotency_key": "idem-1",
+            "intent": None,
+            "function_name": None,
+            "function_args": None,
+            "regenerate_assistant_id": "m-asst",
+            "prepare_regeneration": True,
+        },
+    )
+    assert job.request_fingerprint != _chat_job().request_fingerprint
+
+
 # --- guards shared by every use case ----------------------------------------
 
 
@@ -260,6 +282,7 @@ async def test_capabilities_describe_what_this_server_runs(
         "max_attempts": 4,
         "poll_interval_ms": 2500,
         "chat_background": chat_expected,
+        "chat_regenerate_background": chat_expected,
     }
 
 

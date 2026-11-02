@@ -5,7 +5,8 @@ without a thread id keep working on the user's most recently active thread.
 
 A message sent with ``ai_job_id`` also becomes a background AI job: the reply
 keeps generating if the client goes away, and the job records the outcome.
-A regenerated reply never becomes a job.
+Regenerate and edit do too. A request without ``ai_job_id`` still streams
+the legacy way until every client sends one.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ from src.domain.exceptions.chat_exceptions import (
     ChatRegenerateNotAllowedError,
     ChatThreadNotFoundError,
 )
-from src.domain.model.ai_jobs import AiJobClaim
+from src.domain.model.ai_jobs import AiJob, AiJobClaim, AiJobStatus
 from src.domain.model.chat import (
     CHAT_THREAD_LIST_DEFAULT_LIMIT,
     CHAT_THREAD_LIST_MAX_LIMIT,
@@ -61,6 +62,7 @@ from src.domain.services.chat.coach_functions import (
     resolve_coach_function,
 )
 from src.infra.services.durable_write_service import normalize_idempotency_key
+from src.observability import add_breadcrumb, increment_metric
 
 logger = logging.getLogger(__name__)
 
@@ -350,12 +352,13 @@ async def _post_message(
             retry_after=exc.retry_after_seconds,
         )
 
-    # A regenerated reply streams without a job: a job retry rebuilds its turn
-    # with prepare_turn, which would ask the question again as a new turn.
-    job_id = None if payload.regenerate_assistant_id else payload.ai_job_id
+    # Requests without ai_job_id stay on the legacy stream until Mobile
+    # always sends one. Regenerate uses the same job path: the payload
+    # carries the assistant id so a retry reopens that turn.
+    job_id = payload.ai_job_id
     if job_id is not None and prepared.claim.kind != ChatClaimKind.REPLAY:
         try:
-            claim = await _start_chat_job(
+            claim, follow_existing = await _start_chat_job(
                 ai_jobs,
                 prepared,
                 job_id=str(job_id),
@@ -367,7 +370,8 @@ async def _post_message(
                 intent=intent_value,
                 function_name=function_name,
                 function_args=function_args,
-                # The legacy route passes no thread. prepare_turn has already
+                regenerate_assistant_id=payload.regenerate_assistant_id,
+                # The legacy route passes no thread. prepare has already
                 # resolved the active one; store that id so a retry stays there.
                 thread_id=thread_id or prepared.claim.thread.id,
             )
@@ -377,6 +381,16 @@ async def _post_message(
                 status.HTTP_409_CONFLICT,
                 "AI_JOB_CONFLICT",
                 "This job id is already used by a different request",
+            )
+        if follow_existing:
+            # The job is already running or finished. Streaming this prepared
+            # turn would generate the reply a second time.
+            return await _follow_existing_job(
+                ai_jobs,
+                orchestrator,
+                prepared,
+                job_id=str(job_id),
+                user_id=user_id,
             )
         if claim is not None:
             session = runner.start(
@@ -431,11 +445,20 @@ async def _start_chat_job(
     function_name: str | None,
     function_args: dict | None,
     thread_id: str | None,
-) -> AiJobClaim | None:
-    """Claim the turn's job; None streams the turn without one.
+    regenerate_assistant_id: str | None = None,
+) -> tuple[AiJobClaim | None, bool]:
+    """Claim the turn's job.
+
+    Returns ``(claim, follow_existing)``. ``follow_existing`` means this id
+    already belongs to the same request and another attempt owns it, so the
+    caller must not generate. ``(None, False)`` keeps the legacy stream.
 
     Raises AiJobConflictError when the job id belongs to another request.
     """
+    # The thread lists the in-flight job by the user message's idempotency
+    # key. A regenerate request brings a new key; keep the message's key so
+    # GET still finds the job.
+    turn_key = prepared.claim.user_message.idempotency_key or idempotency_key
     job = new_chat_job(
         job_id=job_id,
         user_id=user_id,
@@ -451,16 +474,101 @@ async def _start_chat_job(
         # Stored as the thread the turn was prepared on, so a retry rebuilds
         # the same turn there.
         thread_id=thread_id,
+        regenerate_assistant_id=regenerate_assistant_id,
+        dedupe_key=turn_key,
     )
     try:
-        return await ai_jobs.start_chat_job(job)
+        claim = await ai_jobs.start_chat_job(job)
     except AiJobConflictError:
         raise
     except AiJobsUnavailableError:
-        return None
+        return None, False
+    except Exception as exc:
+        _note_legacy_fallback(exc)
+        return None, False
+    if claim is None:
+        return None, True
+    return claim, False
+
+
+def _note_legacy_fallback(exc: BaseException) -> None:
+    """Count a swallowed start failure that still streams the old way."""
+    logger.warning("Chat turn streams without an AI job", exc_info=True)
+    increment_metric(
+        "chat.job.legacy_fallback",
+        attributes={"operation": "start_chat_job", "error_type": type(exc).__name__},
+    )
+    add_breadcrumb(
+        "chat.job",
+        "Chat turn fell back to the legacy stream",
+        level="warning",
+        data={"operation": "start_chat_job", "error_type": type(exc).__name__},
+    )
+
+
+async def _follow_existing_job(
+    ai_jobs: AiJobService,
+    orchestrator: ChatTurnOrchestrator,
+    prepared: PreparedChatTurn,
+    *,
+    job_id: str,
+    user_id: str,
+) -> StreamingResponse:
+    """Tell the client to follow the job that already owns this turn."""
+    try:
+        await orchestrator.abandon_turn(prepared, error_code="CHAT_TURN_FAILED")
     except Exception:
-        logger.warning("Chat turn streams without an AI job", exc_info=True)
-        return None
+        logger.warning("Failed to abandon a duplicate chat turn", exc_info=True)
+    job: AiJob | None
+    try:
+        job = await ai_jobs.get(user_id=user_id, job_id=job_id)
+    except Exception:
+        logger.warning("Could not read the chat job to follow", exc_info=True)
+        job = None
+
+    async def events() -> AsyncIterator[bytes]:
+        for event in _follow_job_events(job_id, job):
+            yield _encode_sse(event)
+
+    return _sse_response(events())
+
+
+def _follow_job_events(job_id: str, job: AiJob | None) -> list[ChatSseEvent]:
+    status = job.status.value if job is not None else None
+    result = job.result if job is not None and isinstance(job.result, dict) else {}
+    assistant_id = result.get("assistant_message_id")
+    thread_id = result.get("thread_id")
+    started: dict = {"ai_job_id": job_id}
+    if isinstance(assistant_id, str):
+        started["assistant_message_id"] = assistant_id
+    events = [ChatSseEvent(event="message.started", data=started)]
+    if status == AiJobStatus.COMPLETED.value:
+        completed = {
+            "ai_job_id": job_id,
+            "ai_job_status": status,
+            "replayed": True,
+        }
+        if isinstance(assistant_id, str):
+            completed["assistant_message_id"] = assistant_id
+        if isinstance(thread_id, str):
+            completed["thread_id"] = thread_id
+        events.append(ChatSseEvent(event="message.completed", data=completed))
+        return events
+    code = "CHAT_BUSY"
+    retryable = True
+    if job is not None and job.error is not None:
+        code = job.error.code
+        retryable = job.error.retryable
+    error = {
+        "ai_job_id": job_id,
+        "ai_job_status": status,
+        "code": code,
+        "retryable": retryable,
+    }
+    if isinstance(assistant_id, str):
+        error["assistant_message_id"] = assistant_id
+    events.append(ChatSseEvent(event="message.error", data=error))
+    return events
 
 
 def _sse_response(body: AsyncIterator[bytes]) -> StreamingResponse:
