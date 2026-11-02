@@ -68,6 +68,7 @@ async def test_streak_days_read_the_stored_flag_then_the_noon_stamp_on_the_users
         f"CAST({local} AS TIME WITHOUT TIME ZONE) != %(noon)s))"
     ) in sql
     assert f"GROUP BY date({local})" in sql
+    _assert_streak_scan_is_not_date_bounded(sql)
 
 
 @pytest.mark.asyncio
@@ -79,3 +80,23 @@ async def test_utc_streak_days_need_no_conversion():
         "CAST(meal.created_at AS TIME WITHOUT TIME ZONE) != %(noon)s))"
     ) in sql
     assert "timezone(" not in sql
+    _assert_streak_scan_is_not_date_bounded(sql)
+
+
+def _where_clause(sql: str) -> str:
+    upper = sql.upper()
+    # Newline before WHERE, and the EXISTS subquery has a WHERE of its own.
+    # The outer predicate runs from the first WHERE to the GROUP BY.
+    return sql[upper.index("WHERE ") : upper.index(" GROUP BY ")]
+
+
+def _assert_streak_scan_is_not_date_bounded(sql: str) -> None:
+    """best_streak needs every logged day, so the scan has no created_at bound.
+
+    The constant ``status <> 'INACTIVE'`` is what lets the planner use
+    ix_meal_streak_user_created. A bound parameter does not prove that
+    partial index.
+    """
+    where = _where_clause(sql)
+    assert "created_at" not in where
+    assert "meal.status <> 'INACTIVE'" in where
