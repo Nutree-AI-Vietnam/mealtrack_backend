@@ -93,6 +93,7 @@ def _route(user, *, uow=None, publisher=None, spy=True):
                 "handle_refund",
             ):
                 setattr(spies, name, mock(name, new_callable=AsyncMock))
+            spies.handle_lifetime_purchase.return_value = []  # no Play plans
         yield spies
 
 

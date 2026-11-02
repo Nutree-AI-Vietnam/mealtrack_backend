@@ -140,6 +140,27 @@ class Settings(BaseSettings):
         description="Dedicated thread-pool size for Firebase Admin token verification.",
     )
 
+    # Google Play Developer API, signed in as the Firebase service account
+    # above: a Play lifetime purchase turns off the buyer's Play plan renewal.
+    GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED: bool = Field(
+        default=False,
+        description="Cancel Play plan renewals on a Play lifetime purchase.",
+    )
+    GOOGLE_PLAY_PACKAGE_NAME: str = Field(
+        default="",
+        description="This environment's Android application id in Play Console.",
+    )
+    GOOGLE_PLAY_CANCEL_SANDBOX: bool = Field(
+        default=False,
+        description="Also cancel for SANDBOX (license tester) purchases, for QA.",
+    )
+    GOOGLE_PLAY_API_TIMEOUT_SECONDS: float = Field(
+        default=3.0,
+        gt=0,
+        le=10,
+        description="Per-request timeout for Google token and Play API calls.",
+    )
+
     # Email (Resend)
     RESEND_API_KEY: str | None = Field(default=None)
     EMAIL_FROM: str = Field(default="Nutree <hello@nutree.app>")

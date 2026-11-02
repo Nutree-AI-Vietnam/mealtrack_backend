@@ -23,6 +23,11 @@ from src.api.routes.v1.webhook_lookup_parsing import (
     parse_platform,
     parse_timestamp,
 )
+from src.api.routes.v1.webhook_play_renewal_cancel import cancel_play_renewals
+from src.api.routes.v1.webhook_play_renewal_selection import (
+    PlayRenewal,
+    play_plan_beside_lifetime,
+)
 from src.api.routes.v1.webhook_referral_funnel import (
     _get_subscription_service,
     credit_referral_on_purchase,
@@ -191,6 +196,7 @@ async def revenuecat_webhook(
         event.get("product_id")
     )
     refund_plan = await fetch_revenuecat_plan(event) if lifetime_refund else None
+    play_renewals: list[PlayRenewal] = []
 
     # Get user
     async with AsyncUnitOfWork() as uow:
@@ -234,11 +240,12 @@ async def revenuecat_webhook(
         # Handle events — commit/rollback is owned by the AsyncUnitOfWork context manager
         if event_type == "INITIAL_PURCHASE":
             await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
+            play_renewals = await play_plan_beside_lifetime(uow, user, event)
 
         elif event_type == "NON_RENEWING_PURCHASE" and is_lifetime_product(
             event.get("product_id")
         ):
-            await handle_lifetime_purchase(
+            play_renewals = await handle_lifetime_purchase(
                 uow, user, event, affiliate_handler, event_publisher
             )
 
@@ -249,6 +256,7 @@ async def revenuecat_webhook(
 
         elif event_type == "RENEWAL":
             await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
+            play_renewals = await play_plan_beside_lifetime(uow, user, event)
 
         elif event_type == "CANCELLATION":
             await handle_cancellation(
@@ -272,6 +280,9 @@ async def revenuecat_webhook(
 
         elif event_type == "REFUND":
             await handle_refund(uow, user, event, affiliate_handler, event_publisher)
+
+    # After the commit: the event is stored whatever Google does.
+    await cancel_play_renewals(event, play_renewals)
 
     increment_metric(
         "webhook.revenuecat.processed",
