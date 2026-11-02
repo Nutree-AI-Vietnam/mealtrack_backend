@@ -428,7 +428,7 @@ class TestEnqueue:
         api.uow.ai_jobs.create.assert_not_awaited()
 
     @pytest.mark.parametrize("job_type", ["chat", "dance", "MEAL_SCAN"])
-    def test_only_meal_scans_and_text_parses_are_queued(self, api, job_type):
+    def test_only_scans_text_parses_and_recipe_imports_are_queued(self, api, job_type):
         response = api.client.post(
             "/v1/ai-jobs",
             json={"id": JOB_ID, "type": job_type, "input": {"text": "2 eggs"}},
@@ -438,7 +438,10 @@ class TestEnqueue:
         assert response.json() == _error(
             "INVALID_JOB_TYPE",
             "Unsupported AI job type",
-            {"type": job_type, "supported": ["meal_scan", "parse_text"]},
+            {
+                "type": job_type,
+                "supported": ["meal_scan", "parse_text", "recipe_import"],
+            },
         )
         api.uow.ai_jobs.create.assert_not_awaited()
 

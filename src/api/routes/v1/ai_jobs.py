@@ -1,4 +1,4 @@
-"""Background AI jobs: enqueue a meal scan or text parse, then observe it.
+"""Background AI jobs: enqueue a meal scan, text parse or recipe import, then observe it.
 
 A worker runs the job; the app polls these routes while it is open and gets
 a push for results it has not seen. Chat turns become jobs through
@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.api.dependencies.ai_jobs import get_ai_job_service
 from src.api.dependencies.auth import get_current_user_id
+from src.api.dependencies.recipe_import import get_recipe_import_guard
 from src.api.exceptions import (
     ConflictException,
     ExternalServiceException,
@@ -34,12 +35,14 @@ from src.api.schemas.request.ai_job_requests import (
     MealScanJobInput,
     ParseTextJobInput,
 )
+from src.api.schemas.request.recipe_import_requests import RecipeImportSourceRequest
 from src.api.schemas.response.ai_job_responses import (
     AiJobListResponse,
     AiJobResponse,
     AiJobSeenResponse,
 )
 from src.app.services.ai_jobs import AiJobService
+from src.app.services.recipe_import import RecipeImportGuard
 from src.domain.exceptions.ai_job_exceptions import (
     AiJobConflictError,
     AiJobNotFoundError,
@@ -101,11 +104,17 @@ async def create_ai_job(
     payload: AiJobCreateRequest,
     user_id: str = Depends(get_current_user_id),
     service: AiJobService = Depends(get_ai_job_service),
+    recipe_import_guard: RecipeImportGuard = Depends(get_recipe_import_guard),
 ) -> AiJobResponse:
     """Queue a job. Re-sending the same id and input returns the existing job."""
     job_type = _enqueueable_type(payload.type)
     if job_type == AiJobType.MEAL_SCAN:
         job_request = _meal_scan_request(_parse_input(MealScanJobInput, payload.input))
+    elif job_type == AiJobType.RECIPE_IMPORT:
+        job_request = _recipe_import_request(
+            _parse_input(RecipeImportSourceRequest, payload.input)
+        )
+        await recipe_import_guard.admit(user_id)
     else:
         job_request = _parse_text_request(
             _parse_input(ParseTextJobInput, payload.input)
@@ -277,6 +286,20 @@ def _parse_text_request(job_input: ParseTextJobInput) -> dict[str, Any]:
             error_code="INVALID_MEAL_TEXT",
         )
     return {"text": text, "current_items": job_input.current_items}
+
+
+def _recipe_import_request(job_input: RecipeImportSourceRequest) -> dict[str, Any]:
+    """Validate like POST /v1/recipe-imports/extract; the worker trusts the result."""
+    image_url = job_input.image_url.strip() if job_input.image_url else None
+    if image_url:
+        validate_uploaded_image_url(image_url, job_input.image_id or "")
+    text = job_input.text if job_input.text and job_input.text.strip() else None
+    return {
+        "url": job_input.url.strip() if job_input.url else None,
+        "text": text,
+        "image_url": image_url,
+        "note": job_input.note,
+    }
 
 
 def _parse_job_ids(raw: str) -> list[str]:

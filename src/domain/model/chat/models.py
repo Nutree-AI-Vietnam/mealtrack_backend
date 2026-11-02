@@ -386,6 +386,8 @@ class ChatTurnClaim:
     thread: ChatThread
     user_message: ChatMessage
     assistant_message: ChatMessage
+    # False when this claim reused a row another attempt may still own.
+    owns_row: bool = True
 
 
 @dataclass(frozen=True, slots=True)

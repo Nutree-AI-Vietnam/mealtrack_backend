@@ -75,6 +75,7 @@ from src.api.routes.v1.nutrition import router as nutrition_router
 from src.api.routes.v1.progress import router as progress_router
 from src.api.routes.v1.promo_codes import router as promo_codes_router
 from src.api.routes.v1.recaps import router as recaps_router
+from src.api.routes.v1.recipe_imports import router as recipe_imports_router
 from src.api.routes.v1.referrals import router as referrals_router
 from src.api.routes.v1.saved_suggestions import router as saved_suggestions_router
 from src.api.routes.v1.supplements import router as supplements_router
@@ -390,6 +391,7 @@ app.include_router(hydration_router)
 app.include_router(ingredients_router)
 app.include_router(tdee_router)
 app.include_router(saved_suggestions_router)
+app.include_router(recipe_imports_router)
 app.include_router(cheat_days_router)
 app.include_router(capabilities_router)
 app.include_router(referrals_router)

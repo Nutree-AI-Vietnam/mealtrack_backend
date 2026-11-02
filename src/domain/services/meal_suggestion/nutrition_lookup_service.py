@@ -356,8 +356,13 @@ class NutritionLookupService:
         """Schedule per-100g macros cache population."""
         if self._cache_service is None:
             return
+        # A zero-gram line (a pinch rounded down, an eaten share of a garnish)
+        # has zero macros and says nothing per 100 g: caching it would serve
+        # zeros to every later lookup of that food.
+        if result.quantity_g <= 0:
+            return
         try:
-            factor = 100.0 / result.quantity_g if result.quantity_g > 0 else 1.0
+            factor = 100.0 / result.quantity_g
             data = {
                 "protein": round(result.protein * factor, 2),
                 "carbs": round(result.carbs * factor, 2),

@@ -153,6 +153,26 @@ async def test_cached_t1_result_preserves_food_reference_id():
     assert warm.protein == pytest.approx(cold.protein * 2)
 
 
+@pytest.mark.asyncio
+async def test_a_zero_gram_line_is_priced_but_never_cached():
+    """A line that rounds to 0 g must not cache zero macros per 100 g."""
+    redis = MagicMock()
+    redis.get = AsyncMock(return_value=None)
+    cache = MagicMock()
+    cache.set = AsyncMock()
+    svc = _make_service(
+        ref_result=_make_ref(ref_id=5), redis_client=redis, cache_service=cache
+    )
+
+    pinch = await svc._lookup_ingredient("salt", 0.0)
+
+    assert pinch.calories == 0
+    cache.set.assert_not_awaited()
+
+    await svc._lookup_ingredient("salt", 5.0)
+    cache.set.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # T1 miss → T2 hit
 # ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ from src.app.services.chat_turn_orchestrator import (
 )
 from src.domain.exceptions.ai_job_exceptions import AiJobExecutionError
 from src.domain.model.ai_jobs import AiJobClaim
-from src.domain.model.chat.models import ChatSseEvent
+from src.domain.model.chat.models import ChatClaimKind, ChatSseEvent
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.utils.timezone_utils import utc_now
@@ -153,7 +153,32 @@ class ChatJobExecutor:
         thread_id = _optional_str(payload, "thread_id")
         if thread_id is not None:
             prepare_kwargs["thread_id"] = thread_id
-        prepared = await orchestrator.prepare_turn(**prepare_kwargs)
+        # A WORKER_INTERRUPTED requeue claims the job again. prepare is
+        # idempotent: a finished turn is replayed and a live lease raises
+        # ChatBusyError, so this attempt does not generate a second reply.
+        regenerate_id = _optional_str(payload, "regenerate_assistant_id")
+        if regenerate_id is not None or payload.get("prepare_regeneration") is True:
+            if regenerate_id is None:
+                raise AiJobExecutionError(
+                    "INVALID_JOB_INPUT", "missing regenerate_assistant_id"
+                )
+            prepared = await orchestrator.prepare_regeneration(
+                user_id=claim.user_id,
+                assistant_message_id=regenerate_id,
+                content=prepare_kwargs["content"],
+                locale=prepare_kwargs["locale"],
+                header_timezone=prepare_kwargs["header_timezone"],
+                user_language=prepare_kwargs["user_language"],
+                thread_id=thread_id,
+                resume=True,
+            )
+        else:
+            prepared = await orchestrator.prepare_turn(**prepare_kwargs)
+        if prepared.claim.kind == ChatClaimKind.REPLAY:
+            return {
+                "thread_id": prepared.claim.thread.id,
+                "assistant_message_id": prepared.claim.assistant_message.id,
+            }
         terminal = await run_chat_turn(
             orchestrator, user_id=claim.user_id, prepared=prepared, interrupt=interrupt
         )

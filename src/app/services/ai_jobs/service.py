@@ -50,9 +50,11 @@ def new_chat_job(
     function_name: str | None = None,
     function_args: dict[str, Any] | None = None,
     thread_id: str | None = None,
+    regenerate_assistant_id: str | None = None,
+    dedupe_key: str | None = None,
 ) -> NewAiJob:
     """Describe a chat turn so a worker can run it again exactly as sent."""
-    request = {
+    request: dict[str, Any] = {
         "content": content.strip(),
         "idempotency_key": idempotency_key,
         "intent": intent,
@@ -63,6 +65,10 @@ def new_chat_job(
     # Callers that have not resolved one yet omit it.
     if thread_id is not None:
         request["thread_id"] = thread_id
+    # A regenerate retry must reopen this reply, not ask the question again.
+    if regenerate_assistant_id is not None:
+        request["regenerate_assistant_id"] = regenerate_assistant_id
+        request["prepare_regeneration"] = True
     return NewAiJob(
         id=job_id,
         user_id=user_id,
@@ -77,7 +83,7 @@ def new_chat_job(
             "user_language": user_language,
         },
         request_fingerprint=ai_job_request_fingerprint(AiJobType.CHAT, request),
-        dedupe_key=idempotency_key,
+        dedupe_key=dedupe_key or idempotency_key,
     )
 
 
@@ -110,6 +116,10 @@ class AiJobService:
             "max_attempts": AI_JOB_MAX_ATTEMPTS,
             "poll_interval_ms": AI_JOB_POLL_INTERVAL_MS,
             "chat_background": self._enabled and self._chat_background_enabled,
+            # Same switch as chat_background: regenerate rides the chat job.
+            "chat_regenerate_background": (
+                self._enabled and self._chat_background_enabled
+            ),
         }
 
     async def enqueue(

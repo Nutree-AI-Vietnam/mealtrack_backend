@@ -23,9 +23,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Stage 2: Runtime
 FROM python:3.13.2-slim
 
-# Install runtime dependencies only
+# Install runtime dependencies only. ffmpeg lets recipe import read a video's
+# speech and on-screen text when its caption is not enough.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security

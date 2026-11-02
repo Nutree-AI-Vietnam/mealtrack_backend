@@ -470,6 +470,56 @@ def test_before_send_keeps_connection_terminate_that_is_not_cancelled():
     assert _drop_expected_events(event, _hint(RuntimeError("close failed"))) is event
 
 
+def test_before_send_drops_python_hp_pool_terminate_on_a_langchain_span():
+    """PYTHON-HP ceeb4be9: planner pool log, CancelledError, LangChain span.
+
+    The logging integration can arrive with the message as an object and
+    with no exc_info. A real error on the same log line is kept.
+    """
+    event = _connection_terminate_event(exc_type="CancelledError")
+    event["transaction"] = "/v1/chat/threads/{thread_id}/messages"
+    event["message"] = {
+        "formatted": (
+            "Exception terminating connection "
+            "<AdaptedConnection <asyncpg.connection.Connection object>>"
+        )
+    }
+    event["contexts"] = {"trace": {"op": "gen_ai.chat", "origin": "auto.ai.langchain"}}
+    event["request"] = {
+        "method": "POST",
+        "url": (
+            "http://api.nutreeai.com/v1/chat/threads/"
+            "8115178b-7098-44a1-aadb-2be8e752efad/messages"
+        ),
+    }
+    cancelled = asyncio.CancelledError(
+        "Cancelled via cancel scope 7e91fd4aea30 by "
+        "<Task pending name='Task-1432391' "
+        "coro=<RequestResponseCycle.run_asgi() "
+        "running at uvicorn/protocols/http/httptools_impl.py:421>"
+    )
+
+    assert _drop_expected_events(event, _hint(cancelled)) is None
+    assert _drop_expected_events(event, {}) is None
+
+    kept = _connection_terminate_event(exc_type="RuntimeError")
+    kept["contexts"] = {"trace": {"op": "gen_ai.chat", "origin": "auto.ai.langchain"}}
+    assert _drop_expected_events(kept, _hint(RuntimeError("close failed"))) is kept
+
+
+def test_before_send_keeps_langchain_cancellation_off_chat_routes():
+    event = {
+        "level": "error",
+        "transaction": "/v1/meals/scan-by-url",
+        "contexts": {"trace": {"op": "gen_ai.chat", "origin": "auto.ai.langchain"}},
+        "exception": {
+            "values": [{"type": "CancelledError", "mechanism": {"type": "generic"}}]
+        },
+    }
+
+    assert _drop_expected_events(event, _hint(asyncio.CancelledError())) is event
+
+
 def test_before_send_keeps_chat_cancellations_that_are_not_client_disconnects():
     event = {"level": "error", "transaction": "/v1/chat/messages"}
     provider_error = RuntimeError("provider failed")
