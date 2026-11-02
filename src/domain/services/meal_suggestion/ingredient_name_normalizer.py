@@ -6,6 +6,7 @@ AI-generated ingredient names against the food reference table.
 """
 
 import re
+import unicodedata
 
 _QUALIFIERS = [
     "raw",
@@ -31,6 +32,28 @@ _QUALIFIERS = [
     "chopped",
     "minced",
 ]
+
+# Cooking and preservation state change the nutrition identity. Keep the older
+# normalizer below for existing search/import contracts; nutrition lookups use
+# this state-preserving key and a versioned cache namespace.
+_IDENTITY_REMOVABLE_QUALIFIERS = [
+    "boneless",
+    "skinless",
+    "organic",
+    "large",
+    "medium",
+    "small",
+    "sliced",
+    "diced",
+    "chopped",
+    "minced",
+    "fresh",
+    "frozen",
+]
+_IDENTITY_QUAL_RE = re.compile(
+    r"\b(" + "|".join(map(re.escape, _IDENTITY_REMOVABLE_QUALIFIERS)) + r")\b",
+    re.IGNORECASE,
+)
 
 # Preparation and size descriptors that never identify a food on their own.
 FOOD_NAME_QUALIFIERS = frozenset(_QUALIFIERS)
@@ -62,4 +85,13 @@ def normalize_food_name(name: str) -> str:
     name = name.lower().strip()
     name = _QUAL_RE.sub(" ", name)
     name = re.sub(r"[^a-z0-9\s]", " ", name)  # strip punctuation
+    return " ".join(name.split())
+
+
+def normalize_food_identity(name: str) -> str:
+    """Normalize cosmetic wording while preserving nutrition-relevant state."""
+    name = unicodedata.normalize("NFKD", name.casefold().replace("đ", "d"))
+    name = "".join(char for char in name if not unicodedata.combining(char))
+    name = _IDENTITY_QUAL_RE.sub(" ", name)
+    name = re.sub(r"[^\w\s]", " ", name, flags=re.UNICODE)
     return " ".join(name.split())

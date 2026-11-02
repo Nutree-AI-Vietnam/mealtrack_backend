@@ -36,13 +36,20 @@ class MacroValidationService:
             meal_macros unchanged — this is a validator/logger, not a transformer.
         """
         logger.info(
-            "Macro sources: T1=%d, T2=%d, T3=%d",
+            "Macro sources: T1=%d, T2=%d, T3=%d, complete=%s, unresolved=%d",
             meal_macros.t1_count,
             meal_macros.t2_count,
             meal_macros.t3_count,
+            meal_macros.is_complete,
+            len(meal_macros.unresolved_ingredients),
         )
 
-        if meal_macros.calories <= 0:
+        if not meal_macros.is_complete or meal_macros.calories is None:
+            logger.warning(
+                "Incomplete nutrition result; unresolved ingredients=%s",
+                meal_macros.unresolved_ingredients,
+            )
+        elif meal_macros.calories <= 0:
             logger.error(
                 "Zero/negative calories from deterministic calc: calories=%.1f | "
                 "ingredients=%s",

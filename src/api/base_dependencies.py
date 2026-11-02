@@ -798,6 +798,8 @@ def get_nutrition_lookup_service():
             generation_service=MealGenerationService(),
             redis_client=_redis_client,
             cache_service=get_cache_service(),
+            request_timeout_seconds=settings.MEAL_NUTRITION_LOOKUP_TIMEOUT_SECONDS,
+            max_concurrent_lookups=settings.MEAL_NUTRITION_MAX_CONCURRENCY,
         )
     return _nutrition_lookup_service
 

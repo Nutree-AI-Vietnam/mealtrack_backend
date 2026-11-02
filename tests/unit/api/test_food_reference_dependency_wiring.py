@@ -16,6 +16,8 @@ def test_nutrition_singletons_use_async_food_reference_adapter(monkeypatch):
             generation_service,
             redis_client=None,
             cache_service=None,
+            request_timeout_seconds=20.0,
+            max_concurrent_lookups=8,
         ):
             self.food_ref_repo = food_ref_repo
             self.ingredient_nutrition_resolver = ingredient_nutrition_resolver

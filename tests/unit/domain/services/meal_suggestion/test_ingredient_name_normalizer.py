@@ -5,6 +5,7 @@ Unit tests for ingredient_name_normalizer.normalize_food_name.
 import pytest
 
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
+    normalize_food_identity,
     normalize_food_name,
 )
 
@@ -107,6 +108,17 @@ class TestNormalizeFoodName:
 
     def test_raw_and_cooked_variants_converge(self):
         assert normalize_food_name("raw salmon") == normalize_food_name("cooked salmon")
+
+
+@pytest.mark.unit
+class TestNormalizeFoodIdentity:
+    def test_preserves_nutrition_relevant_preparation_state(self):
+        assert normalize_food_identity("raw rice") != normalize_food_identity(
+            "cooked rice"
+        )
+
+    def test_matches_cosmetic_unicode_variants(self):
+        assert normalize_food_identity("Ức gà") == normalize_food_identity("uc ga")
 
     def test_fresh_and_frozen_variants_converge(self):
         assert normalize_food_name("fresh peas") == normalize_food_name("frozen peas")

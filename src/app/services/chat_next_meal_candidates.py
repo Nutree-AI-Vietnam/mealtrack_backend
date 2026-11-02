@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -217,50 +218,130 @@ class ChatNextMealCandidates:
     async def _reconcile_lookup_macros(
         self, meals: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Replace model calorie estimates with NutritionLookupService totals.
+        """Replace estimates only with complete ingredient nutrition totals."""
+        if not meals:
+            return []
+        if self._nutrition_lookup is None:
+            return [
+                marked
+                for meal in meals
+                if (marked := _with_estimated_nutrition(meal)) is not None
+            ]
 
-        When no lookup service is configured, meals pass through unchanged.
-        A successful positive calorie total replaces the model estimate.
-        A lookup error or a zero-calorie miss keeps the generated meal, so a
-        strict food database cannot swap in an unrelated card. Per-ingredient
-        calories are attached only when the breakdown lines up with the
-        ingredient list.
-        """
-        if self._nutrition_lookup is None or not meals:
-            return meals
-        reconciled = await asyncio.gather(
-            *(self._reconcile_one_meal(meal) for meal in meals)
-        )
+        inputs = [_lookup_ingredient_rows(meal.get("ingredients")) for meal in meals]
+        valid_indexes = [index for index, rows in enumerate(inputs) if rows]
+        if not valid_indexes:
+            return [
+                marked
+                for meal in meals
+                if (marked := _with_estimated_nutrition(meal)) is not None
+            ]
+        try:
+            batch_lookup = getattr(
+                self._nutrition_lookup, "calculate_meals_macros", None
+            )
+            if callable(batch_lookup):
+                macro_results = await batch_lookup([inputs[i] for i in valid_indexes])
+            else:
+                macro_results = await asyncio.gather(
+                    *(
+                        self._nutrition_lookup.calculate_meal_macros(inputs[i])
+                        for i in valid_indexes
+                    ),
+                    return_exceptions=True,
+                )
+        except Exception:
+            logger.warning(
+                "chat next-meal batch nutrition lookup failed", exc_info=True
+            )
+            return [
+                marked
+                for meal in meals
+                if (marked := _with_estimated_nutrition(meal)) is not None
+            ]
+
+        if len(macro_results) != len(valid_indexes):
+            logger.warning(
+                "chat next-meal nutrition lookup returned %d results for %d meals",
+                len(macro_results),
+                len(valid_indexes),
+            )
+            return [
+                marked
+                for meal in meals
+                if (marked := _with_estimated_nutrition(meal)) is not None
+            ]
+
+        reconciled: list[dict[str, Any] | None] = [None] * len(meals)
+        for index, (meal, rows) in enumerate(zip(meals, inputs, strict=True)):
+            if not rows:
+                reconciled[index] = _with_estimated_nutrition(meal)
+        for index, macros in zip(valid_indexes, macro_results, strict=True):
+            meal = meals[index]
+            if isinstance(macros, BaseException):
+                if not isinstance(macros, Exception):
+                    raise macros
+                logger.warning(
+                    "chat next-meal nutrition lookup failed for %s",
+                    meal.get("name"),
+                    exc_info=macros,
+                )
+                marked = _with_estimated_nutrition(meal)
+            else:
+                complete = getattr(macros, "is_complete", True)
+                if not complete or getattr(macros, "calories", None) is None:
+                    marked = _with_estimated_nutrition(meal)
+                else:
+                    marked = self._apply_lookup_macros(meal, inputs[index], macros)
+            reconciled[index] = marked
         return [meal for meal in reconciled if meal is not None]
 
     async def _reconcile_one_meal(self, meal: dict[str, Any]) -> dict[str, Any] | None:
+        """Compatibility helper for a single generated meal."""
         lookup_input = _lookup_ingredient_rows(meal.get("ingredients"))
         if not lookup_input:
-            return None
+            return _with_estimated_nutrition(meal)
+        if self._nutrition_lookup is None:
+            return _with_estimated_nutrition(meal)
         try:
             macros = await self._nutrition_lookup.calculate_meal_macros(lookup_input)
         except Exception:
             logger.warning(
-                "chat next-meal nutrition lookup failed; keeping the generated meal",
+                "chat next-meal nutrition lookup failed",
                 extra={"meal": meal.get("name")},
                 exc_info=True,
             )
-            return dict(meal)
-        calories = getattr(macros, "calories", None)
-        if calories is None or float(calories) <= 0:
-            # A miss in the food database must not replace the dish the user
-            # asked for with an unrelated fallback card.
-            logger.info(
-                "chat next-meal lookup had no calories; keeping model estimate",
-                extra={"meal": meal.get("name")},
-            )
-            return dict(meal)
+            return _with_estimated_nutrition(meal)
+        if not getattr(macros, "is_complete", True):
+            return _with_estimated_nutrition(meal)
+        return self._apply_lookup_macros(meal, lookup_input, macros)
+
+    def _apply_lookup_macros(
+        self, meal: dict[str, Any], lookup_input: list[dict[str, Any]], macros: Any
+    ) -> dict[str, Any] | None:
+        calories = _number_or_none(getattr(macros, "calories", None))
+        if calories is None or calories <= 0:
+            return _with_estimated_nutrition(meal)
+        nutrient_values = [
+            _number_or_none(getattr(macros, key, None))
+            for key in ("protein", "carbs", "fat", "fiber")
+        ]
+        if any(value is None or value < 0 for value in nutrient_values):
+            return _with_estimated_nutrition(meal)
+        protein, carbs, fat, fiber = nutrient_values
+        assert protein is not None
+        assert carbs is not None
+        assert fat is not None
+        assert fiber is not None
         updated = dict(meal)
-        updated["calories"] = int(round(float(calories)))
-        updated["protein_g"] = float(getattr(macros, "protein", 0) or 0)
-        updated["carbs_g"] = float(getattr(macros, "carbs", 0) or 0)
-        updated["fat_g"] = float(getattr(macros, "fat", 0) or 0)
-        updated["fiber_g"] = float(getattr(macros, "fiber", 0) or 0)
+        updated["calories"] = int(round(calories))
+        updated["protein_g"] = float(protein)
+        updated["carbs_g"] = float(carbs)
+        updated["fat_g"] = float(fat)
+        updated["fiber_g"] = float(fiber)
+        updated["nutrition_status"] = (
+            "estimated" if getattr(macros, "t3_count", 0) else "lookup"
+        )
         breakdown = getattr(macros, "ingredients", None) or []
         raw_ingredients = meal.get("ingredients")
         if (
@@ -301,11 +382,30 @@ def _lookup_ingredient_rows(raw: Any) -> list[dict[str, Any]]:
         if not name or amount is None:
             return []
         try:
-            float(amount)
-        except (TypeError, ValueError):
+            parsed_amount = float(amount)
+        except (TypeError, ValueError, OverflowError):
+            return []
+        if not math.isfinite(parsed_amount) or parsed_amount <= 0:
             return []
         rows.append({"name": name, "amount": amount, "unit": unit})
     return rows
+
+
+def _with_estimated_nutrition(meal: dict[str, Any]) -> dict[str, Any] | None:
+    """Keep a complete model estimate when reference reconciliation is unavailable."""
+    calories = _number_or_none(meal.get("calories"))
+    macros = [
+        _number_or_none(meal.get(key)) for key in ("protein_g", "carbs_g", "fat_g")
+    ]
+    if (
+        calories is None
+        or calories <= 0
+        or any(value is None or value < 0 for value in macros)
+    ):
+        return None
+    updated = dict(meal)
+    updated["nutrition_status"] = "estimated"
+    return updated
 
 
 def last_discover_session_id(messages: list[ChatMessage]) -> str | None:
@@ -335,6 +435,9 @@ def map_discover_meals(
             "carbs_g": _number_or_none(meal.get("carbs_g", meal.get("carbs"))),
             "fat_g": _number_or_none(meal.get("fat_g", meal.get("fat"))),
         }
+        nutrition_status = meal.get("nutrition_status")
+        if nutrition_status in {"estimated", "lookup"}:
+            card["nutrition_status"] = nutrition_status
         fiber_g = _number_or_none(meal.get("fiber_g", meal.get("fiber")))
         if fiber_g is not None:
             card["fiber_g"] = fiber_g
@@ -347,7 +450,7 @@ def map_discover_meals(
                 num = _number_or_none(v)
                 if num is not None and num >= 0:
                     micros_dict[k] = float(num)
-        elif hasattr(raw_micros, "model_dump"):
+        elif raw_micros is not None and hasattr(raw_micros, "model_dump"):
             dumped = raw_micros.model_dump()
             for k, v in dumped.items():
                 num = _number_or_none(v)
@@ -403,9 +506,9 @@ def _number_or_none(value: Any) -> float | int | None:
         return None
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    if number != number:
+    if not math.isfinite(number):
         return None
     if number.is_integer():
         return int(number)

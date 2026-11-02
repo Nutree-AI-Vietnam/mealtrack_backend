@@ -45,7 +45,9 @@ class IngredientNutritionResolver:
         self._fs = fatsecret
         self._repo = food_ref_repo
 
-    async def resolve(self, name: str) -> Optional[PerHundredGramsMacros]:
+    async def resolve(
+        self, name: str, *, name_normalized: str | None = None
+    ) -> Optional[PerHundredGramsMacros]:
         """Resolve per-100g macros for the given ingredient name.
 
         Returns None if fatsecret returns no results, hits rate limits,
@@ -77,7 +79,7 @@ class IngredientNutritionResolver:
             logger.debug("Could not extract macros for ingredient '%s'", name)
             return None
 
-        await self._upsert_food_reference(name, best, macros)
+        await self._upsert_food_reference(name, best, macros, name_normalized)
         return macros
 
     # ------------------------------------------------------------------
@@ -134,15 +136,16 @@ class IngredientNutritionResolver:
         name: str,
         food: Dict[str, Any],
         macros: PerHundredGramsMacros,
+        name_normalized: str | None = None,
     ) -> None:
         """Persist macro lookup to food_reference (T1 cache warm-up)."""
-        name_normalized = normalize_food_name(name)
+        normalized = name_normalized or normalize_food_name(name)
         external_id: Optional[str] = food.get("food_id")
 
         try:
             kwargs = {
                 "name": name,
-                "name_normalized": name_normalized,
+                "name_normalized": normalized,
                 "protein_100g": macros.protein,
                 "carbs_100g": macros.carbs,
                 "fat_100g": macros.fat,

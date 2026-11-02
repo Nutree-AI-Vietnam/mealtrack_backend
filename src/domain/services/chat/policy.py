@@ -18,6 +18,12 @@ from src.domain.model.chat import (
     RetrievedKnowledgeChunk,
 )
 from src.domain.services.chat.coach_functions import output_contract_for
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    allergen_codes,
+    allergen_terms,
+    fold_allergen_text,
+    normalize_allergen_code,
+)
 
 PROMPT_VERSION = CHAT_PROMPT_VERSION
 
@@ -131,6 +137,15 @@ _MACRO_CLAIM_RE = re.compile(
 )
 
 _CITATION_RE = re.compile(r"\[K(\d+)\]")
+_MILK_SUBSTITUTES_RE = re.compile(
+    r"\b(?:almond|oat|soy|soya|coconut|rice|cashew|hemp|pea)\s+(?:milk|cream)\b"
+    r"|\b(?:sua\s+(?:hanh nhan|dau nanh|gao|yen mach|dua))\b"
+)
+_LACTOSE_FREE_PRODUCTS_RE = re.compile(
+    r"\b(?:lactose[-\s]?free\s+(?:[a-z]+\s+){0,2}"
+    r"(?:milk|yogurt|yoghurt|curd|cream|sour cream|ice cream|condensed milk|milk powder))\b"
+    r"|\b(?:(?:milk|yogurt|yoghurt|curd|cream)\s+lactose[-\s]?free)\b"
+)
 
 _SENTENCE_END_RE = re.compile(r"(?s)(.+?(?:[.!?…][\"')\]]*|\n{2,})\s+)")
 # Hold a trailing number (and an optional unit) so an untraceable calorie claim
@@ -309,6 +324,7 @@ def request_fingerprint(
             resolved_name = resolved.name
             resolved_args = dict(resolved.args)
 
+    payload: dict[str, Any]
     if resolved_name:
         payload = {
             "content": content,
@@ -479,13 +495,57 @@ def inspect_sentence(
         return SafetyDecision(False, "internal_context_leak")
     if _MUTATION_CLAIM_RE.search(sentence):
         return SafetyDecision(False, "mutation_claim")
-    lowered = sentence.casefold()
-    if _SUGGEST_RE.search(sentence):
-        for allergy in allergies:
-            token = allergy.strip().casefold()
-            if token and token in lowered:
-                return SafetyDecision(False, "allergy_conflict")
+    if _allergen_recommendation_conflict(sentence, allergies):
+        return SafetyDecision(False, "allergy_conflict")
     return SafetyDecision(True)
+
+
+def _allergen_recommendation_conflict(
+    sentence: str,
+    allergies: Iterable[str],
+) -> bool:
+    """Block recommendation sentences that positively include a saved allergen."""
+    if not _SUGGEST_RE.search(sentence):
+        return False
+    text = fold_allergen_text(sentence)
+    for allergy in allergies:
+        if not allergy or not allergy.strip():
+            continue
+        terms = set(allergen_terms(allergy))
+        if not terms:
+            normalized = normalize_allergen_code(allergy).replace("_", " ")
+            if normalized:
+                terms.add(normalized)
+        checked_text = text
+        if "milk" in terms or "dairy" in terms:
+            checked_text = _MILK_SUBSTITUTES_RE.sub("plant beverage", checked_text)
+        if allergen_codes(allergy) == frozenset({"lactose"}):
+            checked_text = _LACTOSE_FREE_PRODUCTS_RE.sub("product", checked_text)
+        pattern = re.compile(
+            r"(?<![a-z0-9])(?:"
+            + "|".join(re.escape(term) for term in sorted(terms, key=len, reverse=True))
+            + r")(?![a-z0-9])"
+        )
+        for match in pattern.finditer(checked_text):
+            prefix = checked_text[max(0, match.start() - 40) : match.start()]
+            suffix = checked_text[match.end() : match.end() + 24]
+            is_avoidance = bool(
+                re.search(
+                    r"\b(?:avoid(?:ing)?|without|skip(?:ping)?|leave out|exclude|no)\s+"
+                    r"(?:[a-z]+\s+){0,2}$",
+                    prefix,
+                )
+                or re.search(
+                    r"\b(?:do not|don't|not)\s+"
+                    r"(?:eat|have|include|add|order|try|cook|make|use|serve)\s+"
+                    r"(?:[a-z]+\s+){0,2}$",
+                    prefix,
+                )
+                or re.match(r"-free\b|\s+(?:is|are|should be) avoided\b", suffix)
+            )
+            if not is_avoidance:
+                return True
+    return False
 
 
 def meal_reply_is_usable(
@@ -901,8 +961,8 @@ def meal_conflicts_with_allergies(
     allergies: Iterable[str],
 ) -> bool:
     """True when a meal mentions a known allergen, or cannot be checked."""
-    tokens = {item.strip().casefold() for item in allergies if item and item.strip()}
-    if not tokens:
+    requested = [item.strip() for item in allergies if item and item.strip()]
+    if not requested:
         return False
     ingredient_names = _ingredient_names(meal)
     haystacks = [
@@ -910,11 +970,27 @@ def meal_conflicts_with_allergies(
         str(meal.get("english_name") or ""),
         *ingredient_names,
     ]
-    blob = " ".join(haystacks).casefold()
-    if any(token in blob for token in tokens):
-        return True
-    # Lightweight Discover cards are names+macros only. Do not show them when
-    # the user has allergies and ingredients were never returned to inspect.
+    text = fold_allergen_text(" ".join(haystacks))
+    for preference in requested:
+        terms = allergen_terms(preference)
+        # Unknown preference labels cannot be safely cleared by a text scan.
+        if not terms:
+            return True
+        # Plant milks contain the word "milk" but are not dairy. Tree-nut or
+        # soy preferences still match their first token independently.
+        checked_text = text
+        if allergen_codes(preference) == frozenset({"lactose"}):
+            checked_text = _LACTOSE_FREE_PRODUCTS_RE.sub("product", checked_text)
+        if "milk" in terms or "dairy" in terms:
+            checked_text = _MILK_SUBSTITUTES_RE.sub("plant beverage", checked_text)
+        pattern = re.compile(
+            r"(?<![a-z0-9])(?:"
+            + "|".join(re.escape(term) for term in sorted(terms, key=len, reverse=True))
+            + r")(?![a-z0-9])"
+        )
+        if pattern.search(checked_text):
+            return True
+    # A card without ingredients cannot be checked for hidden allergens.
     return not ingredient_names
 
 
@@ -934,18 +1010,23 @@ def filter_chunks_for_allergies(
     allergies: Iterable[str],
 ) -> list[RetrievedKnowledgeChunk]:
     """Drop reviewed chunks tagged as containing a known user allergen."""
-    tokens = {item.strip().casefold() for item in allergies if item and item.strip()}
-    if not tokens:
+    requested: set[str] = set()
+    for allergy in allergies:
+        if allergy and allergy.strip():
+            requested.update(allergen_codes(allergy))
+    if not requested:
         return list(chunks)
     kept: list[RetrievedKnowledgeChunk] = []
     for chunk in chunks:
-        tags = {tag.strip().casefold() for tag in chunk.safety_tags if tag}
-        unsafe = False
-        for token in tokens:
-            if token in tags or f"contains:{token}" in tags:
-                unsafe = True
-                break
-        if not unsafe:
+        tags: set[str] = set()
+        for tag in chunk.safety_tags:
+            if not tag:
+                continue
+            cleaned_tag = re.sub(
+                r"^contains\s*:\s*", "", fold_allergen_text(tag.strip())
+            )
+            tags.add(normalize_allergen_code(cleaned_tag))
+        if not tags.intersection(requested):
             kept.append(chunk)
     return kept
 

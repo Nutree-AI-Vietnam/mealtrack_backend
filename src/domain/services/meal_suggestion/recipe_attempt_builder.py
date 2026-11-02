@@ -26,7 +26,9 @@ from src.domain.services.meal_suggestion.nutrition_lookup_service import (
 
 logger = logging.getLogger(__name__)
 
-PARALLEL_SINGLE_MEAL_TOKENS = 1200  # was 4000; worst-case output ~600 tokens, 2x safety margin
+PARALLEL_SINGLE_MEAL_TOKENS = (
+    1200  # was 4000; worst-case output ~600 tokens, 2x safety margin
+)
 PARALLEL_SINGLE_MEAL_TIMEOUT = 20  # was 35
 # User-tapped /recipes: one meal, worth waiting. Discovery stays on the short timeout.
 SELECTED_RECIPE_ATTEMPT_TIMEOUT = 40
@@ -105,11 +107,19 @@ async def attempt_recipe_generation(
             reject_out_of_range=reject_on_scale_out_of_range,
         )
         if scaled_macros is None:
+            actual_calories = (
+                f"{meal_macros.calories:.0f}"
+                if meal_macros.calories is not None
+                else "unavailable"
+            )
             logger.info(
                 f"[PHASE-2-SCALE-REJECT]{marker} index={index} | "
-                f"actual={meal_macros.calories:.0f} kcal | "
+                f"actual={actual_calories} kcal | "
                 f"target={session.target_calories} kcal | meal_name={meal_name}"
             )
+            return None
+
+        if scaled_macros.protein is None:
             return None
 
         # Warn (don't reject) if protein ratio is >20% off the session's protein target
@@ -126,6 +136,20 @@ async def attempt_recipe_generation(
                 )
 
         validated_macros = macro_validator.validate_deterministic(scaled_macros)
+        if any(
+            value is None
+            for value in (
+                validated_macros.calories,
+                validated_macros.protein,
+                validated_macros.carbs,
+                validated_macros.fat,
+            )
+        ):
+            return None
+        assert validated_macros.calories is not None
+        assert validated_macros.protein is not None
+        assert validated_macros.carbs is not None
+        assert validated_macros.fat is not None
 
         # Update ingredient amounts in the raw response to reflect scaled quantities.
         # Also normalise unit to "g" — amount is now in grams regardless of original unit.
@@ -151,7 +175,7 @@ async def attempt_recipe_generation(
             description="",
             meal_type=MealType(session.meal_type),
             macros=MacroEstimate(
-                calories=validated_macros.calories,
+                calories=int(round(validated_macros.calories)),
                 protein=validated_macros.protein,
                 carbs=validated_macros.carbs,
                 fat=validated_macros.fat,
@@ -245,7 +269,9 @@ def fallback_selected_recipe(
     Calories and macros stay on the selected Discover meal. Do not recompute.
     """
     localized = str(selected.get("name") or selected.get("english_name") or "").strip()
-    english = str(selected.get("english_name") or selected.get("name") or localized).strip()
+    english = str(
+        selected.get("english_name") or selected.get("name") or localized
+    ).strip()
     meal_name = localized or english or "Meal"
     ingredients = [
         Ingredient(name=name, amount=0, unit="")
@@ -264,7 +290,9 @@ def fallback_selected_recipe(
         description="",
         meal_type=MealType(session.meal_type),
         macros=MacroEstimate(
-            calories=int(round(float(selected.get("calories") or session.target_calories or 0))),
+            calories=int(
+                round(float(selected.get("calories") or session.target_calories or 0))
+            ),
             protein=float(selected.get("protein") or session.protein_target or 0),
             carbs=float(selected.get("carbs") or session.carbs_target or 0),
             fat=float(selected.get("fat") or session.fat_target or 0),
