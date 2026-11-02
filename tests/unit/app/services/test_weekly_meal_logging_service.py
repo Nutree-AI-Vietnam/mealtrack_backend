@@ -139,6 +139,7 @@ async def test_slot_log_happy_path_with_eager_plan_optimizes_roundtrips():
         slot_id="slot-0-0",
         meal_id="materialized-meal-123",
         slot=slot_obj,
+        log_source="plan",
     )
     assert mock_ops.completed is True
 
@@ -418,3 +419,56 @@ async def test_slot_log_falls_back_to_fetched_plan_timezone_when_slot_plan_not_e
 
     assert result.logged_meal_id == "meal-tz-test-fallback"
     assert captured_kwargs.get("timezone") == "Asia/Tokyo"
+
+
+@pytest.mark.asyncio
+async def test_slot_log_purges_the_meal_day_after_commit():
+    from src.app.events.meal.meal_events import (
+        register_local_cache_invalidation_hook,
+    )
+
+    events = []
+
+    class _UowFactory:
+        async def __aenter__(self):
+            events.append("begin")
+            return uow
+
+        async def __aexit__(self, exc_type, exc, tb):
+            events.append("commit")
+            return False
+
+    slot_obj = SimpleNamespace(
+        id="slot-0-0",
+        day_index=0,
+        slot_index=0,
+        catalog_meal_id="recipe-1",
+        is_logged=False,
+        plan=SimpleNamespace(id="plan-1", week_start_date=date(2026, 9, 21)),
+    )
+    uow = SimpleNamespace(
+        weekly_meal_plans=SimpleNamespace(
+            get_slot_for_update=AsyncMock(return_value=slot_obj),
+            mark_slot_logged=AsyncMock(),
+        ),
+        catalog_recipes=_MockCatalogRecipes(meal=SimpleNamespace(id="recipe-1")),
+        meal_write_operations=_MockWriteOperations(),
+    )
+
+    async def purge(user_id, meal_date, old_meal_date):
+        events.append(("purge", user_id, meal_date, old_meal_date))
+
+    register_local_cache_invalidation_hook(purge)
+    try:
+        service = WeeklyMealLoggingService(
+            _UowFactory, materializer=_MockMaterializer()
+        )
+        await service.log(_make_command())
+    finally:
+        register_local_cache_invalidation_hook(None)
+
+    assert events == [
+        "begin",
+        "commit",
+        ("purge", "user-1", date(2026, 9, 21), None),
+    ]

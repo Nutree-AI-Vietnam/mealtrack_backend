@@ -7,7 +7,7 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from time import monotonic
 
@@ -782,14 +782,8 @@ class WeeklyMealPlanService:
                 )
             if new_recipe_id == current.recipe_id:
                 continue
-            proposed[plan.slots.index(current)] = current.__class__(
-                id=current.id,
-                day_index=current.day_index,
-                slot_index=current.slot_index,
-                recipe_id=new_recipe_id,
-                is_logged=current.is_logged,
-                logged_meal_id=current.logged_meal_id,
-                version=current.version,
+            proposed[plan.slots.index(current)] = _slot_with_recipe(
+                current, new_recipe_id
             )
             changes.append(
                 {
@@ -1453,15 +1447,8 @@ def _target_coordinate(command: AiAdjustMealPlanCommand) -> tuple[int, int] | No
 
 
 def _slot_with_recipe(slot, recipe_id):
-    return slot.__class__(
-        id=slot.id,
-        day_index=slot.day_index,
-        slot_index=slot.slot_index,
-        recipe_id=recipe_id,
-        is_logged=slot.is_logged,
-        logged_meal_id=slot.logged_meal_id,
-        version=slot.version,
-    )
+    # Keeps log and skip state; the proposal changes only the recipe.
+    return replace(slot, recipe_id=recipe_id, recipe_override=None)
 
 
 def _generation_state(plan):

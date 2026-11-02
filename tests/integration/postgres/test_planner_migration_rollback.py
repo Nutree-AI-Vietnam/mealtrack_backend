@@ -24,6 +24,8 @@ TABLES = (
     "meal",
     "meal_write_operation",
 )
+# Columns added by later migrations; the downgrade target does not have them.
+LATER_COLUMNS = {"weekly_meal_plan_slots": ("log_source", "is_skipped")}
 
 
 async def _snapshot(factory):
@@ -32,12 +34,17 @@ async def _snapshot(factory):
             table: (
                 await session.execute(
                     text(
-                        f"SELECT COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)), '[]'::jsonb) FROM {table} row"
+                        f"SELECT COALESCE(jsonb_agg({_row(table)} ORDER BY {_row(table)}), '[]'::jsonb) FROM {table} row"
                     )
                 )
             ).scalar_one()
             for table in TABLES
         }
+
+
+def _row(table: str) -> str:
+    dropped = "".join(f" - '{column}'" for column in LATER_COLUMNS.get(table, ()))
+    return f"(to_jsonb(row){dropped})"
 
 
 @pytest.mark.asyncio
