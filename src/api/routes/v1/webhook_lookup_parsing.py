@@ -85,7 +85,7 @@ async def get_subscription_by_revenuecat_id(uow, revenuecat_id: str):
     return await uow.subscriptions.find_by_revenuecat_id(revenuecat_id)
 
 
-def parse_platform(store: str) -> str:
+def parse_platform(store: str | None) -> str:
     """Parse store name to platform."""
     if not store:
         return "ios"
@@ -99,6 +99,28 @@ def parse_platform(store: str) -> str:
         "MAC_APP_STORE": "ios",
     }
     return store_map.get(store_upper, "ios")
+
+
+# Only stores whose platform is certain. parse_platform records every other
+# store as "ios"; a filter built on that would move or match the wrong rows.
+_FILTER_PLATFORMS = {
+    "APP_STORE": "ios",
+    "MAC_APP_STORE": "ios",
+    "PLAY_STORE": "android",
+    "RC_BILLING": "web",  # RevenueCat Web Billing
+    "PADDLE": "web",  # the web checkout
+    "STRIPE": "web",
+}
+
+
+def store_platform(store: object) -> str | None:
+    """The platform to filter rows by for a store; None means no filter.
+
+    Takes the webhook spelling (RC_BILLING) and the REST one (rc_billing).
+    """
+    if not isinstance(store, str) or not store:
+        return None
+    return _FILTER_PLATFORMS.get(store.upper())
 
 
 def parse_timestamp(ms: int | None) -> datetime | None:

@@ -48,3 +48,23 @@ def test_firebase_executor_accessors_delegate_to_infra(monkeypatch):
     assert get_firebase_executor() is sentinel
     shutdown_firebase_executor()
     assert called["shutdown"] == 1
+
+
+def test_play_subscription_service_is_built_once_from_settings(monkeypatch):
+    from src.bootstrap.integration_services import (
+        get_play_subscription_service,
+        reset_play_subscription_service_for_tests,
+    )
+
+    reset_play_subscription_service_for_tests()
+    built = []
+    monkeypatch.setattr(
+        "src.bootstrap.integration_services.GooglePlaySubscriptionAdapter",
+        SimpleNamespace(from_settings=lambda: built.append(object()) or built[-1]),
+    )
+
+    first = get_play_subscription_service()
+
+    assert get_play_subscription_service() is first is built[0]
+    assert len(built) == 1
+    reset_play_subscription_service_for_tests()

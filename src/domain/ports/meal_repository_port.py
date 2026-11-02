@@ -132,6 +132,18 @@ class MealRepositoryPort(ABC):
         """Return owned READY food meals in [start_dt, end_dt) UTC, newest first."""
         return []
 
+    async def list_recent_fix_result_raw_payloads(
+        self,
+        user_id: str,
+        *,
+        limit: int = 30,
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Return (meal_id, dish_name, raw_ai_response) for recent Fix-result meals.
+
+        Newest first. Used only to recover `_fix_result_corrections` history.
+        """
+        return []
+
     async def aggregate_linked_ingredient_history(
         self,
         *,

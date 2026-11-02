@@ -225,6 +225,7 @@ class VisionAIService(VisionAIServicePort):
         self,
         image_bytes: bytes,
         language: str = "en",
+        correction_hints: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Analyze a food image to extract nutritional information.
@@ -241,6 +242,7 @@ class VisionAIService(VisionAIServicePort):
         strategy = AnalysisStrategyFactory.create_basic_strategy(
             optimized_prompt_enabled=self._optimized_prompt_enabled,
             language=language,
+            correction_hints=correction_hints,
         )
         return await self.analyze_with_strategy(image_bytes, strategy)
 

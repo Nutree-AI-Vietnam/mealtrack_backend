@@ -16,7 +16,7 @@ class SubscriptionInfo(BaseModel):
     """Subscription information."""
 
     product_id: str = Field(
-        ..., description="Subscription product ID (premium_monthly or premium_yearly)"
+        ..., description="Store product ID (a monthly, yearly or lifetime product)"
     )
     status: str = Field(
         ...,
@@ -27,6 +27,9 @@ class SubscriptionInfo(BaseModel):
     )
     is_monthly: bool = Field(..., description="Whether this is a monthly subscription")
     is_yearly: bool = Field(..., description="Whether this is a yearly subscription")
+    is_lifetime: bool = Field(
+        False, description="Whether this is a one-time lifetime purchase (no expiry)"
+    )
     platform: str = Field(..., description="Platform (ios, android, web)")
 
 
