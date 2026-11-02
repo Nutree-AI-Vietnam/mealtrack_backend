@@ -6,6 +6,7 @@ from enum import Enum
 class ModelPurpose(Enum):
     MEAL_SCAN = "meal_scan"
     FOOD_LABEL_SCAN = "food_label_scan"
+    SUPPLEMENT_LABEL_SCAN = "supplement_label_scan"
     INGREDIENT_SCAN = "ingredient_scan"
     PARSE_TEXT = "parse_text"
     BARCODE = "barcode"

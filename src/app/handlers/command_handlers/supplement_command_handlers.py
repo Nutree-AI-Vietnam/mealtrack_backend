@@ -50,7 +50,7 @@ def _not_found(what: str) -> ResourceNotFoundException:
     return ResourceNotFoundException(f"{what} not found", "SUPPLEMENT_NOT_FOUND")
 
 
-class _SupplementWrite:
+class SupplementWrite:
     def __init__(
         self, uow_factory: Callable[[], Any], purge_day: DayPurge | None = None
     ):
@@ -74,6 +74,47 @@ class _SupplementWrite:
             )
         return product
 
+    async def _put_on_list(
+        self,
+        uow: Any,
+        user_id: str,
+        product: SupplementProduct,
+        units_per_dose: float | None = None,
+    ) -> UserSupplement:
+        """Add the product to the list, or reactivate its row keeping its dose."""
+        repo = uow.supplements
+        listed = {e.product_id: e for e in await repo.list_supplements(user_id)}
+        current = listed.get(product.id)
+        return await repo.save_list_entry(
+            UserSupplement(
+                id=current.id if current else str(uuid4()),
+                user_id=user_id,
+                product_id=product.id,
+                units_per_dose=units_per_dose
+                or (current.units_per_dose if current else product.units_per_serving),
+                sort_order=current.sort_order if current else len(listed),
+            )
+        )
+
+    async def _day_doses(
+        self, uow: Any, user_id: str, product_id: str, day: date
+    ) -> list[SupplementIntake]:
+        """The product's doses on ``day``: a list row carries them, as GET /mine does."""
+        doses = await uow.supplements.intakes_between(user_id, day, day)
+        return [dose for dose in doses if dose.product_id == product_id]
+
+    @staticmethod
+    def _taken(taken_at: datetime | None, now: datetime) -> datetime:
+        """The dose time, defaulting to now; refused outside the last year."""
+        taken = taken_at or now
+        if taken.tzinfo is None:
+            taken = taken.replace(tzinfo=now.tzinfo)
+        if not now - _MAX_BACKDATE <= taken <= now + _FUTURE_GRACE:
+            raise ValidationException(
+                "taken_at must be within the last year", "INVALID_TAKEN_AT"
+            )
+        return taken
+
     async def _log(
         self,
         uow: Any,
@@ -86,13 +127,7 @@ class _SupplementWrite:
         header_timezone: str | None,
     ) -> SupplementIntake:
         now = utc_now()
-        taken = taken_at or now
-        if taken.tzinfo is None:
-            taken = taken.replace(tzinfo=now.tzinfo)
-        if not now - _MAX_BACKDATE <= taken <= now + _FUTURE_GRACE:
-            raise ValidationException(
-                "taken_at must be within the last year", "INVALID_TAKEN_AT"
-            )
+        taken = self._taken(taken_at, now)
         user_tz = await resolve_user_timezone_async(user_id, uow, header_timezone)
         local_date, on_day = dose_day(taken, get_zone_info(user_tz), now)
         intake = SupplementIntake.log(
@@ -114,7 +149,7 @@ class _SupplementWrite:
 
 @handles(AddSupplementCommand)
 class AddSupplementCommandHandler(
-    _SupplementWrite, EventHandler[AddSupplementCommand, dict]
+    SupplementWrite, EventHandler[AddSupplementCommand, dict]
 ):
     async def handle(self, cmd: AddSupplementCommand) -> dict:
         if cmd.log_now and not cmd.intake_id:
@@ -131,21 +166,9 @@ class AddSupplementCommandHandler(
 
     async def _add(self, cmd: AddSupplementCommand, reservation: Any) -> dict:
         async with self.uow_factory() as uow:
-            repo = uow.supplements
             product = await self._product(uow, cmd.product_id, cmd.user_id)
-            listed = {e.product_id: e for e in await repo.list_supplements(cmd.user_id)}
-            current = listed.get(product.id)
-            entry = await repo.save_list_entry(
-                UserSupplement(
-                    id=current.id if current else str(uuid4()),
-                    user_id=cmd.user_id,
-                    product_id=product.id,
-                    units_per_dose=cmd.units_per_dose
-                    or (
-                        current.units_per_dose if current else product.units_per_serving
-                    ),
-                    sort_order=current.sort_order if current else len(listed),
-                )
+            entry = await self._put_on_list(
+                uow, cmd.user_id, product, cmd.units_per_dose
             )
             intake = None
             if cmd.log_now and cmd.intake_id:
@@ -164,12 +187,7 @@ class AddSupplementCommandHandler(
                     cmd.user_id, uow, cmd.header_timezone
                 )
                 day = utc_now().astimezone(get_zone_info(user_tz)).date()
-            # The row carries the whole day's doses, as GET /mine does.
-            doses = [
-                dose
-                for dose in await repo.intakes_between(cmd.user_id, day, day)
-                if dose.product_id == product.id
-            ]
+            doses = await self._day_doses(uow, cmd.user_id, product.id, day)
             reply = {
                 "entry": list_entry_payload(entry, product, cmd.user_id, doses),
                 "intake": intake_payload(intake) if intake else None,
@@ -182,7 +200,7 @@ class AddSupplementCommandHandler(
 
 @handles(UpdateSupplementCommand)
 class UpdateSupplementCommandHandler(
-    _SupplementWrite, EventHandler[UpdateSupplementCommand, dict]
+    SupplementWrite, EventHandler[UpdateSupplementCommand, dict]
 ):
     async def handle(self, cmd: UpdateSupplementCommand) -> dict:
         async with self.uow_factory() as uow:
@@ -205,7 +223,7 @@ class UpdateSupplementCommandHandler(
 
 @handles(RemoveSupplementCommand)
 class RemoveSupplementCommandHandler(
-    _SupplementWrite, EventHandler[RemoveSupplementCommand, dict]
+    SupplementWrite, EventHandler[RemoveSupplementCommand, dict]
 ):
     async def handle(self, cmd: RemoveSupplementCommand) -> dict:
         async with self.uow_factory() as uow:
@@ -216,7 +234,7 @@ class RemoveSupplementCommandHandler(
 
 @handles(LogSupplementIntakeCommand)
 class LogSupplementIntakeCommandHandler(
-    _SupplementWrite, EventHandler[LogSupplementIntakeCommand, dict]
+    SupplementWrite, EventHandler[LogSupplementIntakeCommand, dict]
 ):
     async def handle(self, cmd: LogSupplementIntakeCommand) -> dict:
         async def log(reservation: Any) -> dict:
@@ -249,7 +267,7 @@ class LogSupplementIntakeCommandHandler(
 
 @handles(DeleteSupplementIntakeCommand)
 class DeleteSupplementIntakeCommandHandler(
-    _SupplementWrite, EventHandler[DeleteSupplementIntakeCommand, dict]
+    SupplementWrite, EventHandler[DeleteSupplementIntakeCommand, dict]
 ):
     async def handle(self, cmd: DeleteSupplementIntakeCommand) -> dict:
         async with self.uow_factory() as uow:

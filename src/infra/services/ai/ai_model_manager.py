@@ -35,6 +35,7 @@ TEXT_PURPOSES: set[ModelPurpose] = {
 VISION_PURPOSES: set[ModelPurpose] = {
     ModelPurpose.MEAL_SCAN,
     ModelPurpose.FOOD_LABEL_SCAN,
+    ModelPurpose.SUPPLEMENT_LABEL_SCAN,
     ModelPurpose.INGREDIENT_SCAN,
 }
 
@@ -46,6 +47,11 @@ FALLBACK_CHAINS: dict[ModelPurpose, list[str]] = {
         DEFAULT_OPENAI_MODEL,
     ],
     ModelPurpose.FOOD_LABEL_SCAN: [
+        DEFAULT_OPENAI_MODEL,
+    ],
+    # OpenAI only: its schema is enforced. Not in the Workers AI vision list,
+    # whose models get no schema.
+    ModelPurpose.SUPPLEMENT_LABEL_SCAN: [
         DEFAULT_OPENAI_MODEL,
     ],
     ModelPurpose.INGREDIENT_SCAN: [

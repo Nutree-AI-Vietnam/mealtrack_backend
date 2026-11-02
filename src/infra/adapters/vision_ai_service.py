@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from pydantic import BaseModel
+
 from src.domain.exceptions.ai_exceptions import (
     AIContentRejectedError,
     AIOutputValidationError,
@@ -16,6 +18,7 @@ from src.domain.model.ai.nutrition_contracts import (
     FoodLabelNutritionResponse,
     VisionNutritionResponse,
 )
+from src.domain.model.ai.supplement_label_contract import SupplementLabelResponse
 from src.domain.ports.vision_ai_service_port import VisionAIServicePort
 from src.domain.services.ai_output_validation_service import (
     validate_ai_output,
@@ -26,6 +29,9 @@ from src.domain.strategies.meal_analysis_strategy import (
     FoodLabelImageAnalysisStrategy,
     IngredientIdentificationStrategy,
     MealAnalysisStrategy,
+)
+from src.domain.strategies.supplement_label_strategy import (
+    SupplementLabelAnalysisStrategy,
 )
 from src.domain.utils.image_compression import compress_vision_image
 from src.infra.adapters.ai_json_utils import extract_json
@@ -87,24 +93,32 @@ class VisionAIService(VisionAIServicePort):
 
         try:
             is_food_label = isinstance(strategy, FoodLabelImageAnalysisStrategy)
+            is_supplement_label = isinstance(strategy, SupplementLabelAnalysisStrategy)
             full_micros = get_settings().AI_SCAN_FULL_MICROS_ENABLED
-            schema = scan_schema(
-                FoodLabelNutritionResponse
-                if is_food_label
-                else VisionNutritionResponse,
-                full_micros=full_micros,
-            )
             system_prompt = strategy.get_analysis_prompt()
-            if full_micros:
-                system_prompt = SystemPrompts.with_full_micros(system_prompt)
-            validation_purpose = (
-                "food_label_scan" if is_food_label else VISION_VALIDATION_PURPOSE
-            )
-            model_purpose = (
-                ModelPurpose.FOOD_LABEL_SCAN
-                if is_food_label
-                else ModelPurpose.MEAL_SCAN
-            )
+            schema: type[BaseModel]
+            if is_supplement_label:
+                # Its own contract already carries every tracked nutrient.
+                schema = SupplementLabelResponse
+                validation_purpose = "supplement_label_scan"
+            else:
+                schema = scan_schema(
+                    FoodLabelNutritionResponse
+                    if is_food_label
+                    else VisionNutritionResponse,
+                    full_micros=full_micros,
+                )
+                if full_micros:
+                    system_prompt = SystemPrompts.with_full_micros(system_prompt)
+                validation_purpose = (
+                    "food_label_scan" if is_food_label else VISION_VALIDATION_PURPOSE
+                )
+            if is_supplement_label:
+                model_purpose = ModelPurpose.SUPPLEMENT_LABEL_SCAN
+            elif is_food_label:
+                model_purpose = ModelPurpose.FOOD_LABEL_SCAN
+            else:
+                model_purpose = ModelPurpose.MEAL_SCAN
             provenance: dict[str, Any] = {
                 "prompt_sha256": hashlib.sha256(system_prompt.encode()).hexdigest(),
                 "image_sha256": hashlib.sha256(image_bytes).hexdigest(),

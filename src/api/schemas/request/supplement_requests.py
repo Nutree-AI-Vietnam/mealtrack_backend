@@ -39,3 +39,15 @@ class LogSupplementIntakeRequest(BaseModel):
     taken_at: AwareDatetime | None = Field(
         None, description="UTC time with an offset; defaults to now"
     )
+
+
+class ScanSupplementLabelRequest(BaseModel):
+    """An uploaded label photo; the dose is logged under ``intake_id``."""
+
+    # Matches supplement_products.label_image_url.
+    image_url: str = Field(..., min_length=1, max_length=512)
+    image_id: str = Field(..., min_length=1, max_length=128)
+    intake_id: UUID = Field(..., description="Client id for today's dose")
+    taken_at: AwareDatetime | None = Field(
+        None, description="UTC time with an offset; defaults to now"
+    )
