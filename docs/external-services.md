@@ -297,12 +297,11 @@ optional caches.
   once more; a 4xx isn't.
 - **Failures** are logged at ERROR (Sentry) with our user id and each plan's
   order id and product, never a purchase token or a traceback, and the
-  webhook still answers 200. So is every skipped cancel while the switch is
-  on but the key or package is unusable. App Store and web events never call
-  Google.
-- **Settings.** `GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED` (default `false`),
-  `GOOGLE_PLAY_PACKAGE_NAME` (`com.nutreeai.mobile` in production,
-  `com.nutreeai.mobile.staging` on staging), `GOOGLE_PLAY_CANCEL_SANDBOX`
+  webhook still answers 200. So is every skipped cancel while the key or
+  package is unusable. App Store and web events never call Google.
+- **Settings.** Always on, no switch. `GOOGLE_PLAY_PACKAGE_NAME` (default
+  `com.nutreeai.mobile`; set `com.nutreeai.mobile.staging` on staging),
+  `GOOGLE_PLAY_CANCEL_SANDBOX`
   (default `false`; sandbox events are skipped unless on),
   `GOOGLE_PLAY_API_TIMEOUT_SECONDS` (default 3). Calls are signed in as the
   backend's Firebase service account (`FIREBASE_CREDENTIALS` file, else
