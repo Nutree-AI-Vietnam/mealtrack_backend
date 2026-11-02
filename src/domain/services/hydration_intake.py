@@ -156,19 +156,18 @@ def intake_watermark(
     meal_at: datetime | None,
     hydration_at: datetime | None,
     movement_at: datetime | None,
+    supplement_at: datetime | None = None,
 ) -> str:
-    """Fingerprint of the newest meal, drink, and workout touch on a day.
+    """Fingerprint of the newest meal, drink, workout and dose touch on a day.
 
     Each log type is kept separate so deleting a drink still changes the
-    fingerprint when a later meal exists.
+    fingerprint when a later meal exists. The dose part is appended only on
+    days with a dose, so days without one keep their fingerprint.
     """
-    return "|".join(
-        (
-            _utc_stamp(meal_at),
-            _utc_stamp(hydration_at),
-            _utc_stamp(movement_at),
-        )
-    )
+    parts = [_utc_stamp(meal_at), _utc_stamp(hydration_at), _utc_stamp(movement_at)]
+    if supplement_at is not None:
+        parts.append(_utc_stamp(supplement_at))
+    return "|".join(parts)
 
 
 def _utc_stamp(value: datetime | None) -> str:

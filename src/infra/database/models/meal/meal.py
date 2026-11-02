@@ -9,9 +9,11 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -103,4 +105,18 @@ class MealORM(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="MealInstructionStepORM.position",
         lazy="selectin",
+    )
+
+    # Covers GET /v1/meals/streak's per-user day aggregation. Partial so
+    # soft-deleted rows are not visited; INCLUDE so the scan can avoid the
+    # heap. The query must spell ``status <> 'INACTIVE'`` as a constant or
+    # the planner will not prove this predicate. Built concurrently.
+    __table_args__ = (
+        Index(
+            "ix_meal_streak_user_created",
+            "user_id",
+            "created_at",
+            postgresql_include=["logged_on_day", "status", "ready_at", "meal_id"],
+            postgresql_where=text("status <> 'INACTIVE'"),
+        ),
     )

@@ -11,10 +11,14 @@ from src.api.exceptions import (
     ValidationException,
 )
 from src.app.commands.meal_planner import LogMealPlanSlotCommand
+from src.app.events.meal.meal_events import invoke_local_cache_invalidation_hook
 from src.app.services.recommended_meal_materialization_service import (
     RecommendedMealMaterializationService,
 )
-from src.domain.model.weekly_meal_planner import meal_type_for_slot
+from src.domain.model.weekly_meal_planner import (
+    SLOT_LOG_SOURCE_PLAN,
+    meal_type_for_slot,
+)
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 
 
@@ -33,6 +37,16 @@ class WeeklyMealLoggingService:
         self.materializer = materializer or RecommendedMealMaterializationService()
 
     async def log(self, command: LogMealPlanSlotCommand) -> LogMealPlanSlotResult:
+        result = await self._log(command)
+        # A new diary meal changes the day's totals: purge after commit and
+        # before responding, like every other meal write. A replay purges
+        # again in case the first response never got that far.
+        await invoke_local_cache_invalidation_hook(
+            command.user_id, command.meal_date, None
+        )
+        return result
+
+    async def _log(self, command: LogMealPlanSlotCommand) -> LogMealPlanSlotResult:
         if command.portion_multiplier not in {0.5, 1.0, 1.5, 2.0}:
             raise ValidationException(
                 "portion_multiplier must be 0.5, 1, 1.5, or 2",
@@ -151,6 +165,7 @@ class WeeklyMealLoggingService:
                         slot_id=command.slot_id,
                         meal_id=meal.meal_id,
                         slot=slot,
+                        log_source=SLOT_LOG_SOURCE_PLAN,
                     )
                 except TypeError:
                     await uow.weekly_meal_plans.mark_slot_logged(

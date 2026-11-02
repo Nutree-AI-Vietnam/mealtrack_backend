@@ -72,6 +72,7 @@ class WeeklyRecipeService:
         allergies=(),
         limit=20,
         offset=0,
+        min_protein=None,
     ) -> RecipePage:
         async with self.uow_factory() as uow:
             page = await uow.catalog_recipes.list_recipe_page(
@@ -84,6 +85,7 @@ class WeeklyRecipeService:
                 allergies=allergies,
                 limit=limit,
                 offset=offset,
+                min_protein=min_protein,
             )
         return RecipePage(items=page.items, total=page.total)
 
@@ -98,6 +100,18 @@ class WeeklyRecipeService:
         if not include_cached_micronutrients:
             return meal
         return await self.micronutrient_enrichment.load_cached(meal)
+
+    @planner_timed("catalog_sql")
+    async def details(self, recipe_ids: Iterable[str]) -> tuple[CatalogMeal, ...]:
+        """Recipe details in request order; ids that are not active are left out."""
+        ids = tuple(dict.fromkeys(recipe_id for recipe_id in recipe_ids if recipe_id))
+        if not ids:
+            return ()
+        async with self.uow_factory() as uow:
+            found = await uow.catalog_recipes.get_meal_details(ids)
+        by_id = {meal.id: meal for meal in found}
+        ordered = tuple(by_id[recipe_id] for recipe_id in ids if recipe_id in by_id)
+        return await self.micronutrient_enrichment.load_cached_many(ordered)
 
     @planner_timed("catalog_sql")
     async def summaries(self, recipe_ids: Iterable[str]) -> tuple[CatalogMeal, ...]:
@@ -116,7 +130,7 @@ class WeeklyRecipeService:
                 version = await uow.catalog_recipes.lock_catalog_publication(
                     shared=True
                 )
-            keys = [f"catalog:summary:v2:{version}:{mid}" for mid in ids]
+            keys = [f"catalog:summary:v3:{version}:{mid}" for mid in ids]
             # Unversioned legacy cache rows cannot safely survive withdrawals.
             if cache_healthy and version is not None and self.redis_client is not None:
                 try:
@@ -153,7 +167,7 @@ class WeeklyRecipeService:
                     and self.redis_client is not None
                 ):
                     mapping = {
-                        f"catalog:summary:v2:{version}:{meal.id}": json.dumps(
+                        f"catalog:summary:v3:{version}:{meal.id}": json.dumps(
                             meal.to_dict()
                         )
                         for meal in fetched

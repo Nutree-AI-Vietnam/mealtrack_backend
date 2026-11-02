@@ -9,6 +9,7 @@ from typing import Any
 
 from src.app.events.base import EventHandler, handles
 from src.app.queries.activity import GetDailyActivitiesQuery
+from src.app.services.supplement_days import dose_activities
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.meal import Meal
 from src.domain.model.meal_projection import MealProjection
@@ -87,6 +88,9 @@ class GetDailyActivitiesQueryHandler(
                 workout_activities = await self._get_workout_activities(
                     uow, query, tz, local_date, query.language or "en"
                 )
+                supplement_activities = await dose_activities(
+                    uow, query.user_id, local_date
+                )
         except Exception as e:
             # Clients treat a 200 as the whole day and drop rows it leaves out,
             # so an empty or partial feed must not be returned or cached. The
@@ -99,7 +103,7 @@ class GetDailyActivitiesQueryHandler(
             )
             raise
 
-        activities = meal_activities + workout_activities
+        activities = meal_activities + workout_activities + supplement_activities
         logger.info(
             "Retrieved %s diary items (%s meals, %s workouts) for user %s on %s",
             len(activities),

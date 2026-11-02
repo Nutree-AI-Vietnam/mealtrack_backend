@@ -70,25 +70,22 @@ class WeeklyGroceryService:
                     (slot.day_index, slot.slot_index), slot.day_index
                 ),
             )
-            for slot in plan.slots
-            if slot.recipe_id is not None and slot.recipe_id in meals_by_id
+            for slot in _shopping_slots(plan)
+            if slot.recipe_id in meals_by_id
         ]
         return aggregate_grocery(slots, ())
 
     @planner_timed("mapping")
     async def calculate(self, uow, plan: WeeklyMealPlan) -> tuple[GroceryCategory, ...]:
         slots: list[GrocerySlot] = []
-        needed_ids = {
-            slot.recipe_id for slot in plan.slots if slot.recipe_id is not None
-        }
+        shopping_slots = _shopping_slots(plan)
+        needed_ids = {slot.recipe_id for slot in shopping_slots}
         meals_cache: dict[str, Any] = {}
         if hasattr(uow.catalog_recipes, "get_meals"):
             fetched = await uow.catalog_recipes.get_meals(needed_ids)
             meals_cache = {meal.id: meal for meal in fetched if meal is not None}
         cook_days = leftover_lunch_cook_days(plan)
-        for slot in plan.slots:
-            if slot.recipe_id is None:
-                continue
+        for slot in shopping_slots:
             if slot.recipe_id not in meals_cache and not hasattr(
                 uow.catalog_recipes, "get_meals"
             ):
@@ -431,3 +428,12 @@ def _decimal_or_none(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
     return Decimal(str(value))
+
+
+def _shopping_slots(plan: WeeklyMealPlan) -> list:
+    """Slots whose recipe needs buying: planned and not skipped."""
+    return [
+        slot
+        for slot in plan.slots
+        if slot.recipe_id is not None and not getattr(slot, "is_skipped", False)
+    ]

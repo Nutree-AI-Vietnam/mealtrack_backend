@@ -11,6 +11,13 @@ WEEKLY_DAYS = 7
 WEEKLY_SLOTS_PER_DAY = 3
 WEEKLY_PLAN_SLOT_COUNT = WEEKLY_DAYS * WEEKLY_SLOTS_PER_DAY
 SLOT_MEAL_TYPES: tuple[str, ...] = ("breakfast", "lunch", "dinner")
+# Who put the diary meal behind a logged slot: the plan's log endpoint created
+# it ("plan"), or the user linked a meal they had already logged ("diary").
+SLOT_LOG_SOURCE_PLAN = "plan"
+SLOT_LOG_SOURCE_DIARY = "diary"
+SLOT_LOG_SOURCES: frozenset[str] = frozenset(
+    {SLOT_LOG_SOURCE_PLAN, SLOT_LOG_SOURCE_DIARY}
+)
 
 
 def ensure_slot_coordinate(day_index: int, slot_index: int) -> None:
@@ -90,9 +97,27 @@ class WeeklyMealPlanSlot:
     logged_meal_id: str | None = None
     version: int = 1
     recipe_override: dict | None = None
+    log_source: str | None = None
+    is_skipped: bool = False
 
     def __post_init__(self) -> None:
         ensure_slot_coordinate(self.day_index, self.slot_index)
+        if self.log_source is not None and self.log_source not in SLOT_LOG_SOURCES:
+            raise ValueError("log_source must be plan, diary, or None")
+
+    @property
+    def unlog_deletes_meal(self) -> bool:
+        """Unlogging deletes the diary meal only when the plan created it.
+
+        A linked meal is the user's own entry and stays in the diary. A logged
+        slot without a source predates the column; only the log endpoint
+        could have logged it then.
+        """
+        return (
+            self.is_logged
+            and self.logged_meal_id is not None
+            and self.log_source != SLOT_LOG_SOURCE_DIARY
+        )
 
 
 @dataclass(frozen=True)

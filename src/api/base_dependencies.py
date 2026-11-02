@@ -48,6 +48,7 @@ from src.infra.repositories.food_reference_repository_async import (
 )
 
 if TYPE_CHECKING:
+    from src.app.services.daily_quota import DailyQuota
     from src.app.services.describe_log_guard import DescribeLogGuard
     from src.app.services.recipe_import import RecipeImportGuard
     from src.domain.ports.subscription_service_port import SubscriptionServicePort
@@ -820,6 +821,19 @@ def get_recipe_import_guard() -> "RecipeImportGuard":
     from src.bootstrap.recipe_import import build_recipe_import_guard
 
     return build_recipe_import_guard(_increment_counter_with_expiry)
+
+
+def get_supplement_label_scan_quota() -> "DailyQuota":
+    """Supplement label photos per user per local day (AI, so counted apart)."""
+    from src.app.services.daily_quota import DailyQuota
+
+    return DailyQuota(
+        scope="supplement_label_scan",
+        daily_limit=settings.SUPPLEMENT_LABEL_SCANS_PER_DAY,
+        increment_counter=_increment_counter_with_expiry,
+        error_code="SUPPLEMENT_LABEL_SCAN_DAILY_LIMIT",
+        message="Daily label scan limit reached",
+    )
 
 
 async def _increment_counter_with_expiry(key: str, ttl_seconds: int) -> int | None:

@@ -1,8 +1,25 @@
 """Meal calorie helpers for source-specific display and summary totals."""
 
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable
 from typing import Any
 
 from src.domain.model.nutrition.macros import Macros
+
+# Reject absurd upward jumps unless the correction clearly asks for more food.
+MAX_CALORIE_MULTIPLIER = 8.0
+MAX_ABSOLUTE_CALORIES = 10_000.0
+
+_LARGE_PORTION_HINT = re.compile(
+    r"\b("
+    r"double|triple|extra|more|bigger|large|larger|whole|"
+    r"twice|x2|2x|all of|full portion|add(?:ed|ing)?|"
+    r"gấp đôi|gấp ba|thêm|nhiều hơn|toàn bộ"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def effective_meal_calories(meal: Any) -> float:
@@ -109,3 +126,140 @@ def _scaled_label_calories(
         return round(label_calories, 1)
 
     return round(label_calories * (quantity_grams / serving_grams), 1)
+
+
+def normalize_food_name(name: str) -> str:
+    return re.sub(r"\s+", " ", (name or "").strip().casefold())
+
+
+def _name_mentioned(name: str, correction_lower: str) -> bool:
+    token = normalize_food_name(name)
+    if not token or len(token) < 2:
+        return False
+    if token in correction_lower:
+        return True
+    # Match multi-word names when any significant word appears.
+    parts = [part for part in re.split(r"[^a-z0-9à-ỹ]+", token) if len(part) >= 4]
+    return any(part in correction_lower for part in parts)
+
+
+def merge_fix_result_items(
+    old_items: Iterable[Any],
+    new_items: Iterable[Any],
+    correction: str,
+) -> list[Any]:
+    """Keep old items the model dropped unless the correction mentioned them.
+
+    Matched names keep the new estimate (portion/identity may have changed) but
+    reuse the old id so clients can track the same row. Calories always come
+    from macros via FoodItem.calories / effective_food_item_calories, never a
+    client override on this path.
+    """
+    from src.domain.model.nutrition import FoodItem
+
+    old_list = list(old_items or [])
+    new_list = list(new_items or [])
+    correction_lower = (correction or "").casefold()
+
+    old_by_name: dict[str, Any] = {}
+    for item in old_list:
+        key = normalize_food_name(item.name)
+        if key and key not in old_by_name:
+            old_by_name[key] = item
+
+    merged: list[Any] = []
+    seen_old: set[str] = set()
+    for item in new_list:
+        key = normalize_food_name(item.name)
+        previous = old_by_name.get(key)
+        if previous is not None:
+            seen_old.add(key)
+            # Preserve stable id; nutrition already macro-derived.
+            merged.append(
+                FoodItem(
+                    id=previous.id,
+                    name=item.name,
+                    quantity=item.quantity,
+                    unit=item.unit,
+                    macros=item.macros,
+                    micros=item.micros,
+                    confidence=item.confidence,
+                    fdc_id=item.fdc_id or previous.fdc_id,
+                    food_reference_id=item.food_reference_id
+                    or previous.food_reference_id,
+                    is_custom=item.is_custom,
+                    allowed_units=item.allowed_units or previous.allowed_units,
+                    nutrition_override=None,
+                    source_kind=item.source_kind or previous.source_kind,
+                    source_food_id=item.source_food_id or previous.source_food_id,
+                    nutrition_contract_version=item.nutrition_contract_version
+                    or previous.nutrition_contract_version,
+                    source_snapshot=item.source_snapshot or previous.source_snapshot,
+                )
+            )
+            # Touch calories through the shared helper so rename/portion
+            # changes stay on the backend formula path.
+            _ = effective_food_item_calories(merged[-1])
+        else:
+            merged.append(item)
+            _ = effective_food_item_calories(merged[-1])
+
+    for old in old_list:
+        key = normalize_food_name(old.name)
+        if key in seen_old:
+            continue
+        if _name_mentioned(old.name, correction_lower):
+            # Correction referenced this food and the model omitted it —
+            # treat as intentional removal/replacement.
+            continue
+        merged.append(old)
+
+    return merged
+
+
+def assert_fix_result_calorie_guardrail(
+    *,
+    old_calories: float,
+    new_calories: float,
+    correction: str,
+) -> None:
+    """Raise ValueError when the AI rewrite is an absurd calorie jump."""
+    old_value = max(0.0, float(old_calories or 0.0))
+    new_value = max(0.0, float(new_calories or 0.0))
+
+    if new_value <= 0:
+        raise ValueError("FIX_RESULT_EMPTY_CALORIES")
+
+    if new_value > MAX_ABSOLUTE_CALORIES and not _LARGE_PORTION_HINT.search(
+        correction or ""
+    ):
+        raise ValueError("FIX_RESULT_CALORIE_JUMP")
+
+    if old_value <= 0:
+        return
+
+    if (
+        new_value > old_value * MAX_CALORIE_MULTIPLIER
+        and not _LARGE_PORTION_HINT.search(correction or "")
+    ):
+        raise ValueError("FIX_RESULT_CALORIE_JUMP")
+
+
+def serialize_items_for_fix_prompt(items: Iterable[Any]) -> list[dict]:
+    """Compact current-item context for the vision correction prompt."""
+    payload: list[dict] = []
+    for item in items or []:
+        macros = item.effective_macros
+        payload.append(
+            {
+                "name": item.name,
+                "quantity": item.quantity,
+                "unit": item.unit,
+                "calories": round(float(item.calories), 1),
+                "protein": round(float(macros.protein), 1),
+                "carbs": round(float(macros.carbs), 1),
+                "fat": round(float(macros.fat), 1),
+                "confidence": round(float(item.confidence), 3),
+            }
+        )
+    return payload

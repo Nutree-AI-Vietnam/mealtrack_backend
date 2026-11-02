@@ -30,8 +30,14 @@ from src.domain.model.chat import (
     empty_reply_payload,
 )
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
-from src.domain.services.chat.rewind import message_ids_after
+from src.domain.services.chat.rewind import is_latest_message, message_ids_after
 from src.domain.services.chat.thread_listing import thread_preview, thread_title
+from src.domain.services.chat.turn_reuse import (
+    existing_reply_disposition,
+    replacement_question,
+    reuse_assistant_row,
+    should_regenerate_on_resume,
+)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.chat import (
     ChatKnowledgeDocumentORM,
@@ -453,6 +459,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         lease_expires_at: datetime,
         content: str | None = None,
         thread_id: str | None = None,
+        resume: bool = False,
     ) -> tuple[ChatTurnClaim, str | None, bool] | None:
         latest = await self.session.get(ChatMessageORM, assistant_message_id)
         if latest is None:
@@ -464,6 +471,15 @@ class AsyncChatRepository(ChatRepositoryPort):
             return None
         now = utc_now()
         await self._reclaim_expired_generation(thread.id, now)
+        await self.session.refresh(latest)
+        if resume:
+            return await self._resume_assistant_message(
+                thread,
+                latest,
+                lease_expires_at=lease_expires_at,
+                content=content,
+                now=now,
+            )
         if await self._active_generation(thread.id) is not None:
             raise ChatBusyError()
 
@@ -479,12 +495,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         if user_row is None or user_row.role != ChatMessageRole.USER.value:
             return None
 
-        stored = (user_row.content or "").strip()
-        edited = (content or "").strip()
-        content_changed = bool(edited) and edited != stored
-        if edited:
-            user_row.content = edited[:CHAT_MAX_USER_MESSAGE_CHARS]
-            user_row.updated_at = now
+        content_changed = _apply_edited_question(user_row, content, now)
 
         prior_intent = None
         payload = latest.reply_payload
@@ -503,11 +514,15 @@ class AsyncChatRepository(ChatRepositoryPort):
         latest.updated_at = now
         await self.session.flush()
         await self._touch_thread(thread.id, now)
+        # This request cleared the saved reply. It owns the row until the
+        # job is streaming, so a conflict or a follow must fail it instead
+        # of leaving an empty GENERATING reply until the lease expires.
         claim = ChatTurnClaim(
             kind=ChatClaimKind.NEW,
             thread=_to_thread(thread),
             user_message=_to_message(user_row),
             assistant_message=_to_message(latest),
+            owns_row=True,
         )
         return claim, prior_intent, content_changed
 
@@ -625,6 +640,78 @@ class AsyncChatRepository(ChatRepositoryPort):
             delete(ChatThreadORM).where(ChatThreadORM.user_id == user_id)
         )
 
+    async def _resume_assistant_message(
+        self,
+        thread: ChatThreadORM,
+        latest: ChatMessageORM,
+        *,
+        lease_expires_at: datetime,
+        content: str | None,
+        now: datetime,
+    ) -> tuple[ChatTurnClaim, str | None, bool] | None:
+        """Reuse the row a regenerate job already opened.
+
+        A completed reply is replayed. A live lease belongs to the attempt
+        that is still generating. A failed or expired reply is generated
+        again on the same row, so a worker requeue does not ask it again.
+        """
+        if latest.role != ChatMessageRole.ASSISTANT.value:
+            return None
+        if latest.in_reply_to_id is None:
+            return None
+        user_row = await self.session.get(ChatMessageORM, latest.in_reply_to_id)
+        if user_row is None or user_row.role != ChatMessageRole.USER.value:
+            return None
+        disposition = existing_reply_disposition(
+            status=_text(latest.status),
+            lease_expires_at=_when(latest.generation_lease_expires_at),
+            now=now,
+        )
+        prior_intent = _prior_intent(latest)
+        if disposition == "replay":
+            return (
+                ChatTurnClaim(
+                    kind=ChatClaimKind.REPLAY,
+                    thread=_to_thread(thread),
+                    user_message=_to_message(user_row),
+                    assistant_message=_to_message(latest),
+                    owns_row=False,
+                ),
+                prior_intent,
+                False,
+            )
+        if disposition == "busy":
+            raise ChatBusyError()
+        active = await self._active_generation(thread.id)
+        if active is not None and active.id != latest.id:
+            raise ChatBusyError()
+        # A worker retry must not regenerate a reply the user has moved past.
+        if not should_regenerate_on_resume(
+            disposition=disposition,
+            is_latest=await self._reply_is_latest(thread.id, latest),
+        ):
+            return None
+        content_changed = _apply_edited_question(user_row, content, now)
+        reuse_assistant_row(
+            latest,
+            lease_expires_at=lease_expires_at,
+            now=now,
+            generation_id=str(uuid.uuid4()),
+        )
+        await self.session.flush()
+        await self._touch_thread(thread.id, now)
+        return (
+            ChatTurnClaim(
+                kind=ChatClaimKind.NEW,
+                thread=_to_thread(thread),
+                user_message=_to_message(user_row),
+                assistant_message=_to_message(latest),
+                owns_row=False,
+            ),
+            None if content_changed else prior_intent,
+            content_changed,
+        )
+
     async def _claim_existing(
         self,
         thread: ChatThread,
@@ -637,28 +724,48 @@ class AsyncChatRepository(ChatRepositoryPort):
         if user_row.request_fingerprint != request_fingerprint:
             raise ChatIdempotencyConflictError()
 
+        await self._reclaim_expired_generation(thread.id, now)
         assistant = await self._reply_for(user_row.id)
         if assistant is not None:
-            if assistant.status == ChatMessageStatus.COMPLETED.value:
-                return ChatTurnClaim(
-                    kind=ChatClaimKind.REPLAY,
-                    thread=thread,
-                    user_message=_to_message(user_row),
-                    assistant_message=_to_message(assistant),
-                )
-            if assistant.status == ChatMessageStatus.GENERATING.value:
-                expires = assistant.generation_lease_expires_at
-                if expires is not None and expires > now:
-                    raise ChatBusyError()
-                await self.fail_assistant_message(
-                    message_id=assistant.id,
-                    error_code="lease_expired",
-                )
-
-        await self._reclaim_expired_generation(thread.id, now)
-        active = await self._active_generation(thread.id)
-        if active is not None:
+            await self.session.refresh(assistant)
+        disposition = existing_reply_disposition(
+            status=_text(assistant.status) if assistant is not None else None,
+            lease_expires_at=(
+                _when(assistant.generation_lease_expires_at)
+                if assistant is not None
+                else None
+            ),
+            now=now,
+        )
+        if disposition == "replay" and assistant is not None:
+            return ChatTurnClaim(
+                kind=ChatClaimKind.REPLAY,
+                thread=thread,
+                user_message=_to_message(user_row),
+                assistant_message=_to_message(assistant),
+                owns_row=False,
+            )
+        if disposition == "busy":
             raise ChatBusyError()
+        active = await self._active_generation(thread.id)
+        if active is not None and (assistant is None or active.id != assistant.id):
+            raise ChatBusyError()
+        if disposition == "reuse" and assistant is not None:
+            reuse_assistant_row(
+                assistant,
+                lease_expires_at=lease_expires_at,
+                now=now,
+                generation_id=str(uuid.uuid4()),
+            )
+            await self.session.flush()
+            await self._touch_thread(thread.id, now)
+            return ChatTurnClaim(
+                kind=ChatClaimKind.NEW,
+                thread=thread,
+                user_message=_to_message(user_row),
+                assistant_message=_to_message(assistant),
+                owns_row=False,
+            )
 
         assistant_row = ChatMessageORM(
             id=str(uuid.uuid4()),
@@ -809,12 +916,72 @@ class AsyncChatRepository(ChatRepositoryPort):
             )
         )
 
+    async def _reply_is_latest(self, thread_id: str, target: ChatMessageORM) -> bool:
+        created_at = target.created_at
+        role = target.role
+        target_id = target.id
+        if (
+            not isinstance(created_at, datetime)
+            or not isinstance(role, str)
+            or not isinstance(target_id, str)
+        ):
+            return False
+        result = await self.session.execute(
+            select(
+                ChatMessageORM.id,
+                ChatMessageORM.created_at,
+                ChatMessageORM.role,
+            ).where(ChatMessageORM.thread_id == thread_id)
+        )
+        messages: list[tuple[str, datetime, str]] = []
+        for row in result.all():
+            if (
+                isinstance(row.id, str)
+                and isinstance(row.created_at, datetime)
+                and isinstance(row.role, str)
+            ):
+                messages.append((row.id, row.created_at, row.role))
+        return is_latest_message(target_id, created_at, role, messages)
+
     async def _touch_thread(self, thread_id: str, now: datetime) -> None:
         await self.session.execute(
             update(ChatThreadORM)
             .where(ChatThreadORM.id == thread_id)
             .values(updated_at=now)
         )
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _when(value: Any) -> datetime | None:
+    return value if isinstance(value, datetime) else None
+
+
+def _prior_intent(row: ChatMessageORM) -> str | None:
+    payload = row.reply_payload
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("intent")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _apply_edited_question(
+    user_row: ChatMessageORM, content: str | None, now: datetime
+) -> bool:
+    replacement = replacement_question(
+        user_row.content or "",
+        content,
+        limit=CHAT_MAX_USER_MESSAGE_CHARS,
+    )
+    if replacement is None:
+        return False
+    user_row.content = replacement
+    user_row.updated_at = now
+    return True
 
 
 def _to_thread(row: ChatThreadORM) -> ChatThread:

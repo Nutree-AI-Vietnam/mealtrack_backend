@@ -290,6 +290,24 @@ class SentryObservabilityConnector:
             return
         sentry_sdk.flush(timeout=timeout)
 
+    def add_breadcrumb(
+        self,
+        category: str,
+        message: str,
+        *,
+        level: str = "info",
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """Attach a breadcrumb. Does not open a Sentry issue by itself."""
+        if not self._can_use_sdk():
+            return
+        sentry_sdk.add_breadcrumb(
+            category=category,
+            message=message,
+            level=level,
+            data=filter_safe_attributes(data) or None,
+        )
+
     def _can_use_sdk(self) -> bool:
         return bool(self._enabled and sentry_sdk is not None)
 
@@ -331,10 +349,18 @@ def _drop_expected_events(
     when that is absent, the request URL. A visible non-cancellation cause
     or context stays, as do other routes and events with no exception.
 
-    Any ``GeneratorExit`` during an active LangChain span (origin
-    ``auto.ai.langchain``) is dropped. SQLAlchemy's "Exception terminating
-    connection" log is dropped when its visible exception is only
-    cancellation.
+    ``GeneratorExit`` during an active LangChain span (origin
+    ``auto.ai.langchain``) is dropped, and so is a pure
+    ``CancelledError`` on that span when the event is a chat message route
+    or SQLAlchemy's "Exception terminating connection" log. sentry-sdk 2.62
+    ``LangchainIntegration`` always calls ``capture_exception`` and has no
+    switch for that, so the filter is what keeps client disconnects
+    (PYTHON-HF, PYTHON-HW, PYTHON-HP) out of Sentry. A non-cancellation on
+    the same span is still sent.
+
+    SQLAlchemy's "Exception terminating connection" log is dropped when its
+    visible exception is only cancellation, including when the logging
+    integration reaches ``before_send`` with no ``exc_info``.
     """
     redact_sentry_event(event)
     exc_info = hint.get("exc_info")
@@ -343,7 +369,7 @@ def _drop_expected_events(
         return None
     if getattr(exc, "code", None) in CONTENT_REJECTION_ERROR_CODES:
         return None
-    if _is_langchain_generator_exit(event, exc_info):
+    if _is_langchain_client_disconnect(event, exc_info):
         return None
     if _is_expected_chat_cancellation(event, exc_info):
         return None
@@ -395,16 +421,25 @@ def _is_expected_chat_cancellation(event: dict[str, Any], exc_info: Any) -> bool
     return _event_exceptions_are_only_cancellations(event)
 
 
-def _is_langchain_generator_exit(event: dict[str, Any], exc_info: Any) -> bool:
-    """True for any ``GeneratorExit`` during an active LangChain span.
+def _is_langchain_client_disconnect(event: dict[str, Any], exc_info: Any) -> bool:
+    """True for a client disconnect captured on a LangChain span.
 
-    The span origin is ``auto.ai.langchain``. The same origin on the
-    exception mechanism counts. Other ``GeneratorExit`` events and other
-    exceptions on that span stay visible.
+    ``GeneratorExit`` on origin ``auto.ai.langchain`` is always a stream
+    close (PYTHON-HF). A pure ``CancelledError`` on that span is the same
+    disconnect when the event is a chat message route (PYTHON-HW) or the
+    pool's connection-terminate log (PYTHON-HP). Other exceptions on the
+    span, and cancellations that wrap a real error, stay visible.
     """
-    if not _is_generator_exit(exc_info):
+    if not _has_langchain_origin(event):
         return False
-    return _has_langchain_origin(event)
+    if _is_generator_exit(exc_info):
+        return True
+    if not (_is_chat_message_event(event) or _is_connection_terminate_log(event)):
+        return False
+    error = _hint_exception(exc_info)
+    if error is not None:
+        return _visible_chain_is_only_cancellation(error)
+    return _event_exceptions_are_only_cancellations(event)
 
 
 def _is_generator_exit(exc_info: Any) -> bool:
@@ -435,14 +470,19 @@ def _is_expected_connection_terminate(event: dict[str, Any], exc_info: Any) -> b
     """True for SQLAlchemy's pool log of a cancel during connection close.
 
     The logging integration records mechanism type ``logging`` and the
-    message "Exception terminating connection". A different exception on
-    that log line stays visible.
+    message "Exception terminating connection". A missing hint falls back
+    to the stored exception values. A different exception on that log line
+    stays visible.
     """
+    if not _has_logging_mechanism(event) or not _is_connection_terminate_log(event):
+        return False
     error = _hint_exception(exc_info)
-    if error is None or not _visible_chain_is_only_cancellation(error):
-        return False
-    if not _has_logging_mechanism(event):
-        return False
+    if error is not None:
+        return _visible_chain_is_only_cancellation(error)
+    return _event_exceptions_are_only_cancellations(event)
+
+
+def _is_connection_terminate_log(event: dict[str, Any]) -> bool:
     return _CONNECTION_TERMINATE_MESSAGE in _event_log_message(event)
 
 
@@ -456,16 +496,21 @@ def _has_logging_mechanism(event: dict[str, Any]) -> bool:
 
 def _event_log_message(event: dict[str, Any]) -> str:
     parts: list[str] = []
-    message = event.get("message")
-    if isinstance(message, str):
-        parts.append(message)
-    logentry = event.get("logentry")
-    if isinstance(logentry, dict):
-        for key in ("message", "formatted"):
-            value = logentry.get(key)
-            if isinstance(value, str):
-                parts.append(value)
+    _append_log_text(parts, event.get("message"))
+    _append_log_text(parts, event.get("logentry"))
     return "\n".join(parts)
+
+
+def _append_log_text(parts: list[str], value: Any) -> None:
+    if isinstance(value, str):
+        parts.append(value)
+        return
+    if not isinstance(value, dict):
+        return
+    for key in ("message", "formatted"):
+        item = value.get(key)
+        if isinstance(item, str):
+            parts.append(item)
 
 
 def _exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:

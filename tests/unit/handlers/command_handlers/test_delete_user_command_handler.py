@@ -257,6 +257,49 @@ class TestDeleteUserCommandHandler:
         assert list(recaps.recaps) == [(other, date(2026, 10, 5))]
 
     @pytest.mark.asyncio
+    async def test_deletion_removes_the_users_supplement_data(
+        self, delete_handler, active_user, db_session
+    ):
+        """Doses, the list and unpromoted products go with the account."""
+        supplements = MagicMock()
+        supplements.schema_ready = AsyncMock(return_value=True)
+        supplements.delete_user_data = AsyncMock(return_value=4)
+        uow = DummyUnitOfWork(db_session)
+        uow.supplements = supplements
+
+        with patch(
+            "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
+            MagicMock(return_value=uow),
+        ):
+            await delete_handler.handle(
+                DeleteUserCommand(firebase_uid=active_user.firebase_uid)
+            )
+
+        supplements.delete_user_data.assert_awaited_once_with(str(active_user.id))
+
+    @pytest.mark.asyncio
+    async def test_deletion_works_before_the_supplement_tables_are_migrated(
+        self, delete_handler, active_user, db_session
+    ):
+        """A deploy can precede its migration; deleting an account must not fail."""
+        supplements = MagicMock()
+        supplements.schema_ready = AsyncMock(return_value=False)
+        supplements.delete_user_data = AsyncMock()
+        uow = DummyUnitOfWork(db_session)
+        uow.supplements = supplements
+
+        with patch(
+            "src.app.handlers.command_handlers.delete_user_command_handler.AsyncUnitOfWork",
+            MagicMock(return_value=uow),
+        ):
+            result = await delete_handler.handle(
+                DeleteUserCommand(firebase_uid=active_user.firebase_uid)
+            )
+
+        assert result["deleted"] is True
+        supplements.delete_user_data.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_delete_inactive_user_raises_not_found(
         self, delete_handler, inactive_user, db_session
     ):

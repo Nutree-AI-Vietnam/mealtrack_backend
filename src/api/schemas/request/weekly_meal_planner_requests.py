@@ -106,3 +106,19 @@ class LogMealPlanSlotRequest(BaseModel):
     meal_type: WeeklyPlannerMealType
     expected_recipe_id: str = Field(min_length=1, max_length=128)
     portion_multiplier: Literal[0.5, 1.0, 1.5, 2.0] = 1.0
+
+
+class LinkMealPlanSlotRequest(BaseModel):
+    meal_id: str = Field(min_length=1, max_length=36)
+
+
+class RecipeBatchRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=30)
+
+    @field_validator("ids")
+    @classmethod
+    def distinct_ids(cls, value: list[str]) -> list[str]:
+        ids = list(dict.fromkeys(item.strip() for item in value))
+        if any(not item or len(item) > 64 for item in ids):
+            raise ValueError("recipe ids must contain 1 to 64 characters")
+        return ids

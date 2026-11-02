@@ -4,6 +4,7 @@ Event bus dependency for FastAPI with proper type registrations.
 
 import logging
 import time
+from datetime import date
 from typing import Any
 
 from src.app.commands.cheat_day import MarkCheatDayCommand, UnmarkCheatDayCommand
@@ -28,7 +29,10 @@ from src.app.commands.meal_catalog import LogCatalogMealCommand
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
     GenerateWeeklyMealPlanCommand,
+    LinkMealPlanSlotCommand,
     LogMealPlanSlotCommand,
+    SetMealPlanSlotSkipCommand,
+    UnlogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
@@ -96,6 +100,7 @@ from src.app.handlers.command_handlers import (
     DescribeMovementCommandHandler,
     DiscoverMealsCommandHandler,
     EditMealCommandHandler,
+    FixMealResultCommandHandler,
     FavoriteMealCommandHandler,
     GenerateMealRecipesCommandHandler,
     LogMovementCommandHandler,
@@ -136,7 +141,10 @@ from src.app.handlers.command_handlers.meal_catalog import (
 from src.app.handlers.command_handlers.meal_planner import (
     AiAdjustMealPlanCommandHandler,
     GenerateWeeklyMealPlanCommandHandler,
+    LinkMealPlanSlotCommandHandler,
     LogMealPlanSlotCommandHandler,
+    SetMealPlanSlotSkipCommandHandler,
+    UnlogMealPlanSlotCommandHandler,
     UpdateGroceryDayLinesCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
     UpdateWeeklyMealPlanCommandHandler,
@@ -211,7 +219,9 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 )
 from src.app.handlers.query_handlers.meal_planner import (
     GetCurrentWeeklyPlanQueryHandler,
+    GetMealPlanSlotSuggestionsQueryHandler,
     GetRecipeDetailQueryHandler,
+    GetRecipeDetailsQueryHandler,
     GetRecipeSummariesQueryHandler,
     GetWeeklyGroceriesQueryHandler,
     ListRecipesQueryHandler,
@@ -240,7 +250,9 @@ from src.app.queries.meal import (
 from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
+    GetMealPlanSlotSuggestionsQuery,
     GetRecipeDetailQuery,
+    GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
@@ -645,6 +657,21 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
 
+    from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
+
+    event_bus.register_handler(
+        FixMealResultCommand,
+        FixMealResultCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            vision_service=vision_service,
+            gpt_parser=gpt_parser,
+            download_image_bytes=ScanImageDownloadAdapter(),
+            event_publisher=queue_publisher,
+            event_bus=event_bus,
+            environment=settings.ENVIRONMENT,
+        ),
+    )
+
     event_bus.register_handler(
         AddCustomIngredientCommand,
         AddCustomIngredientCommandHandler(
@@ -713,18 +740,16 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
 
-    event_bus.register_handler(
-        CreateManualMealCommand,
-        CreateManualMealCommandHandler(
-            uow_factory=AsyncUnitOfWork,
-            event_publisher=queue_publisher,
-            event_bus=event_bus,
-            environment=settings.ENVIRONMENT,
-            provider=fat_secret_service,
-            provider_budget=provider_budget,
-            provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
-        ),
+    manual_meal_handler = CreateManualMealCommandHandler(
+        uow_factory=AsyncUnitOfWork,
+        event_publisher=queue_publisher,
+        event_bus=event_bus,
+        environment=settings.ENVIRONMENT,
+        provider=fat_secret_service,
+        provider_budget=provider_budget,
+        provider_rpm=settings.NUTRITION_PROVIDER_GLOBAL_RPM,
     )
+    event_bus.register_handler(CreateManualMealCommand, manual_meal_handler)
 
     # Register meal text parsing command handler
     event_bus.register_handler(
@@ -1006,6 +1031,22 @@ def get_configured_event_bus() -> EventBus:
         LogMealPlanSlotCommandHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
+        UnlogMealPlanSlotCommand,
+        UnlogMealPlanSlotCommandHandler(
+            AsyncUnitOfWork,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+        ),
+    )
+    event_bus.register_handler(
+        LinkMealPlanSlotCommand,
+        LinkMealPlanSlotCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        SetMealPlanSlotSkipCommand,
+        SetMealPlanSlotSkipCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
         GetCurrentWeeklyPlanQuery,
         GetCurrentWeeklyPlanQueryHandler(AsyncUnitOfWork),
     )
@@ -1020,6 +1061,17 @@ def get_configured_event_bus() -> EventBus:
             AsyncUnitOfWork,
             micronutrient_enrichment=recipe_micronutrient_enrichment,
             redis_client=redis_client,
+        ),
+    )
+    event_bus.register_handler(
+        GetMealPlanSlotSuggestionsQuery,
+        GetMealPlanSlotSuggestionsQueryHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        GetRecipeDetailsQuery,
+        GetRecipeDetailsQueryHandler(
+            AsyncUnitOfWork,
+            micronutrient_enrichment=recipe_micronutrient_enrichment,
         ),
     )
     event_bus.register_handler(
@@ -1330,6 +1382,113 @@ def get_configured_event_bus() -> EventBus:
         GetWeeklyHydrationQuery,
         GetWeeklyHydrationQueryHandler(cache_service=cache_service),
     )
+
+    # Register supplement handlers (routes answer 503 until the switch is on)
+    from src.api.services.write_cache_invalidation import (
+        apply_supplement_write_cache_invalidation,
+    )
+    from src.app.commands.supplement import (
+        AddSupplementCommand,
+        DeleteSupplementIntakeCommand,
+        LogSupplementIntakeCommand,
+        RemoveSupplementCommand,
+        ScanSupplementLabelCommand,
+        UpdateSupplementCommand,
+    )
+    from src.app.handlers.command_handlers.supplement_command_handlers import (
+        AddSupplementCommandHandler,
+        DeleteSupplementIntakeCommandHandler,
+        LogSupplementIntakeCommandHandler,
+        RemoveSupplementCommandHandler,
+        UpdateSupplementCommandHandler,
+    )
+    from src.app.handlers.command_handlers.supplement_scan_handler import (
+        ScanSupplementLabelCommandHandler,
+    )
+    from src.app.handlers.query_handlers.supplement_query_handlers import (
+        GetMySupplementsQueryHandler,
+        LookupSupplementBarcodeQueryHandler,
+        SearchSupplementsQueryHandler,
+    )
+    from src.app.queries.supplement import (
+        GetMySupplementsQuery,
+        LookupSupplementBarcodeQuery,
+        SearchSupplementsQuery,
+    )
+
+    async def purge_supplement_day(user_id: str, day: date) -> None:
+        await apply_supplement_write_cache_invalidation(cache_service, user_id, day)
+
+    for command, handler_class in (
+        (AddSupplementCommand, AddSupplementCommandHandler),
+        (UpdateSupplementCommand, UpdateSupplementCommandHandler),
+        (RemoveSupplementCommand, RemoveSupplementCommandHandler),
+        (LogSupplementIntakeCommand, LogSupplementIntakeCommandHandler),
+        (DeleteSupplementIntakeCommand, DeleteSupplementIntakeCommandHandler),
+    ):
+        event_bus.register_handler(
+            command,
+            handler_class(uow_factory=AsyncUnitOfWork, purge_day=purge_supplement_day),
+        )
+    event_bus.register_handler(
+        ScanSupplementLabelCommand,
+        ScanSupplementLabelCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            vision_service=vision_service,
+            download_image_bytes=ScanImageDownloadAdapter(),
+            event_bus=event_bus,
+            purge_day=purge_supplement_day,
+        ),
+    )
+    # The + panel's Ghi nhanh: one sentence for every kind of log, and its undo.
+    from src.app.commands.describe_any import (
+        DescribeAnyCommand,
+        UndoDescribeAnyCommand,
+    )
+    from src.app.handlers.command_handlers.describe_any_command_handler import (
+        DescribeAnyCommandHandler,
+    )
+    from src.app.handlers.command_handlers.supplement_command_handlers import (
+        SupplementWrite,
+    )
+    from src.app.handlers.command_handlers.undo_describe_any_command_handler import (
+        UndoDescribeAnyCommandHandler,
+    )
+    from src.bootstrap.supplements import supplements_available
+
+    event_bus.register_handler(
+        DescribeAnyCommand,
+        DescribeAnyCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            meal_generation_service=meal_generation_service,
+            event_bus=event_bus,
+            meal_writer=manual_meal_handler,
+            supplement_writer=SupplementWrite(AsyncUnitOfWork, purge_supplement_day),
+            supplements_available=supplements_available,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+            ai_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
+            food_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
+        ),
+    )
+    event_bus.register_handler(
+        UndoDescribeAnyCommand,
+        UndoDescribeAnyCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+            purge_supplement_day=purge_supplement_day,
+        ),
+    )
+    for query, query_handler_class in (
+        (GetMySupplementsQuery, GetMySupplementsQueryHandler),
+        (SearchSupplementsQuery, SearchSupplementsQueryHandler),
+        (LookupSupplementBarcodeQuery, LookupSupplementBarcodeQueryHandler),
+    ):
+        event_bus.register_handler(
+            query,
+            query_handler_class(uow_factory=lambda: AsyncUnitOfWork(read_only=True)),
+        )
 
     # Register saved suggestion handlers
     event_bus.register_handler(

@@ -66,6 +66,12 @@ from src.infra.repositories.streak_restore_repository_async import (
 from src.infra.repositories.subscription_repository_async import (
     AsyncSubscriptionRepository,
 )
+from src.infra.repositories.supplement_catalog_repository_async import (
+    AsyncSupplementCatalogRepository,
+)
+from src.infra.repositories.supplement_repository_async import (
+    AsyncSupplementRepository,
+)
 from src.infra.repositories.user_repository_async import AsyncUserRepository
 from src.infra.repositories.weekly_budget_repository_async import (
     AsyncWeeklyBudgetRepository,
@@ -185,6 +191,8 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.push_tokens = AsyncPushTokenRepository(session)
         self.engagement_pushes = AsyncEngagementPushRepository(session)
         self.streak_restores = AsyncStreakRestoreRepository(session)
+        self.supplements = AsyncSupplementRepository(session)
+        self.supplement_catalog = AsyncSupplementCatalogRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         session = self.session

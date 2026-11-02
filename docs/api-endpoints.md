@@ -219,6 +219,86 @@ handler/schema when implementing; the bullets below are the durable WHY.
   new threads while it reports `single`. Deploy the server before running that
   migration: the single-thread server's insert needs the unique index.
 
+### Supplements
+
+- `GET /v1/capabilities/supplements` returns `{"supplements": true}` once
+  `SUPPLEMENTS_ENABLED` is on and the supplement tables are migrated, and 503
+  `SUPPLEMENTS_UNAVAILABLE` otherwise. Clients hide supplement logging until it
+  answers 200.
+- Every `/v1/supplements` route answers the same 503 until then. Like water,
+  they carry no subscription check; the app gates the screen.
+- `/v1/admin/supplements` (admins, or loopback in development) loads the
+  curated catalog and reviews held-back rows and label scans; it ignores
+  `SUPPLEMENTS_ENABLED` and answers 503 only before the migration. See
+  [supplement-catalog-admin.md](./supplement-catalog-admin.md).
+- A product is visible when it is a shared, approved catalog row or the
+  user's own. Every route that takes a product, list row or dose id answers
+  404 `SUPPLEMENT_NOT_FOUND` for anything else, so other users' rows never
+  leak.
+- `GET /mine?date=YYYY-MM-DD` (the user's today by default): `items` are the
+  list rows, each with `product` and that day's `doses`; `unlisted_doses` are
+  the day's doses of products since taken off the list.
+- `GET /search?q=` (30/min) folds accents ("dau ca" finds "Dầu cá"); one- and
+  two-letter words match only at a word start, so "vitamin k" does not match
+  every brand with a "k" in it. Vietnamese nutrient names ("sắt", "canxi",
+  "dầu cá", "kẽm") also find the English label words ("Iron", "Calcium",
+  "Fish Oil", "Zinc") and match only as whole words, so "sắt" never finds
+  "Satiety". It lists approved catalog rows first, those
+  sold in Vietnam ahead, then the user's own; at most 20. `macro_bearing: true`
+  marks a product the app logs as food: adding it or logging it as a dose is
+  400 `SUPPLEMENT_IS_FOOD`.
+- `GET /barcode/{code}` (20/min) accepts UPC-A, EAN-13, EAN-8 or GTIN-14 and returns
+  the shared product, else the user's own, else 404 (the app then offers a
+  label scan).
+- `POST /mine` `{product_id, units_per_dose?, log_now?, intake_id?, taken_at?}`
+  adds the product, or reactivates its row. `log_now` also logs one dose of
+  `units_per_dose` (default: the label's serving) and then needs `intake_id`;
+  send an `Idempotency-Key` so a retry replays instead of answering 409. The
+  reply's row carries the whole day's doses of that product. `PATCH /mine/{id}` changes
+  `units_per_dose`, `active` or `sort_order`. `DELETE /mine/{id}` removes the
+  row and keeps past doses.
+- `POST /intakes` `{intake_id, product_id, units, taken_at?}` logs a dose under
+  the client's UUID. `taken_at` must carry an offset (send UTC) and defaults
+  to now; more than 10 minutes ahead or a year back is 400 `INVALID_TAKEN_AT`. A reused `intake_id` (even a
+  deleted one) is 409 `SUPPLEMENT_INTAKE_ID_TAKEN`; the same
+  `Idempotency-Key` replays the stored reply instead. `DELETE /intakes/{id}`
+  removes one of the user's doses.
+- `POST /scan-label` `{image_url, image_id, intake_id, taken_at?}` with a
+  required `Idempotency-Key` reads an uploaded label photo (5/min) with an
+  OpenAI-only model chain (`supplement_label_scan`). It saves
+  the user's own product (`pending_review` when it has a brand and a tracked
+  nutrient, else `private`), lists it and logs one dose: `{route:
+  "supplement", product, entry, intake}`. A protein powder, gainer or meal
+  shake (by kind; by 10 g protein or 50 kcal per unit; or, for powders,
+  liquids and sachets, by 10 g protein or 100 kcal per serving) is saved as a
+  meal from the same read, with `intake_id` as the meal id: `{route: "food",
+  meal: {meal_id, dish_name, calories, protein, carbs, fat}}`. The same key replays the stored
+  reply. A label barcode already in the catalog or on the user's earlier scan
+  reuses that product. Checks run rate limit, replay, Premium (402
+  `SUBSCRIPTION_REQUIRED`), then `SUPPLEMENT_LABEL_SCANS_PER_DAY` (default 20,
+  429 `SUPPLEMENT_LABEL_SCAN_DAILY_LIMIT`). An unreadable photo is 400
+  `SUPPLEMENT_LABEL_UNREADABLE`; food without a printed serving weight is 400
+  `SUPPLEMENT_LABEL_IS_FOOD`; a read past 90 s is `SUPPLEMENT_LABEL_TIMEOUT`.
+  Label photos stay in storage after account deletion, as meal photos do.
+- A dose stores its nutrients at log time (per-unit amounts × units) and
+  never carries calories. It counts as a logged day for the streak and the
+  weekly recap, and appears in `GET /v1/activities/daily` as
+  `type: "supplement"` with `title`, `brand`, `units`, `unit_label` and
+  `estimated`.
+- Doses add vitamins and minerals, never calories, macros or meals. They
+  count in the iron, potassium and sodium highlights of
+  `GET /v1/meals/daily/macros` and of every `GET /v1/progress/summary` day,
+  except Ghi nhanh estimates toward sodium, which Home shows as a limit gauge.
+  The day-totals reply adds `supplement_micros`, the doses' share already in
+  those highlights, so the app can add it to totals it rebuilds from its meal
+  cache. The food-quality score (`nrf_*`) stays food-only.
+- With `include=trends`, day `micros` include every dose, and each day adds
+  `supplement_micros`, `supplement_estimated_micros` (the Ghi nhanh part,
+  which never warns), `supplement_vitamin_a_preformed` (µg from non-estimated
+  doses; an unknown vitamin A form counts in full) and `supplement_doses`.
+  Supplement folate is µg DFE (folic acid × 1.7). Amounts printed as 0 never
+  count.
+
 ### Meal recommendations (catalog)
 
 - Catalog recommendations are separate from `/v1/meal-suggestions` (AI session
@@ -261,10 +341,11 @@ handler/schema when implementing; the bullets below are the durable WHY.
   `weekly_meal_plans`, `weekly_meal_plan_slots`, and
   `weekly_meal_plan_pantry_items`; `/v1/recipes*` reads the existing immutable
   catalog rather than a duplicate recipe table.
-- Recipe alternatives may pass `meal_type=lunch` or `meal_type=dinner` to
+- Recipe alternatives may pass `meal_type=breakfast|lunch|dinner` to
   `/v1/recipes`; the catalog filters candidates by that slot's eligibility.
-- Weeks are Monday-based and contain exactly 14 coordinates: day indexes 0–6
-  with slot index 0 for lunch and 1 for dinner. The default week is resolved
+- Weeks are Monday-based and contain exactly 21 coordinates: day indexes 0–6
+  with slot index 0 for breakfast, 1 for lunch and 2 for dinner. A slot's date
+  is `week_start_date + day_index`. The default week is resolved
   from the authenticated user's timezone. Generation and slot/preferences
   edits are idempotent and return a conflict for confirmed plans; pantry reads
   and diary logging retain their own owner and state checks.
@@ -299,7 +380,7 @@ handler/schema when implementing; the bullets below are the durable WHY.
   several days. `to_buy_count` counts only `needed` and `need_more` items.
 - Ask Nutree's proposal POST is non-mutating and returns `base_revision`, a
   proposed plan, and slot changes. Optional `target_day_index` (0–6) and
-  `target_slot_index` (0 for lunch, 1 for dinner) must be supplied together:
+  `target_slot_index` (0–2) must be supplied together:
   both scope the proposal to exactly that existing, unlogged slot; neither
   requests a week-wide proposal. A logged slot cannot be changed. Accept a
   proposal by PATCHing the plan with `expected_revision` set to its
@@ -322,7 +403,46 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Logging a slot validates date/type and portion `0.5`, `1`, `1.5`, or `2`,
   materializes the normal backend-owned `Meal`, derives nutrition from scaled
   macros, and links the resulting meal to the weekly slot. Replays return the
-  original diary meal.
+  original diary meal. Like every meal write, it purges the day's caches
+  before responding.
+- Every plan payload lists `features`, the planner capabilities this server
+  supports (`slot_unlog`, `slot_link`, `slot_skip`, `slot_suggestions`,
+  `recipe_labels`, `recipe_batch`). Clients hide actions whose name is
+  missing. Slots report `log_source` (`plan`: created by the log endpoint;
+  `diary`: an existing meal was linked; `null`: not logged) and `is_skipped`.
+- Slot writes below (paths under `/v1/meal-plans/{plan_id}`) require
+  `Idempotency-Key` and return the plan (the current-plan shape). They bump
+  the slot's version, not the plan `revision`.
+  - `DELETE …/slots/{slot_id}/log` releases a logged slot. A `plan` meal is
+    deleted through the normal meal delete (meal.deleted published, caches
+    purged); a `diary` meal stays in the diary. `409 WEEKLY_SLOT_NOT_LOGGED`
+    when the slot is not logged.
+  - `POST …/slots/{slot_id}/link` `{"meal_id"}` marks the slot eaten with the
+    user's own meal. The meal's date in the user's timezone (`X-Timezone`,
+    else the saved one) must equal the slot date and its `meal_type` must be
+    the slot's (`400 WEEKLY_SLOT_MISMATCH`). `404 MEAL_NOT_FOUND` for a
+    missing, foreign or deleted meal; `409 WEEKLY_SLOT_ALREADY_LOGGED`;
+    `409 WEEKLY_MEAL_ALREADY_LINKED` when another slot holds that meal.
+  - `POST` / `DELETE …/slots/{slot_id}/skip` skip or restore a slot; repeats
+    are no-ops. A logged slot cannot be skipped (`409
+    WEEKLY_SLOT_ALREADY_LOGGED`); logging or linking a skipped slot ends the
+    skip. Skipped slots keep their recipe but leave the grocery list.
+- Deleting any diary meal (`DELETE /v1/meals/{meal_id}`) releases the weekly
+  slot logged with it in the same transaction, so the slot can be logged or
+  swapped again.
+- `GET …/slots/{slot_id}/suggestions?diet=vegetarian|no-pork&max_cook_time=&min_protein=&limit=10`
+  (limit 1–30) returns `{"items"}` in the `/v1/recipes` item shape and order:
+  recipes for the slot's meal type that the plan's diet, dislikes and
+  allergies allow under the same eligibility PATCH enforces, minus recipes
+  already in the week. The query `diet` narrows the plan diet, never widens it.
+- `/v1/recipes` items and plan recipe summaries carry `is_vegetarian` and
+  `is_pork_free`, computed by the same word rule as `diet=vegetarian|no-pork`
+  (`RecipeDietLabels`). That browse rule is looser than the planner's hard
+  diet rule, so a label is a browse hint, not the planner's verdict.
+  `min_protein` filters by grams of protein per serving.
+- `POST /v1/recipes/batch` `{"ids": [...]}` (1–30, deduplicated) returns
+  `{"items", "missing"}`: details in the `GET /v1/recipes/{id}` shape, in
+  request order, and the ids that are not active recipes.
 
 ### Food search and barcode
 
@@ -386,6 +506,42 @@ handler/schema when implementing; the bullets below are the durable WHY.
   in one unit of work; events and the cache purge follow, and their failures
   are logged, not returned.
 
+### Ghi nhanh for every kind (`POST /v1/log/describe`, `DELETE /v1/log/describe/{request_id}`)
+
+- The + panel's field: one sentence saves food, drinks, activities and
+  supplement doses together. Same limiter, switch, Premium and shared daily
+  quota as the two routes above; the body's `request_id` is the replay key
+  (same rules as `Idempotency-Key`; the fingerprint is the text, `local_date`
+  and `kinds`, not `local_time`).
+- Read first, with no transaction open: one OpenAI-only model call
+  (`describe_log`, never Workers AI) splits the sentence, the person's own
+  supplements are sent with it as refs, and the food part runs through
+  parse-text (a second model call), so a sentence with food can take about
+  20 s. Then one unit of work saves the meal (source `prompt`), the drinks, the
+  activities and the doses, plus the reply and the ids it created.
+- Supplements match the person's list, then a named brand in what they may see
+  (approved catalog rows, then their own), else a new private product from the
+  model's guess (`source=describe`, `estimated=true`, never reviewed or shared).
+  A per-unit guess above 10 times the adult upper limit, or above a fixed
+  ceiling for nutrients with no limit, is dropped as a unit slip. Protein powders, gainers and shakes, by the model's kind or a matched
+  product with calories, are logged as food.
+- `kinds` (default all four) limits what is saved. Items of other kinds, and
+  supplements until `SUPPLEMENTS_ENABLED` is on and the tables exist, come back
+  in `skipped` with a reason; the rest still saves. `nothing_found` is a 200,
+  not 422, and is replayed like any reply.
+- Each `saved` item carries its kind's own payload: `meal` (as
+  `POST /v1/meals/manual` returns it, read fresh, null once deleted), `drink`
+  and `activity` (the two routes above), `intake`, `entry` and `product`
+  (the supplement routes). `local_date` may be tomorrow at most and a year
+  back at most (400 `INVALID_DATE`); today's entries keep their real time,
+  and a dose is never stamped in the future.
+- DELETE deletes everything the sentence saved in one transaction (meal, drink
+  entries with their legacy water meal rows retired, activities, doses) and
+  takes products off the list only if the sentence put them there. 404
+  `DESCRIBE_REQUEST_NOT_FOUND` when no finished sentence has that id, 409
+  while it is still running. A sentence that saved nothing, or a repeated
+  undo, answers zero counts; undos of one id run one after the other.
+
 ### GET meal food item display names
 
 - `Accept-Language: en` (or English primary) → live `food_reference.name`.
@@ -426,6 +582,13 @@ handler/schema when implementing; the bullets below are the durable WHY.
   `POST /redemptions/preflight` → redeem-once →
   `POST /redemptions/finalize`. Session is IP-rate-limited; it must not bind
   `preflight_uid`.
+- Silent activation is for new buyers only: session signs in only to the
+  Firebase record it creates under the lead's reserved UID (`wfr_…`). If the email
+  already belongs to a Nutree user or another Firebase record, session returns
+  the same 404 and the buyer must sign in to that account (verified Google,
+  Apple or email link) before preflight. Session never sets `email_verified`
+  on an existing record, and stops minting once the reserved record has any
+  linked provider.
 - Preflight/finalize require verified email and
   `sign_in_provider` in `{google.com, apple.com, password}` or `custom` with
   claim `wf_silent_login`.

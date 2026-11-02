@@ -88,6 +88,19 @@ def fold_food_search_text(text: str | None) -> str:
     return " " + _NON_ALPHANUMERIC.sub(" ", translated).strip(" ")
 
 
+# Shorter fragments only match at a word start: an infix "bo" would hit
+# "jumbo" and "bolognese" for every "bò" query.
+SEARCH_INFIX_MIN_LENGTH = 3
+
+
+def search_word_pattern(word: str) -> str:
+    """LIKE pattern for one folded word against a folded ``name_search`` column.
+
+    Folded words are [a-z0-9]+, so they never carry LIKE wildcards.
+    """
+    return f"%{word}%" if len(word) >= SEARCH_INFIX_MIN_LENGTH else f"% {word}%"
+
+
 def food_search_words(text: str | None) -> list[str]:
     """Return the folded words of ``text`` in order."""
     return fold_food_search_text(text).split()

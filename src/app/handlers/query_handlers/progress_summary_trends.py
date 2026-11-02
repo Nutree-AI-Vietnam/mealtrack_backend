@@ -13,6 +13,7 @@ from src.domain.model.movement.movement_load import daily_movement_load
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.micros import Micros
 from src.domain.model.nutrition.micros_ops import merge_micros
+from src.domain.model.supplement.day_totals import SupplementDayTotals
 from src.domain.services.meal_nrf_fields import nutrition_nrf_fields
 from src.domain.services.micronutrient_dri_targets import micronutrient_daily_goals
 from src.domain.utils.timezone_utils import ensure_utc
@@ -58,9 +59,17 @@ def included_burn_by_day(entries_by_day: dict[date, list[Any]]) -> dict[date, fl
 
 
 def trends_day_fields(
-    meals: list[Any], drink_micros: Micros | None, movement_entries: list[Any]
+    meals: list[Any],
+    drink_micros: Micros | None,
+    movement_entries: list[Any],
+    supplements: SupplementDayTotals | None = None,
 ) -> dict[str, Any]:
-    """Trends fields for one day; micros here include the food items' own."""
+    """Trends fields for one day; micros here include the food items' own.
+
+    ``micros`` adds supplement doses (estimates included); the supplement
+    fields carry the doses' share so the app can split and warn on it.
+    ``micro_meal_counts`` stays food meals only.
+    """
     day_micros: Micros | None = None
     micro_meal_counts: dict[str, int] = {}
     quality_counts = {"good": 0, "fair": 0, "low": 0}
@@ -84,6 +93,8 @@ def trends_day_fields(
         if meal.meal_type:
             quality_by_type.setdefault(meal.meal_type, []).append(float(quality))
     day_micros = merge_micros(day_micros, drink_micros)
+    supplements = supplements or SupplementDayTotals()
+    day_micros = merge_micros(day_micros, supplements.as_micros())
     load = daily_movement_load(movement_entries)
     return {
         "micros": {
@@ -100,6 +111,7 @@ def trends_day_fields(
         "movement_sessions": load.sessions,
         "movement_load": load.load,
         "movement_kinds": load.kinds,
+        **supplements.to_fields(),
     }
 
 

@@ -8,6 +8,7 @@ import re
 from datetime import date, datetime, timedelta
 from functools import wraps
 from time import monotonic
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -34,7 +35,9 @@ from src.api.middleware.rate_limit import limiter
 from src.api.schemas.request.weekly_meal_planner_requests import (
     AiAdjustMealPlanRequest,
     GenerateWeeklyMealPlanRequest,
+    LinkMealPlanSlotRequest,
     LogMealPlanSlotRequest,
+    RecipeBatchRequest,
     UpdateGroceryDayLinesRequest,
     UpdateMealPlanPantryRequest,
     UpdateWeeklyMealPlanRequest,
@@ -45,9 +48,11 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
     GroceryItemResponse,
     LogMealPlanSlotResponse,
     PantryUpdateResponse,
+    RecipeBatchResponse,
     RecipeDetailNutritionResponse,
     RecipeDetailResponse,
     RecipeIngredientResponse,
+    RecipeItemsResponse,
     RecipeListItemResponse,
     RecipeListResponse,
     RecipeMacroSummaryResponse,
@@ -63,7 +68,10 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
     GenerateWeeklyMealPlanCommand,
+    LinkMealPlanSlotCommand,
     LogMealPlanSlotCommand,
+    SetMealPlanSlotSkipCommand,
+    UnlogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
@@ -71,7 +79,9 @@ from src.app.commands.meal_planner import (
 from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
+    GetMealPlanSlotSuggestionsQuery,
     GetRecipeDetailQuery,
+    GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
@@ -107,6 +117,16 @@ from src.planner_request_policy import planner_deadline, timeout_until
 
 router = APIRouter(tags=["Weekly Meal Plans", "Recipes"])
 logger = logging.getLogger(__name__)
+
+# Sent in every plan payload. Add a name only when its endpoint ships.
+WEEKLY_PLAN_FEATURES: tuple[str, ...] = (
+    "slot_unlog",
+    "slot_link",
+    "slot_skip",
+    "slot_suggestions",
+    "recipe_labels",
+    "recipe_batch",
+)
 
 
 @router.get("/v1/meal-plans/current", response_model=WeeklyMealPlanResponse)
@@ -298,6 +318,7 @@ async def list_recipes(
     meal_type: WeeklyPlannerMealType | None = Query(default=None),
     allergies: str = Query(default="", max_length=1000),
     dislikes: str = Query(default="", max_length=1000),
+    min_protein: float | None = Query(default=None, ge=0, le=500),
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     user_id: str = Depends(get_current_user_id),
@@ -317,6 +338,7 @@ async def list_recipes(
                 dislikes=_csv(dislikes),
                 limit=limit,
                 offset=offset,
+                min_protein=min_protein,
             )
         )
         meals = await localize_catalog_meals(
@@ -327,6 +349,40 @@ async def list_recipes(
         )
         return RecipeListResponse(
             items=[_recipe_list_item(meal) for meal in meals], total=page.total
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+# Declared before /v1/recipes/{recipe_id} so "batch" is never read as an id.
+@router.post("/v1/recipes/batch", response_model=RecipeBatchResponse)
+@limiter.limit("30/minute")
+async def get_recipe_batch(
+    request: Request,
+    body: RecipeBatchRequest,
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    """Up to 30 recipe details in request order; unknown ids come back in missing."""
+    del user_id
+    try:
+        meals = await event_bus.send(GetRecipeDetailsQuery(recipe_ids=tuple(body.ids)))
+        localized = (
+            await localize_catalog_meals(
+                tuple(meals),
+                language=get_request_language(request),
+                translation_service=translation_service,
+            )
+            if meals
+            else ()
+        )
+        found = {meal.id for meal in localized}
+        return RecipeBatchResponse(
+            items=[_recipe_detail(meal) for meal in localized],
+            missing=[recipe_id for recipe_id in body.ids if recipe_id not in found],
         )
     except HTTPException:
         raise
@@ -649,6 +705,232 @@ async def log_weekly_slot(
         raise _http_error(exc) from exc
 
 
+@router.delete(
+    "/v1/meal-plans/{plan_id}/slots/{slot_id}/log",
+    response_model=WeeklyMealPlanResponse,
+)
+@limiter.limit("20/minute")
+async def unlog_weekly_slot(
+    request: Request,
+    plan_id: str,
+    slot_id: str,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    include_grocery_count: bool = Query(default=True),
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    """Release a logged slot; delete its diary meal only if the plan logged it."""
+    try:
+        plan = await event_bus.send(
+            UnlogMealPlanSlotCommand(
+                user_id=user_id,
+                plan_id=plan_id,
+                slot_id=slot_id,
+                idempotency_key=_idempotency_key(idempotency_key),
+            )
+        )
+        return await _plan_response(
+            plan,
+            event_bus,
+            language=get_request_language(request),
+            translation_service=translation_service,
+            include_grocery_count=include_grocery_count,
+            localization_timeout_seconds=1.5,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/v1/meal-plans/{plan_id}/slots/{slot_id}/link",
+    response_model=WeeklyMealPlanResponse,
+)
+@limiter.limit("20/minute")
+async def link_weekly_slot(
+    request: Request,
+    plan_id: str,
+    slot_id: str,
+    body: LinkMealPlanSlotRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    include_grocery_count: bool = Query(default=True),
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    """Mark a slot eaten with a meal already in the user's diary."""
+    try:
+        plan = await event_bus.send(
+            LinkMealPlanSlotCommand(
+                user_id=user_id,
+                plan_id=plan_id,
+                slot_id=slot_id,
+                idempotency_key=_idempotency_key(idempotency_key),
+                meal_id=body.meal_id,
+                timezone=_header_timezone(request),
+            )
+        )
+        return await _plan_response(
+            plan,
+            event_bus,
+            language=get_request_language(request),
+            translation_service=translation_service,
+            include_grocery_count=include_grocery_count,
+            localization_timeout_seconds=1.5,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/v1/meal-plans/{plan_id}/slots/{slot_id}/skip",
+    response_model=WeeklyMealPlanResponse,
+)
+@limiter.limit("30/minute")
+async def skip_weekly_slot(
+    request: Request,
+    plan_id: str,
+    slot_id: str,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    include_grocery_count: bool = Query(default=True),
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    """Skip a slot: it stays planned but buys no groceries."""
+    return await _set_slot_skip(
+        request,
+        plan_id,
+        slot_id,
+        skipped=True,
+        idempotency_key=idempotency_key,
+        include_grocery_count=include_grocery_count,
+        user_id=user_id,
+        event_bus=event_bus,
+        translation_service=translation_service,
+    )
+
+
+@router.delete(
+    "/v1/meal-plans/{plan_id}/slots/{slot_id}/skip",
+    response_model=WeeklyMealPlanResponse,
+)
+@limiter.limit("30/minute")
+async def unskip_weekly_slot(
+    request: Request,
+    plan_id: str,
+    slot_id: str,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    include_grocery_count: bool = Query(default=True),
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    return await _set_slot_skip(
+        request,
+        plan_id,
+        slot_id,
+        skipped=False,
+        idempotency_key=idempotency_key,
+        include_grocery_count=include_grocery_count,
+        user_id=user_id,
+        event_bus=event_bus,
+        translation_service=translation_service,
+    )
+
+
+async def _set_slot_skip(
+    request: Request,
+    plan_id: str,
+    slot_id: str,
+    *,
+    skipped: bool,
+    idempotency_key: str,
+    include_grocery_count: bool,
+    user_id: str,
+    event_bus,
+    translation_service,
+) -> WeeklyMealPlanResponse:
+    try:
+        plan = await event_bus.send(
+            SetMealPlanSlotSkipCommand(
+                user_id=user_id,
+                plan_id=plan_id,
+                slot_id=slot_id,
+                idempotency_key=_idempotency_key(idempotency_key),
+                skipped=skipped,
+            )
+        )
+        return await _plan_response(
+            plan,
+            event_bus,
+            language=get_request_language(request),
+            translation_service=translation_service,
+            include_grocery_count=include_grocery_count,
+            localization_timeout_seconds=1.5,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get(
+    "/v1/meal-plans/{plan_id}/slots/{slot_id}/suggestions",
+    response_model=RecipeItemsResponse,
+)
+@limiter.limit("30/minute")
+async def get_weekly_slot_suggestions(
+    request: Request,
+    plan_id: str,
+    slot_id: str,
+    diet: Literal["vegetarian", "no-pork"] | None = Query(default=None),
+    max_cook_time: int | None = Query(default=None, ge=0, le=600),
+    min_protein: float | None = Query(default=None, ge=0, le=500),
+    limit: int = Query(default=10, ge=1, le=30),
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    """Recipes a PATCH would accept for this slot, minus the week's recipes."""
+    try:
+        meals = await event_bus.send(
+            GetMealPlanSlotSuggestionsQuery(
+                user_id=user_id,
+                plan_id=plan_id,
+                slot_id=slot_id,
+                diet=diet,
+                max_cook_time=max_cook_time,
+                min_protein=min_protein,
+                limit=limit,
+            )
+        )
+        localized = await localize_catalog_meals(
+            meals,
+            language=get_request_language(request),
+            translation_service=translation_service,
+            include_ingredients=False,
+        )
+        return RecipeItemsResponse(
+            items=[_recipe_list_item(meal) for meal in localized]
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+def _header_timezone(request: Request) -> str | None:
+    header_tz = request.headers.get("X-Timezone")
+    if header_tz and is_valid_timezone(header_tz):
+        return normalize_timezone(header_tz)
+    return None
+
+
 async def _timezone(event_bus, request: Request, user_id: str) -> str:
     result = await event_bus.send(
         GetUserTimezoneQuery(
@@ -758,6 +1040,7 @@ async def _plan_response(
         algorithm_version=getattr(plan, "algorithm_version", None),
         created_at=plan.created_at,
         updated_at=plan.updated_at,
+        features=list(WEEKLY_PLAN_FEATURES),
     )
 
 
@@ -770,6 +1053,8 @@ def _slot_response(slot, meal: CatalogMeal | None) -> WeeklyMealSlotResponse:
         recipe=_recipe_summary(meal) if meal else None,
         is_logged=slot.is_logged,
         logged_meal_id=slot.logged_meal_id,
+        log_source=getattr(slot, "log_source", None),
+        is_skipped=bool(getattr(slot, "is_skipped", False)),
     )
 
 
@@ -787,6 +1072,8 @@ def _recipe_summary(meal: CatalogMeal) -> WeeklyRecipeSummaryResponse:
             fat=float(meal.fat_g),
             fiber=float(meal.fiber_g),
         ),
+        is_vegetarian=meal.diet_labels.is_vegetarian,
+        is_pork_free=meal.diet_labels.is_pork_free,
     )
 
 
@@ -802,6 +1089,8 @@ def _recipe_list_item(meal: CatalogMeal) -> RecipeListItemResponse:
         protein=float(meal.protein_g),
         carbs=float(meal.carbs_g),
         fat=float(meal.fat_g),
+        is_vegetarian=meal.diet_labels.is_vegetarian,
+        is_pork_free=meal.diet_labels.is_pork_free,
     )
 
 

@@ -58,15 +58,27 @@ class AsyncMealWriteOperationRepository:
         )
         return len(operation_ids)
 
-    async def lookup(self, *, user_id: str, operation: str, idempotency_key: str):
-        """Inspect a claim without inserting or extending it during precomputation."""
-        result = await self.session.execute(
-            select(MealWriteOperationORM).where(
-                MealWriteOperationORM.user_id == user_id,
-                MealWriteOperationORM.operation == operation,
-                MealWriteOperationORM.idempotency_key == idempotency_key,
-            )
+    async def lookup(
+        self,
+        *,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        for_update: bool = False,
+    ):
+        """Inspect a claim without inserting or extending it during precomputation.
+
+        ``for_update`` locks the row until the caller's transaction ends, so
+        two undos of one request run one after the other.
+        """
+        statement = select(MealWriteOperationORM).where(
+            MealWriteOperationORM.user_id == user_id,
+            MealWriteOperationORM.operation == operation,
+            MealWriteOperationORM.idempotency_key == idempotency_key,
         )
+        if for_update:
+            statement = statement.with_for_update()
+        result = await self.session.execute(statement)
         row = result.scalar_one_or_none()
         if row is None:
             return None

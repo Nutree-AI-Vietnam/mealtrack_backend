@@ -13,6 +13,7 @@ from sqlalchemy import (
     cast,
     delete,
     func,
+    literal_column,
     or_,
     select,
     update,
@@ -107,6 +108,12 @@ def _domain_hydratable_active_meal_filter():
             and_(MealORM.ready_at.is_not(None), MealORM.nutrition.has()),
         ),
     )
+
+
+# Same exclusion as the filter above, spelled as a constant so PostgreSQL can
+# prove the partial predicate of ix_meal_streak_user_created. A bound
+# parameter (``status != $1``) does not.
+_STREAK_INDEX_PREDICATE = MealORM.status.op("<>")(literal_column("'INACTIVE'"))
 
 
 def _map_domain_hydratable_meals(db_meals: list[MealORM]) -> list[Meal]:
@@ -520,6 +527,36 @@ class AsyncMealRepository(MealRepositoryPort):
         )
         return _map_domain_hydratable_meals(list(result.unique().scalars().all()))
 
+    async def list_recent_fix_result_raw_payloads(
+        self,
+        user_id: str,
+        *,
+        limit: int = 30,
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Newest Fix-result scanner meals with raw AI payload for memory hints."""
+        result = await self.session.execute(
+            select(MealORM.meal_id, MealORM.dish_name, MealORM.raw_ai_response)
+            .where(
+                MealORM.user_id == user_id,
+                MealORM.status == MealStatusEnum.READY,
+                MealORM.is_manually_edited.is_(True),
+                MealORM.source.in_(("scanner", "scan", "scan_by_url")),
+                MealORM.raw_ai_response.is_not(None),
+                MealORM.raw_ai_response.contains("_fix_result_corrections"),
+                _domain_hydratable_active_meal_filter(),
+            )
+            .order_by(
+                func.coalesce(
+                    MealORM.last_edited_at, MealORM.updated_at, MealORM.created_at
+                ).desc()
+            )
+            .limit(limit)
+        )
+        rows: list[tuple[str, str | None, str | None]] = []
+        for meal_id, dish_name, raw in result.all():
+            rows.append((str(meal_id), dish_name, raw))
+        return rows
+
     async def aggregate_linked_ingredient_history(
         self,
         *,
@@ -708,10 +745,15 @@ class AsyncMealRepository(MealRepositoryPort):
                 cast(local_ts, Time) != bindparam("noon", BACKDATED_LOCAL_TIME, Time),
             )
         )
+        # No created_at lower bound. best_streak is the longest run ever, and
+        # last_logged_date is the newest logged day even when it is old. A
+        # lookback that stops at a gap would drop both. ix_meal_streak_user_created
+        # is what keeps this full history off the heap.
         result = await self.session.execute(
             select(local_day, same_day)
             .where(
                 MealORM.user_id == user_id,
+                _STREAK_INDEX_PREDICATE,
                 _domain_hydratable_active_meal_filter(),
             )
             .group_by(local_day)

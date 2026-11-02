@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 
+from src.domain.constants.lifetime_products import is_lifetime_product
 from src.domain.model.subscription import Subscription
 from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
 
@@ -43,8 +44,10 @@ class FakeSubscriptionRepository(SubscriptionRepositoryPort):
         return any(
             sub.user_id == user_id
             and sub.status in ("active", "billing_issue")
-            and sub.expires_at is not None
-            and sub.expires_at > datetime.now()
+            and (
+                (sub.expires_at is not None and sub.expires_at > datetime.now())
+                or (sub.expires_at is None and is_lifetime_product(sub.product_id))
+            )
             for sub in self._subscriptions.values()
         )
 

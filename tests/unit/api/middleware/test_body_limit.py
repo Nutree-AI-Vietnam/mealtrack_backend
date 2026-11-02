@@ -39,6 +39,7 @@ LIMITED_PATHS = [
     ("/v1/admin/meal-catalog/import", CATALOG_MANIFEST_BODY_MAX_BYTES),
     (RESOLVE_PATH, CATALOG_MANIFEST_BODY_MAX_BYTES),
     ("/v1/admin/meal-catalog/enrich", CATALOG_MANIFEST_BODY_MAX_BYTES),
+    ("/v1/admin/supplements/import", CATALOG_MANIFEST_BODY_MAX_BYTES),
     (AVATAR_PHOTO_PATH, AVATAR_PHOTO_BODY_MAX_BYTES),
 ]
 # Not in BODY_LIMITS: a JSON route, and a path that only starts like a listed one.

@@ -18,6 +18,7 @@ class MockVisionAIService(VisionAIServicePort):
         self,
         image_bytes: bytes,
         language: str = "en",
+        correction_hints: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return mock analysis result."""
         return self.mock_response

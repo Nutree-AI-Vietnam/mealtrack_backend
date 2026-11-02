@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
+from src.app.services.supplement_days import with_dose_days
 from src.domain.cache.cache_keys import CacheKeys
 from src.domain.model.streak import (
     StreakCalendar,
@@ -53,7 +54,12 @@ async def load_restore_state(
     user_tz = await resolve_user_timezone_async(user_id, uow, header_timezone)
     computed_at = utc_now()
     today = computed_at.astimezone(get_zone_info(user_tz)).date()
-    log_days = await uow.meals.get_streak_log_days(user_id, user_timezone=user_tz)
+    # A supplement dose counts as a logged day, like water.
+    log_days = await with_dose_days(
+        uow,
+        user_id,
+        await uow.meals.get_streak_log_days(user_id, user_timezone=user_tz),
+    )
     ledger = await uow.streak_restores.summary(user_id)
     scan_count = await uow.meals.count_by_source(user_id, "scanner")
     return RestoreState(

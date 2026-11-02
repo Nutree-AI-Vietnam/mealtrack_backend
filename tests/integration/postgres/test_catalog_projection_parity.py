@@ -75,6 +75,10 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
         {"dislikes": ("CÁ", "  ")},
         {"allergies": ("dairy",)},
         {"allergies": ("unknown-code",)},
+        {"min_protein": 0},
+        {"min_protein": 4},
+        {"min_protein": 1000},
+        {"diet": "vegetarian", "min_protein": 4},
     ]
     for options in filters:
         for offset in (0, 1, 99):
@@ -95,6 +99,11 @@ async def test_projected_filter_order_count_and_compact_generation_match_authori
             ] == [
                 (meal.protein_g, meal.carbs_g, meal.calories) for meal in before.items
             ]
+            # Labels come from the projection columns the diet filter reads.
+            assert [meal.diet_labels for meal in after.items] == [
+                meal.diet_labels for meal in before.items
+            ]
+            assert all(meal.browse_labels is not None for meal in after.items)
     meals = await projected.list_active_meals()
     candidates = await projected.list_selection_candidates()
     assert {meal.id for meal in candidates} == set(ids)
@@ -228,3 +237,15 @@ async def test_compact_summaries_use_one_select_and_backfill_is_restartable(pg_s
     assert count == 2 and cursor
     count2, cursor2 = await rebuilder.reconcile_page(after_id=cursor, limit=2)
     assert count2 == 2 and cursor2 > cursor
+
+
+@pytest.mark.asyncio
+async def test_batch_details_load_active_recipes_with_steps(pg_session):
+    ids, _ = await seed_catalog(pg_session)
+    repo = AsyncCatalogMealRepository(pg_session)
+
+    details = await repo.get_meal_details([ids[1], "missing", ids[0], ids[1]])
+
+    assert sorted(meal.id for meal in details) == sorted(ids[:2])
+    single = await repo.get_meal_detail(ids[0])
+    assert next(meal for meal in details if meal.id == ids[0]) == single

@@ -12,6 +12,7 @@ from src.infra.services.web_funnel_redemption_completion import finalize_redempt
 from src.infra.services.web_funnel_redemption_identity import (
     RedemptionIdentityUnavailable,
     WebFunnelRedemptionIdentityService,
+    silent_login_uid,
 )
 
 _TERMINAL_LEAD_STATUSES = frozenset({"refunded", "revoked", "conflict", "expired"})
@@ -57,8 +58,9 @@ class WebFunnelRedemptionService:
     ) -> str | None:
         """Mint a retryable custom token for an unconsumed redemption link.
 
-        ``None`` hides an unknown, consumed or terminal link and an identity
-        outage behind the same not-found response. Nothing is recorded then.
+        ``None`` hides an unknown, consumed or terminal link, an email that
+        already has an account, and an identity outage behind the same
+        not-found response. Nothing is recorded then.
         """
         binding = await db.scalar(
             select(WebFunnelRedemption)
@@ -70,13 +72,16 @@ class WebFunnelRedemptionService:
         lead = await db.get(WebFunnelLead, binding.lead_id, with_for_update=True)
         if not lead or lead.status in _TERMINAL_LEAD_STATUSES:
             return None
+        # An existing account signs in itself. Only the account this lead created
+        # (a retry after the app synced it) may be reopened.
+        uid = silent_login_uid(lead.id)
         owner = await db.scalar(
             select(User).where(func.lower(User.email) == lead.email.strip().lower())
         )
+        if owner and owner.firebase_uid != uid:
+            return None
         try:
-            token = await identity.mint_for_email(
-                lead.email, mealtrack_uid=owner.firebase_uid if owner else None
-            )
+            token = await identity.mint_for_new_buyer(lead.email, uid=uid)
         except RedemptionIdentityUnavailable:
             return None
         binding.silent_login_minted_at = utc_now()

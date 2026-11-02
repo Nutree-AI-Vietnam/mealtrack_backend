@@ -1,6 +1,7 @@
 """Response contracts for weekly planning, recipes, groceries, and logging."""
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,9 @@ class WeeklyRecipeSummaryResponse(BaseModel):
     cook_time_minutes: int | None = None
     calories: int
     nutrition_per_serving: RecipeMacroSummaryResponse | None = None
+    # Same rule as GET /v1/recipes?diet=vegetarian|no-pork.
+    is_vegetarian: bool = False
+    is_pork_free: bool = False
 
 
 class WeeklyMealSlotResponse(BaseModel):
@@ -30,6 +34,10 @@ class WeeklyMealSlotResponse(BaseModel):
     recipe: WeeklyRecipeSummaryResponse | None = None
     is_logged: bool
     logged_meal_id: str | None = None
+    # "plan": logged by the log endpoint (unlog deletes that diary meal);
+    # "diary": an existing diary meal was linked (unlog keeps it).
+    log_source: Literal["plan", "diary"] | None = None
+    is_skipped: bool = False
 
 
 class WeeklyMealPlanResponse(BaseModel):
@@ -47,6 +55,9 @@ class WeeklyMealPlanResponse(BaseModel):
     algorithm_version: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # Planner capabilities this server supports, so clients can hide actions
+    # an older server cannot perform.
+    features: list[str] = Field(default_factory=list)
 
 
 class RecipeListItemResponse(BaseModel):
@@ -60,11 +71,18 @@ class RecipeListItemResponse(BaseModel):
     protein: float
     carbs: float
     fat: float
+    # Same rule as the diet=vegetarian|no-pork filter.
+    is_vegetarian: bool = False
+    is_pork_free: bool = False
 
 
 class RecipeListResponse(BaseModel):
     items: list[RecipeListItemResponse]
     total: int
+
+
+class RecipeItemsResponse(BaseModel):
+    items: list[RecipeListItemResponse]
 
 
 class RecipeIngredientResponse(BaseModel):
@@ -116,6 +134,12 @@ class RecipeDetailResponse(BaseModel):
     ingredients: list[RecipeIngredientResponse]
     steps: list[RecipeStepResponse]
     allergy_evaluated: bool = False
+
+
+class RecipeBatchResponse(BaseModel):
+    items: list[RecipeDetailResponse]
+    # Requested ids that are not active catalog recipes.
+    missing: list[str] = Field(default_factory=list)
 
 
 class WeeklyAiSlotChangeResponse(BaseModel):

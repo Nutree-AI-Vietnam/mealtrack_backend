@@ -4,6 +4,12 @@ import hashlib
 import json
 from dataclasses import replace
 
+from src.domain.model.meal_recommendation.recipe_diet_labels import (
+    BROWSE_MEAT_WORDS,
+    BROWSE_PORK_WORDS,
+    RecipeDietLabels,
+    recipe_browse_text,
+)
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     normalize_allergen_code,
 )
@@ -23,19 +29,14 @@ from src.infra.repositories.food_reference_projection import (
 
 PROJECTION_SCHEMA_VERSION = 1
 CONVERSION_CONTRACT = "canonical-catalog-conversion-v1"
-BROWSE_MEAT_WORDS = (
-    "beef",
-    "chicken",
-    "pork",
-    "fish",
-    "shrimp",
-    "meat",
-    "thịt",
-    "gà",
-    "bò",
-    "cá",
-)
-BROWSE_PORK_WORDS = ("pork", "ham", "bacon", "sausage", "thịt heo", "thịt lợn")
+# The browse diet rule lives in the domain; re-exported for existing imports.
+__all__ = [
+    "BROWSE_MEAT_WORDS",
+    "BROWSE_PORK_WORDS",
+    "CONVERSION_CONTRACT",
+    "PROJECTION_SCHEMA_VERSION",
+    "projection_values",
+]
 
 
 def _digest(value) -> str:
@@ -53,7 +54,8 @@ def _digest(value) -> str:
 def projection_values(row, meal) -> tuple[dict, list[MealCatalogProjectionAllergenORM]]:
     """Do not use timestamps: micronutrient edits leave selection inputs stable."""
     names = [ingredient.name for ingredient in meal.ingredients]
-    browse_text = " ".join([meal.name, meal.description or "", *names]).casefold()
+    browse_text = recipe_browse_text(meal.name, meal.description, names)
+    labels = RecipeDietLabels.from_browse_text(browse_text)
     search_text = " ".join(
         [meal.name, meal.cuisine, meal.description or "", *names]
     ).casefold()
@@ -108,6 +110,7 @@ def projection_values(row, meal) -> tuple[dict, list[MealCatalogProjectionAllerg
         nutrition_micros=None,
         nutrition_micros_sources={},
         selection_features=None,
+        browse_labels=None,
     )
     payload = summary.to_dict()
     selection_digest = _digest(
@@ -152,8 +155,8 @@ def projection_values(row, meal) -> tuple[dict, list[MealCatalogProjectionAllerg
         "search_text": search_text,
         "browse_constraint_text": browse_text,
         "selection_constraint_text": selection_text,
-        "browse_vegetarian": not any(term in browse_text for term in BROWSE_MEAT_WORDS),
-        "browse_no_pork": not any(term in browse_text for term in BROWSE_PORK_WORDS),
+        "browse_vegetarian": labels.is_vegetarian,
+        "browse_no_pork": labels.is_pork_free,
         "selection_contains_meat": _contains_any(selection_text, _MEAT_WORDS),
         "selection_contains_pork": _contains_any(selection_text, _PORK_WORDS),
         "non_meal": is_non_meal_title(meal.name, meal.tag),

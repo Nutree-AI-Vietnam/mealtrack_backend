@@ -13,6 +13,7 @@ from .edit_meal_command import (
     NutritionOverride,
 )
 from .favorite_meal_command import FavoriteMealCommand
+from .fix_meal_result_command import FixMealResultCommand
 from .repeat_meal_command import RepeatMealCommand
 from .scan_by_url_command import ScanByUrlCommand
 from .unfavorite_meal_command import UnfavoriteMealCommand
@@ -32,4 +33,5 @@ __all__ = [
     "FavoriteMealCommand",
     "UnfavoriteMealCommand",
     "RepeatMealCommand",
+    "FixMealResultCommand",
 ]

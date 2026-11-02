@@ -193,6 +193,28 @@ def build_movement_invalidation_operations(
     return operations
 
 
+def build_supplement_invalidation_operations(
+    user_id: str, log_date: date
+) -> list[dict[str, str]]:
+    """Build cache invalidation operations after a supplement dose write.
+
+    A dose adds vitamins and minerals, a feed row and a logged day, never
+    calories, so the weekly budget keys stay.
+    """
+    return [
+        *_expand_language_pattern(f"user:{user_id}:activities:{log_date.isoformat()}:"),
+        {
+            "op": DELETE_KEY,
+            "key": CacheKeys.daily_macros(user_id, log_date)[0],
+        },
+        _intake_revision_bump(user_id),
+        {
+            "op": DELETE_KEY,
+            "key": CacheKeys.user_streak(user_id)[0],
+        },
+    ]
+
+
 def build_profile_invalidation_operations(user_id: str) -> list[dict[str, str]]:
     """Build cache invalidation operations after a user profile or targets write."""
     return [
