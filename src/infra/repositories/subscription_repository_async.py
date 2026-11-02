@@ -2,17 +2,18 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domain.constants.lifetime_products import (
+    ENTITLED_SUBSCRIPTION_STATUSES,
+    LIFETIME_PRODUCT_IDS,
+)
 from src.domain.ports.subscription_repository_port import SubscriptionRepositoryPort
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
 
-# Statuses whose row alone proves access until expires_at. "cancelled" is left
-# to RevenueCat: a store refund arrives as a CANCELLATION webhook too, so a
-# cancelled row can't tell "paid until expiry" from "refunded".
-ENTITLED_SUBSCRIPTION_STATUSES = ("active", "billing_issue")
+__all__ = ["ENTITLED_SUBSCRIPTION_STATUSES", "AsyncSubscriptionRepository"]
 
 
 class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
@@ -54,14 +55,16 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
         return list(result.scalars().all())
 
     async def find_active_by_user_id(self, user_id: str) -> Subscription | None:
-        """Find the active subscription for a user."""
+        """Find the active subscription for a user: lifetime, else the latest expiry."""
         result = await self.session.execute(
-            select(Subscription).where(
+            select(Subscription)
+            .where(
                 and_(
                     Subscription.user_id == user_id,
                     Subscription.status == "active",
                 )
             )
+            .order_by(Subscription.expires_at.desc().nulls_first(), Subscription.id)
         )
         return result.scalars().first()
 
@@ -70,13 +73,20 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
     ) -> bool:
         """Whether an active or billing-issue row is still unexpired.
 
-        Cancelled rows and a null ``expires_at`` don't count here, so the
-        caller asks RevenueCat for those users.
+        A lifetime row never expires, so its null ``expires_at`` counts.
+        Cancelled rows and any other null ``expires_at`` don't count here, so
+        the caller asks RevenueCat for those users.
         """
         conditions = [
             Subscription.user_id == user_id,
             Subscription.status.in_(ENTITLED_SUBSCRIPTION_STATUSES),
-            Subscription.expires_at > utc_now(),
+            or_(
+                Subscription.expires_at > utc_now(),
+                and_(
+                    Subscription.expires_at.is_(None),
+                    Subscription.product_id.in_(sorted(LIFETIME_PRODUCT_IDS)),
+                ),
+            ),
         ]
         if exclude_sandbox:
             conditions.append(Subscription.is_sandbox.is_(False))
@@ -95,6 +105,22 @@ class AsyncSubscriptionRepository(SubscriptionRepositoryPort):
             )
         )
         return result.scalars().first()
+
+    async def find_all_by_revenuecat_id(
+        self, revenuecat_subscriber_id: str
+    ) -> list[Subscription]:
+        """Every row of one RevenueCat subscriber, newest purchase first.
+
+        A subscriber can hold several rows (web-funnel claims write one per
+        product, transfers move rows, a lifetime purchase adds one), so
+        webhook handlers choose among them instead of taking any first row.
+        """
+        result = await self.session.execute(
+            select(Subscription)
+            .where(Subscription.revenuecat_subscriber_id == revenuecat_subscriber_id)
+            .order_by(Subscription.purchased_at.desc(), Subscription.id)
+        )
+        return list(result.scalars().all())
 
     async def find_expiring_soon(
         self, days_until_expiry: int = 7

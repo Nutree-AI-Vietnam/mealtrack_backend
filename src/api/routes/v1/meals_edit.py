@@ -27,6 +27,7 @@ from src.api.routes.v1.meals_route_helpers import (
 from src.api.schemas.request.meal_requests import (
     AttachMealPhotoRequest,
     EditMealIngredientsRequest,
+    FixMealResultRequest,
 )
 from src.app.commands.meal import (
     CustomNutritionData,
@@ -37,7 +38,9 @@ from src.app.commands.meal import (
 from src.app.commands.meal.attach_meal_photo_command import AttachMealPhotoCommand
 from src.app.commands.meal.delete_meal_command import DeleteMealCommand
 from src.app.commands.meal.delete_meal_photo_command import DeleteMealPhotoCommand
+from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
 from src.app.queries.meal import GetMealByIdQuery
+from src.domain.services.prompts.input_sanitizer import sanitize_user_description
 from src.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,8 @@ router = APIRouter()
 
 # Ingredient PUTs are cheap writes. 60/minute is a backstop, not an AI cap.
 MEAL_INGREDIENTS_EDIT_LIMIT = "60/minute"
+# Fix-result re-runs vision; keep tighter than ingredient edits.
+MEAL_FIX_RESULT_LIMIT = "10/minute"
 
 
 @router.delete("/{meal_id}")
@@ -57,6 +62,55 @@ async def delete_meal(
     command = DeleteMealCommand(meal_id=meal_id, user_id=user_id)
     result = await event_bus.send(command)
     return result
+
+
+@router.post("/{meal_id}/fix-result", response_model=None)
+@limiter.limit(MEAL_FIX_RESULT_LIMIT)
+async def fix_meal_result(
+    meal_id: str,
+    payload: FixMealResultRequest,
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+    event_bus: EventBus = Depends(get_configured_event_bus),
+    meal_translation_service=Depends(get_meal_translation_service),
+    food_reference_repository=Depends(get_async_food_reference_repository),
+):
+    """Re-analyze a scanned meal photo using the user's correction text."""
+    sanitized = sanitize_user_description(payload.correction)
+    if not sanitized:
+        raise ValidationException(
+            message="Correction text is empty or not allowed",
+            error_code="FIX_RESULT_CORRECTION_INVALID",
+        )
+
+    language = get_request_language(request)
+    command = FixMealResultCommand(
+        meal_id=meal_id,
+        user_id=user_id,
+        correction=sanitized,
+        language=language,
+    )
+    await event_bus.send(command)
+
+    query = GetMealByIdQuery(meal_id=meal_id, user_id=user_id)
+    meal = await event_bus.send(query)
+    meal = await ensure_requested_meal_translation(
+        meal=meal,
+        language=language,
+        query=query,
+        event_bus=event_bus,
+        meal_translation_service=meal_translation_service,
+    )
+    image_url = getattr(getattr(meal, "image", None), "url", None)
+    display_projections = await load_food_reference_display_projections(
+        meal, food_reference_repository, language=language
+    )
+    return MealMapper.to_detailed_response(
+        meal,
+        image_url,
+        target_language=language,
+        display_name_by_food_reference=display_projections,
+    )
 
 
 @router.put("/{meal_id}/ingredients", response_model=None)

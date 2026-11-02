@@ -12,12 +12,22 @@ import uuid
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from src.api.base_dependencies import get_cache_service, get_streak_restore_policy
+from src.api.routes.v1.webhook_lifetime_purchase import (
+    fetch_revenuecat_plan,
+    handle_lifetime_purchase,
+    handle_lifetime_refund,
+)
 from src.api.routes.v1.webhook_lookup_parsing import (
     candidate_revenuecat_ids,
     find_user_for_revenuecat_event,
     is_anonymous_event,
     parse_platform,
     parse_timestamp,
+)
+from src.api.routes.v1.webhook_play_renewal_cancel import cancel_play_renewals
+from src.api.routes.v1.webhook_play_renewal_selection import (
+    PlayRenewal,
+    play_plan_beside_lifetime,
 )
 from src.api.routes.v1.webhook_referral_funnel import (
     _get_subscription_service,
@@ -44,11 +54,15 @@ from src.bootstrap.integration_services import (
     get_integration_event_publisher,
 )
 from src.bootstrap.web_funnel_claim_dispatcher import get_web_funnel_outbox_dispatcher
+from src.domain.constants.lifetime_products import is_lifetime_product
 from src.infra.database.uow_async import AsyncUnitOfWork
 from src.observability import increment_metric
 
 router = APIRouter(prefix="/v1/webhooks", tags=["Webhooks"])
 logger = logging.getLogger(__name__)
+
+# RevenueCat reports a one-time refund as CANCELLATION; REFUND is accepted too.
+LIFETIME_REFUND_EVENTS = {"CANCELLATION", "REFUND"}
 
 NON_RETRYABLE_USERLESS_EVENTS = {
     "TRANSFER",
@@ -72,6 +86,8 @@ __all__ = [
     "webhook_health",
     "find_user_for_revenuecat_event",
     "handle_purchase",
+    "handle_lifetime_purchase",
+    "handle_lifetime_refund",
     "handle_renewal",
     "handle_cancellation",
     "handle_expiration",
@@ -177,6 +193,14 @@ async def revenuecat_webhook(
     affiliate_handler = _get_affiliate_handler()
     event_publisher = _get_event_publisher()
 
+    # Asked before the unit of work opens: no pooled connection or subscriber
+    # lock waits on RevenueCat.
+    lifetime_refund = event_type in LIFETIME_REFUND_EVENTS and is_lifetime_product(
+        event.get("product_id")
+    )
+    refund_plan = await fetch_revenuecat_plan(event) if lifetime_refund else None
+    play_renewals: list[PlayRenewal] = []
+
     # Get user
     async with AsyncUnitOfWork() as uow:
         user = await find_user_for_revenuecat_event(uow, event)
@@ -225,9 +249,23 @@ async def revenuecat_webhook(
             pass  # a streak restore pack never reaches the subscription handlers
         elif event_type == "INITIAL_PURCHASE":
             await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
+            play_renewals = await play_plan_beside_lifetime(uow, user, event)
+
+        elif event_type == "NON_RENEWING_PURCHASE" and is_lifetime_product(
+            event.get("product_id")
+        ):
+            play_renewals = await handle_lifetime_purchase(
+                uow, user, event, affiliate_handler, event_publisher
+            )
+
+        elif lifetime_refund:
+            await handle_lifetime_refund(
+                uow, user, event, affiliate_handler, event_publisher, refund_plan
+            )
 
         elif event_type == "RENEWAL":
             await handle_renewal(uow, user, event, affiliate_handler, event_publisher)
+            play_renewals = await play_plan_beside_lifetime(uow, user, event)
 
         elif event_type == "CANCELLATION":
             await handle_cancellation(
@@ -255,6 +293,9 @@ async def revenuecat_webhook(
     # After the commit, so a read that refills the cache sees the new balance.
     if pack is not None and pack.owner_id:
         await purge_streak_cache(get_cache_service(), pack.owner_id)
+
+    # After the commit too: the event is stored whatever Google does.
+    await cancel_play_renewals(event, play_renewals)
 
     increment_metric(
         "webhook.revenuecat.processed",

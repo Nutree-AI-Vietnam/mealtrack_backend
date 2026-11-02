@@ -1,9 +1,6 @@
 """RevenueCat webhook referral wallet and transfer/redemption helpers."""
 
 import logging
-import uuid
-
-from sqlalchemy import text
 
 from src.api.base_dependencies import (
     get_subscription_service as _resolve_subscription_service,
@@ -12,14 +9,17 @@ from src.api.base_dependencies import (
     get_web_funnel_redemption_service,
 )
 from src.api.routes.v1.webhook_lookup_parsing import (
-    get_subscription_by_revenuecat_id,
-    parse_platform,
-    parse_revenuecat_expiry,
-    parse_timestamp,
     preferred_transfer_target,
+    store_platform,
+)
+from src.api.routes.v1.webhook_subscription_rows import (
+    apply_subscription_info,
+    entitled_lifetime_row,
+    is_sandbox_event,
+    load_subscriber_rows,
+    lock_subscriber,
 )
 from src.domain.utils.timezone_utils import utc_now
-from src.infra.database.models.subscription import Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -37,24 +37,17 @@ async def record_web_funnel_redemption(uow, event: dict) -> bool:
 
 
 async def handle_transfer(uow, event):
-    """Handle RevenueCat subscriber transfers without failing on anonymous IDs."""
+    """Handle RevenueCat subscriber transfers without failing on anonymous IDs.
+
+    RevenueCat moves the source subscribers' purchases from the event's store,
+    so every row of that store's platform moves (every row when the store
+    names no certain platform): a row left behind would keep Premium on the
+    old account, and a web-funnel plan is not part of an App Store transfer.
+    """
     transferred_from = event.get("transferred_from") or []
     transferred_to = event.get("transferred_to") or []
     if not transferred_from or not transferred_to:
         logger.info("RevenueCat transfer ignored: missing transfer IDs")
-        return
-
-    subscription = None
-    for source_id in transferred_from:
-        subscription = await uow.subscriptions.find_by_revenuecat_id(source_id)
-        if subscription:
-            break
-
-    if not subscription:
-        logger.info(
-            "RevenueCat transfer ignored: no local subscription matched transferred_from=%s",
-            transferred_from,
-        )
         return
 
     target_id = preferred_transfer_target(transferred_to)
@@ -62,56 +55,65 @@ async def handle_transfer(uow, event):
         logger.info("RevenueCat transfer ignored: no valid transferred_to ID")
         return
 
-    subscription.revenuecat_subscriber_id = target_id
-    subscription.updated_at = utc_now()
-    logger.info(
-        "RevenueCat transfer updated subscription %s to subscriber_id=%s",
-        subscription.id,
-        target_id,
-    )
+    # One lock order for every transfer, so two of them can't deadlock.
+    ids = {i for i in (*transferred_from, target_id) if isinstance(i, str) and i}
+    for subscriber_id in sorted(ids):
+        await lock_subscriber(uow, subscriber_id)
+    rows = []
+    for source_id in transferred_from:
+        rows.extend(await load_subscriber_rows(uow, source_id))
+    platform = store_platform(event.get("store"))
+    if platform is not None:
+        rows = [row for row in rows if row.platform == platform]
+
+    if not rows:
+        logger.info(
+            "RevenueCat transfer ignored: no local subscription matched transferred_from=%s",
+            transferred_from,
+        )
+        return
+
+    for subscription in rows:
+        subscription.revenuecat_subscriber_id = target_id
+        subscription.updated_at = utc_now()
+        logger.info(
+            "RevenueCat transfer updated subscription %s to subscriber_id=%s",
+            subscription.id,
+            target_id,
+        )
+    # Sessions don't autoflush: the target's sync in this unit of work looks
+    # rows up by the new subscriber id.
+    await uow.session.flush()
 
 
 async def sync_redeemed_target_subscription(uow, user, event: dict) -> None:
-    """Refresh the target Firebase user's cache after a RevenueCat redemption."""
+    """Refresh the target Firebase user's rows after a RevenueCat redemption.
+
+    Every row the target's subscriber id holds now belongs to the target user,
+    including a lifetime row RevenueCat's subscription info never lists.
+    """
     current = await _get_subscription_service().get_subscription_info(user.firebase_uid)
+    await _lock_subscription_cache(uow, user.firebase_uid)
+    rows = await load_subscriber_rows(uow, user.firebase_uid)
+    for row in rows:
+        if row.user_id != user.id:
+            row.user_id = user.id
+            row.updated_at = utc_now()
+
     if not current:
         logger.info("RevenueCat redemption has no active target entitlement")
         return
-
-    await _lock_subscription_cache(uow, user.firebase_uid)
-    subscription = await get_subscription_by_revenuecat_id(uow, user.firebase_uid)
-    if subscription is None:
-        subscription = Subscription(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            revenuecat_subscriber_id=user.firebase_uid,
-            product_id=current.get("product_id")
-            or event.get("product_id")
-            or "unknown",
-            platform=parse_platform(current.get("store") or event.get("store")),
-            status="active",
-            purchased_at=parse_timestamp(event.get("purchased_at_ms")) or utc_now(),
-            expires_at=parse_revenuecat_expiry(current.get("expires_date")),
-            store_transaction_id=event.get("transaction_id"),
-            is_sandbox=event.get("environment") == "SANDBOX",
-        )
-        uow.session.add(subscription)
-        return
-
-    subscription.user_id = user.id
-    subscription.product_id = current.get("product_id") or subscription.product_id
-    subscription.platform = parse_platform(current.get("store") or event.get("store"))
-    subscription.status = "active"
-    subscription.expires_at = parse_revenuecat_expiry(current.get("expires_date"))
-    subscription.updated_at = utc_now()
+    # RevenueCat reports only renewing products here: beside a lifetime row
+    # that grants access, only the plan's own row is refreshed.
+    held = entitled_lifetime_row(rows, sandbox=is_sandbox_event(event)) is not None
+    apply_subscription_info(
+        uow, user, event, user.firebase_uid, rows, current, lifetime_held=held
+    )
 
 
 async def _lock_subscription_cache(uow, firebase_uid: str) -> None:
     """Serialize cache creation for duplicate webhook deliveries of one user."""
-    await uow.session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:firebase_uid))"),
-        {"firebase_uid": firebase_uid},
-    )
+    await lock_subscriber(uow, firebase_uid)
 
 
 async def credit_referral_on_purchase(uow, user_id: str) -> None:
