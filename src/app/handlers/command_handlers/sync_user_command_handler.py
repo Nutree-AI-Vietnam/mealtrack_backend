@@ -9,6 +9,7 @@ from typing import Any
 
 from src.app.commands.user.sync_user_command import SyncUserCommand
 from src.app.events.base import EventHandler, handles
+from src.domain.constants.lifetime_products import is_lifetime_product
 from src.domain.exceptions.firebase_identity_exceptions import (
     FirebaseIdentityConflictError,
 )
@@ -136,6 +137,9 @@ class SyncUserCommandHandler(EventHandler[SyncUserCommand, dict[str, Any]]):
                             active_subscription.product_id.endswith("_yearly")
                             if active_subscription.product_id
                             else False
+                        ),
+                        "is_lifetime": is_lifetime_product(
+                            active_subscription.product_id
                         ),
                     }
 

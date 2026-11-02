@@ -69,7 +69,7 @@ durable.
 | Translation | `src/infra/adapters/openai_translation_adapter.py` |
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
-| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
+| RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_lifetime_purchase.py`, `webhook_subscription_rows.py`, `webhook_lifecycle_events.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
@@ -234,6 +234,42 @@ optional caches.
     stay off).
 - Contracts: `api-endpoints.md`. Billing ownership is RevenueCat Web.
 - Premium feature gates are planned, not enforced on routes.
+
+### Lifetime purchases
+
+- `nutree_lifetime_1299k` and the yearly-to-lifetime upgrade
+  `nutree_lifetime_upgrade_700k` (`src/domain/constants/lifetime_products.py`;
+  a Play `:suffix` is dropped, rows store the base id) arrive as
+  `NON_RENEWING_PURCHASE`. The upgrade converts the running yearly row; a
+  lifetime bought outright gets its own row. Either is `active` with a NULL
+  `expires_at`, and a `transaction_id` already stored is a no-op. A sandbox
+  purchase never converts a production row.
+- A subscriber can hold several rows (web-funnel claims, transfers), so
+  handlers pick rows in `webhook_subscription_rows.py`, and every handler
+  takes a per-subscriber advisory lock before reading them.
+  `has_entitled_subscription` counts a NULL expiry only for lifetime products.
+- While a lifetime row grants access, a renewing-product event changes only
+  its own product's row: no other row, no new row, no payment-failed push. A
+  refunded lifetime row is history: the next plan gets its own row.
+- One store account can hold rows for two Nutree accounts. The lifetime paths
+  (the upgrade, plan events beside lifetime, the restore) prefer the event
+  user's row, and the row they update moves to the event user.
+- RevenueCat has no REFUND event: a `CANCELLATION` of a lifetime product is
+  its refund and marks only that purchase's row (by transaction, else product
+  in the same environment). RevenueCat is asked before the unit of work
+  opens. If no other row grants access, the renewing plan it still reports is
+  written to a plan row of the same environment and platform, or a new one.
+  An upgrade refund RevenueCat cannot answer is logged at ERROR and returns
+  503 before any write, so it is redelivered.
+- The referral credit is revoked only when a refund leaves no paid access.
+  Only a lifetime bought outright by someone with no earlier paid row is
+  reported as `subscription_initial_purchase`; the upgrade never is, and the
+  yearly purchase stays the initial one even when its webhook lands second.
+- A transfer moves the old subscriber's rows of the event's store and relinks
+  them to the new user. Only stores with a certain platform filter rows
+  (`store_platform`: App Store, Play Store, and RC_BILLING, Paddle and Stripe
+  for web); any other store moves every row. `parse_platform`, which records
+  new rows, is unchanged.
 
 ### Payment-failed push
 
