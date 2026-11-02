@@ -699,6 +699,17 @@ def _validate_change_origin(change: FoodItemChangeRequest) -> None:
             raise ValueError("custom origin requires only custom_nutrition")
 
 
+class FixMealResultRequest(BaseModel):
+    """Request DTO for AI fix-result on a scanned meal photo."""
+
+    correction: str = Field(
+        ...,
+        min_length=1,
+        max_length=300,
+        description="What was wrong with the scan, in plain language",
+    )
+
+
 class AttachMealPhotoRequest(BaseModel):
     """Request DTO for attaching an uploaded image to a meal."""
 

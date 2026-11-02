@@ -5,6 +5,7 @@ Subscription model for tracking user subscriptions.
 from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Index, String
 from sqlalchemy.orm import relationship
 
+from src.domain.constants.lifetime_products import is_lifetime_product
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.base import Base
 from src.infra.database.models.base import BaseMixin
@@ -26,9 +27,9 @@ class Subscription(Base, BaseMixin):
 
     # RevenueCat data
     revenuecat_subscriber_id = Column(String(255), nullable=False, index=True)
-    product_id = Column(
-        String(255), nullable=False
-    )  # "premium_monthly" or "premium_yearly"
+    # The store product: a monthly, yearly or weekly plan, or a lifetime
+    # purchase (src/domain/constants/lifetime_products.py) with no expires_at.
+    product_id = Column(String(255), nullable=False)
     platform = Column(Enum("ios", "android", "web", native_enum=False), nullable=False)
 
     # Subscription status
@@ -79,3 +80,7 @@ class Subscription(Base, BaseMixin):
         return (
             "yearly" in self.product_id.lower() or "annual" in self.product_id.lower()
         )
+
+    def is_lifetime(self) -> bool:
+        """Check if this is a one-time lifetime purchase."""
+        return is_lifetime_product(self.product_id)

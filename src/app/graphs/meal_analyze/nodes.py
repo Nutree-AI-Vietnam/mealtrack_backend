@@ -220,32 +220,47 @@ async def analyze_vision(
             image_bytes,
             strategy,
         )
-    elif command.user_description:
-        strategy = AnalysisStrategyFactory.create_user_context_strategy(
-            command.user_description,
-            language=command.language,
-        )
-        runtime.vision_result = await _run_vision_with_retry(
-            runtime,
-            lambda: _analyze_and_validate_locale(
-                runtime,
-                lambda: runtime.vision_service.analyze_with_strategy(
-                    image_bytes,
-                    strategy,
-                ),
-            ),
-        )
     else:
-        runtime.vision_result = await _run_vision_with_retry(
-            runtime,
-            lambda: _analyze_and_validate_locale(
-                runtime,
-                lambda: runtime.vision_service.analyze(
-                    image_bytes,
-                    language=command.language,
-                ),
-            ),
+        from src.app.services.scan_correction_hints import (
+            load_correction_hints_for_scan,
         )
+
+        meals_repo = getattr(runtime.uow, "meals", None) if runtime.uow else None
+        correction_hints = await load_correction_hints_for_scan(
+            user_id=command.user_id,
+            user_description=command.user_description,
+            meals_repo=meals_repo,
+        )
+        if command.user_description:
+            strategy = AnalysisStrategyFactory.create_user_context_strategy(
+                command.user_description,
+                language=command.language,
+                correction_hints=correction_hints or None,
+            )
+            runtime.vision_result = await _run_vision_with_retry(
+                runtime,
+                lambda: _analyze_and_validate_locale(
+                    runtime,
+                    lambda: runtime.vision_service.analyze_with_strategy(
+                        image_bytes,
+                        strategy,
+                    ),
+                ),
+            )
+        else:
+            analyze_kwargs: dict = {"language": command.language}
+            if correction_hints:
+                analyze_kwargs["correction_hints"] = correction_hints
+            runtime.vision_result = await _run_vision_with_retry(
+                runtime,
+                lambda: _analyze_and_validate_locale(
+                    runtime,
+                    lambda: runtime.vision_service.analyze(
+                        image_bytes,
+                        **analyze_kwargs,
+                    ),
+                ),
+            )
 
     return {"vision_analyzed": True}
 
