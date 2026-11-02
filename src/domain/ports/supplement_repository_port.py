@@ -105,6 +105,12 @@ class SupplementRepositoryPort(ABC):
         """Mark the user's own dose deleted; returns it, or None when not theirs."""
 
     @abstractmethod
+    async def max_updated_at_for_local_day(
+        self, target_date: date, user_id: str, user_tz: str | None = None
+    ) -> datetime | None:
+        """Newest change to the user's doses that day, deleted ones included."""
+
+    @abstractmethod
     async def log_days(self, user_id: str) -> list[tuple[date, bool]]:
         """Each local day with a dose, and whether one was logged on the day itself."""
 

@@ -342,3 +342,39 @@ async def test_search_lists_approved_shared_rows_before_the_users_own(
         found = await uow.supplements.search_products("vitamin c", alice)
 
     assert [p.id for p in found] == [shared.id, own.id]
+
+
+@pytest.mark.asyncio
+async def test_the_day_fingerprint_moves_when_a_dose_is_added_or_deleted(
+    factory, pg_session
+):
+    alice = await _user(pg_session)
+    product = _product("Vitamin D3")
+    await _add(product)
+    day = date(2026, 11, 1)
+
+    async with AsyncUnitOfWork() as uow:
+        assert await uow.supplements.max_updated_at_for_local_day(day, alice) is None
+        intake = SupplementIntake.log(
+            id=str(uuid4()),
+            user_id=alice,
+            product=product,
+            units=1,
+            taken_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC),
+            local_date=day,
+            logged_on_day=True,
+        )
+        await uow.supplements.add_intake(intake)
+        await uow.commit()
+
+    async with AsyncUnitOfWork() as uow:
+        added = await uow.supplements.max_updated_at_for_local_day(day, alice)
+        await uow.supplements.soft_delete_intake(
+            alice, intake.id, datetime(2030, 1, 1, tzinfo=UTC)
+        )
+        await uow.commit()
+
+    async with AsyncUnitOfWork() as uow:
+        deleted = await uow.supplements.max_updated_at_for_local_day(day, alice)
+
+    assert added is not None and deleted > added

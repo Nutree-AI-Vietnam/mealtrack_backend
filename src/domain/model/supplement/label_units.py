@@ -106,8 +106,8 @@ def nutrients_from_label(
         if row.nutrient is None or row.amount is None:
             continue
         value = canonical_amount(row.nutrient, row.amount, row.unit, row.name)
-        if value is None:
-            continue
+        if not value:
+            continue  # unconvertible, or "0 mg" printed for a nutrient it lacks
         totals[row.nutrient] = totals.get(row.nutrient, 0.0) + value
         if row.nutrient == "vitamin_a" and preformed is not None:
             share = preformed_share(row.name)

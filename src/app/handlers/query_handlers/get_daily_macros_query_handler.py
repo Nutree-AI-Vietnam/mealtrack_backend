@@ -10,6 +10,7 @@ from uuid import UUID
 
 from src.app.events.base import EventHandler, handles
 from src.app.queries.meal import GetDailyMacrosQuery
+from src.app.services.supplement_days import dose_watermark, doses_between
 from src.app.services.weekly_budget_target_sync import (
     sync_weekly_budget_targets_if_stale,
 )
@@ -19,6 +20,7 @@ from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import merge_micros
+from src.domain.model.supplement.day_totals import supplement_day_totals
 from src.domain.model.user import MacroPreset, MacroTargets
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.hydration_goal_service import resolve_hydration_goal_ml
@@ -195,6 +197,12 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 total_calories += drink.total_calories
                 day_micros = merge_micros(day_micros, entry.micros)
 
+            # Supplement doses add vitamins and minerals only, never calories
+            # or a meal; Ghi nhanh estimates count too, except toward sodium.
+            doses = await doses_between(uow, query.user_id, target_date, target_date)
+            supplements = supplement_day_totals(doses)
+            day_micros = merge_micros(day_micros, supplements.home_highlight_micros())
+
             # Pre-fetch weekly budget eagerly here (must be inside this UoW — fetching it
             # later would require a second connection open). Only consumed when target_calories
             # is available; cheap indexed lookup so the overhead is negligible.
@@ -285,6 +293,12 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             "meals_with_nutrition": meals_with_nutrition,
             "weekly_auto_adjust": auto_adjust,
             **highlight_amounts(day_micros),
+            # The doses' share of the highlights, so the app can add it to
+            # totals it rebuilds from its own meal cache.
+            "supplement_micros": {
+                key: round(value, 2)
+                for key, value in sorted(supplements.home_micros().items())
+            },
         }
         if user_profile is not None:
             result["gender"] = user_profile.gender
@@ -433,10 +447,11 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 user_id,
                 user_tz,
             )
+            supplement_at = await dose_watermark(uow, user_id, target_date)
         except Exception as exc:
             logger.warning("Failed to fingerprint logs for %s: %s", user_id, exc)
             return None
-        return intake_watermark(meal_at, hydration_at, movement_at)
+        return intake_watermark(meal_at, hydration_at, movement_at, supplement_at)
 
     async def _try_get_cached_result(
         self,

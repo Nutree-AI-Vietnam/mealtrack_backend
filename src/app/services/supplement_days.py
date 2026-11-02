@@ -48,6 +48,22 @@ async def with_dose_dates(uow: Any, user_id: str, dates: list[date]) -> list[dat
     return sorted(days.union(dates), reverse=True)
 
 
+async def doses_between(uow: Any, user_id: str, start: date, end: date) -> list[Any]:
+    """Doses whose local day falls in ``start``..``end``."""
+    repo = await _repo(uow)
+    if repo is None:
+        return []
+    return list(await repo.intakes_between(user_id, start, end))
+
+
+async def dose_watermark(uow: Any, user_id: str, local_date: date) -> datetime | None:
+    """Newest dose change that day (deleted doses included), for cache fingerprints."""
+    repo = await _repo(uow)
+    if repo is None:
+        return None
+    return await repo.max_updated_at_for_local_day(local_date, user_id)
+
+
 async def dose_activities(uow: Any, user_id: str, local_date: date) -> list[dict]:
     """The day's doses as activity rows."""
     repo = await _repo(uow)
