@@ -219,3 +219,67 @@ def test_without_restores_or_a_launch_date_the_numbers_match_plain_runs():
     assert calendar.current_streak == 3
     assert calendar.best_streak == 7
     assert calendar.last_logged_date == TODAY
+
+
+def test_a_streak_longer_than_a_year_counts_in_full():
+    """A lookback shorter than the run would clip current and best."""
+    logged = _days(TODAY, 400)
+    calendar = _calendar(logged)
+    assert calendar.current_streak == 400
+    assert calendar.best_streak == 400
+    assert calendar.last_logged_date == TODAY
+    assert calendar.offer is None
+
+
+def test_a_gap_keeps_an_older_best_streak():
+    """best_streak is the longest run ever, including one that ended long ago."""
+    current = _days(TODAY, 4)
+    older = _days(TODAY - timedelta(days=200), 50)
+    calendar = _calendar([*current, *older])
+    assert calendar.current_streak == 4
+    assert calendar.best_streak == 50
+    assert calendar.last_logged_date == TODAY
+    assert calendar.offer is None
+
+
+def test_a_restored_day_bridges_an_old_run_into_best_streak():
+    """A restore far from today still joins the runs on either side of it."""
+    older_end = TODAY - timedelta(days=200)
+    bridge = older_end + timedelta(days=1)
+    calendar = _calendar(
+        [
+            *_days(TODAY, 2),
+            *_days(older_end, 15),
+            *_days(bridge + timedelta(days=10), 10),
+        ],
+        restored=[bridge],
+    )
+    assert calendar.current_streak == 2
+    assert calendar.best_streak == 25
+    assert calendar.restored_recent == ()
+    assert calendar.last_logged_date == TODAY
+
+
+def test_a_recent_restore_still_lists_when_the_logged_run_is_old():
+    recent = TODAY - timedelta(days=2)
+    calendar = _calendar(
+        _days(TODAY - timedelta(days=40), 12),
+        restored=[recent],
+    )
+    assert calendar.current_streak == 0
+    assert calendar.best_streak == 12
+    assert calendar.restored_recent == (recent,)
+    assert calendar.last_logged_date == TODAY - timedelta(days=40)
+
+
+def test_same_local_dates_do_not_depend_on_a_zone_once_they_are_days():
+    """Day identity is a calendar date. The zone is applied before this."""
+    logged = [date(2026, 3, 8), date(2026, 3, 9)]
+    utc = _calendar(logged, today=date(2026, 3, 9))
+    # A meal at 2026-03-08 17:00 UTC is 2026-03-09 in Tokyo and 2026-03-08
+    # in Los Angeles. Those are different days; once resolved, a one-day
+    # gap is a gap in every zone.
+    split = _calendar([date(2026, 3, 8)], today=date(2026, 3, 9))
+    assert (utc.current_streak, utc.best_streak) == (2, 2)
+    assert (split.current_streak, split.best_streak) == (1, 1)
+    assert split.offer is None
