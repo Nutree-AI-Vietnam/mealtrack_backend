@@ -264,6 +264,7 @@ async def update_user_metrics(
         daily_water_goal_ml=request.daily_water_goal_ml,
         reset_water_goal=request.reset_water_goal,
         weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+        dietary_preferences=request.dietary_preferences,
     )
 
     await event_bus.send(command)

@@ -14,6 +14,7 @@ from scripts.development.parse_text_eval_budget import (
 )
 from scripts.development.parse_text_eval_prompt_bundle import _prompt_for_language
 
+from src.domain.model.ai.full_micros_contracts import scan_schema
 from src.domain.model.ai.nutrition_contracts import MealTextNutritionResponse
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros import Micros
@@ -30,9 +31,11 @@ async def _run_provider_only_case(
     case: ParseTextEvalCase,
     prompt: str,
     service: Any,
+    full_micros: bool = False,
 ) -> ParseTextEvalObservation:
     """Call only configured AI generation: no handler, lookup, provider search, or write."""
     started = time.perf_counter()
+    schema = scan_schema(MealTextNutritionResponse, full_micros=full_micros)
     from src.infra.adapters.meal_generation_service import MealGenerationService
 
     generation_service = service or MealGenerationService()
@@ -42,11 +45,11 @@ async def _run_provider_only_case(
         system_message=prompt,
         response_type="json",
         max_tokens=2048,
-        schema=MealTextNutritionResponse,
+        schema=schema,
         model_purpose="parse_text",
         thinking_budget=0,
     )
-    validated = MealTextNutritionResponse.model_validate(generated)
+    validated = schema.model_validate(generated)
     extracted: list[dict[str, Any]] = []
     response_items: list[Any] = []
     for item in validated.items:
@@ -120,6 +123,7 @@ async def run_provider_pair(
     repetitions: int,
     max_cases: int,
     case_offset: int = 0,
+    candidate_full_micros: bool = False,
 ) -> dict[str, Any]:
     admitted, selected = select_provider_batch(
         cases, repetitions, max_cases, case_offset
@@ -152,7 +156,10 @@ async def run_provider_pair(
                 bundle = baseline if name == "baseline" else candidate
                 observation = await asyncio.wait_for(
                     _run_provider_only_case(
-                        case, _prompt_for_language(bundle, case.language), service
+                        case,
+                        _prompt_for_language(bundle, case.language),
+                        service,
+                        full_micros=candidate_full_micros and name == "candidate",
                     ),
                     timeout=remaining,
                 )

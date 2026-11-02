@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from fnmatch import fnmatch
 
 import pytest
 
@@ -9,6 +10,7 @@ from src.domain.cache.cache_invalidation_operations import (
     build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
     build_movement_invalidation_operations,
+    build_profile_invalidation_operations,
 )
 from src.domain.cache.cache_keys import CacheKeys
 
@@ -71,3 +73,14 @@ def test_backdated_meal_operations_include_current_week() -> None:
     keys = {operation.get("key") for operation in operations}
     assert CacheKeys.weekly_budget("user1", date(2026, 5, 18))[0] in keys
     assert CacheKeys.weekly_budget("user1", date(2026, 6, 1))[0] in keys
+
+
+def test_profile_purge_pattern_covers_the_versioned_daily_macros_key() -> None:
+    key, _ = CacheKeys.daily_macros("user-1", date(2026, 11, 1))
+    assert key == "user:user-1:macros:v2:2026-11-01"
+    patterns = [
+        op["pattern"]
+        for op in build_profile_invalidation_operations("user-1")
+        if "pattern" in op
+    ]
+    assert any(fnmatch(key, pattern) for pattern in patterns)

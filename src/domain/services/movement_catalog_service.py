@@ -246,12 +246,19 @@ def localized_activity_name(
     return names.get(lang) or names.get("en")
 
 
+def activity_id_for_name(activity_name: str | None) -> str | None:
+    """Catalog id whose name, in any app language, is exactly this name."""
+    if not activity_name:
+        return None
+    return _ACTIVITY_IDS_BY_CANONICAL_NAME.get(activity_name.strip().lower())
+
+
 def localized_activity_name_for_snapshot(
     activity_name: str | None, language: str = "en"
 ) -> str | None:
     if not activity_name:
         return activity_name
-    activity_id = _ACTIVITY_IDS_BY_CANONICAL_NAME.get(activity_name.lower())
+    activity_id = activity_id_for_name(activity_name)
     if not activity_id:
         return activity_name
     return localized_activity_name(activity_id, language) or activity_name

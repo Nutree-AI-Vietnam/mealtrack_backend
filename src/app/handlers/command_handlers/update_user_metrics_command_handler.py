@@ -62,7 +62,25 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         or command.body_fat_percent_provided
         or command.reset_water_goal
         or command.weight_loss_kg_per_week is not None
+        or command.dietary_preferences is not None
     )
+
+
+def _clean_diets(values: list[str]) -> list[str]:
+    """Trimmed diets in the order given; blanks and repeats in any case dropped."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        diet = str(value).strip()
+        if diet and diet.casefold() not in seen:
+            seen.add(diet.casefold())
+            cleaned.append(diet)
+    return cleaned
+
+
+def _diet_set(values: list[str] | None) -> frozenset[str]:
+    """Diets as a set, so reordering or recasing them is not a target change."""
+    return frozenset(diet.casefold() for diet in _clean_diets(list(values or ())))
 
 
 @handles(UpdateUserMetricsCommand)
@@ -104,6 +122,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                _diet_set(profile.dietary_preferences),
             )
             journey_inputs_before = (
                 profile.target_weight_kg,
@@ -278,6 +297,9 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                         get_zone_info(timezone_name)
                     ).date()
 
+            if command.dietary_preferences is not None:
+                profile.dietary_preferences = _clean_diets(command.dietary_preferences)
+
             # Ensure this profile is marked as current
             profile.is_current = True
 
@@ -292,6 +314,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                _diet_set(profile.dietary_preferences),
             )
             journey_inputs_after = (
                 profile.target_weight_kg,

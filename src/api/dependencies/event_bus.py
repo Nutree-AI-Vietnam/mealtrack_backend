@@ -96,6 +96,7 @@ from src.app.handlers.command_handlers import (
     DescribeMovementCommandHandler,
     DiscoverMealsCommandHandler,
     EditMealCommandHandler,
+    FixMealResultCommandHandler,
     FavoriteMealCommandHandler,
     GenerateMealRecipesCommandHandler,
     LogMovementCommandHandler,
@@ -645,6 +646,21 @@ def get_configured_event_bus() -> EventBus:
         ),
     )
 
+    from src.app.commands.meal.fix_meal_result_command import FixMealResultCommand
+
+    event_bus.register_handler(
+        FixMealResultCommand,
+        FixMealResultCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            vision_service=vision_service,
+            gpt_parser=gpt_parser,
+            download_image_bytes=ScanImageDownloadAdapter(),
+            event_publisher=queue_publisher,
+            event_bus=event_bus,
+            environment=settings.ENVIRONMENT,
+        ),
+    )
+
     event_bus.register_handler(
         AddCustomIngredientCommand,
         AddCustomIngredientCommandHandler(
@@ -742,6 +758,7 @@ def get_configured_event_bus() -> EventBus:
             ai_timeout_seconds=settings.PARSE_TEXT_AI_TIMEOUT_SECONDS,
             cache_namespace=settings.OPENAI_PARSE_TEXT_MODEL,
             reference_timeout_seconds=settings.PARSE_TEXT_FATSECRET_TIMEOUT_SECONDS,
+            full_micros=settings.AI_SCAN_FULL_MICROS_ENABLED,
         ),
     )
 

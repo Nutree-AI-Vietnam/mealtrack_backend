@@ -10,7 +10,7 @@ from dataclasses import asdict
 from typing import Any
 
 from src.app.schemas.meal_schemas import ParsedFoodItemDto, ParseMealTextResponseDto
-from src.domain.model.ai.nutrition_contracts import MealTextNutritionResponse
+from src.domain.model.ai.full_micros_contracts import MealTextNutritionResponseFull
 from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
 from src.domain.services.ai_output_validation_service import (
     validate_ai_output,
@@ -91,7 +91,7 @@ def response_from_cache(data: Any) -> ParseMealTextResponseDto:
         _validate_item_snapshot(item, grams)
     validated = validate_ai_output(
         {"items": portions},
-        schema=MealTextNutritionResponse,
+        schema=MealTextNutritionResponseFull,
         purpose="parse_text",
         attempt_count=1,
     )

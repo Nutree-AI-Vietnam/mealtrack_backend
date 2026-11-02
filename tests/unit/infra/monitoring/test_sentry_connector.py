@@ -35,6 +35,29 @@ def _hint(exc):
     return {"exc_info": (type(exc), exc, None)}
 
 
+def test_before_send_redacts_api_key_query_values():
+    secret = "synthetic-fdc-key-not-real"
+    leaked = (
+        "Client error '404 Not Found' for url "
+        f"'https://api.nal.usda.gov/fdc/v1/food/12345?api_key={secret}'"
+    )
+    event = {
+        "level": "error",
+        "message": f"Error handling GetFoodDetailsQuery: {leaked}",
+        "logentry": {"message": leaked, "formatted": leaked},
+        "exception": {"values": [{"type": "HTTPStatusError", "value": leaked}]},
+        "request": {"url": f"https://api.example.test/food?api_key={secret}"},
+    }
+
+    result = _drop_expected_events(event, {"exc_info": None})
+
+    assert result is event
+    rendered = str(result)
+    assert secret not in rendered
+    assert "api_key=[Filtered]" in result["exception"]["values"][0]["value"]
+    assert "api_key=[Filtered]" in result["request"]["url"]
+
+
 def test_before_send_drops_content_rejections():
     event = {"level": "error"}
     chat = {"level": "error", "transaction": "/v1/chat/messages"}

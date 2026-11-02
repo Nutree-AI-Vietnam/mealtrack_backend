@@ -44,8 +44,10 @@ class CacheKeys:
 
     @staticmethod
     def daily_macros(user_id: str, target_date: date) -> tuple[str, int]:
+        # v2 payloads carry dietary_preferences, which the iron goal needs;
+        # older entries without it are left to expire.
         return (
-            f"user:{user_id}:macros:{target_date.isoformat()}",
+            f"user:{user_id}:macros:v2:{target_date.isoformat()}",
             CacheKeys.TTL_1_DAY,
         )
 
@@ -112,15 +114,17 @@ class CacheKeys:
 
     @staticmethod
     def progress_summary(
-        user_id: str, start_date: date, end_date: date
+        user_id: str, start_date: date, end_date: date, include_trends: bool = False
     ) -> tuple[str, int]:
         """Cache key for a progress-summary date range. 5 min TTL.
 
         Meal/movement/hydration writes fence it through ``intake_revision``;
-        target changes through ``target_revision``.
+        target changes through ``target_revision``. The Trends payload is a
+        different shape, so it gets its own key.
         """
+        suffix = ":trends" if include_trends else ""
         return (
-            f"user:{user_id}:progress_summary:{start_date.isoformat()}:{end_date.isoformat()}",
+            f"user:{user_id}:progress_summary:{start_date.isoformat()}:{end_date.isoformat()}{suffix}",
             CacheKeys.TTL_5_MIN,
         )
 

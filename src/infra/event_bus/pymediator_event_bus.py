@@ -24,6 +24,10 @@ from src.domain.exceptions.meal_recommendation_exceptions import (
 from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
+from src.infra.monitoring.secret_redaction import (
+    redact_sensitive_text,
+    scrub_exception_text,
+)
 
 from .event_bus import EventBus
 
@@ -196,7 +200,9 @@ class PyMediatorEventBus(EventBus):
             # are converted to proper HTTP responses by the API layer. Keep this
             # at debug so routine control flow does not produce duplicate ERRORs.
             logger.debug(
-                f"Application exception handling {event_type.__name__}: {str(e)}"
+                "Application exception handling %s: %s",
+                event_type.__name__,
+                redact_sensitive_text(str(e)),
             )
             raise
         except WeeklyMealPlanConflictError as exc:
@@ -210,8 +216,12 @@ class PyMediatorEventBus(EventBus):
             )
             raise
         except Exception as e:
+            scrub_exception_text(e)
             logger.error(
-                f"Error handling {event_type.__name__}: {str(e)}", exc_info=True
+                "Error handling %s: %s",
+                event_type.__name__,
+                redact_sensitive_text(str(e)),
+                exc_info=True,
             )
             raise
 
@@ -245,8 +255,12 @@ class PyMediatorEventBus(EventBus):
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
+                    scrub_exception_text(result)
                     logger.error(
-                        f"Subscriber {i} for {event_type.__name__} failed: {result}",
+                        "Subscriber %s for %s failed: %s",
+                        i,
+                        event_type.__name__,
+                        redact_sensitive_text(str(result)),
                         exc_info=result,
                     )
             logger.debug(f"Processing completed for {event_type.__name__}")

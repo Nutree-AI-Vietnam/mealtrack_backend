@@ -172,6 +172,9 @@ class UserMetricsResponse(BaseModel):
         False,
         description="Show the clinician disclaimer when the user answered yes",
     )
+    dietary_preferences: list[str] = Field(
+        default_factory=list, description="Saved diets such as vegetarian or keto"
+    )
 
 
 class UserDeleteResponse(BaseModel):
