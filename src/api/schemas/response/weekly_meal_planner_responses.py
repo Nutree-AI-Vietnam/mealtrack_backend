@@ -21,9 +21,13 @@ class WeeklyRecipeSummaryResponse(BaseModel):
     cook_time_minutes: int | None = None
     calories: int
     nutrition_per_serving: RecipeMacroSummaryResponse | None = None
-    # Same rule as GET /v1/recipes?diet=vegetarian|no-pork.
+    # Same rule as GET /v1/recipes?diet=vegetarian|no-pork. Always false for
+    # a saved recipe.
     is_vegetarian: bool = False
     is_pork_free: bool = False
+    # "catalog": a /v1/recipes recipe; "saved": one of the user's saved
+    # recipes, and ``id`` is its saved-suggestion id.
+    kind: Literal["catalog", "saved"] = "catalog"
 
 
 class WeeklyMealSlotResponse(BaseModel):

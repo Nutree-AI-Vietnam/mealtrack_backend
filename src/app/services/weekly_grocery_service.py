@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from src.domain.model.weekly_meal_planner import WeeklyMealPlan
+from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot, WeeklyMealPlan
+from src.domain.model.weekly_meal_planner.saved_recipe import SOURCE_RECIPE_IMPORT
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
     GroceryIngredient,
@@ -73,12 +74,15 @@ class WeeklyGroceryService:
             for slot in _shopping_slots(plan)
             if slot.recipe_id in meals_by_id
         ]
+        slots.extend(_saved_recipe_slots(plan))
         return aggregate_grocery(slots, ())
 
     @planner_timed("mapping")
     async def calculate(self, uow, plan: WeeklyMealPlan) -> tuple[GroceryCategory, ...]:
         slots: list[GrocerySlot] = []
-        shopping_slots = _shopping_slots(plan)
+        shopping_slots = [
+            slot for slot in _shopping_slots(plan) if slot.recipe_id is not None
+        ]
         needed_ids = {slot.recipe_id for slot in shopping_slots}
         meals_cache: dict[str, Any] = {}
         if hasattr(uow.catalog_recipes, "get_meals"):
@@ -105,6 +109,7 @@ class WeeklyGroceryService:
                     ),
                 )
             )
+        slots.extend(_saved_recipe_slots(plan))
         pantry_rows = await uow.weekly_meal_plans.list_pantry(
             user_id=plan.user_id, plan_id=plan.id
         )
@@ -435,5 +440,68 @@ def _shopping_slots(plan: WeeklyMealPlan) -> list:
     return [
         slot
         for slot in plan.slots
-        if slot.recipe_id is not None and not getattr(slot, "is_skipped", False)
+        if (
+            slot.recipe_id is not None
+            or getattr(slot, "saved_recipe", None) is not None
+        )
+        and not getattr(slot, "is_skipped", False)
     ]
+
+
+def _saved_recipe_slots(plan: WeeklyMealPlan) -> list[GrocerySlot]:
+    """Saved recipes bought from the slot's copy, on the slot's own day."""
+    return [
+        _slot_from_saved_recipe(
+            slot.saved_recipe, plan_people=plan.people, day_index=slot.day_index
+        )
+        for slot in _shopping_slots(plan)
+        if getattr(slot, "saved_recipe", None) is not None
+    ]
+
+
+def _slot_from_saved_recipe(
+    recipe: SavedRecipeSnapshot, *, plan_people: int, day_index: int
+) -> GrocerySlot:
+    """Lines cover the recipe's servings; groceries scale to the plan's people.
+
+    A line without a food reference is bought under the id its name gives,
+    like catalog lines. A line with no amount uses its grams; a bare count
+    ("2 eggs") is bought in pieces.
+    """
+    ingredients: list[GroceryIngredient] = []
+    for position, item in enumerate(recipe.ingredients, start=1):
+        if _is_non_food_ingredient(item.name, None):
+            continue
+        if item.amount is not None:
+            quantity: Decimal | None = Decimal(str(item.amount))
+            unit = item.unit or "piece"
+        elif item.grams is not None:
+            quantity, unit = Decimal(str(item.grams)), "g"
+        else:
+            quantity, unit = None, item.unit
+        ingredients.append(
+            GroceryIngredient(
+                position=position,
+                food_reference_id=item.food_reference_id,
+                name=item.name,
+                quantity=quantity,
+                unit=unit,
+                category=_resolve_grocery_category(item.name, None),
+            )
+        )
+    return GrocerySlot(
+        recipe_id=f"saved:{recipe.suggestion_id}",
+        publication_status="published",
+        nutrition_status="ready",
+        is_active=True,
+        base_servings=recipe.servings,
+        # An AI meal idea states no servings: its amounts are taken as one.
+        serving_confidence=(
+            "verified"
+            if recipe.source == SOURCE_RECIPE_IMPORT and not recipe.servings_estimated
+            else "estimated"
+        ),
+        people=plan_people,
+        ingredients=tuple(ingredients),
+        day_index=day_index,
+    )

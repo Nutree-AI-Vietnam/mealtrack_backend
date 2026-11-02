@@ -25,7 +25,14 @@ TABLES = (
     "meal_write_operation",
 )
 # Columns added by later migrations; the downgrade target does not have them.
-LATER_COLUMNS = {"weekly_meal_plan_slots": ("log_source", "is_skipped")}
+LATER_COLUMNS = {
+    "weekly_meal_plan_slots": (
+        "log_source",
+        "is_skipped",
+        "saved_suggestion_id",
+        "saved_recipe",
+    )
+}
 
 
 async def _snapshot(factory):

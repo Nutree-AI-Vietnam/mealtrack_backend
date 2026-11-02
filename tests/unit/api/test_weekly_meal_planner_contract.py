@@ -17,6 +17,7 @@ from src.api.base_dependencies import (
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.exceptions import (
+    BusinessLogicException,
     ConflictException,
     ResourceNotFoundException,
     ValidationException,
@@ -657,6 +658,7 @@ def test_plan_payload_lists_features_and_slot_log_state():
         "slot_suggestions",
         "recipe_labels",
         "recipe_batch",
+        "saved_recipe_slots",
     ]
     slot = _slot_json(body, "slot-0-0")
     assert slot["log_source"] is None and slot["is_skipped"] is False
@@ -978,3 +980,181 @@ def test_slot_suggestions_default_limit_and_missing_slot():
     assert bus.suggestion_queries[0].diet is None
     assert missing.status_code == 404
     assert missing.json()["detail"]["error_code"] == "WEEKLY_SLOT_NOT_FOUND"
+
+
+# Saved recipes in slots ------------------------------------------------------
+
+_SAVED_ID = "recipe_import_imp-1"
+
+
+def _saved_snapshot():
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    return SavedRecipeSnapshot.from_saved_suggestion(
+        _SAVED_ID,
+        {
+            "meal_name": "Chicken pho",
+            "macros": {"protein": 30.0, "carbs": 50.0, "fat": 10.0, "fiber": 4.0},
+            "image_url": "https://images.example/pho.jpg",
+            "servings": 4,
+            "recipe_import": {"total_time_minutes": 50},
+        },
+    )
+
+
+def _plan_with_saved_slot():
+    plan = _plan()
+    return replace(
+        plan,
+        slots=tuple(
+            replace(slot, saved_suggestion_id=_SAVED_ID, saved_recipe=_saved_snapshot())
+            if slot.id == "slot-1-2"
+            else replace(slot, recipe_id="ga")
+            if slot.id == "slot-0-1"
+            else slot
+            for slot in plan.slots
+        ),
+    )
+
+
+class _SavedPlanBus(_Bus):
+    def __init__(self, error=None):
+        super().__init__(plan=_plan_with_saved_slot())
+        self.error = error
+        self.update_commands = []
+        self.summary_queries = []
+
+    async def send(self, query):
+        name = query.__class__.__name__
+        if name == "UpdateWeeklyMealPlanCommand":
+            self.update_commands.append(query)
+            if self.error is not None:
+                raise self.error
+            return self.plan
+        if name == "GetRecipeSummariesQuery":
+            self.summary_queries.append(query)
+            return (_labelled("ga", "Gà", vegetarian=False, pork_free=True),)
+        return await super().send(query)
+
+
+def test_patch_sends_saved_recipes_apart_from_catalog_recipes():
+    bus = _SavedPlanBus()
+
+    response = TestClient(_app(bus=bus)).patch(
+        "/v1/meal-plans/plan-1",
+        headers={"Idempotency-Key": "patch-saved"},
+        json={
+            "expected_revision": 4,
+            "slots": [
+                # Serializers that write nulls send recipe_id: null.
+                {
+                    "day_index": 1,
+                    "slot_index": 2,
+                    "recipe_id": None,
+                    "saved_suggestion_id": _SAVED_ID,
+                },
+                {"day_index": 0, "slot_index": 1, "recipe_id": "ga"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    (command,) = bus.update_commands
+    assert command.saved_slots == {(1, 2): _SAVED_ID}
+    assert command.slots == {(0, 1): "ga"}
+    assert command.expected_revision == 4
+    assert command.idempotency_key == "patch-saved"
+
+
+def test_plan_payload_marks_saved_and_catalog_recipes():
+    bus = _SavedPlanBus()
+
+    body = (
+        TestClient(_app(bus=bus))
+        .get("/v1/meal-plans/current?week_start_date=2026-09-21")
+        .json()
+    )
+
+    assert "saved_recipe_slots" in body["features"]
+    assert body["total_meals_planned"] == 2
+    saved = _slot_json(body, "slot-1-2")["recipe"]
+    assert saved == {
+        "id": _SAVED_ID,
+        "name": "Chicken pho",
+        "image_url": "https://images.example/pho.jpg",
+        "cook_time_minutes": 50,
+        "calories": 402,
+        "nutrition_per_serving": {
+            "calories": 402.0,
+            "protein": 30.0,
+            "carbs": 50.0,
+            "fat": 10.0,
+            "fiber": 4.0,
+        },
+        "is_vegetarian": False,
+        "is_pork_free": False,
+        "kind": "saved",
+    }
+    assert _slot_json(body, "slot-0-1")["recipe"]["kind"] == "catalog"
+    # Only catalog ids go to the catalog summary query.
+    assert [query.recipe_ids for query in bus.summary_queries] == [("ga",)]
+
+
+def test_patch_rejects_a_slot_with_both_recipe_kinds_before_dispatch():
+    bus = _SavedPlanBus()
+
+    response = TestClient(_app(bus=bus)).patch(
+        "/v1/meal-plans/plan-1",
+        headers={"Idempotency-Key": "patch-both"},
+        json={
+            "slots": [
+                {
+                    "day_index": 1,
+                    "slot_index": 2,
+                    "recipe_id": "ga",
+                    "saved_suggestion_id": _SAVED_ID,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert bus.update_commands == []
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (
+            ResourceNotFoundException("gone", error_code="SAVED_RECIPE_NOT_FOUND"),
+            404,
+            "SAVED_RECIPE_NOT_FOUND",
+        ),
+        (
+            BusinessLogicException("no macros", error_code="SAVED_RECIPE_UNUSABLE"),
+            422,
+            "SAVED_RECIPE_UNUSABLE",
+        ),
+        (
+            WeeklyMealPlanConflictError(
+                "Weekly meal plan changed since it was loaded",
+                error_code="WEEKLY_PLAN_STALE_REVISION",
+            ),
+            409,
+            "WEEKLY_PLAN_STALE_REVISION",
+        ),
+    ],
+)
+def test_patch_saved_recipe_errors_keep_their_codes(error, status_code, error_code):
+    response = TestClient(_app(bus=_SavedPlanBus(error))).patch(
+        "/v1/meal-plans/plan-1",
+        headers={"Idempotency-Key": "patch-saved-error"},
+        json={
+            "slots": [
+                {"day_index": 1, "slot_index": 2, "saved_suggestion_id": _SAVED_ID}
+            ]
+        },
+    )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"]["error_code"] == error_code

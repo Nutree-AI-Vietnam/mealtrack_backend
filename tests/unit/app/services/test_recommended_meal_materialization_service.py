@@ -483,3 +483,152 @@ async def test_materializer_marks_only_a_log_for_today_as_logged_on_its_day(
     )
 
     assert meal.logged_on_day is for_today
+
+
+def _saved_pho(**overrides):
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    data = {
+        "meal_name": "Chicken pho",
+        "description": "Clear broth",
+        "emoji": "🍜",
+        "macros": {"protein": 30.0, "carbs": 50.0, "fat": 10.0, "fiber": 4.0},
+        "servings": 4,
+        "image_url": "https://images.example/pho.jpg",
+        "prep_time_minutes": 45,
+        "cuisine_type": "Vietnamese",
+        "ingredients": [
+            {
+                "name": "Chicken",
+                "amount": 400,
+                "unit": "g",
+                "food_reference_id": 123,
+                "protein": 100.0,
+                "carbs": 0.0,
+                "fat": 20.0,
+            },
+            # Reference that no longer exists: kept as a custom line.
+            {
+                "name": "Noodles",
+                "amount": 2,
+                "unit": "",
+                "food_reference_id": 999,
+                "protein": 20.0,
+                "carbs": 200.0,
+                "fat": 20.0,
+            },
+            {"name": "Salt", "amount": 0, "unit": ""},
+        ],
+        "recipe_steps": [{"step": 1, "instruction": "Simmer.", "duration_minutes": 30}],
+        "recipe_import": {"servings_estimated": False},
+    }
+    data.update(overrides)
+    return SavedRecipeSnapshot.from_saved_suggestion("recipe_import_imp-1", data)
+
+
+def _projection(food_id):
+    return FoodReferenceNutritionProjection(
+        id=food_id,
+        name="Chicken",
+        source="catalog_seed",
+        is_verified=True,
+        protein_100g=25.0,
+        carbs_100g=0.0,
+        fat_100g=5.0,
+        fiber_100g=0.0,
+        sugar_100g=0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_becomes_a_meal_with_its_per_serving_macros():
+    uow = _Uow(food_references=_FoodRefRepo({123: _projection(123)}))
+
+    meal = await RecommendedMealMaterializationService().materialize_from_saved_recipe(
+        uow,
+        user_id="00000000-0000-0000-0000-000000000001",
+        recipe=_saved_pho(),
+        meal_date=date(2026, 9, 22),
+        meal_type="dinner",
+        timezone="UTC",
+        portion_multiplier=2.0,
+        source="weekly_meal_planner",
+    )
+
+    assert uow.meals.saved is meal
+    assert (meal.dish_name, meal.meal_type, meal.source) == (
+        "Chicken pho",
+        "dinner",
+        "weekly_meal_planner",
+    )
+    macros = meal.nutrition.macros
+    assert (macros.protein, macros.carbs, macros.fat, macros.fiber) == (
+        60.0,
+        100.0,
+        20.0,
+        8.0,
+    )
+    # Backend formula over the doubled per-serving macros.
+    assert meal.nutrition.calories == pytest.approx(60 * 4 + 92 * 4 + 8 * 2 + 20 * 9)
+    assert meal.catalog_meal_id is None
+    assert meal.recipe_snapshot["saved_suggestion_id"] == "recipe_import_imp-1"
+    assert meal.nutrition_snapshot["source"] == "saved_recipe"
+    assert meal.image.url == "https://images.example/pho.jpg"
+    assert meal.instructions == [{"instruction": "Simmer.", "duration_minutes": 30}]
+    assert (meal.cook_time_min, meal.cuisine_type, meal.emoji) == (
+        45,
+        "Vietnamese",
+        "🍜",
+    )
+    chicken, noodles = meal.nutrition.food_items
+    # 400 g for 4 servings, eaten twice over: 200 g.
+    assert (chicken.quantity, chicken.unit, chicken.food_reference_id) == (
+        200.0,
+        "g",
+        123,
+    )
+    assert chicken.macros.protein == pytest.approx(50.0)
+    assert (noodles.quantity, noodles.unit, noodles.food_reference_id) == (
+        1.0,
+        "piece",
+        None,
+    )
+    assert noodles.is_custom and not chicken.is_custom
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_without_line_macros_spreads_the_meal_macros():
+    recipe = _saved_pho(
+        servings=1,
+        ingredients=[
+            {"name": "Tofu", "amount": 300, "unit": "g"},
+            {"name": "Rice", "amount": 100, "unit": "g"},
+        ],
+    )
+
+    meal = await RecommendedMealMaterializationService().materialize_from_saved_recipe(
+        _Uow(),
+        user_id="00000000-0000-0000-0000-000000000001",
+        recipe=recipe,
+        meal_date=date(2026, 9, 22),
+        meal_type="lunch",
+        timezone="UTC",
+    )
+
+    tofu, rice = meal.nutrition.food_items
+    assert tofu.macros.protein == pytest.approx(22.5)
+    assert rice.macros.protein == pytest.approx(7.5)
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_rejects_unsupported_portions():
+    with pytest.raises(ValueError):
+        await RecommendedMealMaterializationService().materialize_from_saved_recipe(
+            _Uow(),
+            user_id="00000000-0000-0000-0000-000000000001",
+            recipe=_saved_pho(),
+            meal_date=date(2026, 9, 22),
+            meal_type="lunch",
+            timezone="UTC",
+            portion_multiplier=3.0,
+        )

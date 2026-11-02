@@ -33,6 +33,15 @@ class WeeklyMealPlanSlotUpdateRequest(BaseModel):
     day_index: int = Field(ge=0, le=6)
     slot_index: int = Field(ge=0, le=WEEKLY_SLOTS_PER_DAY - 1)
     recipe_id: str | None = Field(default=None, max_length=36)
+    # One of the user's saved recipes (GET /v1/saved-suggestions id) instead
+    # of a catalog recipe.
+    saved_suggestion_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def one_recipe(self):
+        if self.recipe_id is not None and self.saved_suggestion_id is not None:
+            raise ValueError("send recipe_id or saved_suggestion_id, not both")
+        return self
 
 
 class UpdateWeeklyMealPlanRequest(BaseModel):

@@ -407,8 +407,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
   before responding.
 - Every plan payload lists `features`, the planner capabilities this server
   supports (`slot_unlog`, `slot_link`, `slot_skip`, `slot_suggestions`,
-  `recipe_labels`, `recipe_batch`). Clients hide actions whose name is
-  missing. Slots report `log_source` (`plan`: created by the log endpoint;
+  `recipe_labels`, `recipe_batch`, `saved_recipe_slots`). Clients hide
+  actions whose name is missing. Slots report `log_source` (`plan`: created by the log endpoint;
   `diary`: an existing meal was linked; `null`: not logged) and `is_skipped`.
 - Slot writes below (paths under `/v1/meal-plans/{plan_id}`) require
   `Idempotency-Key` and return the plan (the current-plan shape). They bump
@@ -443,6 +443,59 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - `POST /v1/recipes/batch` `{"ids": [...]}` (1–30, deduplicated) returns
   `{"items", "missing"}`: details in the `GET /v1/recipes/{id}` shape, in
   request order, and the ids that are not active recipes.
+
+#### Saved recipes in slots (`saved_recipe_slots`)
+
+- A slot can hold one of the user's saved recipes (an imported recipe,
+  `recipe_import_<import_id>`, or a bookmarked AI meal idea; any id from
+  `GET /v1/saved-suggestions`) instead of a catalog recipe. PATCH slot
+  entries send `"saved_suggestion_id": "<id>"` (1–64 chars) instead of
+  `recipe_id`; an entry with both non-null is `422` before dispatch, and
+  `"recipe_id": null` beside a saved id is accepted. `expected_revision`,
+  `Idempotency-Key`, the revision bump and the `409`s are those of a recipe
+  swap (`409 WEEKLY_PLAN_CONFLICT` for a logged slot,
+  `409 WEEKLY_PLAN_STALE_REVISION`).
+- Errors: `404 SAVED_RECIPE_NOT_FOUND` when the id is not one of the
+  caller's saved suggestions (another user's id answers the same);
+  `422 SAVED_RECIPE_UNUSABLE` when the saved payload has no name or no
+  per-serving protein, carbs or fat; `400 WEEKLY_SLOT_INVALID` for a bad
+  coordinate.
+- The plan's diet, allergy, dislike and meal-type rules do not apply to a
+  saved recipe: the user chose and saved it. A preference change does not
+  check saved slots either.
+- The slot stores a copy of the saved recipe when it is put there
+  (`weekly_meal_plan_slots.saved_recipe`, no foreign key). The summary,
+  groceries and logging read that copy, so deleting the saved suggestion,
+  or editing it by deleting and saving again, leaves this week's plan as
+  it is. Put it in the slot again to pick up a new version.
+- In the plan payload such a slot's `recipe` has the catalog summary fields
+  with `id` = the saved-suggestion id, `kind: "saved"`, and
+  `is_vegetarian` / `is_pork_free` false. `calories` and
+  `nutrition_per_serving.calories` come from the backend formula over the
+  saved per-serving macros, never from the saved `calories` number.
+  `cook_time_minutes` is the import's total time, else the meal idea's
+  `prep_time_minutes`. Catalog summaries carry `kind: "catalog"`.
+  `total_meals_planned` counts saved slots.
+- `POST …/slots/{slot_id}/log` with `expected_recipe_id` = the saved id
+  creates the diary meal from the copy: its name, the per-serving macros
+  times the portion, one ingredient per line (the recipe's amounts divided
+  by its `servings`, times the portion; a bare count is logged in `piece`,
+  a line with no amount by its grams), steps, image and cook time.
+  `log_source` `plan`, idempotency and the cache purge are as for catalog
+  slots. Unlog, link and skip work unchanged.
+- Groceries include the copy's ingredient lines, scaled by
+  `people / servings` (an AI meal idea counts as one serving; its lines and
+  estimated import servings are marked `estimated`). A line with a food
+  reference merges with catalog lines of that food; others are keyed by
+  name like catalog lines without one. Skipped saved slots buy nothing; a
+  compact week's leftover-lunch rule applies to catalog recipes only.
+- Ask Nutree proposals may replace a saved slot with a catalog recipe (the
+  change's `previous_recipe_id` is the saved id) or clear it; the provider
+  is told which slots hold the user's saved recipes and keeps them unless
+  asked. A logged saved slot is never changed. Regenerating the week
+  (`POST /v1/meal-plans/generate`) replaces unlogged saved slots like any
+  other unlogged slot; logged ones stay. Slot suggestions for a saved slot
+  are catalog recipes as usual.
 
 ### Food search and barcode
 

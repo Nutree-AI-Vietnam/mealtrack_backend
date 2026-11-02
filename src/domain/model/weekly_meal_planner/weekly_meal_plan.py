@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
+from .saved_recipe import SavedRecipeSnapshot
+
 WEEKLY_DAYS = 7
 # Slot order is breakfast, lunch, dinner.
 WEEKLY_SLOTS_PER_DAY = 3
@@ -99,11 +101,28 @@ class WeeklyMealPlanSlot:
     recipe_override: dict | None = None
     log_source: str | None = None
     is_skipped: bool = False
+    # A saved recipe of the user's instead of a catalog recipe, with the
+    # copy taken when it was put in the slot.
+    saved_suggestion_id: str | None = None
+    saved_recipe: SavedRecipeSnapshot | None = None
 
     def __post_init__(self) -> None:
         ensure_slot_coordinate(self.day_index, self.slot_index)
         if self.log_source is not None and self.log_source not in SLOT_LOG_SOURCES:
             raise ValueError("log_source must be plan, diary, or None")
+        if self.recipe_id is not None and self.saved_suggestion_id is not None:
+            raise ValueError("a slot holds a catalog recipe or a saved recipe")
+        if (self.saved_suggestion_id is None) != (self.saved_recipe is None):
+            raise ValueError("a saved recipe slot needs its snapshot")
+
+    @property
+    def has_recipe(self) -> bool:
+        return self.recipe_id is not None or self.saved_suggestion_id is not None
+
+    @property
+    def recipe_ref(self) -> str | None:
+        """The id clients see for the slot's recipe, catalog or saved."""
+        return self.saved_suggestion_id or self.recipe_id
 
     @property
     def unlog_deletes_meal(self) -> bool:

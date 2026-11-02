@@ -100,6 +100,7 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.micros import Micros
 from src.domain.model.weekly_meal_planner import (
+    SavedRecipeSnapshot,
     WeeklyMealPlanPreferences,
     meal_type_for_slot,
 )
@@ -126,6 +127,7 @@ WEEKLY_PLAN_FEATURES: tuple[str, ...] = (
     "slot_suggestions",
     "recipe_labels",
     "recipe_batch",
+    "saved_recipe_slots",
 )
 
 
@@ -279,7 +281,14 @@ async def update_weekly_plan(
                 body.preferences.model_dump(), people=body.people
             )
         slots = {
-            (item.day_index, item.slot_index): item.recipe_id for item in body.slots
+            (item.day_index, item.slot_index): item.recipe_id
+            for item in body.slots
+            if item.saved_suggestion_id is None
+        }
+        saved_slots = {
+            (item.day_index, item.slot_index): item.saved_suggestion_id
+            for item in body.slots
+            if item.saved_suggestion_id is not None
         }
         plan = await event_bus.send(
             UpdateWeeklyMealPlanCommand(
@@ -291,6 +300,7 @@ async def update_weekly_plan(
                 status=body.status,
                 slots=slots,
                 expected_revision=body.expected_revision,
+                saved_slots=saved_slots or None,
             )
         )
         return await _plan_response(
@@ -1035,7 +1045,7 @@ async def _plan_response(
         people=plan.people,
         preferences=plan.preferences.to_dict(),
         plan=grouped,
-        total_meals_planned=sum(slot.recipe_id is not None for slot in plan.slots),
+        total_meals_planned=sum(slot.has_recipe for slot in plan.slots),
         to_buy_count=to_buy_count,
         algorithm_version=getattr(plan, "algorithm_version", None),
         created_at=plan.created_at,
@@ -1045,12 +1055,18 @@ async def _plan_response(
 
 
 def _slot_response(slot, meal: CatalogMeal | None) -> WeeklyMealSlotResponse:
+    saved_recipe = getattr(slot, "saved_recipe", None)
+    recipe: WeeklyRecipeSummaryResponse | None
+    if saved_recipe is not None:
+        recipe = _saved_recipe_summary(saved_recipe)
+    else:
+        recipe = _recipe_summary(meal) if meal else None
     return WeeklyMealSlotResponse(
         slot_id=slot.id,
         day_index=slot.day_index,
         slot_index=slot.slot_index,
         slot_name=meal_type_for_slot(slot.slot_index),
-        recipe=_recipe_summary(meal) if meal else None,
+        recipe=recipe,
         is_logged=slot.is_logged,
         logged_meal_id=slot.logged_meal_id,
         log_source=getattr(slot, "log_source", None),
@@ -1074,6 +1090,26 @@ def _recipe_summary(meal: CatalogMeal) -> WeeklyRecipeSummaryResponse:
         ),
         is_vegetarian=meal.diet_labels.is_vegetarian,
         is_pork_free=meal.diet_labels.is_pork_free,
+        kind="catalog",
+    )
+
+
+def _saved_recipe_summary(recipe: SavedRecipeSnapshot) -> WeeklyRecipeSummaryResponse:
+    """The slot's copy of a saved recipe, in the catalog summary shape."""
+    return WeeklyRecipeSummaryResponse(
+        id=recipe.suggestion_id,
+        name=recipe.name,
+        image_url=recipe.image_url,
+        cook_time_minutes=recipe.cook_time_minutes,
+        calories=recipe.calories,
+        nutrition_per_serving=RecipeMacroSummaryResponse(
+            calories=float(recipe.calories),
+            protein=recipe.protein,
+            carbs=recipe.carbs,
+            fat=recipe.fat,
+            fiber=recipe.fiber,
+        ),
+        kind="saved",
     )
 
 

@@ -44,6 +44,16 @@ class WeeklyMealPlanSlotORM(Base, TimestampMixin):
     # a meal they had already logged. Unlogging deletes only "plan" meals.
     log_source = Column(String(16), nullable=True)
     is_skipped = Column(Boolean, nullable=False, default=False, server_default="false")
+    # A saved recipe of the user's (saved_suggestions.suggestion_id) instead of
+    # a catalog recipe. No foreign key: deleting the saved recipe leaves the
+    # slot as planned, and saved_recipe is the copy every read uses.
+    saved_suggestion_id = Column(String(64), nullable=True)
+    # none_as_null: clearing the copy must store SQL NULL, not JSON null, or
+    # ck_weekly_slot_saved_recipe_snapshot refuses the row.
+    saved_recipe = Column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"),
+        nullable=True,
+    )
 
     plan = relationship("WeeklyMealPlanORM", back_populates="slots")
     catalog_meal = relationship("MealCatalogORM", lazy="joined")
@@ -69,5 +79,13 @@ class WeeklyMealPlanSlotORM(Base, TimestampMixin):
         CheckConstraint(
             "log_source IS NULL OR log_source IN ('plan', 'diary')",
             name="ck_weekly_slot_log_source",
+        ),
+        CheckConstraint(
+            "catalog_meal_id IS NULL OR saved_suggestion_id IS NULL",
+            name="ck_weekly_slot_one_recipe",
+        ),
+        CheckConstraint(
+            "(saved_suggestion_id IS NULL) = (saved_recipe IS NULL)",
+            name="ck_weekly_slot_saved_recipe_snapshot",
         ),
     )

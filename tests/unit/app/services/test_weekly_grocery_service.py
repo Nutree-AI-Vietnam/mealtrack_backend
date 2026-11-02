@@ -609,3 +609,92 @@ async def test_skipped_slots_buy_no_groceries():
     assert [item.ingredient_id for c in planned for item in c.items] == [7]
     assert after_skip == ()
     assert service.project(skipped, [await _Catalog().get_meal("recipe-1")]) == ()
+
+
+def _saved_recipe(**overrides):
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    data = {
+        "meal_name": "Tomato eggs",
+        "macros": {"protein": 12, "carbs": 8, "fat": 9},
+        "servings": 4,
+        "ingredients": [
+            # Same food as the catalog recipe's tomato: one grocery line.
+            {"name": "Tomato", "amount": 400, "unit": "g", "food_reference_id": 7},
+            {"name": "Eggs", "amount": 8, "unit": ""},
+            {"name": "Fish sauce", "amount": 0, "unit": "", "grams": 20},
+            {"name": "Salt", "amount": 0, "unit": ""},
+        ],
+        "recipe_import": {"servings_estimated": False},
+    }
+    data.update(overrides)
+    return SavedRecipeSnapshot.from_saved_suggestion("recipe_import_imp-9", data)
+
+
+def _plan_with_saved(*, skipped=False, recipe=None):
+    plan = _plan()
+    return replace(
+        plan,
+        slots=tuple(
+            replace(
+                slot,
+                saved_suggestion_id="recipe_import_imp-9",
+                saved_recipe=recipe or _saved_recipe(),
+                is_skipped=skipped,
+            )
+            if slot.id == "slot-2-1"
+            else slot
+            for slot in plan.slots
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_lines_join_the_list_scaled_to_the_plans_people():
+    categories = await WeeklyGroceryService().calculate(_Uow(), _plan_with_saved())
+    items = {item.name: item for category in categories for item in category.items}
+
+    # Catalog tomato 150 g x 2 people + saved 400 g x 2/4 people, minus 100 g.
+    tomato = items["Tomato"]
+    assert tomato.ingredient_id == 7
+    assert tomato.total_needed == 500
+    assert sorted(day["day_index"] for day in tomato.daily_amounts) == [0, 2]
+    eggs = items["Eggs"]
+    assert (eggs.ingredient_id, eggs.unit, eggs.total_needed) == (
+        deterministic_ingredient_id("Eggs"),
+        "piece",
+        4,
+    )
+    assert eggs.quantity_confidence == "verified"
+    assert items["Fish sauce"].total_needed == 10
+    assert "Salt" not in items
+
+
+@pytest.mark.asyncio
+async def test_skipped_saved_slot_buys_nothing():
+    categories = await WeeklyGroceryService().calculate(
+        _Uow(), _plan_with_saved(skipped=True)
+    )
+    names = {item.name for category in categories for item in category.items}
+
+    assert names == {"Tomato"}
+
+
+def test_ai_meal_idea_amounts_count_as_one_estimated_serving():
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    idea = SavedRecipeSnapshot.from_saved_suggestion(
+        "sugg-1",
+        {
+            "meal_name": "Tofu bowl",
+            "macros": {"protein": 20, "carbs": 30, "fat": 10},
+            "ingredients": [{"name": "Tofu", "amount": 150, "unit": "g"}],
+        },
+    )
+
+    (item,) = WeeklyGroceryService().project(_plan_with_saved(recipe=idea), ())
+    assert (item.name, item.total_needed, item.quantity_confidence) == (
+        "Tofu",
+        300,
+        "estimated",
+    )
