@@ -26,6 +26,7 @@ from src.app.handlers.query_handlers.progress_summary_trends import (
     trends_goal_fields,
 )
 from src.app.queries.progress.get_progress_summary_query import GetProgressSummaryQuery
+from src.app.services.supplement_days import doses_between
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.ports.cache_port import CachePort
@@ -159,6 +160,10 @@ class GetProgressSummaryQueryHandler(
             hydration_entries, meals_by_day, user_tz_str
         )
         entries_by_day: dict[date, list[Any]] = {}
+        # Doses count in the day highlights on both paths, as on Home.
+        doses_by_day: dict[date, list[Any]] = {}
+        for dose in await doses_between(uow, user_id, start, end):
+            doses_by_day.setdefault(dose.local_date, []).append(dose)
         if include_trends:
             entries_by_day = await fetch_movement_entries_by_day(
                 uow, user_id, start, end, user_tz_str, user_tz
@@ -212,6 +217,7 @@ class GetProgressSummaryQueryHandler(
                     trends_movement=entries_by_day.get(current, [])
                     if include_trends
                     else None,
+                    supplement_doses=doses_by_day.get(current, []),
                 )
             )
             current += timedelta(days=1)

@@ -16,6 +16,7 @@ PURPOSE_MAP = {
     "recipe": ModelPurpose.RECIPE,
     "barcode": ModelPurpose.BARCODE,
     "parse_text": ModelPurpose.PARSE_TEXT,
+    "describe_log": ModelPurpose.DESCRIBE_LOG,
     "general": ModelPurpose.GENERAL,
     "meal_plan_adjustment": ModelPurpose.MEAL_PLAN_ADJUSTMENT,
 }

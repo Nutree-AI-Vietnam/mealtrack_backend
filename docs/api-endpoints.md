@@ -219,6 +219,86 @@ handler/schema when implementing; the bullets below are the durable WHY.
   new threads while it reports `single`. Deploy the server before running that
   migration: the single-thread server's insert needs the unique index.
 
+### Supplements
+
+- `GET /v1/capabilities/supplements` returns `{"supplements": true}` once
+  `SUPPLEMENTS_ENABLED` is on and the supplement tables are migrated, and 503
+  `SUPPLEMENTS_UNAVAILABLE` otherwise. Clients hide supplement logging until it
+  answers 200.
+- Every `/v1/supplements` route answers the same 503 until then. Like water,
+  they carry no subscription check; the app gates the screen.
+- `/v1/admin/supplements` (admins, or loopback in development) loads the
+  curated catalog and reviews held-back rows and label scans; it ignores
+  `SUPPLEMENTS_ENABLED` and answers 503 only before the migration. See
+  [supplement-catalog-admin.md](./supplement-catalog-admin.md).
+- A product is visible when it is a shared, approved catalog row or the
+  user's own. Every route that takes a product, list row or dose id answers
+  404 `SUPPLEMENT_NOT_FOUND` for anything else, so other users' rows never
+  leak.
+- `GET /mine?date=YYYY-MM-DD` (the user's today by default): `items` are the
+  list rows, each with `product` and that day's `doses`; `unlisted_doses` are
+  the day's doses of products since taken off the list.
+- `GET /search?q=` (30/min) folds accents ("dau ca" finds "Dầu cá"); one- and
+  two-letter words match only at a word start, so "vitamin k" does not match
+  every brand with a "k" in it. Vietnamese nutrient names ("sắt", "canxi",
+  "dầu cá", "kẽm") also find the English label words ("Iron", "Calcium",
+  "Fish Oil", "Zinc") and match only as whole words, so "sắt" never finds
+  "Satiety". It lists approved catalog rows first, those
+  sold in Vietnam ahead, then the user's own; at most 20. `macro_bearing: true`
+  marks a product the app logs as food: adding it or logging it as a dose is
+  400 `SUPPLEMENT_IS_FOOD`.
+- `GET /barcode/{code}` (20/min) accepts UPC-A, EAN-13, EAN-8 or GTIN-14 and returns
+  the shared product, else the user's own, else 404 (the app then offers a
+  label scan).
+- `POST /mine` `{product_id, units_per_dose?, log_now?, intake_id?, taken_at?}`
+  adds the product, or reactivates its row. `log_now` also logs one dose of
+  `units_per_dose` (default: the label's serving) and then needs `intake_id`;
+  send an `Idempotency-Key` so a retry replays instead of answering 409. The
+  reply's row carries the whole day's doses of that product. `PATCH /mine/{id}` changes
+  `units_per_dose`, `active` or `sort_order`. `DELETE /mine/{id}` removes the
+  row and keeps past doses.
+- `POST /intakes` `{intake_id, product_id, units, taken_at?}` logs a dose under
+  the client's UUID. `taken_at` must carry an offset (send UTC) and defaults
+  to now; more than 10 minutes ahead or a year back is 400 `INVALID_TAKEN_AT`. A reused `intake_id` (even a
+  deleted one) is 409 `SUPPLEMENT_INTAKE_ID_TAKEN`; the same
+  `Idempotency-Key` replays the stored reply instead. `DELETE /intakes/{id}`
+  removes one of the user's doses.
+- `POST /scan-label` `{image_url, image_id, intake_id, taken_at?}` with a
+  required `Idempotency-Key` reads an uploaded label photo (5/min) with an
+  OpenAI-only model chain (`supplement_label_scan`). It saves
+  the user's own product (`pending_review` when it has a brand and a tracked
+  nutrient, else `private`), lists it and logs one dose: `{route:
+  "supplement", product, entry, intake}`. A protein powder, gainer or meal
+  shake (by kind; by 10 g protein or 50 kcal per unit; or, for powders,
+  liquids and sachets, by 10 g protein or 100 kcal per serving) is saved as a
+  meal from the same read, with `intake_id` as the meal id: `{route: "food",
+  meal: {meal_id, dish_name, calories, protein, carbs, fat}}`. The same key replays the stored
+  reply. A label barcode already in the catalog or on the user's earlier scan
+  reuses that product. Checks run rate limit, replay, Premium (402
+  `SUBSCRIPTION_REQUIRED`), then `SUPPLEMENT_LABEL_SCANS_PER_DAY` (default 20,
+  429 `SUPPLEMENT_LABEL_SCAN_DAILY_LIMIT`). An unreadable photo is 400
+  `SUPPLEMENT_LABEL_UNREADABLE`; food without a printed serving weight is 400
+  `SUPPLEMENT_LABEL_IS_FOOD`; a read past 90 s is `SUPPLEMENT_LABEL_TIMEOUT`.
+  Label photos stay in storage after account deletion, as meal photos do.
+- A dose stores its nutrients at log time (per-unit amounts × units) and
+  never carries calories. It counts as a logged day for the streak and the
+  weekly recap, and appears in `GET /v1/activities/daily` as
+  `type: "supplement"` with `title`, `brand`, `units`, `unit_label` and
+  `estimated`.
+- Doses add vitamins and minerals, never calories, macros or meals. They
+  count in the iron, potassium and sodium highlights of
+  `GET /v1/meals/daily/macros` and of every `GET /v1/progress/summary` day,
+  except Ghi nhanh estimates toward sodium, which Home shows as a limit gauge.
+  The day-totals reply adds `supplement_micros`, the doses' share already in
+  those highlights, so the app can add it to totals it rebuilds from its meal
+  cache. The food-quality score (`nrf_*`) stays food-only.
+- With `include=trends`, day `micros` include every dose, and each day adds
+  `supplement_micros`, `supplement_estimated_micros` (the Ghi nhanh part,
+  which never warns), `supplement_vitamin_a_preformed` (µg from non-estimated
+  doses; an unknown vitamin A form counts in full) and `supplement_doses`.
+  Supplement folate is µg DFE (folic acid × 1.7). Amounts printed as 0 never
+  count.
+
 ### Meal recommendations (catalog)
 
 - Catalog recommendations are separate from `/v1/meal-suggestions` (AI session
@@ -385,6 +465,42 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - `target_date` may be at most tomorrow (400 `INVALID_DATE`). All entries save
   in one unit of work; events and the cache purge follow, and their failures
   are logged, not returned.
+
+### Ghi nhanh for every kind (`POST /v1/log/describe`, `DELETE /v1/log/describe/{request_id}`)
+
+- The + panel's field: one sentence saves food, drinks, activities and
+  supplement doses together. Same limiter, switch, Premium and shared daily
+  quota as the two routes above; the body's `request_id` is the replay key
+  (same rules as `Idempotency-Key`; the fingerprint is the text, `local_date`
+  and `kinds`, not `local_time`).
+- Read first, with no transaction open: one OpenAI-only model call
+  (`describe_log`, never Workers AI) splits the sentence, the person's own
+  supplements are sent with it as refs, and the food part runs through
+  parse-text (a second model call), so a sentence with food can take about
+  20 s. Then one unit of work saves the meal (source `prompt`), the drinks, the
+  activities and the doses, plus the reply and the ids it created.
+- Supplements match the person's list, then a named brand in what they may see
+  (approved catalog rows, then their own), else a new private product from the
+  model's guess (`source=describe`, `estimated=true`, never reviewed or shared).
+  A per-unit guess above 10 times the adult upper limit, or above a fixed
+  ceiling for nutrients with no limit, is dropped as a unit slip. Protein powders, gainers and shakes, by the model's kind or a matched
+  product with calories, are logged as food.
+- `kinds` (default all four) limits what is saved. Items of other kinds, and
+  supplements until `SUPPLEMENTS_ENABLED` is on and the tables exist, come back
+  in `skipped` with a reason; the rest still saves. `nothing_found` is a 200,
+  not 422, and is replayed like any reply.
+- Each `saved` item carries its kind's own payload: `meal` (as
+  `POST /v1/meals/manual` returns it, read fresh, null once deleted), `drink`
+  and `activity` (the two routes above), `intake`, `entry` and `product`
+  (the supplement routes). `local_date` may be tomorrow at most and a year
+  back at most (400 `INVALID_DATE`); today's entries keep their real time,
+  and a dose is never stamped in the future.
+- DELETE deletes everything the sentence saved in one transaction (meal, drink
+  entries with their legacy water meal rows retired, activities, doses) and
+  takes products off the list only if the sentence put them there. 404
+  `DESCRIBE_REQUEST_NOT_FOUND` when no finished sentence has that id, 409
+  while it is still running. A sentence that saved nothing, or a repeated
+  undo, answers zero counts; undos of one id run one after the other.
 
 ### GET meal food item display names
 

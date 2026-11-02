@@ -11,6 +11,7 @@ from src.domain.cache.cache_invalidation_operations import (
     build_meal_invalidation_operations,
     build_movement_invalidation_operations,
     build_profile_invalidation_operations,
+    build_supplement_invalidation_operations,
 )
 from src.domain.cache.cache_keys import CacheKeys
 
@@ -84,3 +85,18 @@ def test_profile_purge_pattern_covers_the_versioned_daily_macros_key() -> None:
         if "pattern" in op
     ]
     assert any(fnmatch(key, pattern) for pattern in patterns)
+
+
+def test_supplement_operations_purge_the_day_streak_and_revision_not_the_budget() -> None:
+    day = date(2026, 11, 1)
+    operations = build_supplement_invalidation_operations("user1", day)
+    deleted = {op["key"] for op in operations if op["op"] == DELETE_KEY}
+
+    assert CacheKeys.daily_macros("user1", day)[0] in deleted
+    assert CacheKeys.user_streak("user1")[0] in deleted
+    assert "user:user1:activities:2026-11-01:vi" in deleted
+    assert {op["key"] for op in operations if op["op"] == BUMP_REVISION} == {
+        CacheKeys.intake_revision("user1")[0]
+    }
+    # A dose has no calories, so weekly budget keys stay.
+    assert not any("budget" in key for key in deleted)

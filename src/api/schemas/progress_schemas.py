@@ -138,6 +138,13 @@ class ProgressSummaryDay(BaseModel):
     movement_sessions: int | None = _trends_only()
     movement_load: float | None = _trends_only()
     movement_kinds: list[str] | None = _trends_only()
+    # The doses' share of ``micros`` (estimates included), the part from Ghi
+    # nhanh estimates, preformed vitamin A (µg) from non-estimated doses, and
+    # the dose count. Supplement folate is µg DFE (folic acid x 1.7).
+    supplement_micros: dict[str, float] | None = _trends_only()
+    supplement_estimated_micros: dict[str, float] | None = _trends_only()
+    supplement_vitamin_a_preformed: float | None = _trends_only()
+    supplement_doses: int | None = _trends_only()
 
 
 class MicroUpperLimit(BaseModel):

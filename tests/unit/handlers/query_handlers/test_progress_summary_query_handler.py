@@ -454,3 +454,92 @@ async def test_default_summary_keeps_its_query_shape_and_cache_key():
     assert "movement_load" not in result["days"][0]
     key = cache.set_json.await_args.args[0]
     assert key == f"user:{USER_ID}:progress_summary:2026-08-26:2026-09-01"
+
+
+@pytest.mark.asyncio
+async def test_trends_days_add_supplement_doses_and_their_parts():
+    from types import SimpleNamespace
+
+    from src.domain.model.supplement import SupplementIntake, SupplementNutrients
+
+    start, end = date(2026, 8, 26), date(2026, 9, 1)
+
+    def dose(amounts, *, estimated=False, preformed=None):
+        return SupplementIntake(
+            id=f"i{len(amounts)}{estimated}",
+            user_id=USER_ID,
+            product_id="p",
+            units=1,
+            taken_at=datetime(2026, 8, 26, 1, tzinfo=UTC),
+            local_date=start,
+            logged_on_day=True,
+            nutrients=SupplementNutrients(amounts, vitamin_a_preformed=preformed),
+            estimated=estimated,
+        )
+
+    uow = _uow(meals=[_meal(start, 10.0)])
+    uow.movement_entries.find_by_user_and_logged_range = AsyncMock(return_value=[])
+    uow.supplements = SimpleNamespace(
+        schema_ready=AsyncMock(return_value=True),
+        intakes_between=AsyncMock(
+            return_value=[
+                dose({"vitamin_d": 25.0, "vitamin_a": 900.0}, preformed=900.0),
+                dose({"zinc": 5.0}, estimated=True),
+            ]
+        ),
+    )
+
+    result = await _handle(
+        uow,
+        GetProgressSummaryQuery(
+            user_id=USER_ID, start_date=start, end_date=end, include_trends=True
+        ),
+    )
+
+    uow.supplements.intakes_between.assert_awaited_once_with(USER_ID, start, end)
+    first, second = result["days"][0], result["days"][1]
+    assert first["micros"]["vitamin_d"] == 25.0
+    assert first["supplement_micros"] == {
+        "vitamin_a": 900.0,
+        "vitamin_d": 25.0,
+        "zinc": 5.0,
+    }
+    assert first["supplement_estimated_micros"] == {"zinc": 5.0}
+    assert first["supplement_vitamin_a_preformed"] == 900.0
+    assert first["supplement_doses"] == 2
+    assert "vitamin_d" not in first["micro_meal_counts"]
+    assert first["calories"] == pytest.approx(10 * 4 + 10 * 4 + 5 * 9, rel=0.01)
+    assert second["supplement_doses"] == 0 and second["supplement_micros"] == {}
+
+
+@pytest.mark.asyncio
+async def test_default_summary_highlights_count_doses_like_home():
+    from types import SimpleNamespace
+
+    from src.domain.model.supplement import SupplementIntake, SupplementNutrients
+
+    start, end = date(2026, 8, 26), date(2026, 9, 1)
+    iron = SupplementIntake(
+        id="i1",
+        user_id=USER_ID,
+        product_id="p",
+        units=1,
+        taken_at=datetime(2026, 8, 26, 1, tzinfo=UTC),
+        local_date=start,
+        logged_on_day=True,
+        nutrients=SupplementNutrients({"iron": 18.0}),
+    )
+    uow = _uow(meals=[_meal(start, 10.0)])
+    uow.supplements = SimpleNamespace(
+        schema_ready=AsyncMock(return_value=True),
+        intakes_between=AsyncMock(return_value=[iron]),
+    )
+
+    result = await _handle(
+        uow, GetProgressSummaryQuery(user_id=USER_ID, start_date=start, end_date=end)
+    )
+
+    first = result["days"][0]
+    assert first["iron_mg"] == 18.0
+    assert first["nrf_coverage"] == 0  # the food score stays food-only
+    assert "supplement_micros" not in first

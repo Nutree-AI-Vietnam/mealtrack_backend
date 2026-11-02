@@ -100,23 +100,21 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
                 "No activity was recognised in the sentence",
                 "DESCRIBE_NOTHING_RECOGNIZED",
             )
-        commands = [
-            _log_command(cmd, activity, weight_kg) for activity in described.activities
+        entries = [
+            described_movement_entry(cmd.user_id, activity, weight_kg, logged_at)
+            for activity in described.activities
         ]
-        for command in commands:
-            _validate_log_movement(command)
 
         async with self.uow_factory() as uow:
-            saved = [
-                await uow.movement_entries.add(_entry(command, logged_at))
-                for command in commands
-            ]
+            saved = [await uow.movement_entries.add(entry) for entry in entries]
             response = {"entries": [_movement_response(entry) for entry in saved]}
             if reservation is not None:
                 # Same transaction as the entries: saved ⇔ reply stored.
                 await complete(uow, reservation, response)
 
-        await self._after_commit(cmd.user_id, log_date, saved)
+        await publish_movement_writes(
+            self.event_publisher, self.environment, cmd.user_id, log_date, saved
+        )
         logger.info(
             "[DESCRIBE-LOG-COMPLETE] kind=movement items=%d unlisted=%d "
             "dropped=%d overflow=%d total_ms=%.0f",
@@ -136,44 +134,67 @@ class DescribeMovementCommandHandler(EventHandler[DescribeMovementCommand, dict]
             user_tz = await resolve_user_timezone_async(
                 cmd.user_id, uow, cmd.header_timezone
             )
-            weight_kg = _usable_weight(cmd.weight_kg) or await _profile_weight(
-                uow, cmd.user_id
-            )
-        now = utc_now()
-        today = now.astimezone(get_zone_info(user_tz)).date()
-        log_date = cmd.target_date or today
-        if log_date > today + timedelta(days=1):
-            raise ValidationException(
-                "Movement date cannot be more than one day in the future",
-                "INVALID_DATE",
-            )
-        logged_at = noon_utc_for_date(log_date, user_tz) if cmd.target_date else now
-        return log_date, logged_at, weight_kg or DEFAULT_WEIGHT_KG
+            weight_kg = await movement_weight(uow, cmd.user_id, cmd.weight_kg)
+        log_date, logged_at = movement_log_moment(cmd.target_date, user_tz, utc_now())
+        return log_date, logged_at, weight_kg
 
-    async def _after_commit(
-        self, user_id: str, log_date: date, saved: list[MovementEntry]
-    ) -> None:
-        """Publish and purge like POST /v1/movement/log; the entries are saved."""
-        for entry in saved:
-            event = MovementCreatedEvent(
-                environment=self.environment,
-                aggregate_id=entry.id,
-                data={"user_id": user_id, "log_date": log_date.isoformat()},
-            )
-            try:
-                await require_event_publisher(self.event_publisher).publish(
-                    event.to_payload()
-                )
-            except Exception:
-                logger.warning(
-                    "Describe movement event publish failed aggregate_id=%s",
-                    entry.id,
-                    exc_info=True,
-                )
+
+def movement_log_moment(
+    target_date: date | None, user_tz: str, now: datetime
+) -> tuple[date, datetime]:
+    """The day and instant of a sentence's activities: now, or noon of another day."""
+    today = now.astimezone(get_zone_info(user_tz)).date()
+    log_date = target_date or today
+    if log_date > today + timedelta(days=1):
+        raise ValidationException(
+            "Movement date cannot be more than one day in the future",
+            "INVALID_DATE",
+        )
+    logged_at = noon_utc_for_date(log_date, user_tz) if target_date else now
+    return log_date, logged_at
+
+
+async def movement_weight(uow: Any, user_id: str, sent_kg: float | None) -> float:
+    """The weight activities are priced with: sent, else the profile's, else 62 kg."""
+    weight = _usable_weight(sent_kg) or await _profile_weight(uow, user_id)
+    return weight or DEFAULT_WEIGHT_KG
+
+
+def described_movement_entry(
+    user_id: str, activity: DescribedActivity, weight_kg: float, logged_at: datetime
+) -> MovementEntry:
+    """The entry POST /v1/movement/log would save, priced and checked the same way."""
+    command = _log_command(user_id, activity, weight_kg)
+    _validate_log_movement(command)
+    return _entry(command, logged_at)
+
+
+async def publish_movement_writes(
+    event_publisher: IntegrationEventPublisherPort | None,
+    environment: str,
+    user_id: str,
+    log_date: date,
+    saved: list[MovementEntry],
+) -> None:
+    """Publish and purge like POST /v1/movement/log; the entries are saved."""
+    for entry in saved:
+        event = MovementCreatedEvent(
+            environment=environment,
+            aggregate_id=entry.id,
+            data={"user_id": user_id, "log_date": log_date.isoformat()},
+        )
         try:
-            await invoke_local_movement_cache_invalidation_hook(user_id, log_date)
+            await require_event_publisher(event_publisher).publish(event.to_payload())
         except Exception:
-            logger.warning("Describe movement cache purge failed", exc_info=True)
+            logger.warning(
+                "Describe movement event publish failed aggregate_id=%s",
+                entry.id,
+                exc_info=True,
+            )
+    try:
+        await invoke_local_movement_cache_invalidation_hook(user_id, log_date)
+    except Exception:
+        logger.warning("Describe movement cache purge failed", exc_info=True)
 
 
 async def _profile_weight(uow: Any, user_id: str) -> float | None:
@@ -194,20 +215,18 @@ def _usable_weight(weight: float | None) -> float | None:
 
 
 def _log_command(
-    cmd: DescribeMovementCommand, activity: DescribedActivity, weight_kg: float
+    user_id: str, activity: DescribedActivity, weight_kg: float
 ) -> LogMovementCommand:
     kcal = active_kcal(activity.met, weight_kg, activity.duration_min)
     kcal = min(kcal, MAX_KCAL, activity.duration_min * MAX_KCAL_PER_MINUTE)
     return LogMovementCommand(
-        user_id=cmd.user_id,
+        user_id=user_id,
         activity_name=activity.name,
         duration_min=activity.duration_min,
         kcal_burned=kcal,
         intensity=activity.intensity,
         include_in_balance=True,
         activity_id=activity.activity_id,
-        target_date=cmd.target_date,
-        header_timezone=cmd.header_timezone,
     )
 
 

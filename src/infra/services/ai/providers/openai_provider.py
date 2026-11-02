@@ -31,6 +31,10 @@ from src.infra.services.ai.openai_structured_generation_result import (
 )
 from src.observability import increment_metric
 
+# Their callers run one correction pass, so a contract miss comes back as
+# AIOutputValidationError instead of spending the fallback chain.
+_CORRECTED_PURPOSES = frozenset({"parse_text", "describe_log"})
+
 
 def _content_rejection(
     exc: BadRequestError, model: str
@@ -175,7 +179,8 @@ class OpenAIProvider(AIProviderPort):
                 raise rejected from exc
             raise
         except (ValidationError, OutputParserException) as exc:
-            if kwargs.get("purpose_hint") != "parse_text":
+            purpose = kwargs.get("purpose_hint")
+            if purpose not in _CORRECTED_PURPOSES:
                 raise
             details = (
                 summarize_validation_error(exc)
@@ -184,7 +189,7 @@ class OpenAIProvider(AIProviderPort):
             )
             raise AIOutputValidationError(
                 "Invalid parse-text structured output",
-                purpose="parse_text",
+                purpose=purpose,
                 attempt_count=1,
                 validation_details=details,
                 candidate_payload=getattr(exc, "parse_text_candidate_output", None),

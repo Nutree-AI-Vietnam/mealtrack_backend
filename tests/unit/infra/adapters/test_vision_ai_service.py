@@ -283,3 +283,30 @@ async def test_full_micros_flag_picks_the_contract_and_prompt(monkeypatch, full_
         FoodLabelNutritionResponseFull if full_micros else FoodLabelNutritionResponse
     )
     assert ("selenium" in label_kwargs["system_message"]) is full_micros
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_micros", [False, True])
+async def test_supplement_labels_use_their_own_contract_whatever_the_flag(
+    monkeypatch, full_micros
+):
+    from src.domain.model.ai.model_purpose import ModelPurpose
+    from src.domain.model.ai.supplement_label_contract import SupplementLabelResponse
+    from src.domain.strategies.supplement_label_strategy import (
+        SupplementLabelAnalysisStrategy,
+    )
+    from src.infra.config.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "AI_SCAN_FULL_MICROS_ENABLED", full_micros)
+    strategy = SupplementLabelAnalysisStrategy()
+    service = _make_service(
+        response={"is_supplement_label": True, "product_name": "Zinc 50mg"}
+    )
+
+    result = await service.analyze_with_strategy(_make_jpeg(400, 300), strategy)
+
+    kwargs = service._ai_manager.generate_with_vision.call_args.kwargs
+    assert kwargs["schema"] is SupplementLabelResponse
+    assert kwargs["system_message"] == strategy.get_analysis_prompt()
+    assert kwargs["purpose"] == ModelPurpose.SUPPLEMENT_LABEL_SCAN
+    assert result["structured_data"]["product_name"] == "Zinc 50mg"
