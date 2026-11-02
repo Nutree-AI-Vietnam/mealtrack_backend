@@ -235,6 +235,7 @@ Architecture guardrails enforced by `tests/unit/architecture/test_logging_owners
 | User | User, UserProfile, Activity, TdeeRequest, weight history |
 | Hydration | Hydration entries, drink catalog, caloric drink logging |
 | Movement | Movement entries, activity catalog, daily movement summaries |
+| Supplements | Products (curated, scanned, estimated) and their barcodes, the person's list, dose intakes |
 | Progress | Journey progress snapshot, active-period filtering, action scoring |
 | Meal Planning | Weekly budget, weekly meal plans, catalog recipe detail, groceries, meal suggestion, saved suggestion models |
 | Notification | UserFcmToken, NotificationPreferences, PushNotification, queued notification rows |
@@ -248,6 +249,30 @@ owned by the backend (AGENTS MUST-Follow). Exception: when a meal-level or
 ingredient-level `NutritionOverride` is set, the backend presents the absolute
 override values (including calories) until cleared. Source macros remain
 available for restore. HTTP shape: `api-endpoints.md`.
+
+### Supplements: micros only, never calories
+
+Supplements live in their own tables (`supplement_products`,
+`supplement_product_barcodes`, `user_supplements`, `supplement_intakes`); a dose
+is never a meal row. Doses carry no calories or macros, so the weekly budget,
+calories-from-macros and meal counts are untouched. Their vitamins and minerals
+join the day: Home's day micros and highlights, `/v1/meals/daily/macros`
+(`supplement_micros`) and the Trends day fields. Supplement folate is stored as
+µg DFE, and preformed vitamin A is kept apart for its own upper limit.
+
+- **Visibility.** One rule on every product read: shared and approved, or your
+  own. A label scan stays private until an admin promotes it
+  ([supplement-catalog-admin.md](./supplement-catalog-admin.md)).
+- **Estimates.** A Ghi nhanh sentence that names an unknown supplement saves the
+  model's estimate as the person's private product, marked estimated. It counts
+  in the day's totals, never triggers an upper-limit warning, never counts
+  toward a limit gauge (sodium), and never reaches the catalog. Scanning its
+  label replaces it.
+- **Streak.** A day with only a dose counts as a logged day, like water.
+- **Gate.** Every supplement route answers 503 until `SUPPLEMENTS_ENABLED` is on
+  and the tables exist; `/v1/log/describe` skips supplement items until then.
+  Account deletion removes doses, list rows and unpromoted products, and checks
+  the schema first because a deploy can run before its migration.
 
 ### Meal scan vs hydration
 
@@ -343,6 +368,20 @@ the [catalog rollout runbook](./runbooks/meal-catalog-release.md#weekly-planner-
 `POST /v1/meals/scan-by-url` follows the same synchronous workflow after
 downloading Cloudinary bytes. Graph nodes must not import provider SDKs,
 `sentry_sdk`, SQLAlchemy, API-layer services, or domain-internal vendor code.
+
+## Data Flow Example: One Ghi nhanh Sentence For Every Kind
+
+1. `POST /v1/log/describe` takes a sentence, a `request_id` and the person's
+   local date and time; `kinds` limits what it may log.
+2. A read step asks the model which meals, drinks, activities and doses the
+   sentence holds (food needs a second call, so a sentence with food can take
+   about 20 s).
+3. One save transaction writes all of them through the meal, hydration,
+   movement and supplement writers; a sentence never saves half.
+4. `describe_log_replay.run_once` keys the reply on `request_id`, so a retry
+   replays it instead of saving twice.
+5. `DELETE /v1/log/describe/{request_id}` deletes everything the sentence saved
+   in one transaction and puts the supplement list back as it was.
 
 ## Data Flow Example: Food-Label Scan By URL
 
