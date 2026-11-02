@@ -27,6 +27,7 @@ settings, wiring from adapters, and live health from OpenAPI `/docs`.
 | OpenAI translation | **Optional read-path localization** | Return canonical local/provider results without translated names; do not block startup or writes |
 | OpenAI, FatSecret, USDA, OFF, Brave, image stock APIs | **Optional enrichment** | Degrade to local/prior results when safe |
 | Sentry | **Optional observability** | Local logs only; facade no-ops without DSN |
+| Google Play Developer API | **Optional** (renewal cancel) | Log ERROR (Sentry); the webhook still answers 200 |
 | nutree-affiliate | **Optional partner** | Validate may return inactive; lifecycle events retry via outbox |
 
 **Redis rule:** optional caches are never the source of truth for nutrition,
@@ -70,6 +71,7 @@ durable.
 | Cloudflare Queue publisher | `src/infra/adapters/cloudflare_queue_publisher.py` |
 | Stock / generated images | `pexels_image_adapter.py`, `unsplash_image_adapter.py`, `imagen_image_generator.py`, `pollinations_image_generator.py`, `cloudflare_workers_image_generator.py` |
 | RevenueCat | `src/infra/adapters/revenuecat_adapter.py`; webhook entry in `src/api/routes/v1/webhooks.py` with sibling modules `webhook_subscription_lifecycle.py`, `webhook_lifetime_purchase.py`, `webhook_subscription_rows.py`, `webhook_lifecycle_events.py`, `webhook_referral_funnel.py`, `webhook_lookup_parsing.py` |
+| Google Play Developer API | `src/infra/adapters/google_play_subscription_adapter.py`, `google_play_auth.py`; webhook side `webhook_play_renewal_cancel.py` |
 | Web funnel redemption | `src/infra/services/web_funnel_*` |
 | Resend email | `src/infra/adapters/resend_email_adapter.py` |
 | Redis | `src/infra/cache/` |
@@ -270,6 +272,61 @@ optional caches.
   (`store_platform`: App Store, Play Store, and RC_BILLING, Paddle and Stripe
   for web); any other store moves every row. `parse_platform`, which records
   new rows, is unchanged.
+
+### Play renewal cancel on lifetime
+
+- **Scope.** Every renewing Play plan of a Play lifetime holder is stopped,
+  weekly and monthly as well as yearly. That is intended: one `standard`
+  entitlement covers all of them, so a plan beside lifetime only charges again.
+- **Triggers.** A lifetime purchase or upgrade from `PLAY_STORE` picks the
+  event user's Play plan rows of the same environment that aren't lifetime or
+  refunded and whose expiry is unknown, ahead or under 90 days old, read
+  before the upgrade converts the yearly row. A Play `INITIAL_PURCHASE` or
+  `RENEWAL` while that user holds a Play lifetime row that grants access
+  names its own plan by order id (the upgrade's webhook landed first). A
+  redelivered lifetime purchase picks nothing.
+- **Checks, after the unit of work commits, inline within 10 s.** RevenueCat
+  must list the plan's order (compared without the `..N` renewal suffix)
+  under the event's subscriber, else nothing is cancelled. `orders.get` turns
+  the order id into the purchase token; `purchases.subscriptionsv2.get` must
+  show the product's line item with auto-renew on and the state ACTIVE,
+  IN_GRACE_PERIOD, ON_HOLD or PAUSED, so a plan in billing retry is stopped
+  and one already off is left alone. Then `purchases.subscriptionsv2.cancel`
+  (`DEVELOPER_REQUESTED_STOP_PAYMENTS`) stops the next payment; access lasts
+  to the end of the paid period. A timeout, network failure or 5xx is tried
+  once more; a 4xx isn't.
+- **Failures** are logged at ERROR (Sentry) with our user id and each plan's
+  order id and product, never a purchase token or a traceback, and the
+  webhook still answers 200. So is every skipped cancel while the switch is
+  on but the key or package is unusable. App Store and web events never call
+  Google.
+- **Settings.** `GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED` (default `false`),
+  `GOOGLE_PLAY_PACKAGE_NAME` (`com.nutreeai.mobile` in production,
+  `com.nutreeai.mobile.staging` on staging), `GOOGLE_PLAY_CANCEL_SANDBOX`
+  (default `false`; sandbox events are skipped unless on),
+  `GOOGLE_PLAY_API_TIMEOUT_SECONDS` (default 3). Calls are signed in as the
+  backend's Firebase service account (`FIREBASE_CREDENTIALS` file, else
+  `FIREBASE_SERVICE_ACCOUNT_JSON`), scope `androidpublisher`.
+- **Setup per environment, per app only:**
+  1. In that backend's Firebase project's Google Cloud console, enable the
+     Google Play Android Developer API.
+  2. In Play Console, Users and permissions, invite that service account
+     (`client_email` of the key) with app permissions on that environment's
+     app only: the staging account on `com.nutreeai.mobile.staging`, the
+     production account on `com.nutreeai.mobile`. Grant "View financial data"
+     and "Manage orders and subscriptions". Never grant account-level
+     permissions. A 401/403 right after the invite can be Play still applying it.
+- **QA on staging:** set `GOOGLE_PLAY_CANCEL_SANDBOX=true`, buy the yearly then
+  the upgrade on the Play internal build with a license tester, and check for
+  "Play renewal cancelled" in the logs and "Canceled" in Play's subscriptions.
+- **Runbook, a failed cancel.** In Sentry, search the backend project for
+  "Play renewal" at level error ("cancel failed", "ran out of time", "not
+  cancelled", "on but unusable"). The message holds `plans=<order id>|<product>`
+  and our `user_id`. If the order is listed "under another subscriber",
+  check the account in RevenueCat before acting. Otherwise, in Play Console
+  open Order management, search the order id (without any `..N`), open the
+  order and choose to cancel the subscription so it doesn't renew; don't
+  refund. Afterwards RevenueCat sends a CANCELLATION for the plan.
 
 ### Payment-failed push
 
