@@ -1,0 +1,84 @@
+"""A recipe as the AI read it from a source, before nutrition is priced."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from src.domain.model.common.enums import MealType
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedIngredient:
+    """One ingredient line.
+
+    ``name`` is for display in the requested language. ``english_name`` is
+    the canonical food the nutrition lookup searches for. ``grams`` is the
+    weight of the whole line, estimated when the unit is not a weight or a
+    volume (2 cloves, 1 can). ``amount_estimated`` marks an amount the
+    source did not give. ``eaten_share`` is the part of the line that is
+    eaten: below 1 for a dipping sauce made in a batch, frying oil, or a
+    marinade that is drained.
+    """
+
+    name: str
+    english_name: str
+    quantity: float | None = None
+    unit: str | None = None
+    grams: float | None = None
+    note: str | None = None
+    optional: bool = False
+    group: str | None = None
+    amount_estimated: bool = False
+    eaten_share: float = 1.0
+
+    @property
+    def stated_amount(self) -> bool:
+        """The source itself gave an amount for this line."""
+        return not self.amount_estimated and (
+            self.quantity is not None or self.grams is not None
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RecipeStep:
+    instruction: str
+    duration_minutes: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedRecipe:
+    """Structured recipe text; ``is_recipe`` False means the source had none.
+
+    ``servings`` counts people; ``servings_stated`` says the source gave that
+    count. ``makes`` is what the recipe makes when the source counts pieces
+    ("12 pancakes"). ``serving_description`` says what one serving is.
+    """
+
+    is_recipe: bool
+    name: str
+    language: str
+    rejection_reason: str | None = None
+    english_name: str | None = None
+    description: str | None = None
+    servings: int | None = None
+    servings_stated: bool = False
+    makes: str | None = None
+    serving_description: str | None = None
+    quantities_stated: bool = False
+    prep_time_minutes: int | None = None
+    cook_time_minutes: int | None = None
+    total_time_minutes: int | None = None
+    ingredients: tuple[ExtractedIngredient, ...] = ()
+    steps: tuple[RecipeStep, ...] = ()
+    cuisine_type: str | None = None
+    origin_country: str | None = None
+    meal_type: MealType | None = None
+    emoji: str | None = None
+
+    @property
+    def quantified_share(self) -> float:
+        """Share of required ingredients whose amount the source gave."""
+        required = [item for item in self.ingredients if not item.optional]
+        if not required:
+            return 0.0
+        return sum(1 for item in required if item.stated_amount) / len(required)

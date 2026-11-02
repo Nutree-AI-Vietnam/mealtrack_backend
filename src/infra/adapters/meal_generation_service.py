@@ -19,6 +19,7 @@ PURPOSE_MAP = {
     "describe_log": ModelPurpose.DESCRIBE_LOG,
     "general": ModelPurpose.GENERAL,
     "meal_plan_adjustment": ModelPurpose.MEAL_PLAN_ADJUSTMENT,
+    "recipe_import": ModelPurpose.RECIPE_IMPORT,
 }
 
 

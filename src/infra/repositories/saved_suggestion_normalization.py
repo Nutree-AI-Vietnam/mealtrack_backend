@@ -156,18 +156,23 @@ def project_saved_suggestion_data(model: SavedSuggestionModel) -> dict[str, Any]
     if macros:
         projected["macros"] = {**projected.get("macros", {}), **macros}
     if getattr(model, "items", None):
+        extras = _raw_ingredient_extras(raw, len(model.items))
         projected["ingredients"] = [
             {
+                **extra,
                 "name": item.name,
                 "quantity": item.quantity,
-                "unit": item.unit,
+                # The app's ingredient model requires a number ``amount`` and
+                # a string ``unit``, as in the suggestion it saved.
+                "amount": item.quantity if item.quantity is not None else 0.0,
+                "unit": item.unit or "",
                 "protein": item.protein_g,
                 "carbs": item.carbs_g,
                 "fat": item.fat_g,
                 "fiber": item.fiber_g,
                 "sugar": item.sugar_g,
             }
-            for item in model.items
+            for item, extra in zip(model.items, extras, strict=True)
         ]
     if getattr(model, "steps", None):
         projected["instructions"] = [
@@ -178,6 +183,24 @@ def project_saved_suggestion_data(model: SavedSuggestionModel) -> dict[str, Any]
             for step in model.steps
         ]
     return projected
+
+
+def _raw_ingredient_extras(raw: dict[str, Any], count: int) -> list[dict[str, Any]]:
+    """Snapshot fields of each ingredient that have no normalized column.
+
+    Kept only when the raw list lines up one-to-one with the normalized rows,
+    so a field is never attached to the wrong ingredient.
+    """
+    items = _array(raw, "ingredients", "items", "food_items")
+    named = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and str(_first_present(item, ("name", "ingredient", "food")) or "").strip()
+    ]
+    if len(named) != count or len(named) != len(items):
+        return [{} for _ in range(count)]
+    return [dict(item) for item in named]
 
 
 def saved_suggestion_model_to_dict(model: SavedSuggestionModel) -> dict[str, Any]:

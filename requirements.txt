@@ -20,6 +20,10 @@ pgvector==0.4.2
 requests==2.34.2
 httpx==0.28.1
 
+# Recipe import: video captions, subtitles and downloads (YouTube, TikTok,
+# Instagram, Facebook). Platforms change often; bump this regularly.
+yt-dlp==2026.10.21
+
 # Image processing
 pillow==12.2.0
 
