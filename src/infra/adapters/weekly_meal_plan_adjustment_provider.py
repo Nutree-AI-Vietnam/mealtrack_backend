@@ -16,6 +16,7 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanPreferences,
+    WeeklyMealPlanSlot,
     WeeklyMealPlanSlotAdjustment,
     meal_type_for_slot,
 )
@@ -99,7 +100,7 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                 "slot_index": target_slot_index,
                 "meal_type": meal_type_for_slot(target_slot_index),
                 "current_recipe_id": current.recipe_id,
-                "current_recipe_name": target_meal.name if target_meal else None,
+                "current_recipe_name": _slot_recipe_name(current, target_meal),
             }
         context = {
             "base_revision": plan.revision,
@@ -115,11 +116,11 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                     "slot_index": slot.slot_index,
                     "meal_type": meal_type_for_slot(slot.slot_index),
                     "recipe_id": slot.recipe_id,
-                    "recipe_name": (
-                        meal_by_id[slot.recipe_id].name
-                        if slot.recipe_id in meal_by_id
-                        else None
+                    "recipe_name": _slot_recipe_name(
+                        slot, meal_by_id.get(slot.recipe_id or "")
                     ),
+                    # The user's own saved recipe, not a catalog recipe.
+                    "is_saved_recipe": slot.saved_recipe is not None,
                     "is_logged": slot.is_logged,
                 }
                 for slot in plan.slots
@@ -164,7 +165,9 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                 "When scope is meal, replace only target_slot with a different "
                 "eligible recipe; never return the current recipe, clear the slot, "
                 "or return no change when a safe replacement exists. When scope is "
-                "week, change only slots requested by the user. Each action must be exactly "
+                "week, change only slots requested by the user. A slot with "
+                "is_saved_recipe holds the user's own saved recipe; change it only "
+                "when the user asks for that slot. Each action must be exactly "
                 "replace or clear; replace requires new_recipe_id and clear requires "
                 "new_recipe_id to be null. Keep explanation to one concise sentence "
                 "under 160 characters; do not list individual slot changes there. "
@@ -199,3 +202,9 @@ class StructuredWeeklyMealPlanAdjustmentProvider:
                 for change in parsed.slot_changes
             ),
         )
+
+
+def _slot_recipe_name(slot: WeeklyMealPlanSlot, meal: CatalogMeal | None) -> str | None:
+    if slot.saved_recipe is not None:
+        return slot.saved_recipe.name
+    return meal.name if meal is not None else None

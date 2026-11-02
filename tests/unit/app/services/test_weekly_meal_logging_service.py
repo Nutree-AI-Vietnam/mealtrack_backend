@@ -472,3 +472,112 @@ async def test_slot_log_purges_the_meal_day_after_commit():
         "commit",
         ("purge", "user-1", date(2026, 9, 21), None),
     ]
+
+
+class _SavedRecipeMaterializer(_MockMaterializer):
+    def __init__(self):
+        self.saved_kwargs = None
+
+    async def materialize_from_catalog(self, uow, **kwargs):
+        raise AssertionError("a saved slot must not read the catalog")
+
+    async def materialize_from_saved_recipe(self, uow, **kwargs):
+        self.saved_kwargs = kwargs
+        return SimpleNamespace(
+            meal_id="saved-meal-1",
+            nutrition=SimpleNamespace(macros=SimpleNamespace(total_calories=418.0)),
+        )
+
+
+def _saved_slot(**overrides):
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    snapshot = SavedRecipeSnapshot.from_saved_suggestion(
+        "recipe_import_imp-1",
+        {"meal_name": "Chicken pho", "macros": {"protein": 30, "carbs": 50, "fat": 6}},
+    )
+    values = {
+        "id": "slot-0-0",
+        "day_index": 0,
+        "slot_index": 0,
+        "catalog_meal_id": None,
+        "saved_suggestion_id": "recipe_import_imp-1",
+        "saved_recipe": snapshot.to_dict(),
+        "is_logged": False,
+        "plan": SimpleNamespace(
+            id="plan-1", week_start_date=date(2026, 9, 21), timezone="UTC"
+        ),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _saved_uow(slot):
+    plans = SimpleNamespace(
+        get_slot_for_update=AsyncMock(return_value=slot),
+        mark_slot_logged=AsyncMock(),
+    )
+    return SimpleNamespace(
+        weekly_meal_plans=plans,
+        catalog_recipes=_MockCatalogRecipes(meal=None),
+        meal_write_operations=_MockWriteOperations(),
+    )
+
+
+def _factory(uow):
+    class _UowFactory:
+        async def __aenter__(self):
+            return uow
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    return _UowFactory
+
+
+@pytest.mark.asyncio
+async def test_saved_slot_logs_from_its_copy_by_saved_suggestion_id():
+    uow = _saved_uow(_saved_slot())
+    materializer = _SavedRecipeMaterializer()
+    service = WeeklyMealLoggingService(_factory(uow), materializer=materializer)
+
+    result = await service.log(
+        _make_command(expected_recipe_id="recipe_import_imp-1", portion_multiplier=1.5)
+    )
+
+    assert (result.logged_meal_id, result.calories) == ("saved-meal-1", 418.0)
+    recipe = materializer.saved_kwargs["recipe"]
+    assert (recipe.suggestion_id, recipe.name) == ("recipe_import_imp-1", "Chicken pho")
+    assert materializer.saved_kwargs["portion_multiplier"] == 1.5
+    assert materializer.saved_kwargs["source"] == "weekly_meal_planner"
+    uow.weekly_meal_plans.mark_slot_logged.assert_awaited_once()
+    assert (
+        uow.weekly_meal_plans.mark_slot_logged.await_args.kwargs["log_source"] == "plan"
+    )
+    assert uow.meal_write_operations.completed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("slot", "expected", "error_code"),
+    [
+        # The app sent the catalog id the slot held before the swap.
+        (_saved_slot(), "recipe-1", "WEEKLY_SLOT_STALE_RECIPE"),
+        (
+            _saved_slot(is_logged=True),
+            "recipe_import_imp-1",
+            "WEEKLY_SLOT_ALREADY_LOGGED",
+        ),
+    ],
+)
+async def test_saved_slot_log_conflicts(slot, expected, error_code):
+    uow = _saved_uow(slot)
+    service = WeeklyMealLoggingService(
+        _factory(uow), materializer=_SavedRecipeMaterializer()
+    )
+
+    with pytest.raises(ConflictException) as exc:
+        await service.log(_make_command(expected_recipe_id=expected))
+
+    assert exc.value.error_code == error_code
+    assert uow.meal_write_operations.released

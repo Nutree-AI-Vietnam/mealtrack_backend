@@ -4,6 +4,11 @@ from .ai_proposal import (
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanSlotAdjustment,
 )
+from .saved_recipe import (
+    SavedRecipeIngredient,
+    SavedRecipeSnapshot,
+    SavedRecipeStep,
+)
 from .weekly_meal_plan import (
     SLOT_LOG_SOURCE_DIARY,
     SLOT_LOG_SOURCE_PLAN,
@@ -25,6 +30,9 @@ __all__ = [
     "WEEKLY_DAYS",
     "WEEKLY_PLAN_SLOT_COUNT",
     "WEEKLY_SLOTS_PER_DAY",
+    "SavedRecipeIngredient",
+    "SavedRecipeSnapshot",
+    "SavedRecipeStep",
     "WeeklyMealPlanAdjustmentProposal",
     "WeeklyMealPlanSlotAdjustment",
     "WeeklyMealPlan",

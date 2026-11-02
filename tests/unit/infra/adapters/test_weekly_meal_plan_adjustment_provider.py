@@ -135,3 +135,56 @@ async def test_planner_adapter_expired_explicit_deadline_never_calls_provider():
             prompt="request", plan=_plan(), meals=(), deadline=0
         )
     service.generate_meal_plan_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_planner_adapter_names_saved_recipe_slots():
+    from dataclasses import replace
+
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    saved = SavedRecipeSnapshot.from_saved_suggestion(
+        "recipe_import_imp-1",
+        {
+            "meal_name": "Grandma's pho",
+            "macros": {"protein": 30, "carbs": 50, "fat": 9},
+        },
+    )
+    plan = _plan()
+    plan = replace(
+        plan,
+        slots=tuple(
+            replace(slot, saved_suggestion_id="recipe_import_imp-1", saved_recipe=saved)
+            if slot.id == "0-2"
+            else slot
+            for slot in plan.slots
+        ),
+    )
+    service = AsyncMock()
+    service.generate_meal_plan_async.return_value = {
+        "explanation": "Swapped dinner.",
+        "slot_changes": [],
+    }
+
+    await StructuredWeeklyMealPlanAdjustmentProvider(service).propose(
+        prompt="change dinner",
+        plan=plan,
+        meals=(_meal(),),
+        target_day_index=0,
+        target_slot_index=2,
+    )
+
+    kwargs = service.generate_meal_plan_async.await_args.kwargs
+    context = json.loads(kwargs["prompt"].split("Plan context JSON: ", 1)[1])
+    dinner = next(
+        slot
+        for slot in context["current_slots"]
+        if (slot["day_index"], slot["slot_index"]) == (0, 2)
+    )
+    assert dinner["recipe_id"] is None
+    assert (dinner["recipe_name"], dinner["is_saved_recipe"]) == (
+        "Grandma's pho",
+        True,
+    )
+    assert context["target_slot"]["current_recipe_name"] == "Grandma's pho"
+    assert "is_saved_recipe" in kwargs["system_message"]

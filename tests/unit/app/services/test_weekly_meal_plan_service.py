@@ -1193,3 +1193,337 @@ async def test_a_first_week_has_nothing_to_avoid():
     await service.generate(_generate_command(plan))
 
     assert generator.kwargs["last_week"] == frozenset()
+
+
+# Saved recipes in slots ------------------------------------------------------
+
+_SAVED_ID = "recipe_import_imp-1"
+
+
+def _saved_data(**overrides):
+    data = {
+        "meal_name": "Chicken pho",
+        "macros": {"protein": 30.0, "carbs": 50.0, "fat": 10.0, "fiber": 4.0},
+        "ingredients": [
+            {"name": "Chicken", "amount": 400, "unit": "g", "food_reference_id": 3}
+        ],
+        "servings": 4,
+        "recipe_import": {"source_url": "https://cook.example/pho"},
+    }
+    data.update(overrides)
+    return data
+
+
+def _saved_snapshot():
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    return SavedRecipeSnapshot.from_saved_suggestion(_SAVED_ID, _saved_data())
+
+
+def _with_saved(plan, coordinate, *, logged=False):
+    from dataclasses import replace
+
+    return replace(
+        plan,
+        slots=tuple(
+            replace(
+                slot,
+                recipe_id=None,
+                saved_suggestion_id=_SAVED_ID,
+                saved_recipe=_saved_snapshot(),
+                is_logged=logged,
+                logged_meal_id="saved-meal" if logged else None,
+            )
+            if (slot.day_index, slot.slot_index) == coordinate
+            else slot
+            for slot in plan.slots
+        ),
+    )
+
+
+class _SavedSuggestions:
+    def __init__(self, records):
+        self.records = records
+        self.lookups = []
+
+    async def find_by_user_and_suggestion(self, user_id, suggestion_id):
+        self.lookups.append((user_id, suggestion_id))
+        return self.records.get((user_id, suggestion_id))
+
+
+class _SavedUow(_Uow):
+    def __init__(self, plan, meals, records=None):
+        super().__init__(plan, meals)
+        self.saved_suggestions = _SavedSuggestions(
+            {("user-1", _SAVED_ID): {"suggestion_data": _saved_data()}}
+            if records is None
+            else records
+        )
+        self.released = 0
+
+    async def release(self, *_args, **_kwargs):
+        self.released += 1
+
+
+@pytest.mark.asyncio
+async def test_patch_puts_a_copy_of_the_callers_saved_recipe_in_the_slot():
+    uow = _SavedUow(_plan(), (_meal("chicken", "Chicken"),))
+
+    await WeeklyMealPlanService(lambda: uow).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="saved-1",
+            slots={},
+            expected_revision=3,
+            saved_slots={(1, 2): _SAVED_ID, (2, 2): _SAVED_ID},
+        )
+    )
+
+    saved = uow.update_args["saved_slots"]
+    assert set(saved) == {(1, 2), (2, 2)}
+    assert saved[(1, 2)] == _saved_snapshot()
+    assert saved[(1, 2)].name == "Chicken pho"
+    assert uow.update_args["slots"] == {}
+    assert uow.update_args["expected_revision"] == 3
+    # One lookup per distinct saved recipe, scoped to the caller.
+    assert uow.saved_suggestions.lookups == [("user-1", _SAVED_ID)]
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_is_exempt_from_plan_diet_rules():
+    # Vegetarian plan, chicken saved recipe, and a preference change that
+    # would reject the catalog recipe the saved one replaces.
+    uow = _SavedUow(_plan(recipe_id="chicken"), (_meal("chicken", "Chicken pork"),))
+
+    await WeeklyMealPlanService(lambda: uow).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            idempotency_key="saved-diet",
+            people=1,
+            preferences=WeeklyMealPlanPreferences(people=1, dislikes=("chicken",)),
+            slots={
+                coordinate: None
+                for coordinate in ((day, slot) for day in range(7) for slot in range(3))
+                if coordinate not in {(0, 0), (1, 2)}
+            },
+            saved_slots={(1, 2): _SAVED_ID},
+        )
+    )
+
+    assert uow.update_args["saved_slots"][(1, 2)].name == "Chicken pho"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "records",
+    [
+        {},
+        # Another user's saved recipe with the same id.
+        {("user-2", _SAVED_ID): {"suggestion_data": _saved_data()}},
+    ],
+)
+async def test_patch_rejects_a_saved_recipe_the_caller_does_not_have(records):
+    from src.api.exceptions import ResourceNotFoundException
+
+    uow = _SavedUow(_plan(), (), records)
+    with pytest.raises(ResourceNotFoundException) as exc:
+        await WeeklyMealPlanService(lambda: uow).update(
+            UpdateWeeklyMealPlanCommand(
+                user_id="user-1",
+                plan_id="plan-1",
+                idempotency_key="saved-missing",
+                saved_slots={(1, 2): _SAVED_ID},
+            )
+        )
+    assert exc.value.error_code == "SAVED_RECIPE_NOT_FOUND"
+    assert uow.update_args is None
+    assert uow.released == 1
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_a_saved_recipe_without_nutrition():
+    from src.api.exceptions import BusinessLogicException
+
+    uow = _SavedUow(
+        _plan(),
+        (),
+        {("user-1", _SAVED_ID): {"suggestion_data": {"meal_name": "Only a name"}}},
+    )
+    with pytest.raises(BusinessLogicException) as exc:
+        await WeeklyMealPlanService(lambda: uow).update(
+            UpdateWeeklyMealPlanCommand(
+                user_id="user-1",
+                plan_id="plan-1",
+                idempotency_key="saved-unusable",
+                saved_slots={(1, 2): _SAVED_ID},
+            )
+        )
+    assert exc.value.error_code == "SAVED_RECIPE_UNUSABLE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coordinate", [(7, 0), (0, 3)])
+async def test_patch_rejects_invalid_saved_coordinates(coordinate):
+    uow = _SavedUow(_plan(), ())
+    with pytest.raises(ValidationException) as exc:
+        await WeeklyMealPlanService(lambda: uow).update(
+            UpdateWeeklyMealPlanCommand(
+                user_id="user-1",
+                plan_id="plan-1",
+                idempotency_key="saved-bad",
+                saved_slots={coordinate: _SAVED_ID},
+            )
+        )
+    assert exc.value.error_code == "WEEKLY_SLOT_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_a_slot_given_both_recipe_kinds():
+    uow = _SavedUow(_plan(), (_meal("tofu", "Tofu"),))
+    with pytest.raises(ValidationException) as exc:
+        await WeeklyMealPlanService(lambda: uow).update(
+            UpdateWeeklyMealPlanCommand(
+                user_id="user-1",
+                plan_id="plan-1",
+                idempotency_key="saved-both",
+                slots={(1, 2): "tofu"},
+                saved_slots={(1, 2): _SAVED_ID},
+            )
+        )
+    assert exc.value.error_code == "WEEKLY_SLOT_INVALID"
+
+
+def test_requests_without_saved_recipes_keep_their_fingerprint():
+    from src.app.services.weekly_meal_plan_service import _fingerprint_value
+    from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
+
+    command = UpdateWeeklyMealPlanCommand(
+        user_id="user-1",
+        plan_id="plan-1",
+        idempotency_key="k",
+        slots={(1, 0): "tofu"},
+        expected_revision=2,
+    )
+    before_field = canonicalize_fingerprint(
+        {
+            key: _fingerprint_value(value)
+            for key, value in vars(command).items()
+            if key not in {"idempotency_key", "saved_slots"}
+        }
+    )
+
+    assert _fingerprint(command) == before_field
+    with_saved = UpdateWeeklyMealPlanCommand(
+        **{**vars(command), "saved_slots": {(1, 2): _SAVED_ID}}
+    )
+    assert _fingerprint(with_saved) != before_field
+
+
+@pytest.mark.asyncio
+async def test_meal_proposal_replaces_a_saved_slot_with_a_catalog_recipe():
+    plan = _with_saved(_plan(), (2, 1))
+    service = _service(plan, (_meal("chicken", "Chicken"), _meal("tofu", "Tofu")))
+
+    proposal = await service.ai_proposal(
+        AiAdjustMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            prompt="replace with tofu",
+            target_day_index=2,
+            target_slot_index=1,
+        )
+    )
+
+    assert proposal.slot_changes == (
+        {
+            "day_index": 2,
+            "slot_index": 1,
+            "previous_recipe_id": _SAVED_ID,
+            "new_recipe_id": "chicken",
+            "action": "replace",
+        },
+    )
+    replaced = proposal.proposed_plan.slots[_slot_offset(2, 1)]
+    assert replaced.recipe_id == "chicken"
+    assert (replaced.saved_suggestion_id, replaced.saved_recipe) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_week_proposal_keeps_a_logged_saved_slot_and_projects_its_groceries():
+    plan = _with_saved(_with_saved(_plan(), (1, 2), logged=True), (3, 2))
+    service = _service(plan, (_meal("chicken", "Chicken"), _meal("tofu", "Tofu")))
+
+    proposal = await service.ai_proposal(
+        AiAdjustMealPlanCommand(
+            user_id="user-1", plan_id="plan-1", prompt="Make this week vegetarian"
+        )
+    )
+
+    logged = proposal.proposed_plan.slots[_slot_offset(1, 2)]
+    assert (logged.saved_suggestion_id, logged.is_logged) == (_SAVED_ID, True)
+    unlogged = proposal.proposed_plan.slots[_slot_offset(3, 2)]
+    assert unlogged.recipe_id == "tofu" and unlogged.saved_recipe is None
+    changed = {(c["day_index"], c["slot_index"]): c for c in proposal.slot_changes}
+    assert (1, 2) not in changed
+    assert changed[(3, 2)]["previous_recipe_id"] == _SAVED_ID
+    # The logged saved recipe's chicken is still on the list (100 g a person).
+    chicken = next(
+        item for item in proposal.proposed_groceries if item.ingredient_id == 3
+    )
+    assert chicken.total_needed == 100
+
+
+@pytest.mark.asyncio
+async def test_provider_sees_saved_slots_and_can_replace_or_clear_them():
+    plan = _with_saved(_with_saved(_plan(), (1, 1)), (1, 2))
+    provider = _Provider(
+        (
+            WeeklyMealPlanSlotAdjustment(1, 1, "replace", "tofu"),
+            WeeklyMealPlanSlotAdjustment(1, 2, "clear", None),
+        )
+    )
+    service = _service(
+        plan, (_meal("chicken", "Chicken"), _meal("tofu", "Tofu")), provider
+    )
+
+    proposal = await service.ai_proposal(
+        AiAdjustMealPlanCommand(
+            user_id="user-1",
+            plan_id="plan-1",
+            prompt="swap Tuesday lunch for tofu and remove the meal at dinner",
+        )
+    )
+
+    assert [
+        (c["previous_recipe_id"], c["new_recipe_id"], c["action"])
+        for c in proposal.slot_changes
+    ] == [(_SAVED_ID, "tofu", "replace"), (_SAVED_ID, None, "clear")]
+    cleared = proposal.proposed_plan.slots[_slot_offset(1, 2)]
+    assert not cleared.has_recipe
+
+
+@pytest.mark.asyncio
+async def test_regeneration_replaces_unlogged_saved_slots_and_keeps_logged_ones(
+    empty_basket_cache,
+):
+    plan = _with_saved(_with_saved(_plan(recipe_id=None), (1, 2), logged=True), (2, 2))
+    uow = _IngredientLinesUow(
+        plan,
+        (_meal("tofu", "Tofu"), _meal("lentils", "Lentil bowl")),
+        [("tofu", 7, "Tofu"), ("lentils", 9, "Lentils")],
+    )
+    generator = _RecordingGenerator()
+    service = WeeklyMealPlanService(
+        lambda: uow, generator=generator, compact_week_percent=100
+    )
+
+    await service.generate(_generate_command(plan))
+
+    # A logged saved dinner stays fixed and feeds no leftover lunch.
+    assert generator.compact_kwargs["fixed"] == {(1, 2): f"saved:{_SAVED_ID}"}
+    slots = uow.update_args["slots"]
+    assert (1, 2) not in slots
+    assert slots[(2, 2)] in {"tofu", "lentils"}
+    assert all(not value.startswith("saved:") for value in slots.values() if value)

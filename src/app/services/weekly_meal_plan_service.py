@@ -14,6 +14,7 @@ from time import monotonic
 from pydantic import ValidationError
 
 from src.api.exceptions import (
+    BusinessLogicException,
     ConflictException,
     ExternalServiceException,
     ResourceNotFoundException,
@@ -31,6 +32,7 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
 )
 from src.domain.model.weekly_meal_planner import (
     WEEKLY_SLOTS_PER_DAY,
+    SavedRecipeSnapshot,
     WeeklyMealPlan,
     WeeklyMealPlanAdjustmentProposal,
     WeeklyMealPlanPreferences,
@@ -59,6 +61,10 @@ from src.planner_request_policy import (
 # Fresh ingredient ids per recipe, for the catalog ingredient version they
 # were read at. One process-wide copy: the catalog changes rarely.
 _basket_ids_cache: tuple[tuple[int, int], Mapping[str, frozenset[int]]] | None = None
+# Compact generation keeps logged slots in place. A logged saved recipe has
+# no catalog id, so it is passed under this prefix: never a catalog id, so it
+# feeds no leftover lunch and adds nothing to the basket.
+_SAVED_FIXED_PREFIX = "saved:"
 
 
 @dataclass(frozen=True)
@@ -183,12 +189,15 @@ class WeeklyMealPlanService:
                     basket_ids=basket_ids,
                     fixed={
                         (slot.day_index, slot.slot_index): slot.recipe_id
+                        or f"{_SAVED_FIXED_PREFIX}{slot.saved_suggestion_id}"
                         for slot in (current.slots if current else ())
-                        if slot.is_logged and slot.recipe_id
+                        if slot.is_logged and slot.has_recipe
                     },
                 )
             recipe_ids = {
-                (item.day_index, item.slot_index): item.recipe_id for item in selected
+                (item.day_index, item.slot_index): item.recipe_id
+                for item in selected
+                if not (item.recipe_id or "").startswith(_SAVED_FIXED_PREFIX)
             }
             async with self.uow_factory() as uow:
                 version = await uow.catalog_recipes.lock_catalog_publication(
@@ -312,6 +321,7 @@ class WeeklyMealPlanService:
                 hard_preferences_changed = _hard_preferences_changed(
                     current.preferences, preferences
                 )
+                saved_slots = await _saved_recipe_slots(uow, command)
                 expected_revision = (
                     command.expected_revision
                     if command.expected_revision is not None
@@ -339,6 +349,10 @@ class WeeklyMealPlanService:
                         coordinate: slot.recipe_id
                         for coordinate, slot in slots_by_coordinate.items()
                     }
+                    # A saved recipe is the user's own: the plan's diet,
+                    # allergy, dislike and meal-type rules do not apply to it.
+                    for coordinate in saved_slots:
+                        proposed_recipe_ids[coordinate] = None
                     for coordinate, recipe_id in (command.slots or {}).items():
                         try:
                             ensure_slot_coordinate(*coordinate)
@@ -392,6 +406,7 @@ class WeeklyMealPlanService:
                     status=command.status,
                     slots=command.slots,
                     expected_revision=expected_revision,
+                    saved_slots=saved_slots or None,
                 )
                 if plan is None:
                     raise ResourceNotFoundException("Weekly meal plan not found")
@@ -539,12 +554,12 @@ class WeeklyMealPlanService:
             recipe_ids = {
                 (item.day_index, item.slot_index): item.recipe_id for item in selected
             }
+            # Logged slots stay as they are, a logged saved recipe included.
             proposed_slots = tuple(
-                _slot_with_recipe(
-                    slot,
-                    slot.recipe_id
-                    if slot.is_logged
-                    else recipe_ids.get((slot.day_index, slot.slot_index)),
+                slot
+                if slot.is_logged
+                else _slot_with_recipe(
+                    slot, recipe_ids.get((slot.day_index, slot.slot_index))
                 )
                 for slot in plan.slots
             )
@@ -554,12 +569,13 @@ class WeeklyMealPlanService:
             {
                 "day_index": before.day_index,
                 "slot_index": before.slot_index,
-                "previous_recipe_id": before.recipe_id,
+                # A replaced saved recipe is named by its saved-suggestion id.
+                "previous_recipe_id": before.recipe_ref,
                 "new_recipe_id": after.recipe_id,
                 "action": "replace" if after.recipe_id else "clear",
             }
             for before, after in zip(plan.slots, proposed_slots, strict=True)
-            if before.recipe_id != after.recipe_id
+            if _recipe_key(before) != _recipe_key(after)
         )
         _validate_proposal_outcome(
             plan=plan,
@@ -780,7 +796,10 @@ class WeeklyMealPlanService:
                     "A meal replacement cannot leave a slot empty; no eligible recipe was returned",
                     error_code="AI_OUTPUT_INCOMPLETE",
                 )
-            if new_recipe_id == current.recipe_id:
+            if (
+                new_recipe_id == current.recipe_id
+                and current.saved_suggestion_id is None
+            ):
                 continue
             proposed[plan.slots.index(current)] = _slot_with_recipe(
                 current, new_recipe_id
@@ -789,7 +808,7 @@ class WeeklyMealPlanService:
                 {
                     "day_index": current.day_index,
                     "slot_index": current.slot_index,
-                    "previous_recipe_id": current.recipe_id,
+                    "previous_recipe_id": current.recipe_ref,
                     "new_recipe_id": new_recipe_id,
                     "action": change.action,
                 }
@@ -933,6 +952,52 @@ class WeeklyMealPlanService:
             )
 
 
+async def _saved_recipe_slots(
+    uow, command: UpdateWeeklyMealPlanCommand
+) -> dict[tuple[int, int], SavedRecipeSnapshot]:
+    """Copy each requested saved recipe of the caller for its slot.
+
+    Another user's saved suggestion is reported like a missing one.
+    """
+    requested = command.saved_slots or {}
+    if not requested:
+        return {}
+    for coordinate in requested:
+        try:
+            ensure_slot_coordinate(*coordinate)
+        except ValueError as exc:
+            raise ValidationException(
+                "slot coordinate is invalid", error_code="WEEKLY_SLOT_INVALID"
+            ) from exc
+        if coordinate in (command.slots or {}):
+            raise ValidationException(
+                "a slot takes a catalog recipe or a saved recipe, not both",
+                error_code="WEEKLY_SLOT_INVALID",
+            )
+    snapshots: dict[str, SavedRecipeSnapshot] = {}
+    for suggestion_id in sorted(set(requested.values())):
+        saved = await uow.saved_suggestions.find_by_user_and_suggestion(
+            command.user_id, suggestion_id
+        )
+        if saved is None:
+            raise ResourceNotFoundException(
+                "Saved recipe not found", error_code="SAVED_RECIPE_NOT_FOUND"
+            )
+        try:
+            snapshots[suggestion_id] = SavedRecipeSnapshot.from_saved_suggestion(
+                suggestion_id, saved.get("suggestion_data")
+            )
+        except ValueError as exc:
+            raise BusinessLogicException(
+                "This saved recipe has no name or nutrition to plan with",
+                error_code="SAVED_RECIPE_UNUSABLE",
+            ) from exc
+    return {
+        coordinate: snapshots[suggestion_id]
+        for coordinate, suggestion_id in requested.items()
+    }
+
+
 async def _basket_ids(
     catalog_recipes, catalog_version: tuple[int, int]
 ) -> Mapping[str, frozenset[int]]:
@@ -960,8 +1025,7 @@ async def _basket_ids(
 def _fingerprint(command) -> str:
     payload = {
         key: _fingerprint_value(value)
-        for key, value in vars(command).items()
-        if key != "idempotency_key"
+        for key, value in _fingerprint_fields(command).items()
     }
     return canonicalize_fingerprint(payload)
 
@@ -969,14 +1033,21 @@ def _fingerprint(command) -> str:
 def _legacy_fingerprint(command) -> str:
     """Hash used when dataclass fields were stringified instead of expanded."""
 
-    payload = {
-        key: value for key, value in vars(command).items() if key != "idempotency_key"
+    return canonicalize_fingerprint(_fingerprint_fields(command))
+
+
+def _fingerprint_fields(command) -> dict:
+    # An empty saved_slots is left out so requests without saved recipes
+    # keep the fingerprint they had before the field existed.
+    return {
+        key: value
+        for key, value in vars(command).items()
+        if key != "idempotency_key" and not (key == "saved_slots" and not value)
     }
-    return canonicalize_fingerprint(payload)
 
 
 def _plan_has_assigned_recipe(plan: WeeklyMealPlan) -> bool:
-    return any(slot.recipe_id for slot in plan.slots)
+    return any(slot.has_recipe for slot in plan.slots)
 
 
 def _fingerprint_value(value):
@@ -1447,8 +1518,19 @@ def _target_coordinate(command: AiAdjustMealPlanCommand) -> tuple[int, int] | No
 
 
 def _slot_with_recipe(slot, recipe_id):
-    # Keeps log and skip state; the proposal changes only the recipe.
-    return replace(slot, recipe_id=recipe_id, recipe_override=None)
+    # Keeps log and skip state; the proposal changes only the recipe. A saved
+    # recipe in the slot is replaced, so its copy goes too.
+    return replace(
+        slot,
+        recipe_id=recipe_id,
+        recipe_override=None,
+        saved_suggestion_id=None,
+        saved_recipe=None,
+    )
+
+
+def _recipe_key(slot) -> tuple[str | None, str | None]:
+    return (slot.recipe_id, slot.saved_suggestion_id)
 
 
 def _generation_state(plan):
@@ -1459,7 +1541,13 @@ def _generation_state(plan):
         plan.revision,
         plan.preferences,
         tuple(
-            (slot.id, slot.version, slot.recipe_id, slot.is_logged)
+            (
+                slot.id,
+                slot.version,
+                slot.recipe_id,
+                slot.saved_suggestion_id,
+                slot.is_logged,
+            )
             for slot in plan.slots
         ),
     )

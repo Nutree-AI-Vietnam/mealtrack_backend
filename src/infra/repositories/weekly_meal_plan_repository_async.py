@@ -19,6 +19,7 @@ from src.domain.model.weekly_meal_planner import (
     SLOT_LOG_SOURCE_PLAN,
     WEEKLY_DAYS,
     WEEKLY_SLOTS_PER_DAY,
+    SavedRecipeSnapshot,
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
@@ -160,6 +161,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slots: dict[tuple[int, int], str | None] | None = None,
         expected_revision: int | None = None,
         algorithm_version: str | None = None,
+        saved_slots: dict[tuple[int, int], SavedRecipeSnapshot] | None = None,
     ) -> WeeklyMealPlan:
         row = await self.get_for_update(
             user_id=user_id, plan_id=plan_id, include_pantry=False
@@ -206,26 +208,33 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             ):
                 raise WeeklyMealPlanConflictError()
             row.status = status
-        if slots:
+        if slots or saved_slots:
             by_coordinate = {
                 (slot.day_index, slot.slot_index): slot for slot in row.slots
             }
-            for coordinate, recipe_id in slots.items():
-                slot = by_coordinate.get(coordinate)
-                if slot is None:
-                    raise ValueError("unknown weekly meal slot")
-                if slot.is_logged:
-                    raise WeeklyMealPlanConflictError(
-                        "Logged weekly meal slots cannot be replaced"
-                    )
+            for coordinate, recipe_id in (slots or {}).items():
+                slot = _replaceable_slot(by_coordinate, coordinate)
                 slot.catalog_meal_id = recipe_id
+                slot.saved_suggestion_id = None
+                slot.saved_recipe = None
+                slot.version += 1
+            for coordinate, snapshot in (saved_slots or {}).items():
+                slot = _replaceable_slot(by_coordinate, coordinate)
+                slot.catalog_meal_id = None
+                slot.recipe_override = None
+                slot.saved_suggestion_id = snapshot.suggestion_id
+                slot.saved_recipe = snapshot.to_dict()
                 slot.version += 1
         if algorithm_version is not None:
             row.algorithm_version = algorithm_version
-        changed = any(
-            value is not None
-            for value in (people, preferences, status, algorithm_version)
-        ) or bool(slots)
+        changed = (
+            any(
+                value is not None
+                for value in (people, preferences, status, algorithm_version)
+            )
+            or bool(slots)
+            or bool(saved_slots)
+        )
         if changed:
             row.revision += 1
         await self.session.flush()
@@ -625,6 +634,24 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         return True
 
 
+def _replaceable_slot(by_coordinate: dict, coordinate: tuple[int, int]) -> Any:
+    slot = by_coordinate.get(coordinate)
+    if slot is None:
+        raise ValueError("unknown weekly meal slot")
+    if slot.is_logged:
+        raise WeeklyMealPlanConflictError("Logged weekly meal slots cannot be replaced")
+    return slot
+
+
+def _saved_recipe(slot: Any) -> SavedRecipeSnapshot | None:
+    saved_suggestion_id = getattr(slot, "saved_suggestion_id", None)
+    if saved_suggestion_id is None:
+        return None
+    return SavedRecipeSnapshot.from_dict(
+        getattr(slot, "saved_recipe", None), suggestion_id=saved_suggestion_id
+    )
+
+
 def _is_late_legacy_row(row: WeeklyMealPlanORM) -> bool:
     data = cast(Any, row)
     coordinates = {(int(slot.day_index), int(slot.slot_index)) for slot in data.slots}
@@ -654,6 +681,10 @@ def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
             recipe_override=cast(dict | None, getattr(slot, "recipe_override", None)),
             log_source=cast(str | None, getattr(slot, "log_source", None)),
             is_skipped=bool(getattr(slot, "is_skipped", False)),
+            saved_suggestion_id=cast(
+                str | None, getattr(slot, "saved_suggestion_id", None)
+            ),
+            saved_recipe=_saved_recipe(slot),
         )
         for slot in sorted(
             data.slots, key=lambda item: (item.day_index, item.slot_index)
