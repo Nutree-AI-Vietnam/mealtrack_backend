@@ -16,6 +16,11 @@ from src.api.base_dependencies import (
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
 from src.api.routes.v1.meal_plans import router
 from src.app.handlers.query_handlers.meal_planner.weekly_meal_planner_query_handlers import (
@@ -594,3 +599,176 @@ def test_patch_requires_people_when_preferences_are_updated():
     )
 
     assert response.status_code == 422
+
+
+class _SlotBus(_Bus):
+    """Answers slot state commands with the plan, slot 0-1 logged from diary."""
+
+    def __init__(self, error=None):
+        super().__init__()
+        self.error = error
+        self.slot_commands = []
+
+    async def send(self, query):
+        name = query.__class__.__name__
+        if name in {
+            "UnlogMealPlanSlotCommand",
+            "LinkMealPlanSlotCommand",
+            "SetMealPlanSlotSkipCommand",
+        }:
+            self.slot_commands.append(query)
+            if self.error is not None:
+                raise self.error
+            plan = _plan()
+            return replace(
+                plan,
+                slots=tuple(
+                    replace(
+                        slot,
+                        is_logged=True,
+                        logged_meal_id="meal-1",
+                        log_source="diary",
+                    )
+                    if slot.id == "slot-0-1"
+                    else replace(slot, is_skipped=slot.id == "slot-0-2")
+                    for slot in plan.slots
+                ),
+            )
+        return await super().send(query)
+
+
+def _slot_json(body, slot_id):
+    return next(
+        slot for day in body["plan"] for slot in day if slot["slot_id"] == slot_id
+    )
+
+
+def test_plan_payload_lists_features_and_slot_log_state():
+    body = (
+        TestClient(_app())
+        .get("/v1/meal-plans/current?week_start_date=2026-09-21")
+        .json()
+    )
+
+    assert body["features"] == ["slot_unlog", "slot_link", "slot_skip"]
+    slot = _slot_json(body, "slot-0-0")
+    assert slot["log_source"] is None and slot["is_skipped"] is False
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json"),
+    [
+        ("delete", "/v1/meal-plans/plan-1/slots/slot-0-1/log", None),
+        ("post", "/v1/meal-plans/plan-1/slots/slot-0-1/link", {"meal_id": "m"}),
+        ("post", "/v1/meal-plans/plan-1/slots/slot-0-1/skip", None),
+        ("delete", "/v1/meal-plans/plan-1/slots/slot-0-1/skip", None),
+    ],
+)
+def test_slot_state_writes_require_idempotency_key(method, path, json):
+    bus = _SlotBus()
+    client = TestClient(_app(bus=bus))
+    kwargs = {"json": json} if json is not None else {}
+
+    missing = getattr(client, method)(path, **kwargs)
+    blank = getattr(client, method)(path, headers={"Idempotency-Key": " "}, **kwargs)
+
+    assert missing.status_code == 422
+    assert blank.status_code == 400
+    assert bus.slot_commands == []
+
+
+def test_unlog_returns_the_plan():
+    bus = _SlotBus()
+
+    response = TestClient(_app(bus=bus)).delete(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/log",
+        headers={"Idempotency-Key": "unlog-1"},
+    )
+
+    assert response.status_code == 200
+    (command,) = bus.slot_commands
+    assert (command.plan_id, command.slot_id, command.idempotency_key) == (
+        "plan-1",
+        "slot-0-1",
+        "unlog-1",
+    )
+    slot = _slot_json(response.json(), "slot-0-1")
+    assert slot["log_source"] == "diary" and slot["logged_meal_id"] == "meal-1"
+    assert response.json()["features"] == ["slot_unlog", "slot_link", "slot_skip"]
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (
+            ConflictException("not logged", error_code="WEEKLY_SLOT_NOT_LOGGED"),
+            409,
+            "WEEKLY_SLOT_NOT_LOGGED",
+        ),
+        (
+            ValidationException("mismatch", error_code="WEEKLY_SLOT_MISMATCH"),
+            400,
+            "WEEKLY_SLOT_MISMATCH",
+        ),
+        (
+            ResourceNotFoundException("missing", error_code="MEAL_NOT_FOUND"),
+            404,
+            "MEAL_NOT_FOUND",
+        ),
+    ],
+)
+def test_slot_state_errors_keep_their_codes(error, status_code, error_code):
+    response = TestClient(_app(bus=_SlotBus(error))).post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-1"},
+        json={"meal_id": "meal-1"},
+    )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"]["error_code"] == error_code
+
+
+def test_link_sends_meal_and_header_timezone():
+    bus = _SlotBus()
+    client = TestClient(_app(bus=bus))
+
+    response = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-1", "X-Timezone": "Asia/Ho_Chi_Minh"},
+        json={"meal_id": "meal-1"},
+    )
+    invalid_tz = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-2", "X-Timezone": "Mars/Base"},
+        json={"meal_id": "meal-1"},
+    )
+    empty_meal = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-3"},
+        json={"meal_id": ""},
+    )
+
+    assert response.status_code == 200 and invalid_tz.status_code == 200
+    assert empty_meal.status_code == 422
+    assert [(c.meal_id, c.timezone) for c in bus.slot_commands] == [
+        ("meal-1", "Asia/Ho_Chi_Minh"),
+        ("meal-1", None),
+    ]
+
+
+def test_skip_and_unskip_send_the_flag():
+    bus = _SlotBus()
+    client = TestClient(_app(bus=bus))
+
+    skipped = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-2/skip",
+        headers={"Idempotency-Key": "skip-1"},
+    )
+    unskipped = client.delete(
+        "/v1/meal-plans/plan-1/slots/slot-0-2/skip",
+        headers={"Idempotency-Key": "skip-2"},
+    )
+
+    assert skipped.status_code == 200 and unskipped.status_code == 200
+    assert [c.skipped for c in bus.slot_commands] == [True, False]
+    assert _slot_json(skipped.json(), "slot-0-2")["is_skipped"] is True

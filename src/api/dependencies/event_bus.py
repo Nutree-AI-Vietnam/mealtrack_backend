@@ -29,7 +29,10 @@ from src.app.commands.meal_catalog import LogCatalogMealCommand
 from src.app.commands.meal_planner import (
     AiAdjustMealPlanCommand,
     GenerateWeeklyMealPlanCommand,
+    LinkMealPlanSlotCommand,
     LogMealPlanSlotCommand,
+    SetMealPlanSlotSkipCommand,
+    UnlogMealPlanSlotCommand,
     UpdateGroceryDayLinesCommand,
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
@@ -138,7 +141,10 @@ from src.app.handlers.command_handlers.meal_catalog import (
 from src.app.handlers.command_handlers.meal_planner import (
     AiAdjustMealPlanCommandHandler,
     GenerateWeeklyMealPlanCommandHandler,
+    LinkMealPlanSlotCommandHandler,
     LogMealPlanSlotCommandHandler,
+    SetMealPlanSlotSkipCommandHandler,
+    UnlogMealPlanSlotCommandHandler,
     UpdateGroceryDayLinesCommandHandler,
     UpdateMealPlanPantryStockCommandHandler,
     UpdateWeeklyMealPlanCommandHandler,
@@ -1019,6 +1025,22 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         LogMealPlanSlotCommand,
         LogMealPlanSlotCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        UnlogMealPlanSlotCommand,
+        UnlogMealPlanSlotCommandHandler(
+            AsyncUnitOfWork,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+        ),
+    )
+    event_bus.register_handler(
+        LinkMealPlanSlotCommand,
+        LinkMealPlanSlotCommandHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        SetMealPlanSlotSkipCommand,
+        SetMealPlanSlotSkipCommandHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetCurrentWeeklyPlanQuery,

@@ -589,3 +589,23 @@ def test_slot_from_meal_non_contiguous_positions_does_not_collide_and_override_w
     remaining_names = [item.name for item in remaining_after_override]
     assert remaining_names == ["Rice", "Special Sauce", "Garnish Herb"]
     assert "Chicken" not in remaining_names
+
+
+@pytest.mark.asyncio
+async def test_skipped_slots_buy_no_groceries():
+    plan = _plan()
+    skipped = replace(
+        plan,
+        slots=tuple(
+            replace(slot, is_skipped=True) if slot.recipe_id else slot
+            for slot in plan.slots
+        ),
+    )
+    service = WeeklyGroceryService()
+
+    planned = await service.calculate(_Uow(), plan)
+    after_skip = await service.calculate(_Uow(), skipped)
+
+    assert [item.ingredient_id for c in planned for item in c.items] == [7]
+    assert after_skip == ()
+    assert service.project(skipped, [await _Catalog().get_meal("recipe-1")]) == ()

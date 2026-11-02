@@ -1,6 +1,7 @@
 """Response contracts for weekly planning, recipes, groceries, and logging."""
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -30,6 +31,10 @@ class WeeklyMealSlotResponse(BaseModel):
     recipe: WeeklyRecipeSummaryResponse | None = None
     is_logged: bool
     logged_meal_id: str | None = None
+    # "plan": logged by the log endpoint (unlog deletes that diary meal);
+    # "diary": an existing diary meal was linked (unlog keeps it).
+    log_source: Literal["plan", "diary"] | None = None
+    is_skipped: bool = False
 
 
 class WeeklyMealPlanResponse(BaseModel):
@@ -47,6 +52,9 @@ class WeeklyMealPlanResponse(BaseModel):
     algorithm_version: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # Planner capabilities this server supports, so clients can hide actions
+    # an older server cannot perform.
+    features: list[str] = Field(default_factory=list)
 
 
 class RecipeListItemResponse(BaseModel):
