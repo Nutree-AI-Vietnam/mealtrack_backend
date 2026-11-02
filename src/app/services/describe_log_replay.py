@@ -6,6 +6,9 @@ ends up either with a stored reply (the entries exist) or with nothing saved.
 A claim that saved nothing is released at once, or its lease runs out, so a
 retry with the same key then runs fresh. 409 IDEMPOTENCY_KEY_IN_PROGRESS only
 means a live lease: the first request is still running.
+
+A sentence that can be undone as a whole also stores the ids it created, per
+kind, next to its reply. They are never part of a replayed reply.
 """
 
 import logging
@@ -19,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 HYDRATION_DESCRIBE_OPERATION = "hydration_describe"
 MOVEMENT_DESCRIBE_OPERATION = "movement_describe"
+LOG_DESCRIBE_OPERATION = "log_describe"
+# The ids a sentence created, stored with its reply for undo only.
+CREATED_KEY = "_created"
 # Longer than a describe request can run: the model deadline plus the reads
 # and the write around it.
 MIN_LEASE_SECONDS = 60
@@ -82,7 +88,29 @@ async def stored_reply(uow_factory: Any, user_id: str, key: DescribeKey) -> dict
     if found is None:
         return None
     _raise_on_conflict(found, key)
-    return found.response if found.state == "replay" else None
+    return _public(found.response) if found.state == "replay" else None
+
+
+async def created_entries(
+    uow: Any, user_id: str, operation: str, idempotency_key: str
+) -> dict[str, Any] | None:
+    """The ids a finished sentence created, or None when it saved nothing.
+
+    The claim row stays locked until the caller's unit of work ends, so a
+    second undo waits and then finds everything already gone. 409 while the
+    sentence is still being logged, so an undo never races it.
+    """
+    found = await uow.meal_write_operations.lookup(
+        user_id=user_id,
+        operation=operation,
+        idempotency_key=idempotency_key,
+        for_update=True,
+    )
+    if found is None or found.state == "available":
+        return None
+    if found.state == "in_progress":
+        raise _in_progress()
+    return dict((found.response or {}).get(CREATED_KEY) or {})
 
 
 async def claim(
@@ -99,15 +127,24 @@ async def claim(
         )
     _raise_on_conflict(reservation, key)
     if reservation.state == "replay":
-        return None, reservation.response
+        return None, _public(reservation.response)
     return reservation, None
 
 
-async def complete(uow: Any, reservation: Any, response: dict) -> None:
-    """Store the reply inside the unit of work that saves the entries."""
+async def complete(
+    uow: Any,
+    reservation: Any,
+    response: dict,
+    created: dict[str, Any] | None = None,
+) -> None:
+    """Store the reply inside the unit of work that saves the entries.
+
+    ``created`` (ids per kind) is kept with it for undo, never replayed.
+    """
+    stored = response if created is None else {**response, CREATED_KEY: created}
     try:
         await uow.meal_write_operations.complete(
-            reservation, target_meal_id=None, response=response
+            reservation, target_meal_id=None, response=stored
         )
     except RuntimeError as exc:
         # Our lease ran out and another request took the key over; raising
@@ -125,6 +162,12 @@ async def release(uow_factory: Any, reservation: Any) -> None:
             "Describe claim release failed; it frees itself when the lease ends",
             exc_info=True,
         )
+
+
+def _public(stored: dict | None) -> dict | None:
+    if stored is None or CREATED_KEY not in stored:
+        return stored
+    return {name: value for name, value in stored.items() if name != CREATED_KEY}
 
 
 def _raise_on_conflict(found: Any, key: DescribeKey) -> None:

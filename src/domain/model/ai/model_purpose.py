@@ -9,6 +9,7 @@ class ModelPurpose(Enum):
     SUPPLEMENT_LABEL_SCAN = "supplement_label_scan"
     INGREDIENT_SCAN = "ingredient_scan"
     PARSE_TEXT = "parse_text"
+    DESCRIBE_LOG = "describe_log"
     BARCODE = "barcode"
     MEAL_NAMES = "meal_names"
     RECIPE = "recipe"

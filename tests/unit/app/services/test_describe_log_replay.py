@@ -113,3 +113,76 @@ async def test_sentence_finished_between_lookup_and_claim_is_replayed():
 
     assert result == REPLY
     generation.generate_meal_plan_async.assert_not_called()
+
+
+# --- the ids a sentence created, kept for its undo --------------------------
+
+CREATED = {"food": ["meal-1"], "drink": ["drink-1"]}
+
+
+async def _finished_with_ids(db: FakeDescribeDb, key: DescribeKey = KEY) -> None:
+    reservation, _ = await replay.claim(db.uow, USER_ID, key, lease_seconds=60)
+    async with db.uow() as uow:
+        await replay.complete(uow, reservation, REPLY, CREATED)
+
+
+@pytest.mark.asyncio
+async def test_created_ids_are_stored_but_never_replayed():
+    db = FakeDescribeDb()
+    await _finished_with_ids(db)
+
+    assert await replay.stored_reply(db.uow, USER_ID, KEY) == REPLY
+    assert await replay.claim(db.uow, USER_ID, KEY, lease_seconds=60) == (
+        None,
+        REPLY,
+    )
+    async with db.uow() as uow:
+        assert (
+            await replay.created_entries(
+                uow, USER_ID, KEY.operation, KEY.idempotency_key
+            )
+            == CREATED
+        )
+
+
+@pytest.mark.asyncio
+async def test_undo_finds_nothing_for_an_unknown_or_released_sentence():
+    db = FakeDescribeDb()
+    reservation, _ = await replay.claim(db.uow, USER_ID, KEY, lease_seconds=60)
+    await replay.release(db.uow, reservation)
+
+    async with db.uow() as uow:
+        released = await replay.created_entries(
+            uow, USER_ID, KEY.operation, KEY.idempotency_key
+        )
+        unknown = await replay.created_entries(uow, USER_ID, KEY.operation, "other")
+
+    assert released is None and unknown is None
+
+
+@pytest.mark.asyncio
+async def test_undo_waits_for_a_sentence_still_being_logged():
+    db = FakeDescribeDb()
+    await replay.claim(db.uow, USER_ID, KEY, lease_seconds=60)
+
+    async with db.uow() as uow:
+        with pytest.raises(ConflictException) as exc_info:
+            await replay.created_entries(
+                uow, USER_ID, KEY.operation, KEY.idempotency_key
+            )
+
+    assert exc_info.value.error_code == "IDEMPOTENCY_KEY_IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_a_reply_stored_without_ids_undoes_nothing():
+    db = FakeDescribeDb()
+    await _finished(db)
+
+    async with db.uow() as uow:
+        assert (
+            await replay.created_entries(
+                uow, USER_ID, KEY.operation, KEY.idempotency_key
+            )
+            == {}
+        )
