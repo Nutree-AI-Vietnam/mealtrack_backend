@@ -219,6 +219,13 @@ handler/schema when implementing; the bullets below are the durable WHY.
   new threads while it reports `single`. Deploy the server before running that
   migration: the single-thread server's insert needs the unique index.
 
+### Supplements
+
+- `GET /v1/capabilities/supplements` returns `{"supplements": true}` once
+  `SUPPLEMENTS_ENABLED` is on and the supplement tables are migrated, and 503
+  `SUPPLEMENTS_UNAVAILABLE` otherwise. Clients hide supplement logging until it
+  answers 200.
+
 ### Meal recommendations (catalog)
 
 - Catalog recommendations are separate from `/v1/meal-suggestions` (AI session

@@ -180,13 +180,20 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
             if getattr(uow, "weekly_recaps", None) is not None:
                 recaps_count = await uow.weekly_recaps.delete_for_user(user_id)
 
+            # Supplement doses, the list and products never promoted to the catalog.
+            # Skipped until the tables exist: a deploy can precede its migration.
+            supplement_rows = 0
+            supplements = getattr(uow, "supplements", None)
+            if supplements is not None and await supplements.schema_ready():
+                supplement_rows = await supplements.delete_user_data(user_id)
+
             # Flush to ensure all changes are pending in the transaction
             await uow.session.flush()
 
             logger.info(
                 f"Soft-deleted related data: meals={meals_count}, "
                 f"notification_prefs={notif_prefs_count}, chat={chat_count}, "
-                f"weekly_recaps={recaps_count}"
+                f"weekly_recaps={recaps_count}, supplement_rows={supplement_rows}"
             )
         except Exception:
             raise
