@@ -37,17 +37,28 @@ def upgrade() -> None:
     )
     # ### end Alembic commands ###
     # A slot holds a catalog recipe or a saved recipe, never both, and a
-    # saved recipe always comes with the snapshot every read uses.
-    op.create_check_constraint(
-        "ck_weekly_slot_one_recipe",
-        "weekly_meal_plan_slots",
-        "catalog_meal_id IS NULL OR saved_suggestion_id IS NULL",
-    )
-    op.create_check_constraint(
-        "ck_weekly_slot_saved_recipe_snapshot",
-        "weekly_meal_plan_slots",
-        "(saved_suggestion_id IS NULL) = (saved_recipe IS NULL)",
-    )
+    # saved recipe always comes with the snapshot every read uses. Added NOT
+    # VALID first so the brief lock does not wait on a table scan; VALIDATE
+    # then checks existing rows under a lighter lock.
+    for name, condition in (
+        (
+            "ck_weekly_slot_one_recipe",
+            "catalog_meal_id IS NULL OR saved_suggestion_id IS NULL",
+        ),
+        (
+            "ck_weekly_slot_saved_recipe_snapshot",
+            "(saved_suggestion_id IS NULL) = (saved_recipe IS NULL)",
+        ),
+    ):
+        op.execute(
+            sa.text(
+                f"ALTER TABLE weekly_meal_plan_slots ADD CONSTRAINT {name} "
+                f"CHECK ({condition}) NOT VALID"
+            )
+        )
+        op.execute(
+            sa.text(f"ALTER TABLE weekly_meal_plan_slots VALIDATE CONSTRAINT {name}")
+        )
 
 
 def downgrade() -> None:
