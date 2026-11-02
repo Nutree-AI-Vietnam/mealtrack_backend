@@ -219,6 +219,7 @@ from src.app.handlers.query_handlers.list_logged_catalog_meals_query_handler imp
 )
 from src.app.handlers.query_handlers.meal_planner import (
     GetCurrentWeeklyPlanQueryHandler,
+    GetMealPlanSlotSuggestionsQueryHandler,
     GetRecipeDetailQueryHandler,
     GetRecipeDetailsQueryHandler,
     GetRecipeSummariesQueryHandler,
@@ -249,6 +250,7 @@ from src.app.queries.meal import (
 from src.app.queries.meal_catalog import ListLoggedCatalogMealsQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
+    GetMealPlanSlotSuggestionsQuery,
     GetRecipeDetailQuery,
     GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
@@ -1060,6 +1062,10 @@ def get_configured_event_bus() -> EventBus:
             micronutrient_enrichment=recipe_micronutrient_enrichment,
             redis_client=redis_client,
         ),
+    )
+    event_bus.register_handler(
+        GetMealPlanSlotSuggestionsQuery,
+        GetMealPlanSlotSuggestionsQueryHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetRecipeDetailsQuery,

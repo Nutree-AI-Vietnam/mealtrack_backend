@@ -193,3 +193,36 @@ async def test_skipped_slot_leaves_groceries_and_replays(pg_session, uow_on_test
     # Logging the skipped slot ends the skip.
     await _log(user_id, plan, plan.slots[2])
     assert not (await _slot(user_id, plan.id, plan.slots[2].id)).is_skipped
+
+
+@pytest.mark.asyncio
+async def test_slot_suggestions_offer_other_recipes_the_slot_accepts(
+    pg_session, uow_on_test_db
+):
+    from src.app.commands.meal_planner import UpdateWeeklyMealPlanCommand
+    from src.app.services.weekly_meal_plan_service import WeeklyMealPlanService
+    from src.app.services.weekly_slot_suggestion_service import (
+        WeeklySlotSuggestionService,
+    )
+
+    user_id, plan, _ = await _seed(pg_session)
+    breakfast = plan.slots[0]
+    async with AsyncUnitOfWork() as uow:
+        await uow.catalog_recipes.rebuild_catalog_projection_page(limit=100)
+
+    suggestions = await WeeklySlotSuggestionService(AsyncUnitOfWork).suggestions(
+        user_id=user_id, plan_id=plan.id, slot_id=breakfast.id
+    )
+
+    # The seed plans breakfast recipe 0 every day; only recipe 1 is left.
+    assert [meal.name for meal in suggestions] == ["Breakfast Rice 1"]
+    assert suggestions[0].diet_labels.is_vegetarian
+    updated = await WeeklyMealPlanService(AsyncUnitOfWork).update(
+        UpdateWeeklyMealPlanCommand(
+            user_id=user_id,
+            plan_id=plan.id,
+            idempotency_key=str(uuid4()),
+            slots={(0, 0): suggestions[0].id},
+        )
+    )
+    assert updated.slots[0].recipe_id == suggestions[0].id

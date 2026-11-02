@@ -654,6 +654,7 @@ def test_plan_payload_lists_features_and_slot_log_state():
         "slot_unlog",
         "slot_link",
         "slot_skip",
+        "slot_suggestions",
         "recipe_labels",
         "recipe_batch",
     ]
@@ -902,3 +903,78 @@ def test_recipe_batch_requires_auth_and_is_not_a_recipe_id():
     assert bus.detail_queries == []
     # GET still reads "batch" as a recipe id; only POST is the batch route.
     assert detail.status_code == 200
+
+
+class _SuggestionBus(_Bus):
+    def __init__(self, error=None):
+        super().__init__()
+        self.error = error
+        self.suggestion_queries = []
+
+    async def send(self, query):
+        if query.__class__.__name__ == "GetMealPlanSlotSuggestionsQuery":
+            self.suggestion_queries.append(query)
+            if self.error is not None:
+                raise self.error
+            return (_labelled("tofu", "Tofu", vegetarian=True, pork_free=True),)
+        return await super().send(query)
+
+
+def test_slot_suggestions_return_recipe_list_items():
+    bus = _SuggestionBus()
+
+    response = TestClient(_app(bus=bus)).get(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/suggestions"
+        "?diet=vegetarian&max_cook_time=30&min_protein=15&limit=5"
+    )
+
+    assert response.status_code == 200
+    (query,) = bus.suggestion_queries
+    assert (query.plan_id, query.slot_id, query.user_id) == (
+        "plan-1",
+        "slot-0-1",
+        "user-1",
+    )
+    assert (query.diet, query.max_cook_time, query.min_protein, query.limit) == (
+        "vegetarian",
+        30,
+        15,
+        5,
+    )
+    (item,) = response.json()["items"]
+    assert item["id"] == "tofu" and item["slug"] == "sample-recipe"
+    assert item["is_vegetarian"] is True and item["is_pork_free"] is True
+    assert set(response.json()) == {"items"}
+
+
+@pytest.mark.parametrize(
+    "query", ["diet=keto", "limit=0", "limit=31", "min_protein=-1", "max_cook_time=-5"]
+)
+def test_slot_suggestions_validate_filters(query):
+    bus = _SuggestionBus()
+
+    response = TestClient(_app(bus=bus)).get(
+        f"/v1/meal-plans/plan-1/slots/slot-0-1/suggestions?{query}"
+    )
+
+    assert response.status_code == 422
+    assert bus.suggestion_queries == []
+
+
+def test_slot_suggestions_default_limit_and_missing_slot():
+    bus = _SuggestionBus()
+    ok = TestClient(_app(bus=bus)).get(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/suggestions"
+    )
+    missing = TestClient(
+        _app(
+            bus=_SuggestionBus(
+                ResourceNotFoundException("missing", error_code="WEEKLY_SLOT_NOT_FOUND")
+            )
+        )
+    ).get("/v1/meal-plans/plan-1/slots/nope/suggestions")
+
+    assert ok.status_code == 200 and bus.suggestion_queries[0].limit == 10
+    assert bus.suggestion_queries[0].diet is None
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error_code"] == "WEEKLY_SLOT_NOT_FOUND"

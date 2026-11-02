@@ -1,5 +1,6 @@
 from .weekly_meal_planner_query_handlers import (
     GetCurrentWeeklyPlanQueryHandler,
+    GetMealPlanSlotSuggestionsQueryHandler,
     GetRecipeDetailQueryHandler,
     GetRecipeDetailsQueryHandler,
     GetRecipeSummariesQueryHandler,
@@ -9,6 +10,7 @@ from .weekly_meal_planner_query_handlers import (
 
 __all__ = [
     "GetCurrentWeeklyPlanQueryHandler",
+    "GetMealPlanSlotSuggestionsQueryHandler",
     "ListRecipesQueryHandler",
     "GetRecipeDetailQueryHandler",
     "GetRecipeDetailsQueryHandler",

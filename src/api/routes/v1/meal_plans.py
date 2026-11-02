@@ -8,6 +8,7 @@ import re
 from datetime import date, datetime, timedelta
 from functools import wraps
 from time import monotonic
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -51,6 +52,7 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
     RecipeDetailNutritionResponse,
     RecipeDetailResponse,
     RecipeIngredientResponse,
+    RecipeItemsResponse,
     RecipeListItemResponse,
     RecipeListResponse,
     RecipeMacroSummaryResponse,
@@ -77,6 +79,7 @@ from src.app.commands.meal_planner import (
 from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
+    GetMealPlanSlotSuggestionsQuery,
     GetRecipeDetailQuery,
     GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
@@ -120,6 +123,7 @@ WEEKLY_PLAN_FEATURES: tuple[str, ...] = (
     "slot_unlog",
     "slot_link",
     "slot_skip",
+    "slot_suggestions",
     "recipe_labels",
     "recipe_batch",
 )
@@ -868,6 +872,51 @@ async def _set_slot_skip(
             translation_service=translation_service,
             include_grocery_count=include_grocery_count,
             localization_timeout_seconds=1.5,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get(
+    "/v1/meal-plans/{plan_id}/slots/{slot_id}/suggestions",
+    response_model=RecipeItemsResponse,
+)
+@limiter.limit("30/minute")
+async def get_weekly_slot_suggestions(
+    request: Request,
+    plan_id: str,
+    slot_id: str,
+    diet: Literal["vegetarian", "no-pork"] | None = Query(default=None),
+    max_cook_time: int | None = Query(default=None, ge=0, le=600),
+    min_protein: float | None = Query(default=None, ge=0, le=500),
+    limit: int = Query(default=10, ge=1, le=30),
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    """Recipes a PATCH would accept for this slot, minus the week's recipes."""
+    try:
+        meals = await event_bus.send(
+            GetMealPlanSlotSuggestionsQuery(
+                user_id=user_id,
+                plan_id=plan_id,
+                slot_id=slot_id,
+                diet=diet,
+                max_cook_time=max_cook_time,
+                min_protein=min_protein,
+                limit=limit,
+            )
+        )
+        localized = await localize_catalog_meals(
+            meals,
+            language=get_request_language(request),
+            translation_service=translation_service,
+            include_ingredients=False,
+        )
+        return RecipeItemsResponse(
+            items=[_recipe_list_item(meal) for meal in localized]
         )
     except HTTPException:
         raise
