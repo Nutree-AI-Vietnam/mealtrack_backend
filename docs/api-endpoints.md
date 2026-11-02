@@ -341,10 +341,11 @@ handler/schema when implementing; the bullets below are the durable WHY.
   `weekly_meal_plans`, `weekly_meal_plan_slots`, and
   `weekly_meal_plan_pantry_items`; `/v1/recipes*` reads the existing immutable
   catalog rather than a duplicate recipe table.
-- Recipe alternatives may pass `meal_type=lunch` or `meal_type=dinner` to
+- Recipe alternatives may pass `meal_type=breakfast|lunch|dinner` to
   `/v1/recipes`; the catalog filters candidates by that slot's eligibility.
-- Weeks are Monday-based and contain exactly 14 coordinates: day indexes 0–6
-  with slot index 0 for lunch and 1 for dinner. The default week is resolved
+- Weeks are Monday-based and contain exactly 21 coordinates: day indexes 0–6
+  with slot index 0 for breakfast, 1 for lunch and 2 for dinner. A slot's date
+  is `week_start_date + day_index`. The default week is resolved
   from the authenticated user's timezone. Generation and slot/preferences
   edits are idempotent and return a conflict for confirmed plans; pantry reads
   and diary logging retain their own owner and state checks.
@@ -379,7 +380,7 @@ handler/schema when implementing; the bullets below are the durable WHY.
   several days. `to_buy_count` counts only `needed` and `need_more` items.
 - Ask Nutree's proposal POST is non-mutating and returns `base_revision`, a
   proposed plan, and slot changes. Optional `target_day_index` (0–6) and
-  `target_slot_index` (0 for lunch, 1 for dinner) must be supplied together:
+  `target_slot_index` (0–2) must be supplied together:
   both scope the proposal to exactly that existing, unlogged slot; neither
   requests a week-wide proposal. A logged slot cannot be changed. Accept a
   proposal by PATCHing the plan with `expected_revision` set to its
@@ -402,7 +403,46 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - Logging a slot validates date/type and portion `0.5`, `1`, `1.5`, or `2`,
   materializes the normal backend-owned `Meal`, derives nutrition from scaled
   macros, and links the resulting meal to the weekly slot. Replays return the
-  original diary meal.
+  original diary meal. Like every meal write, it purges the day's caches
+  before responding.
+- Every plan payload lists `features`, the planner capabilities this server
+  supports (`slot_unlog`, `slot_link`, `slot_skip`, `slot_suggestions`,
+  `recipe_labels`, `recipe_batch`). Clients hide actions whose name is
+  missing. Slots report `log_source` (`plan`: created by the log endpoint;
+  `diary`: an existing meal was linked; `null`: not logged) and `is_skipped`.
+- Slot writes below (paths under `/v1/meal-plans/{plan_id}`) require
+  `Idempotency-Key` and return the plan (the current-plan shape). They bump
+  the slot's version, not the plan `revision`.
+  - `DELETE …/slots/{slot_id}/log` releases a logged slot. A `plan` meal is
+    deleted through the normal meal delete (meal.deleted published, caches
+    purged); a `diary` meal stays in the diary. `409 WEEKLY_SLOT_NOT_LOGGED`
+    when the slot is not logged.
+  - `POST …/slots/{slot_id}/link` `{"meal_id"}` marks the slot eaten with the
+    user's own meal. The meal's date in the user's timezone (`X-Timezone`,
+    else the saved one) must equal the slot date and its `meal_type` must be
+    the slot's (`400 WEEKLY_SLOT_MISMATCH`). `404 MEAL_NOT_FOUND` for a
+    missing, foreign or deleted meal; `409 WEEKLY_SLOT_ALREADY_LOGGED`;
+    `409 WEEKLY_MEAL_ALREADY_LINKED` when another slot holds that meal.
+  - `POST` / `DELETE …/slots/{slot_id}/skip` skip or restore a slot; repeats
+    are no-ops. A logged slot cannot be skipped (`409
+    WEEKLY_SLOT_ALREADY_LOGGED`); logging or linking a skipped slot ends the
+    skip. Skipped slots keep their recipe but leave the grocery list.
+- Deleting any diary meal (`DELETE /v1/meals/{meal_id}`) releases the weekly
+  slot logged with it in the same transaction, so the slot can be logged or
+  swapped again.
+- `GET …/slots/{slot_id}/suggestions?diet=vegetarian|no-pork&max_cook_time=&min_protein=&limit=10`
+  (limit 1–30) returns `{"items"}` in the `/v1/recipes` item shape and order:
+  recipes for the slot's meal type that the plan's diet, dislikes and
+  allergies allow under the same eligibility PATCH enforces, minus recipes
+  already in the week. The query `diet` narrows the plan diet, never widens it.
+- `/v1/recipes` items and plan recipe summaries carry `is_vegetarian` and
+  `is_pork_free`, computed by the same word rule as `diet=vegetarian|no-pork`
+  (`RecipeDietLabels`). That browse rule is looser than the planner's hard
+  diet rule, so a label is a browse hint, not the planner's verdict.
+  `min_protein` filters by grams of protein per serving.
+- `POST /v1/recipes/batch` `{"ids": [...]}` (1–30, deduplicated) returns
+  `{"items", "missing"}`: details in the `GET /v1/recipes/{id}` shape, in
+  request order, and the ids that are not active recipes.
 
 ### Food search and barcode
 
