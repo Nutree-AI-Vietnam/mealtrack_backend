@@ -1,6 +1,7 @@
-"""The Google Play adapter: an order id becomes its purchase token, then the renewal stops."""
+"""The Google Play adapter: order to token, Play's own state, then the cancel."""
 
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -12,6 +13,7 @@ from src.domain.ports.play_subscription_port import (
     PlayBillingNotFoundError,
     PlayBillingRejectedError,
     PlayBillingUnavailableError,
+    PlayCancelOutcome,
 )
 from src.infra.adapters.google_play_subscription_adapter import (
     API_ROOT,
@@ -23,11 +25,13 @@ pytestmark = pytest.mark.asyncio
 
 PACKAGE = "com.nutreeai.mobile"
 ORDER = "GPA.3372-1234-5678-12345..0"
+PRODUCT = "nutree_annual_599k:yearly"  # RevenueCat's id; Play's is before ':'
 PURCHASE_TOKEN = "kpbnlmhlplnjgbnkkfhgijcm.AO-J1OzQ_example-token"
 ORDER_URL = f"{API_ROOT}/{PACKAGE}/orders/{ORDER}"
-CANCEL_URL = (
-    f"{API_ROOT}/{PACKAGE}/purchases/subscriptionsv2/tokens/{PURCHASE_TOKEN}:cancel"
+SUBSCRIPTION_URL = (
+    f"{API_ROOT}/{PACKAGE}/purchases/subscriptionsv2/tokens/{PURCHASE_TOKEN}"
 )
+CANCEL_URL = f"{SUBSCRIPTION_URL}:cancel"
 
 
 class FakeAccessToken:
@@ -48,6 +52,14 @@ async def client():
         yield http_client
 
 
+@pytest.fixture(autouse=True)
+def no_retry_wait():
+    with patch(
+        "src.infra.adapters.google_play_subscription_adapter.RETRY_DELAY_SECONDS", 0
+    ):
+        yield
+
+
 def _adapter(client, access_token=None, package_name=PACKAGE):
     return GooglePlaySubscriptionAdapter(
         package_name=package_name,
@@ -61,22 +73,106 @@ def _order(**fields):
     return {"orderId": ORDER, "purchaseToken": PURCHASE_TOKEN, **fields}
 
 
+def _subscription(state="SUBSCRIPTION_STATE_ACTIVE", *, auto_renew=True, product=None):
+    plan = {"autoRenewEnabled": True} if auto_renew else {}  # proto3 drops false
+    return {
+        "subscriptionState": state,
+        "lineItems": [
+            {
+                "productId": "other_addon",
+                "autoRenewingPlan": {"autoRenewEnabled": True},
+            },
+            {"productId": product or PRODUCT.split(":")[0], "autoRenewingPlan": plan},
+        ],
+    }
+
+
+def _mock_play(subscription=None):
+    respx.get(ORDER_URL).respond(200, json=_order(state="PROCESSED"))
+    respx.get(SUBSCRIPTION_URL).respond(200, json=subscription or _subscription())
+    return respx.post(CANCEL_URL).respond(200)
+
+
+# --- The cancel ---
+
+
 @respx.mock
 async def test_the_order_becomes_its_token_and_that_renewal_is_cancelled(client):
-    order_route = respx.get(ORDER_URL).respond(200, json=_order(state="PROCESSED"))
-    cancel_route = respx.post(CANCEL_URL).respond(200)
+    cancel_route = _mock_play()
     access_token = FakeAccessToken()
 
-    await _adapter(client, access_token).cancel_renewal(ORDER)
+    outcome = await _adapter(client, access_token).cancel_renewal(ORDER, PRODUCT)
 
-    assert order_route.call_count == 1 and cancel_route.call_count == 1
-    for route in (order_route, cancel_route):
-        assert route.calls.last.request.headers["Authorization"] == "Bearer access-1"
+    assert outcome is PlayCancelOutcome.CANCELLED
+    assert cancel_route.call_count == 1
+    for call in respx.calls:
+        assert call.request.headers["Authorization"] == "Bearer access-1"
     assert json.loads(cancel_route.calls.last.request.content) == CANCEL_BODY
     assert CANCEL_BODY["cancellationContext"]["cancellationType"] == (
         "DEVELOPER_REQUESTED_STOP_PAYMENTS"
     )
-    assert access_token.calls == 1  # one token for both calls
+    assert access_token.calls == 1  # one token for every call
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "SUBSCRIPTION_STATE_ACTIVE",
+        "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+        "SUBSCRIPTION_STATE_ON_HOLD",
+        "SUBSCRIPTION_STATE_PAUSED",
+    ],
+)
+@respx.mock
+async def test_a_plan_that_will_charge_again_is_cancelled(client, state):
+    cancel_route = _mock_play(_subscription(state))
+
+    assert await _adapter(client).cancel_renewal(ORDER, PRODUCT) is (
+        PlayCancelOutcome.CANCELLED
+    )
+    assert cancel_route.called
+
+
+@pytest.mark.parametrize(
+    "subscription",
+    [
+        _subscription("SUBSCRIPTION_STATE_CANCELED", auto_renew=False),
+        _subscription("SUBSCRIPTION_STATE_EXPIRED", auto_renew=False),
+        _subscription("SUBSCRIPTION_STATE_PENDING"),
+        _subscription("SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED"),
+        _subscription("SUBSCRIPTION_STATE_ACTIVE", auto_renew=False),
+        {"lineItems": _subscription()["lineItems"]},  # no state at all
+    ],
+    ids=[
+        "canceled",
+        "expired",
+        "pending",
+        "pending-canceled",
+        "auto-renew-off",
+        "no-state",
+    ],
+)
+@respx.mock
+async def test_a_plan_that_will_not_charge_again_is_left_alone(client, subscription):
+    cancel_route = _mock_play(subscription)
+
+    assert await _adapter(client).cancel_renewal(ORDER, PRODUCT) is (
+        PlayCancelOutcome.NOT_RENEWING
+    )
+    assert not cancel_route.called
+
+
+@respx.mock
+async def test_a_subscription_without_the_product_is_a_mix_up(client):
+    cancel_route = _mock_play(_subscription(product="nutree_weekly"))
+
+    with pytest.raises(PlayBillingRejectedError):
+        await _adapter(client).cancel_renewal(ORDER, PRODUCT)
+
+    assert not cancel_route.called
+
+
+# --- Failures and the one retry ---
 
 
 @pytest.mark.parametrize(
@@ -88,41 +184,55 @@ async def test_the_order_becomes_its_token_and_that_renewal_is_cancelled(client)
         (410, PlayBillingNotFoundError),
         (408, PlayBillingUnavailableError),
         (429, PlayBillingUnavailableError),
-        (500, PlayBillingUnavailableError),
-        (503, PlayBillingUnavailableError),
         (400, PlayBillingRejectedError),
     ],
 )
 @respx.mock
-async def test_an_order_lookup_failure_is_typed_and_cancels_nothing(
-    client, status, error
-):
-    respx.get(ORDER_URL).respond(status)
-    cancel_route = respx.post(CANCEL_URL).respond(200)
+async def test_a_4xx_is_typed_and_not_retried(client, status, error):
+    order_route = respx.get(ORDER_URL).respond(status)
 
     with pytest.raises(error) as raised:
-        await _adapter(client).cancel_renewal(ORDER)
+        await _adapter(client).cancel_renewal(ORDER, PRODUCT)
 
     assert raised.value.status_code == status
-    assert not cancel_route.called
+    assert order_route.call_count == 1
+
+
+@pytest.mark.parametrize("step", ["order", "subscription", "cancel"])
+@respx.mock
+async def test_a_5xx_is_retried_once_and_then_succeeds(client, step):
+    steps = {
+        "order": (respx.get(ORDER_URL), httpx.Response(200, json=_order())),
+        "subscription": (
+            respx.get(SUBSCRIPTION_URL),
+            httpx.Response(200, json=_subscription()),
+        ),
+        "cancel": (respx.post(CANCEL_URL), httpx.Response(200)),
+    }
+    for name, (route, answer) in steps.items():
+        route.side_effect = [httpx.Response(503), answer] if name == step else [answer]
+
+    outcome = await _adapter(client).cancel_renewal(ORDER, PRODUCT)
+
+    assert outcome is PlayCancelOutcome.CANCELLED
+    assert steps[step][0].call_count == 2
 
 
 @pytest.mark.parametrize(
-    ("status", "error"),
-    [
-        (403, PlayBillingConfigurationError),
-        (410, PlayBillingNotFoundError),
-        (500, PlayBillingUnavailableError),
-        (400, PlayBillingRejectedError),
-    ],
+    "failure",
+    [httpx.Response(500), httpx.ConnectTimeout("slow"), httpx.ConnectError("down")],
+    ids=["5xx", "timeout", "network"],
 )
 @respx.mock
-async def test_a_cancel_failure_is_typed(client, status, error):
-    respx.get(ORDER_URL).respond(200, json=_order())
-    respx.post(CANCEL_URL).respond(status)
+async def test_a_second_transient_failure_gives_up_as_unavailable(client, failure):
+    _mock_play()
+    cancel_route = respx.post(CANCEL_URL)
+    cancel_route.side_effect = [failure, failure]
 
-    with pytest.raises(error):
-        await _adapter(client).cancel_renewal(ORDER)
+    with pytest.raises(PlayBillingUnavailableError):
+        await _adapter(client).cancel_renewal(ORDER, PRODUCT)
+
+    assert cancel_route.call_count == 2
 
 
 @respx.mock
@@ -140,22 +250,11 @@ async def test_google_error_words_are_kept_but_not_its_message(client):
     )
 
     with pytest.raises(PlayBillingConfigurationError) as raised:
-        await _adapter(client).cancel_renewal(ORDER)
+        await _adapter(client).cancel_renewal(ORDER, PRODUCT)
 
     text = str(raised.value)
     assert "orders.get returned 403 (PERMISSION_DENIED, permissionDenied)" in text
     assert ORDER not in text
-
-
-@pytest.mark.parametrize(
-    "failure", [httpx.ConnectTimeout("slow"), httpx.ConnectError("down")]
-)
-@respx.mock
-async def test_a_timeout_or_network_failure_is_unavailable(client, failure):
-    respx.get(ORDER_URL).mock(side_effect=failure)
-
-    with pytest.raises(PlayBillingUnavailableError):
-        await _adapter(client).cancel_renewal(ORDER)
 
 
 @pytest.mark.parametrize(
@@ -171,25 +270,32 @@ async def test_a_timeout_or_network_failure_is_unavailable(client, failure):
 @respx.mock
 async def test_an_order_without_a_usable_token_is_rejected(client, response):
     respx.get(ORDER_URL).mock(return_value=response)
-    cancel_route = respx.post(CANCEL_URL).respond(200)
+    subscription_route = respx.get(SUBSCRIPTION_URL).respond(200, json=_subscription())
 
     with pytest.raises(PlayBillingRejectedError):
-        await _adapter(client).cancel_renewal(ORDER)
+        await _adapter(client).cancel_renewal(ORDER, PRODUCT)
 
-    assert not cancel_route.called
+    assert not subscription_route.called
 
 
 @pytest.mark.parametrize(
-    "order_id",
-    ["", " ", "GPA.1 2", "x" * 5000],
-    ids=["empty", "blank", "inner-space", "too-long"],
+    ("order_id", "product_id"),
+    [
+        ("", PRODUCT),
+        (" ", PRODUCT),
+        ("GPA.1 2", PRODUCT),
+        ("x" * 5000, PRODUCT),
+        (ORDER, ""),
+        (ORDER, ":yearly"),
+    ],
+    ids=["empty", "blank", "inner-space", "too-long", "no-product", "bare-plan"],
 )
 @respx.mock(assert_all_mocked=True)
-async def test_a_malformed_order_id_is_rejected_before_any_call(client, order_id):
+async def test_malformed_ids_are_rejected_before_any_call(client, order_id, product_id):
     access_token = FakeAccessToken()
 
     with pytest.raises(PlayBillingRejectedError):
-        await _adapter(client, access_token).cancel_renewal(order_id)
+        await _adapter(client, access_token).cancel_renewal(order_id, product_id)
 
     assert access_token.calls == 0
 
@@ -199,7 +305,7 @@ async def test_an_order_id_with_a_slash_stays_one_path_segment(client):
     route = respx.get(f"{API_ROOT}/{PACKAGE}/orders/a%2Fb").respond(404)
 
     with pytest.raises(PlayBillingNotFoundError):
-        await _adapter(client).cancel_renewal("a/b")
+        await _adapter(client).cancel_renewal("a/b", PRODUCT)
 
     assert route.called
 
@@ -210,28 +316,32 @@ async def test_a_token_failure_stops_before_any_play_call(client):
     access_token = FakeAccessToken(PlayBillingUnavailableError("token down"))
 
     with pytest.raises(PlayBillingUnavailableError):
-        await _adapter(client, access_token).cancel_renewal(ORDER)
+        await _adapter(client, access_token).cancel_renewal(ORDER, PRODUCT)
 
     assert not order_route.called
 
 
 @pytest.mark.parametrize(
-    "adapter",
+    "fields",
     [
-        GooglePlaySubscriptionAdapter(
-            package_name=PACKAGE, access_token=None, timeout_seconds=1.0
-        ),
-        GooglePlaySubscriptionAdapter(
-            package_name="", access_token=FakeAccessToken(), timeout_seconds=1.0
-        ),
-        GooglePlaySubscriptionAdapter(
-            package_name="nutree", access_token=FakeAccessToken(), timeout_seconds=1.0
-        ),
+        {"access_token": None},
+        {"package_name": ""},
+        {"package_name": "nutree"},
+        {"switched_on": False},
     ],
+    ids=["no-key", "no-package", "bad-package", "switched-off"],
 )
 @respx.mock(assert_all_mocked=True)
-async def test_a_disabled_adapter_calls_nothing(adapter):
+async def test_a_disabled_adapter_calls_nothing(fields):
+    values = {
+        "package_name": PACKAGE,
+        "access_token": FakeAccessToken(),
+        "timeout_seconds": 1.0,
+        **fields,
+    }
+    adapter = GooglePlaySubscriptionAdapter(**values)
     assert adapter.enabled is False
+    assert adapter.switched_on is fields.get("switched_on", True)
 
     with pytest.raises(PlayBillingConfigurationError):
-        await adapter.cancel_renewal(ORDER)
+        await adapter.cancel_renewal(ORDER, PRODUCT)

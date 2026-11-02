@@ -22,6 +22,7 @@ from tests.fixtures.fakes.lifetime_webhook_db import (
 
 from src.api.routes.v1.webhooks import revenuecat_webhook
 from src.domain.model.streak import StreakRestorePolicy
+from src.domain.ports.play_subscription_port import PlayCancelOutcome
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
 
@@ -33,6 +34,24 @@ PLAY_MONTHLY = "nutree_monthly_149k:monthly"
 YEARLY_ORDER = "GPA.3372-1111-2222-33333"
 MONTHLY_ORDER = "GPA.3372-4444-5555-66666..2"
 LIFETIME_ORDER = "GPA.3372-7777-8888-99999"
+# RevenueCat lists a Play plan by its latest order: the first one plus ``..N``.
+LISTED_ORDERS = (f"{YEARLY_ORDER}..3", MONTHLY_ORDER)
+
+
+def revenuecat_subscriber(*orders: str) -> dict[str, Any]:
+    """RevenueCat's v1 subscriber, listing these Play orders as subscriptions."""
+    return {
+        "subscriber": {
+            "subscriptions": {
+                f"product_{index}": {
+                    "store": "play_store",
+                    "store_transaction_id": order,
+                    "is_sandbox": False,
+                }
+                for index, order in enumerate(orders)
+            }
+        }
+    }
 
 
 def play_yearly_purchase(**fields: Any) -> dict[str, Any]:
@@ -76,8 +95,9 @@ def fake_play_service(**fields: Any) -> SimpleNamespace:
     """An enabled adapter whose cancel succeeds unless a test says otherwise."""
     values: dict[str, Any] = {
         "enabled": True,
+        "switched_on": True,
         "sandbox_enabled": False,
-        "cancel_renewal": AsyncMock(),
+        "cancel_renewal": AsyncMock(return_value=PlayCancelOutcome.CANCELLED),
         **fields,
     }
     return SimpleNamespace(**values)

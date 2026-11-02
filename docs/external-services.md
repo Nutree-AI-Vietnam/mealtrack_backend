@@ -275,40 +275,58 @@ optional caches.
 
 ### Play renewal cancel on lifetime
 
-- A lifetime purchase or upgrade from `PLAY_STORE` turns off the renewal of
-  the event user's Play plan rows that still grant access (same environment,
-  not lifetime; `cancelled` rows already stopped). The rows are read before
-  the upgrade converts the yearly row. A redelivered purchase is already
-  stored and cancels nothing.
-- A Play `INITIAL_PURCHASE` or `RENEWAL` of a renewing plan while the event
-  user holds a Play lifetime row that grants access (same environment) is
-  cancelled too, by the event's own order id. This covers the upgrade's
-  webhook landing before the yearly's, when the yearly had no row to pick.
-- Either way the cancel runs after the unit of work commits, inline, within
-  a 10 s budget, behind the same switches. Every failure is logged at ERROR
-  (Sentry) and the webhook still answers 200. App Store and web events, and
-  plans beside an App Store lifetime, never call Google.
-- RevenueCat names a Play subscription only by order id (`GPA.…`, the row's
-  `store_transaction_id`). `orders.get` returns its `purchaseToken`, then
-  `purchases.subscriptionsv2.cancel` with `DEVELOPER_REQUESTED_STOP_PAYMENTS`
-  stops the next payment; access lasts to the end of the paid period.
-- Signed in as the backend's Firebase service account (`FIREBASE_CREDENTIALS`
-  file, else `FIREBASE_SERVICE_ACCOUNT_JSON`), scope `androidpublisher`.
-- Settings: `GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED` (default `false`; off also
-  without a usable service account or package), `GOOGLE_PLAY_PACKAGE_NAME`
-  (`com.nutreeai.mobile` in production, `com.nutreeai.mobile.staging` on
-  staging), `GOOGLE_PLAY_CANCEL_SANDBOX` (default `false`; sandbox events are
-  skipped unless on), `GOOGLE_PLAY_API_TIMEOUT_SECONDS` (default 3).
-- Setup per environment, before turning the switch on:
+- **Scope.** Every renewing Play plan of a Play lifetime holder is stopped,
+  weekly and monthly as well as yearly. That is intended: one `standard`
+  entitlement covers all of them, so a plan beside lifetime only charges again.
+- **Triggers.** A lifetime purchase or upgrade from `PLAY_STORE` picks the
+  event user's Play plan rows of the same environment that aren't lifetime or
+  refunded and whose expiry is unknown, ahead or under 90 days old, read
+  before the upgrade converts the yearly row. A Play `INITIAL_PURCHASE` or
+  `RENEWAL` while that user holds a Play lifetime row that grants access
+  names its own plan by order id (the upgrade's webhook landed first). A
+  redelivered lifetime purchase picks nothing.
+- **Checks, after the unit of work commits, inline within 10 s.** RevenueCat
+  must list the plan's order (compared without the `..N` renewal suffix)
+  under the event's subscriber, else nothing is cancelled. `orders.get` turns
+  the order id into the purchase token; `purchases.subscriptionsv2.get` must
+  show the product's line item with auto-renew on and the state ACTIVE,
+  IN_GRACE_PERIOD, ON_HOLD or PAUSED, so a plan in billing retry is stopped
+  and one already off is left alone. Then `purchases.subscriptionsv2.cancel`
+  (`DEVELOPER_REQUESTED_STOP_PAYMENTS`) stops the next payment; access lasts
+  to the end of the paid period. A timeout, network failure or 5xx is tried
+  once more; a 4xx isn't.
+- **Failures** are logged at ERROR (Sentry) with our user id and each plan's
+  order id and product, never a purchase token or a traceback, and the
+  webhook still answers 200. So is every skipped cancel while the switch is
+  on but the key or package is unusable. App Store and web events never call
+  Google.
+- **Settings.** `GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED` (default `false`),
+  `GOOGLE_PLAY_PACKAGE_NAME` (`com.nutreeai.mobile` in production,
+  `com.nutreeai.mobile.staging` on staging), `GOOGLE_PLAY_CANCEL_SANDBOX`
+  (default `false`; sandbox events are skipped unless on),
+  `GOOGLE_PLAY_API_TIMEOUT_SECONDS` (default 3). Calls are signed in as the
+  backend's Firebase service account (`FIREBASE_CREDENTIALS` file, else
+  `FIREBASE_SERVICE_ACCOUNT_JSON`), scope `androidpublisher`.
+- **Setup per environment, per app only:**
   1. In that backend's Firebase project's Google Cloud console, enable the
      Google Play Android Developer API.
-  2. In Play Console, Users and permissions, invite the service account email
-     (`client_email` of the key) with app access to that environment's app,
-     and grant "View financial data" and "Manage orders and subscriptions".
-     A 401/403 right after the invite can be Play still applying it.
-- QA on staging: set `GOOGLE_PLAY_CANCEL_SANDBOX=true`, buy the yearly then
+  2. In Play Console, Users and permissions, invite that service account
+     (`client_email` of the key) with app permissions on that environment's
+     app only: the staging account on `com.nutreeai.mobile.staging`, the
+     production account on `com.nutreeai.mobile`. Grant "View financial data"
+     and "Manage orders and subscriptions". Never grant account-level
+     permissions. A 401/403 right after the invite can be Play still applying it.
+- **QA on staging:** set `GOOGLE_PLAY_CANCEL_SANDBOX=true`, buy the yearly then
   the upgrade on the Play internal build with a license tester, and check for
   "Play renewal cancelled" in the logs and "Canceled" in Play's subscriptions.
+- **Runbook, a failed cancel.** In Sentry, search the backend project for
+  "Play renewal" at level error ("cancel failed", "ran out of time", "not
+  cancelled", "on but unusable"). The message holds `plans=<order id>|<product>`
+  and our `user_id`. If the order is listed "under another subscriber",
+  check the account in RevenueCat before acting. Otherwise, in Play Console
+  open Order management, search the order id (without any `..N`), open the
+  order and choose to cancel the subscription so it doesn't renew; don't
+  refund. Afterwards RevenueCat sends a CANCELLATION for the plan.
 
 ### Payment-failed push
 

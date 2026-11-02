@@ -25,7 +25,10 @@ from tests.fixtures.fakes.play_renewal_fakes import (
 )
 
 from src.api.routes.v1.webhook_lifetime_purchase import handle_lifetime_purchase
-from src.api.routes.v1.webhook_play_renewal_cancel import play_plan_beside_lifetime
+from src.api.routes.v1.webhook_play_renewal_selection import (
+    PlayRenewal,
+    play_plan_beside_lifetime,
+)
 from src.domain.ports.play_subscription_port import PlayBillingUnavailableError
 
 pytestmark = pytest.mark.asyncio
@@ -61,7 +64,7 @@ async def test_a_play_yearly_arriving_after_the_play_upgrade_is_cancelled(
     commit(uow)
     seen: list = []
 
-    async def cancel(order_id):
+    async def cancel(order_id, product_id):
         seen.append(("cancel", order_id, uow.session.sync.in_transaction()))
 
     play.cancel_renewal.side_effect = cancel
@@ -76,15 +79,16 @@ async def test_a_play_yearly_arriving_after_the_play_upgrade_is_cancelled(
 
 async def test_a_play_renewal_beside_a_play_lifetime_is_cancelled(uow, publisher, play):
     _play_lifetime_row(uow)
-    yearly_row = add_plan_row(uow)
+    add_plan_row(uow)
 
     with webhook_route(uow, publisher):
         assert await post_webhook(_play_renewal()) == {"status": "success"}
 
-    play.cancel_renewal.assert_awaited_once_with(RENEWAL_ORDER)
+    play.cancel_renewal.assert_awaited_once_with(RENEWAL_ORDER, PLAY_YEARLY)
     assert lifecycle_types(publisher) == ["subscription_renewal"]
-    (renewal,) = await play_plan_beside_lifetime(uow, USER, _play_renewal())
-    assert (renewal.row_id, renewal.product_id) == (yearly_row.id, PLAY_YEARLY)
+    assert await play_plan_beside_lifetime(uow, USER, _play_renewal()) == [
+        PlayRenewal(USER.id, PLAY_YEARLY, RENEWAL_ORDER)
+    ]
 
 
 async def test_a_failing_cancel_still_stores_the_plan_event(uow, publisher, play):
@@ -96,7 +100,7 @@ async def test_a_failing_cancel_still_stores_the_plan_event(uow, publisher, play
     with webhook_route(uow, publisher):
         assert await post_webhook(play_yearly_purchase()) == {"status": "success"}
 
-    play.cancel_renewal.assert_awaited_once_with(YEARLY_ORDER)
+    play.cancel_renewal.assert_awaited_once_with(YEARLY_ORDER, PLAY_YEARLY)
     assert await entitled(uow)
 
 

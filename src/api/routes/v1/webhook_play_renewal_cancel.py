@@ -1,139 +1,60 @@
-"""Turn off a Play plan's renewal once its buyer holds a Play lifetime.
+"""Stop the Play plans a Play lifetime holder's webhook picked, after it commits.
 
 Neither store credits a running plan against lifetime, so a plan left
 renewing charges again next period. Play lets the developer stop it; the
-App Store doesn't, so only Play purchases and Play plans get here.
+App Store doesn't. ``webhook_play_renewal_selection`` picks the plans inside
+the event's unit of work; this runs only after that unit commits, so the
+grant never waits on Google or fails because of it.
 
-Two events name such a plan. A Play lifetime purchase picks the buyer's Play
-plans that still renew, before the upgrade converts the yearly row. A Play
-plan bought or renewed while a Play lifetime already grants access names
-itself: that covers the upgrade's webhook landing before the yearly's, when
-the yearly had no row yet to pick.
-
-Either way the plans are picked inside the event's unit of work and are
-cancelled only after it commits, so the grant never waits on Google or fails
-because of it. Nothing here raises, so RevenueCat never redelivers an event
-because of it. A redelivered lifetime purchase is already stored and picks
-no plans.
+Each plan is cancelled only when RevenueCat lists its order under the
+event's subscriber, so a plan our rows attribute to the buyer but the store
+account doesn't (a broad transfer) is never touched. Nothing here raises, so
+RevenueCat never redelivers an event because of it. Failures are logged at
+ERROR, without a traceback, with the order id needed to cancel by hand.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any
 
-from src.api.routes.v1.webhook_lookup_parsing import store_platform
-from src.api.routes.v1.webhook_subscription_rows import (
-    is_sandbox_event,
-    load_subscriber_rows,
+from src.api.base_dependencies import get_subscription_service
+from src.api.routes.v1.webhook_play_renewal_selection import (
+    PlayRenewal,
+    play_order_base,
 )
+from src.api.routes.v1.webhook_subscription_rows import is_sandbox_event
 from src.bootstrap.integration_services import get_play_subscription_service
-from src.domain.constants.lifetime_products import grants_access, is_lifetime_product
 from src.domain.ports.play_subscription_port import (
     PlayBillingError,
+    PlayCancelOutcome,
     PlaySubscriptionPort,
 )
-from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
 # Well inside RevenueCat's 60 s webhook timeout: a slow Google never turns a
-# stored purchase into a redelivery.
+# stored event into a redelivery. Covers the RevenueCat lookup, every
+# Google call and the adapter's one retry.
 CANCEL_BUDGET_SECONDS = 10.0
-
-
-@dataclass(frozen=True)
-class PlayRenewal:
-    """A Play plan row that still renews, as it was before the purchase."""
-
-    row_id: str | None  # None: the plan has no row of its own
-    user_id: str
-    product_id: str
-    order_id: str | None  # RevenueCat's Play transaction id is the order id
+REVENUECAT_LOOKUP_SECONDS = 3.0
 
 
 def _get_play_subscription_service() -> PlaySubscriptionPort:
     return get_play_subscription_service()
 
 
-def play_renewals_to_cancel(
-    rows: list[Any], user: Any, event: dict[str, Any]
-) -> list[PlayRenewal]:
-    """The event user's Play plans that still renew, for a Play purchase.
-
-    Only plan rows of the event's environment that grant access now: active or
-    billing-issue, with the period still ahead. A cancelled row has already
-    stopped renewing, and another account's row is not this buyer's plan.
-    """
-    if store_platform(event.get("store")) != "android":
-        return []
-    sandbox = is_sandbox_event(event)
-    now = utc_now()
-    renewals = [
-        PlayRenewal(row.id, row.user_id, row.product_id, row.store_transaction_id)
-        for row in rows
-        if row.user_id == user.id
-        and row.platform == "android"
-        and bool(row.is_sandbox) == sandbox
-        and not is_lifetime_product(row.product_id)
-        and grants_access(row.status, row.product_id, row.expires_at, now)
-    ]
-    if not renewals:
-        logger.info(
-            "Play lifetime purchase: no renewing Play plan: user_id=%s", user.id
-        )
-    return renewals
+def _get_subscription_service() -> Any:
+    return get_subscription_service()
 
 
-async def play_plan_beside_lifetime(
-    uow: Any, user: Any, event: dict[str, Any]
-) -> list[PlayRenewal]:
-    """A Play plan bought or renewed while the event user holds a Play lifetime.
-
-    The event's own transaction id is the plan's order id, so the plan needs
-    no row. Read after the plan handler ran, under its subscriber lock.
-    """
-    product_id = event.get("product_id")
-    if (
-        store_platform(event.get("store")) != "android"
-        or not isinstance(product_id, str)
-        or is_lifetime_product(product_id)
-    ):
-        return []
-    rows = await load_subscriber_rows(uow, event.get("app_user_id"))
-    sandbox = is_sandbox_event(event)
-    now = utc_now()
-    holds_play_lifetime = any(
-        row.user_id == user.id
-        and row.platform == "android"
-        and bool(row.is_sandbox) == sandbox
-        and is_lifetime_product(row.product_id)
-        and grants_access(row.status, row.product_id, row.expires_at, now)
-        for row in rows
-    )
-    if not holds_play_lifetime:
-        return []
-    own = next(
-        (r for r in rows if r.product_id == product_id and r.user_id == user.id),
-        None,
-    )
-    order_id = event.get("transaction_id") or event.get("original_transaction_id")
-    logger.info(
-        "Play plan event beside a Play lifetime: user_id=%s event_type=%s product=%s",
-        user.id,
-        event.get("type"),
-        product_id,
-    )
-    return [
-        PlayRenewal(
-            own.id if own is not None else None,
-            user.id,
-            product_id,
-            order_id if isinstance(order_id, str) else None,
-        )
-    ]
+def _plans(renewals: Sequence[PlayRenewal]) -> str:
+    """Our user id and each plan's order and product, for cancelling by hand."""
+    user_id = renewals[0].user_id if renewals else None
+    plans = ";".join(f"{r.order_id}|{r.product_id}" for r in renewals)
+    return f"user_id={user_id} plans={plans}"
 
 
 async def cancel_play_renewals(
@@ -142,72 +63,127 @@ async def cancel_play_renewals(
     """Cancel each renewal once the event is committed; logs, never raises."""
     if not renewals:
         return
-    user_id = renewals[0].user_id
     try:
         service = _get_play_subscription_service()
-    except Exception:
-        logger.exception("Play renewal cancel could not start: user_id=%s", user_id)
+    except Exception as exc:
+        logger.error(
+            "Play renewal cancel could not start: error=%s %s",
+            type(exc).__name__,
+            _plans(renewals),
+        )
         return
     if not service.enabled:
-        logger.warning(
-            "Play renewal cancel is off; %d Play plan(s) keep renewing: user_id=%s",
-            len(renewals),
-            user_id,
-        )
+        if service.switched_on:
+            logger.error(
+                "Play renewal cancel is on but unusable; plans keep renewing: %s",
+                _plans(renewals),
+            )
+        else:
+            logger.warning(
+                "Play renewal cancel is off; %d Play plan(s) keep renewing: user_id=%s",
+                len(renewals),
+                renewals[0].user_id,
+            )
         return
     if is_sandbox_event(event) and not service.sandbox_enabled:
         logger.info(
-            "Play renewal cancel skipped for a sandbox event: user_id=%s", user_id
+            "Play renewal cancel skipped for a sandbox event: user_id=%s",
+            renewals[0].user_id,
         )
         return
+    pending = list(renewals)
     try:
         async with asyncio.timeout(CANCEL_BUDGET_SECONDS):
-            for renewal in renewals:
-                await _cancel(service, renewal)
+            owned = await _subscriber_play_orders(event)
+            while pending:
+                await _cancel(service, pending[0], owned)
+                pending.pop(0)
     except TimeoutError:
         logger.error(
-            "Play renewal cancel ran out of time: user_id=%s budget_s=%s",
-            user_id,
+            "Play renewal cancel ran out of time: budget_s=%s %s",
             CANCEL_BUDGET_SECONDS,
+            _plans(pending),
         )
 
 
-async def _cancel(service: PlaySubscriptionPort, renewal: PlayRenewal) -> None:
+async def _subscriber_play_orders(event: dict[str, Any]) -> set[str] | None:
+    """The base order ids RevenueCat lists under the event's subscriber.
+
+    None when RevenueCat can't answer: nothing is cancelled unconfirmed.
+    """
+    subscriber_id = event.get("app_user_id")
+    if not isinstance(subscriber_id, str) or not subscriber_id:
+        return None
+    try:
+        lookup = _get_subscription_service().get_subscriber_info(subscriber_id)
+        info = await asyncio.wait_for(lookup, timeout=REVENUECAT_LOOKUP_SECONDS)
+    except Exception as exc:
+        logger.warning(
+            "RevenueCat lookup for Play renewal cancel failed: error=%s",
+            type(exc).__name__,
+        )
+        return None
+    subscriber = info.get("subscriber") if isinstance(info, dict) else None
+    entries = subscriber.get("subscriptions") if isinstance(subscriber, dict) else None
+    if not isinstance(entries, dict):
+        return None
+    return {
+        play_order_base(entry["store_transaction_id"])
+        for entry in entries.values()
+        if isinstance(entry, dict)
+        and str(entry.get("store") or "").lower() == "play_store"
+        and isinstance(entry.get("store_transaction_id"), str)
+        and entry["store_transaction_id"]
+    }
+
+
+async def _cancel(
+    service: PlaySubscriptionPort, renewal: PlayRenewal, owned: set[str] | None
+) -> None:
+    plan = _plans([renewal])
     if not renewal.order_id:
+        logger.error("Play renewal not cancelled, its row has no order id: %s", plan)
+        return
+    if owned is None:
         logger.error(
-            "Play renewal not cancelled, its row has no order id: "
-            "user_id=%s row_id=%s product=%s",
-            renewal.user_id,
-            renewal.row_id,
-            renewal.product_id,
+            "Play renewal not cancelled, RevenueCat could not confirm the owner: %s",
+            plan,
+        )
+        return
+    if play_order_base(renewal.order_id) not in owned:
+        logger.error(
+            "Play renewal not cancelled, RevenueCat lists the order under "
+            "another subscriber: %s",
+            plan,
         )
         return
     try:
-        await service.cancel_renewal(renewal.order_id)
+        outcome = await service.cancel_renewal(renewal.order_id, renewal.product_id)
     except PlayBillingError as exc:
         logger.error(
-            "Play renewal cancel failed: user_id=%s row_id=%s product=%s "
-            "error=%s status=%s detail=%s",
-            renewal.user_id,
-            renewal.row_id,
-            renewal.product_id,
+            "Play renewal cancel failed: error=%s status=%s detail=%s %s",
             type(exc).__name__,
             exc.status_code,
             exc,
+            plan,
         )
         return
-    except Exception:
-        logger.exception(
-            "Play renewal cancel failed unexpectedly: user_id=%s row_id=%s product=%s",
+    except Exception as exc:
+        logger.error(
+            "Play renewal cancel failed unexpectedly: error=%s %s",
+            type(exc).__name__,
+            plan,
+        )
+        return
+    if outcome is PlayCancelOutcome.NOT_RENEWING:
+        logger.info(
+            "Play renewal already off or ended: user_id=%s product=%s",
             renewal.user_id,
-            renewal.row_id,
             renewal.product_id,
         )
-        return
-    logger.info(
-        "Play renewal cancelled for a Play lifetime holder: "
-        "user_id=%s row_id=%s product=%s",
-        renewal.user_id,
-        renewal.row_id,
-        renewal.product_id,
-    )
+    else:
+        logger.info(
+            "Play renewal cancelled for a Play lifetime holder: user_id=%s product=%s",
+            renewal.user_id,
+            renewal.product_id,
+        )

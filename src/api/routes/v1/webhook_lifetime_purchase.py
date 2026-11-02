@@ -7,7 +7,7 @@ refund arrives as CANCELLATION (RevenueCat has no REFUND event type) and
 marks only the row of that purchase refunded. Renewing-product events leave
 lifetime rows alone; see ``webhook_subscription_rows``. A purchase made on
 Play also returns the buyer's Play plans that still renew, for the router to
-cancel after commit (``webhook_play_renewal_cancel``).
+cancel after commit (``webhook_play_renewal_selection``).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from src.api.base_dependencies import get_subscription_service
 from src.api.exceptions import ExternalServiceException
 from src.api.routes.v1.webhook_lifecycle_events import notify_affiliate
 from src.api.routes.v1.webhook_lookup_parsing import parse_platform, parse_timestamp
-from src.api.routes.v1.webhook_play_renewal_cancel import (
+from src.api.routes.v1.webhook_play_renewal_selection import (
     PlayRenewal,
     play_renewals_to_cancel,
 )

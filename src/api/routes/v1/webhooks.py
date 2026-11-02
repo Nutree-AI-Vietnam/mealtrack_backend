@@ -24,9 +24,9 @@ from src.api.routes.v1.webhook_lookup_parsing import (
     parse_platform,
     parse_timestamp,
 )
-from src.api.routes.v1.webhook_play_renewal_cancel import (
+from src.api.routes.v1.webhook_play_renewal_cancel import cancel_play_renewals
+from src.api.routes.v1.webhook_play_renewal_selection import (
     PlayRenewal,
-    cancel_play_renewals,
     play_plan_beside_lifetime,
 )
 from src.api.routes.v1.webhook_referral_funnel import (

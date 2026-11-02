@@ -95,13 +95,20 @@ class ServiceAccountAccessToken:
 
 
 def load_access_token(
-    settings: Any, timeout_seconds: float
+    file_path: object, json_text: object, timeout_seconds: float
 ) -> ServiceAccountAccessToken | None:
-    """The token source, or None (logged) without a usable service account."""
-    info = _service_account_info(settings)
-    if info is None:
-        return None
+    """The token source, or None (logged) without a usable service account.
+
+    Takes the FIREBASE_CREDENTIALS path and the FIREBASE_SERVICE_ACCOUNT_JSON
+    text, never the Settings object. Every failure is caught here and logged
+    as a fixed message with the error type only: no traceback, so neither
+    the key nor the file's content reaches a log or Sentry, even as a frame
+    variable.
+    """
     try:
+        info = _service_account_info(file_path, json_text)
+        if info is None:
+            return None
         signer = service_account.Credentials.from_service_account_info(
             info, scopes=[ANDROID_PUBLISHER_SCOPE]
         )
@@ -114,27 +121,31 @@ def load_access_token(
     return ServiceAccountAccessToken(signer, timeout_seconds)
 
 
-def _service_account_info(settings: Any) -> dict[str, Any] | None:
-    path = settings.FIREBASE_CREDENTIALS
-    raw: str | None
-    if path and os.path.exists(path):
+def _service_account_info(
+    file_path: object, json_text: object
+) -> dict[str, Any] | None:
+    raw: object
+    if isinstance(file_path, str) and file_path and os.path.exists(file_path):
         try:
-            with open(path, encoding="utf-8") as handle:
+            with open(file_path, encoding="utf-8") as handle:
                 raw = handle.read()
-        except OSError as exc:
+        except (OSError, ValueError) as exc:  # ValueError: not UTF-8
             logger.error(
                 "Firebase service account file unreadable for Google Play: error=%s",
                 type(exc).__name__,
             )
             return None
     else:
-        raw = settings.FIREBASE_SERVICE_ACCOUNT_JSON
+        raw = json_text
     if not raw:
         logger.error("No Firebase service account set; Play renewal cancel stays off")
         return None
+    if not isinstance(raw, str):
+        logger.error("Firebase service account setting is not text")
+        return None
     try:
         info = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         logger.error("Firebase service account is not JSON; Play renewal cancel off")
         return None
     if not isinstance(info, dict) or info.get("type") != "service_account":

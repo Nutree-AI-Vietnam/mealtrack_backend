@@ -1,6 +1,7 @@
 """Through the RevenueCat route: the grant commits first, then Play is asked."""
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -8,11 +9,13 @@ import pytest
 import respx
 from tests.fixtures.fakes.lifetime_webhook_db import (
     LIFETIME_UPGRADE_PRODUCT_ID,
+    USER,
     entitled,
     lifetime,
     rows,
 )
 from tests.fixtures.fakes.play_renewal_fakes import (
+    PLAY_YEARLY,
     YEARLY_ORDER,
     play_lifetime,
     play_yearly_purchase,
@@ -38,7 +41,7 @@ async def test_the_grant_commits_before_play_is_asked(uow, deliver, publisher, p
     await deliver(handle_purchase, play_yearly_purchase())
     seen: list = []
 
-    async def cancel(order_id):
+    async def cancel(order_id, product_id):
         # Nothing of the purchase is still uncommitted when Play is asked.
         seen.append(("cancel", order_id, uow.session.sync.in_transaction()))
 
@@ -74,37 +77,79 @@ async def test_a_duplicate_webhook_cancels_once(uow, deliver, publisher, play):
         for _ in range(2):
             assert await post_webhook(play_lifetime(UPGRADE)) == {"status": "success"}
 
-    play.cancel_renewal.assert_awaited_once_with(YEARLY_ORDER)
+    play.cancel_renewal.assert_awaited_once_with(YEARLY_ORDER, PLAY_YEARLY)
     assert len(await rows(uow)) == 1
+
+
+PACKAGE = "com.nutreeai.mobile"
+PURCHASE_TOKEN = "purchase-token-of-the-yearly"
+SUBSCRIPTION_URL = (
+    f"{API_ROOT}/{PACKAGE}/purchases/subscriptionsv2/tokens/{PURCHASE_TOKEN}"
+)
+
+
+def _real_adapter(client):
+    return GooglePlaySubscriptionAdapter(
+        package_name=PACKAGE,
+        access_token=MagicMock(get=AsyncMock(return_value="access-1")),
+        timeout_seconds=1.0,
+        client=client,
+    )
+
+
+def _mock_play(*, cancel_status=200):
+    """Play's answers for the yearly: its order, a renewing plan, the cancel."""
+    respx.get(f"{API_ROOT}/{PACKAGE}/orders/{YEARLY_ORDER}").respond(
+        200, json={"orderId": YEARLY_ORDER, "purchaseToken": PURCHASE_TOKEN}
+    )
+    respx.get(SUBSCRIPTION_URL).respond(
+        200,
+        json={
+            "subscriptionState": "SUBSCRIPTION_STATE_ACTIVE",
+            "lineItems": [
+                {
+                    "productId": PLAY_YEARLY.split(":")[0],
+                    "autoRenewingPlan": {"autoRenewEnabled": True},
+                }
+            ],
+        },
+    )
+    return respx.post(f"{SUBSCRIPTION_URL}:cancel").respond(cancel_status)
 
 
 @respx.mock
 async def test_the_real_adapter_cancels_the_orders_token_in_the_package(
     uow, deliver, publisher, play
 ):
-    package = "com.nutreeai.mobile"
-    token = "purchase-token-of-the-yearly"
-    order_route = respx.get(f"{API_ROOT}/{package}/orders/{YEARLY_ORDER}").respond(
-        200, json={"orderId": YEARLY_ORDER, "purchaseToken": token}
-    )
-    cancel_route = respx.post(
-        f"{API_ROOT}/{package}/purchases/subscriptionsv2/tokens/{token}:cancel"
-    ).respond(200)
+    cancel_route = _mock_play()
     await deliver(handle_purchase, play_yearly_purchase())
 
     async with httpx.AsyncClient() as client:
-        adapter = GooglePlaySubscriptionAdapter(
-            package_name=package,
-            access_token=MagicMock(get=AsyncMock(return_value="access-1")),
-            timeout_seconds=1.0,
-            client=client,
-        )
-        play.getter.return_value = adapter
+        play.getter.return_value = _real_adapter(client)
         with webhook_route(uow, publisher, []):
             assert await post_webhook(play_lifetime(UPGRADE)) == {"status": "success"}
 
-    assert order_route.call_count == 1 and cancel_route.call_count == 1
+    assert cancel_route.call_count == 1
     assert json.loads(cancel_route.calls.last.request.content) == CANCEL_BODY
+    assert await entitled(uow)
+
+
+@respx.mock
+async def test_a_cancel_play_keeps_failing_is_retried_once_and_logged_without_token(
+    uow, deliver, publisher, play, caplog
+):
+    cancel_route = _mock_play(cancel_status=503)
+    await deliver(handle_purchase, play_yearly_purchase())
+
+    async with httpx.AsyncClient() as client:
+        play.getter.return_value = _real_adapter(client)
+        with webhook_route(uow, publisher, []):
+            assert await post_webhook(play_lifetime(UPGRADE)) == {"status": "success"}
+
+    assert cancel_route.call_count == 2
+    (error,) = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert YEARLY_ORDER in error and PLAY_YEARLY in error and USER.id in error
+    assert PURCHASE_TOKEN not in caplog.text and "access-1" not in caplog.text
     assert await entitled(uow)
 
 

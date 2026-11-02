@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from tests.fixtures.fakes.lifetime_webhook_db import USER, commit, open_subscription_uow
-from tests.fixtures.fakes.play_renewal_fakes import fake_play_service
+from tests.fixtures.fakes.play_renewal_fakes import (
+    LISTED_ORDERS,
+    fake_play_service,
+    revenuecat_subscriber,
+)
 
 from src.domain.ports.subscription_service_port import EntitlementCheck
 
@@ -37,14 +41,22 @@ def push_enabled():
 
 @pytest.fixture(autouse=True)
 def revenuecat():
-    """RevenueCat answers: no renewing plan and no access unless a test sets them."""
+    """RevenueCat answers: no renewing plan and no access unless a test sets them.
+
+    Its subscriber lists the test Play plans' orders, so the Play cancel can
+    confirm their owner.
+    """
     service = MagicMock(
         get_subscription_info=AsyncMock(return_value=None),
         check_entitlement=AsyncMock(return_value=EntitlementCheck.NOT_ENTITLED),
+        get_subscriber_info=AsyncMock(
+            return_value=revenuecat_subscriber(*LISTED_ORDERS)
+        ),
     )
     with (
         patch(f"{LIFETIME}._get_subscription_service", return_value=service),
         patch(f"{FUNNEL}._get_subscription_service", return_value=service),
+        patch(f"{PLAY_CANCEL}._get_subscription_service", return_value=service),
     ):
         yield service
 

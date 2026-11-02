@@ -120,8 +120,66 @@ def test_without_a_usable_service_account_it_stays_off(caplog, fields):
     with caplog.at_level(logging.ERROR):
         adapter = GooglePlaySubscriptionAdapter.from_settings(_settings(**fields))
 
+    assert not adapter.enabled and adapter.switched_on
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors and all(r.exc_info is None for r in errors)
+
+
+# Sentry sends a traceback's frame variables, so the loader must never let
+# one out: no settings, no file content and no key in any log or frame.
+SECRET = "-----BEGIN PRIVATE KEY-----\nsuper-secret-key-material\n"
+
+
+def _assert_logged_safely(caplog) -> None:
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors and all(r.exc_info is None for r in caplog.records)
+    assert "super-secret" not in caplog.text and "Settings" not in caplog.text
+
+
+def test_a_key_file_that_is_not_utf8_is_caught_and_logged_safely(tmp_path, caplog):
+    key_file = tmp_path / "firebase.json"
+    key_file.write_bytes(b"\xff\xfe" + json.dumps({"private_key": SECRET}).encode())
+
+    with caplog.at_level(logging.ERROR):
+        adapter = GooglePlaySubscriptionAdapter.from_settings(
+            _settings(FIREBASE_CREDENTIALS=str(key_file))
+        )
+
     assert not adapter.enabled
-    assert [r for r in caplog.records if r.levelno == logging.ERROR]
+    _assert_logged_safely(caplog)
+    assert "file unreadable for Google Play: error=UnicodeDecodeError" in caplog.text
+
+
+@pytest.mark.parametrize("value", [12345, b"bytes", ["list"]])
+def test_a_service_account_setting_that_is_not_text_is_caught(caplog, value):
+    with caplog.at_level(logging.ERROR):
+        adapter = GooglePlaySubscriptionAdapter.from_settings(
+            _settings(FIREBASE_SERVICE_ACCOUNT_JSON=value)
+        )
+
+    assert not adapter.enabled
+    _assert_logged_safely(caplog)
+
+
+def test_a_key_the_library_chokes_on_is_caught_and_logged_safely(
+    caplog, service_account_json
+):
+    failure = RuntimeError(f"cannot parse {SECRET}")
+    with (
+        caplog.at_level(logging.ERROR),
+        patch(
+            "src.infra.adapters.google_play_auth.service_account.Credentials"
+            ".from_service_account_info",
+            side_effect=failure,
+        ),
+    ):
+        adapter = GooglePlaySubscriptionAdapter.from_settings(
+            _settings(FIREBASE_SERVICE_ACCOUNT_JSON=service_account_json)
+        )
+
+    assert not adapter.enabled
+    _assert_logged_safely(caplog)
+    assert "error=RuntimeError" in caplog.text
 
 
 def test_a_malformed_key_is_reported_without_its_content(caplog):
