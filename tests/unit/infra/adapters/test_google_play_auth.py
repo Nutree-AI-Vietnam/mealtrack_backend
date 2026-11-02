@@ -52,7 +52,6 @@ def service_account_json() -> str:
 
 def _settings(**overrides):
     values = {
-        "GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED": True,
         "GOOGLE_PLAY_PACKAGE_NAME": "com.nutreeai.mobile",
         "GOOGLE_PLAY_CANCEL_SANDBOX": False,
         "GOOGLE_PLAY_API_TIMEOUT_SECONDS": 3.0,
@@ -93,15 +92,20 @@ def test_the_service_account_file_wins_over_the_json_setting(
     assert adapter.enabled
 
 
-def test_with_the_switch_off_no_service_account_is_read(caplog):
-    with patch(f"{ADAPTER}.load_access_token") as load:
-        adapter = GooglePlaySubscriptionAdapter.from_settings(
-            _settings(GOOGLE_PLAY_RENEWAL_CANCEL_ENABLED=False)
-        )
+def test_it_is_on_without_any_switch(service_account_json):
+    adapter = GooglePlaySubscriptionAdapter.from_settings(
+        _settings(FIREBASE_SERVICE_ACCOUNT_JSON=service_account_json)
+    )
 
-    assert not adapter.enabled
-    load.assert_not_called()
-    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert adapter.switched_on and adapter.enabled
+
+
+def test_the_package_defaults_to_the_production_app():
+    from src.infra.config.settings import Settings
+
+    assert Settings.model_fields["GOOGLE_PLAY_PACKAGE_NAME"].default == (
+        "com.nutreeai.mobile"
+    )
 
 
 @pytest.mark.parametrize(
