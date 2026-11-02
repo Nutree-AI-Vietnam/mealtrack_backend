@@ -122,6 +122,11 @@ text, photos and testing.
   a `recipe_import` job.
 - Third-party images (expiring video thumbnails) are copied to the image
   store on save; if that fails the original link is kept.
+- A saved import can be planned in a weekly meal-plan slot
+  (`PATCH /v1/meal-plans/{plan_id}` with `saved_suggestion_id`, plan feature
+  `saved_recipe_slots`) and logged from there; the slot keeps its own copy,
+  so deleting the saved import leaves the week as planned. See
+  "Saved recipes in slots" in `docs/api-endpoints.md`.
 
 ## Errors
 
