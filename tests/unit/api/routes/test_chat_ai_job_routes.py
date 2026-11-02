@@ -417,6 +417,42 @@ class TestPostWithJob:
         assert record.getMessage() == "Chat turn streams without an AI job"
         assert isinstance(record.exc_info[1], RuntimeError)
 
+    def test_first_send_regenerate_conflict_abandons_the_reopened_row(self):
+        """The first send cleared the saved reply, so this request owns it.
+
+        A job id that belongs to another request must fail that row. A
+        reused row (owns_row false) is only released.
+        """
+        orchestrator = _StubOrchestrator()
+        ai_jobs = _StubAiJobs(error=AiJobConflictError(JOB_ID))
+
+        response = _post(
+            orchestrator,
+            ai_jobs,
+            _StubRunner(),
+            ai_job_id=JOB_ID,
+            regenerate_assistant_id="m-asst",
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "AI_JOB_CONFLICT"
+        assert orchestrator.cleared_reply is True
+        assert orchestrator.regenerate_kwargs["resume"] is False
+        assert orchestrator.prepared.claim.owns_row is True
+        assert orchestrator.abandoned == [(orchestrator.prepared, "CHAT_TURN_FAILED")]
+        assert orchestrator.released == []
+
+    def test_conflict_does_not_abandon_a_row_another_attempt_reused(self):
+        orchestrator = _StubOrchestrator(owns_row=False)
+        ai_jobs = _StubAiJobs(error=AiJobConflictError(JOB_ID))
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "AI_JOB_CONFLICT"
+        assert orchestrator.abandoned == []
+        assert orchestrator.released == [orchestrator.prepared]
+
     def test_job_id_used_by_another_request_abandons_the_turn(self):
         orchestrator = _StubOrchestrator()
         runner = _StubRunner()

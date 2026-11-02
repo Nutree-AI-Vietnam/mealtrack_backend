@@ -53,9 +53,14 @@ def replacement_question(
     ``None`` means the stored question stays, including its ``updated_at``.
     """
     edited = (incoming or "").strip()
-    if not edited or edited == stored.strip():
+    if not edited:
         return None
-    return edited[:limit]
+    # Resume sends the original question every time. Once it has been
+    # stored at the length limit, that truncated text is not a new edit.
+    truncated = edited[:limit]
+    if truncated == stored.strip():
+        return None
+    return truncated
 
 
 def reuse_assistant_row(

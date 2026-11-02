@@ -495,12 +495,7 @@ class AsyncChatRepository(ChatRepositoryPort):
         if user_row is None or user_row.role != ChatMessageRole.USER.value:
             return None
 
-        stored = (user_row.content or "").strip()
-        edited = (content or "").strip()
-        content_changed = bool(edited) and edited != stored
-        if edited:
-            user_row.content = edited[:CHAT_MAX_USER_MESSAGE_CHARS]
-            user_row.updated_at = now
+        content_changed = _apply_edited_question(user_row, content, now)
 
         prior_intent = None
         payload = latest.reply_payload
@@ -519,12 +514,15 @@ class AsyncChatRepository(ChatRepositoryPort):
         latest.updated_at = now
         await self.session.flush()
         await self._touch_thread(thread.id, now)
+        # This request cleared the saved reply. It owns the row until the
+        # job is streaming, so a conflict or a follow must fail it instead
+        # of leaving an empty GENERATING reply until the lease expires.
         claim = ChatTurnClaim(
             kind=ChatClaimKind.NEW,
             thread=_to_thread(thread),
             user_message=_to_message(user_row),
             assistant_message=_to_message(latest),
-            owns_row=False,
+            owns_row=True,
         )
         return claim, prior_intent, content_changed
 

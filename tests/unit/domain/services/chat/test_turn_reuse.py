@@ -83,6 +83,9 @@ def test_unchanged_question_is_not_rewritten():
     assert replacement_question("Soup", None, limit=100) is None
     assert replacement_question("Soup", "Stew", limit=100) == "Stew"
     assert replacement_question("Soup", "Stew please", limit=4) == "Stew"
+    # Already stored at the limit: a longer resend is the same question.
+    assert replacement_question("Stew", "Stew please", limit=4) is None
+    assert replacement_question("Stew", "  Stew please  ", limit=4) is None
 
 
 def test_reuse_keeps_the_row_identity_and_clears_the_old_reply():

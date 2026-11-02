@@ -295,6 +295,10 @@ async def _post_message(
 
     # A resent regenerate must not reopen the saved reply before we know
     # whether that job already finished or is still running.
+    #
+    # This read is not atomic with prepare or start_chat_job. Two first
+    # sends of the same regenerate can both see no job. Both then reopen,
+    # and the second loses the one-generating-assistant lock as CHAT_BUSY.
     existing_job: AiJob | None = None
     if payload.regenerate_assistant_id and payload.ai_job_id is not None:
         existing_job = await _load_own_chat_job(
