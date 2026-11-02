@@ -28,6 +28,7 @@ def recipe_filters(
     meal_type=None,
     dislikes=(),
     allergen_codes=(),
+    min_protein=None,
 ):
     clauses = []
     needle = (query or "").strip().casefold()
@@ -50,6 +51,9 @@ def recipe_filters(
             clauses.append(false())
     if max_cook_time is not None:
         clauses.append(Projection.total_minutes <= max_cook_time)
+    if min_protein is not None:
+        # Grams per serving, the same figure the list item shows.
+        clauses.append(Projection.protein_g >= min_protein)
     clauses.extend(
         ~_contains(Projection.browse_constraint_text, term.strip().casefold())
         for term in dislikes

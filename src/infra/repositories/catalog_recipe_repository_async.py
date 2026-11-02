@@ -290,6 +290,23 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         row = result.scalar_one_or_none()
         return _meal_to_domain(row, include_steps=True) if row else None
 
+    async def get_meal_details(
+        self, catalog_meal_ids: Iterable[str]
+    ) -> list[CatalogMeal]:
+        """get_meal_detail for several active recipes in one read; order not kept."""
+        ids = [mid for mid in dict.fromkeys(catalog_meal_ids) if mid]
+        if not ids:
+            return []
+        result = await self._execute_catalog(
+            select(MealCatalogORM)
+            .where(MealCatalogORM.id.in_(ids))
+            .where(MealCatalogORM.is_active.is_(True))
+            .options(*_catalog_meal_detail_load_options())
+        )
+        return [
+            _meal_to_domain(row, include_steps=True) for row in result.scalars().all()
+        ]
+
     async def get_micronutrient_enrichment(
         self, *, catalog_meal_id: str, content_hash: str
     ) -> dict | None:

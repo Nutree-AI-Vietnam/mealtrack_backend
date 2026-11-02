@@ -6,6 +6,7 @@ from src.app.events.base import EventHandler, handles
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
     GetRecipeDetailQuery,
+    GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
@@ -42,6 +43,7 @@ class ListRecipesQueryHandler(EventHandler):
             dislikes=query.dislikes,
             limit=query.limit,
             offset=query.offset,
+            min_protein=query.min_protein,
         )
 
 
@@ -65,6 +67,17 @@ class GetRecipeDetailQueryHandler(EventHandler):
             query.recipe_id,
             include_cached_micronutrients=query.include_cached_micronutrients,
         )
+
+
+@handles(GetRecipeDetailsQuery)
+class GetRecipeDetailsQueryHandler(EventHandler):
+    def __init__(self, uow_factory: Any, *, micronutrient_enrichment=None):
+        self.service = WeeklyRecipeService(
+            uow_factory, micronutrient_enrichment=micronutrient_enrichment
+        )
+
+    async def handle(self, query):
+        return await self.service.details(query.recipe_ids)
 
 
 @handles(GetRecipeSummariesQuery)

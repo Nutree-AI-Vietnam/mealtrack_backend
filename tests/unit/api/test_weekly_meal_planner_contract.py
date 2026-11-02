@@ -22,7 +22,7 @@ from src.api.exceptions import (
     ValidationException,
 )
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
-from src.api.routes.v1.meal_plans import router
+from src.api.routes.v1.meal_plans import WEEKLY_PLAN_FEATURES, router
 from src.app.handlers.query_handlers.meal_planner.weekly_meal_planner_query_handlers import (
     ListRecipesQueryHandler,
 )
@@ -650,7 +650,13 @@ def test_plan_payload_lists_features_and_slot_log_state():
         .json()
     )
 
-    assert body["features"] == ["slot_unlog", "slot_link", "slot_skip"]
+    assert body["features"] == [
+        "slot_unlog",
+        "slot_link",
+        "slot_skip",
+        "recipe_labels",
+        "recipe_batch",
+    ]
     slot = _slot_json(body, "slot-0-0")
     assert slot["log_source"] is None and slot["is_skipped"] is False
 
@@ -694,7 +700,7 @@ def test_unlog_returns_the_plan():
     )
     slot = _slot_json(response.json(), "slot-0-1")
     assert slot["log_source"] == "diary" and slot["logged_meal_id"] == "meal-1"
-    assert response.json()["features"] == ["slot_unlog", "slot_link", "slot_skip"]
+    assert response.json()["features"] == list(WEEKLY_PLAN_FEATURES)
 
 
 @pytest.mark.parametrize(
@@ -772,3 +778,127 @@ def test_skip_and_unskip_send_the_flag():
     assert skipped.status_code == 200 and unskipped.status_code == 200
     assert [c.skipped for c in bus.slot_commands] == [True, False]
     assert _slot_json(skipped.json(), "slot-0-2")["is_skipped"] is True
+
+
+def _labelled(recipe_id, name, *, vegetarian, pork_free):
+    from src.domain.model.meal_recommendation.recipe_diet_labels import (
+        RecipeDietLabels,
+    )
+
+    return replace(
+        _recipe(),
+        id=recipe_id,
+        name=name,
+        browse_labels=RecipeDietLabels(vegetarian, pork_free),
+    )
+
+
+def test_recipe_list_labels_items_and_forwards_min_protein():
+    class _ListBus(_Bus):
+        async def send(self, query):
+            if query.__class__.__name__ == "ListRecipesQuery":
+                self.recipe_query = query
+                return SimpleNamespace(
+                    items=(
+                        _labelled("tofu", "Tofu", vegetarian=True, pork_free=True),
+                        _labelled("ga", "Gà", vegetarian=False, pork_free=True),
+                    ),
+                    total=2,
+                )
+            return await super().send(query)
+
+    bus = _ListBus()
+    client = TestClient(_app(bus=bus))
+
+    response = client.get("/v1/recipes?min_protein=12.5")
+    negative = client.get("/v1/recipes?min_protein=-1")
+
+    assert response.status_code == 200 and negative.status_code == 422
+    assert bus.recipe_query.min_protein == 12.5
+    assert [
+        (item["id"], item["is_vegetarian"], item["is_pork_free"])
+        for item in response.json()["items"]
+    ] == [("tofu", True, True), ("ga", False, True)]
+
+
+def test_plan_recipe_summary_carries_diet_labels():
+    plan = _plan()
+    plan = replace(
+        plan,
+        slots=tuple(
+            replace(slot, recipe_id="ga") if slot.id == "slot-0-1" else slot
+            for slot in plan.slots
+        ),
+    )
+
+    class _SummaryBus(_Bus):
+        async def send(self, query):
+            if query.__class__.__name__ == "GetRecipeSummariesQuery":
+                return (_labelled("ga", "Gà", vegetarian=False, pork_free=True),)
+            return await super().send(query)
+
+    body = (
+        TestClient(_app(bus=_SummaryBus(plan=plan)))
+        .get("/v1/meal-plans/current?week_start_date=2026-09-21")
+        .json()
+    )
+
+    recipe = _slot_json(body, "slot-0-1")["recipe"]
+    assert (recipe["is_vegetarian"], recipe["is_pork_free"]) == (False, True)
+
+
+class _BatchBus(_Bus):
+    def __init__(self):
+        super().__init__()
+        self.detail_queries = []
+
+    async def send(self, query):
+        if query.__class__.__name__ == "GetRecipeDetailsQuery":
+            self.detail_queries.append(query)
+            return tuple(
+                replace(_recipe(), id=recipe_id, name=f"Recipe {recipe_id}")
+                for recipe_id in query.recipe_ids
+                if recipe_id != "gone"
+            )
+        return await super().send(query)
+
+
+def test_recipe_batch_returns_details_in_order_and_lists_missing():
+    bus = _BatchBus()
+
+    response = TestClient(_app(bus=bus)).post(
+        "/v1/recipes/batch", json={"ids": ["b", "gone", "a", "b", " a "]}
+    )
+
+    assert response.status_code == 200
+    assert bus.detail_queries[0].recipe_ids == ("b", "gone", "a")
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == ["b", "a"]
+    assert body["items"][0]["nutrition_per_serving"]["protein"] == 30
+    assert body["missing"] == ["gone"]
+
+
+@pytest.mark.parametrize(
+    "ids", [[], [str(index) for index in range(31)], [""], ["x" * 65]]
+)
+def test_recipe_batch_validates_ids(ids):
+    bus = _BatchBus()
+
+    response = TestClient(_app(bus=bus)).post("/v1/recipes/batch", json={"ids": ids})
+
+    assert response.status_code == 422
+    assert bus.detail_queries == []
+
+
+def test_recipe_batch_requires_auth_and_is_not_a_recipe_id():
+    bus = _BatchBus()
+
+    unauthenticated = TestClient(_app(bus=bus, authenticated=False)).post(
+        "/v1/recipes/batch", json={"ids": ["a"]}
+    )
+    detail = TestClient(_app(recipe=_recipe())).get("/v1/recipes/batch")
+
+    assert unauthenticated.status_code in {401, 403}
+    assert bus.detail_queries == []
+    # GET still reads "batch" as a recipe id; only POST is the batch route.
+    assert detail.status_code == 200

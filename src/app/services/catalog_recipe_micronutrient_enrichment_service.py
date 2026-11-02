@@ -52,47 +52,91 @@ class CatalogRecipeMicronutrientEnrichmentService:
         loaded = _has_complete_micronutrients(meal, cached)
         return _with_estimate(meal, cached, source_labels, loaded=loaded)
 
-    async def _reference_sources(self, meal: CatalogMeal) -> dict[str, str]:
-        values = meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
-        if not values:
-            return {}
-        ids = [
-            int(ingredient.food_reference_id)
-            for ingredient in meal.ingredients
-            if ingredient.food_reference_id is not None
-        ]
+    async def load_cached_many(
+        self, meals: tuple[CatalogMeal, ...]
+    ) -> tuple[CatalogMeal, ...]:
+        """load_cached for several meals: one session, one reference read."""
+        if not meals:
+            return ()
+        async with self._uow_factory() as uow:
+            overlays = [
+                await uow.catalog_preparation.get_overlay(meal.id) for meal in meals
+            ]
+        references_by_id = await self._references(
+            [_reference_ids(meal) for meal in meals if _micro_values(meal)]
+        )
+        return tuple(
+            _with_estimate(
+                meal,
+                cached,
+                _sources_from_references(meal, references_by_id),
+                loaded=_has_complete_micronutrients(meal, cached),
+            )
+            for meal, cached in zip(meals, overlays, strict=True)
+        )
+
+    async def _references(self, id_groups: list[list[int]]) -> dict[int, dict] | None:
+        """Food references by id; None when the read failed."""
+        ids = sorted({item for group in id_groups for item in group})
         if not ids:
             return {}
         try:
             async with self._uow_factory() as uow:
                 references = await uow.food_references.get_by_ids(ids)
         except Exception:
-            return dict.fromkeys(values, "food_reference")
-        references_by_id = {int(reference["id"]): reference for reference in references}
-        ingredient_reference_ids = [
-            int(ingredient.food_reference_id)
-            for ingredient in meal.ingredients
-            if ingredient.food_reference_id is not None
-        ]
-        sources = {}
-        for field in values:
-            all_usda = bool(ingredient_reference_ids)
-            for reference_id in ingredient_reference_ids:
-                reference = references_by_id.get(reference_id)
-                extra = reference.get("extra_nutrients") if reference else None
-                if not isinstance(extra, dict):
-                    all_usda = False
-                    break
-                usda_extra = {
-                    key: value
-                    for key, value in extra.items()
-                    if isinstance(value, dict) and value.get("source") == "usda_fdc"
-                }
-                if field not in _micros_from_reference({"extra_nutrients": usda_extra}):
-                    all_usda = False
-                    break
-            sources[field] = "usda_fdc" if all_usda else "food_reference"
-        return sources
+            return None
+        return {int(reference["id"]): reference for reference in references}
+
+    async def _reference_sources(self, meal: CatalogMeal) -> dict[str, str]:
+        if not _micro_values(meal) or not _reference_ids(meal):
+            return {}
+        references_by_id = await self._references([_reference_ids(meal)])
+        return _sources_from_references(meal, references_by_id)
+
+
+def _micro_values(meal: CatalogMeal) -> dict[str, float]:
+    return meal.nutrition_micros.to_dict() if meal.nutrition_micros else {}
+
+
+def _reference_ids(meal: CatalogMeal) -> list[int]:
+    return [
+        int(ingredient.food_reference_id)
+        for ingredient in meal.ingredients
+        if ingredient.food_reference_id is not None
+    ]
+
+
+def _sources_from_references(
+    meal: CatalogMeal, references_by_id: dict[int, dict] | None
+) -> dict[str, str]:
+    """USDA when every ingredient reference carries the field from FDC."""
+    values = _micro_values(meal)
+    if not values:
+        return {}
+    ingredient_reference_ids = _reference_ids(meal)
+    if not ingredient_reference_ids:
+        return {}
+    if references_by_id is None:
+        return dict.fromkeys(values, "food_reference")
+    sources = {}
+    for field in values:
+        all_usda = True
+        for reference_id in ingredient_reference_ids:
+            reference = references_by_id.get(reference_id)
+            extra = reference.get("extra_nutrients") if reference else None
+            if not isinstance(extra, dict):
+                all_usda = False
+                break
+            usda_extra = {
+                key: value
+                for key, value in extra.items()
+                if isinstance(value, dict) and value.get("source") == "usda_fdc"
+            }
+            if field not in _micros_from_reference({"extra_nutrients": usda_extra}):
+                all_usda = False
+                break
+        sources[field] = "usda_fdc" if all_usda else "food_reference"
+    return sources
 
 
 def _micros_from_reference(reference: dict[str, Any]) -> dict[str, float]:

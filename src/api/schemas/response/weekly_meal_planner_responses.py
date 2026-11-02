@@ -21,6 +21,9 @@ class WeeklyRecipeSummaryResponse(BaseModel):
     cook_time_minutes: int | None = None
     calories: int
     nutrition_per_serving: RecipeMacroSummaryResponse | None = None
+    # Same rule as GET /v1/recipes?diet=vegetarian|no-pork.
+    is_vegetarian: bool = False
+    is_pork_free: bool = False
 
 
 class WeeklyMealSlotResponse(BaseModel):
@@ -68,11 +71,18 @@ class RecipeListItemResponse(BaseModel):
     protein: float
     carbs: float
     fat: float
+    # Same rule as the diet=vegetarian|no-pork filter.
+    is_vegetarian: bool = False
+    is_pork_free: bool = False
 
 
 class RecipeListResponse(BaseModel):
     items: list[RecipeListItemResponse]
     total: int
+
+
+class RecipeItemsResponse(BaseModel):
+    items: list[RecipeListItemResponse]
 
 
 class RecipeIngredientResponse(BaseModel):
@@ -124,6 +134,12 @@ class RecipeDetailResponse(BaseModel):
     ingredients: list[RecipeIngredientResponse]
     steps: list[RecipeStepResponse]
     allergy_evaluated: bool = False
+
+
+class RecipeBatchResponse(BaseModel):
+    items: list[RecipeDetailResponse]
+    # Requested ids that are not active catalog recipes.
+    missing: list[str] = Field(default_factory=list)
 
 
 class WeeklyAiSlotChangeResponse(BaseModel):

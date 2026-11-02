@@ -14,3 +14,5 @@ class ListRecipesQuery(Query):
     dislikes: tuple[str, ...] = ()
     limit: int = 20
     offset: int = 0
+    # Grams of protein per serving, at least.
+    min_protein: float | None = None

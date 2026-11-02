@@ -1,5 +1,12 @@
 """Authoritative list fallback while query projections reconcile."""
 
+from dataclasses import replace
+from decimal import Decimal
+
+from src.domain.model.meal_recommendation.recipe_diet_labels import (
+    RecipeDietLabels,
+    recipe_browse_text,
+)
 from src.domain.model.weekly_meal_planner import SLOT_MEAL_TYPES
 from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
 
@@ -16,6 +23,7 @@ async def legacy_recipe_page(
     codes,
     limit,
     offset,
+    min_protein=None,
 ):
     # Legacy reads remain the authority until every mandatory query field is current.
     from src.domain.services.weekly_meal_planner.allergen_constraint import (
@@ -26,10 +34,6 @@ async def legacy_recipe_page(
     )
     from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
         is_non_meal_title,
-    )
-    from src.infra.repositories.catalog_projection_builder import (
-        BROWSE_MEAT_WORDS,
-        BROWSE_PORK_WORDS,
     )
 
     meals = await repository.list_active_meals(meal_type=meal_type)
@@ -42,22 +46,17 @@ async def legacy_recipe_page(
         ):
             continue
         names = [ingredient.name for ingredient in meal.ingredients]
-        browse = " ".join([meal.name, meal.description or "", *names]).casefold()
+        browse = recipe_browse_text(meal.name, meal.description, names)
+        labels = RecipeDietLabels.from_browse_text(browse)
         search = " ".join(
             [meal.name, meal.cuisine, meal.description or "", *names]
         ).casefold()
         if (query or "").strip().casefold() not in search:
             continue
-        if diet and diet != "any":
-            terms = (
-                BROWSE_MEAT_WORDS
-                if diet == "vegetarian"
-                else BROWSE_PORK_WORDS
-                if diet == "no-pork"
-                else None
-            )
-            if terms is None or any(term in browse for term in terms):
-                continue
+        if not labels.allows(diet):
+            continue
+        if min_protein is not None and meal.protein_g < Decimal(str(min_protein)):
+            continue
         if (
             max_cook_time is not None
             and int(meal.prep_time_minutes or 0) + int(meal.cook_time_minutes or 0)
@@ -70,7 +69,7 @@ async def legacy_recipe_page(
             continue
         if recipe_excluded_by_allergen(meal.allergen_codes, codes):
             continue
-        filtered.append(meal)
+        filtered.append(replace(meal, browse_labels=labels))
     filtered.sort(
         key=lambda meal: (
             practicality_rank(

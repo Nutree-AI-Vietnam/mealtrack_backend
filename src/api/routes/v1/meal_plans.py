@@ -36,6 +36,7 @@ from src.api.schemas.request.weekly_meal_planner_requests import (
     GenerateWeeklyMealPlanRequest,
     LinkMealPlanSlotRequest,
     LogMealPlanSlotRequest,
+    RecipeBatchRequest,
     UpdateGroceryDayLinesRequest,
     UpdateMealPlanPantryRequest,
     UpdateWeeklyMealPlanRequest,
@@ -46,6 +47,7 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
     GroceryItemResponse,
     LogMealPlanSlotResponse,
     PantryUpdateResponse,
+    RecipeBatchResponse,
     RecipeDetailNutritionResponse,
     RecipeDetailResponse,
     RecipeIngredientResponse,
@@ -76,6 +78,7 @@ from src.app.queries.get_weekly_budget_query import GetWeeklyBudgetQuery
 from src.app.queries.meal_planner import (
     GetCurrentWeeklyPlanQuery,
     GetRecipeDetailQuery,
+    GetRecipeDetailsQuery,
     GetRecipeSummariesQuery,
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
@@ -113,7 +116,13 @@ router = APIRouter(tags=["Weekly Meal Plans", "Recipes"])
 logger = logging.getLogger(__name__)
 
 # Sent in every plan payload. Add a name only when its endpoint ships.
-WEEKLY_PLAN_FEATURES: tuple[str, ...] = ("slot_unlog", "slot_link", "slot_skip")
+WEEKLY_PLAN_FEATURES: tuple[str, ...] = (
+    "slot_unlog",
+    "slot_link",
+    "slot_skip",
+    "recipe_labels",
+    "recipe_batch",
+)
 
 
 @router.get("/v1/meal-plans/current", response_model=WeeklyMealPlanResponse)
@@ -305,6 +314,7 @@ async def list_recipes(
     meal_type: WeeklyPlannerMealType | None = Query(default=None),
     allergies: str = Query(default="", max_length=1000),
     dislikes: str = Query(default="", max_length=1000),
+    min_protein: float | None = Query(default=None, ge=0, le=500),
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     user_id: str = Depends(get_current_user_id),
@@ -324,6 +334,7 @@ async def list_recipes(
                 dislikes=_csv(dislikes),
                 limit=limit,
                 offset=offset,
+                min_protein=min_protein,
             )
         )
         meals = await localize_catalog_meals(
@@ -334,6 +345,40 @@ async def list_recipes(
         )
         return RecipeListResponse(
             items=[_recipe_list_item(meal) for meal in meals], total=page.total
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
+# Declared before /v1/recipes/{recipe_id} so "batch" is never read as an id.
+@router.post("/v1/recipes/batch", response_model=RecipeBatchResponse)
+@limiter.limit("30/minute")
+async def get_recipe_batch(
+    request: Request,
+    body: RecipeBatchRequest,
+    user_id: str = Depends(get_current_user_id),
+    event_bus=Depends(get_configured_event_bus),
+    translation_service=Depends(get_planner_translation_service),
+):
+    """Up to 30 recipe details in request order; unknown ids come back in missing."""
+    del user_id
+    try:
+        meals = await event_bus.send(GetRecipeDetailsQuery(recipe_ids=tuple(body.ids)))
+        localized = (
+            await localize_catalog_meals(
+                tuple(meals),
+                language=get_request_language(request),
+                translation_service=translation_service,
+            )
+            if meals
+            else ()
+        )
+        found = {meal.id for meal in localized}
+        return RecipeBatchResponse(
+            items=[_recipe_detail(meal) for meal in localized],
+            missing=[recipe_id for recipe_id in body.ids if recipe_id not in found],
         )
     except HTTPException:
         raise
@@ -978,6 +1023,8 @@ def _recipe_summary(meal: CatalogMeal) -> WeeklyRecipeSummaryResponse:
             fat=float(meal.fat_g),
             fiber=float(meal.fiber_g),
         ),
+        is_vegetarian=meal.diet_labels.is_vegetarian,
+        is_pork_free=meal.diet_labels.is_pork_free,
     )
 
 
@@ -993,6 +1040,8 @@ def _recipe_list_item(meal: CatalogMeal) -> RecipeListItemResponse:
         protein=float(meal.protein_g),
         carbs=float(meal.carbs_g),
         fat=float(meal.fat_g),
+        is_vegetarian=meal.diet_labels.is_vegetarian,
+        is_pork_free=meal.diet_labels.is_pork_free,
     )
 
 
