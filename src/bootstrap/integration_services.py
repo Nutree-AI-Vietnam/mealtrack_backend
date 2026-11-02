@@ -7,10 +7,14 @@ from src.domain.ports.affiliate_service_port import AffiliateServicePort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
+from src.domain.ports.play_subscription_port import PlaySubscriptionPort
 from src.infra.adapters.best_effort_integration_event_publisher import (
     BestEffortIntegrationEventPublisher,
 )
 from src.infra.adapters.cloudflare_queue_publisher import CloudflareQueuePublisher
+from src.infra.adapters.google_play_subscription_adapter import (
+    GooglePlaySubscriptionAdapter,
+)
 from src.infra.concurrency.executors import (
     get_firebase_executor as _get_firebase_executor,
 )
@@ -20,6 +24,7 @@ from src.infra.concurrency.executors import (
 from src.infra.config.settings import get_settings
 
 _publisher: BestEffortIntegrationEventPublisher | None = None
+_play_subscriptions: PlaySubscriptionPort | None = None
 
 
 def get_integration_event_publisher() -> IntegrationEventPublisherPort:
@@ -75,3 +80,17 @@ def get_affiliate_service(
     from src.infra.adapters.affiliate_service_adapter import AffiliateServiceAdapter
 
     return AffiliateServiceAdapter()
+
+
+def get_play_subscription_service() -> PlaySubscriptionPort:
+    """Return the process-local Google Play adapter; disabled unless configured."""
+    global _play_subscriptions
+    if _play_subscriptions is None:
+        _play_subscriptions = GooglePlaySubscriptionAdapter.from_settings()
+    return _play_subscriptions
+
+
+def reset_play_subscription_service_for_tests() -> None:
+    """Drop the singleton so tests can rebuild it from new settings."""
+    global _play_subscriptions
+    _play_subscriptions = None

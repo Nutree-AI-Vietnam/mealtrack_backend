@@ -334,6 +334,7 @@ class TestSyncUserCommandHandler:
         )
         assert result["user"]["subscription"]["product_id"] == "standard_monthly"
         assert result["user"]["subscription"]["is_monthly"] is True
+        assert result["user"]["subscription"]["is_lifetime"] is False
 
     @pytest.mark.asyncio
     async def test_handle_database_error(self, handler):
