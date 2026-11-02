@@ -30,11 +30,13 @@ from src.domain.model.chat import (
     empty_reply_payload,
 )
 from src.domain.ports.chat_repository_port import ChatRepositoryPort
-from src.domain.services.chat.rewind import message_ids_after
+from src.domain.services.chat.rewind import is_latest_message, message_ids_after
 from src.domain.services.chat.thread_listing import thread_preview, thread_title
 from src.domain.services.chat.turn_reuse import (
     existing_reply_disposition,
+    replacement_question,
     reuse_assistant_row,
+    should_regenerate_on_resume,
 )
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.chat import (
@@ -522,6 +524,7 @@ class AsyncChatRepository(ChatRepositoryPort):
             thread=_to_thread(thread),
             user_message=_to_message(user_row),
             assistant_message=_to_message(latest),
+            owns_row=False,
         )
         return claim, prior_intent, content_changed
 
@@ -674,6 +677,7 @@ class AsyncChatRepository(ChatRepositoryPort):
                     thread=_to_thread(thread),
                     user_message=_to_message(user_row),
                     assistant_message=_to_message(latest),
+                    owns_row=False,
                 ),
                 prior_intent,
                 False,
@@ -683,7 +687,11 @@ class AsyncChatRepository(ChatRepositoryPort):
         active = await self._active_generation(thread.id)
         if active is not None and active.id != latest.id:
             raise ChatBusyError()
-        if disposition != "reuse":
+        # A worker retry must not regenerate a reply the user has moved past.
+        if not should_regenerate_on_resume(
+            disposition=disposition,
+            is_latest=await self._reply_is_latest(thread.id, latest),
+        ):
             return None
         content_changed = _apply_edited_question(user_row, content, now)
         reuse_assistant_row(
@@ -700,6 +708,7 @@ class AsyncChatRepository(ChatRepositoryPort):
                 thread=_to_thread(thread),
                 user_message=_to_message(user_row),
                 assistant_message=_to_message(latest),
+                owns_row=False,
             ),
             None if content_changed else prior_intent,
             content_changed,
@@ -736,6 +745,7 @@ class AsyncChatRepository(ChatRepositoryPort):
                 thread=thread,
                 user_message=_to_message(user_row),
                 assistant_message=_to_message(assistant),
+                owns_row=False,
             )
         if disposition == "busy":
             raise ChatBusyError()
@@ -756,6 +766,7 @@ class AsyncChatRepository(ChatRepositoryPort):
                 thread=thread,
                 user_message=_to_message(user_row),
                 assistant_message=_to_message(assistant),
+                owns_row=False,
             )
 
         assistant_row = ChatMessageORM(
@@ -907,6 +918,33 @@ class AsyncChatRepository(ChatRepositoryPort):
             )
         )
 
+    async def _reply_is_latest(self, thread_id: str, target: ChatMessageORM) -> bool:
+        created_at = target.created_at
+        role = target.role
+        target_id = target.id
+        if (
+            not isinstance(created_at, datetime)
+            or not isinstance(role, str)
+            or not isinstance(target_id, str)
+        ):
+            return False
+        result = await self.session.execute(
+            select(
+                ChatMessageORM.id,
+                ChatMessageORM.created_at,
+                ChatMessageORM.role,
+            ).where(ChatMessageORM.thread_id == thread_id)
+        )
+        messages: list[tuple[str, datetime, str]] = []
+        for row in result.all():
+            if (
+                isinstance(row.id, str)
+                and isinstance(row.created_at, datetime)
+                and isinstance(row.role, str)
+            ):
+                messages.append((row.id, row.created_at, row.role))
+        return is_latest_message(target_id, created_at, role, messages)
+
     async def _touch_thread(self, thread_id: str, now: datetime) -> None:
         await self.session.execute(
             update(ChatThreadORM)
@@ -936,13 +974,16 @@ def _prior_intent(row: ChatMessageORM) -> str | None:
 def _apply_edited_question(
     user_row: ChatMessageORM, content: str | None, now: datetime
 ) -> bool:
-    stored = (user_row.content or "").strip()
-    edited = (content or "").strip()
-    changed = bool(edited) and edited != stored
-    if edited:
-        user_row.content = edited[:CHAT_MAX_USER_MESSAGE_CHARS]
-        user_row.updated_at = now
-    return changed
+    replacement = replacement_question(
+        user_row.content or "",
+        content,
+        limit=CHAT_MAX_USER_MESSAGE_CHARS,
+    )
+    if replacement is None:
+        return False
+    user_row.content = replacement
+    user_row.updated_at = now
+    return True
 
 
 def _to_thread(row: ChatThreadORM) -> ChatThread:

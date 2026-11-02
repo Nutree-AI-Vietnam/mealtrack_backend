@@ -222,7 +222,9 @@ can finish what it already queued.
 - When `ai_job_id` already belongs to this same request and another attempt
   owns it, the response does not generate again. It sends `message.started`
   with `ai_job_id`, then a terminal event whose `ai_job_status` tells the
-  app to follow that job.
+  app to follow that job. A second regenerate of a running or queued job
+  gets that follow stream. Resending a completed regenerate replays the
+  saved reply and does not reopen it.
 - Stopping a chat job ends it `cancelled` with no `error`; the stream's final
   `message.error` has the code `CHAT_STOPPED`. Cancelled jobs are never
   pushed.

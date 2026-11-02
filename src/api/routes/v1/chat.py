@@ -39,6 +39,7 @@ from src.app.services.chat_turn_orchestrator import (
 )
 from src.domain.exceptions.ai_job_exceptions import (
     AiJobConflictError,
+    AiJobNotFoundError,
     AiJobsUnavailableError,
 )
 from src.domain.exceptions.chat_exceptions import (
@@ -292,8 +293,44 @@ async def _post_message(
         function_args = resolved.args
         intent_value = preferred_alias(resolved.name, resolved.args)
 
+    # A resent regenerate must not reopen the saved reply before we know
+    # whether that job already finished or is still running.
+    existing_job: AiJob | None = None
+    if payload.regenerate_assistant_id and payload.ai_job_id is not None:
+        existing_job = await _load_own_chat_job(
+            ai_jobs, user_id=user_id, job_id=str(payload.ai_job_id)
+        )
+        if existing_job is not None and not _same_regenerate_request(
+            existing_job, payload, idempotency_key
+        ):
+            return _error_response(
+                status.HTTP_409_CONFLICT,
+                "AI_JOB_CONFLICT",
+                "This job id is already used by a different request",
+            )
+        if existing_job is not None and existing_job.status in (
+            AiJobStatus.RUNNING,
+            AiJobStatus.QUEUED,
+            AiJobStatus.CANCELLED,
+        ):
+            return await _follow_existing_job(
+                ai_jobs,
+                orchestrator,
+                None,
+                job_id=str(payload.ai_job_id),
+                user_id=user_id,
+                job=existing_job,
+            )
+
     try:
         if payload.regenerate_assistant_id:
+            # Completed and failed jobs already opened this reply. Resume
+            # replays a saved answer and reuses a failed row. A first send
+            # still opens the completed reply.
+            resume = existing_job is not None and existing_job.status in (
+                AiJobStatus.COMPLETED,
+                AiJobStatus.FAILED,
+            )
             prepared = await orchestrator.prepare_regeneration(
                 user_id=user_id,
                 assistant_message_id=payload.regenerate_assistant_id,
@@ -302,6 +339,7 @@ async def _post_message(
                 header_timezone=header_timezone,
                 user_language=locale,
                 thread_id=thread_id,
+                resume=resume,
             )
         else:
             prepared = await orchestrator.prepare_turn(
@@ -376,7 +414,10 @@ async def _post_message(
                 thread_id=thread_id or prepared.claim.thread.id,
             )
         except AiJobConflictError:
-            await orchestrator.abandon_turn(prepared, error_code="CHAT_TURN_FAILED")
+            if prepared.claim.owns_row:
+                await orchestrator.abandon_turn(prepared, error_code="CHAT_TURN_FAILED")
+            else:
+                orchestrator.release_slot(prepared)
             return _error_response(
                 status.HTTP_409_CONFLICT,
                 "AI_JOB_CONFLICT",
@@ -506,25 +547,69 @@ def _note_legacy_fallback(exc: BaseException) -> None:
     )
 
 
+def _same_regenerate_request(
+    job: AiJob, payload: ChatMessageCreateRequest, idempotency_key: str
+) -> bool:
+    """True when this resend is the regenerate that already owns ``job``."""
+    body = job.request_payload
+    stored_id = body.get("regenerate_assistant_id")
+    stored_key = body.get("idempotency_key")
+    stored_content = body.get("content")
+    return (
+        job.job_type.value == "chat"
+        and body.get("prepare_regeneration") is True
+        and isinstance(stored_id, str)
+        and stored_id == payload.regenerate_assistant_id
+        and isinstance(stored_key, str)
+        and stored_key == idempotency_key
+        and isinstance(stored_content, str)
+        and stored_content.strip() == payload.content.strip()
+    )
+
+
+async def _load_own_chat_job(
+    ai_jobs: AiJobService, *, user_id: str, job_id: str
+) -> AiJob | None:
+    """The caller's chat job, or None when this id has not been stored."""
+    try:
+        job = await ai_jobs.get(user_id=user_id, job_id=job_id)
+    except AiJobNotFoundError:
+        return None
+    except Exception:
+        logger.warning("Could not read the chat job before regenerate", exc_info=True)
+        return None
+    if job is None or job.job_type.value != "chat":
+        return None
+    return job
+
+
 async def _follow_existing_job(
     ai_jobs: AiJobService,
     orchestrator: ChatTurnOrchestrator,
-    prepared: PreparedChatTurn,
+    prepared: PreparedChatTurn | None,
     *,
     job_id: str,
     user_id: str,
+    job: AiJob | None = None,
 ) -> StreamingResponse:
-    """Tell the client to follow the job that already owns this turn."""
-    try:
-        await orchestrator.abandon_turn(prepared, error_code="CHAT_TURN_FAILED")
-    except Exception:
-        logger.warning("Failed to abandon a duplicate chat turn", exc_info=True)
-    job: AiJob | None
-    try:
-        job = await ai_jobs.get(user_id=user_id, job_id=job_id)
-    except Exception:
-        logger.warning("Could not read the chat job to follow", exc_info=True)
-        job = None
+    """Tell the client to follow the job that already owns this turn.
+
+    Only a row this request inserted is failed. A reused row may still
+    belong to the attempt that is generating it.
+    """
+    if prepared is not None and prepared.claim.owns_row:
+        try:
+            await orchestrator.abandon_turn(prepared, error_code="CHAT_TURN_FAILED")
+        except Exception:
+            logger.warning("Failed to abandon a duplicate chat turn", exc_info=True)
+    elif prepared is not None:
+        orchestrator.release_slot(prepared)
+    if job is None:
+        try:
+            job = await ai_jobs.get(user_id=user_id, job_id=job_id)
+        except Exception:
+            logger.warning("Could not read the chat job to follow", exc_info=True)
+            job = None
 
     async def events() -> AsyncIterator[bytes]:
         for event in _follow_job_events(job_id, job):

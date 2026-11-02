@@ -34,6 +34,30 @@ def existing_reply_disposition(
     return "create"
 
 
+def should_regenerate_on_resume(
+    *, disposition: ReplyDisposition, is_latest: bool
+) -> bool:
+    """A delayed retry generates again only on the latest failed or expired reply.
+
+    A completed reply is replayed by the caller. An older reply is left alone
+    so the retry cannot overwrite a turn the user has already moved past.
+    """
+    return disposition == "reuse" and is_latest
+
+
+def replacement_question(
+    stored: str, incoming: str | None, *, limit: int
+) -> str | None:
+    """Return new question text only when it actually changes.
+
+    ``None`` means the stored question stays, including its ``updated_at``.
+    """
+    edited = (incoming or "").strip()
+    if not edited or edited == stored.strip():
+        return None
+    return edited[:limit]
+
+
 def reuse_assistant_row(
     row: Any,
     *,

@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from src.domain.model.chat.models import ChatMessageStatus
 from src.domain.services.chat.turn_reuse import (
     existing_reply_disposition,
+    replacement_question,
     reuse_assistant_row,
+    should_regenerate_on_resume,
 )
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
@@ -66,6 +68,21 @@ def test_missing_reply_creates_the_first_row():
         existing_reply_disposition(status=None, lease_expires_at=None, now=NOW)
         == "create"
     )
+
+
+def test_resume_skips_an_older_reply_and_regenerates_only_the_latest():
+    assert should_regenerate_on_resume(disposition="reuse", is_latest=False) is False
+    assert should_regenerate_on_resume(disposition="reuse", is_latest=True) is True
+    assert should_regenerate_on_resume(disposition="replay", is_latest=False) is False
+    assert should_regenerate_on_resume(disposition="busy", is_latest=True) is False
+
+
+def test_unchanged_question_is_not_rewritten():
+    assert replacement_question("Soup", "Soup", limit=100) is None
+    assert replacement_question("Soup", "  Soup  ", limit=100) is None
+    assert replacement_question("Soup", None, limit=100) is None
+    assert replacement_question("Soup", "Stew", limit=100) == "Stew"
+    assert replacement_question("Soup", "Stew please", limit=4) == "Stew"
 
 
 def test_reuse_keeps_the_row_identity_and_clears_the_old_reply():
