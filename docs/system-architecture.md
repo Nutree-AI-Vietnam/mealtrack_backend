@@ -260,19 +260,25 @@ join the day: Home's day micros and highlights, `/v1/meals/daily/macros`
 (`supplement_micros`) and the Trends day fields. Supplement folate is stored as
 µg DFE, and preformed vitamin A is kept apart for its own upper limit.
 
-- **Visibility.** One rule on every product read: shared and approved, or your
-  own. A label scan stays private until an admin promotes it
-  ([supplement-catalog-admin.md](./supplement-catalog-admin.md)).
+- **Visibility.** Product search, barcode and id reads return shared approved
+  products or your own; your history also reads products already on your list
+  or in your doses. A label scan stays private until an admin promotes it
+  ([supplement-catalog-admin.md](./supplement-catalog-admin.md)); admin review
+  reads see every row.
 - **Estimates.** A Ghi nhanh sentence that names an unknown supplement saves the
-  model's estimate as the person's private product, marked estimated. It counts
-  in the day's totals, never triggers an upper-limit warning, never counts
-  toward a limit gauge (sodium), and never reaches the catalog. Scanning its
-  label replaces it.
+  model's estimate as the person's private product, marked estimated, and it
+  never reaches the catalog. It counts in the day's totals but never toward a
+  limit gauge (sodium); the server reports the estimated part apart
+  (`supplement_estimated_micros`), so the app can keep it out of upper-limit
+  warnings. The app replaces the estimate when the person scans its label.
 - **Streak.** A day with only a dose counts as a logged day, like water.
-- **Gate.** Every supplement route answers 503 until `SUPPLEMENTS_ENABLED` is on
-  and the tables exist; `/v1/log/describe` skips supplement items until then.
-  Account deletion removes doses, list rows and unpromoted products, and checks
-  the schema first because a deploy can run before its migration.
+- **Gate.** Every `/v1/supplements` route answers 503 until `SUPPLEMENTS_ENABLED`
+  is on and the tables exist, and `/v1/log/describe` skips supplement items
+  until then. Admin catalog routes need only the tables. Reads (day totals,
+  Trends, streak, recap, day feed) count stored doses whenever the tables
+  exist, so the switch gates writes, not totals. Account deletion removes
+  doses, list rows and unpromoted products, and checks the schema first
+  because a deploy can run before its migration.
 
 ### Meal scan vs hydration
 
@@ -372,7 +378,9 @@ downloading Cloudinary bytes. Graph nodes must not import provider SDKs,
 ## Data Flow Example: One Ghi nhanh Sentence For Every Kind
 
 1. `POST /v1/log/describe` takes a sentence, a `request_id` and the person's
-   local date and time; `kinds` limits what it may log.
+   local date and time; `kinds` limits what it may log. A finished
+   `request_id` replays first; otherwise the Ghi nhanh switch, Premium and the
+   daily quota are checked.
 2. A read step asks the model which meals, drinks, activities and doses the
    sentence holds (food needs a second call, so a sentence with food can take
    about 20 s).
@@ -381,7 +389,9 @@ downloading Cloudinary bytes. Graph nodes must not import provider SDKs,
 4. `describe_log_replay.run_once` keys the reply on `request_id`, so a retry
    replays it instead of saving twice.
 5. `DELETE /v1/log/describe/{request_id}` deletes everything the sentence saved
-   in one transaction and puts the supplement list back as it was.
+   in one transaction and puts the supplement list back as it was (a dose the
+   person already deleted by hand is left as is). An estimated product the
+   sentence created stays as an unlisted private product.
 
 ## Data Flow Example: Food-Label Scan By URL
 
