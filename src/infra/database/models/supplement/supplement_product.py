@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     Computed,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -56,6 +57,14 @@ class SupplementProductORM(Base, BaseMixin):
     estimated = Column(Boolean, nullable=False, default=False)
     label_image_url = Column(String(512), nullable=True)
     review_status = Column(String(16), nullable=False)
+    # Why a held-back catalog row waits for review, as the seed import read it.
+    review_reasons = Column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"),
+        nullable=True,
+    )
+    # Set once an admin edits, approves or rejects; re-imports then skip the row.
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by = Column(String(255), nullable=True)
     # Accent-folded brand and names, so "dau ca" finds "Dầu cá" (trigram index).
     name_search = Column(Text, Computed(SupplementSearchName(), persisted=True))
 

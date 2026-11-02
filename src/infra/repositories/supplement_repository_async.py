@@ -45,6 +45,8 @@ _TABLES = (
     # Every product read selects name_search, so its migration must have run too.
     "ix_supplement_products_name_search_trgm",
 )
+# Every product read selects the review fields too.
+_PRODUCT_COLUMNS = ("review_reasons", "reviewed_at", "reviewed_by")
 
 
 # A positive answer is final for the process: tables are never dropped while
@@ -61,7 +63,15 @@ class AsyncSupplementRepository(SupplementProductReads, SupplementRepositoryPort
     async def schema_ready(self) -> bool:
         global _schema_ready
         if not _schema_ready:
-            checks = " AND ".join(f"to_regclass('{t}') IS NOT NULL" for t in _TABLES)
+            checks = " AND ".join(
+                [f"to_regclass('{t}') IS NOT NULL" for t in _TABLES]
+                + [
+                    "EXISTS (SELECT 1 FROM pg_attribute"
+                    " WHERE attrelid = to_regclass('supplement_products')"
+                    f" AND attname = '{column}' AND NOT attisdropped)"
+                    for column in _PRODUCT_COLUMNS
+                ]
+            )
             result = await self.session.execute(text(f"SELECT {checks}"))
             _schema_ready = bool(result.scalar_one())
         return _schema_ready

@@ -25,6 +25,10 @@ _PRECISION = 4
 def _amount(name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{name} must be a number")
+    try:
+        value = float(value)
+    except OverflowError:
+        raise ValueError(f"{name} is too large") from None
     if not math.isfinite(value) or value < 0:
         raise ValueError(f"{name} must be a finite amount of zero or more")
     return float(value)

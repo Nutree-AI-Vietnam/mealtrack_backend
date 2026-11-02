@@ -146,6 +146,31 @@ async def test_search_matches_every_word_and_ranks_products_sold_in_vietnam_firs
 
 
 @pytest.mark.asyncio
+async def test_vietnamese_nutrient_names_find_english_label_names(factory, pg_session):
+    alice = await _user(pg_session)
+    iron = _product("Iron 18 mg", brand="NOW")
+    satiety = _product("PureLean Satiety", brand="Pure Encapsulations")
+    fish_oil = _product("Omega-3 Fish Oil", brand="NOW")
+    calcium = _product("Calcium Citrate", brand="Solgar")
+    canxi = _product("Canxi Nano", brand="Hataphar", sold_in_vn=True)
+    alkemy = _product("Fast-C Alkemy", brand="Bronson")
+    zinc = _product("Zinc 50 mg", brand="NOW")
+    await _add(iron, satiety, fish_oil, calcium, canxi, alkemy, zinc)
+
+    async with AsyncUnitOfWork() as uow:
+        repo = uow.supplements
+
+        async def names(query: str) -> set[str]:
+            return {p.name for p in await repo.search_products(query, alice)}
+
+        assert await names("sắt") == {"Iron 18 mg"}
+        assert await names("dầu cá") == {"Omega-3 Fish Oil"}
+        assert await names("canxi") == {"Calcium Citrate", "Canxi Nano"}
+        assert await names("kẽm") == {"Zinc 50 mg"}
+        assert await names("now sắt") == {"Iron 18 mg"}
+
+
+@pytest.mark.asyncio
 async def test_list_rows_upsert_per_product_and_delete_only_for_their_owner(
     factory, pg_session
 ):

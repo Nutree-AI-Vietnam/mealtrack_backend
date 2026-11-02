@@ -227,6 +227,10 @@ handler/schema when implementing; the bullets below are the durable WHY.
   answers 200.
 - Every `/v1/supplements` route answers the same 503 until then. Like water,
   they carry no subscription check; the app gates the screen.
+- `/v1/admin/supplements` (admins, or loopback in development) loads the
+  curated catalog and reviews held-back rows and label scans; it ignores
+  `SUPPLEMENTS_ENABLED` and answers 503 only before the migration. See
+  [supplement-catalog-admin.md](./supplement-catalog-admin.md).
 - A product is visible when it is a shared, approved catalog row or the
   user's own. Every route that takes a product, list row or dose id answers
   404 `SUPPLEMENT_NOT_FOUND` for anything else, so other users' rows never
@@ -236,7 +240,10 @@ handler/schema when implementing; the bullets below are the durable WHY.
   the day's doses of products since taken off the list.
 - `GET /search?q=` (30/min) folds accents ("dau ca" finds "Dầu cá"); one- and
   two-letter words match only at a word start, so "vitamin k" does not match
-  every brand with a "k" in it. It lists approved catalog rows first, those
+  every brand with a "k" in it. Vietnamese nutrient names ("sắt", "canxi",
+  "dầu cá", "kẽm") also find the English label words ("Iron", "Calcium",
+  "Fish Oil", "Zinc") and match only as whole words, so "sắt" never finds
+  "Satiety". It lists approved catalog rows first, those
   sold in Vietnam ahead, then the user's own; at most 20. `macro_bearing: true`
   marks a product the app logs as food: adding it or logging it as a dose is
   400 `SUPPLEMENT_IS_FOOD`.
