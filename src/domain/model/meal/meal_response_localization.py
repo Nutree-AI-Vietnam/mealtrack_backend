@@ -74,6 +74,25 @@ def parse_meal_response_localization(
     )
 
 
+def localize_food_items(
+    food_items: list[Any],
+    localization: MealResponseLocalization,
+) -> list[Any]:
+    """Rename food items, in order, to their requested-language names."""
+    if len(food_items) != len(localization.food_item_names):
+        raise MealResponseLocalizationError(
+            "Localized names do not cover every persisted food item"
+        )
+    return [
+        replace(item, name=localized_name)
+        for item, localized_name in zip(
+            food_items,
+            localization.food_item_names,
+            strict=True,
+        )
+    ]
+
+
 def persist_meal_response_localization(
     meal: Meal,
     localization: MealResponseLocalization | None,
@@ -85,21 +104,12 @@ def persist_meal_response_localization(
     nutrition = meal.nutrition
     if nutrition is None or not nutrition.food_items:
         return replace(meal, dish_name=localization.dish_name)
-    if len(nutrition.food_items) != len(localization.food_item_names):
-        raise MealResponseLocalizationError(
-            "Localized names do not cover every persisted food item"
-        )
 
-    localized_items = [
-        replace(item, name=localized_name)
-        for item, localized_name in zip(
-            nutrition.food_items,
-            localization.food_item_names,
-            strict=True,
-        )
-    ]
     return replace(
         meal,
         dish_name=localization.dish_name,
-        nutrition=replace(nutrition, food_items=localized_items),
+        nutrition=replace(
+            nutrition,
+            food_items=localize_food_items(nutrition.food_items, localization),
+        ),
     )
