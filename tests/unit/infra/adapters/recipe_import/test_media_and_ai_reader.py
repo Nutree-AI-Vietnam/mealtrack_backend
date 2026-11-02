@@ -340,6 +340,59 @@ async def test_media_analysis_reads_speech_and_frames_then_cleans_up(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_timed_out_download_keeps_its_folder_and_slot_until_the_thread_stops():
+    import asyncio
+    import threading
+
+    started = threading.Event()
+    gate = threading.Event()
+    work_dirs: list[Path] = []
+
+    class SlowDownload:
+        def __init__(self, options: dict[str, Any]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "SlowDownload":
+            return self
+
+        def __exit__(self, *exc: Any) -> bool:
+            return False
+
+        def download(self, urls: list[str]) -> None:
+            target = Path(self.options["outtmpl"].replace("%(ext)s", "part"))
+            work_dirs.append(target.parent)
+            started.set()
+            gate.wait(5)
+            # yt-dlp reports progress, and the hook stops a cancelled read
+            for hook in self.options["progress_hooks"]:
+                hook({"status": "downloading"})
+
+    analyzer = _analyzer(AsyncMock(), AsyncMock(), SlowDownload)
+    task = asyncio.create_task(
+        analyzer.analyze(
+            "https://www.tiktok.com/@a/video/1",
+            RecipeSourcePlatform.TIKTOK,
+            duration_seconds=30,
+        )
+    )
+    await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(task, timeout=0.05)
+
+    # the thread still runs: its folder stays and it still holds the slot
+    assert work_dirs and work_dirs[0].exists()
+    assert analyzer._semaphore.locked()
+
+    gate.set()
+    for _ in range(100):
+        if not work_dirs[0].exists() and not analyzer._semaphore.locked():
+            break
+        await asyncio.sleep(0.02)
+    assert not work_dirs[0].exists()
+    assert not analyzer._semaphore.locked()
+
+
+@pytest.mark.asyncio
 async def test_media_analysis_skips_videos_over_the_duration_limit():
     def factory(options: dict[str, Any]) -> Any:
         raise AssertionError("must not download")

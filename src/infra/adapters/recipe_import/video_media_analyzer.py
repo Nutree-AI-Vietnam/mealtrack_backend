@@ -104,26 +104,36 @@ class VideoMediaAnalyzer:
                 "Recipe video too long to analyze: seconds=%d", duration_seconds
             )
             return VideoMediaAnalysis()
-        async with self._semaphore:
+        await self._semaphore.acquire()
+        try:
             work_dir = Path(tempfile.mkdtemp(prefix="recipe-import-"))
-            cancel = threading.Event()
-            loop = asyncio.get_running_loop()
-            download = loop.run_in_executor(
-                None, self._download, url, platform, work_dir, cancel
-            )
-            try:
-                video = await download
-                return await self._read(video, work_dir, duration_seconds)
-            finally:
-                cancel.set()
-                if download.done():
-                    shutil.rmtree(work_dir, ignore_errors=True)
-                else:
-                    # The download thread notices the cancel at its next
-                    # progress callback; clean up once it has stopped.
-                    download.add_done_callback(
-                        lambda _: shutil.rmtree(work_dir, ignore_errors=True)
-                    )
+        except BaseException:
+            self._semaphore.release()
+            raise
+        cancel = threading.Event()
+        loop = asyncio.get_running_loop()
+        download = loop.run_in_executor(
+            None, self._download, url, platform, work_dir, cancel
+        )
+
+        def finish(_: object = None) -> None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            self._semaphore.release()
+
+        try:
+            # Shielded: a timeout cancels this await, not the future, so the
+            # future stays pending while the thread still runs.
+            video = await asyncio.shield(download)
+            return await self._read(video, work_dir, duration_seconds)
+        finally:
+            cancel.set()
+            if download.done():
+                finish()
+            else:
+                # The download thread notices the cancel at its next progress
+                # callback. Until it stops, it may still write into work_dir
+                # and counts toward the concurrency limit.
+                download.add_done_callback(_retrieve_then(finish))
 
     async def _read(
         self, video: Path, work_dir: Path, duration_seconds: int | None
@@ -275,3 +285,14 @@ def _merge_frame_texts(strips: list[list[str] | None]) -> str | None:
 
 def _caption_key(caption: str) -> str:
     return " ".join(caption.casefold().split())
+
+
+def _retrieve_then(finish: Callable[[], None]) -> Callable[[asyncio.Future[Any]], None]:
+    """A done callback that marks the future's error as seen, then cleans up."""
+
+    def done(future: asyncio.Future[Any]) -> None:
+        if not future.cancelled():
+            future.exception()  # nobody awaits it any more
+        finish()
+
+    return done
