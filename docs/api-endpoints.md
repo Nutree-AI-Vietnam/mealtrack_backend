@@ -225,6 +225,42 @@ handler/schema when implementing; the bullets below are the durable WHY.
   `SUPPLEMENTS_ENABLED` is on and the supplement tables are migrated, and 503
   `SUPPLEMENTS_UNAVAILABLE` otherwise. Clients hide supplement logging until it
   answers 200.
+- Every `/v1/supplements` route answers the same 503 until then. Like water,
+  they carry no subscription check; the app gates the screen.
+- A product is visible when it is a shared, approved catalog row or the
+  user's own. Every route that takes a product, list row or dose id answers
+  404 `SUPPLEMENT_NOT_FOUND` for anything else, so other users' rows never
+  leak.
+- `GET /mine?date=YYYY-MM-DD` (the user's today by default): `items` are the
+  list rows, each with `product` and that day's `doses`; `unlisted_doses` are
+  the day's doses of products since taken off the list.
+- `GET /search?q=` (30/min) folds accents ("dau ca" finds "Dầu cá"); one- and
+  two-letter words match only at a word start, so "vitamin k" does not match
+  every brand with a "k" in it. It lists approved catalog rows first, those
+  sold in Vietnam ahead, then the user's own; at most 20. `macro_bearing: true`
+  marks a product the app logs as food: adding it or logging it as a dose is
+  400 `SUPPLEMENT_IS_FOOD`.
+- `GET /barcode/{code}` (20/min) accepts UPC-A, EAN-13, EAN-8 or GTIN-14 and returns
+  the shared product, else the user's own, else 404 (the app then offers a
+  label scan).
+- `POST /mine` `{product_id, units_per_dose?, log_now?, intake_id?, taken_at?}`
+  adds the product, or reactivates its row. `log_now` also logs one dose of
+  `units_per_dose` (default: the label's serving) and then needs `intake_id`;
+  send an `Idempotency-Key` so a retry replays instead of answering 409. The
+  reply's row carries the whole day's doses of that product. `PATCH /mine/{id}` changes
+  `units_per_dose`, `active` or `sort_order`. `DELETE /mine/{id}` removes the
+  row and keeps past doses.
+- `POST /intakes` `{intake_id, product_id, units, taken_at?}` logs a dose under
+  the client's UUID. `taken_at` must carry an offset (send UTC) and defaults
+  to now; more than 10 minutes ahead or a year back is 400 `INVALID_TAKEN_AT`. A reused `intake_id` (even a
+  deleted one) is 409 `SUPPLEMENT_INTAKE_ID_TAKEN`; the same
+  `Idempotency-Key` replays the stored reply instead. `DELETE /intakes/{id}`
+  removes one of the user's doses.
+- A dose stores its nutrients at log time (per-unit amounts × units) and
+  never carries calories. It counts as a logged day for the streak and the
+  weekly recap, and appears in `GET /v1/activities/daily` as
+  `type: "supplement"` with `title`, `brand`, `units`, `unit_label` and
+  `estimated`.
 
 ### Meal recommendations (catalog)
 

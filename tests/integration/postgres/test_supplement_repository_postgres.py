@@ -138,7 +138,8 @@ async def test_search_matches_every_word_and_ranks_products_sold_in_vietnam_firs
 
     async with AsyncUnitOfWork() as uow:
         found = await uow.supplements.search_products("d3 1000", alice)
-        wildcard = await uow.supplements.search_products("100%", alice)
+        # Folding drops punctuation, so a lone LIKE wildcard matches nothing.
+        wildcard = await uow.supplements.search_products("%", alice)
 
     assert [p.id for p in found] == [local.id, abroad.id]
     assert wildcard == []
@@ -201,8 +202,10 @@ async def test_a_reused_intake_id_is_refused_and_deletes_are_scoped_to_the_user(
             == []
         )
         now = datetime.now(UTC)
-        assert await repo.soft_delete_intake(bob, intake.id, now) is False
-        assert await repo.soft_delete_intake(alice, intake.id, now) is True
+        assert await repo.soft_delete_intake(bob, intake.id, now) is None
+        deleted = await repo.soft_delete_intake(alice, intake.id, now)
+        assert deleted.local_date == date(2026, 11, 1)
+        assert await repo.soft_delete_intake(alice, intake.id, now) is None
         assert (
             await repo.intakes_between(alice, date(2026, 11, 1), date(2026, 11, 1))
             == []

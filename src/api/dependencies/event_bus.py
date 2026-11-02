@@ -4,6 +4,7 @@ Event bus dependency for FastAPI with proper type registrations.
 
 import logging
 import time
+from datetime import date
 from typing import Any
 
 from src.app.commands.cheat_day import MarkCheatDayCommand, UnmarkCheatDayCommand
@@ -1346,6 +1347,59 @@ def get_configured_event_bus() -> EventBus:
         GetWeeklyHydrationQuery,
         GetWeeklyHydrationQueryHandler(cache_service=cache_service),
     )
+
+    # Register supplement handlers (routes answer 503 until the switch is on)
+    from src.api.services.write_cache_invalidation import (
+        apply_supplement_write_cache_invalidation,
+    )
+    from src.app.commands.supplement import (
+        AddSupplementCommand,
+        DeleteSupplementIntakeCommand,
+        LogSupplementIntakeCommand,
+        RemoveSupplementCommand,
+        UpdateSupplementCommand,
+    )
+    from src.app.handlers.command_handlers.supplement_command_handlers import (
+        AddSupplementCommandHandler,
+        DeleteSupplementIntakeCommandHandler,
+        LogSupplementIntakeCommandHandler,
+        RemoveSupplementCommandHandler,
+        UpdateSupplementCommandHandler,
+    )
+    from src.app.handlers.query_handlers.supplement_query_handlers import (
+        GetMySupplementsQueryHandler,
+        LookupSupplementBarcodeQueryHandler,
+        SearchSupplementsQueryHandler,
+    )
+    from src.app.queries.supplement import (
+        GetMySupplementsQuery,
+        LookupSupplementBarcodeQuery,
+        SearchSupplementsQuery,
+    )
+
+    async def purge_supplement_day(user_id: str, day: date) -> None:
+        await apply_supplement_write_cache_invalidation(cache_service, user_id, day)
+
+    for command, handler_class in (
+        (AddSupplementCommand, AddSupplementCommandHandler),
+        (UpdateSupplementCommand, UpdateSupplementCommandHandler),
+        (RemoveSupplementCommand, RemoveSupplementCommandHandler),
+        (LogSupplementIntakeCommand, LogSupplementIntakeCommandHandler),
+        (DeleteSupplementIntakeCommand, DeleteSupplementIntakeCommandHandler),
+    ):
+        event_bus.register_handler(
+            command,
+            handler_class(uow_factory=AsyncUnitOfWork, purge_day=purge_supplement_day),
+        )
+    for query, query_handler_class in (
+        (GetMySupplementsQuery, GetMySupplementsQueryHandler),
+        (SearchSupplementsQuery, SearchSupplementsQueryHandler),
+        (LookupSupplementBarcodeQuery, LookupSupplementBarcodeQueryHandler),
+    ):
+        event_bus.register_handler(
+            query,
+            query_handler_class(uow_factory=lambda: AsyncUnitOfWork(read_only=True)),
+        )
 
     # Register saved suggestion handlers
     event_bus.register_handler(

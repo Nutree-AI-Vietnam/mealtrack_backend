@@ -5,16 +5,19 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Computed,
     Float,
     ForeignKey,
     Index,
     String,
+    Text,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
 from src.infra.database.base import Base
 from src.infra.database.models.base import BaseMixin
+from src.infra.database.supplement_search_name_sql import SupplementSearchName
 
 _JSON = JSON().with_variant(JSONB(), "postgresql")
 
@@ -53,6 +56,8 @@ class SupplementProductORM(Base, BaseMixin):
     estimated = Column(Boolean, nullable=False, default=False)
     label_image_url = Column(String(512), nullable=True)
     review_status = Column(String(16), nullable=False)
+    # Accent-folded brand and names, so "dau ca" finds "Dầu cá" (trigram index).
+    name_search = Column(Text, Computed(SupplementSearchName(), persisted=True))
 
     __table_args__ = (
         CheckConstraint(
@@ -84,6 +89,12 @@ class SupplementProductORM(Base, BaseMixin):
         CheckConstraint(
             "NOT estimated OR (source = 'describe' AND owner_user_id IS NOT NULL)",
             name="ck_supplement_products_estimate_private",
+        ),
+        Index(
+            "ix_supplement_products_name_search_trgm",
+            "name_search",
+            postgresql_using="gin",
+            postgresql_ops={"name_search": "gin_trgm_ops"},
         ),
     )
 

@@ -2,29 +2,20 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date, datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.elements import ColumnElement
 
 from src.domain.model.supplement import (
-    ReviewStatus,
     SupplementIntake,
     SupplementProduct,
-    SupplementProductNotFoundError,
     UserSupplement,
-    gtin14,
 )
 from src.domain.ports.supplement_repository_port import SupplementRepositoryPort
-from src.domain.utils.food_search_text import (
-    MAX_FOOD_SEARCH_WORDS,
-    clip_food_search_query,
-)
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.supplement import (
     SupplementIntakeORM as Intake,
@@ -42,92 +33,38 @@ from src.infra.mappers.supplement_mapper import (
     intake_to_domain,
     intake_values,
     list_entry_to_domain,
-    product_to_domain,
     product_values,
 )
+from src.infra.repositories.supplement_product_reads import SupplementProductReads
 
-logger = logging.getLogger(__name__)
-
-_MAX_SEARCH_LIMIT = 50
 _TABLES = (
     "supplement_products",
     "supplement_product_barcodes",
     "user_supplements",
     "supplement_intakes",
+    # Every product read selects name_search, so its migration must have run too.
+    "ix_supplement_products_name_search_trgm",
 )
 
 
-def _visible_to(user_id: str) -> ColumnElement[bool]:
-    # An empty id would compare as "owner IS NULL" and expose unapproved shared rows.
-    if not user_id:
-        raise ValueError("a visibility check needs a user id")
-    return or_(
-        and_(
-            Product.owner_user_id.is_(None),
-            Product.review_status == ReviewStatus.APPROVED.value,
-        ),
-        Product.owner_user_id == user_id,
-    )
+# A positive answer is final for the process: tables are never dropped while
+# it runs. A negative one is checked again on the next call.
+_schema_ready = False
 
 
-def _like(word: str) -> str:
-    escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
-
-
-class AsyncSupplementRepository(SupplementRepositoryPort):
+class AsyncSupplementRepository(SupplementProductReads, SupplementRepositoryPort):
     """Never commits; callers own the transaction."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
 
     async def schema_ready(self) -> bool:
-        checks = " AND ".join(f"to_regclass('{t}') IS NOT NULL" for t in _TABLES)
-        return bool((await self.session.execute(text(f"SELECT {checks}"))).scalar_one())
-
-    async def get_product(
-        self, product_id: str, user_id: str
-    ) -> SupplementProduct | None:
-        rows = await self._products(
-            select(Product).where(Product.id == product_id, _visible_to(user_id))
-        )
-        return rows[0] if rows else None
-
-    async def find_by_barcode(
-        self, barcode: str, user_id: str
-    ) -> SupplementProduct | None:
-        code = gtin14(barcode)
-        if code is None:
-            return None
-        rows = await self._products(
-            select(Product)
-            .join(Barcode, Barcode.product_id == Product.id)
-            .where(Barcode.barcode == code, _visible_to(user_id))
-            .order_by(Product.owner_user_id.is_(None).desc())
-            .limit(1)
-        )
-        return rows[0] if rows else None
-
-    async def search_products(
-        self, query: str, user_id: str, limit: int = 20
-    ) -> list[SupplementProduct]:
-        words = clip_food_search_query(query).split()[:MAX_FOOD_SEARCH_WORDS]
-        if not words:
-            return []
-        haystack = func.concat_ws(
-            " ", Product.brand, Product.name, Product.name_original
-        )
-        return await self._products(
-            select(Product)
-            .where(_visible_to(user_id), *(haystack.ilike(_like(w)) for w in words))
-            .order_by(
-                Product.owner_user_id.is_(None).desc(),
-                Product.sold_in_vn.desc(),
-                Product.brand,
-                Product.name,
-            )
-            .limit(max(1, min(limit, _MAX_SEARCH_LIMIT)))
-        )
+        global _schema_ready
+        if not _schema_ready:
+            checks = " AND ".join(f"to_regclass('{t}') IS NOT NULL" for t in _TABLES)
+            result = await self.session.execute(text(f"SELECT {checks}"))
+            _schema_ready = bool(result.scalar_one())
+        return _schema_ready
 
     async def add_product(self, product: SupplementProduct) -> tuple[str, ...]:
         await self.session.execute(pg_insert(Product).values(**product_values(product)))
@@ -185,6 +122,36 @@ class AsyncSupplementRepository(SupplementRepositoryPort):
         row = (await self.session.execute(statement)).scalar_one()
         return list_entry_to_domain(row)
 
+    async def update_list_entry(
+        self,
+        user_id: str,
+        entry_id: str,
+        *,
+        units_per_dose: float | None = None,
+        active: bool | None = None,
+        sort_order: int | None = None,
+    ) -> UserSupplement | None:
+        changes: dict[str, Any] = {
+            key: value
+            for key, value in (
+                ("units_per_dose", units_per_dose),
+                ("active", active),
+                ("sort_order", sort_order),
+            )
+            if value is not None
+        }
+        changes["updated_at"] = utc_now()
+        row = (
+            await self.session.execute(
+                update(ListEntry)
+                .where(ListEntry.id == entry_id, ListEntry.user_id == user_id)
+                .values(**changes)
+                .returning(ListEntry)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        return None if row is None else list_entry_to_domain(row)
+
     async def remove_list_entry(self, user_id: str, entry_id: str) -> bool:
         return bool(
             await self._rowcount(
@@ -220,9 +187,9 @@ class AsyncSupplementRepository(SupplementRepositoryPort):
 
     async def soft_delete_intake(
         self, user_id: str, intake_id: str, deleted_at: datetime
-    ) -> bool:
-        return bool(
-            await self._rowcount(
+    ) -> SupplementIntake | None:
+        row = (
+            await self.session.execute(
                 update(Intake)
                 .where(
                     Intake.id == intake_id,
@@ -230,8 +197,19 @@ class AsyncSupplementRepository(SupplementRepositoryPort):
                     Intake.deleted_at.is_(None),
                 )
                 .values(deleted_at=deleted_at, updated_at=deleted_at)
+                .returning(Intake)
+                .execution_options(populate_existing=True)
             )
+        ).scalar_one_or_none()
+        return None if row is None else intake_to_domain(row)
+
+    async def log_days(self, user_id: str) -> list[tuple[date, bool]]:
+        result = await self.session.execute(
+            select(Intake.local_date, func.bool_or(Intake.logged_on_day))
+            .where(Intake.user_id == user_id, Intake.deleted_at.is_(None))
+            .group_by(Intake.local_date)
         )
+        return [(day, bool(on_day)) for day, on_day in result.all()]
 
     async def delete_user_data(self, user_id: str) -> int:
         removed = 0
@@ -243,40 +221,7 @@ class AsyncSupplementRepository(SupplementRepositoryPort):
             removed += await self._rowcount(statement)
         return removed
 
-    async def _require_visible(self, product_id: str, user_id: str) -> None:
-        # Another user's private product must never gain doses or list rows:
-        # its owner's account deletion would then be blocked or lose their rows.
-        found = await self.session.execute(
-            select(Product.id).where(Product.id == product_id, _visible_to(user_id))
-        )
-        if found.scalar_one_or_none() is None:
-            raise SupplementProductNotFoundError(product_id)
-
     async def _rowcount(self, statement: Any) -> int:
         # DML results are cursor results, which carry the affected row count.
         result = cast(CursorResult[Any], await self.session.execute(statement))
         return int(result.rowcount or 0)
-
-    async def _products(self, statement: Any) -> list[SupplementProduct]:
-        rows = (await self.session.execute(statement)).scalars().all()
-        if not rows:
-            return []
-        codes: dict[str, list[str]] = {}
-        for product_id, code in (
-            await self.session.execute(
-                select(Barcode.product_id, Barcode.barcode).where(
-                    Barcode.product_id.in_([row.id for row in rows])
-                )
-            )
-        ).all():
-            codes.setdefault(product_id, []).append(code)
-        products = []
-        for row in rows:
-            try:
-                products.append(product_to_domain(row, codes.get(row.id, [])))
-            except ValueError:
-                # One malformed row must not break every search that returns it.
-                logger.warning(
-                    "Skipping invalid supplement product %s", row.id, exc_info=True
-                )
-        return products
