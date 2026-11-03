@@ -622,6 +622,19 @@ handler/schema when implementing; the bullets below are the durable WHY.
   5/20/75 with calories derived from the returned macro triple. Details live in
   `system-architecture.md` and the preview handler.
 
+### My Plan date of birth (`/v1/user-profiles/metrics`)
+
+- `GET` always carries `date_of_birth` (`YYYY-MM-DD` or `null`). Apps send
+  `date_of_birth` only to a server whose `GET` has the key, because
+  `UpdateMetricsRequest` forbids unknown fields.
+- `POST` accepts an optional `date_of_birth`. It must be a real, past date that
+  gives an age from 12 to 120 (422 otherwise). It is stored on the profile and
+  sets `age` as of today, winning over an `age` sent with it.
+- An `age` sent alone, as older apps do, that differs from the age the stored
+  date gives today clears `date_of_birth`; a matching age keeps it.
+- `age` is stored, not derived on read, so it goes stale on birthdays until the
+  next metrics update; TDEE reads that stored age.
+
 ### Paid web redemption
 
 - `/v1/web-funnel/*` lead creation fails closed until
