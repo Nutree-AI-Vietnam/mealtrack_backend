@@ -594,6 +594,7 @@ class TestGetUserMetricsQueryHandlerCache:
             "user_id": "u1",
             "weight_kg": 75.0,
             "target_weight_kg": 65.0,
+            "date_of_birth": None,
             "profile_target_revision": 1,
         }
         cache_service = MagicMock()

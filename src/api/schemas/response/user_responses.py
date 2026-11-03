@@ -2,7 +2,7 @@
 User management response schemas for Firebase integration.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
@@ -134,6 +134,9 @@ class UserMetricsResponse(BaseModel):
 
     user_id: str = Field(..., description="User internal ID")
     age: int = Field(..., description="User age")
+    date_of_birth: date | None = Field(
+        None, description="Date of birth as YYYY-MM-DD, or null when not stored"
+    )
     gender: str = Field(..., description="User gender")
     height_cm: float = Field(..., description="Height in centimeters")
     weight_kg: float = Field(..., description="Current weight in kilograms")
