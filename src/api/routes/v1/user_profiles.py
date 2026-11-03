@@ -209,6 +209,7 @@ async def get_user_tdee(
     response.activity_multiplier = result["activity_multiplier"]
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
+    response.deficit_blocked_reason = result.get("deficit_blocked_reason")
     response.is_custom = result.get("is_custom", False)
 
     return response
@@ -294,6 +295,7 @@ async def update_user_metrics(
     response.activity_multiplier = result["activity_multiplier"]
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
+    response.deficit_blocked_reason = result.get("deficit_blocked_reason")
     response.is_custom = result.get("is_custom", False)
     return response
 
@@ -345,5 +347,6 @@ async def update_custom_macros(
     response.activity_multiplier = result["activity_multiplier"]
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
+    response.deficit_blocked_reason = result.get("deficit_blocked_reason")
     response.is_custom = result.get("is_custom", False)
     return response

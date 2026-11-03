@@ -35,12 +35,17 @@ class TdeeCalculationService:
         tdee = self._calculate_tdee_from_activity(bmr, request.job_type)
         # Minors and underweight adults get no deficit: a weight-loss goal plans
         # at maintenance until a clinician-reviewed rule says otherwise.
-        deficit_blocked = request.goal == Goal.CUT and deficit_not_allowed(
-            age=request.age,
-            weight_kg=request.weight_kg,
-            height_cm=request.height_cm,
-            health_conditions=request.health_conditions,
+        block_reason = (
+            deficit_block_reason(
+                age=request.age,
+                weight_kg=request.weight_kg,
+                height_cm=request.height_cm,
+                health_conditions=request.health_conditions,
+            )
+            if request.goal == Goal.CUT
+            else None
         )
+        deficit_blocked = block_reason is not None
         macro_targets = self._calculate_all_macro_targets(
             tdee,
             request.weight_kg,
@@ -59,6 +64,7 @@ class TdeeCalculationService:
             macros=macro_targets,
             formula_used=formula_name,
             macro_preset=request.macro_preset,
+            deficit_blocked_reason=block_reason,
             pace_range=(
                 pace_range(request.weight_kg, tdee, bmr, request.sex)
                 if request.goal == Goal.CUT and not deficit_blocked
@@ -329,14 +335,21 @@ NO_DEFICIT_CONDITIONS = frozenset(
 CKD_PROTEIN_PER_KG = 0.8
 
 
-def deficit_not_allowed(
+# Why a weight-loss goal was planned at maintenance. The client shows the
+# user a reason rather than a target that silently disagrees with their goal.
+DEFICIT_BLOCK_MINOR = "minor"
+DEFICIT_BLOCK_UNDERWEIGHT = "underweight"
+DEFICIT_BLOCK_HEALTH_CONDITION = "health_condition"
+
+
+def deficit_block_reason(
     *,
     age: int,
     weight_kg: float,
     height_cm: float,
     health_conditions: Iterable[str] = (),
-) -> bool:
-    """True for users who must not be given a calorie deficit.
+) -> str | None:
+    """Why this user must not be given a calorie deficit, or None.
 
     Under-18s are still growing and every formula here is an adult one, and a
     BMI below 18.5 is underweight (WHO). Pregnancy, breastfeeding and a
@@ -344,15 +357,36 @@ def deficit_not_allowed(
     maintenance until a reviewed rule pack says otherwise.
     """
     if age < ADULT_AGE:
-        return True
+        return DEFICIT_BLOCK_MINOR
     if NO_DEFICIT_CONDITIONS & {
         str(condition).strip().lower() for condition in health_conditions
     }:
-        return True
+        return DEFICIT_BLOCK_HEALTH_CONDITION
     if height_cm <= 0:
-        return False
+        return None
     bmi = weight_kg / (height_cm / 100) ** 2
-    return bmi < UNDERWEIGHT_BMI
+    if bmi < UNDERWEIGHT_BMI:
+        return DEFICIT_BLOCK_UNDERWEIGHT
+    return None
+
+
+def deficit_not_allowed(
+    *,
+    age: int,
+    weight_kg: float,
+    height_cm: float,
+    health_conditions: Iterable[str] = (),
+) -> bool:
+    """True for users who must not be given a calorie deficit."""
+    return (
+        deficit_block_reason(
+            age=age,
+            weight_kg=weight_kg,
+            height_cm=height_cm,
+            health_conditions=health_conditions,
+        )
+        is not None
+    )
 
 
 def calorie_floor(bmr: float, sex: Sex) -> float:

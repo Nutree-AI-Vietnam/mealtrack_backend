@@ -122,3 +122,39 @@ def test_a_pregnant_user_plans_at_maintenance():
 
     assert abs(_calories(cut) - _calories(maintain)) < 1
     assert cut.pace_range is None
+
+
+def test_the_response_says_why_a_cut_was_planned_at_maintenance():
+    """The client needs a reason: the goal field still says "cut"."""
+    service = TdeeCalculationService()
+    cases = (
+        ("minor", _request(age=13, height=155, weight=55, goal=Goal.CUT)),
+        ("underweight", _request(age=30, height=160, weight=46, goal=Goal.CUT)),
+        (
+            "health_condition",
+            _request(
+                age=30,
+                height=160,
+                weight=70,
+                goal=Goal.CUT,
+                health_conditions=("pregnancy",),
+            ),
+        ),
+    )
+    for reason, request in cases:
+        response = service.calculate_tdee(request)
+        assert response.deficit_blocked_reason == reason, reason
+        assert response.goal == Goal.CUT
+        assert response.to_dict()["deficit_blocked_reason"] == reason
+
+
+def test_a_plan_that_keeps_its_deficit_carries_no_reason():
+    service = TdeeCalculationService()
+    cut = service.calculate_tdee(_request(age=30, height=160, weight=70, goal=Goal.CUT))
+    maintain = service.calculate_tdee(
+        _request(age=30, height=160, weight=70, goal=Goal.RECOMP)
+    )
+
+    assert cut.deficit_blocked_reason is None
+    assert maintain.deficit_blocked_reason is None
+    assert "deficit_blocked_reason" not in cut.to_dict()
