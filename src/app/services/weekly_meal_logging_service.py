@@ -178,6 +178,7 @@ class WeeklyMealLoggingService:
                         timezone=effective_timezone,
                         portion_multiplier=command.portion_multiplier,
                         source="weekly_meal_planner",
+                        rice_steps=int(getattr(command, "rice_steps", 0) or 0),
                     )
                 try:
                     await uow.weekly_meal_plans.mark_slot_logged(

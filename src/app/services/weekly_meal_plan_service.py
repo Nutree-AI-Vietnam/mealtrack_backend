@@ -51,6 +51,10 @@ from src.domain.services.weekly_meal_planner.slot_rules import (
     ensure_base_revision,
     ensure_slot_coordinate,
 )
+from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
+    DayTargets,
+    compose_day,
+)
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 from src.planner_observability import planner_phase, planner_timed
 from src.planner_request_policy import (
@@ -205,6 +209,7 @@ class WeeklyMealPlanService:
                         if slot.is_logged and slot.has_recipe
                     },
                 )
+            servings = _compose_servings(command, selected, meals)
             recipe_ids = {
                 (item.day_index, item.slot_index): item.recipe_id
                 for item in selected
@@ -273,6 +278,7 @@ class WeeklyMealPlanService:
                         catalog_revision=_revision_key(revision),
                         recipe_ids=recipe_ids,
                         algorithm_version=algorithm_version,
+                        servings=servings,
                     )
                 else:
                     logged = {
@@ -292,6 +298,11 @@ class WeeklyMealPlanService:
                         },
                         algorithm_version=algorithm_version,
                         expected_revision=current.revision,
+                        servings={
+                            key: value
+                            for key, value in servings.items()
+                            if key not in logged
+                        },
                     )
                 await uow.meal_write_operations.complete(
                     reservation, target_meal_id=plan.id, response={"plan_id": plan.id}
@@ -1297,6 +1308,70 @@ def _resolve_plan_preferences(
         elif {"no pork", "halal"} & set(profile_diets):
             diet = "no-pork"
     return replace(preferences, diet=diet, allergies=tuple(sorted(allergies)))
+
+
+def _compose_servings(
+    command, selected, meals
+) -> dict[tuple[int, int], tuple[float, int]]:
+    """How much of each chosen dish to serve, and the rice beside it.
+
+    The dishes are already picked; this only decides the serving, against the
+    day's targets. Without macro targets it still fits calories. Rice goes
+    only with dishes that take it.
+    """
+    targets = DayTargets(
+        kcal=float(command.daily_calories or 0),
+        protein=float(getattr(command, "daily_protein", None) or 0),
+        carbs=float(getattr(command, "daily_carbs", None) or 0),
+        fat=float(getattr(command, "daily_fat", None) or 0),
+    )
+    if targets.kcal <= 0:
+        return {}
+    by_id = {meal.id: meal for meal in meals}
+    rice_dishes = frozenset(meal.id for meal in meals if _takes_rice(meal))
+    chosen: dict[int, dict[int, str]] = {}
+    for item in selected:
+        recipe_id = item.recipe_id or ""
+        if not recipe_id or recipe_id.startswith(_SAVED_FIXED_PREFIX):
+            continue
+        chosen.setdefault(item.day_index, {})[item.slot_index] = recipe_id
+
+    servings: dict[tuple[int, int], tuple[float, int]] = {}
+    served: dict[str, int] = {}
+    for day in sorted(chosen):
+        slots = chosen[day]
+        candidates = tuple(
+            (by_id[slots[slot]],) if slot in slots and slots[slot] in by_id else ()
+            for slot in range(WEEKLY_SLOTS_PER_DAY)
+        )
+        for composed in compose_day(
+            candidates,
+            targets,
+            day_index=day,
+            rice_dishes=rice_dishes,
+            used_counts=served,
+        ):
+            if composed.recipe_id is None:
+                continue
+            servings[(day, composed.slot_index)] = (
+                composed.portion,
+                composed.rice_steps,
+            )
+            served[composed.recipe_id] = served.get(composed.recipe_id, 0) + 1
+    return servings
+
+
+def _takes_rice(meal) -> bool:
+    """A savoury main eaten with rice, not a soup, noodle or rice dish."""
+    name = _normalize_preference_text(getattr(meal, "name", ""))
+    if any(
+        word in name for word in ("pho", "bun", "mi ", "chao", "com", "banh", "sup")
+    ):
+        return False
+    return any(
+        word in name
+        for word in ("kho", "ram", "rang", "xao", "chien", "nuong", "hap", "luoc")
+    )
 
 
 def _validate_proposal_outcome(

@@ -90,6 +90,7 @@ class RecommendedMealMaterializationService:
         timezone: str,
         portion_multiplier: float = 1.0,
         source: str = "meal_recommendation",
+        rice_steps: int = 0,
     ) -> Meal:
         if portion_multiplier not in {0.5, 1.0, 1.5, 2.0}:
             raise ValueError("portion_multiplier must be one of 0.5, 1, 1.5, or 2")
@@ -106,6 +107,9 @@ class RecommendedMealMaterializationService:
             food_items = _distribute_catalog_macros(
                 food_items, catalog_meal, portion_multiplier
             )
+        rice = _rice_food_item(rice_steps)
+        if rice is not None:
+            food_items = [*food_items, rice]
         recipe_micros = complete_micros_from_per_100g_portions(
             _ingredient_micro_portions(catalog_meal, projections)
         )
@@ -368,6 +372,28 @@ def _ingredient_micro_portions(
             continue
         portions.append((projection.extra_nutrients, resolved.grams))
     return portions
+
+
+# Viet Nam NIN counts a cereal serving as 55 g steamed rice: 20 g
+# carbohydrate, 1.5 g protein, 0.15 g fat. Calories come from the canonical
+# backend formula over those macros, never from a stored number.
+RICE_STEP_GRAMS = 55
+_RICE_STEP_MACROS = (1.5, 20.0, 0.15)
+_RICE_ITEM_NAME = "Cơm trắng"
+
+
+def _rice_food_item(rice_steps: int) -> FoodItem | None:
+    """The rice served beside a dish, as its own line on the logged meal."""
+    if rice_steps <= 0:
+        return None
+    protein, carbs, fat = (value * rice_steps for value in _RICE_STEP_MACROS)
+    return FoodItem(
+        id=str(uuid4()),
+        name=_RICE_ITEM_NAME,
+        quantity=float(rice_steps * RICE_STEP_GRAMS),
+        unit="g",
+        macros=Macros(protein=protein, carbs=carbs, fat=fat, fiber=0.0, sugar=0.0),
+    )
 
 
 def _food_item_for_ingredient(

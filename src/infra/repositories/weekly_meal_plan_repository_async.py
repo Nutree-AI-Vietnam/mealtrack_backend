@@ -121,6 +121,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         catalog_revision: str | None = None,
         recipe_ids: dict[tuple[int, int], str | None] | None = None,
         algorithm_version: str | None = None,
+        servings: dict[tuple[int, int], tuple[float, int]] | None = None,
     ) -> WeeklyMealPlan:
         plan = WeeklyMealPlanORM(
             id=str(uuid.uuid4()),
@@ -136,12 +137,15 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             or WeeklyPlanGenerationService.algorithm_version,
         )
         selected = recipe_ids or {}
+        served = servings or {}
         plan.slots = [
             WeeklyMealPlanSlotORM(
                 id=str(uuid.uuid4()),
                 day_index=day,
                 slot_index=slot,
                 catalog_meal_id=selected.get((day, slot)),
+                planned_portion=served.get((day, slot), (1.0, 0))[0],
+                planned_rice_steps=served.get((day, slot), (1.0, 0))[1],
             )
             for day in range(WEEKLY_DAYS)
             for slot in range(WEEKLY_SLOTS_PER_DAY)
@@ -162,6 +166,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         expected_revision: int | None = None,
         algorithm_version: str | None = None,
         saved_slots: dict[tuple[int, int], SavedRecipeSnapshot] | None = None,
+        servings: dict[tuple[int, int], tuple[float, int]] | None = None,
     ) -> WeeklyMealPlan:
         row = await self.get_for_update(
             user_id=user_id, plan_id=plan_id, include_pantry=False
@@ -217,6 +222,9 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                 slot.catalog_meal_id = recipe_id
                 slot.saved_suggestion_id = None
                 slot.saved_recipe = None
+                portion, rice_steps = (servings or {}).get(coordinate, (1.0, 0))
+                slot.planned_portion = portion
+                slot.planned_rice_steps = rice_steps
                 slot.version += 1
             for coordinate, snapshot in (saved_slots or {}).items():
                 slot = _replaceable_slot(by_coordinate, coordinate)

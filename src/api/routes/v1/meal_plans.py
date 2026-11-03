@@ -183,6 +183,7 @@ async def get_current_weekly_plan(
                         f"auto-gen-{user_id}-{week.isoformat()}"
                     ),
                     daily_calories=daily_calories,
+                    **_macro_targets(budget),
                 )
             )
 
@@ -247,6 +248,7 @@ async def generate_weekly_plan(
                 preferences=preferences,
                 idempotency_key=_idempotency_key(idempotency_key),
                 daily_calories=daily_calories,
+                **_macro_targets(budget),
             )
         )
         return await _plan_response(
@@ -708,6 +710,7 @@ async def log_weekly_slot(
                 meal_type=body.meal_type,
                 expected_recipe_id=body.expected_recipe_id,
                 portion_multiplier=body.portion_multiplier,
+                rice_steps=body.rice_steps,
                 timezone=timezone,
             )
         )
@@ -1077,6 +1080,21 @@ def _slot_response(slot, meal: CatalogMeal | None) -> WeeklyMealSlotResponse:
         planned_rice_grams=int(getattr(slot, "planned_rice_steps", 0) or 0)
         * RICE_STEP_GRAMS,
     )
+
+
+def _macro_targets(budget: dict | None) -> dict[str, float]:
+    """The day's protein, carb and fat targets, when the budget has them."""
+    names = {
+        "daily_protein": "daily_protein",
+        "daily_carbs": "adjusted_daily_carbs",
+        "daily_fat": "adjusted_daily_fat",
+    }
+    targets = {}
+    for field, key in names.items():
+        value = (budget or {}).get(key)
+        if value:
+            targets[field] = float(value)
+    return targets
 
 
 def _recipe_summary(meal: CatalogMeal) -> WeeklyRecipeSummaryResponse:
