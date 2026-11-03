@@ -88,6 +88,7 @@ class WeeklyMealPlanService:
         generator: WeeklyPlanGenerationService | None = None,
         ai_adjustment_provider=None,
         compact_week_percent: int = 0,
+        basket_target: int = 0,
     ):
         self.uow_factory = uow_factory
         self.generator = generator or WeeklyPlanGenerationService()
@@ -95,6 +96,8 @@ class WeeklyMealPlanService:
         self.grocery_service = WeeklyGroceryService()
         # Share of users whose generated weeks are compact (A/B arm).
         self.compact_week_percent = max(0, min(100, int(compact_week_percent)))
+        # Fresh ingredients a compact week aims to buy; 0 means no budget.
+        self.basket_target = max(0, int(basket_target)) or None
 
     def _plans_compact_week(self, user_id: str) -> bool:
         """Stable per-user A/B bucket for compact week generation."""
@@ -194,6 +197,7 @@ class WeeklyMealPlanService:
                     meals,
                     **selection,
                     basket_ids=basket_ids,
+                    basket_target=self.basket_target,
                     fixed={
                         (slot.day_index, slot.slot_index): slot.recipe_id
                         or f"{_SAVED_FIXED_PREFIX}{slot.saved_suggestion_id}"

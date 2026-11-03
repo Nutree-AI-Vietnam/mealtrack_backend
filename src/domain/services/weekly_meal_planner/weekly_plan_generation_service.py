@@ -121,6 +121,7 @@ class WeeklyPlanGenerationService:
         basket_ids: Mapping[str, frozenset[int]],
         fixed: Mapping[tuple[int, int], str] | None = None,
         last_week: frozenset[str] = frozenset(),
+        basket_target: int | None = None,
     ) -> tuple[GeneratedSlot, ...]:
         """Plan a week around fewer dishes and one shared grocery basket.
 
@@ -132,6 +133,12 @@ class WeeklyPlanGenerationService:
         already buy, then the one whose new ingredients most other eligible
         dishes also use, so the basket starts from common ingredients.
         ``basket_ids`` maps a recipe to its fresh grocery ids.
+
+        ``basket_target`` caps how many fresh ingredients the week should buy.
+        While the basket has room the choice is the same as without a budget;
+        once it is full, reusing what is already bought outranks calorie
+        closeness. It is a target, not a hard rule: a slot is always filled,
+        even when every remaining dish adds something new.
 
         ``fixed`` holds logged meals by (day, slot). They stay in place and
         count toward the basket, and a logged dinner still feeds the next
@@ -187,6 +194,9 @@ class WeeklyPlanGenerationService:
                         basket_ids,
                         basket,
                         frequency,
+                        None
+                        if basket_target is None
+                        else max(0, basket_target - len(basket)),
                     ),
                     item[1],
                     self._stable_rank(item[0], user_id, week_start_date, day, slot),
@@ -510,17 +520,35 @@ def _reuse_rank(
     basket_ids: Mapping[str, frozenset[int]],
     basket: set[int],
     frequency: Mapping[int, int],
-) -> tuple[int, int, int]:
-    """Rank by calorie band, fresh ingredients new to the week, then how many
-    eligible dishes use those new ingredients (more first)."""
+    allowance: int | None = None,
+) -> tuple[int, int, int, int]:
+    """Rank a dish by how it fits the week's calories and its grocery basket.
+
+    Without a budget (``allowance`` is None) calories lead: rank by calorie
+    band, then fresh ingredients new to the week, then how many eligible
+    dishes use those new ingredients.
+
+    With a budget, the basket leads. ``allowance`` is how many more fresh
+    ingredients the week may still buy, so a dish that would push past it
+    sorts last. Within the budget the dish whose new ingredients the most
+    other dishes also use comes first, which starts the week inside a group
+    of dishes that shop alike, and calories decide last. Picking by calories
+    first never reaches a small basket: the first dish of a shared group
+    costs as much as a one-off dish, so the week never enters the group.
+    """
     band = int(
         calorie_gap // max(_REUSE_CALORIE_BAND_KCAL, target * _REUSE_CALORIE_BAND_SHARE)
     )
     fresh = basket_ids.get(meal_id)
     if fresh is None:
-        return (band, _UNKNOWN_FRESH_COUNT, 0)
-    new = fresh - basket
-    return (band, len(new), -sum(frequency.get(item, 0) for item in new))
+        new_count, reuse = _UNKNOWN_FRESH_COUNT, 0
+    else:
+        new = fresh - basket
+        new_count = len(new)
+        reuse = -sum(frequency.get(item, 0) for item in new)
+    if allowance is None:
+        return (0, band, new_count, reuse)
+    return (max(0, new_count - allowance), reuse, new_count, band)
 
 
 def leftover_lunch_cook_days(plan: WeeklyMealPlan) -> dict[tuple[int, int], int]:

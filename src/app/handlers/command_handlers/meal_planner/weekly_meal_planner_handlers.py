@@ -27,9 +27,17 @@ from src.app.services.weekly_pantry_service import WeeklyPantryService
 
 @handles(GenerateWeeklyMealPlanCommand)
 class GenerateWeeklyMealPlanCommandHandler(EventHandler):
-    def __init__(self, uow_factory: Any, *, compact_week_percent: int = 0):
+    def __init__(
+        self,
+        uow_factory: Any,
+        *,
+        compact_week_percent: int = 0,
+        basket_target: int = 0,
+    ):
         self.service = WeeklyMealPlanService(
-            uow_factory, compact_week_percent=compact_week_percent
+            uow_factory,
+            compact_week_percent=compact_week_percent,
+            basket_target=basket_target,
         )
 
     async def handle(self, command):
