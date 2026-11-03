@@ -18,6 +18,11 @@ from src.domain.model.supplement import (
 
 
 def product_values(product: SupplementProduct) -> dict[str, Any]:
+    """Columns imports and reviews write.
+
+    The photo columns are left out, so a re-import or a review never clears a
+    photo an admin uploaded; only the image routes set them.
+    """
     return {
         "id": product.id,
         "catalog_key": product.catalog_key,
@@ -67,6 +72,8 @@ def product_to_domain(row: Any, barcodes: Iterable[str]) -> SupplementProduct:
         macro_bearing=row.macro_bearing,
         estimated=row.estimated,
         label_image_url=row.label_image_url,
+        image_id=row.image_id,
+        image_url=row.image_url,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

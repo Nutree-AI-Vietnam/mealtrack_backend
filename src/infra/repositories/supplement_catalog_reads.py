@@ -40,12 +40,19 @@ class SupplementCatalogReads:
         kind: ReviewKind | None = None,
         q: str | None = None,
         status: QueueStatus = "pending_review",
+        has_image: bool | None = None,
     ) -> tuple[list[ReviewItem], int]:
         waiting = [Product.review_status == status]
         if kind == "catalog":
             waiting.append(Product.owner_user_id.is_(None))
         elif kind == "scan":
             waiting.append(Product.owner_user_id.is_not(None))
+        if has_image is not None:
+            waiting.append(
+                Product.image_url.is_not(None)
+                if has_image
+                else Product.image_url.is_(None)
+            )
         if q:
             # Words fold like product search, so "now iron" finds NOW Iron 18 mg.
             words = food_search_words(clip_food_search_query(q))

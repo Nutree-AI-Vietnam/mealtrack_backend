@@ -145,7 +145,20 @@ def test_review_queue_lists_items_with_their_source(monkeypatch):
         "catalog_key": "dsld:2959",
         "review_status": "approved",
     }
-    queue.assert_awaited_once_with(10, 0, "scan", "dsld:2959", "approved")
+    queue.assert_awaited_once_with(10, 0, "scan", "dsld:2959", "approved", None)
+
+
+def test_review_queue_filters_by_photo(monkeypatch):
+    queue = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(route_mod, "supplement_review_queue", queue)
+
+    response = _client().get(
+        "/v1/admin/supplements/review",
+        params={"status": "approved", "has_image": "false"},
+    )
+
+    assert response.status_code == 200
+    queue.assert_awaited_once_with(50, 0, None, None, "approved", False)
 
 
 def test_review_passes_only_the_fields_sent(monkeypatch):

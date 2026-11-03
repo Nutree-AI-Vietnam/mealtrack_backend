@@ -115,6 +115,9 @@ class SupplementProduct:
     macro_bearing: bool = False
     estimated: bool = False
     label_image_url: str | None = None
+    # The product photo people see; ``image_id`` names it in the image store.
+    image_id: str | None = None
+    image_url: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -79,17 +81,18 @@ async def list_supplement_review(
     kind: Literal["catalog", "scan"] | None = Query(None),
     q: str | None = Query(None, max_length=120),
     status: Literal["pending_review", "approved"] = Query("pending_review"),
+    has_image: bool | None = Query(None),
     _admin: str = Depends(require_admin_or_local),
 ) -> AdminSupplementReviewListResponse:
     """Held-back catalog rows and people's label scans waiting for review."""
     try:
         items, total = await supplement_review_queue(
-            limit, offset, kind, (q or "").strip() or None, status
+            limit, offset, kind, (q or "").strip() or None, status, has_image
         )
     except SupplementCatalogUnavailableError as error:
         raise _unavailable(error) from error
     return AdminSupplementReviewListResponse(
-        items=[_item(item, match) for item, match in items],
+        items=[review_item_response(item, match) for item, match in items],
         total=total,
         limit=limit,
         offset=offset,
@@ -107,9 +110,24 @@ async def review_admin_supplement(
         request.changes.model_dump(exclude_unset=True) if request.changes else None
     )
     try:
-        outcome = await review_supplement(
-            product_id, ReviewAction(request.action), admin, changes
-        )
+        with catalog_errors():
+            outcome = await review_supplement(
+                product_id, ReviewAction(request.action), admin, changes
+            )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+        ) from error
+    return AdminSupplementReviewResponse(
+        item=review_item_response(outcome.item), merged_into=outcome.merged_into
+    )
+
+
+@contextmanager
+def catalog_errors() -> Iterator[None]:
+    """The status codes every write to one catalog product shares."""
+    try:
+        yield
     except SupplementCatalogUnavailableError as error:
         raise _unavailable(error) from error
     except SupplementProductNotFoundError as error:
@@ -120,16 +138,9 @@ async def review_admin_supplement(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
         ) from error
-    except ValueError as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
-        ) from error
-    return AdminSupplementReviewResponse(
-        item=_item(outcome.item), merged_into=outcome.merged_into
-    )
 
 
-def _item(
+def review_item_response(
     item: ReviewItem, match: SupplementProduct | None = None
 ) -> AdminSupplementReviewItem:
     product = item.product
@@ -158,6 +169,7 @@ def _item(
         source_name=product.source_name,
         source_url=product.source_url,
         label_image_url=product.label_image_url,
+        image_url=product.image_url,
         reasons=list(item.reasons),
         review_status=product.review_status.value,
         reviewed_at=item.reviewed_at,

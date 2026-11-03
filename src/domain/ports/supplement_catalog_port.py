@@ -72,10 +72,12 @@ class SupplementCatalogPort(ABC):
         kind: ReviewKind | None = None,
         q: str | None = None,
         status: QueueStatus = "pending_review",
+        has_image: bool | None = None,
     ) -> tuple[list[ReviewItem], int]:
         """Products waiting for review (or live, approved ones), oldest first.
 
         ``q`` matches a catalog key exactly, or part of the name or brand.
+        ``has_image`` keeps only products with (True) or without (False) a photo.
         """
 
     @abstractmethod
@@ -97,6 +99,12 @@ class SupplementCatalogPort(ABC):
         An approved shared row shares its barcodes (a shared holder makes the
         write fail); a rejected shared row gives its barcodes up.
         """
+
+    @abstractmethod
+    async def set_image(
+        self, product_id: str, image_id: str | None, image_url: str | None
+    ) -> None:
+        """Point the product at a stored photo, or at none; review fields stay."""
 
     @abstractmethod
     async def delete_product(self, product_id: str) -> None:

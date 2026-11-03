@@ -56,6 +56,9 @@ class SupplementProductORM(Base, BaseMixin):
     source = Column(String(16), nullable=False)
     estimated = Column(Boolean, nullable=False, default=False)
     label_image_url = Column(String(512), nullable=True)
+    # A catalog product's photo; only the admin image routes write these two.
+    image_id = Column(String(128), nullable=True)
+    image_url = Column(String(512), nullable=True)
     review_status = Column(String(16), nullable=False)
     # Why a held-back catalog row waits for review, as the seed import read it.
     review_reasons = Column(

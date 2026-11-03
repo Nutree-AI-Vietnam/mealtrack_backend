@@ -38,16 +38,25 @@ from src.infra.mappers.supplement_mapper import (
 )
 from src.infra.repositories.supplement_product_reads import SupplementProductReads
 
-_TABLES = (
+_DATA_TABLES = (
     "supplement_products",
     "supplement_product_barcodes",
     "user_supplements",
     "supplement_intakes",
+)
+_TABLES = (
+    *_DATA_TABLES,
     # Every product read selects name_search, so its migration must have run too.
     "ix_supplement_products_name_search_trgm",
 )
-# Every product read selects the review fields too.
-_PRODUCT_COLUMNS = ("review_reasons", "reviewed_at", "reviewed_by")
+# Every product read selects the review and photo fields too.
+_PRODUCT_COLUMNS = (
+    "review_reasons",
+    "reviewed_at",
+    "reviewed_by",
+    "image_id",
+    "image_url",
+)
 
 
 logger = logging.getLogger(__name__)
@@ -78,6 +87,13 @@ class AsyncSupplementRepository(SupplementProductReads, SupplementRepositoryPort
             result = await self.session.execute(text(f"SELECT {checks}"))
             _schema_ready = bool(result.scalar_one())
         return _schema_ready
+
+    async def tables_exist(self) -> bool:
+        checks = " AND ".join(
+            f"to_regclass('{table}') IS NOT NULL" for table in _DATA_TABLES
+        )
+        result = await self.session.execute(text(f"SELECT {checks}"))
+        return bool(result.scalar_one())
 
     async def add_product(self, product: SupplementProduct) -> tuple[str, ...]:
         await self.session.execute(pg_insert(Product).values(**product_values(product)))
