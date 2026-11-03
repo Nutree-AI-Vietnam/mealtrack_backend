@@ -277,11 +277,13 @@ async def close_async_session(
     terminating the connection, which logs "Exception terminating connection"
     and drops the cleanup (PYTHON-HP).
 
-    ``AsyncUnitOfWork`` commit and rollback also return the connection.
+    ``AsyncUnitOfWork`` rollback also returns the connection.
     ``PlannerNullPool`` then closes it gracefully (``do_close``, not
     terminate). Doing that on the cancelled request logs "Exception closing
     connection" (PYTHON-KK). ``before_close`` therefore runs in the same
-    shielded task as ``session.close``.
+    shielded task as ``session.close``. A successful commit does not: this
+    wait is capped at ``SESSION_CLOSE_TIMEOUT_SECONDS``, and a timeout
+    returns without raising.
 
     The close runs on a shielded task with a strong reference. The wait is
     bounded so a hung close cannot hold the request. ``CancelledError`` is

@@ -309,6 +309,53 @@ async def test_commit_failure_still_rolls_back_and_propagates():
 
 
 @pytest.mark.asyncio
+async def test_slow_commit_failure_is_not_hidden_by_the_close_timeout(monkeypatch):
+    """The close timeout must not turn a late commit failure into success.
+
+    The commit stays on ``AsyncUnitOfWork.commit`` so the planner commit
+    phase still runs, and it is not capped by the session-close timeout.
+    """
+    from contextlib import contextmanager
+
+    import src.infra.database.config_async as cfg
+    from src.planner_observability import planner_phase
+
+    monkeypatch.setattr(cfg, "SESSION_CLOSE_TIMEOUT_SECONDS", 0.05)
+    events: list[str] = []
+    phases: list[str] = []
+
+    @contextmanager
+    def _record_phase(phase: str):
+        phases.append(phase)
+        with planner_phase(phase):
+            yield
+
+    monkeypatch.setattr("src.planner_observability.planner_phase", _record_phase)
+
+    class _Session:
+        async def commit(self) -> None:
+            await asyncio.sleep(0.2)
+            events.append("commit")
+            raise RuntimeError("commit failed")
+
+        async def rollback(self) -> None:
+            events.append("rollback")
+
+        async def close(self) -> None:
+            events.append("close")
+
+    with patch(
+        "src.infra.database.uow_async.AsyncSessionLocal", return_value=_Session()
+    ):
+        with pytest.raises(RuntimeError, match="commit failed"):
+            async with AsyncUnitOfWork():
+                pass
+
+    assert events == ["commit", "rollback", "close"]
+    assert phases == ["commit"]
+
+
+@pytest.mark.asyncio
 async def test_async_uow_read_only_commit_raises():
     mock_session = AsyncMock()
 
