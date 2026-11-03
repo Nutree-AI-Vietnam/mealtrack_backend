@@ -150,11 +150,14 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
             elif command.age is not None:
                 if command.age < 12 or command.age > 120:
                     raise ValidationException("Age must be between 12 and 120")
-                # An app without the date picker changed the age, so a stored
-                # date of birth that gives another age is wrong now.
+                # Apps without the date picker send the stored age with every
+                # My Plan save, and it lags the date after a birthday. Only an
+                # age they changed, to one the date does not give, means the
+                # stored date of birth is wrong now.
                 if (
                     profile.date_of_birth is not None
-                    and age_on(profile.date_of_birth, date.today()) != command.age
+                    and command.age != profile.age
+                    and command.age != age_on(profile.date_of_birth, date.today())
                 ):
                     profile.date_of_birth = None
                 profile.age = command.age

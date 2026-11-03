@@ -133,6 +133,28 @@ async def test_age_only_update_that_matches_keeps_the_stored_date():
 
 
 @pytest.mark.asyncio
+async def test_age_only_update_echoing_a_stale_stored_age_keeps_the_date():
+    """Older apps resend the stored age on every My Plan save; after a
+    birthday it trails the date, which must survive."""
+    profile = _profile(age=29, date_of_birth=date(1996, 3, 1))
+
+    await _update(profile, age=29, weight_kg=56.0)
+
+    assert profile.date_of_birth == date(1996, 3, 1)
+    assert profile.age == 29
+
+
+@pytest.mark.asyncio
+async def test_age_changed_to_the_one_the_date_gives_keeps_the_date():
+    profile = _profile(age=29, date_of_birth=date(1996, 3, 1))
+
+    await _update(profile, age=30)
+
+    assert profile.date_of_birth == date(1996, 3, 1)
+    assert profile.age == 30
+
+
+@pytest.mark.asyncio
 async def test_age_only_update_without_a_stored_date_just_sets_the_age():
     profile = _profile(age=30)
 

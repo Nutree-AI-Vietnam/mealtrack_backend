@@ -630,8 +630,10 @@ handler/schema when implementing; the bullets below are the durable WHY.
 - `POST` accepts an optional `date_of_birth`. It must be a real, past date that
   gives an age from 12 to 120 (422 otherwise). It is stored on the profile and
   sets `age` as of today, winning over an `age` sent with it.
-- An `age` sent alone, as older apps do, that differs from the age the stored
-  date gives today clears `date_of_birth`; a matching age keeps it.
+- Older apps send the stored `age` with every My Plan save, and after a
+  birthday it trails the stored date. So an `age` sent alone clears
+  `date_of_birth` only when it differs from both the stored age (the person
+  changed it) and the age the stored date gives today; otherwise the date stays.
 - `age` is stored, not derived on read, so it goes stale on birthdays until the
   next metrics update; TDEE reads that stored age.
 
