@@ -262,7 +262,7 @@ class TestDeleteUserCommandHandler:
     ):
         """Doses, the list and unpromoted products go with the account."""
         supplements = MagicMock()
-        supplements.schema_ready = AsyncMock(return_value=True)
+        supplements.tables_exist = AsyncMock(return_value=True)
         supplements.delete_user_data = AsyncMock(return_value=4)
         uow = DummyUnitOfWork(db_session)
         uow.supplements = supplements
@@ -283,7 +283,7 @@ class TestDeleteUserCommandHandler:
     ):
         """A deploy can precede its migration; deleting an account must not fail."""
         supplements = MagicMock()
-        supplements.schema_ready = AsyncMock(return_value=False)
+        supplements.tables_exist = AsyncMock(return_value=False)
         supplements.delete_user_data = AsyncMock()
         uow = DummyUnitOfWork(db_session)
         uow.supplements = supplements

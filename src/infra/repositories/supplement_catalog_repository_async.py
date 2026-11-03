@@ -93,10 +93,13 @@ class AsyncSupplementCatalogRepository(SupplementCatalogReads, SupplementCatalog
         self, product_id: str, image_id: str | None, image_url: str | None
     ) -> None:
         # Not a review: re-imports keep updating a row whose photo changed.
+        # Nor a content change, so updated_at stays (the admin card keys on it).
         await self.session.execute(
             update(Product)
             .where(Product.id == product_id)
-            .values(image_id=image_id, image_url=image_url)
+            .values(
+                image_id=image_id, image_url=image_url, updated_at=Product.updated_at
+            )
             .execution_options(**NO_SYNC)
         )
 

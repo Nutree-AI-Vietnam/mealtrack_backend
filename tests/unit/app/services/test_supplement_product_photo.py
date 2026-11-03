@@ -86,12 +86,17 @@ async def test_a_file_that_is_not_an_image_is_refused_before_storing():
     store.save_async.assert_not_awaited()
 
 
-async def test_a_store_failure_becomes_a_storage_error():
+async def test_a_store_failure_becomes_a_storage_error_and_cleans_up():
     store = AsyncMock()
-    store.save_async.side_effect = RuntimeError("cloudflare down")
+    store.save_async.side_effect = RuntimeError("cloudflare timeout")
+    store.delete_async.return_value = True
 
     with pytest.raises(SupplementPhotoStorageError):
         await store_photo(store, _png((10, 10)))
+
+    # The store may have kept the photo before the reply failed.
+    saved_id = store.save_async.await_args.args[2]
+    store.delete_async.assert_awaited_once_with(saved_id)
 
 
 @pytest.mark.parametrize(
@@ -167,6 +172,21 @@ async def test_rows_outside_the_catalog_take_no_photo(product):
     assert catalog.writes == []
 
 
+async def test_a_row_rejected_after_taking_a_photo_can_still_give_it_up():
+    catalog = _Catalog(
+        ReviewItem(
+            product=_product(
+                review_status=ReviewStatus.REJECTED, image_id="old-id", image_url="u"
+            )
+        )
+    )
+
+    item, previous = await point_at_photo(catalog, "p1", None)
+
+    assert catalog.writes == [("p1", None, None)]
+    assert previous == "old-id"
+
+
 async def test_an_unknown_product_is_not_found():
     with pytest.raises(SupplementProductNotFoundError):
         await point_at_photo(_Catalog(None), "missing", PHOTO)
@@ -177,7 +197,11 @@ async def test_a_failed_delete_is_logged_for_removal_by_hand(caplog):
     store.delete_async.side_effect = RuntimeError("timeout")
 
     with caplog.at_level(logging.ERROR):
-        await delete_photo(store, "old-id", reason="photo replaced")
+        deleted = await delete_photo(
+            store, "old-id", reason="photo replaced", retry_seconds=0
+        )
 
+    assert deleted is False
+    assert store.delete_async.await_count == 3
     assert "image_id=old-id" in caplog.text
     assert "reason=photo replaced" in caplog.text

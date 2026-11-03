@@ -115,6 +115,13 @@ async def _user(session) -> str:
     return user.id
 
 
+async def _updated_at():
+    async with AsyncUnitOfWork() as uow:
+        return await uow.session.scalar(
+            text("SELECT updated_at FROM supplement_products")
+        )
+
+
 async def _catalog_id(key: str) -> str:
     items, _ = await supplement_review_queue(10, 0, q=key, status="approved")
     return items[0][0].product.id
@@ -160,13 +167,17 @@ async def test_removing_a_photo_clears_the_row_and_the_store(factory):
     store = _Store()
     await import_supplement_catalog([_record("1")])
     product_id = await _catalog_id("1")
+    before = await _updated_at()
 
     async with _client(store) as client:
-        await client.post(
+        added = await client.post(
             f"/v1/admin/supplements/{product_id}/image", files={"file": _jpeg()}
         )
         removed = await client.delete(f"/v1/admin/supplements/{product_id}/image")
 
+    # A photo is not a content change: the admin card keys on updated_at.
+    assert added.json()["updated_at"] == removed.json()["updated_at"]
+    assert await _updated_at() == before
     assert removed.status_code == 200
     assert removed.json()["image_url"] is None
     assert store.images == {}

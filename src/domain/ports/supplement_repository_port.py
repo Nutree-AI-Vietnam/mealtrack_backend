@@ -25,6 +25,13 @@ class SupplementRepositoryPort(ABC):
         """Whether the supplement tables are migrated."""
 
     @abstractmethod
+    async def tables_exist(self) -> bool:
+        """Whether the tables account deletion clears exist, columns aside.
+
+        A later column migration then never makes a deletion skip their rows.
+        """
+
+    @abstractmethod
     async def get_product(
         self, product_id: str, user_id: str
     ) -> SupplementProduct | None: ...
