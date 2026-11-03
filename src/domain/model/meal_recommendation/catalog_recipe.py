@@ -91,7 +91,7 @@ class CatalogMealStep:
 
 @dataclass(frozen=True)
 class CatalogMeal:
-    """Renderable catalog meal consumed by deterministic recommendation planning."""
+    """A catalog meal as the planner and the browse surface read it."""
 
     id: str
     catalog_key: str
