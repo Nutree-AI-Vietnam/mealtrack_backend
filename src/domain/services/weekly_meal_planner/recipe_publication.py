@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+import unicodedata
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -227,3 +228,243 @@ def _optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+# ---------------------------------------------------------------------------
+# Checking a generated recipe
+#
+# A model writes a dish and its gram amounts; nothing it says about nutrition,
+# allergens or safety is taken on trust. These rules run on the resolved
+# ingredients before the recipe may be shown, and they decide three things:
+# whether the recipe is usable at all, whether its nutrition can be computed,
+# and whether it may be served to a user with a dietary constraint.
+#
+# Unknown is never treated as safe. An ingredient the food database could not
+# identify makes the recipe ineligible for anyone with an allergy or a diet,
+# at any weight, because a missing identification hides exactly the carriers
+# that matter: fish sauce, shrimp paste, soy, sesame.
+# ---------------------------------------------------------------------------
+
+# Nutrition tolerates a small unidentified line; constraints do not.
+UNRESOLVED_NUTRITION_LIMIT_G = 10.0
+# Above this share of calories from AI-estimated values the recipe is flagged
+# for review rather than served.
+AI_ESTIMATE_KCAL_SHARE_LIMIT = 0.10
+# A serving outside this range is not a meal.
+MIN_SERVING_GRAMS = 120.0
+MAX_SERVING_GRAMS = 1500.0
+
+INGREDIENT_FROM_DATABASE = "food_reference"
+INGREDIENT_FROM_PROVIDER = "provider"
+INGREDIENT_AI_ESTIMATED = "ai_estimate"
+INGREDIENT_UNRESOLVED = "unresolved"
+
+# Dishes a generator must never produce. Eating these raw or fermented raw
+# carries risks no recipe check can manage: Streptococcus suis from raw pig
+# blood and fermented raw pork, liver flukes from raw freshwater fish,
+# tetrodotoxin, and misidentified wild mushrooms.
+_BLOCKED_DISHES = (
+    "tiết canh",
+    "nem chua",
+    "gỏi cá",
+    "cá sống",
+    "pufferfish",
+    "cá nóc",
+    "wild mushroom",
+    "nấm rừng",
+    "nấm dại",
+)
+# Safe only when thoroughly boiled: cyanogenic glycosides in fresh bamboo
+# shoots and cassava, lectins in raw kidney beans.
+_MUST_BE_BOILED = (
+    "măng tươi",
+    "măng chua",
+    "sắn",
+    "khoai mì",
+    "đậu tây",
+    "kidney bean",
+)
+_BOILING_WORDS = ("luộc", "đun sôi", "nấu sôi", "boil", "simmer")
+# Raw animal food needs a step that says it is cooked through.
+_RAW_ANIMAL_WORDS = (
+    "thịt heo",
+    "thịt bò",
+    "thịt gà",
+    "gà",
+    "vịt",
+    "trứng",
+    "tôm",
+    "cua",
+    "mực",
+    "cá",
+    "chicken",
+    "pork",
+    "beef",
+    "egg",
+    "shrimp",
+    "fish",
+)
+_DONENESS_WORDS = (
+    "chín",
+    "chín kỹ",
+    "chín đều",
+    "luộc",
+    "hấp",
+    "kho",
+    "rang",
+    "chiên",
+    "xào",
+    "nướng",
+    "đun sôi",
+    "cooked through",
+    "until cooked",
+    "no longer pink",
+    "boil",
+    "steam",
+    "fry",
+    "grill",
+    "roast",
+    "simmer",
+    "°c",
+)
+# Preparations a generated recipe may not ask for.
+_RAW_PREPARATIONS = ("tái", "sống", "raw", "rare", "sashimi", "medium rare")
+# A dish cooked in fat must account for the fat.
+_FRYING_WORDS = ("chiên", "rán", "xào", "quay", "fry", "stir-fry", "deep-fry", "sauté")
+_FAT_WORDS = ("dầu", "mỡ", "bơ", "oil", "butter", "lard", "ghee")
+
+
+@dataclass(frozen=True)
+class DraftIngredient:
+    """One line of a generated recipe, after the resolver has run."""
+
+    name: str
+    grams: float
+    source: str = INGREDIENT_UNRESOLVED
+    food_reference_id: int | None = None
+    kcal: float = 0.0
+    # The food the resolver matched, to catch a raw line mapped to a cooked
+    # food or the other way round.
+    resolved_name: str | None = None
+
+
+@dataclass(frozen=True)
+class RecipeDraft:
+    """What a generator produced, before anything is shown to a user."""
+
+    name: str
+    ingredients: tuple[DraftIngredient, ...]
+    steps: tuple[str, ...] = ()
+    servings: int = 1
+
+
+@dataclass(frozen=True)
+class DraftReview:
+    """What may be done with a generated recipe."""
+
+    rejections: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
+    # False when an unidentified ingredient could hide an allergen.
+    constraints_checkable: bool = True
+
+    @property
+    def usable(self) -> bool:
+        return not self.rejections
+
+    @property
+    def needs_review(self) -> bool:
+        return bool(self.flags)
+
+    def servable_to(self, *, has_dietary_constraint: bool) -> bool:
+        """Whether this recipe may be put in front of a given user."""
+        if not self.usable:
+            return False
+        return self.constraints_checkable or not has_dietary_constraint
+
+
+def _mentions(text: str, words: Iterable[str]) -> bool:
+    folded = unicodedata.normalize("NFC", text or "").casefold()
+    return any(word in folded for word in words)
+
+
+def _cooked_state(text: str) -> str | None:
+    folded = unicodedata.normalize("NFC", text or "").casefold()
+    if any(word in folded for word in ("cooked", "chín", "cơm")):
+        return "cooked"
+    if any(word in folded for word in ("raw", "sống", "gạo")):
+        return "raw"
+    return None
+
+
+def review_recipe_draft(draft: RecipeDraft) -> DraftReview:
+    """Apply every rule a generated recipe must pass before it is shown."""
+    rejections: list[str] = []
+    flags: list[str] = []
+    steps_text = " ".join(draft.steps)
+    whole_text = f"{draft.name} {steps_text} " + " ".join(
+        line.name for line in draft.ingredients
+    )
+
+    if not draft.ingredients:
+        rejections.append("recipe has no ingredients")
+    if draft.servings < 1:
+        rejections.append("recipe has no servings")
+
+    # Food safety comes first: these are not fixable by re-resolving.
+    if _mentions(whole_text, _BLOCKED_DISHES):
+        rejections.append("dish is unsafe to generate")
+    if _mentions(steps_text, _RAW_PREPARATIONS) or _mentions(
+        draft.name, _RAW_PREPARATIONS
+    ):
+        rejections.append("recipe serves food raw or rare")
+    for line in draft.ingredients:
+        if _mentions(line.name, _MUST_BE_BOILED) and not _mentions(
+            steps_text, _BOILING_WORDS
+        ):
+            rejections.append(f"{line.name} must be boiled thoroughly")
+    if (
+        draft.steps
+        and _mentions(whole_text, _RAW_ANIMAL_WORDS)
+        and not _mentions(steps_text, _DONENESS_WORDS)
+    ):
+        rejections.append("no step says the food is cooked through")
+    if _mentions(whole_text, _FRYING_WORDS) and not _mentions(whole_text, _FAT_WORDS):
+        rejections.append("a fried dish must list its cooking fat")
+
+    # Nutrition: a large unidentified line makes the numbers meaningless.
+    unresolved = [
+        line
+        for line in draft.ingredients
+        if line.source in {INGREDIENT_UNRESOLVED, ""} or line.food_reference_id is None
+    ]
+    for line in unresolved:
+        if line.grams > UNRESOLVED_NUTRITION_LIMIT_G:
+            rejections.append(f"{line.name} could not be identified")
+
+    estimated_kcal = sum(
+        line.kcal
+        for line in draft.ingredients
+        if line.source == INGREDIENT_AI_ESTIMATED
+    )
+    total_kcal = sum(line.kcal for line in draft.ingredients)
+    if total_kcal > 0 and estimated_kcal / total_kcal > AI_ESTIMATE_KCAL_SHARE_LIMIT:
+        flags.append("too much of the energy is an AI estimate")
+
+    for line in draft.ingredients:
+        if line.resolved_name is None:
+            continue
+        wanted, matched = _cooked_state(line.name), _cooked_state(line.resolved_name)
+        if wanted and matched and wanted != matched:
+            rejections.append(f"{line.name} was matched to {line.resolved_name}")
+
+    grams = sum(line.grams for line in draft.ingredients) / max(draft.servings, 1)
+    if draft.ingredients and not MIN_SERVING_GRAMS <= grams <= MAX_SERVING_GRAMS:
+        rejections.append(f"a serving weighs {grams:.0f} g")
+
+    return DraftReview(
+        rejections=tuple(dict.fromkeys(rejections)),
+        flags=tuple(dict.fromkeys(flags)),
+        # Any unidentified or estimated line can hide an allergen.
+        constraints_checkable=not unresolved
+        and all(line.source != INGREDIENT_AI_ESTIMATED for line in draft.ingredients),
+    )
