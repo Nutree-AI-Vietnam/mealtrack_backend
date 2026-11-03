@@ -55,7 +55,8 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
 
         # Cache-first when X-Timezone is usable: week_start needs no DB.
         # auto_adjust flips publish UserProfileUpdated which wipes
-        # weekly_budget Redis keys, so a revision-matched hit is safe
+        # weekly_budget Redis keys, and an activity calories flip deletes this
+        # week's keys before it returns, so a revision-matched hit is safe
         # without opening a SQLAlchemy session.
         cached_hit = await self._try_cache_before_uow(query, profile_revision)
         if cached_hit is not None:
@@ -87,6 +88,9 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                     await uow.users.get_weekly_auto_adjust(query.user_id)
                 )
+                activity_calories = WeeklyBudgetService.activity_calories_enabled(
+                    await uow.users.get_activity_calories(query.user_id)
+                )
                 if self.cache_service:
                     cached = await self.cache_service.get_json(cache_key)
                     if (
@@ -96,6 +100,10 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                             cached.get("weekly_auto_adjust", True)
                         )
                         == auto_adjust
+                        and WeeklyBudgetService.activity_calories_enabled(
+                            cached.get("activity_calories", True)
+                        )
+                        == activity_calories
                     ):
                         return cached
 
@@ -162,6 +170,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                         user_timezone=user_tz_str,
                         cheat_dates=past_cheat_dates,
                         auto_adjust=auto_adjust,
+                        activity_calories=activity_calories,
                     )
                 )
                 adjusted = effective.adjusted
@@ -310,6 +319,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                     "target_revision": weekly_budget.target_revision,
                     "bmr_floor_active": adjusted.bmr_floor_active,
                     "weekly_auto_adjust": auto_adjust,
+                    "activity_calories": activity_calories,
                     "cheat_days": [cd.date.isoformat() for cd in cheat_days],
                     "skipped_days": skipped_days,
                     "show_logging_prompt": show_logging_prompt,

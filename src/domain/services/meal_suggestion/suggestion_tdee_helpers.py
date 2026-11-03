@@ -115,6 +115,9 @@ async def get_adjusted_daily_target(
         auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
             await uow.users.get_weekly_auto_adjust(user_id)
         )
+        activity_calories = WeeklyBudgetService.activity_calories_enabled(
+            await uow.users.get_activity_calories(user_id)
+        )
         effective = await WeeklyBudgetService.get_effective_adjusted_daily_async(
             uow=uow, user_id=user_id,
             week_start=week_start, target_date=today,
@@ -125,6 +128,7 @@ async def get_adjusted_daily_target(
             base_daily_fat=tdee_result.macros.fat,
             bmr=bmr, user_timezone=user_tz,
             auto_adjust=auto_adjust,
+            activity_calories=activity_calories,
         )
         logger.info(
             f"Adjusted daily target for user {user_id}: "
