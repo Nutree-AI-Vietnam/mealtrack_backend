@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+import pytest
+
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.services.weekly_meal_planner.meal_locale import MealLocale
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
@@ -9,6 +11,7 @@ from src.domain.services.weekly_meal_planner.weekly_plan_generation_service impo
     MAX_RICE_STEPS,
     MEAL_KCAL_SHARE_CAP,
     DayTargets,
+    _macro_cost,
     compose_day,
     day_totals,
 )
@@ -268,3 +271,54 @@ def test_the_staple_grams_follow_the_locale_that_composed_the_slot():
 
     for slot in composed:
         assert slot.rice_grams == slot.rice_steps * 40
+
+
+def _day_kcal(composed, meals_by_id):
+    return day_totals(composed, meals_by_id)[0]
+
+
+def test_a_day_lands_on_target_or_a_little_over_not_under():
+    """Under-eating is the worse miss: the user gets hungry and eats off plan."""
+    pool = _pool()
+    meals_by_id = {meal.id: meal for meal in pool}
+    targets = _targets()
+
+    under_days = 0
+    for day in range(7):
+        composed = compose_day((pool, pool, pool), targets, day_index=day)
+        if _day_kcal(composed, meals_by_id) < targets.kcal:
+            under_days += 1
+
+    assert under_days <= 2
+
+
+def test_a_shortfall_costs_more_than_the_same_surplus():
+    targets = _targets()
+    short = (targets.kcal - 100, targets.protein, targets.carbs, targets.fat)
+    over = (targets.kcal + 100, targets.protein, targets.carbs, targets.fat)
+
+    assert _macro_cost(short, targets) > _macro_cost(over, targets)
+
+
+def test_a_small_surplus_is_free_but_a_large_one_is_not():
+    """The free band is narrow: a cut that is always overshot is not a cut."""
+    targets = _targets()
+    on_target = (targets.kcal, targets.protein, targets.carbs, targets.fat)
+    just_over = (targets.kcal * 1.02, targets.protein, targets.carbs, targets.fat)
+    well_over = (targets.kcal * 1.20, targets.protein, targets.carbs, targets.fat)
+
+    assert _macro_cost(just_over, targets) == pytest.approx(
+        _macro_cost(on_target, targets)
+    )
+    assert _macro_cost(well_over, targets) > _macro_cost(on_target, targets)
+
+
+def test_the_other_macros_stay_symmetric_apart_from_protein():
+    """Only calories and protein are asymmetric; carbs and fat are not."""
+    targets = _targets()
+    low_fat = (targets.kcal, targets.protein, targets.carbs, targets.fat - 10)
+    high_fat = (targets.kcal, targets.protein, targets.carbs, targets.fat + 10)
+
+    assert _macro_cost(low_fat, targets) == pytest.approx(
+        _macro_cost(high_fat, targets)
+    )

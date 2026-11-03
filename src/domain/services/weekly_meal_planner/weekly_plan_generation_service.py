@@ -684,6 +684,15 @@ MEAL_KCAL_SHARE_CAP = 0.45
 # under the protein target is worse than going over it.
 _MACRO_WEIGHTS = (1.0, 1.0, 0.5, 0.5)  # kcal, protein, carbs, fat
 _PROTEIN_SHORTFALL_WEIGHT = 1.5
+# A day that lands under its calories is the worse failure. The user gets
+# hungry, eats something the plan never saw, and the week stops describing
+# what they ate - so a shortfall costs more than the same surplus.
+_CALORIE_SHORTFALL_WEIGHT = 2.0
+# Landing a little over costs nothing, so the composer settles on or just
+# above the target rather than just below it. The band stays small on
+# purpose: a weight-loss target that is routinely overshot is not a
+# weight-loss target, and beyond it a surplus is charged in full.
+_CALORIE_FREE_SURPLUS = 0.03
 # Small nudges toward a plain serving, so odd portions need to earn their place.
 _PORTION_STEP_COST = 0.01
 _EXTRA_RICE_COST = 0.01
@@ -768,16 +777,27 @@ def _serving(
 def _macro_cost(
     totals: tuple[float, float, float, float], targets: DayTargets
 ) -> float:
-    """Weighted relative miss across the day's four macro targets."""
+    """Weighted relative miss across the day's four macro targets.
+
+    Not symmetric on calories. Eating under target is penalised twice, and a
+    surplus inside a narrow band is free, so a day settles on its target or
+    a little over instead of a little under.
+    """
     wanted = (targets.kcal, targets.protein, targets.carbs, targets.fat)
     cost = 0.0
     for index, (actual, target) in enumerate(zip(totals, wanted, strict=True)):
         if target <= 0:
             continue
         weight = _MACRO_WEIGHTS[index]
-        if index == 1 and actual < target:
+        miss = abs(actual - target) / target
+        if index == 0:
+            if actual < target:
+                weight *= _CALORIE_SHORTFALL_WEIGHT
+            else:
+                miss = max(0.0, miss - _CALORIE_FREE_SURPLUS)
+        elif index == 1 and actual < target:
             weight *= _PROTEIN_SHORTFALL_WEIGHT
-        cost += weight * abs(actual - target) / target
+        cost += weight * miss
     return cost
 
 
