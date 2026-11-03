@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from src.domain.model.meal_recommendation import CatalogMeal
+from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly_meal_planner import (
     SLOT_MEAL_TYPES,
     WEEKLY_DAYS,
@@ -590,3 +591,259 @@ def is_non_meal_title(title: str, tag: str | None = None) -> bool:
 
 def _total_minutes(meal: CatalogMeal) -> int:
     return int(meal.prep_time_minutes or 0) + int(meal.cook_time_minutes or 0)
+
+
+# ---------------------------------------------------------------------------
+# Composing a meal
+#
+# A catalog recipe is raw material, not a fixed menu item. Serving one as it
+# was written leaves the plan at the mercy of whatever portion the recipe was
+# authored for, which is why today's weeks miss the day's macros: they plan
+# calories only, one dish per slot, with no portion and no rice.
+#
+# compose_day() builds each meal instead: a dish, how much of it, and how much
+# rice goes with it, chosen together against what is left of the day's four
+# macro targets. The catalog supplies the candidates; the user's targets decide
+# what is actually served.
+# ---------------------------------------------------------------------------
+
+# Viet Nam NIN counts a cereal serving as 55 g steamed rice (20 g carbohydrate).
+# Rice is planned in those half-bowl steps, up to two bowls.
+RICE_STEP_GRAMS = 55
+RICE_STEP_MACROS = (1.5, 20.0, 0.15)  # protein, carbs, fat per step
+MAX_RICE_STEPS = 4
+# A rice dish is eaten with rice: never plan one with none.
+MIN_RICE_STEPS = 1
+# Portions POST /slots/{id}/log accepts today. Planning outside this set would
+# give the user a meal they cannot log as planned.
+LOGGABLE_PORTIONS = (0.5, 1.0, 1.5, 2.0)
+# No single meal may take more than this share of the day's calorie target.
+MEAL_KCAL_SHARE_CAP = 0.45
+# Weights on the daily macro miss. Protein counts double when short: eating
+# under the protein target is worse than going over it.
+_MACRO_WEIGHTS = (1.0, 1.0, 0.5, 0.5)  # kcal, protein, carbs, fat
+_PROTEIN_SHORTFALL_WEIGHT = 1.5
+# Small nudges toward a plain serving, so odd portions need to earn their place.
+_PORTION_STEP_COST = 0.01
+_EXTRA_RICE_COST = 0.01
+_COMFORTABLE_RICE_STEPS = 2
+# Dominates every macro term: a plan must not starve a day or pile it into one
+# meal.
+_RULE_BREAK_COST = 1.0
+# The usual split of a day across breakfast, lunch and dinner. Used only to
+# guess what the slots after this one will bring.
+_SLOT_CALORIE_SHARES = (0.25, 0.375, 0.375)
+
+
+@dataclass(frozen=True)
+class DayTargets:
+    """What one day of the plan should add up to."""
+
+    kcal: float
+    protein: float
+    carbs: float
+    fat: float
+    # Lowest calories the day may be planned at (clinical floor).
+    floor_kcal: float = 0.0
+
+
+@dataclass(frozen=True)
+class ComposedSlot:
+    """One planned meal: the dish, how much of it, and the rice beside it."""
+
+    day_index: int
+    slot_index: int
+    recipe_id: str | None
+    portion: float = 1.0
+    rice_steps: int = 0
+
+    @property
+    def rice_grams(self) -> int:
+        return self.rice_steps * RICE_STEP_GRAMS
+
+
+def meal_macros(meal: CatalogMeal) -> tuple[float, float, float, float]:
+    """Protein, carbs, fat and fiber of one serving, as floats."""
+    return (
+        float(meal.protein_g or 0),
+        float(meal.carbs_g or 0),
+        float(meal.fat_g or 0),
+        float(meal.fiber_g or 0),
+    )
+
+
+def _serving(
+    meal: CatalogMeal, portion: float, rice_steps: int
+) -> tuple[float, float, float, float]:
+    """Kcal, protein, carbs and fat of a dish at a portion, with its rice."""
+    protein, carbs, fat, fiber = meal_macros(meal)
+    protein, carbs, fat, fiber = (
+        protein * portion,
+        carbs * portion,
+        fat * portion,
+        fiber * portion,
+    )
+    rice_protein, rice_carbs, rice_fat = RICE_STEP_MACROS
+    protein += rice_protein * rice_steps
+    carbs += rice_carbs * rice_steps
+    fat += rice_fat * rice_steps
+    return (
+        Macros.raw_total_calories(protein, carbs, fat, fiber),
+        protein,
+        carbs,
+        fat,
+    )
+
+
+def _macro_cost(
+    totals: tuple[float, float, float, float], targets: DayTargets
+) -> float:
+    """Weighted relative miss across the day's four macro targets."""
+    wanted = (targets.kcal, targets.protein, targets.carbs, targets.fat)
+    cost = 0.0
+    for index, (actual, target) in enumerate(zip(totals, wanted, strict=True)):
+        if target <= 0:
+            continue
+        weight = _MACRO_WEIGHTS[index]
+        if index == 1 and actual < target:
+            weight *= _PROTEIN_SHORTFALL_WEIGHT
+        cost += weight * abs(actual - target) / target
+    return cost
+
+
+def _options(
+    meal: CatalogMeal, *, takes_rice: bool, cap_kcal: float
+) -> list[tuple[float, int, tuple[float, float, float, float]]]:
+    """Every way this dish can be served, smallest first.
+
+    A serving over the per-meal calorie cap is dropped, unless the dish has no
+    serving under it: a slot is always filled.
+    """
+    rice_range = (
+        range(MIN_RICE_STEPS, MAX_RICE_STEPS + 1) if takes_rice else range(0, 1)
+    )
+    every = [
+        (portion, steps, _serving(meal, portion, steps))
+        for portion in LOGGABLE_PORTIONS
+        for steps in rice_range
+    ]
+    within = [option for option in every if option[2][0] <= cap_kcal]
+    if within:
+        return within
+    return [min(every, key=lambda option: option[2][0])]
+
+
+def _serving_cost(portion: float, rice_steps: int) -> float:
+    steps_from_plain = abs(
+        LOGGABLE_PORTIONS.index(portion) - LOGGABLE_PORTIONS.index(1.0)
+    )
+    return _PORTION_STEP_COST * steps_from_plain + _EXTRA_RICE_COST * max(
+        0, rice_steps - _COMFORTABLE_RICE_STEPS
+    )
+
+
+def compose_day(
+    slot_candidates: tuple[tuple[CatalogMeal, ...], ...],
+    targets: DayTargets,
+    *,
+    day_index: int = 0,
+    rice_dishes: frozenset[str] = frozenset(),
+    shares: tuple[float, ...] = _SLOT_CALORIE_SHARES,
+    polish_passes: int = 3,
+) -> tuple[ComposedSlot, ...]:
+    """Compose one day: a dish, a portion and its rice for every slot.
+
+    Each slot is filled against what the day still needs, assuming the slots
+    after it bring their usual share. A polish pass then re-picks each slot
+    knowing the rest of the day, which is what turns a run of locally sensible
+    meals into a day that adds up.
+    """
+    cap_kcal = MEAL_KCAL_SHARE_CAP * targets.kcal if targets.kcal > 0 else float("inf")
+    slot_count = len(slot_candidates)
+    chosen: list[ComposedSlot | None] = [None] * slot_count
+    served: list[tuple[float, float, float, float]] = [
+        (0.0, 0.0, 0.0, 0.0)
+    ] * slot_count
+
+    def totals(skip: int | None = None) -> tuple[float, float, float, float]:
+        return tuple(
+            sum(
+                served[index][macro]
+                for index in range(slot_count)
+                if index != skip and chosen[index] is not None
+            )
+            for macro in range(4)
+        )
+
+    def expected(remaining: Iterable[int]) -> tuple[float, float, float, float]:
+        """What the slots still to fill should bring, at their usual share."""
+        share = sum(
+            shares[index] if index < len(shares) else 0.0 for index in remaining
+        )
+        return (
+            targets.kcal * share,
+            targets.protein * share,
+            targets.carbs * share,
+            targets.fat * share,
+        )
+
+    def best_for(slot: int, *, rest: Iterable[int]) -> ComposedSlot | None:
+        candidates = slot_candidates[slot]
+        if not candidates:
+            return None
+        base = totals(skip=slot)
+        ahead = expected(rest)
+        best: tuple[float, str, ComposedSlot, tuple[float, ...]] | None = None
+        for meal in candidates:
+            takes_rice = meal.id in rice_dishes
+            for portion, steps, serving in _options(
+                meal, takes_rice=takes_rice, cap_kcal=cap_kcal
+            ):
+                projected = tuple(
+                    base[macro] + serving[macro] + ahead[macro] for macro in range(4)
+                )
+                cost = _macro_cost(projected, targets) + _serving_cost(portion, steps)
+                if serving[0] > cap_kcal:
+                    cost += _RULE_BREAK_COST
+                key = (cost, meal.id)
+                if best is None or key < (best[0], best[1]):
+                    best = (
+                        cost,
+                        meal.id,
+                        ComposedSlot(day_index, slot, meal.id, portion, steps),
+                        serving,
+                    )
+        if best is None:
+            return None
+        served[slot] = best[3]
+        return best[2]
+
+    for slot in range(slot_count):
+        chosen[slot] = best_for(slot, rest=range(slot + 1, slot_count))
+
+    for _ in range(polish_passes):
+        before = tuple(chosen)
+        for slot in range(slot_count):
+            if slot_candidates[slot]:
+                chosen[slot] = best_for(slot, rest=())
+        if tuple(chosen) == before:
+            break
+
+    return tuple(
+        chosen[slot] or ComposedSlot(day_index, slot, None)
+        for slot in range(slot_count)
+    )
+
+
+def day_totals(
+    composed: Iterable[ComposedSlot], meals_by_id: Mapping[str, CatalogMeal]
+) -> tuple[float, float, float, float]:
+    """Kcal, protein, carbs and fat a composed day actually delivers."""
+    total = [0.0, 0.0, 0.0, 0.0]
+    for slot in composed:
+        meal = meals_by_id.get(slot.recipe_id or "")
+        if meal is None:
+            continue
+        for index, value in enumerate(_serving(meal, slot.portion, slot.rice_steps)):
+            total[index] += value
+    return tuple(total)
