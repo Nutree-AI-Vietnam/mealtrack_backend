@@ -244,6 +244,7 @@ async def update_user_metrics(
     command = UpdateUserMetricsCommand(
         user_id=user_id,
         age=request.age,
+        date_of_birth=request.date_of_birth,
         height_cm=request.height_cm,
         weight_kg=request.weight_kg,
         biological_sex=request.biological_sex,
