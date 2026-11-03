@@ -14,7 +14,10 @@ from src.domain.utils.timezone_utils import format_iso_utc
 
 
 def product_payload(product: SupplementProduct, user_id: str) -> dict[str, Any]:
-    """``nutrients`` are per unit; ``mine`` marks the user's own private product."""
+    """``nutrients`` are per unit; ``mine`` marks the user's own private product.
+
+    ``image_url`` is the catalog photo an admin set, never a label scan's photo.
+    """
     return {
         "id": product.id,
         "brand": product.brand,
@@ -30,6 +33,7 @@ def product_payload(product: SupplementProduct, user_id: str) -> dict[str, Any]:
         "source": product.source.value,
         "review_status": product.review_status.value,
         "sold_in_vn": product.sold_in_vn,
+        "image_url": product.image_url,
         "mine": product.owner_user_id == user_id,
     }
 

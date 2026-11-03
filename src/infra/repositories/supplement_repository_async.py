@@ -46,8 +46,14 @@ _TABLES = (
     # Every product read selects name_search, so its migration must have run too.
     "ix_supplement_products_name_search_trgm",
 )
-# Every product read selects the review fields too.
-_PRODUCT_COLUMNS = ("review_reasons", "reviewed_at", "reviewed_by")
+# Every product read selects the review and photo fields too.
+_PRODUCT_COLUMNS = (
+    "review_reasons",
+    "reviewed_at",
+    "reviewed_by",
+    "image_id",
+    "image_url",
+)
 
 
 logger = logging.getLogger(__name__)

@@ -235,6 +235,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
   user's own. Every route that takes a product, list row or dose id answers
   404 `SUPPLEMENT_NOT_FOUND` for anything else, so other users' rows never
   leak.
+- Every `product` carries `image_url`: the catalog photo an admin set, or
+  null. A label scan's own photo is never sent.
 - `GET /mine?date=YYYY-MM-DD` (the user's today by default): `items` are the
   list rows, each with `product` and that day's `doses`; `unlisted_doses` are
   the day's doses of products since taken off the list.
