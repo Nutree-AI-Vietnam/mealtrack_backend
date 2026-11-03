@@ -26,6 +26,9 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
     normalize_allergen_code,
     recipe_excluded_by_allergen,
 )
+from src.domain.services.weekly_meal_planner.grocery_projection import (
+    fresh_ingredient_id,
+)
 from src.domain.services.weekly_meal_planner.meal_practicality import (
     practicality_rank,
 )
@@ -847,3 +850,162 @@ def day_totals(
         for index, value in enumerate(_serving(meal, slot.portion, slot.rice_steps)):
             total[index] += value
     return tuple(total)
+
+
+# ---------------------------------------------------------------------------
+# Finding reference dishes
+#
+# Treating the catalog as a book of ideas means a slot is not filled by
+# "the next eligible row" but by the dishes most worth looking at: ones that
+# can be served near the slot's targets, that shop from the basket the week is
+# already buying, and that use food the user likes.
+#
+# rank_reference_dishes() produces that shortlist. The planner can serve it
+# directly, and a generator can hand it to a model as the examples to work
+# from. Callers pass meals that already satisfy the hard rules: this ranks,
+# it never decides what is allowed.
+#
+# The semantic leg is injected. Meaning-based matching needs stored vectors,
+# which nothing writes yet, so until then the other legs carry the score and
+# its weight is shared out among them.
+# ---------------------------------------------------------------------------
+
+_FIT_WEIGHT = 0.4
+_BASKET_WEIGHT = 0.25
+_TASTE_WEIGHT = 0.2
+_SEMANTIC_WEIGHT = 0.15
+# A serving this far off the slot's calorie target scores nothing for fit.
+_FIT_TOLERANCE = 0.5
+
+
+@dataclass(frozen=True)
+class SlotBrief:
+    """What a slot is looking for."""
+
+    slot_index: int
+    kcal_target: float
+    cuisine: str | None = None
+    # Fresh grocery ids the week already buys.
+    basket: frozenset[int] = frozenset()
+    # Fresh grocery ids the user eats often.
+    liked_ingredients: frozenset[int] = frozenset()
+    exclude_recipe_ids: frozenset[str] = frozenset()
+    takes_rice: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class ScoredDish:
+    """A reference dish, why it was shortlisted, and how strongly."""
+
+    meal: CatalogMeal
+    score: float
+    fit: float
+    basket: float
+    taste: float
+    semantic: float
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        """Plain labels for an explanation or a prompt."""
+        labels = []
+        if self.fit >= 0.8:
+            labels.append("fits the slot's calories")
+        if self.basket >= 0.5:
+            labels.append("mostly uses what the week already buys")
+        if self.taste >= 0.5:
+            labels.append("uses food the user eats often")
+        if self.semantic >= 0.5:
+            labels.append("close to what was asked for")
+        return tuple(labels)
+
+
+def dish_fresh_ingredient_ids(meal: CatalogMeal) -> frozenset[int]:
+    """Grocery ids a dish needs, seasonings and kitchen staples aside."""
+    ids = set()
+    for line in meal.ingredients:
+        fresh = fresh_ingredient_id(
+            getattr(line, "food_reference_id", None), getattr(line, "display_name", "")
+        )
+        if fresh is not None:
+            ids.add(fresh)
+    return frozenset(ids)
+
+
+def _best_serving_fit(meal: CatalogMeal, brief: SlotBrief) -> float:
+    """How close this dish can get to the slot's calories, at any serving."""
+    if brief.kcal_target <= 0:
+        return 0.0
+    options = _options(
+        meal,
+        takes_rice=meal.id in brief.takes_rice,
+        cap_kcal=MEAL_KCAL_SHARE_CAP
+        * brief.kcal_target
+        / max(_SLOT_CALORIE_SHARES[brief.slot_index], 1e-9)
+        if brief.slot_index < len(_SLOT_CALORIE_SHARES)
+        else float("inf"),
+    )
+    gaps = [
+        abs(serving[0] - brief.kcal_target) / brief.kcal_target
+        for _portion, _steps, serving in options
+    ]
+    return max(0.0, 1.0 - min(gaps) / _FIT_TOLERANCE)
+
+
+def _overlap(ingredients: frozenset[int], against: frozenset[int]) -> float:
+    if not ingredients or not against:
+        return 0.0
+    return len(ingredients & against) / len(ingredients)
+
+
+def rank_reference_dishes(
+    meals: Iterable[CatalogMeal],
+    brief: SlotBrief,
+    *,
+    embedding_scores: Mapping[str, float] | None = None,
+    limit: int = 10,
+) -> tuple[ScoredDish, ...]:
+    """Shortlist the dishes most worth considering for a slot, best first.
+
+    ``embedding_scores`` maps a recipe id to a similarity in 0..1 against the
+    user's request or taste. Leave it out and the remaining legs share its
+    weight, so scores stay on the same scale either way.
+    """
+    scores = embedding_scores or {}
+    semantic_weight = _SEMANTIC_WEIGHT if scores else 0.0
+    spare = _SEMANTIC_WEIGHT - semantic_weight
+    weighted = _FIT_WEIGHT + _BASKET_WEIGHT + _TASTE_WEIGHT
+    fit_weight = _FIT_WEIGHT + spare * _FIT_WEIGHT / weighted
+    basket_weight = _BASKET_WEIGHT + spare * _BASKET_WEIGHT / weighted
+    taste_weight = _TASTE_WEIGHT + spare * _TASTE_WEIGHT / weighted
+
+    ranked: list[ScoredDish] = []
+    for meal in meals:
+        if meal.id in brief.exclude_recipe_ids:
+            continue
+        if (
+            brief.cuisine
+            and brief.cuisine.casefold() not in (meal.cuisine or "").casefold()
+        ):
+            continue
+        fresh = dish_fresh_ingredient_ids(meal)
+        fit = _best_serving_fit(meal, brief)
+        basket = _overlap(fresh, brief.basket)
+        taste = _overlap(fresh, brief.liked_ingredients)
+        semantic = max(0.0, min(1.0, float(scores.get(meal.id, 0.0))))
+        ranked.append(
+            ScoredDish(
+                meal=meal,
+                score=(
+                    fit_weight * fit
+                    + basket_weight * basket
+                    + taste_weight * taste
+                    + semantic_weight * semantic
+                ),
+                fit=fit,
+                basket=basket,
+                taste=taste,
+                semantic=semantic,
+            )
+        )
+    ranked.sort(key=lambda dish: (-round(dish.score, 9), dish.meal.id))
+    return tuple(ranked[:limit])
