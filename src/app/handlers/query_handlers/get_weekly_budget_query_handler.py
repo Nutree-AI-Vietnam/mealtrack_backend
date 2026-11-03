@@ -411,7 +411,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
         import uuid
 
         daily_macros = tdee_result["macros"]
-        bmr = tdee_result["bmr"]
+        bmr = _adjustment_floor(tdee_result)
         target_revision = tdee_result.get("profile_target_revision", 1)
         weekly_targets = self._weekly_targets_from_daily_macros(daily_macros)
 
@@ -441,7 +441,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
     ) -> tuple[WeeklyMacroBudget, float]:
         """Check if weekly targets match current TDEE; update if stale. Returns (budget, bmr)."""
         daily_macros = tdee_result["macros"]
-        bmr = tdee_result["bmr"]
+        bmr = _adjustment_floor(tdee_result)
         target_revision = tdee_result.get(
             "profile_target_revision", weekly_budget.target_revision
         )
@@ -493,3 +493,13 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
             "target_carbs": target_carbs,
             "target_fat": target_fat,
         }
+
+
+def _adjustment_floor(tdee_result: dict[str, Any]) -> float:
+    """Lowest calories auto-adjust may set: BMR and the clinical minimum.
+
+    The weekly redistribution floors at max(BMR, 85-90 % of base), which alone
+    can drop a 1,200 kcal base below the 1,200 / 1,500 kcal minimum.
+    """
+    bmr = float(tdee_result["bmr"])
+    return max(bmr, float(tdee_result.get("calorie_floor") or 0.0))

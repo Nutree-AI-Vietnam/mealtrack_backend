@@ -16,7 +16,7 @@ from src.domain.constants import NutritionConstants, TDEEConstants
 from src.domain.mappers.activity_goal_mapper import ActivityGoalMapper
 from src.domain.model.user import MacroPreset, Sex, TdeeRequest, UnitSystem
 from src.domain.ports.cache_port import CachePort
-from src.domain.services.tdee_service import TdeeCalculationService
+from src.domain.services.tdee_service import TdeeCalculationService, calorie_floor
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -139,6 +139,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
             return {
                 "user_id": query.user_id,
                 "bmr": result.bmr,
+                "calorie_floor": round(calorie_floor(result.bmr, sex), 1),
                 "tdee": result.tdee,
                 "target_calories": macros["calories"],
                 "activity_multiplier": round(base_multiplier, 3),
@@ -203,6 +204,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
         return {
             "user_id": query.user_id,
             "bmr": result.bmr,
+            "calorie_floor": round(calorie_floor(result.bmr, sex), 1),
             "tdee": result.tdee,
             "target_calories": macros["calories"],
             "activity_multiplier": round(base_multiplier, 3),

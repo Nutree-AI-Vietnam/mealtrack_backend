@@ -41,6 +41,7 @@ from src.domain.model.weekly_meal_planner import (
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_preferences,
+    resolve_allergen_terms,
 )
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
@@ -158,6 +159,12 @@ class WeeklyMealPlanService:
                 )
                 revision = await uow.catalog_recipes.get_active_catalog_revision()
                 meals = await uow.catalog_recipes.list_selection_candidates()
+                profile = await uow.users.get_profile(command.user_id)
+                preferences = _resolve_plan_preferences(
+                    command.preferences,
+                    profile,
+                    await _known_allergen_codes(uow, meals),
+                )
                 basket_ids = (
                     await _basket_ids(
                         uow.catalog_recipes,
@@ -170,7 +177,7 @@ class WeeklyMealPlanService:
                 "user_id": command.user_id,
                 "week_start_date": command.week_start_date.isoformat(),
                 "daily_calories": command.daily_calories,
-                "preferences": command.preferences,
+                "preferences": preferences,
                 # Last week's dishes come later so next week is not a copy.
                 "last_week": frozenset(
                     slot.recipe_id
@@ -257,7 +264,7 @@ class WeeklyMealPlanService:
                         user_id=command.user_id,
                         week_start_date=command.week_start_date,
                         timezone=command.timezone,
-                        preferences=command.preferences,
+                        preferences=preferences,
                         daily_calories=command.daily_calories,
                         catalog_revision=_revision_key(revision),
                         recipe_ids=recipe_ids,
@@ -272,8 +279,8 @@ class WeeklyMealPlanService:
                     plan = await uow.weekly_meal_plans.update(
                         user_id=command.user_id,
                         plan_id=current.id,
-                        people=command.preferences.people,
-                        preferences=command.preferences,
+                        people=preferences.people,
+                        preferences=preferences,
                         slots={
                             key: value
                             for key, value in recipe_ids.items()
@@ -317,7 +324,13 @@ class WeeklyMealPlanService:
                 )
                 if current is None:
                     raise ResourceNotFoundException("Weekly meal plan not found")
-                preferences = command.preferences or current.preferences
+                preferences = current.preferences
+                if command.preferences is not None:
+                    preferences = _resolve_plan_preferences(
+                        command.preferences,
+                        await uow.users.get_profile(command.user_id),
+                        await _known_allergen_codes(uow, ()),
+                    )
                 hard_preferences_changed = _hard_preferences_changed(
                     current.preferences, preferences
                 )
@@ -1161,8 +1174,11 @@ def _profile_values(profile, field: str) -> tuple[str, ...]:
 
 
 def _normalize_preference_text(value: object) -> str:
+    # NFKD has no decomposition for "đ"; map it first so "đậu phộng" folds to
+    # "dau phong", not "au phong".
+    text = str(value).replace("đ", "d").replace("Đ", "D")
     return (
-        unicodedata.normalize("NFKD", str(value))
+        unicodedata.normalize("NFKD", text)
         .encode("ascii", "ignore")
         .decode("ascii")
         .casefold()
@@ -1232,6 +1248,51 @@ def _profile_allergy_codes(
             error_code="AI_PROFILE_ALLERGY_UNSUPPORTED",
         )
     return resolved
+
+
+async def _known_allergen_codes(uow, meals) -> tuple[str, ...]:
+    codes: list[str] = []
+    lister = getattr(uow.catalog_recipes, "list_allergen_codes", None)
+    if callable(lister):
+        codes.extend(str(code) for code in await lister())
+    for meal in meals:
+        for raw_code in getattr(meal, "allergen_codes", ()):
+            code = str(raw_code).strip()
+            if code:
+                codes.append(code)
+    return tuple(codes)
+
+
+def _resolve_plan_preferences(
+    preferences: WeeklyMealPlanPreferences, profile, known_codes: tuple[str, ...]
+) -> WeeklyMealPlanPreferences:
+    """Hard plan constraints from the request plus the user's saved profile.
+
+    Allergies from both sources resolve to catalog allergen codes. A term the
+    recipe data cannot check fails the request instead of being dropped. A
+    profile diet applies when the request leaves diet at "any".
+    """
+    terms = (*preferences.allergies, *_profile_values(profile, "allergies"))
+    codes, unresolved = resolve_allergen_terms(terms, known_codes)
+    if unresolved:
+        raise ValidationException(
+            "These allergies can't be checked against the recipe data yet: "
+            + ", ".join(unresolved),
+            error_code="ALLERGY_UNRESOLVED",
+        )
+    allergies = set(codes)
+    diet = preferences.diet
+    if diet == "any":
+        profile_diets = _profile_values(profile, "dietary_preferences")
+        if "vegan" in profile_diets:
+            diet = "vegetarian"
+            vegan_codes, _ = resolve_allergen_terms(("milk", "egg"), known_codes)
+            allergies.update(vegan_codes)
+        elif "vegetarian" in profile_diets:
+            diet = "vegetarian"
+        elif {"no pork", "halal"} & set(profile_diets):
+            diet = "no-pork"
+    return replace(preferences, diet=diet, allergies=tuple(sorted(allergies)))
 
 
 def _validate_proposal_outcome(

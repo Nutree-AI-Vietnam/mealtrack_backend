@@ -32,10 +32,15 @@ class TdeeCalculationService:
         """Calculate BMR, TDEE and macros based on the request."""
         bmr, formula_name = self._calculate_bmr(request)
         tdee = self._calculate_tdee_from_activity(bmr, request.job_type)
+        # Minors and underweight adults get no deficit: a weight-loss goal plans
+        # at maintenance until a clinician-reviewed rule says otherwise.
+        deficit_blocked = request.goal == Goal.CUT and deficit_not_allowed(
+            age=request.age, weight_kg=request.weight_kg, height_cm=request.height_cm
+        )
         macro_targets = self._calculate_all_macro_targets(
             tdee,
             request.weight_kg,
-            request.goal,
+            Goal.RECOMP if deficit_blocked else request.goal,
             request.training_level,
             bmr=bmr,
             sex=request.sex,
@@ -51,7 +56,7 @@ class TdeeCalculationService:
             macro_preset=request.macro_preset,
             pace_range=(
                 pace_range(request.weight_kg, tdee, bmr, request.sex)
-                if request.goal == Goal.CUT
+                if request.goal == Goal.CUT and not deficit_blocked
                 else None
             ),
         )
@@ -285,6 +290,24 @@ KG_TO_LB = 2.20462
 def daily_deficit_kcal(kg_per_week: float) -> float:
     """Daily deficit for a weekly loss: ~7,700 kcal per kg, spread over 7 days."""
     return kg_per_week * TDEEConstants.KCAL_PER_KG_BODY_WEIGHT / 7
+
+
+ADULT_AGE = 18
+UNDERWEIGHT_BMI = 18.5
+
+
+def deficit_not_allowed(*, age: int, weight_kg: float, height_cm: float) -> bool:
+    """True for users who must not be given a calorie deficit.
+
+    Under-18s are still growing and every formula here is an adult one, and a
+    BMI below 18.5 is underweight (WHO). Both plan at maintenance.
+    """
+    if age < ADULT_AGE:
+        return True
+    if height_cm <= 0:
+        return False
+    bmi = weight_kg / (height_cm / 100) ** 2
+    return bmi < UNDERWEIGHT_BMI
 
 
 def calorie_floor(bmr: float, sex: Sex) -> float:
