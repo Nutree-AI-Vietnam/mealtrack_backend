@@ -35,8 +35,9 @@ _USER_LOADS = (
 )
 
 # Columns save() copies from the in-memory model. Columns with their own setter
-# (language_code, weekly_auto_adjust, the avatar_* columns) stay out, so a stale
-# model saved by sync, onboarding or deletion cannot overwrite them.
+# (language_code, weekly_auto_adjust, activity_calories, the avatar_* columns)
+# stay out, so a stale model saved by sync, onboarding or deletion cannot
+# overwrite them.
 _USER_SAVE_COLUMNS = (
     "firebase_uid",
     "email",
@@ -308,6 +309,24 @@ class AsyncUserRepository(UserRepositoryPort):
             update(User)
             .where(User.id == str(user_id))
             .values(weekly_auto_adjust=enabled)
+        )
+
+    async def get_activity_calories(self, user_id: UUID | str) -> bool:
+        result = await self.session.execute(
+            select(User.activity_calories).where(
+                User.id == str(user_id), User.is_active.is_(True)
+            )
+        )
+        value = result.scalar_one_or_none()
+        return True if value is None else bool(value)
+
+    async def update_user_activity_calories(
+        self, user_id: UUID | str, enabled: bool
+    ) -> None:
+        await self.session.execute(
+            update(User)
+            .where(User.id == str(user_id))
+            .values(activity_calories=enabled)
         )
 
     async def update_user_avatar(

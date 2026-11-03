@@ -55,6 +55,8 @@ def test_repository_ports_are_async_contracts():
             "update_user_language",
             "get_weekly_auto_adjust",
             "update_user_weekly_auto_adjust",
+            "get_activity_calories",
+            "update_user_activity_calories",
         ],
     )
     _assert_async_methods(

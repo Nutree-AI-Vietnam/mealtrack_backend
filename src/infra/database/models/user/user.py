@@ -69,6 +69,12 @@ class User(Base, BaseMixin):
         Boolean, default=True, nullable=False, server_default="true"
     )
 
+    # When true, calories burned in logged movement raise the food budget.
+    # When false, movement still logs, but budgets and totals count food only.
+    activity_calories = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+
     # Chosen avatar. Written only by the repository's update_user_avatar, never
     # by save(), so sign-in sync and other model saves cannot overwrite it.
     # 'auto' shows the provider photo, or initials on a colour the app derives.
