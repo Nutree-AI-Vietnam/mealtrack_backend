@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     text,
 )
@@ -54,6 +55,14 @@ class WeeklyMealPlanSlotORM(Base, TimestampMixin):
         JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"),
         nullable=True,
     )
+
+    # How much of the dish the plan asks for, in the steps the log endpoint
+    # accepts (0.5, 1.0, 1.5, 2.0), and the rice beside it in 55 g half-bowl
+    # servings. A plan written before composing has 1.0 and no rice.
+    planned_portion = Column(
+        Numeric(3, 2), nullable=False, default=1, server_default="1"
+    )
+    planned_rice_steps = Column(Integer, nullable=False, default=0, server_default="0")
 
     plan = relationship("WeeklyMealPlanORM", back_populates="slots")
     catalog_meal = relationship("MealCatalogORM", lazy="joined")

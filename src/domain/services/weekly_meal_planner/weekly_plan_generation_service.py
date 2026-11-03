@@ -633,6 +633,9 @@ _COMFORTABLE_RICE_STEPS = 2
 # Dominates every macro term: a plan must not starve a day or pile it into one
 # meal.
 _RULE_BREAK_COST = 1.0
+# Each repeat of a dish costs more than the last, so a week spreads out
+# instead of serving its best-fitting dish seven times.
+_REPEAT_COST = 0.15
 # The usual split of a day across breakfast, lunch and dinner. Used only to
 # guess what the slots after this one will bring.
 _SLOT_CALORIE_SHARES = (0.25, 0.375, 0.375)
@@ -753,6 +756,7 @@ def compose_day(
     rice_dishes: frozenset[str] = frozenset(),
     shares: tuple[float, ...] = _SLOT_CALORIE_SHARES,
     polish_passes: int = 3,
+    used_counts: Mapping[str, int] | None = None,
 ) -> tuple[ComposedSlot, ...]:
     """Compose one day: a dish, a portion and its rice for every slot.
 
@@ -760,8 +764,14 @@ def compose_day(
     after it bring their usual share. A polish pass then re-picks each slot
     knowing the rest of the day, which is what turns a run of locally sensible
     meals into a day that adds up.
+
+    ``used_counts`` is how often each dish has already been served this week.
+    Every repeat costs more than the last, and no dish is served twice in one
+    day, so fitting the targets well does not turn into the same dinner every
+    night.
     """
     cap_kcal = MEAL_KCAL_SHARE_CAP * targets.kcal if targets.kcal > 0 else float("inf")
+    served_before = dict(used_counts or {})
     slot_count = len(slot_candidates)
     chosen: list[ComposedSlot | None] = [None] * slot_count
     served: list[tuple[float, float, float, float]] = [
@@ -796,16 +806,29 @@ def compose_day(
             return None
         base = totals(skip=slot)
         ahead = expected(rest)
+        elsewhere_today = {
+            chosen[other].recipe_id
+            for other in range(slot_count)
+            if other != slot and chosen[other] is not None
+        }
         best: tuple[float, str, ComposedSlot, tuple[float, ...]] | None = None
         for meal in candidates:
+            if meal.id in elsewhere_today:
+                continue
             takes_rice = meal.id in rice_dishes
+            # The n-th serving of a dish costs n times the first.
+            repeat = _REPEAT_COST * served_before.get(meal.id, 0)
             for portion, steps, serving in _options(
                 meal, takes_rice=takes_rice, cap_kcal=cap_kcal
             ):
                 projected = tuple(
                     base[macro] + serving[macro] + ahead[macro] for macro in range(4)
                 )
-                cost = _macro_cost(projected, targets) + _serving_cost(portion, steps)
+                cost = (
+                    _macro_cost(projected, targets)
+                    + _serving_cost(portion, steps)
+                    + repeat
+                )
                 if serving[0] > cap_kcal:
                     cost += _RULE_BREAK_COST
                 key = (cost, meal.id)
@@ -823,12 +846,24 @@ def compose_day(
 
     for slot in range(slot_count):
         chosen[slot] = best_for(slot, rest=range(slot + 1, slot_count))
+        if chosen[slot] is not None and chosen[slot].recipe_id:
+            served_before[chosen[slot].recipe_id] = (
+                served_before.get(chosen[slot].recipe_id, 0) + 1
+            )
 
     for _ in range(polish_passes):
         before = tuple(chosen)
         for slot in range(slot_count):
-            if slot_candidates[slot]:
-                chosen[slot] = best_for(slot, rest=())
+            if not slot_candidates[slot]:
+                continue
+            previous = chosen[slot]
+            if previous is not None and previous.recipe_id:
+                served_before[previous.recipe_id] -= 1
+            chosen[slot] = best_for(slot, rest=())
+            if chosen[slot] is not None and chosen[slot].recipe_id:
+                served_before[chosen[slot].recipe_id] = (
+                    served_before.get(chosen[slot].recipe_id, 0) + 1
+                )
         if tuple(chosen) == before:
             break
 

@@ -17,6 +17,12 @@ SLOT_MEAL_TYPES: tuple[str, ...] = ("breakfast", "lunch", "dinner")
 # it ("plan"), or the user linked a meal they had already logged ("diary").
 SLOT_LOG_SOURCE_PLAN = "plan"
 SLOT_LOG_SOURCE_DIARY = "diary"
+# Servings POST /slots/{id}/log accepts, and the rice a plan may ask for in
+# 55 g half-bowl steps (Viet Nam NIN cereal serving).
+PLANNED_PORTIONS: tuple[float, ...] = (0.5, 1.0, 1.5, 2.0)
+MAX_PLANNED_RICE_STEPS = 4
+RICE_STEP_GRAMS = 55
+
 SLOT_LOG_SOURCES: frozenset[str] = frozenset(
     {SLOT_LOG_SOURCE_PLAN, SLOT_LOG_SOURCE_DIARY}
 )
@@ -105,9 +111,17 @@ class WeeklyMealPlanSlot:
     # copy taken when it was put in the slot.
     saved_suggestion_id: str | None = None
     saved_recipe: SavedRecipeSnapshot | None = None
+    # How much of the dish to serve, and the rice beside it in 55 g half-bowl
+    # servings. A plan made before composing is one plain serving, no rice.
+    planned_portion: float = 1.0
+    planned_rice_steps: int = 0
 
     def __post_init__(self) -> None:
         ensure_slot_coordinate(self.day_index, self.slot_index)
+        if self.planned_portion not in PLANNED_PORTIONS:
+            raise ValueError("planned_portion must be 0.5, 1, 1.5 or 2")
+        if not 0 <= self.planned_rice_steps <= MAX_PLANNED_RICE_STEPS:
+            raise ValueError("planned_rice_steps must be between 0 and 4")
         if self.log_source is not None and self.log_source not in SLOT_LOG_SOURCES:
             raise ValueError("log_source must be plan, diary, or None")
         if self.recipe_id is not None and self.saved_suggestion_id is not None:

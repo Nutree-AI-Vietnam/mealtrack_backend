@@ -154,3 +154,43 @@ def test_a_slot_with_no_candidate_stays_empty():
 
     assert composed[1].recipe_id is None
     assert composed[0].recipe_id is not None
+
+
+def test_the_same_dish_is_never_served_twice_in_a_day():
+    pool = _pool()
+
+    composed = compose_day((pool, pool, pool), _targets())
+
+    served = [slot.recipe_id for slot in composed if slot.recipe_id]
+    assert len(set(served)) == len(served)
+
+
+def test_a_dish_already_served_this_week_costs_more():
+    pool = _pool()
+    targets = _targets()
+
+    fresh = compose_day((pool, pool, pool), targets)
+    best = fresh[2].recipe_id
+    # Serve that dish four times earlier in the week and it should give way.
+    later = compose_day((pool, pool, pool), targets, used_counts={best: 4})
+
+    assert later[2].recipe_id != best
+
+
+def test_a_week_of_days_does_not_repeat_one_menu():
+    pool = _pool()
+    served: dict[str, int] = {}
+    week = []
+    for day in range(7):
+        composed = compose_day(
+            (pool, pool, pool), _targets(), day_index=day, used_counts=served
+        )
+        week.append(composed)
+        for slot in composed:
+            if slot.recipe_id:
+                served[slot.recipe_id] = served.get(slot.recipe_id, 0) + 1
+
+    assert len(served) >= 5
+    # The same three dishes every day would mean one distinct menu.
+    menus = {tuple(slot.recipe_id for slot in day) for day in week}
+    assert len(menus) > 1

@@ -685,6 +685,8 @@ def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
                 str | None, getattr(slot, "saved_suggestion_id", None)
             ),
             saved_recipe=_saved_recipe(slot),
+            planned_portion=float(getattr(slot, "planned_portion", None) or 1.0),
+            planned_rice_steps=int(getattr(slot, "planned_rice_steps", None) or 0),
         )
         for slot in sorted(
             data.slots, key=lambda item: (item.day_index, item.slot_index)

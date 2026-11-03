@@ -42,6 +42,11 @@ class WeeklyMealSlotResponse(BaseModel):
     # "diary": an existing diary meal was linked (unlog keeps it).
     log_source: Literal["plan", "diary"] | None = None
     is_skipped: bool = False
+    # What the plan asks the user to eat: how much of the dish, and the rice
+    # beside it in 55 g half-bowl servings. Logging defaults to these.
+    planned_portion: float = 1.0
+    planned_rice_steps: int = 0
+    planned_rice_grams: int = 0
 
 
 class WeeklyMealPlanResponse(BaseModel):

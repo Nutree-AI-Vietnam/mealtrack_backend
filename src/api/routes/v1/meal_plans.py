@@ -100,6 +100,7 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.micros import Micros
 from src.domain.model.weekly_meal_planner import (
+    RICE_STEP_GRAMS,
     SavedRecipeSnapshot,
     WeeklyMealPlanPreferences,
     meal_type_for_slot,
@@ -1071,6 +1072,10 @@ def _slot_response(slot, meal: CatalogMeal | None) -> WeeklyMealSlotResponse:
         logged_meal_id=slot.logged_meal_id,
         log_source=getattr(slot, "log_source", None),
         is_skipped=bool(getattr(slot, "is_skipped", False)),
+        planned_portion=float(getattr(slot, "planned_portion", 1.0) or 1.0),
+        planned_rice_steps=int(getattr(slot, "planned_rice_steps", 0) or 0),
+        planned_rice_grams=int(getattr(slot, "planned_rice_steps", 0) or 0)
+        * RICE_STEP_GRAMS,
     )
 
 
