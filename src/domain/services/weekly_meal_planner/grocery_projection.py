@@ -213,7 +213,9 @@ _WORD_SYNONYMS = {
 }
 
 # Whole-name groups, checked after word folding. The value is the shopping
-# identity; the display name comes from _DISPLAY_NAMES.
+# identity. The wording a merged line is shown in is not taken from here:
+# _display_name keeps whichever name the recipes used most, so an English
+# catalog is never relabelled in Vietnamese, or the other way round.
 _NAME_GROUPS = {
     # Pork, beef, chicken written with or without the generic head "thịt".
     "heo": "thit_heo",
