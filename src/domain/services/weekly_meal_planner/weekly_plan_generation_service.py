@@ -72,6 +72,9 @@ class GeneratedSlot:
 # already eats. Taste breaks a near tie; it never outvotes the day's targets,
 # so a dish that fits 200 kcal better still wins however familiar the other is.
 TASTE_KCAL_ALLOWANCE = 40.0
+# Liking a dish's ingredients is weaker evidence than eating that dish at
+# that slot, so it reaches less of the allowance.
+_INGREDIENT_FAMILIARITY_WEIGHT = 0.6
 
 
 class WeeklyPlanGenerationService:
@@ -102,6 +105,8 @@ class WeeklyPlanGenerationService:
             return _empty_week()
         _, slot_candidates = prepared
         refused = memory.refused_recipe_ids
+        proven = memory.proven_recipe_ids
+        tolerance = memory.repeat_tolerance
         result: list[GeneratedSlot] = []
         used_counts: dict[str, int] = {}
         for day in range(WEEKLY_DAYS):
@@ -122,7 +127,11 @@ class WeeklyPlanGenerationService:
                         # they refused. It can still fill a slot nothing else
                         # fits, because a hole in the week is worse.
                         1 if item[0].id in refused else 0,
-                        used_counts.get(item[0].id, 0),
+                        # A dish they planned and actually cooked comes first.
+                        0 if item[0].id in proven else 1,
+                        # Spreading, loosened for someone whose own log shows
+                        # they happily eat the same dish again.
+                        used_counts.get(item[0].id, 0) // tolerance,
                         # Without this the same profile and catalog give the
                         # same week every week: the calorie gap below decides.
                         1 if item[0].id in last_week else 0,
@@ -130,8 +139,7 @@ class WeeklyPlanGenerationService:
                         # it decides between dishes that fit about as well. One
                         # skip pushes the other way by the same bounded amount.
                         item[1]
-                        - TASTE_KCAL_ALLOWANCE
-                        * memory.taste_score(dish_fresh_ingredient_ids(item[0]))
+                        - TASTE_KCAL_ALLOWANCE * _familiarity(memory, item[0], slot)
                         + TASTE_KCAL_ALLOWANCE * memory.skip_score(item[0].id),
                         self._stable_rank(item[0], user_id, week_start_date, day, slot),
                         item[0].id,
@@ -189,6 +197,8 @@ class WeeklyPlanGenerationService:
             return _empty_week()
         targets, slot_candidates = prepared
         refused = memory.refused_recipe_ids
+        proven = memory.proven_recipe_ids
+        tolerance = memory.repeat_tolerance
         fixed = fixed or {}
         eligible_ids = [
             {meal.id for meal, _ in candidates} for candidates in slot_candidates
@@ -217,7 +227,8 @@ class WeeklyPlanGenerationService:
                     1 if item[0].id in day_used else 0,
                     *_practicality(item[0], slot),
                     1 if item[0].id in refused else 0,
-                    cooked.get(item[0].id, 0),
+                    0 if item[0].id in proven else 1,
+                    cooked.get(item[0].id, 0) // tolerance,
                     1
                     if feeds_next_lunch and item[0].id not in eligible_ids[_LUNCH]
                     else 0,
@@ -236,8 +247,7 @@ class WeeklyPlanGenerationService:
                     # Inside a calorie band, prefer what the user already eats
                     # and lean away from what they skipped once.
                     item[1]
-                    - TASTE_KCAL_ALLOWANCE
-                    * memory.taste_score(dish_fresh_ingredient_ids(item[0]))
+                    - TASTE_KCAL_ALLOWANCE * _familiarity(memory, item[0], slot)
                     + TASTE_KCAL_ALLOWANCE * memory.skip_score(item[0].id),
                     self._stable_rank(item[0], user_id, week_start_date, day, slot),
                     item[0].id,
@@ -538,6 +548,18 @@ def _word_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
 
 def _is_non_meal_recipe(meal: CatalogMeal) -> bool:
     return is_non_meal_title(meal.name, meal.tag)
+
+
+def _familiarity(memory: UserFoodMemory, meal: CatalogMeal, slot: int) -> float:
+    """How much this dish looks like what the user eats at this slot, [0, 1].
+
+    A dish the user logs at this very slot counts for more than one merely
+    built from ingredients they like: eating pho every morning says more
+    about breakfast than liking beef does.
+    """
+    by_dish = memory.slot_dish_score(slot, meal.name)
+    by_ingredient = memory.taste_score(dish_fresh_ingredient_ids(meal))
+    return max(by_dish, by_ingredient * _INGREDIENT_FAMILIARITY_WEIGHT)
 
 
 def _practicality(meal: CatalogMeal, slot_index: int) -> tuple[int, int]:

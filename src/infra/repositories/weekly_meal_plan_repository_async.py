@@ -7,7 +7,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, cast
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, noload, selectinload
@@ -324,17 +324,21 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             for item in result.scalars().all()
         ]
 
-    async def list_skipped_recipe_ids(
-        self, *, user_id: str, since: date, limit: int = 200
-    ) -> list[str]:
-        """Catalog recipes this user skipped, newest first, one per skip.
+    async def list_plan_recipe_outcomes(
+        self, *, user_id: str, since: date, limit: int = 400
+    ) -> list[tuple[str, str]]:
+        """What became of each planned dish, newest week first.
 
-        Only slots that were skipped and never logged count: a slot can carry
-        both flags when somebody skipped a meal and later logged it anyway,
-        and that is not a refusal.
+        "logged" wins over "skipped" on a slot that carries both, which
+        happens when somebody skips a meal and then logs it anyway: they did
+        eat it, so it is not a refusal.
         """
         result = await self.session.execute(
-            select(WeeklyMealPlanSlotORM.catalog_meal_id)
+            select(
+                WeeklyMealPlanSlotORM.catalog_meal_id,
+                WeeklyMealPlanSlotORM.is_logged,
+                WeeklyMealPlanSlotORM.is_skipped,
+            )
             .join(
                 WeeklyMealPlanORM,
                 WeeklyMealPlanORM.id == WeeklyMealPlanSlotORM.plan_id,
@@ -342,14 +346,22 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             .where(
                 WeeklyMealPlanORM.user_id == user_id,
                 WeeklyMealPlanORM.week_start_date >= since,
-                WeeklyMealPlanSlotORM.is_skipped.is_(True),
-                WeeklyMealPlanSlotORM.is_logged.is_(False),
                 WeeklyMealPlanSlotORM.catalog_meal_id.is_not(None),
+                or_(
+                    WeeklyMealPlanSlotORM.is_logged.is_(True),
+                    WeeklyMealPlanSlotORM.is_skipped.is_(True),
+                ),
             )
             .order_by(WeeklyMealPlanORM.week_start_date.desc())
             .limit(limit)
         )
-        return [str(recipe_id) for (recipe_id,) in result.all()]
+        outcomes: list[tuple[str, str]] = []
+        for recipe_id, is_logged, is_skipped in result.all():
+            if is_logged:
+                outcomes.append((str(recipe_id), "logged"))
+            elif is_skipped:
+                outcomes.append((str(recipe_id), "skipped"))
+        return outcomes
 
     async def list_grocery_interactions(
         self, *, user_id: str, plan_id: str

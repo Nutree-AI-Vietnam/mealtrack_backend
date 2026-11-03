@@ -588,8 +588,13 @@ class AsyncMealRepository(MealRepositoryPort):
                 MealORM.dish_name,
                 MealORM.meal_type,
                 MealORM.cuisine_type,
+                NutritionORM.protein,
+                NutritionORM.carbs,
+                NutritionORM.fat,
+                NutritionORM.fiber,
                 occurred_at.label("occurred_at"),
             )
+            .outerjoin(NutritionORM, NutritionORM.meal_id == MealORM.meal_id)
             .where(
                 MealORM.user_id == user_id,
                 occurred_at >= start_dt,
@@ -618,7 +623,9 @@ class AsyncMealRepository(MealRepositoryPort):
             names_by_meal.setdefault(str(meal_id), []).append(str(name or ""))
 
         shapes: list[LoggedMealShape] = []
-        for meal_id, dish_name, meal_type, cuisine, _occurred in rows:
+        for row in rows:
+            meal_id, dish_name, meal_type, cuisine = row[0], row[1], row[2], row[3]
+            protein, carbs, fat, fiber = row[4], row[5], row[6], row[7]
             names = names_by_meal.get(str(meal_id), [])
             shapes.append(
                 LoggedMealShape(
@@ -626,6 +633,12 @@ class AsyncMealRepository(MealRepositoryPort):
                     meal_type=str(meal_type) if meal_type else None,
                     cuisine=str(cuisine) if cuisine else None,
                     item_names=tuple(names),
+                    calories=Macros.raw_total_calories(
+                        float(protein or 0),
+                        float(carbs or 0),
+                        float(fat or 0),
+                        float(fiber or 0),
+                    ),
                 )
             )
         return shapes

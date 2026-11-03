@@ -19,13 +19,14 @@ class WeeklyMealPlanRepositoryPort(ABC):
     async def get_by_id(self, *, user_id: str, plan_id: str) -> WeeklyMealPlan | None:
         raise NotImplementedError
 
-    async def list_skipped_recipe_ids(
-        self, *, user_id: str, since: date, limit: int = 200
-    ) -> list[str]:
-        """Catalog recipes the user skipped, one entry per skip.
+    async def list_plan_recipe_outcomes(
+        self, *, user_id: str, since: date, limit: int = 400
+    ) -> list[tuple[str, str]]:
+        """What became of each planned dish: (recipe_id, "logged"|"skipped").
 
-        Used to learn which dishes to stop planning. An implementation that
-        cannot answer returns nothing and the planner keeps its old
+        One entry per slot, so repeats carry their count. Used to learn which
+        dishes to plan again and which to stop planning. An implementation
+        that cannot answer returns nothing and the planner keeps its old
         behaviour.
         """
         return []

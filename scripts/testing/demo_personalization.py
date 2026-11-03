@@ -183,34 +183,48 @@ def _catalog_meal(meal_id: str, name: str, food_id: int) -> CatalogMeal:
 
 def demo_memory() -> None:
     heading(3, "Memory: tuần sau học từ tuần trước")
-    log = [
-        LoggedMealShape(
-            dish_name=name,
-            cuisine=cuisine,
-            item_names=items,
-        )
-        for name, cuisine, items in (
-            ("Thịt kho trứng", "vietnamese", ("Thịt heo", "Trứng gà", "Cơm trắng")),
-            ("Cá kho tộ", "vietnamese", ("Cá lóc", "Cơm trắng")),
-            ("Bò xào hành tây", "vietnamese", ("Thịt bò", "Hành tây", "Cơm trắng")),
-            ("Phở gà", "vietnamese", ("Bánh phở", "Thịt gà")),
-            ("Thịt kho trứng", "vietnamese", ("Thịt heo", "Trứng gà", "Cơm trắng")),
-        )
-    ]
+    # Sáu tuần log hằng ngày: sáng ăn phở, trưa tối cơm với món mặn.
+    log = []
+    for _ in range(6):
+        log += [
+            LoggedMealShape(
+                "Phở gà", "breakfast", "vietnamese", ("Bánh phở", "Thịt gà"), 450.0
+            ),
+            LoggedMealShape(
+                "Thịt kho trứng",
+                "lunch",
+                "vietnamese",
+                ("Thịt heo", "Trứng gà", "Cơm trắng"),
+                650.0,
+            ),
+            LoggedMealShape(
+                "Cá kho tộ", "dinner", "vietnamese", ("Cá lóc", "Cơm trắng"), 600.0
+            ),
+        ]
     memory = build_user_food_memory(
         affinity_weights={11: 0.9, 12: 0.7, 22: 0.05},
         meals=log,
         is_staple_item=VIETNAM.is_staple_item,
     )
 
-    print("   Từ 5 bữa đã log, LLM sẽ đọc đúng khối này:\n")
+    print("   Sáu tuần log hằng ngày — không cần log từ plan, chỉ cần ăn và log.\n")
+    print("   LLM đọc đúng khối này:\n")
     for line in memory.prompt_text().splitlines():
         print(f"      {line}")
 
+    print("\n   Những gì bộ chọn món tất định đọc được:")
     print(
-        f"\n   Nguyên liệu ăn thường xuyên: "
-        f"{sorted(memory.liked_ingredient_ids)}  "
-        f"(đủ tin cậy: {memory.is_confident})"
+        f"      chia calo trong ngày   "
+        f"{tuple(round(share, 2) for share in memory.slot_calorie_shares)}"
+        f"   (mặc định vùng: {VIETNAM.slot_calorie_shares})"
+    )
+    for slot, label in enumerate(("sáng", "trưa", "tối")):
+        print(
+            f"      hay ăn bữa {label:<5}      {list(memory.slot_dishes.get(slot, ()))}"
+        )
+    print(
+        f"      chịu lặp món           {memory.repeat_tolerance} lần/tuần "
+        f"({memory.meals_observed} bữa / {memory.distinct_dishes} món khác nhau)"
     )
 
     liked = [_catalog_meal(f"liked-{i}", f"Món quen {i}", 11) for i in range(3)]
@@ -228,12 +242,10 @@ def demo_memory() -> None:
         )
         return sum(1 for slot in slots if (slot.recipe_id or "").startswith("liked-"))
 
-    cold = week(EMPTY_MEMORY)
-    warm = week(memory)
     print(
-        f"\n   Trong 21 bữa của tuần, số bữa dùng nguyên liệu user hay ăn:"
-        f"\n      user mới (chưa log gì)  {cold}/21"
-        f"\n      user đã log 5 bữa       {warm}/21"
+        f"\n   Trong 21 bữa, số bữa dùng nguyên liệu user hay ăn:"
+        f"\n      user mới chưa log gì  {week(EMPTY_MEMORY)}/21"
+        f"\n      user đã log 6 tuần    {week(memory)}/21"
     )
     print(
         "\n   Vị giác chỉ đáng 40 kcal độ khớp — không bao giờ lấn mục tiêu dinh dưỡng."
@@ -255,9 +267,14 @@ def demo_skips() -> None:
         )
         return sorted({slot.recipe_id for slot in slots if slot.recipe_id})
 
-    once = build_user_food_memory(skipped_recipe_ids=["dish-0"])
+    once = build_user_food_memory(plan_outcomes=[("dish-0", "skipped")])
     twice = build_user_food_memory(
-        skipped_recipe_ids=["dish-0", "dish-0", "dish-1", "dish-1"]
+        plan_outcomes=[
+            ("dish-0", "skipped"),
+            ("dish-0", "skipped"),
+            ("dish-1", "skipped"),
+            ("dish-1", "skipped"),
+        ]
     )
 
     print(f"   chưa skip gì         → {served(EMPTY_MEMORY)}")
@@ -273,7 +290,7 @@ def demo_skips() -> None:
         week_start_date="2026-11-09",
         daily_calories=1800,
         preferences=WeeklyMealPlanPreferences(),
-        memory=build_user_food_memory(skipped_recipe_ids=["only"] * 5),
+        memory=build_user_food_memory(plan_outcomes=[("only", "skipped")] * 5),
     )
     filled = sum(1 for slot in fallback if slot.recipe_id)
     print(

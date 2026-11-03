@@ -235,7 +235,7 @@ class WeeklyMealPlanService:
                         if slot.is_logged and slot.has_recipe
                     },
                 )
-            servings = _compose_servings(command, selected, meals)
+            servings = _compose_servings(command, selected, meals, memory)
             recipe_ids = {
                 (item.day_index, item.slot_index): item.recipe_id
                 for item in selected
@@ -1337,22 +1337,22 @@ async def _user_food_memory(
             logger.warning("Could not read logged meal shapes for the planner")
             shapes = []
 
-    skipped: list[str] = []
+    outcomes: list[tuple[str, str]] = []
     plans_repo = getattr(uow, "weekly_meal_plans", None)
-    list_skipped = getattr(plans_repo, "list_skipped_recipe_ids", None)
-    if list_skipped is not None:
+    list_outcomes = getattr(plans_repo, "list_plan_recipe_outcomes", None)
+    if list_outcomes is not None:
         try:
-            skipped = await list_skipped(user_id=user_id, since=start)
+            outcomes = await list_outcomes(user_id=user_id, since=start)
         except Exception:  # noqa: BLE001
-            logger.warning("Could not read skipped dishes for the planner")
-            skipped = []
+            logger.warning("Could not read past plan outcomes for the planner")
+            outcomes = []
 
     locale = locale_for_timezone(timezone)
     return build_user_food_memory(
         affinity_weights=weights,
         meals=shapes,
         is_staple_item=locale.is_staple_item,
-        skipped_recipe_ids=skipped,
+        plan_outcomes=outcomes,
     )
 
 
@@ -1402,7 +1402,7 @@ def _resolve_plan_preferences(
 
 
 def _compose_servings(
-    command, selected, meals
+    command, selected, meals, memory: UserFoodMemory = EMPTY_MEMORY
 ) -> dict[tuple[int, int], tuple[float, int]]:
     """How much of each chosen dish to serve, and the rice beside it.
 
@@ -1442,6 +1442,9 @@ def _compose_servings(
             day_index=day,
             rice_dishes=rice_dishes,
             locale=locale,
+            # How this user really splits a day, when the log knows. The
+            # locale's assumption covers everyone else.
+            shares=memory.slot_calorie_shares or None,
             used_counts=served,
         ):
             if composed.recipe_id is None:

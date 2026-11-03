@@ -682,3 +682,42 @@ def test_one_skip_does_not_banish_a_dish():
     week = _generated(meals, UserFoodMemory(skipped_dishes={"dish-0": 1}))
 
     assert "dish-0" in {slot.recipe_id for slot in week}
+
+
+def test_a_user_with_favourites_gets_them_more_often():
+    """The spread loosens for somebody whose own log repeats dishes.
+
+    The same favourite under the same taste signal, once with a log that
+    shows the user repeating dishes and once without. Only the first is
+    allowed to serve it up to the tolerance before the spread pushes back.
+    """
+    meals = [_meal_with_ingredient(f"dish-{i}", f"Dish {i}", 11) for i in range(12)]
+    favourite = {0: ("Dish 0",), 1: ("Dish 0",), 2: ("Dish 0",)}
+    repeats = UserFoodMemory(
+        slot_dishes=favourite, meals_observed=40, distinct_dishes=4
+    )
+    varies = UserFoodMemory(
+        slot_dishes=favourite, meals_observed=40, distinct_dishes=40
+    )
+
+    def times_favourite(mem):
+        return sum(1 for slot in _generated(meals, mem) if slot.recipe_id == "dish-0")
+
+    assert repeats.repeat_tolerance == 4
+    assert varies.repeat_tolerance == 1
+    # With twelve dishes and twenty-one slots, the strict spread reaches the
+    # favourite twice; the loosened one reaches it four times.
+    assert times_favourite(repeats) == 4
+    assert times_favourite(varies) == 2
+
+
+def test_a_proven_dish_outranks_one_the_user_never_tried():
+    """Three slots a day, three proven dishes: the week should be all three."""
+    meals = [_meal_with_ingredient(f"dish-{i}", f"Dish {i}", 11) for i in range(6)]
+
+    week = _generated(
+        meals,
+        UserFoodMemory(cooked_dishes={"dish-3": 1, "dish-4": 1, "dish-5": 1}),
+    )
+
+    assert {slot.recipe_id for slot in week} == {"dish-3", "dish-4", "dish-5"}

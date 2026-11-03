@@ -30,6 +30,19 @@ RECENT_DISH_LIMIT = 12
 # Skips before a dish is treated as refused rather than missed. One skip is
 # usually a busy evening, not a verdict on the food; twice is a pattern.
 SKIP_REFUSAL_COUNT = 2
+# Meals needed in a slot before its share of the day is taken from the log
+# rather than from the locale's assumption.
+SLOT_SHARE_MEAL_FLOOR = 6
+# A slot never falls below this share, so learning never starves a meal.
+MIN_SLOT_SHARE = 0.1
+# How a meal_type maps onto the planner's slots.
+SLOT_MEAL_TYPES = ("breakfast", "lunch", "dinner")
+# Dishes kept per slot. Enough to recognise a habit, few enough that one
+# unusual evening does not become one.
+SLOT_DISH_LIMIT = 8
+# The most times a dish may be repeated in a week because the user repeats
+# dishes themselves. Beyond this the week stops being a plan.
+MAX_REPEAT_TOLERANCE = 4
 
 
 @dataclass(frozen=True)
@@ -43,6 +56,7 @@ class LoggedMealShape:
     # many dishes were eaten, and the names say whether a staple was among
     # them - which is a regional question, so the locale answers it.
     item_names: tuple[str, ...] = ()
+    calories: float = 0.0
 
     @property
     def item_count(self) -> int:
@@ -64,8 +78,20 @@ class UserFoodMemory:
     # Dish names eaten recently, newest first.
     recent_dishes: tuple[str, ...] = ()
     meals_observed: int = 0
+    # Distinct dish names across the logged meals. With meals_observed this
+    # says how much variety this person actually wants.
+    distinct_dishes: int = 0
     # catalog recipe id -> how often the user skipped it when it was planned.
     skipped_dishes: Mapping[str, int] = field(default_factory=dict)
+    # catalog recipe id -> how often they cooked it as planned. The mirror of
+    # a skip, and the clearest yes the product ever gets.
+    cooked_dishes: Mapping[str, int] = field(default_factory=dict)
+    # The share of a day's calories the user actually eats at each slot, in
+    # the planner's slot order. Empty until the log says enough.
+    slot_calorie_shares: tuple[float, ...] = ()
+    # Dish names the user logs at each slot, most eaten first. Breakfast is
+    # not dinner, and a global list of favourites cannot tell them apart.
+    slot_dishes: Mapping[int, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def is_confident(self) -> bool:
@@ -90,6 +116,30 @@ class UserFoodMemory:
             if count >= SKIP_REFUSAL_COUNT
         )
 
+    @property
+    def repeat_tolerance(self) -> int:
+        """How often a dish may repeat in a week before it is too much.
+
+        The planner spreads dishes so nobody eats the same dinner nightly.
+        That is right for someone who logs 30 different meals a month and
+        wrong for someone who logs the same four, who ends up with a week of
+        strangers. The user's own log decides which they are.
+
+        One - the old fixed behaviour - until the log is long enough to say
+        otherwise.
+        """
+        if not self.is_confident or self.distinct_dishes <= 0:
+            return 1
+        ratio = int(self.meals_observed / self.distinct_dishes)
+        return max(1, min(ratio, MAX_REPEAT_TOLERANCE))
+
+    @property
+    def proven_recipe_ids(self) -> frozenset[str]:
+        """Dishes the user planned and actually cooked."""
+        return frozenset(
+            recipe_id for recipe_id, count in self.cooked_dishes.items() if count > 0
+        )
+
     def skip_score(self, recipe_id: str | None) -> float:
         """How reluctant to plan this dish again, in [0, 1].
 
@@ -103,6 +153,25 @@ class UserFoodMemory:
         if count <= 0:
             return 0.0
         return min(count / SKIP_REFUSAL_COUNT, 1.0)
+
+    def slot_dish_score(self, slot_index: int, dish_name: str) -> float:
+        """How much this dish looks like what the user eats at this slot.
+
+        Matched on the dish name because that is what the diary stores for a
+        meal logged outside the plan, which is most of them.
+        """
+        names = self.slot_dishes.get(slot_index, ())
+        if not names or not dish_name:
+            return 0.0
+        wanted = _fold(dish_name)
+        if not wanted:
+            return 0.0
+        for rank, name in enumerate(names):
+            folded = _fold(name)
+            if folded and (folded in wanted or wanted in folded):
+                # The most eaten dish at this slot scores 1, the next less.
+                return 1.0 - rank / max(len(names), 1)
+        return 0.0
 
     def taste_score(self, ingredient_ids: Iterable[int]) -> float:
         """How much of a dish this person already eats, in [0, 1].
@@ -145,32 +214,80 @@ class UserFoodMemory:
 EMPTY_MEMORY = UserFoodMemory()
 
 
+def _fold(value: str) -> str:
+    """Lowercase and collapse a dish name for loose comparison."""
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _observed_slot_shares(
+    slot_kcal: Mapping[str, float], slot_meals: Mapping[str, int]
+) -> tuple[float, ...]:
+    """The share of the day the user eats at each slot, or nothing.
+
+    Nothing unless every slot has been logged enough times. A user who only
+    ever logs dinner would otherwise read as eating 100% of the day at
+    dinner, when the truth is that breakfast went unlogged.
+
+    Every share keeps a floor, so a learned split can shift a meal but never
+    starve one.
+    """
+    if any(slot_meals.get(name, 0) < SLOT_SHARE_MEAL_FLOOR for name in SLOT_MEAL_TYPES):
+        return ()
+    per_meal = [
+        slot_kcal[name] / slot_meals[name]
+        for name in SLOT_MEAL_TYPES
+        if slot_meals[name]
+    ]
+    total = sum(per_meal)
+    if total <= 0 or len(per_meal) != len(SLOT_MEAL_TYPES):
+        return ()
+    shares = [max(value / total, MIN_SLOT_SHARE) for value in per_meal]
+    scale = sum(shares)
+    return tuple(share / scale for share in shares)
+
+
 def build_user_food_memory(
     *,
     affinity_weights: Mapping[int, float] | None = None,
     meals: Iterable[LoggedMealShape] = (),
     is_staple_item: Callable[[str], bool] | None = None,
-    skipped_recipe_ids: Iterable[str] = (),
+    plan_outcomes: Iterable[tuple[str, str]] = (),
 ) -> UserFoodMemory:
-    """Reduce the log, and what the user refused, to one memory.
+    """Reduce the log, and what became of past plans, to one memory.
 
-    ``meals`` is newest first. ``skipped_recipe_ids`` repeats a recipe once
-    per skip, so the counts fall out of it.
+    ``meals`` is newest first. ``plan_outcomes`` is (recipe_id, "logged" or
+    "skipped"), one entry per planned slot, so the counts fall out of it.
     """
     observed = list(meals)
     skips: dict[str, int] = {}
-    for recipe_id in skipped_recipe_ids:
+    cooked: dict[str, int] = {}
+    for recipe_id, outcome in plan_outcomes:
         key = str(recipe_id or "").strip()
-        if key:
-            skips[key] = skips.get(key, 0) + 1
-    if not observed and not affinity_weights and not skips:
+        if not key:
+            continue
+        bucket = cooked if outcome == "logged" else skips
+        bucket[key] = bucket.get(key, 0) + 1
+    if not observed and not affinity_weights and not skips and not cooked:
         return EMPTY_MEMORY
 
     cuisine_counts: dict[str, int] = {}
     recent: list[str] = []
     staple_meals = 0
     items = 0
+    slot_kcal = dict.fromkeys(SLOT_MEAL_TYPES, 0.0)
+    slot_meals = dict.fromkeys(SLOT_MEAL_TYPES, 0)
+    slot_dish_counts: dict[int, dict[str, int]] = {}
     for meal in observed:
+        meal_type = (meal.meal_type or "").strip().casefold()
+        if meal_type in slot_kcal:
+            if meal.calories > 0:
+                slot_kcal[meal_type] += meal.calories
+                slot_meals[meal_type] += 1
+            name = (meal.dish_name or "").strip()
+            if name:
+                slot = SLOT_MEAL_TYPES.index(meal_type)
+                counts = slot_dish_counts.setdefault(slot, {})
+                counts[name] = counts.get(name, 0) + 1
         if meal.cuisine:
             key = meal.cuisine.strip()
             if key:
@@ -186,6 +303,16 @@ def build_user_food_memory(
 
     count = len(observed)
     return UserFoodMemory(
+        slot_calorie_shares=_observed_slot_shares(slot_kcal, slot_meals),
+        slot_dishes={
+            slot: tuple(
+                name
+                for name, _ in sorted(
+                    counts.items(), key=lambda item: (-item[1], item[0])
+                )[:SLOT_DISH_LIMIT]
+            )
+            for slot, counts in slot_dish_counts.items()
+        },
         liked_ingredients=dict(affinity_weights or {}),
         staple_share=(staple_meals / count) if count else 0.0,
         items_per_meal=(items / count) if count else 0.0,
@@ -197,5 +324,13 @@ def build_user_food_memory(
         ),
         recent_dishes=tuple(recent),
         meals_observed=count,
+        distinct_dishes=len(
+            {
+                (meal.dish_name or "").strip().casefold()
+                for meal in observed
+                if (meal.dish_name or "").strip()
+            }
+        ),
         skipped_dishes=skips,
+        cooked_dishes=cooked,
     )
