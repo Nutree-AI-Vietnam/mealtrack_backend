@@ -681,6 +681,26 @@ class TestPostWithJob:
         assert "message.completed" in response.text
         assert orchestrator.streamed is False
 
+    def test_cancelled_job_without_an_error_follows_as_stopped(self):
+        orchestrator = _StubOrchestrator()
+        job = make_job(
+            job_type=AiJobType.CHAT,
+            status=AiJobStatus.CANCELLED,
+            error=None,
+        )
+        ai_jobs = _StubAiJobs(claim=None, job=job)
+
+        response = _post(orchestrator, ai_jobs, _StubRunner(), ai_job_id=JOB_ID)
+
+        assert response.status_code == 200
+        assert response.text == (
+            f'event: message.started\ndata: {{"ai_job_id": "{JOB_ID}"}}\n\n'
+            "event: message.error\n"
+            f'data: {{"ai_job_id": "{JOB_ID}", "ai_job_status": "cancelled", '
+            '"code": "CHAT_STOPPED", "retryable": false}\n\n'
+        )
+        assert orchestrator.streamed is False
+
     def test_failed_job_follow_keeps_the_job_error(self):
         orchestrator = _StubOrchestrator()
         job = make_job(
