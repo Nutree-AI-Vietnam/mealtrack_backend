@@ -24,6 +24,9 @@ from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
 )
 from src.domain.services.tdee_service import allowed_pace
 from src.domain.services.training_policy import normalize_training_pair
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    resolve_allergen_terms,
+)
 from src.domain.utils.timezone_utils import (
     get_zone_info,
     resolve_user_timezone_async,
@@ -64,6 +67,27 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         or command.weight_loss_kg_per_week is not None
         or command.dietary_preferences is not None
     )
+
+
+async def _checked_allergies(uow, values: list[str]) -> list[str]:
+    """Keep the user's own words, but only terms the recipe data can check.
+
+    Saving a term the planner cannot resolve would leave the user believing
+    an allergy is handled when no recipe is ever excluded for it.
+    """
+    cleaned = _clean_diets(values)
+    if not cleaned:
+        return []
+    lister = getattr(uow.catalog_recipes, "list_allergen_codes", None)
+    known = tuple(await lister()) if callable(lister) else ()
+    _, unresolved = resolve_allergen_terms(cleaned, known)
+    if unresolved:
+        raise ValidationException(
+            "These allergies can't be checked against the recipe data yet: "
+            + ", ".join(unresolved),
+            error_code="ALLERGY_UNRESOLVED",
+        )
+    return cleaned
 
 
 def _clean_diets(values: list[str]) -> list[str]:
@@ -299,6 +323,9 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
 
             if command.dietary_preferences is not None:
                 profile.dietary_preferences = _clean_diets(command.dietary_preferences)
+
+            if command.allergies is not None:
+                profile.allergies = await _checked_allergies(uow, command.allergies)
 
             # Ensure this profile is marked as current
             profile.is_current = True
