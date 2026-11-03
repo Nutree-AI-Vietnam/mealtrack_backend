@@ -648,6 +648,11 @@ def _follow_job_events(job_id: str, job: AiJob | None) -> list[ChatSseEvent]:
     if job is not None and job.error is not None:
         code = job.error.code
         retryable = job.error.retryable
+    elif status == AiJobStatus.CANCELLED.value:
+        # A stop stores no error. The live stream already ends CHAT_STOPPED;
+        # following that row must not look like the turn is still busy.
+        code = "CHAT_STOPPED"
+        retryable = False
     error = {
         "ai_job_id": job_id,
         "ai_job_status": status,
