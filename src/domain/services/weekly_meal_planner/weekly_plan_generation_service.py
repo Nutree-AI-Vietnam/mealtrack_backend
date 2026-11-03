@@ -29,6 +29,10 @@ from src.domain.services.weekly_meal_planner.allergen_constraint import (
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     fresh_ingredient_id,
 )
+from src.domain.services.weekly_meal_planner.meal_locale import (
+    DEFAULT_LOCALE,
+    MealLocale,
+)
 from src.domain.services.weekly_meal_planner.meal_practicality import (
     practicality_rank,
 )
@@ -610,13 +614,13 @@ def _total_minutes(meal: CatalogMeal) -> int:
 # what is actually served.
 # ---------------------------------------------------------------------------
 
-# Viet Nam NIN counts a cereal serving as 55 g steamed rice (20 g carbohydrate).
-# Rice is planned in those half-bowl steps, up to two bowls.
-RICE_STEP_GRAMS = 55
-RICE_STEP_MACROS = (1.5, 20.0, 0.15)  # protein, carbs, fat per step
-MAX_RICE_STEPS = 4
+# The staple's numbers come from the locale pack. These names stay because
+# the API, the materializer and the app all read the default locale's values.
+RICE_STEP_GRAMS = DEFAULT_LOCALE.staple_step_grams
+RICE_STEP_MACROS = DEFAULT_LOCALE.staple_step_macros  # protein, carbs, fat
+MAX_RICE_STEPS = DEFAULT_LOCALE.max_staple_steps
 # A rice dish is eaten with rice: never plan one with none.
-MIN_RICE_STEPS = 1
+MIN_RICE_STEPS = DEFAULT_LOCALE.min_staple_steps
 # Portions POST /slots/{id}/log accepts today. Planning outside this set would
 # give the user a meal they cannot log as planned.
 LOGGABLE_PORTIONS = (0.5, 1.0, 1.5, 2.0)
@@ -636,13 +640,9 @@ _RULE_BREAK_COST = 1.0
 # Each repeat of a dish costs more than the last, so a week spreads out
 # instead of serving its best-fitting dish seven times.
 _REPEAT_COST = 0.15
-# The usual split of a day across breakfast, lunch and dinner. Used only to
-# guess what the slots after this one will bring.
-_SLOT_CALORIE_SHARES = (0.25, 0.375, 0.375)
-# Rice goes with the two main meals. Breakfast in Viet Nam is pho, banh mi,
-# xoi or chao, never a bowl of plain rice beside the dish, so slot 0 is left
-# out however the dish is cooked.
-_RICE_SLOTS = frozenset({1, 2})
+# The usual split of a day across its slots. Used only to guess what the
+# slots after this one will bring.
+_SLOT_CALORIE_SHARES = DEFAULT_LOCALE.slot_calorie_shares
 
 
 @dataclass(frozen=True)
@@ -666,10 +666,13 @@ class ComposedSlot:
     recipe_id: str | None
     portion: float = 1.0
     rice_steps: int = 0
+    # The step size of the locale this slot was composed for, so the grams
+    # stay right for a plan made under another region's rules.
+    staple_step_grams: int = RICE_STEP_GRAMS
 
     @property
     def rice_grams(self) -> int:
-        return self.rice_steps * RICE_STEP_GRAMS
+        return self.rice_steps * self.staple_step_grams
 
 
 def meal_macros(meal: CatalogMeal) -> tuple[float, float, float, float]:
@@ -683,7 +686,10 @@ def meal_macros(meal: CatalogMeal) -> tuple[float, float, float, float]:
 
 
 def _serving(
-    meal: CatalogMeal, portion: float, rice_steps: int
+    meal: CatalogMeal,
+    portion: float,
+    rice_steps: int,
+    staple_macros: tuple[float, float, float] = RICE_STEP_MACROS,
 ) -> tuple[float, float, float, float]:
     """Kcal, protein, carbs and fat of a dish at a portion, with its rice."""
     protein, carbs, fat, fiber = meal_macros(meal)
@@ -693,7 +699,7 @@ def _serving(
         fat * portion,
         fiber * portion,
     )
-    rice_protein, rice_carbs, rice_fat = RICE_STEP_MACROS
+    rice_protein, rice_carbs, rice_fat = staple_macros
     protein += rice_protein * rice_steps
     carbs += rice_carbs * rice_steps
     fat += rice_fat * rice_steps
@@ -722,7 +728,11 @@ def _macro_cost(
 
 
 def _options(
-    meal: CatalogMeal, *, takes_rice: bool, cap_kcal: float
+    meal: CatalogMeal,
+    *,
+    takes_rice: bool,
+    cap_kcal: float,
+    locale: MealLocale = DEFAULT_LOCALE,
 ) -> list[tuple[float, int, tuple[float, float, float, float]]]:
     """Every way this dish can be served, smallest first.
 
@@ -730,10 +740,12 @@ def _options(
     serving under it: a slot is always filled.
     """
     rice_range = (
-        range(MIN_RICE_STEPS, MAX_RICE_STEPS + 1) if takes_rice else range(0, 1)
+        range(locale.min_staple_steps, locale.max_staple_steps + 1)
+        if takes_rice
+        else range(0, 1)
     )
     every = [
-        (portion, steps, _serving(meal, portion, steps))
+        (portion, steps, _serving(meal, portion, steps, locale.staple_step_macros))
         for portion in LOGGABLE_PORTIONS
         for steps in rice_range
     ]
@@ -758,8 +770,8 @@ def compose_day(
     *,
     day_index: int = 0,
     rice_dishes: frozenset[str] = frozenset(),
-    rice_slots: frozenset[int] = _RICE_SLOTS,
-    shares: tuple[float, ...] = _SLOT_CALORIE_SHARES,
+    locale: MealLocale = DEFAULT_LOCALE,
+    shares: tuple[float, ...] | None = None,
     polish_passes: int = 3,
     used_counts: Mapping[str, int] | None = None,
 ) -> tuple[ComposedSlot, ...]:
@@ -776,6 +788,7 @@ def compose_day(
     night.
     """
     cap_kcal = MEAL_KCAL_SHARE_CAP * targets.kcal if targets.kcal > 0 else float("inf")
+    shares = locale.slot_calorie_shares if shares is None else shares
     served_before = dict(used_counts or {})
     slot_count = len(slot_candidates)
     chosen: list[ComposedSlot | None] = [None] * slot_count
@@ -820,11 +833,11 @@ def compose_day(
         for meal in candidates:
             if meal.id in elsewhere_today:
                 continue
-            takes_rice = meal.id in rice_dishes and slot in rice_slots
+            takes_rice = meal.id in rice_dishes and slot in locale.staple_slots
             # The n-th serving of a dish costs n times the first.
             repeat = _REPEAT_COST * served_before.get(meal.id, 0)
             for portion, steps, serving in _options(
-                meal, takes_rice=takes_rice, cap_kcal=cap_kcal
+                meal, takes_rice=takes_rice, cap_kcal=cap_kcal, locale=locale
             ):
                 projected = tuple(
                     base[macro] + serving[macro] + ahead[macro] for macro in range(4)
@@ -841,7 +854,14 @@ def compose_day(
                     best = (
                         cost,
                         meal.id,
-                        ComposedSlot(day_index, slot, meal.id, portion, steps),
+                        ComposedSlot(
+                            day_index,
+                            slot,
+                            meal.id,
+                            portion,
+                            steps,
+                            locale.staple_step_grams,
+                        ),
                         serving,
                     )
         if best is None:

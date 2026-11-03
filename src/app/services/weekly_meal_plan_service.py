@@ -47,6 +47,11 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
     fresh_ingredient_id,
 )
+from src.domain.services.weekly_meal_planner.meal_locale import (
+    DEFAULT_LOCALE,
+    MealLocale,
+    locale_for_timezone,
+)
 from src.domain.services.weekly_meal_planner.slot_rules import (
     ensure_base_revision,
     ensure_slot_coordinate,
@@ -1327,8 +1332,9 @@ def _compose_servings(
     )
     if targets.kcal <= 0:
         return {}
+    locale = locale_for_timezone(getattr(command, "timezone", None))
     by_id = {meal.id: meal for meal in meals}
-    rice_dishes = frozenset(meal.id for meal in meals if _takes_rice(meal))
+    rice_dishes = frozenset(meal.id for meal in meals if _takes_rice(meal, locale))
     chosen: dict[int, dict[int, str]] = {}
     for item in selected:
         recipe_id = item.recipe_id or ""
@@ -1349,6 +1355,7 @@ def _compose_servings(
             targets,
             day_index=day,
             rice_dishes=rice_dishes,
+            locale=locale,
             used_counts=served,
         ):
             if composed.recipe_id is None:
@@ -1361,17 +1368,13 @@ def _compose_servings(
     return servings
 
 
-def _takes_rice(meal) -> bool:
-    """A savoury main eaten with rice, not a soup, noodle or rice dish."""
-    name = _normalize_preference_text(getattr(meal, "name", ""))
-    if any(
-        word in name for word in ("pho", "bun", "mi ", "chao", "com", "banh", "sup")
-    ):
-        return False
-    return any(
-        word in name
-        for word in ("kho", "ram", "rang", "xao", "chien", "nuong", "hap", "luoc")
-    )
+def _takes_rice(meal, locale: MealLocale = DEFAULT_LOCALE) -> bool:
+    """A savoury main eaten with the staple, not a soup, noodle or rice dish.
+
+    Which cooking words mean that is a regional question, so the word lists
+    live in the locale pack rather than here.
+    """
+    return locale.takes_staple(_normalize_preference_text(getattr(meal, "name", "")))
 
 
 def _validate_proposal_outcome(

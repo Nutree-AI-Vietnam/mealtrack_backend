@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
+from src.domain.services.weekly_meal_planner.meal_locale import MealLocale
 from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
     LOGGABLE_PORTIONS,
     MAX_RICE_STEPS,
@@ -218,3 +219,51 @@ def test_a_week_of_days_does_not_repeat_one_menu():
     # The same three dishes every day would mean one distinct menu.
     menus = {tuple(slot.recipe_id for slot in day) for day in week}
     assert len(menus) > 1
+
+
+def _bread_locale():
+    """A region that eats its staple at breakfast too, in 40 g steps."""
+    return MealLocale(
+        code="test",
+        staple_name="Bread",
+        staple_step_grams=40,
+        staple_step_macros=(3.0, 20.0, 1.0),
+        max_staple_steps=3,
+        min_staple_steps=1,
+        staple_slots=frozenset({0, 1, 2}),
+        slot_calorie_shares=(0.3, 0.3, 0.4),
+        staple_dish_words=("stew",),
+        standalone_dish_words=("soup",),
+    )
+
+
+def test_another_locale_may_serve_its_staple_at_breakfast():
+    """The breakfast rule belongs to Viet Nam, not to the composer."""
+    pool = _pool()
+    every_dish = frozenset(meal.id for meal in pool)
+
+    composed = compose_day(
+        (pool, pool, pool),
+        _targets(),
+        rice_dishes=every_dish,
+        locale=_bread_locale(),
+    )
+
+    breakfast = next(slot for slot in composed if slot.slot_index == 0)
+    assert breakfast.rice_steps >= 1
+
+
+def test_the_staple_grams_follow_the_locale_that_composed_the_slot():
+    """A 40 g step must not be reported in Viet Nam's 55 g bowls."""
+    pool = _pool()
+    every_dish = frozenset(meal.id for meal in pool)
+
+    composed = compose_day(
+        (pool, pool, pool),
+        _targets(),
+        rice_dishes=every_dish,
+        locale=_bread_locale(),
+    )
+
+    for slot in composed:
+        assert slot.rice_grams == slot.rice_steps * 40
