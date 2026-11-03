@@ -43,9 +43,6 @@ from src.infra.repositories.food_reference_repository_async import (
     AsyncFoodReferenceRepository,
 )
 from src.infra.repositories.hydration_repository_async import AsyncHydrationRepository
-from src.infra.repositories.meal_recommendation_plan_repository_async import (
-    AsyncMealRecommendationPlanRepository,
-)
 from src.infra.repositories.meal_repository_async import AsyncMealRepository
 from src.infra.repositories.meal_translation_repository_async import (
     AsyncMealTranslationRepository,
@@ -164,7 +161,6 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.meals = AsyncMealRepository(session)
         self.scan_feedback = ScanFeedbackRepository(session)
         self.favorite_meals = AsyncFavoriteMealRepository(session)
-        self.meal_recommendation_plans = AsyncMealRecommendationPlanRepository(session)
         self.meal_suggestions = UnavailableMealSuggestionSessionStore()
         self.body_fat_visual_profiles = AsyncBodyFatVisualProfileRepository(session)
         self.hydration_entries = AsyncHydrationRepository(session)

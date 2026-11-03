@@ -14,12 +14,7 @@ from src.app.services.food_name_localizer import (
     translation_is_cacheable,
 )
 from src.domain.constants.translation_limits import iter_translation_batches
-from src.domain.model.meal_recommendation import (
-    CatalogMeal,
-    PersistedMealRecommendationCandidate,
-    PersistedMealRecommendationPlan,
-    PersistedMealRecommendationSlot,
-)
+from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.translation_result import TranslationOutcome
 from src.planner_observability import planner_timed
 
@@ -82,34 +77,6 @@ class TextTranslationService(Protocol):
     """Minimal translation dependency needed by catalog response localization."""
 
     async def translate_texts(self, texts: list[str], *args: str) -> Any: ...
-
-
-async def localize_meal_recommendation_plan(
-    plan: PersistedMealRecommendationPlan,
-    *,
-    language: str,
-    translation_service: TextTranslationService | None,
-) -> PersistedMealRecommendationPlan:
-    """Return a localized presentation copy of a recommendation plan."""
-
-    if language == "en" or translation_service is None:
-        return plan
-
-    meals = [meal for slot in plan.slots for meal in _slot_catalog_meals(slot)]
-    localized_meals = await _localized_meals(
-        meals,
-        language=language,
-        translation_service=translation_service,
-    )
-    if localized_meals is None:
-        return plan
-
-    return replace(
-        plan,
-        slots=tuple(
-            _replace_slot_catalog_meals(slot, localized_meals) for slot in plan.slots
-        ),
-    )
 
 
 @planner_timed("localization")
@@ -208,39 +175,6 @@ async def localize_presentation_texts(
     if result.outcome is not TranslationOutcome.TRANSLATED:
         return original
     return tuple(result.items)
-
-
-async def localize_meal_recommendation_slot(
-    slot: PersistedMealRecommendationSlot,
-    *,
-    language: str,
-    translation_service: TextTranslationService | None,
-) -> PersistedMealRecommendationSlot:
-    """Return a localized presentation copy of one recommendation slot."""
-
-    if language == "en" or translation_service is None:
-        return slot
-
-    localized_meals = await _localized_meals(
-        list(_slot_catalog_meals(slot)),
-        language=language,
-        translation_service=translation_service,
-    )
-    if localized_meals is None:
-        return slot
-
-    return _replace_slot_catalog_meals(slot, localized_meals)
-
-
-def _slot_catalog_meals(
-    slot: PersistedMealRecommendationSlot,
-) -> tuple[CatalogMeal, ...]:
-    candidates = (slot.selected, *slot.alternatives)
-    return tuple(
-        candidate.catalog_meal
-        for candidate in candidates
-        if candidate is not None and candidate.catalog_meal is not None
-    )
 
 
 async def _localized_meals(
@@ -388,38 +322,6 @@ def _replace_meal_display_text(
                 description=translations.get(step.description, step.description),
             )
             for step in meal.steps
-        ),
-    )
-
-
-def _replace_slot_catalog_meals(
-    slot: PersistedMealRecommendationSlot,
-    localized_meals: dict[str, CatalogMeal],
-) -> PersistedMealRecommendationSlot:
-    return replace(
-        slot,
-        selected=(
-            _replace_candidate_catalog_meal(slot.selected, localized_meals)
-            if slot.selected is not None
-            else None
-        ),
-        alternatives=tuple(
-            _replace_candidate_catalog_meal(candidate, localized_meals)
-            for candidate in slot.alternatives
-        ),
-    )
-
-
-def _replace_candidate_catalog_meal(
-    candidate: PersistedMealRecommendationCandidate,
-    localized_meals: dict[str, CatalogMeal],
-) -> PersistedMealRecommendationCandidate:
-    if candidate.catalog_meal is None:
-        return candidate
-    return replace(
-        candidate,
-        catalog_meal=localized_meals.get(
-            candidate.catalog_meal.id, candidate.catalog_meal
         ),
     )
 

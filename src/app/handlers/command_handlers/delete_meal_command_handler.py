@@ -177,12 +177,6 @@ async def remove_meal(
         return None
     if meal.user_id != user_id:
         raise AuthorizationException("You do not have permission to delete this meal")
-    # Recommended-meal logs set meal_recommendations.logged_meal_id
-    # with ON DELETE SET NULL. Clearing only the FK leaves logged_at
-    # set and violates ck_meal_recommendations_logged_coherent.
-    plans = getattr(uow, "meal_recommendation_plans", None)
-    if plans is not None:
-        await plans.clear_links_for_deleted_meal(meal_id=meal_id)
     # Weekly plan slots logged with this meal are released the same way, so
     # the slot can be logged or swapped again.
     weekly_plans = getattr(uow, "weekly_meal_plans", None)

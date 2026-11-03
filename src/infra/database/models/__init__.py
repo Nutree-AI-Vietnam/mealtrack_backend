@@ -52,8 +52,6 @@ from .meal_recommendation import (
     MealCatalogMicronutrientEnrichmentORM,
     MealCatalogORM,
     MealCatalogStepORM,
-    MealRecommendationOperationORM,
-    MealRecommendationORM,
 )
 from .meal_write_operation import MealWriteOperationORM
 
@@ -226,8 +224,6 @@ __all__ = [
     "MealCatalogIngredientORM",
     "MealCatalogStepORM",
     "MealCatalogMicronutrientEnrichmentORM",
-    "MealRecommendationORM",
-    "MealRecommendationOperationORM",
     "PendingMealImageResolutionModel",
     # Referral system
     "ReferralCode",

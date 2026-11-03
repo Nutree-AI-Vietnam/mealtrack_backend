@@ -47,9 +47,6 @@ class TestDeleteMealWithFakeUoW:
         mock_uow = MagicMock()
         mock_uow.meals.find_by_id = AsyncMock(return_value=meal)
         mock_uow.meals.delete = AsyncMock(return_value=None)
-        mock_uow.meal_recommendation_plans.clear_links_for_deleted_meal = AsyncMock(
-            return_value=None
-        )
         mock_uow.weekly_meal_plans.clear_links_for_deleted_meal = AsyncMock(
             return_value=None
         )
@@ -67,14 +64,11 @@ class TestDeleteMealWithFakeUoW:
         # Assert
         assert result["meal_id"] == meal.meal_id
         assert "deleted" in result["message"].lower()
-        mock_uow.meal_recommendation_plans.clear_links_for_deleted_meal.assert_awaited_once_with(
-            meal_id=meal.meal_id
-        )
         mock_uow.meals.delete.assert_called_once_with(meal.meal_id)
 
     @pytest.mark.asyncio
-    async def test_delete_meal_clears_recommendation_links_before_delete(self):
-        """Recommended-meal FK clear must run before hard-deleting the meal."""
+    async def test_delete_meal_clears_weekly_slot_links_before_delete(self):
+        """Weekly slot FK clear must run before hard-deleting the meal."""
         user_id = str(uuid4())
         meal = Meal.create_new_processing(
             user_id=user_id,
@@ -97,18 +91,12 @@ class TestDeleteMealWithFakeUoW:
 
         call_order: list[str] = []
 
-        async def clear_links(*, meal_id: str) -> None:
-            call_order.append(f"clear:{meal_id}")
-
         async def delete_meal(meal_id: str) -> None:
             call_order.append(f"delete:{meal_id}")
 
         mock_uow = MagicMock()
         mock_uow.meals.find_by_id = AsyncMock(return_value=meal)
         mock_uow.meals.delete = AsyncMock(side_effect=delete_meal)
-        mock_uow.meal_recommendation_plans.clear_links_for_deleted_meal = AsyncMock(
-            side_effect=clear_links
-        )
 
         async def clear_weekly_links(*, meal_id: str) -> None:
             call_order.append(f"weekly:{meal_id}")
@@ -127,7 +115,6 @@ class TestDeleteMealWithFakeUoW:
         # Weekly slots are released in the same unit of work, before the
         # FK's ON DELETE SET NULL could leave them logged with no meal.
         assert call_order == [
-            f"clear:{meal.meal_id}",
             f"weekly:{meal.meal_id}",
             f"delete:{meal.meal_id}",
         ]

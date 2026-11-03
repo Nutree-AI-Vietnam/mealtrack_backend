@@ -7,15 +7,10 @@ from datetime import date
 from typing import Any
 from uuid import uuid4
 
-from src.domain.exceptions.meal_recommendation_exceptions import (
-    MealRecommendationNotFoundError,
-)
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.meal_recommendation import (
     CatalogMeal,
     CatalogMealIngredient,
-    PersistedMealRecommendationPlan,
-    PersistedMealRecommendationSlot,
 )
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 from src.domain.model.nutrition.extra_nutrients import (
@@ -59,25 +54,6 @@ _WEIGHT_UNITS_TO_GRAMS = {
 
 class RecommendedMealMaterializationService:
     """Build and persist normal meals from immutable catalog recipe snapshots."""
-
-    async def materialize(
-        self,
-        uow,
-        *,
-        plan: PersistedMealRecommendationPlan,
-        slot: PersistedMealRecommendationSlot,
-    ) -> Meal:
-        if slot.selected is None or slot.selected.catalog_meal is None:
-            raise MealRecommendationNotFoundError
-        catalog_meal = slot.selected.catalog_meal
-        return await self.materialize_from_catalog(
-            uow,
-            user_id=plan.user_id,
-            catalog_meal=catalog_meal,
-            meal_date=slot.slot_date,
-            meal_type=slot.meal_type,
-            timezone=plan.timezone,
-        )
 
     async def materialize_from_catalog(
         self,
