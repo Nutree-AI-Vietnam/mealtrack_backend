@@ -10,7 +10,11 @@ from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.meal_suggestion_repository_port import (
     MealSuggestionRepositoryPort,
 )
-from src.infra.database.config_async import AsyncSessionLocal, close_async_session
+from src.infra.database.config_async import (
+    AsyncSessionLocal,
+    _caller_was_cancelled,
+    close_async_session,
+)
 from src.infra.repositories.ai_job_repository import AsyncAiJobRepository
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
@@ -83,7 +87,7 @@ from src.infra.repositories.weekly_recap_repository_async import (
     AsyncWeeklyRecapRepository,
 )
 from src.infra.repositories.weight_repository_async import AsyncWeightRepository
-from src.planner_observability import planner_timed
+from src.planner_observability import planner_phase, planner_timed
 
 logger = logging.getLogger(__name__)
 
@@ -198,40 +202,46 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         session = self.session
         if session is None:
             return
-        try:
-            if exc_type:
+        # Meal-plan reads keep this session open across Redis. A client
+        # disconnect cancels the request there. Session.rollback/commit close
+        # the checked-out connection, and PlannerNullPool's graceful close
+        # then raises CancelledError on this task (PYTHON-KK). Both run with
+        # the captured session, off this task.
+        cancelled = _caller_was_cancelled() or (
+            exc_type is not None and issubclass(exc_type, asyncio.CancelledError)
+        )
+        read_only_cleanup = self._read_only and exc_type is None and not cancelled
+
+        async def before_close() -> None:
+            if cancelled or exc_type is not None or self._read_only:
                 try:
-                    await self.rollback()
+                    await session.rollback()
                 except Exception:
                     logger.warning(
-                        "Rollback failed; connection will be discarded", exc_info=True
-                    )
-            elif self._read_only:
-                try:
-                    await self.rollback()
-                except Exception:
-                    logger.warning(
-                        "Rollback failed in read_only mode; connection will be discarded",
+                        "Rollback failed in read_only mode; connection will be discarded"
+                        if read_only_cleanup
+                        else "Rollback failed; connection will be discarded",
                         exc_info=True,
                     )
-            else:
-                try:
-                    await self.commit()
-                except Exception:
-                    try:
-                        await self.rollback()
-                    except Exception:
-                        logger.warning(
-                            "Rollback failed after commit error; connection will be discarded",
-                            exc_info=True,
-                        )
-                    raise
-        finally:
+                return
             try:
-                await close_async_session(session)
-            finally:
-                self.session = None
-                self._session_lock.release()
+                with planner_phase("commit"):
+                    await session.commit()
+            except Exception:
+                try:
+                    await session.rollback()
+                except Exception:
+                    logger.warning(
+                        "Rollback failed after commit error; connection will be discarded",
+                        exc_info=True,
+                    )
+                raise
+
+        try:
+            await close_async_session(session, before_close=before_close)
+        finally:
+            self.session = None
+            self._session_lock.release()
 
     @planner_timed("commit")
     async def commit(self) -> None:
