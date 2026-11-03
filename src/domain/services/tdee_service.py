@@ -1,5 +1,6 @@
 import inspect
 import math
+from collections.abc import Iterable
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
@@ -35,7 +36,10 @@ class TdeeCalculationService:
         # Minors and underweight adults get no deficit: a weight-loss goal plans
         # at maintenance until a clinician-reviewed rule says otherwise.
         deficit_blocked = request.goal == Goal.CUT and deficit_not_allowed(
-            age=request.age, weight_kg=request.weight_kg, height_cm=request.height_cm
+            age=request.age,
+            weight_kg=request.weight_kg,
+            height_cm=request.height_cm,
+            health_conditions=request.health_conditions,
         )
         macro_targets = self._calculate_all_macro_targets(
             tdee,
@@ -46,6 +50,7 @@ class TdeeCalculationService:
             sex=request.sex,
             macro_preset=request.macro_preset,
             weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+            health_conditions=request.health_conditions,
         )
         return TdeeResponse(
             bmr=round(bmr, 1),
@@ -103,6 +108,7 @@ class TdeeCalculationService:
         sex: Sex = None,
         macro_preset: MacroPreset = MacroPreset.STANDARD,
         weight_loss_kg_per_week: float | None = None,
+        health_conditions: Iterable[str] = (),
     ) -> MacroTargets:
         """Calculate macro targets using weight-based approach.
 
@@ -156,10 +162,21 @@ class TdeeCalculationService:
             ).get(training_key, TDEEConstants.PROTEIN_PER_KG.get(goal_key, 1.8))
         else:
             protein_multiplier = TDEEConstants.PROTEIN_PER_KG.get(goal_key, 1.8)
+        # Chronic kidney disease: KDIGO suggests about 0.8 g/kg a day, half
+        # what a cut otherwise asks for. Capped until a dietitian-reviewed
+        # pack says otherwise.
+        limits_protein = "kidney_disease" in {
+            str(condition).strip().lower() for condition in health_conditions
+        }
+        if limits_protein:
+            protein_multiplier = min(protein_multiplier, CKD_PROTEIN_PER_KG)
         protein_g = weight_kg * protein_multiplier
-        protein_g = max(
-            TDEEConstants.MIN_PROTEIN_G, min(protein_g, TDEEConstants.MAX_PROTEIN_G)
-        )
+        protein_g = min(protein_g, TDEEConstants.MAX_PROTEIN_G)
+        if not limits_protein:
+            # The 60 g floor keeps a healthy target from collapsing, but for
+            # kidney disease going over 0.8 g/kg is the harm being avoided,
+            # so the cap wins.
+            protein_g = max(TDEEConstants.MIN_PROTEIN_G, protein_g)
 
         # Fat dual-gate: max(weight-based, percentage-based) for hormone safety
         # Dorgan 1996: <20% cal reduces testosterone; Kerksick 2018 ISSN
@@ -294,15 +311,43 @@ def daily_deficit_kcal(kg_per_week: float) -> float:
 
 ADULT_AGE = 18
 UNDERWEIGHT_BMI = 18.5
+# Conditions a user can report. Each one changes what a safe target is, so
+# the set is closed: an unknown string would silently do nothing.
+HEALTH_CONDITIONS = (
+    "pregnancy",
+    "breastfeeding",
+    "kidney_disease",
+    "insulin_treated_diabetes",
+    "eating_disorder_history",
+)
+# Reported conditions where losing weight is a clinician's call, not ours.
+NO_DEFICIT_CONDITIONS = frozenset(
+    {"pregnancy", "breastfeeding", "eating_disorder_history"}
+)
+# KDIGO suggests about 0.8 g/kg a day for adults with CKD G3-G5, against the
+# 1.6-1.8 g/kg these formulas otherwise use.
+CKD_PROTEIN_PER_KG = 0.8
 
 
-def deficit_not_allowed(*, age: int, weight_kg: float, height_cm: float) -> bool:
+def deficit_not_allowed(
+    *,
+    age: int,
+    weight_kg: float,
+    height_cm: float,
+    health_conditions: Iterable[str] = (),
+) -> bool:
     """True for users who must not be given a calorie deficit.
 
     Under-18s are still growing and every formula here is an adult one, and a
-    BMI below 18.5 is underweight (WHO). Both plan at maintenance.
+    BMI below 18.5 is underweight (WHO). Pregnancy, breastfeeding and a
+    history of disordered eating are a clinician's call. All plan at
+    maintenance until a reviewed rule pack says otherwise.
     """
     if age < ADULT_AGE:
+        return True
+    if NO_DEFICIT_CONDITIONS & {
+        str(condition).strip().lower() for condition in health_conditions
+    }:
         return True
     if height_cm <= 0:
         return False

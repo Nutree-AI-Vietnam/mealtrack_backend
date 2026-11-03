@@ -97,6 +97,15 @@ class UpdateMetricsRequest(BaseModel):
         max_length=10,
         description="Diets such as vegetarian or keto. Omitted keeps the saved list.",
     )
+    health_conditions: list[Annotated[str, Field(max_length=40)]] | None = Field(
+        None,
+        max_length=10,
+        description=(
+            "Conditions that change what a safe target is: pregnancy, "
+            "breastfeeding, kidney_disease, insulin_treated_diabetes, "
+            "eating_disorder_history. Omitted keeps the saved list."
+        ),
+    )
     allergies: list[Annotated[str, Field(max_length=40)]] | None = Field(
         None,
         max_length=20,

@@ -63,6 +63,9 @@ class TdeeRequest:
     training_level: TrainingLevel | None = None
     macro_preset: MacroPreset = MacroPreset.STANDARD
     weight_loss_kg_per_week: float | None = None
+    # Conditions that change what a safe target is, e.g. pregnancy or
+    # kidney disease. Empty means none were reported.
+    health_conditions: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Validate invariants."""

@@ -119,6 +119,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                 unit_system=UnitSystem.METRIC,
                 training_level=training_level,
                 macro_preset=macro_preset,
+                health_conditions=tuple(profile.health_conditions or ()),
                 weight_loss_kg_per_week=profile.weight_loss_kg_per_week,
             )
 
@@ -196,6 +197,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
             unit_system=UnitSystem.METRIC,
             training_level=training_level,
             macro_preset=macro_preset,
+            health_conditions=tuple(profile.health_conditions or ()),
         )
         result = self.tdee_service.calculate_tdee(tdee_request)
 

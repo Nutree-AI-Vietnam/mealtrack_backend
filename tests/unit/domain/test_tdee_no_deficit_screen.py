@@ -7,7 +7,14 @@ from src.domain.services.tdee_service import (
 )
 
 
-def _request(*, age: int, height: float, weight: float, goal: Goal) -> TdeeRequest:
+def _request(
+    *,
+    age: int,
+    height: float,
+    weight: float,
+    goal: Goal,
+    health_conditions: tuple[str, ...] = (),
+) -> TdeeRequest:
     return TdeeRequest(
         age=age,
         sex=Sex.FEMALE,
@@ -19,6 +26,7 @@ def _request(*, age: int, height: float, weight: float, goal: Goal) -> TdeeReque
         goal=goal,
         body_fat_pct=None,
         unit_system=UnitSystem.METRIC,
+        health_conditions=health_conditions,
     )
 
 
@@ -62,3 +70,55 @@ def test_adult_cut_still_gets_a_deficit():
     )
 
     assert _calories(cut) < _calories(maintain) - 100
+
+
+def test_pregnancy_and_a_history_of_disordered_eating_block_a_deficit():
+    for condition in ("pregnancy", "breastfeeding", "eating_disorder_history"):
+        assert deficit_not_allowed(
+            age=30, weight_kg=70, height_cm=165, health_conditions=[condition]
+        ), condition
+
+
+def test_a_reported_condition_the_targets_ignore_changes_nothing():
+    assert not deficit_not_allowed(
+        age=30, weight_kg=70, height_cm=165, health_conditions=["kidney_disease"]
+    )
+
+
+def test_kidney_disease_caps_protein_near_the_kdigo_suggestion():
+    service = TdeeCalculationService()
+    plain = service.calculate_tdee(
+        _request(age=30, height=160, weight=60, goal=Goal.CUT)
+    )
+    ckd = service.calculate_tdee(
+        _request(
+            age=30,
+            height=160,
+            weight=60,
+            goal=Goal.CUT,
+            health_conditions=("kidney_disease",),
+        )
+    )
+
+    # 1.8 g/kg down to 0.8 g/kg for a 60 kg user.
+    assert plain.macros.protein == 108.0
+    assert ckd.macros.protein == 48.0
+
+
+def test_a_pregnant_user_plans_at_maintenance():
+    service = TdeeCalculationService()
+    cut = service.calculate_tdee(
+        _request(
+            age=30,
+            height=160,
+            weight=70,
+            goal=Goal.CUT,
+            health_conditions=("pregnancy",),
+        )
+    )
+    maintain = service.calculate_tdee(
+        _request(age=30, height=160, weight=70, goal=Goal.RECOMP)
+    )
+
+    assert abs(_calories(cut) - _calories(maintain)) < 1
+    assert cut.pace_range is None

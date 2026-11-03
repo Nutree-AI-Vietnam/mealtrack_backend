@@ -22,7 +22,7 @@ from src.domain.ports.integration_event_publisher_port import (
 from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
     build_tdee_request,
 )
-from src.domain.services.tdee_service import allowed_pace
+from src.domain.services.tdee_service import HEALTH_CONDITIONS, allowed_pace
 from src.domain.services.training_policy import normalize_training_pair
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_terms,
@@ -67,6 +67,25 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         or command.weight_loss_kg_per_week is not None
         or command.dietary_preferences is not None
     )
+
+
+def _checked_conditions(values: list[str]) -> list[str]:
+    """Only conditions the targets actually act on.
+
+    An unrecognised string would be stored and then silently ignored, which
+    reads to the user as "I told you" while nothing changed.
+    """
+    cleaned = []
+    for value in _clean_diets(values):
+        condition = value.strip().lower().replace(" ", "_").replace("-", "_")
+        if condition not in HEALTH_CONDITIONS:
+            raise ValidationException(
+                f"Unknown health condition: {value}",
+                error_code="HEALTH_CONDITION_UNSUPPORTED",
+            )
+        if condition not in cleaned:
+            cleaned.append(condition)
+    return cleaned
 
 
 async def _checked_allergies(uow, values: list[str]) -> list[str]:
@@ -323,6 +342,11 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
 
             if command.dietary_preferences is not None:
                 profile.dietary_preferences = _clean_diets(command.dietary_preferences)
+
+            if command.health_conditions is not None:
+                profile.health_conditions = _checked_conditions(
+                    command.health_conditions
+                )
 
             if command.allergies is not None:
                 profile.allergies = await _checked_allergies(uow, command.allergies)

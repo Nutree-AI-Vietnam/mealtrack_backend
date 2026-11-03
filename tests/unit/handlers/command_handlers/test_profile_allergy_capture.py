@@ -51,3 +51,20 @@ async def test_a_code_the_catalog_does_not_seed_is_refused():
     # Nothing can be excluded for sesame when no recipe is linked to it.
     with pytest.raises(ValidationException):
         await _checked_allergies(_Uow(codes=("milk",)), ["mè"])
+
+
+def test_only_conditions_the_targets_act_on_are_saved():
+    from src.app.handlers.command_handlers.update_user_metrics_command_handler import (
+        _checked_conditions,
+    )
+
+    assert _checked_conditions(["Pregnancy", "kidney disease"]) == [
+        "pregnancy",
+        "kidney_disease",
+    ]
+    assert _checked_conditions([]) == []
+
+    with pytest.raises(ValidationException) as error:
+        _checked_conditions(["gout"])
+
+    assert error.value.error_code == "HEALTH_CONDITION_UNSUPPORTED"
