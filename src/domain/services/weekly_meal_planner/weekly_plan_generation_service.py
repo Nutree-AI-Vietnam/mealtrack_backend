@@ -639,6 +639,10 @@ _REPEAT_COST = 0.15
 # The usual split of a day across breakfast, lunch and dinner. Used only to
 # guess what the slots after this one will bring.
 _SLOT_CALORIE_SHARES = (0.25, 0.375, 0.375)
+# Rice goes with the two main meals. Breakfast in Viet Nam is pho, banh mi,
+# xoi or chao, never a bowl of plain rice beside the dish, so slot 0 is left
+# out however the dish is cooked.
+_RICE_SLOTS = frozenset({1, 2})
 
 
 @dataclass(frozen=True)
@@ -754,6 +758,7 @@ def compose_day(
     *,
     day_index: int = 0,
     rice_dishes: frozenset[str] = frozenset(),
+    rice_slots: frozenset[int] = _RICE_SLOTS,
     shares: tuple[float, ...] = _SLOT_CALORIE_SHARES,
     polish_passes: int = 3,
     used_counts: Mapping[str, int] | None = None,
@@ -815,7 +820,7 @@ def compose_day(
         for meal in candidates:
             if meal.id in elsewhere_today:
                 continue
-            takes_rice = meal.id in rice_dishes
+            takes_rice = meal.id in rice_dishes and slot in rice_slots
             # The n-th serving of a dish costs n times the first.
             repeat = _REPEAT_COST * served_before.get(meal.id, 0)
             for portion, steps, serving in _options(

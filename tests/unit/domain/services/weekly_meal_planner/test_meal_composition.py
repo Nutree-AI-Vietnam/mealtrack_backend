@@ -104,9 +104,33 @@ def test_a_rice_dish_is_never_planned_without_rice():
 
     composed = compose_day((pool, pool, pool), _targets(), rice_dishes=rice_dishes)
 
-    lunch_and_dinner = [slot for slot in composed if slot.slot_index > 0]
-    assert all(1 <= slot.rice_steps <= MAX_RICE_STEPS for slot in lunch_and_dinner)
+    with_rice = [
+        slot
+        for slot in composed
+        if slot.slot_index > 0 and slot.recipe_id in rice_dishes
+    ]
+    assert with_rice
+    assert all(1 <= slot.rice_steps <= MAX_RICE_STEPS for slot in with_rice)
     assert all(slot.rice_grams == slot.rice_steps * 55 for slot in composed)
+
+
+def test_breakfast_never_comes_with_a_bowl_of_rice():
+    """Breakfast is pho, banh mi, xoi or chao: no plain rice beside it.
+
+    The dish catalogue decides which dishes are eaten with rice by how they
+    are cooked, so a fried-egg breakfast matches. The slot has to say no.
+    """
+    pool = _pool()
+    every_dish_takes_rice = frozenset(meal.id for meal in pool)
+
+    composed = compose_day(
+        (pool, pool, pool), _targets(), rice_dishes=every_dish_takes_rice
+    )
+
+    breakfast = next(slot for slot in composed if slot.slot_index == 0)
+    assert breakfast.rice_steps == 0
+    assert breakfast.rice_grams == 0
+    assert all(slot.rice_steps >= 1 for slot in composed if slot.slot_index > 0)
 
 
 def test_rice_only_goes_with_dishes_that_take_it():
