@@ -138,7 +138,12 @@ async def test_groceries_scale_people_and_subtract_pantry():
 
 
 @pytest.mark.asyncio
-async def test_groceries_do_not_silently_scale_unknown_servings():
+async def test_a_recipe_that_does_not_state_servings_is_estimated_by_weight():
+    """A crawled recipe is written for the pot, so scaling by 1 under-buys.
+
+    150 g of weighed ingredients reads as one serving, so a plan for two
+    people buys twice it - and says the number is estimated, not verified.
+    """
     plan = _plan()
 
     class CatalogWithoutServing(_Catalog):
@@ -159,7 +164,43 @@ async def test_groceries_do_not_silently_scale_unknown_servings():
     categories = await WeeklyGroceryService().calculate(UowWithoutServing(), plan)
 
     item = categories[0].items[0]
-    assert item.total_needed == 150
+    assert item.total_needed == 300
+    assert item.quantity_confidence == "estimated"
+
+
+@pytest.mark.asyncio
+async def test_a_recipe_measured_only_in_pieces_is_still_left_unscaled():
+    """Nothing here is weighed, so there is no honest serving to divide by."""
+    plan = _plan()
+
+    class CountOnlyCatalog(_Catalog):
+        async def get_meal(self, recipe_id):
+            meal = await super().get_meal(recipe_id)
+            return meal.__class__(
+                **{
+                    **meal.__dict__,
+                    "base_servings": None,
+                    "serving_confidence": "unknown",
+                    "ingredients": (
+                        CatalogMealIngredient(
+                            food_reference_id=7,
+                            display_name="Tomato",
+                            quantity=Decimal("3"),
+                            unit="quả",
+                            category="produce",
+                        ),
+                    ),
+                }
+            )
+
+    class CountOnlyUow:
+        catalog_recipes = CountOnlyCatalog()
+        weekly_meal_plans = _Plans()
+
+    categories = await WeeklyGroceryService().calculate(CountOnlyUow(), plan)
+
+    item = categories[0].items[0]
+    assert item.total_needed == 3
     assert item.quantity_confidence == "unscaled"
 
 

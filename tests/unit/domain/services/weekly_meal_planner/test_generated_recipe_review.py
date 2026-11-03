@@ -6,8 +6,10 @@ from src.domain.services.weekly_meal_planner.recipe_publication import (
     INGREDIENT_AI_ESTIMATED,
     INGREDIENT_FROM_DATABASE,
     INGREDIENT_UNRESOLVED,
+    MAX_ESTIMATED_SERVINGS,
     DraftIngredient,
     RecipeDraft,
+    estimate_servings_from_weight,
     review_recipe_draft,
 )
 
@@ -179,3 +181,21 @@ def test_a_serving_that_is_not_a_meal_is_rejected(grams):
     )
 
     assert any("a serving weighs" in reason for reason in review.rejections)
+
+
+def test_servings_are_estimated_from_the_weight_that_is_actually_weighed():
+    """A pot-sized recipe reads as several servings, a plate-sized one as one."""
+    assert estimate_servings_from_weight(300.0) == 1
+    assert estimate_servings_from_weight(500.0) == 2
+    assert estimate_servings_from_weight(1000.0) == 4
+
+
+def test_too_little_weighed_food_gives_no_serving_estimate():
+    """Better unscaled than a confident wrong portion."""
+    assert estimate_servings_from_weight(0.0) is None
+    assert estimate_servings_from_weight(149.0) is None
+
+
+def test_a_serving_estimate_never_runs_away():
+    """A 20 kg catering recipe must not divide a week's shopping by 80."""
+    assert estimate_servings_from_weight(20_000.0) == MAX_ESTIMATED_SERVINGS

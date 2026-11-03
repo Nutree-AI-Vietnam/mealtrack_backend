@@ -254,6 +254,20 @@ AI_ESTIMATE_KCAL_SHARE_LIMIT = 0.10
 MIN_SERVING_GRAMS = 120.0
 MAX_SERVING_GRAMS = 1500.0
 
+# A crawled recipe usually does not say how many it feeds, and it is written
+# for the pot, not the plate. Scaling such a recipe by 1 drops a family dish
+# whole into a one-person week, so its weighed ingredients estimate the
+# servings instead.
+#
+# Only weight lines count. ingredient_quantity_normalization refuses to invent
+# "1 quả cà chua = 120 g" and so does this: a recipe written in bó and quả
+# gives no estimate rather than a confident wrong one. Liquids are left out
+# too, so a canh is judged on its solids rather than on its broth.
+SOLID_GRAMS_PER_SERVING = 250.0
+MAX_ESTIMATED_SERVINGS = 8
+# Under this the weighed lines are too small a share of the dish to divide by.
+MIN_WEIGHED_GRAMS = 150.0
+
 INGREDIENT_FROM_DATABASE = "food_reference"
 INGREDIENT_FROM_PROVIDER = "provider"
 INGREDIENT_AI_ESTIMATED = "ai_estimate"
@@ -394,6 +408,18 @@ def _cooked_state(text: str) -> str | None:
     if any(word in folded for word in ("raw", "sống", "gạo")):
         return "raw"
     return None
+
+
+def estimate_servings_from_weight(weighed_grams: float) -> int | None:
+    """How many people a recipe of this solid weight feeds, or None.
+
+    None means the weighed lines say too little to divide by; the caller must
+    then leave the recipe unscaled rather than guess a portion.
+    """
+    if weighed_grams < MIN_WEIGHED_GRAMS:
+        return None
+    servings = int(round(weighed_grams / SOLID_GRAMS_PER_SERVING))
+    return max(1, min(servings, MAX_ESTIMATED_SERVINGS))
 
 
 def review_recipe_draft(draft: RecipeDraft) -> DraftReview:

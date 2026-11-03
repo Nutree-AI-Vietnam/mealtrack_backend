@@ -18,6 +18,7 @@ from src.domain.services.meal_recommendation.ingredient_quantity_normalization i
     normalize_ingredient_quantity,
 )
 from src.domain.services.weekly_meal_planner.recipe_publication import (
+    estimate_servings_from_weight,
     is_nutrition_safe_ingredient,
     is_planner_eligible,
 )
@@ -592,7 +593,25 @@ def grocery_status(required: Decimal, available: Decimal | None) -> tuple[str, D
     return "need_more", remaining
 
 
+def _weighed_grams(slot: GrocerySlot) -> float:
+    """Grams of the recipe that are actually weighed, liquids excluded."""
+    total = Decimal("0")
+    for line in slot.ingredients:
+        if line.quantity is None:
+            continue
+        normalized = normalize_ingredient_quantity(line.quantity, line.unit or "")
+        if normalized.dimension == "weight":
+            total += normalized.amount
+    return float(total)
+
+
 def _serving_multiplier(slot: GrocerySlot) -> tuple[Decimal, str]:
+    """How much of the recipe to buy, and how sure we are of it.
+
+    A recipe that states its servings is trusted. One that does not is
+    estimated from its weighed ingredients, because the alternative -
+    scaling by 1 - buys a whole family dish for one person.
+    """
     if (
         slot.base_servings
         and slot.base_servings > 0
@@ -602,6 +621,9 @@ def _serving_multiplier(slot: GrocerySlot) -> tuple[Decimal, str]:
             Decimal(slot.people) / Decimal(slot.base_servings),
             slot.serving_confidence,
         )
+    estimated = estimate_servings_from_weight(_weighed_grams(slot))
+    if estimated is not None:
+        return Decimal(slot.people) / Decimal(estimated), "estimated"
     return Decimal("1"), "unknown"
 
 
