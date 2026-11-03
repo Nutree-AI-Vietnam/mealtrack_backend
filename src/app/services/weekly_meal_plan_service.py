@@ -1337,11 +1337,22 @@ async def _user_food_memory(
             logger.warning("Could not read logged meal shapes for the planner")
             shapes = []
 
+    skipped: list[str] = []
+    plans_repo = getattr(uow, "weekly_meal_plans", None)
+    list_skipped = getattr(plans_repo, "list_skipped_recipe_ids", None)
+    if list_skipped is not None:
+        try:
+            skipped = await list_skipped(user_id=user_id, since=start)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not read skipped dishes for the planner")
+            skipped = []
+
     locale = locale_for_timezone(timezone)
     return build_user_food_memory(
         affinity_weights=weights,
         meals=shapes,
         is_staple_item=locale.is_staple_item,
+        skipped_recipe_ids=skipped,
     )
 
 

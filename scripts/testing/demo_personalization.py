@@ -240,11 +240,54 @@ def demo_memory() -> None:
     )
 
 
+def demo_skips() -> None:
+    heading(4, "Lớp B: món user bấm skip thì ngừng lên lịch")
+    five = [_catalog_meal(f"dish-{i}", f"Món {i}", 11) for i in range(5)]
+
+    def served(mem: UserFoodMemory) -> list[str]:
+        slots = WeeklyPlanGenerationService().generate(
+            five,
+            user_id="user-1",
+            week_start_date="2026-11-09",
+            daily_calories=1800,
+            preferences=WeeklyMealPlanPreferences(),
+            memory=mem,
+        )
+        return sorted({slot.recipe_id for slot in slots if slot.recipe_id})
+
+    once = build_user_food_memory(skipped_recipe_ids=["dish-0"])
+    twice = build_user_food_memory(
+        skipped_recipe_ids=["dish-0", "dish-0", "dish-1", "dish-1"]
+    )
+
+    print(f"   chưa skip gì         → {served(EMPTY_MEMORY)}")
+    print(f"   skip dish-0 một lần  → {served(once)}")
+    print("                           (vẫn giữ: một lần thường là bận, không phải chê)")
+    print(f"   skip dish-0 và 1 hai → {served(twice)}")
+    print("                           (đã bỏ hẳn khỏi tuần)")
+
+    only = [_catalog_meal("only", "Món duy nhất", 11)]
+    fallback = WeeklyPlanGenerationService().generate(
+        only,
+        user_id="user-1",
+        week_start_date="2026-11-09",
+        daily_calories=1800,
+        preferences=WeeklyMealPlanPreferences(),
+        memory=build_user_food_memory(skipped_recipe_ids=["only"] * 5),
+    )
+    filled = sum(1 for slot in fallback if slot.recipe_id)
+    print(
+        f"\n   Catalog chỉ còn 1 món và user đã skip 5 lần → vẫn xếp {filled}/21 bữa."
+        "\n   Tuần thủng lỗ còn tệ hơn bữa tối nhàm chán."
+    )
+
+
 def main() -> None:
     demo_servings()
     demo_locale()
     demo_memory()
-    print(f"\n{RULE}\nCả ba chạy trên code thật.\n")
+    demo_skips()
+    print(f"\n{RULE}\nTất cả chạy trên code thật.\n")
 
 
 if __name__ == "__main__":

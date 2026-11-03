@@ -649,3 +649,36 @@ def test_taste_never_outvotes_the_day_the_plan_has_to_hit():
     without = _generated(meals, EMPTY_MEMORY)
 
     assert with_taste == without
+
+
+def test_a_dish_refused_twice_drops_out_of_the_week():
+    """The user saw it planned, said no twice, and should stop seeing it.
+
+    Five dishes with two refused leaves exactly three, which is what a day of
+    three slots needs - a day never serves the same dish twice.
+    """
+    meals = [_meal_with_ingredient(f"dish-{i}", f"Dish {i}", 11) for i in range(5)]
+
+    week = _generated(meals, UserFoodMemory(skipped_dishes={"dish-0": 2, "dish-1": 2}))
+    served = {slot.recipe_id for slot in week}
+
+    assert served == {"dish-2", "dish-3", "dish-4"}
+
+
+def test_a_refused_dish_still_fills_a_slot_nothing_else_can():
+    """A week with a hole in it is worse than a dinner the user once skipped."""
+    only = _meal_with_ingredient("only", "Only", 11)
+
+    week = _generated([only], UserFoodMemory(skipped_dishes={"only": 5}))
+
+    assert {slot.recipe_id for slot in week} == {"only"}
+    assert all(slot.recipe_id is not None for slot in week)
+
+
+def test_one_skip_does_not_banish_a_dish():
+    """Skipping once is a busy evening, so the dish stays in the rotation."""
+    meals = [_meal_with_ingredient(f"dish-{i}", f"Dish {i}", 11) for i in range(4)]
+
+    week = _generated(meals, UserFoodMemory(skipped_dishes={"dish-0": 1}))
+
+    assert "dish-0" in {slot.recipe_id for slot in week}

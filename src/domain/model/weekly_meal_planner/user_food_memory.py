@@ -27,6 +27,9 @@ CONFIDENT_MEAL_COUNT = 12
 LIKED_WEIGHT_FLOOR = 0.15
 # Dishes kept as "recently eaten", so a new week can avoid repeating them.
 RECENT_DISH_LIMIT = 12
+# Skips before a dish is treated as refused rather than missed. One skip is
+# usually a busy evening, not a verdict on the food; twice is a pattern.
+SKIP_REFUSAL_COUNT = 2
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,8 @@ class UserFoodMemory:
     # Dish names eaten recently, newest first.
     recent_dishes: tuple[str, ...] = ()
     meals_observed: int = 0
+    # catalog recipe id -> how often the user skipped it when it was planned.
+    skipped_dishes: Mapping[str, int] = field(default_factory=dict)
 
     @property
     def is_confident(self) -> bool:
@@ -75,6 +80,29 @@ class UserFoodMemory:
             for food_id, weight in self.liked_ingredients.items()
             if weight >= LIKED_WEIGHT_FLOOR
         )
+
+    @property
+    def refused_recipe_ids(self) -> frozenset[str]:
+        """Dishes skipped often enough to stop planning them."""
+        return frozenset(
+            recipe_id
+            for recipe_id, count in self.skipped_dishes.items()
+            if count >= SKIP_REFUSAL_COUNT
+        )
+
+    def skip_score(self, recipe_id: str | None) -> float:
+        """How reluctant to plan this dish again, in [0, 1].
+
+        A skip says a lot about the dish and nothing reliable about its
+        ingredients - the user may simply have eaten out - so it is read
+        against the dish alone and never spread to what it is made of.
+        """
+        if not recipe_id:
+            return 0.0
+        count = self.skipped_dishes.get(recipe_id, 0)
+        if count <= 0:
+            return 0.0
+        return min(count / SKIP_REFUSAL_COUNT, 1.0)
 
     def taste_score(self, ingredient_ids: Iterable[int]) -> float:
         """How much of a dish this person already eats, in [0, 1].
@@ -96,7 +124,7 @@ class UserFoodMemory:
         Written for a reader, not parsed by anything, and empty when there is
         nothing worth saying - an empty block beats an invented one.
         """
-        if self.meals_observed == 0:
+        if self.meals_observed == 0 and not self.skipped_dishes:
             return ""
         lines = [f"Meals logged: {self.meals_observed}"]
         if self.cuisines:
@@ -108,6 +136,9 @@ class UserFoodMemory:
             lines.append(f"About {self.items_per_meal:.1f} items in a meal")
         if self.recent_dishes:
             lines.append(f"Ate recently: {', '.join(self.recent_dishes)}")
+        refused = len(self.refused_recipe_ids)
+        if refused:
+            lines.append(f"Skipped {refused} planned dishes more than once")
         return "\n".join(lines)
 
 
@@ -119,13 +150,20 @@ def build_user_food_memory(
     affinity_weights: Mapping[int, float] | None = None,
     meals: Iterable[LoggedMealShape] = (),
     is_staple_item: Callable[[str], bool] | None = None,
+    skipped_recipe_ids: Iterable[str] = (),
 ) -> UserFoodMemory:
-    """Reduce an affinity profile and a run of logged meals to one memory.
+    """Reduce the log, and what the user refused, to one memory.
 
-    ``meals`` is newest first.
+    ``meals`` is newest first. ``skipped_recipe_ids`` repeats a recipe once
+    per skip, so the counts fall out of it.
     """
     observed = list(meals)
-    if not observed and not affinity_weights:
+    skips: dict[str, int] = {}
+    for recipe_id in skipped_recipe_ids:
+        key = str(recipe_id or "").strip()
+        if key:
+            skips[key] = skips.get(key, 0) + 1
+    if not observed and not affinity_weights and not skips:
         return EMPTY_MEMORY
 
     cuisine_counts: dict[str, int] = {}
@@ -159,4 +197,5 @@ def build_user_food_memory(
         ),
         recent_dishes=tuple(recent),
         meals_observed=count,
+        skipped_dishes=skips,
     )

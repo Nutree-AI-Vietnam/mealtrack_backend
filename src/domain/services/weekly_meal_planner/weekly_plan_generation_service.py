@@ -101,6 +101,7 @@ class WeeklyPlanGenerationService:
         if prepared is None:
             return _empty_week()
         _, slot_candidates = prepared
+        refused = memory.refused_recipe_ids
         result: list[GeneratedSlot] = []
         used_counts: dict[str, int] = {}
         for day in range(WEEKLY_DAYS):
@@ -115,15 +116,23 @@ class WeeklyPlanGenerationService:
                     key=lambda item: (
                         1 if item[0].id in day_used else 0,
                         *_practicality(item[0], slot),
+                        # A dish skipped more than once sorts behind every
+                        # other option, even one already served this week:
+                        # repeating a dish the user eats beats replanning one
+                        # they refused. It can still fill a slot nothing else
+                        # fits, because a hole in the week is worse.
+                        1 if item[0].id in refused else 0,
                         used_counts.get(item[0].id, 0),
                         # Without this the same profile and catalog give the
                         # same week every week: the calorie gap below decides.
                         1 if item[0].id in last_week else 0,
                         # Familiar food shaves a little off the calorie gap, so
-                        # it decides between dishes that fit about as well.
+                        # it decides between dishes that fit about as well. One
+                        # skip pushes the other way by the same bounded amount.
                         item[1]
                         - TASTE_KCAL_ALLOWANCE
-                        * memory.taste_score(dish_fresh_ingredient_ids(item[0])),
+                        * memory.taste_score(dish_fresh_ingredient_ids(item[0]))
+                        + TASTE_KCAL_ALLOWANCE * memory.skip_score(item[0].id),
                         self._stable_rank(item[0], user_id, week_start_date, day, slot),
                         item[0].id,
                     ),
@@ -179,6 +188,7 @@ class WeeklyPlanGenerationService:
         if prepared is None:
             return _empty_week()
         targets, slot_candidates = prepared
+        refused = memory.refused_recipe_ids
         fixed = fixed or {}
         eligible_ids = [
             {meal.id for meal, _ in candidates} for candidates in slot_candidates
@@ -206,6 +216,7 @@ class WeeklyPlanGenerationService:
                 key=lambda item: (
                     1 if item[0].id in day_used else 0,
                     *_practicality(item[0], slot),
+                    1 if item[0].id in refused else 0,
                     cooked.get(item[0].id, 0),
                     1
                     if feeds_next_lunch and item[0].id not in eligible_ids[_LUNCH]
@@ -222,10 +233,12 @@ class WeeklyPlanGenerationService:
                         if basket_target is None
                         else max(0, basket_target - len(basket)),
                     ),
-                    # Inside a calorie band, prefer what the user already eats.
+                    # Inside a calorie band, prefer what the user already eats
+                    # and lean away from what they skipped once.
                     item[1]
                     - TASTE_KCAL_ALLOWANCE
-                    * memory.taste_score(dish_fresh_ingredient_ids(item[0])),
+                    * memory.taste_score(dish_fresh_ingredient_ids(item[0]))
+                    + TASTE_KCAL_ALLOWANCE * memory.skip_score(item[0].id),
                     self._stable_rank(item[0], user_id, week_start_date, day, slot),
                     item[0].id,
                 ),

@@ -104,3 +104,51 @@ def test_the_same_dish_eaten_twice_is_listed_once():
 
     assert memory.recent_dishes == ("Thịt kho",)
     assert memory.meals_observed == 2
+
+
+def test_one_skip_is_a_busy_evening_not_a_verdict():
+    """Skipping once usually means the user ate out, so do not blacklist."""
+    memory = build_user_food_memory(skipped_recipe_ids=["r1"])
+
+    assert memory.skipped_dishes == {"r1": 1}
+    assert memory.refused_recipe_ids == frozenset()
+    assert 0 < memory.skip_score("r1") < 1
+
+
+def test_skipping_the_same_dish_twice_is_a_refusal():
+    memory = build_user_food_memory(skipped_recipe_ids=["r1", "r1", "r2"])
+
+    assert memory.refused_recipe_ids == frozenset({"r1"})
+    assert memory.skip_score("r1") == 1.0
+    assert memory.skip_score("r2") < 1.0
+
+
+def test_a_skip_score_never_runs_past_one():
+    memory = build_user_food_memory(skipped_recipe_ids=["r1"] * 20)
+
+    assert memory.skip_score("r1") == 1.0
+
+
+def test_a_dish_never_skipped_carries_no_penalty():
+    memory = build_user_food_memory(skipped_recipe_ids=["r1", "r1"])
+
+    assert memory.skip_score("other") == 0.0
+    assert memory.skip_score(None) == 0.0
+    assert memory.skip_score("") == 0.0
+
+
+def test_skips_alone_are_still_a_memory_worth_having():
+    """A user who logs nothing but refuses dishes has told us something."""
+    memory = build_user_food_memory(skipped_recipe_ids=["r1", "r1"])
+
+    assert memory is not EMPTY_MEMORY
+    assert "Skipped 1 planned dishes more than once" in memory.prompt_text()
+
+
+def test_a_skip_is_read_against_the_dish_not_its_ingredients():
+    """The user may have eaten out; that says nothing about pork."""
+    memory = build_user_food_memory(
+        affinity_weights={11: 0.9}, skipped_recipe_ids=["r1", "r1"]
+    )
+
+    assert memory.taste_score([11]) > 0.5

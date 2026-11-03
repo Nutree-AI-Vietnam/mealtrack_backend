@@ -324,6 +324,33 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             for item in result.scalars().all()
         ]
 
+    async def list_skipped_recipe_ids(
+        self, *, user_id: str, since: date, limit: int = 200
+    ) -> list[str]:
+        """Catalog recipes this user skipped, newest first, one per skip.
+
+        Only slots that were skipped and never logged count: a slot can carry
+        both flags when somebody skipped a meal and later logged it anyway,
+        and that is not a refusal.
+        """
+        result = await self.session.execute(
+            select(WeeklyMealPlanSlotORM.catalog_meal_id)
+            .join(
+                WeeklyMealPlanORM,
+                WeeklyMealPlanORM.id == WeeklyMealPlanSlotORM.plan_id,
+            )
+            .where(
+                WeeklyMealPlanORM.user_id == user_id,
+                WeeklyMealPlanORM.week_start_date >= since,
+                WeeklyMealPlanSlotORM.is_skipped.is_(True),
+                WeeklyMealPlanSlotORM.is_logged.is_(False),
+                WeeklyMealPlanSlotORM.catalog_meal_id.is_not(None),
+            )
+            .order_by(WeeklyMealPlanORM.week_start_date.desc())
+            .limit(limit)
+        )
+        return [str(recipe_id) for (recipe_id,) in result.all()]
+
     async def list_grocery_interactions(
         self, *, user_id: str, plan_id: str
     ) -> list[dict]:
