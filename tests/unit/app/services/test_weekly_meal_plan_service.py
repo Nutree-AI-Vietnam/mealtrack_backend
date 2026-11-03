@@ -1468,11 +1468,12 @@ async def test_week_proposal_keeps_a_logged_saved_slot_and_projects_its_grocerie
     changed = {(c["day_index"], c["slot_index"]): c for c in proposal.slot_changes}
     assert (1, 2) not in changed
     assert changed[(3, 2)]["previous_recipe_id"] == _SAVED_ID
-    # The logged saved recipe's chicken is still on the list (100 g a person).
+    # The logged saved recipe's chicken is still on the list (100 g a person),
+    # merged into the one chicken line with the catalog meal's 100 g.
     chicken = next(
-        item for item in proposal.proposed_groceries if item.ingredient_id == 3
+        item for item in proposal.proposed_groceries if item.name == "Chicken"
     )
-    assert chicken.total_needed == 100
+    assert chicken.total_needed == 200
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import unicodedata
 import zlib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -146,6 +146,224 @@ def _ends_with_any(value: str, phrases: tuple[str, ...]) -> bool:
     return any(value == phrase or value.endswith(f" {phrase}") for phrase in phrases)
 
 
+# ---------------------------------------------------------------------------
+# Canonical shopping identity
+#
+# Recipes come from many sources, so the same thing is written in several ways:
+# "thịt heo" and "thịt lợn", "hành lá" and "hành ống", "lạc" and "đậu phộng".
+# A grocery list that keeps them apart makes the user buy the same item twice
+# and shows a different word on the weekly list than on the day list.
+#
+# canonical_ingredient() folds a recipe line's name onto a shopping identity:
+# a stable key to merge on. It merges only names for the *same purchase*. Cuts
+# a market sells separately stay separate: sườn (ribs) is not ba chỉ (belly),
+# and tôm khô is not tôm. The name shown comes from the catalog's own wording
+# (the most used name in the group), never from a word list, so an
+# English-language recipe is never relabelled in Vietnamese.
+#
+# Nutrition never reads this. Merging only affects what the user buys.
+# ---------------------------------------------------------------------------
+_LEADING_AMOUNT = re.compile(r"^\d+[\d.,/]*\s*")
+
+# Dropped wherever they appear: they describe the cooking, not the purchase.
+_PREP_PHRASES = (
+    "thái lát",
+    "thái nhỏ",
+    "thái sợi",
+    "thái khúc",
+    "cắt khúc",
+    "cắt nhỏ",
+    "cắt miếng",
+    "băm nhỏ",
+    "băm nhuyễn",
+    "xắt lát",
+    "xắt nhỏ",
+    "đập dập",
+    "rửa sạch",
+    "bóc vỏ",
+    "bỏ vỏ",
+    "bỏ hạt",
+    "để ráo",
+    "tùy thích",
+    "tùy khẩu vị",
+    "vừa ăn",
+    "vừa đủ",
+    "các loại",
+    "thái mỏng",
+    "sliced",
+    "chopped",
+    "minced",
+    "diced",
+    "peeled",
+    "to taste",
+    "for garnish",
+    "optional",
+    "fresh",
+    "finely",
+)
+
+# Region and dialect pairs for the same thing. The value is the word kept.
+# Only unambiguous pairs: "bắp" alone can mean corn or calf muscle, so
+# "bắp bò" is excluded below before this map runs.
+_WORD_SYNONYMS = {
+    "lợn": "heo",
+    "ngô": "bắp",
+    "lạc": "đậu phộng",
+    "vừng": "mè",
+}
+
+# Whole-name groups, checked after word folding. The value is the shopping
+# identity; the display name comes from _DISPLAY_NAMES.
+_NAME_GROUPS = {
+    # Pork, beef, chicken written with or without the generic head "thịt".
+    "heo": "thit_heo",
+    "thịt heo": "thit_heo",
+    "thịt heo nạc": "thit_heo_nac",
+    "nạc heo": "thit_heo_nac",
+    "thịt nạc heo": "thit_heo_nac",
+    "heo xay": "thit_heo_xay",
+    "thịt heo xay": "thit_heo_xay",
+    "thịt xay": "thit_heo_xay",
+    "ba chỉ": "ba_chi_heo",
+    "thịt ba chỉ": "ba_chi_heo",
+    "ba chỉ heo": "ba_chi_heo",
+    "thịt ba chỉ heo": "ba_chi_heo",
+    "bò": "thit_bo",
+    "thịt bò": "thit_bo",
+    "beef": "thit_bo",
+    "gà": "thit_ga",
+    "thịt gà": "thit_ga",
+    "chicken": "thit_ga",
+    "ức gà": "uc_ga",
+    "thịt ức gà": "uc_ga",
+    "chicken breast": "uc_ga",
+    "đùi gà": "dui_ga",
+    "pork": "thit_heo",
+    # Alliums and herbs, the worst offenders for duplicate lines.
+    "hành lá": "hanh_la",
+    "hành ống": "hanh_la",
+    "hành hoa": "hanh_la",
+    "lá hành": "hanh_la",
+    "green onion": "hanh_la",
+    "green onions": "hanh_la",
+    "spring onion": "hanh_la",
+    "scallion": "hanh_la",
+    "scallions": "hanh_la",
+    "hành tím": "hanh_tim",
+    "hành khô": "hanh_tim",
+    "củ hành tím": "hanh_tim",
+    "shallot": "hanh_tim",
+    "shallots": "hanh_tim",
+    "hành tây": "hanh_tay",
+    "củ hành tây": "hanh_tay",
+    "onion": "hanh_tay",
+    "ngò": "ngo_ri",
+    "ngò rí": "ngo_ri",
+    "rau mùi": "ngo_ri",
+    "mùi ta": "ngo_ri",
+    "cilantro": "ngo_ri",
+    "coriander": "ngo_ri",
+    "ngò gai": "ngo_gai",
+    "mùi tàu": "ngo_gai",
+    "tỏi": "toi",
+    "củ tỏi": "toi",
+    "nhánh tỏi": "toi",
+    "tép tỏi": "toi",
+    "garlic": "toi",
+    "gừng": "gung",
+    "củ gừng": "gung",
+    "ginger": "gung",
+    "sả": "sa",
+    "cây sả": "sa",
+    "lemongrass": "sa",
+    # Vegetables seen in the weekly list.
+    "cà chua": "ca_chua",
+    "tomato": "ca_chua",
+    "tomatoes": "ca_chua",
+    "củ cải": "cu_cai_trang",
+    "củ cải trắng": "cu_cai_trang",
+    "daikon": "cu_cai_trang",
+    "cà rốt": "ca_rot",
+    "carrot": "ca_rot",
+    "carrots": "ca_rot",
+    "giá": "gia_do",
+    "giá đỗ": "gia_do",
+    "giá đậu": "gia_do",
+    "bean sprouts": "gia_do",
+    "dưa chuột": "dua_leo",
+    "dưa leo": "dua_leo",
+    "cucumber": "dua_leo",
+    "rau muống": "rau_muong",
+    "water spinach": "rau_muong",
+    "bắp cải": "bap_cai",
+    "cabbage": "bap_cai",
+    # Eggs, tofu and other staples bought by the piece.
+    "trứng": "trung_ga",
+    "trứng gà": "trung_ga",
+    "egg": "trung_ga",
+    "eggs": "trung_ga",
+    "trứng vịt": "trung_vit",
+    "đậu hũ": "dau_hu",
+    "đậu phụ": "dau_hu",
+    "tàu hũ": "dau_hu",
+    "tofu": "dau_hu",
+    "tôm": "tom",
+    "tôm tươi": "tom",
+    "shrimp": "tom",
+    "prawn": "tom",
+    "prawns": "tom",
+}
+
+# "bắp bò" is a beef shank, not corn: leave these names alone before the
+# word map folds "ngô" onto "bắp".
+_WORD_SYNONYM_BLOCKERS = ("bắp bò", "bắp chuối", "bắp cải")
+
+
+@dataclass(frozen=True)
+class CanonicalIngredient:
+    """What a recipe line is bought as."""
+
+    key: str
+    # False when the name is unknown to the table and only normalization ran.
+    is_known: bool = False
+
+
+def normalize_ingredient_name(name: str) -> str:
+    """Lower-case the name and drop amounts, notes and preparation words.
+
+    Accents are kept: "cà" (eggplant, tomato) is not "cá" (fish).
+    """
+    value = unicodedata.normalize("NFC", str(name or "")).casefold()
+    value = _PARENTHESES.sub(" ", value)
+    value = value.replace("–", " ").replace("—", " ")
+    value = _LEADING_AMOUNT.sub("", value.strip())
+    for phrase in _PREP_PHRASES:
+        value = value.replace(phrase, " ")
+    value = _SPACES.sub(" ", value).strip(" .,:-")
+    return value
+
+
+def _fold_words(value: str) -> str:
+    if any(blocker in value for blocker in _WORD_SYNONYM_BLOCKERS):
+        return value
+    words = [_WORD_SYNONYMS.get(word, word) for word in value.split(" ")]
+    return " ".join(words)
+
+
+def canonical_ingredient(name: str) -> CanonicalIngredient:
+    """The shopping identity of a recipe line.
+
+    An unknown name keeps its own identity, so nothing is merged by accident.
+    """
+    normalized = _fold_words(normalize_ingredient_name(name))
+    if not normalized:
+        return CanonicalIngredient(key="")
+    group = _NAME_GROUPS.get(normalized)
+    if group is not None:
+        return CanonicalIngredient(key=group, is_known=True)
+    return CanonicalIngredient(key=f"raw:{normalized}")
+
+
 def fresh_ingredient_id(food_reference_id: int | None, name: str) -> int | None:
     """The grocery id a recipe line is bought under, or None for a staple."""
     if is_pantry_staple(name):
@@ -261,14 +479,15 @@ def aggregate_grocery(
     pantry: tuple[PantryAvailability, ...] | list[PantryAvailability],
     interactions: tuple[GroceryInteraction, ...] | list[GroceryInteraction] = (),
 ) -> tuple[DerivedGroceryItem, ...]:
-    totals: dict[tuple[int, str, str], dict] = defaultdict(
+    totals: dict[tuple[str, str, str], dict] = defaultdict(
         lambda: {
-            "name": "",
             "category": "pantry",
             "amount": Decimal("0"),
             "quantity_confidence": "verified",
             "contributions": [],
             "day_amounts": defaultdict(Decimal),
+            "food_ids": set(),
+            "names": Counter(),
         }
     )
     for slot in slots:
@@ -292,10 +511,14 @@ def aggregate_grocery(
                 if line.food_reference_id is not None
                 else deterministic_ingredient_id(line.name)
             )
-            key = (ingredient_id, normalized.dimension, normalized.unit)
+            # One shopping identity per purchase, so "thịt heo" and "thịt lợn"
+            # become one line with one name on every view.
+            merge_key = canonical_ingredient(line.name).key or str(ingredient_id)
+            key = (merge_key, normalized.dimension, normalized.unit)
             scaled = normalized.amount * multiplier
             bucket = totals[key]
-            bucket["name"] = line.name
+            bucket["food_ids"].add(ingredient_id)
+            bucket["names"][line.name.strip()] += 1
             bucket["category"] = line.category or "pantry"
             bucket["amount"] += scaled
             bucket["contributions"].append((line.position, float(scaled)))
@@ -309,15 +532,22 @@ def aggregate_grocery(
     pantry_by_food = {item.food_reference_id: item for item in pantry}
     interaction_by_food = {item.food_reference_id: item for item in interactions}
     items: list[DerivedGroceryItem] = []
-    for (ingredient_id, dimension, unit), value in sorted(
-        totals.items(), key=lambda item: item[0]
-    ):
-        stock = pantry_by_food.get(ingredient_id)
-        available = _available_amount(stock, dimension=dimension, unit=unit)
-        status, remaining = grocery_status(value["amount"], available)
-        flags = interaction_by_food.get(
-            ingredient_id, GroceryInteraction(ingredient_id)
+    ordered = sorted(
+        totals.items(),
+        key=lambda item: (_representative_id(item[1]["food_ids"]), item[0][1:]),
+    )
+    for (_merge_key, dimension, unit), value in ordered:
+        food_ids = value["food_ids"]
+        ingredient_id = _representative_id(food_ids)
+        # Stock and the user's own ticks were saved per food id, so a merged
+        # line reads every id behind it.
+        available = _merged_available(
+            (pantry_by_food.get(food_id) for food_id in sorted(food_ids)),
+            dimension=dimension,
+            unit=unit,
         )
+        status, remaining = grocery_status(value["amount"], available)
+        flags = _merged_flags(ingredient_id, food_ids, interaction_by_food)
         stock_remaining = max(available or Decimal("0"), Decimal("0"))
         daily_amounts = []
         for day_index, day_needed in sorted(value["day_amounts"].items()):
@@ -333,7 +563,7 @@ def aggregate_grocery(
         items.append(
             DerivedGroceryItem(
                 ingredient_id=ingredient_id,
-                name=value["name"],
+                name=_display_name(value["names"]),
                 category=value["category"],
                 total_needed=float(value["amount"]),
                 remaining=float(remaining),
@@ -381,6 +611,60 @@ def _confidence(*, current: str, serving_confidence: str, line_confidence: str) 
     if serving_confidence == "estimated":
         return "estimated"
     return current
+
+
+def _display_name(names) -> str:
+    """The one name a merged line shows, in the catalog's own wording.
+
+    The most used name wins, then the shortest, then alphabetical order, so
+    every view of the week names the ingredient the same way.
+    """
+    if not names:
+        return ""
+    return min(names.items(), key=lambda item: (-item[1], len(item[0]), item[0]))[0]
+
+
+def _representative_id(food_ids) -> int:
+    """The id a merged line is reported under.
+
+    A real food_reference id wins over a name-derived one, so the app keeps
+    talking to the catalog about the same food.
+    """
+    real = [food_id for food_id in food_ids if food_id < SYNTHETIC_INGREDIENT_ID_OFFSET]
+    return min(real) if real else min(food_ids)
+
+
+def _merged_available(stocks, *, dimension: str, unit: str) -> Decimal | None:
+    """Pantry stock held under any of a merged line's food ids."""
+    total: Decimal | None = None
+    for stock in stocks:
+        amount = _available_amount(stock, dimension=dimension, unit=unit)
+        if amount is None:
+            continue
+        total = amount if total is None else total + amount
+    return total
+
+
+def _merged_flags(
+    ingredient_id: int, food_ids, interaction_by_food
+) -> GroceryInteraction:
+    """A tick on any merged food id applies to the whole line."""
+    checked = False
+    do_not_buy = False
+    manually_owned = False
+    for food_id in food_ids:
+        flags = interaction_by_food.get(food_id)
+        if flags is None:
+            continue
+        checked = checked or flags.checked
+        do_not_buy = do_not_buy or flags.do_not_buy
+        manually_owned = manually_owned or flags.manually_owned
+    return GroceryInteraction(
+        food_reference_id=ingredient_id,
+        checked=checked,
+        do_not_buy=do_not_buy,
+        manually_owned=manually_owned,
+    )
 
 
 def _available_amount(

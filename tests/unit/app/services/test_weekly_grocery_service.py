@@ -698,3 +698,129 @@ def test_ai_meal_idea_amounts_count_as_one_estimated_serving():
         300,
         "estimated",
     )
+
+
+def _merge_slot(recipe_id: str, lines: tuple, day_index: int = 0) -> GrocerySlot:
+    return GrocerySlot(
+        recipe_id=recipe_id,
+        publication_status="published",
+        nutrition_status="ready",
+        is_active=True,
+        base_servings=1,
+        serving_confidence="verified",
+        people=1,
+        ingredients=lines,
+        day_index=day_index,
+    )
+
+
+def _line(position: int, name: str, grams: str, food_reference_id: int | None):
+    return GroceryIngredient(
+        position=position,
+        food_reference_id=food_reference_id,
+        name=name,
+        quantity=Decimal(grams),
+        unit="g",
+        category="protein",
+    )
+
+
+def test_the_same_food_under_two_names_becomes_one_line():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt heo", "200", 11),), day_index=0),
+            _merge_slot("r2", (_line(0, "thịt lợn", "300", 12),), day_index=2),
+        ],
+        [],
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.total_needed == 500.0
+    # One wording, and the day view reads the same merged line.
+    assert item.name in {"thịt heo", "thịt lợn"}
+    assert [(day, needed) for day, needed, _ in item.daily_amounts] == [
+        (0, 200.0),
+        (2, 300.0),
+    ]
+
+
+def test_the_merged_line_keeps_a_real_catalog_id():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "hành ống", "50", None),)),
+            _merge_slot("r2", (_line(0, "hành lá", "50", 31),)),
+        ],
+        [],
+    )
+
+    assert len(items) == 1
+    assert items[0].ingredient_id == 31
+
+
+def test_the_most_used_wording_names_the_merged_line():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt lợn", "100", 11),)),
+            _merge_slot("r2", (_line(0, "thịt lợn", "100", 11),)),
+            _merge_slot("r3", (_line(0, "thịt heo", "100", 12),)),
+        ],
+        [],
+    )
+
+    assert [item.name for item in items] == ["thịt lợn"]
+
+
+def test_english_lines_are_never_relabelled_in_vietnamese():
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "Tomato", "100", 21),))],
+        [],
+    )
+
+    assert [item.name for item in items] == ["Tomato"]
+
+
+def test_pantry_stock_and_ticks_follow_every_merged_food_id():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt heo", "200", 11),)),
+            _merge_slot("r2", (_line(0, "thịt lợn", "300", 12),)),
+        ],
+        [
+            PantryAvailability(
+                food_reference_id=12,
+                available_amount=Decimal("500"),
+                available_unit="g",
+            )
+        ],
+        [GroceryInteraction(food_reference_id=12, checked=True)],
+    )
+
+    assert len(items) == 1
+    assert items[0].status == "owned"
+    assert items[0].checked is True
+
+
+def test_different_cuts_stay_separate_purchases():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "thịt ba chỉ", "200", 11),)),
+            _merge_slot("r2", (_line(0, "sườn heo", "300", 13),)),
+        ],
+        [],
+    )
+
+    assert len(items) == 2
+
+
+def test_preparation_words_do_not_split_a_line():
+    items = aggregate_grocery(
+        [
+            _merge_slot("r1", (_line(0, "Cà rốt (thái lát)", "100", None),)),
+            _merge_slot("r2", (_line(0, "cà rốt", "150", None),)),
+        ],
+        [],
+    )
+
+    assert len(items) == 1
+    assert items[0].total_needed == 250.0
