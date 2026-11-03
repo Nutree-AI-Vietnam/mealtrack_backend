@@ -16,6 +16,7 @@ from src.domain.cache.cache_invalidation_operations import (
     BUMP_REVISION,
     DELETE_KEY,
     DELETE_PATTERN,
+    build_activity_calories_invalidation_operations,
     build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
     build_movement_invalidation_operations,
@@ -146,6 +147,26 @@ async def apply_movement_write_cache_invalidation(
     except Exception:
         logger.warning(
             "movement write cache invalidation failed user_id=%s",
+            user_id,
+            exc_info=True,
+        )
+
+
+async def apply_activity_calories_cache_invalidation(
+    cache: CachePort | None,
+    user_id: str,
+    today: date,
+) -> None:
+    """Purge this week's budget keys and fence range caches after the switch."""
+    if cache is None or not user_id:
+        return
+    try:
+        await _apply_operations(
+            cache, build_activity_calories_invalidation_operations(user_id, today)
+        )
+    except Exception:
+        logger.warning(
+            "activity calories cache invalidation failed user_id=%s",
             user_id,
             exc_info=True,
         )

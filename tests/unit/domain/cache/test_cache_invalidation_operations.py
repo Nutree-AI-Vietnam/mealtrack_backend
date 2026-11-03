@@ -7,6 +7,7 @@ from src.domain.cache.cache_invalidation_operations import (
     BUMP_REVISION,
     DELETE_KEY,
     DELETE_PATTERN,
+    build_activity_calories_invalidation_operations,
     build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
     build_movement_invalidation_operations,
@@ -100,3 +101,20 @@ def test_supplement_operations_purge_the_day_streak_and_revision_not_the_budget(
     }
     # A dose has no calories, so weekly budget keys stay.
     assert not any("budget" in key for key in deleted)
+
+
+def test_activity_calories_switch_purges_week_budget_and_bumps_revision() -> None:
+    """The switch changes every day's totals without naming a SCAN pattern."""
+    today = date(2026, 11, 4)  # Wednesday
+    week_start = date(2026, 11, 2)
+    operations = build_activity_calories_invalidation_operations("user1", today)
+    deleted = {op["key"] for op in operations if op["op"] == DELETE_KEY}
+
+    assert CacheKeys.weekly_budget("user1", week_start)[0] in deleted
+    for offset in range(7):
+        target = week_start + timedelta(days=offset)
+        assert CacheKeys.weekly_budget("user1", week_start, target)[0] in deleted
+    assert {op["key"] for op in operations if op["op"] == BUMP_REVISION} == {
+        CacheKeys.intake_revision("user1")[0]
+    }
+    assert all(op["op"] != DELETE_PATTERN for op in operations)
