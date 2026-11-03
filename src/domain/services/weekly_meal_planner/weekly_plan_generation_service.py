@@ -19,6 +19,10 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanPreferences,
     meal_type_for_slot,
 )
+from src.domain.model.weekly_meal_planner.user_food_memory import (
+    EMPTY_MEMORY,
+    UserFoodMemory,
+)
 from src.domain.services.meal_recommendation.calorie_allocation_policy import (
     CalorieAllocationPolicy,
 )
@@ -64,6 +68,12 @@ class GeneratedSlot:
     recipe_id: str | None
 
 
+# How many calories of fit a dish may "spend" on being something the user
+# already eats. Taste breaks a near tie; it never outvotes the day's targets,
+# so a dish that fits 200 kcal better still wins however familiar the other is.
+TASTE_KCAL_ALLOWANCE = 40.0
+
+
 class WeeklyPlanGenerationService:
     """Generate stable selections without provider calls or persistence."""
 
@@ -79,6 +89,7 @@ class WeeklyPlanGenerationService:
         daily_calories: int,
         preferences: WeeklyMealPlanPreferences,
         last_week: frozenset[str] = frozenset(),
+        memory: UserFoodMemory = EMPTY_MEMORY,
     ) -> tuple[GeneratedSlot, ...]:
         prepared = self._slot_candidates(
             meals,
@@ -108,7 +119,11 @@ class WeeklyPlanGenerationService:
                         # Without this the same profile and catalog give the
                         # same week every week: the calorie gap below decides.
                         1 if item[0].id in last_week else 0,
-                        item[1],
+                        # Familiar food shaves a little off the calorie gap, so
+                        # it decides between dishes that fit about as well.
+                        item[1]
+                        - TASTE_KCAL_ALLOWANCE
+                        * memory.taste_score(dish_fresh_ingredient_ids(item[0])),
                         self._stable_rank(item[0], user_id, week_start_date, day, slot),
                         item[0].id,
                     ),
@@ -130,6 +145,7 @@ class WeeklyPlanGenerationService:
         fixed: Mapping[tuple[int, int], str] | None = None,
         last_week: frozenset[str] = frozenset(),
         basket_target: int | None = None,
+        memory: UserFoodMemory = EMPTY_MEMORY,
     ) -> tuple[GeneratedSlot, ...]:
         """Plan a week around fewer dishes and one shared grocery basket.
 
@@ -206,7 +222,10 @@ class WeeklyPlanGenerationService:
                         if basket_target is None
                         else max(0, basket_target - len(basket)),
                     ),
-                    item[1],
+                    # Inside a calorie band, prefer what the user already eats.
+                    item[1]
+                    - TASTE_KCAL_ALLOWANCE
+                    * memory.taste_score(dish_fresh_ingredient_ids(item[0])),
                     self._stable_rank(item[0], user_id, week_start_date, day, slot),
                     item[0].id,
                 ),

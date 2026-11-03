@@ -234,6 +234,7 @@ def _bread_locale():
         slot_calorie_shares=(0.3, 0.3, 0.4),
         staple_dish_words=("stew",),
         standalone_dish_words=("soup",),
+        staple_item_words=("bread",),
     )
 
 

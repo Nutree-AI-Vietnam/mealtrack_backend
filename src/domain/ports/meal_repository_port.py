@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import Any
 
 from src.domain.model.meal import Meal, MealStatus
+from src.domain.model.weekly_meal_planner.user_food_memory import LoggedMealShape
 from src.domain.services.meal_recommendation.ingredient_affinity_service import (
     IngredientHistoryBucket,
 )
@@ -154,6 +155,23 @@ class MealRepositoryPort(ABC):
         user_timezone: str | None = None,
     ) -> list[IngredientHistoryBucket]:
         """Return linked canonical ingredient usage buckets for recommendations."""
+        return []
+
+    async def recent_logged_meal_shapes(
+        self,
+        *,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+        user_timezone: str | None = None,
+        limit: int = 120,
+    ) -> list[LoggedMealShape]:
+        """Return recent logged meals reduced to how the user eats.
+
+        Newest first. Used to build the planner's memory of one person; an
+        implementation that cannot answer returns nothing and the planner
+        falls back to planning without it.
+        """
         return []
 
     @abstractmethod

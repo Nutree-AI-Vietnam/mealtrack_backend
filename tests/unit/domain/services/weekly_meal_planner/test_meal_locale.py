@@ -74,6 +74,7 @@ def test_a_region_can_eat_its_staple_at_every_meal():
         slot_calorie_shares=(0.3, 0.3, 0.4),
         staple_dish_words=("stew",),
         standalone_dish_words=("soup",),
+        staple_item_words=("bread",),
     )
 
     assert 0 in everywhere.staple_slots

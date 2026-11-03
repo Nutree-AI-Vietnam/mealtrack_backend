@@ -28,6 +28,7 @@ from src.domain.model.nutrition import FoodItem, Nutrition
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import mapping_from_micros
+from src.domain.model.weekly_meal_planner.user_food_memory import LoggedMealShape
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.services.meal_recommendation.ingredient_affinity_service import (
     IngredientHistoryBucket,
@@ -556,6 +557,78 @@ class AsyncMealRepository(MealRepositoryPort):
         for meal_id, dish_name, raw in result.all():
             rows.append((str(meal_id), dish_name, raw))
         return rows
+
+    async def recent_logged_meal_shapes(
+        self,
+        *,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+        user_timezone: str | None = None,
+        limit: int = 120,
+    ) -> list[LoggedMealShape]:
+        """Recent logged meals, reduced to how this person eats.
+
+        The food item names come back as they were logged; whether one of
+        them is a staple is a regional question the domain answers.
+        """
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
+        start_dt = datetime.combine(
+            start_date, datetime.min.time(), tzinfo=tz
+        ).astimezone(UTC)
+        end_dt = (
+            datetime.combine(end_date, datetime.min.time(), tzinfo=tz)
+            + timedelta(days=1)
+        ).astimezone(UTC)
+        occurred_at = func.coalesce(MealORM.ready_at, MealORM.created_at)
+
+        result = await self.session.execute(
+            select(
+                MealORM.meal_id,
+                MealORM.dish_name,
+                MealORM.meal_type,
+                MealORM.cuisine_type,
+                occurred_at.label("occurred_at"),
+            )
+            .where(
+                MealORM.user_id == user_id,
+                occurred_at >= start_dt,
+                occurred_at < end_dt,
+                _domain_hydratable_active_meal_filter(),
+            )
+            .order_by(occurred_at.desc())
+            .limit(limit)
+        )
+        rows = result.all()
+        if not rows:
+            return []
+
+        meal_ids = [str(row[0]) for row in rows]
+        items = await self.session.execute(
+            select(NutritionORM.meal_id, FoodItemORM.name)
+            .select_from(NutritionORM)
+            .join(FoodItemORM, FoodItemORM.nutrition_id == NutritionORM.id)
+            .where(
+                NutritionORM.meal_id.in_(meal_ids),
+                FoodItemORM.is_deleted.is_(False),
+            )
+        )
+        names_by_meal: dict[str, list[str]] = {}
+        for meal_id, name in items.all():
+            names_by_meal.setdefault(str(meal_id), []).append(str(name or ""))
+
+        shapes: list[LoggedMealShape] = []
+        for meal_id, dish_name, meal_type, cuisine, _occurred in rows:
+            names = names_by_meal.get(str(meal_id), [])
+            shapes.append(
+                LoggedMealShape(
+                    dish_name=str(dish_name or ""),
+                    meal_type=str(meal_type) if meal_type else None,
+                    cuisine=str(cuisine) if cuisine else None,
+                    item_names=tuple(names),
+                )
+            )
+        return shapes
 
     async def aggregate_linked_ingredient_history(
         self,

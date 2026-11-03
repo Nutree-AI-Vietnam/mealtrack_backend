@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import unicodedata
 from collections import Counter
@@ -38,6 +39,15 @@ from src.domain.model.weekly_meal_planner import (
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlotAdjustment,
 )
+from src.domain.model.weekly_meal_planner.user_food_memory import (
+    EMPTY_MEMORY,
+    LoggedMealShape,
+    UserFoodMemory,
+    build_user_food_memory,
+)
+from src.domain.services.meal_recommendation.ingredient_affinity_service import (
+    IngredientAffinityService,
+)
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_preferences,
@@ -62,6 +72,8 @@ from src.domain.services.weekly_meal_planner.weekly_plan_generation_service impo
 )
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 from src.planner_observability import planner_phase, planner_timed
+
+logger = logging.getLogger(__name__)
 from src.planner_request_policy import (
     planner_deadline,
     planner_retry_budget,
@@ -185,6 +197,12 @@ class WeeklyMealPlanService:
                     if self._plans_compact_week(command.user_id)
                     else None
                 )
+                memory = await _user_food_memory(
+                    uow,
+                    user_id=command.user_id,
+                    week_start_date=command.week_start_date,
+                    timezone=command.timezone,
+                )
             selection = {
                 "user_id": command.user_id,
                 "week_start_date": command.week_start_date.isoformat(),
@@ -197,6 +215,9 @@ class WeeklyMealPlanService:
                     if slot.recipe_id
                 ),
             }
+            # What the user actually eats nudges the pick between dishes that
+            # fit the day about as well. A user with no log changes nothing.
+            selection["memory"] = memory
             if basket_ids is None:
                 algorithm_version = self.generator.algorithm_version
                 selected = self._select_recipes(meals, **selection)
@@ -1268,6 +1289,60 @@ def _profile_allergy_codes(
             error_code="AI_PROFILE_ALLERGY_UNSUPPORTED",
         )
     return resolved
+
+
+# How far back the planner looks to learn how somebody eats. The affinity
+# service already weights a 90-day window by recency.
+MEMORY_WINDOW_DAYS = 90
+
+
+async def _user_food_memory(
+    uow, *, user_id: str, week_start_date: date, timezone: str | None
+) -> UserFoodMemory:
+    """What the log says about how this user eats, or nothing.
+
+    Built on the way past rather than stored: it is two reads, a week is
+    planned about once a week, and a stored copy would buy a table and a
+    staleness bug for no gain. A repository that cannot answer, or a user with
+    no history, gives an empty memory and the week is planned as before.
+    """
+    meals_repo = getattr(uow, "meals", None)
+    if meals_repo is None:
+        return EMPTY_MEMORY
+    start = week_start_date - timedelta(days=MEMORY_WINDOW_DAYS)
+    window = {
+        "user_id": user_id,
+        "start_date": start,
+        "end_date": week_start_date,
+        "user_timezone": timezone,
+    }
+
+    weights: dict[int, float] = {}
+    aggregate = getattr(meals_repo, "aggregate_linked_ingredient_history", None)
+    if aggregate is not None:
+        try:
+            buckets = await aggregate(reference_date=week_start_date, **window)
+        except Exception:  # noqa: BLE001 - memory is a nicety, never a blocker
+            logger.warning("Could not read ingredient history for the planner")
+            buckets = []
+        if buckets:
+            weights = dict(IngredientAffinityService().build_profile(buckets).weights)
+
+    shapes: list[LoggedMealShape] = []
+    recent = getattr(meals_repo, "recent_logged_meal_shapes", None)
+    if recent is not None:
+        try:
+            shapes = await recent(**window)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not read logged meal shapes for the planner")
+            shapes = []
+
+    locale = locale_for_timezone(timezone)
+    return build_user_food_memory(
+        affinity_weights=weights,
+        meals=shapes,
+        is_staple_item=locale.is_staple_item,
+    )
 
 
 async def _known_allergen_codes(uow, meals) -> tuple[str, ...]:

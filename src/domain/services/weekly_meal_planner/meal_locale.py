@@ -36,6 +36,16 @@ class MealLocale:
     staple_dish_words: tuple[str, ...]
     # A dish named this way is already a whole meal and takes no staple.
     standalone_dish_words: tuple[str, ...]
+    # Names a logged food item goes by when it is the staple itself, used to
+    # read back from the diary whether a meal came with one.
+    staple_item_words: tuple[str, ...]
+
+    def is_staple_item(self, name: str) -> bool:
+        """Whether a logged food item is the staple served beside a dish."""
+        folded = " ".join(str(name or "").strip().casefold().split())
+        if not folded:
+            return False
+        return any(word in folded for word in self.staple_item_words)
 
     def takes_staple(self, folded_name: str) -> bool:
         """Whether a dish of this name is eaten with the staple.
@@ -71,6 +81,7 @@ VIETNAM = MealLocale(
         "luoc",
     ),
     standalone_dish_words=("pho", "bun", "mi ", "chao", "com", "banh", "sup"),
+    staple_item_words=("cơm", "com trang", "gạo", "steamed rice", "white rice"),
 )
 
 DEFAULT_LOCALE = VIETNAM

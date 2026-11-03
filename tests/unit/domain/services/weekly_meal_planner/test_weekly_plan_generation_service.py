@@ -9,6 +9,10 @@ from src.domain.model.weekly_meal_planner import (
     WEEKLY_SLOTS_PER_DAY,
     WeeklyMealPlanPreferences,
 )
+from src.domain.model.weekly_meal_planner.user_food_memory import (
+    EMPTY_MEMORY,
+    UserFoodMemory,
+)
 from src.domain.services.weekly_meal_planner import WeeklyPlanGenerationService
 
 
@@ -544,3 +548,104 @@ def test_a_budget_still_fills_a_week_whose_dishes_share_nothing():
     week = _compact_week(meals, basket_ids, basket_target=3)
 
     assert all(slot.recipe_id is not None for slot in week)
+
+
+def _meal_with_ingredient(meal_id: str, name: str, food_reference_id: int):
+    """Two dishes that fit a day identically but shop differently."""
+    return CatalogMeal(
+        id=meal_id,
+        catalog_key=meal_id,
+        content_hash="a" * 64,
+        name=name,
+        cuisine="vietnamese",
+        description=None,
+        image_url=None,
+        protein_g=Decimal("30"),
+        carbs_g=Decimal("40"),
+        fat_g=Decimal("10"),
+        fiber_g=Decimal("5"),
+        meal_types=("breakfast", "lunch", "dinner"),
+        popularity_rank=1,
+        ingredients=(
+            CatalogMealIngredient(
+                food_reference_id=food_reference_id,
+                display_name=name,
+                quantity=Decimal("100"),
+                unit="g",
+            ),
+        ),
+    )
+
+
+def _generated(meals, memory):
+    return WeeklyPlanGenerationService().generate(
+        meals,
+        user_id="user-1",
+        week_start_date="2026-09-21",
+        daily_calories=2000,
+        preferences=WeeklyMealPlanPreferences(),
+        memory=memory,
+    )
+
+
+def test_the_week_leans_toward_food_the_user_already_eats():
+    """Six dishes fit the day alike; the week should favour the familiar ones.
+
+    A day holds three slots and the planner avoids repeating a dish within
+    one, so it cannot serve only the liked group - but it should reach for
+    it first.
+    """
+    liked = [_meal_with_ingredient(f"liked-{i}", f"Liked {i}", 11) for i in range(3)]
+    strange = [
+        _meal_with_ingredient(f"strange-{i}", f"Strange {i}", 22) for i in range(3)
+    ]
+    meals = liked + strange
+
+    week = _generated(meals, UserFoodMemory(liked_ingredients={11: 1.0}))
+    served_liked = sum(
+        1 for slot in week if (slot.recipe_id or "").startswith("liked-")
+    )
+
+    assert served_liked > len(week) / 2
+
+
+def test_a_user_with_no_memory_gets_the_week_they_got_before():
+    """A cold start must not change how anything is planned."""
+    meals = [
+        _meal_with_ingredient("familiar", "Familiar", 11),
+        _meal_with_ingredient("stranger", "Stranger", 22),
+    ]
+
+    with_default = WeeklyPlanGenerationService().generate(
+        meals,
+        user_id="user-1",
+        week_start_date="2026-09-21",
+        daily_calories=2000,
+        preferences=WeeklyMealPlanPreferences(),
+    )
+    with_empty = _generated(meals, EMPTY_MEMORY)
+
+    assert with_default == with_empty
+
+
+def test_taste_never_outvotes_the_day_the_plan_has_to_hit():
+    """Liking a dish is worth 40 kcal of fit, not 400.
+
+    The liked dish here misses the slot by hundreds of calories, so the week
+    comes out exactly as it would for a user the planner knows nothing about.
+    """
+    close = [_meal_with_ingredient(f"close-{i}", f"Close {i}", 22) for i in range(3)]
+    liked_but_wrong = CatalogMeal(
+        **{
+            **_meal_with_ingredient("liked", "Liked", 11).__dict__,
+            "protein_g": Decimal("120"),
+            "carbs_g": Decimal("200"),
+            "fat_g": Decimal("60"),
+        }
+    )
+    meals = [*close, liked_but_wrong]
+
+    with_taste = _generated(meals, UserFoodMemory(liked_ingredients={11: 1.0}))
+    without = _generated(meals, EMPTY_MEMORY)
+
+    assert with_taste == without
