@@ -264,7 +264,11 @@ def _caller_was_cancelled() -> bool:
     return current is not None and current.cancelling() > 0
 
 
-async def close_async_session(session: AsyncSession) -> None:
+async def close_async_session(
+    session: AsyncSession,
+    *,
+    before_close: Callable[[], Awaitable[None]] | None = None,
+) -> None:
     """Close a session even when the request task is already cancelled.
 
     Chat does not use ``get_async_db``. Its sessions are closed from
@@ -273,11 +277,28 @@ async def close_async_session(session: AsyncSession) -> None:
     terminating the connection, which logs "Exception terminating connection"
     and drops the cleanup (PYTHON-HP).
 
+    ``AsyncUnitOfWork`` rollback also returns the connection.
+    ``PlannerNullPool`` then closes it gracefully (``do_close``, not
+    terminate). Doing that on the cancelled request logs "Exception closing
+    connection" (PYTHON-KK). ``before_close`` therefore runs in the same
+    shielded task as ``session.close``. A successful commit does not: this
+    wait is capped at ``SESSION_CLOSE_TIMEOUT_SECONDS``, and a timeout
+    returns without raising.
+
     The close runs on a shielded task with a strong reference. The wait is
     bounded so a hung close cannot hold the request. ``CancelledError`` is
-    re-raised when the caller was cancelled.
+    re-raised when the caller was cancelled. A real cleanup failure is still
+    logged when the caller is no longer waiting for it.
     """
-    close_task = asyncio.create_task(session.close())
+
+    async def _cleanup() -> None:
+        try:
+            if before_close is not None:
+                await before_close()
+        finally:
+            await session.close()
+
+    close_task = asyncio.create_task(_cleanup())
     wait = _CloseWait()
     _CLOSING_SESSIONS.add(close_task)
     _CLOSE_WAITS[close_task] = wait
