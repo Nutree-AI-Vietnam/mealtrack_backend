@@ -563,35 +563,6 @@ def reference_block(names: tuple[str, ...]) -> str:
     )
 
 
-# How much of the week's shopping to show a dish being written. The whole
-# basket is noise by the twentieth dish and costs tokens on every call.
-BASKET_SHOWN = 24
-
-
-def basket_block(bought: tuple[str, ...]) -> str:
-    """What the week already buys, so the next dish can cook from it.
-
-    The catalogue path has MEAL_PLAN_BASKET_TARGET, which caps the fresh
-    ingredients a week buys: it can compare baskets before it chooses,
-    because its dishes already exist and their ingredients are known. A
-    dish written on demand has no ingredients until it is written, so
-    there is nothing to compare — this says it in the only place that can
-    still act on it, the prompt that writes the dish.
-
-    Measured end to end, a week bought 62 to 76 distinct ingredients
-    against the catalogue path's target of 15.
-    """
-    usable = [name for name in bought if name][:BASKET_SHOWN]
-    if not usable:
-        return ""
-    return (
-        f"\nThis week already buys: {', '.join(usable)}."
-        "\nCook from those where the dish allows it, rather than sending"
-        " the shopper out for something new. Never at the cost of the dish"
-        " being itself."
-    )
-
-
 def _day_so_far_block(eaten: tuple[str, ...]) -> str:
     """What this day already holds, so the next meal is not the same again."""
     usable = [item for item in eaten if item]
@@ -752,8 +723,6 @@ async def generate_week_of_dishes(
     # at noon and "Cơm áp chảo bò húng quế" at night.
     day_proteins: dict[int, set[str]] = {}
     day_dishes: dict[int, list[str]] = {}
-    # Every ingredient the week has committed to buying, first use first.
-    basket: dict[str, None] = {}
     memory = _memory_block(memory_text)
     catalogue = _catalogue_by_meal(reference_dishes)
 
@@ -794,7 +763,6 @@ async def generate_week_of_dishes(
                 language=language,
                 taken=taken,
                 eaten_today=tuple(day_dishes.get(request.day_index, ())),
-                bought=tuple(basket),
                 proteins_today=frozenset(day_proteins.get(request.day_index, ())),
                 rejected=rejected,
                 mint=mint,
@@ -805,8 +773,6 @@ async def generate_week_of_dishes(
             dishes[request.slot] = snapshot
             taken.add(dish_key(snapshot.name))
             day_dishes.setdefault(request.day_index, []).append(snapshot.name)
-            for line in snapshot.ingredients:
-                basket.setdefault(str(line.name or "").strip().casefold(), None)
             protein = main_protein(snapshot)
             if protein:
                 day_proteins.setdefault(request.day_index, set()).add(protein)
@@ -895,7 +861,6 @@ async def _dish_for_slot(
     taken: set[str],
     eaten_today: tuple[str, ...] = (),
     proteins_today: frozenset[str] = frozenset(),
-    bought: tuple[str, ...] = (),
     rejected: list[RejectedDish],
     mint,
 ) -> SavedRecipeSnapshot | None:
@@ -925,7 +890,6 @@ async def _dish_for_slot(
                 prompt
                 + _slot_note_block(request.note)
                 + _day_so_far_block(eaten_today)
-                + basket_block(bought)
                 + KITCHEN_RULES
                 + ("" if name else NAME_IT_YOURSELF_RULE)
                 + language_block(language),
