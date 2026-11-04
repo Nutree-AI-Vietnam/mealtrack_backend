@@ -1206,3 +1206,57 @@ class TestSoftAndHardNo:
         assert week.dishes == {}
         assert week.unfilled == ((0, 1),)
         assert any("raw or rare" in r for d in week.rejected for r in d.reasons)
+
+
+class TestTheWeeksShoppingBasket:
+    """MEAL_PLAN_BASKET_TARGET caps the catalogue path and not this one."""
+
+    def test_an_empty_basket_says_nothing(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import basket_block
+
+        assert basket_block(()) == ""
+        assert basket_block(("", "")) == ""
+
+    def test_what_the_week_buys_is_offered_not_imposed(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import basket_block
+
+        block = basket_block(("jasmine rice", "fish sauce"))
+
+        assert "jasmine rice" in block
+        assert "Cook from those where the dish allows" in block
+        # A dish must still be itself; a basket is not a straitjacket.
+        assert "Never at the cost of the dish being itself" in block
+
+    def test_a_long_basket_is_cut_down(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            BASKET_SHOWN,
+            basket_block,
+        )
+
+        block = basket_block(tuple(f"item{i}" for i in range(BASKET_SHOWN + 10)))
+
+        assert f"item{BASKET_SHOWN - 1}" in block
+        assert f"item{BASKET_SHOWN}" not in block
+
+    @pytest.mark.asyncio
+    async def test_the_first_dish_is_told_of_no_basket(self):
+        model = _Model(["Grilled chicken bowl"])
+
+        await generate_week_of_dishes(
+            _requests(1), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert "This week already buys" not in model.prompts[1]
+
+    @pytest.mark.asyncio
+    async def test_a_later_dish_is_told_what_the_week_bought(self):
+        model = _Model(["First bowl", "Second bowl"])
+
+        await generate_week_of_dishes(
+            _requests(2), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        last = model.prompts[-1]
+        assert "This week already buys" in last
+        # The pricing keys, which is what a shopper actually buys.
+        assert "chicken breast" in last
