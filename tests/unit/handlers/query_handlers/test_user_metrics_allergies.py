@@ -33,6 +33,7 @@ def _profile(**lists) -> SimpleNamespace:
         "journey_progress_seed_percent": 0.0,
         "updated_at": datetime(2026, 11, 1, tzinfo=UTC),
         "weight_loss_kg_per_week": None,
+        "weight_gain_kg_per_week": None,
         "dietary_preferences": [],
         "allergies": None,
         "health_conditions": None,

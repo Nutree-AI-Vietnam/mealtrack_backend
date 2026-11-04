@@ -23,7 +23,11 @@ from src.domain.ports.integration_event_publisher_port import (
 from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
     build_tdee_request,
 )
-from src.domain.services.tdee_service import HEALTH_CONDITIONS, allowed_pace
+from src.domain.services.tdee_service import (
+    HEALTH_CONDITIONS,
+    allowed_gain_pace,
+    allowed_pace,
+)
 from src.domain.services.training_policy import normalize_training_pair
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     resolve_allergen_terms,
@@ -67,6 +71,7 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         or command.body_fat_percent_provided
         or command.reset_water_goal
         or command.weight_loss_kg_per_week is not None
+        or command.weight_gain_kg_per_week is not None
         or command.dietary_preferences is not None
         or command.health_conditions is not None
         or command.allergies is not None
@@ -172,6 +177,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                profile.weight_gain_kg_per_week,
                 _value_set(profile.dietary_preferences),
                 # Conditions change the safe target; allergies only show in GET
                 # metrics, whose cache this revision also fences.
@@ -353,6 +359,13 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                     raise ValidationException("Daily water goal must be greater than 0")
                 profile.daily_water_goal_ml = command.daily_water_goal_ml
 
+            # Before the paces: a condition reported in this same update
+            # decides whether a pace may be saved.
+            if command.health_conditions is not None:
+                profile.health_conditions = _checked_conditions(
+                    command.health_conditions
+                )
+
             if command.weight_loss_kg_per_week is not None:
                 # Capped where the target would drop below the floor, using the
                 # metrics this same update just set.
@@ -371,13 +384,26 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                         get_zone_info(timezone_name)
                     ).date()
 
+            if command.weight_gain_kg_per_week is not None:
+                # A gain has no floor; only the fast limit caps it. A change
+                # resets today like a loss pace does.
+                try:
+                    gain = allowed_gain_pace(
+                        build_tdee_request(profile), command.weight_gain_kg_per_week
+                    )
+                except ValueError as exc:
+                    raise ValidationException(str(exc)) from exc
+                if profile.weight_gain_kg_per_week != gain:
+                    timezone_name = await resolve_user_timezone_async(
+                        command.user_id, uow
+                    )
+                    profile.weight_gain_kg_per_week = gain
+                    profile.weight_loss_pace_reset_on = datetime.now(
+                        get_zone_info(timezone_name)
+                    ).date()
+
             if command.dietary_preferences is not None:
                 profile.dietary_preferences = _clean_diets(command.dietary_preferences)
-
-            if command.health_conditions is not None:
-                profile.health_conditions = _checked_conditions(
-                    command.health_conditions
-                )
 
             if command.allergies is not None:
                 profile.allergies = await _checked_allergies(uow, command.allergies)
@@ -397,6 +423,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.fitness_goal,
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
+                profile.weight_gain_kg_per_week,
                 _value_set(profile.dietary_preferences),
                 # Conditions change the safe target; allergies only show in GET
                 # metrics, whose cache this revision also fences.

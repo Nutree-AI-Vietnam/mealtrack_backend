@@ -30,6 +30,8 @@ def build_tdee_request(profile: Any) -> TdeeRequest:
     sex = Sex.MALE if gender.lower() == "male" else Sex.FEMALE
     preferences = getattr(profile, "dietary_preferences", None)
     preferences = preferences if isinstance(preferences, (list, tuple, set)) else ()
+    conditions = getattr(profile, "health_conditions", None)
+    conditions = conditions if isinstance(conditions, (list, tuple, set)) else ()
     preset = (
         MacroPreset.KETO
         if any(value.casefold() == "keto" for value in preferences if isinstance(value, str))
@@ -49,6 +51,8 @@ def build_tdee_request(profile: Any) -> TdeeRequest:
         unit_system=UnitSystem.METRIC,
         macro_preset=preset,
         weight_loss_kg_per_week=getattr(profile, "weight_loss_kg_per_week", None),
+        weight_gain_kg_per_week=getattr(profile, "weight_gain_kg_per_week", None),
+        health_conditions=tuple(conditions),
     )
 
 

@@ -72,9 +72,12 @@ class UserProfile(Base, BaseMixin):
     profile_target_revision = Column(Integer, nullable=False, default=1)
     # Chosen lose-weight pace in kg per week. Null keeps the flat cutting deficit.
     weight_loss_kg_per_week = Column(Float, nullable=True, default=None)
+    # Chosen gain-weight pace in kg per week. Null keeps the flat bulking surplus.
+    weight_gain_kg_per_week = Column(Float, nullable=True, default=None)
     pace_clinician_disclaimer = Column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # Local date of the latest pace change, loss or gain.
     weight_loss_pace_reset_on = Column(Date, nullable=True, default=None)
 
     @property
@@ -123,6 +126,11 @@ class UserProfile(Base, BaseMixin):
             "weight_loss_kg_per_week IS NULL "
             "OR (weight_loss_kg_per_week > 0 AND weight_loss_kg_per_week <= 1)",
             name="check_weight_loss_kg_per_week",
+        ),
+        CheckConstraint(
+            "weight_gain_kg_per_week IS NULL "
+            "OR (weight_gain_kg_per_week > 0 AND weight_gain_kg_per_week <= 1)",
+            name="check_weight_gain_kg_per_week",
         ),
     )
 

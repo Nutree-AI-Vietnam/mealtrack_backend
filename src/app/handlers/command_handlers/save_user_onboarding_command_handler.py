@@ -23,7 +23,7 @@ from src.domain.ports.integration_event_publisher_port import (
 from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
     build_tdee_request,
 )
-from src.domain.services.tdee_service import allowed_pace
+from src.domain.services.tdee_service import allowed_gain_pace, allowed_pace
 from src.domain.utils.timezone_utils import (
     get_zone_info,
     resolve_user_timezone_async,
@@ -121,6 +121,7 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                         profile.custom_carbs_g,
                         profile.custom_fat_g,
                         profile.weight_loss_kg_per_week,
+                        profile.weight_gain_kg_per_week,
                     )
                     previous_target = profile.target_weight_kg
                     # Update existing profile
@@ -173,6 +174,18 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                         profile.weight_loss_kg_per_week = pace
                         if pace is not None:
                             profile.weight_loss_pace_reset_on = today
+                # A gain pace has no floor; only the fast limit caps it.
+                if command.weight_gain_kg_per_week is not None:
+                    try:
+                        gain = allowed_gain_pace(
+                            build_tdee_request(profile), command.weight_gain_kg_per_week
+                        )
+                    except ValueError as exc:
+                        raise ValidationException(str(exc)) from exc
+                    if gain != profile.weight_gain_kg_per_week:
+                        profile.weight_gain_kg_per_week = gain
+                        if gain is not None:
+                            profile.weight_loss_pace_reset_on = today
 
                 # Save custom macro overrides if all three provided
                 custom_values = [
@@ -204,6 +217,7 @@ class SaveUserOnboardingCommandHandler(EventHandler[SaveUserOnboardingCommand, N
                         profile.custom_carbs_g,
                         profile.custom_fat_g,
                         profile.weight_loss_kg_per_week,
+                        profile.weight_gain_kg_per_week,
                     )
                     if target_inputs_before != target_inputs_after:
                         profile.profile_target_revision = (

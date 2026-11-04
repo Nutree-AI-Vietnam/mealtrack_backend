@@ -95,6 +95,8 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
                 "allergies": list(profile.allergies or []),
                 "health_conditions": list(profile.health_conditions or []),
                 "weight_loss_lb_per_week": kg_to_lb(profile.weight_loss_kg_per_week),
+                "weight_gain_kg_per_week": profile.weight_gain_kg_per_week,
+                "weight_gain_lb_per_week": kg_to_lb(profile.weight_gain_kg_per_week),
                 "pace_clinician_disclaimer": bool(
                     profile.pace_clinician_disclaimer or False
                 ),
