@@ -181,7 +181,10 @@ async def test_start_runs_the_worker_and_the_notifier_once(env, caplog):
             deadline_seconds=90,
             poll_seconds=1.0,
             notify_grace_seconds=8,
-            deadline_overrides={AiJobType.RECIPE_IMPORT: 120.0},
+            deadline_overrides={
+                AiJobType.RECIPE_IMPORT: 120.0,
+                AiJobType.WEEKLY_PLAN: 420.0,
+            },
             ready=env.probe.ready,
         )
         env.FcmPushSender.assert_called_once_with(executor=env.push_executor)
@@ -396,3 +399,26 @@ def test_build_executors_covers_every_job_type():
     assert isinstance(recipe_import, RecipeImportJobExecutor)
     assert recipe_import._send is send
     assert recipe_import._to_result is recipe_import_result
+
+
+class TestAWeekOutlivesTheDefaultDeadline:
+    """Twenty-one dishes take longer than the worker's ordinary ninety."""
+
+    def test_the_weekly_plan_job_gets_its_own_deadline(self):
+        from src.domain.model.weekly_meal_planner.limits import (
+            WEEKLY_PLAN_DEADLINE_SECONDS,
+        )
+        from src.infra.config.settings import Settings
+
+        # Six measured runs took 80 to 121 seconds with pricing stubbed out,
+        # and real pricing is slower. The default would kill every one.
+        assert Settings().AI_JOBS_EXECUTION_DEADLINE_SECONDS < 121
+        assert WEEKLY_PLAN_DEADLINE_SECONDS > 121 * 2
+
+    def test_a_longer_configured_deadline_still_wins(self):
+        """The override is a floor, not a ceiling."""
+        from src.domain.model.weekly_meal_planner.limits import (
+            WEEKLY_PLAN_DEADLINE_SECONDS,
+        )
+
+        assert max(600, WEEKLY_PLAN_DEADLINE_SECONDS) == 600
