@@ -95,6 +95,18 @@ class UserRepositoryPort(ABC):
         pass
 
     @abstractmethod
+    async def get_activity_calories(self, user_id: UUID | str) -> bool:
+        """Return whether calories burned in logged movement raise the budget."""
+        pass
+
+    @abstractmethod
+    async def update_user_activity_calories(
+        self, user_id: UUID | str, enabled: bool
+    ) -> None:
+        """Persist whether calories burned in logged movement raise the budget."""
+        pass
+
+    @abstractmethod
     async def update_user_avatar(
         self, user_id: UUID | str, avatar: UserAvatar
     ) -> str | None:

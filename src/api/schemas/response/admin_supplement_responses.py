@@ -121,6 +121,8 @@ class AdminSupplementReviewItem(BaseModel):
     source_name: str | None = None
     source_url: str | None = None
     label_image_url: str | None = None
+    # The product photo people see; set through POST /{id}/image.
+    image_url: str | None = None
     reasons: list[str]
     review_status: str
     reviewed_at: datetime | None = None

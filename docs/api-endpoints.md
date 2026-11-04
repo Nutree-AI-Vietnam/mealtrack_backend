@@ -182,6 +182,17 @@ handler/schema when implementing; the bullets below are the durable WHY.
   unit is not allowed by the authoritative snapshot, `NUTRITION_PROVIDER_UNAVAILABLE`
   returns 503 for temporary provider capacity loss, and other integrity rejects
   return 422 `NUTRITION_INTEGRITY_REJECTED`.
+- `GET` and `PATCH /v1/users/activity-calories` (body `{"enabled": bool}`) both
+  answer `{"enabled": bool}`; users who never set it get `true`. While it is
+  off, logged movement no longer raises the food budget: day, bulk and weekly
+  consumed calories equal food calories, and adjusted daily targets, the weekly
+  leftover split, the progress live target and meal suggestions count food
+  only. `movement_kcal_burned`, progress `burned_calories` and each entry's
+  `include_in_balance` still report the activity as logged.
+- A switch drops today's stored target snapshot, so the next read stores it
+  under the new setting, deletes this week's weekly budget keys and bumps the
+  intake revision before it returns. Day macros, weekly budgets and progress
+  summaries also refuse a cached payload built under the other setting.
 
 ### Coach nutrition snapshots
 
@@ -190,8 +201,9 @@ handler/schema when implementing; the bullets below are the durable WHY.
   additive `nutrition_snapshot` sidecar for completed replies. It is versioned
   as `chat_nutrition_v1` and scoped by `local_date`, `timezone`, and `as_of`.
 - The snapshot is the backend-owned rendering input: `food_calories` is gross
-  intake, `movement_kcal_burned` is activity credit, and `remaining_calories`
-  is the authoritative net-budget result. Clients must not replace a
+  intake, `movement_kcal_burned` is the logged activity (credited only while
+  activity calories are on), and `remaining_calories` is the authoritative
+  net-budget result. Clients must not replace a
   historical snapshot with current-day data or recompute its values.
 - If authoritative context is incomplete, the sidecar is omitted. Consumers
   must render the reply text without nutrition cards rather than inventing
@@ -235,6 +247,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
   user's own. Every route that takes a product, list row or dose id answers
   404 `SUPPLEMENT_NOT_FOUND` for anything else, so other users' rows never
   leak.
+- Every `product` carries `image_url`: the catalog photo an admin set, or
+  null. A label scan's own photo is never sent.
 - `GET /mine?date=YYYY-MM-DD` (the user's today by default): `items` are the
   list rows, each with `product` and that day's `doses`; `unlisted_doses` are
   the day's doses of products since taken off the list.
@@ -619,6 +633,21 @@ handler/schema when implementing; the bullets below are the durable WHY.
   no-training is `(0, 0)`; `(0, 15)` is legacy compatibility only. Keto is
   5/20/75 with calories derived from the returned macro triple. Details live in
   `system-architecture.md` and the preview handler.
+
+### My Plan date of birth (`/v1/user-profiles/metrics`)
+
+- `GET` always carries `date_of_birth` (`YYYY-MM-DD` or `null`). Apps send
+  `date_of_birth` only to a server whose `GET` has the key, because
+  `UpdateMetricsRequest` forbids unknown fields.
+- `POST` accepts an optional `date_of_birth`. It must be a real, past date that
+  gives an age from 12 to 120 (422 otherwise). It is stored on the profile and
+  sets `age` as of today, winning over an `age` sent with it.
+- Older apps send the stored `age` with every My Plan save, and after a
+  birthday it trails the stored date. So an `age` sent alone clears
+  `date_of_birth` only when it differs from both the stored age (the person
+  changed it) and the age the stored date gives today; otherwise the date stays.
+- `age` is stored, not derived on read, so it goes stale on birthdays until the
+  next metrics update; TDEE reads that stored age.
 
 ### Paid web redemption
 

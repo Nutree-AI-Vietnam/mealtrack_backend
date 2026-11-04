@@ -3,7 +3,7 @@ Command handler for updating user metrics.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from src.api.exceptions import ResourceNotFoundException, ValidationException
@@ -14,6 +14,7 @@ from src.app.events.user.user_profile_updated_event import (
 )
 from src.domain.model.common.enums import FitnessGoal, JobType, TrainingLevel
 from src.domain.model.user.body_fat_visual import remap_visual_profile_selection
+from src.domain.model.user.core_user import age_on
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
@@ -49,6 +50,7 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
                 command.weight_kg,
                 command.height_cm,
                 command.age,
+                command.date_of_birth,
                 command.biological_sex,
                 command.job_type,
                 command.training_days_per_week,
@@ -154,8 +156,11 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                     f"User {command.user_id} not found. Profile required to update metrics."
                 )
 
+            # The date of birth sits with the target inputs because the age
+            # comes from it, and GET metrics' cache is fenced by this revision.
             target_inputs_before = (
                 profile.age,
+                profile.date_of_birth,
                 profile.height_cm,
                 profile.weight_kg,
                 profile.gender,
@@ -174,10 +179,30 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
             )
             sex_changed = False
 
-            # Update provided fields only
-            if command.age is not None:
+            # Update provided fields only. A date of birth sets the age and
+            # wins over an age sent with it.
+            if command.date_of_birth is not None:
+                today = date.today()
+                age = age_on(command.date_of_birth, today)
+                if command.date_of_birth > today or age < 12 or age > 120:
+                    raise ValidationException(
+                        "Date of birth must be past and give an age between 12 and 120"
+                    )
+                profile.date_of_birth = command.date_of_birth
+                profile.age = age
+            elif command.age is not None:
                 if command.age < 12 or command.age > 120:
                     raise ValidationException("Age must be between 12 and 120")
+                # Apps without the date picker send the stored age with every
+                # My Plan save, and it lags the date after a birthday. Only an
+                # age they changed, to one the date does not give, means the
+                # stored date of birth is wrong now.
+                if (
+                    profile.date_of_birth is not None
+                    and command.age != profile.age
+                    and command.age != age_on(profile.date_of_birth, date.today())
+                ):
+                    profile.date_of_birth = None
                 profile.age = command.age
 
             if command.height_cm is not None:
@@ -356,6 +381,7 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
 
             target_inputs_after = (
                 profile.age,
+                profile.date_of_birth,
                 profile.height_cm,
                 profile.weight_kg,
                 profile.gender,

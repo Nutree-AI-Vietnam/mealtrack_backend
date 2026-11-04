@@ -111,12 +111,13 @@ async def review_page(
     kind: ReviewKind | None = None,
     q: str | None = None,
     status: QueueStatus = "pending_review",
+    has_image: bool | None = None,
 ) -> tuple[list[tuple[ReviewItem, SupplementProduct | None]], int]:
     """The queue, each scan with the shared row its barcode already belongs to.
 
     The admin then sees before approving whether it shares, merges, or waits.
     """
-    items, total = await catalog.review_queue(limit, offset, kind, q, status)
+    items, total = await catalog.review_queue(limit, offset, kind, q, status, has_image)
     page = []
     for item in items:
         product = item.product

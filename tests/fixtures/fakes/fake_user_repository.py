@@ -13,6 +13,7 @@ class FakeUserRepository(UserRepositoryPort):
         self.users = {}  # id -> user
         self.profiles = {}  # user_id -> profile
         self.weekly_auto_adjust = {}  # user_id str -> bool
+        self.activity_calories = {}  # user_id str -> bool
 
     async def save(self, user: UserDomainModel) -> UserDomainModel:
         self.users[user.id] = user
@@ -87,6 +88,14 @@ class FakeUserRepository(UserRepositoryPort):
         self, user_id: UUID, enabled: bool
     ) -> None:
         self.weekly_auto_adjust[str(user_id)] = enabled
+
+    async def get_activity_calories(self, user_id: UUID | str) -> bool:
+        return self.activity_calories.get(str(user_id), True)
+
+    async def update_user_activity_calories(
+        self, user_id: UUID | str, enabled: bool
+    ) -> None:
+        self.activity_calories[str(user_id)] = enabled
 
     async def update_user_avatar(
         self, user_id: UUID | str, avatar: UserAvatar

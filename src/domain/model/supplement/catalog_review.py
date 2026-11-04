@@ -59,6 +59,17 @@ def require_reviewable(product: SupplementProduct, *, editing: bool = False) -> 
     )
 
 
+def require_photo_target(product: SupplementProduct) -> None:
+    """Only catalog rows, waiting or live, take a photo.
+
+    A scan takes one once approved: until then it is its owner's row, and a
+    merge into another product would delete it along with the photo.
+    """
+    require_reviewable(product, editing=True)
+    if not product.shared:
+        raise SupplementNotReviewableError("approve the scan before adding a photo")
+
+
 def with_edits(
     product: SupplementProduct, changes: Mapping[str, Any]
 ) -> SupplementProduct:

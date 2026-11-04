@@ -251,11 +251,11 @@ class Settings(BaseSettings):
         ),
     )
     STREAK_RESTORE_SPEND_ENABLED: bool = Field(
-        default=True,
+        default=False,
         description="Offer restores in GET /v1/meals/streak and accept spending them.",
     )
     STREAK_RESTORE_CLAIM_ENABLED: bool = Field(
-        default=True,
+        default=False,
         description="Accept restore pack purchase claims from the app.",
     )
     STREAK_RESTORE_SANDBOX_USER_IDS: str = Field(

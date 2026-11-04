@@ -44,6 +44,18 @@ async def persist_today_snapshot(
         )
 
 
+async def forget_today_snapshot(uow: Any, user_id: str, today: date) -> None:
+    """Drop today's target after a setting changes how targets are computed.
+
+    The next read stores today's target again under the new setting. Earlier
+    dates keep the target that applied when they were stored.
+    """
+    repo = getattr(uow, "daily_target_snapshots", None)
+    if repo is None:
+        return
+    await repo.delete_for_date(user_id, today)
+
+
 async def maybe_write_today_snapshot(
     uow: Any,
     user_id: str,

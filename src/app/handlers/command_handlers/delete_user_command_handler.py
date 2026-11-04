@@ -182,9 +182,10 @@ class DeleteUserCommandHandler(EventHandler[DeleteUserCommand, dict[str, Any]]):
 
             # Supplement doses, the list and products never promoted to the catalog.
             # Skipped until the tables exist: a deploy can precede its migration.
+            # Only the tables, so a later column migration never skips this.
             supplement_rows = 0
             supplements = getattr(uow, "supplements", None)
-            if supplements is not None and await supplements.schema_ready():
+            if supplements is not None and await supplements.tables_exist():
                 supplement_rows = await supplements.delete_user_data(user_id)
 
             # Flush to ensure all changes are pending in the transaction

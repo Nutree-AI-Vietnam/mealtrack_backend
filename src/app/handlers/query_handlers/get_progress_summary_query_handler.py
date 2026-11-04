@@ -76,6 +76,9 @@ class GetProgressSummaryQueryHandler(
             auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                 await uow.users.get_weekly_auto_adjust(query.user_id)
             )
+            activity_calories = WeeklyBudgetService.activity_calories_enabled(
+                await uow.users.get_activity_calories(query.user_id)
+            )
             cached, intake_revision = await read_summary_cache(
                 self.cache_service,
                 query.user_id,
@@ -84,6 +87,7 @@ class GetProgressSummaryQueryHandler(
                 targets[4],
                 auto_adjust,
                 include_trends=query.include_trends,
+                activity_calories=activity_calories,
             )
             if cached is not None:
                 return await overlay_live_hydration(
@@ -100,6 +104,7 @@ class GetProgressSummaryQueryHandler(
                 targets,
                 auto_adjust,
                 include_trends=query.include_trends,
+                activity_calories=activity_calories,
             )
             await write_summary_cache(
                 self.cache_service,
@@ -125,6 +130,7 @@ class GetProgressSummaryQueryHandler(
         auto_adjust: bool = True,
         *,
         include_trends: bool = False,
+        activity_calories: bool = True,
     ) -> dict[str, Any]:
         base_cal, protein_t, _c, _f, revision, bmr = targets
         # Only the Trends fields use food items, whose micros fill the
@@ -181,7 +187,16 @@ class GetProgressSummaryQueryHandler(
         )
         profile = await uow.users.get_profile(UUID(user_id))
         live_cal = await resolve_today_live_target(
-            uow, user_id, today, start, end, user_tz_str, base_cal, protein_t, bmr
+            uow,
+            user_id,
+            today,
+            start,
+            end,
+            user_tz_str,
+            base_cal,
+            protein_t,
+            bmr,
+            activity_calories=activity_calories,
         )
         goal_ml = hydration_goal_ml(profile)
         fiber_target = fiber_goal_g(
@@ -229,6 +244,7 @@ class GetProgressSummaryQueryHandler(
             "days": days,
             "target_revision": revision,
             "weekly_auto_adjust": auto_adjust,
+            "activity_calories": activity_calories,
         }
         if include_trends:
             result.update(trends_goal_fields(profile, base_cal, revision))

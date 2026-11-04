@@ -32,7 +32,9 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
         cache_key, ttl = CacheKeys.user_metrics(query.user_id)
         if self.cache_service:
             cached = await self.cache_service.get_json(cache_key)
-            if cached is not None:
+            # A payload cached before date_of_birth existed would answer null
+            # for a stored date, so it is rebuilt once.
+            if cached is not None and "date_of_birth" in cached:
                 cached_revision = cached.get("profile_target_revision")
                 if cached_revision == await self._current_profile_revision(
                     query.user_id
@@ -65,6 +67,9 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
             return {
                 "user_id": query.user_id,
                 "age": profile.age,
+                "date_of_birth": (
+                    profile.date_of_birth.isoformat() if profile.date_of_birth else None
+                ),
                 "gender": profile.gender,
                 "height_cm": profile.height_cm,
                 "weight_kg": profile.weight_kg,

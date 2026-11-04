@@ -51,9 +51,16 @@ class _Catalog:
         self.deleted.append(product_id)
 
     async def review_queue(
-        self, limit, offset, kind=None, q=None, status="pending_review"
+        self,
+        limit,
+        offset,
+        kind=None,
+        q=None,
+        status="pending_review",
+        has_image=None,
     ):
         self.queue_status = status
+        self.queue_has_image = has_image
         return list(self.items.values()), len(self.items)
 
 

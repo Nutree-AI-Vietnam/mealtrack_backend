@@ -21,8 +21,17 @@ from src.app.services.supplement_catalog_review import (
     review_page,
     review_product,
 )
+from src.app.services.supplement_product_photo import (
+    StoredPhoto,
+    check_photo_target,
+    delete_photo,
+    log_left_in_storage,
+    point_at_photo,
+    store_photo,
+)
 from src.domain.model.supplement import SupplementProduct
 from src.domain.model.supplement.catalog_review import SupplementReviewConflictError
+from src.domain.ports.image_store_port import ImageStorePort
 from src.domain.ports.supplement_catalog_port import (
     QueueStatus,
     ReviewItem,
@@ -60,10 +69,11 @@ async def supplement_review_queue(
     kind: ReviewKind | None = None,
     q: str | None = None,
     status: QueueStatus = "pending_review",
+    has_image: bool | None = None,
 ) -> tuple[list[tuple[ReviewItem, SupplementProduct | None]], int]:
     async with AsyncUnitOfWork() as uow:
         catalog = await _catalog(uow)
-        return await review_page(catalog, limit, offset, kind, q, status)
+        return await review_page(catalog, limit, offset, kind, q, status, has_image)
 
 
 async def review_supplement(
@@ -93,6 +103,65 @@ async def review_supplement(
         raise SupplementReviewConflictError(
             "another change to this barcode or list landed first; reload and retry"
         ) from error
+
+
+async def set_supplement_photo(
+    product_id: str, data: bytes, image_store: ImageStorePort
+) -> ReviewItem:
+    """Store the upload, point the catalog product at it, then drop the old photo."""
+    # Checked first so a refused call costs no upload; the write checks again.
+    async with AsyncUnitOfWork() as uow:
+        await check_photo_target(await _catalog(uow), product_id)
+    photo = await store_photo(image_store, data)
+    try:
+        item, previous = await _point_at(product_id, photo)
+    except Exception:
+        await _drop_unused(product_id, photo, image_store)
+        raise
+    if previous:
+        await delete_photo(image_store, previous, reason="photo replaced")
+    return item
+
+
+async def remove_supplement_photo(
+    product_id: str, image_store: ImageStorePort
+) -> ReviewItem:
+    """Take the photo off a product, then delete it from the store."""
+    item, previous = await _point_at(product_id, None)
+    if previous:
+        await delete_photo(image_store, previous, reason="photo removed")
+    return item
+
+
+async def _point_at(
+    product_id: str, photo: StoredPhoto | None
+) -> tuple[ReviewItem, str | None]:
+    async with AsyncUnitOfWork() as uow:
+        catalog = await _catalog(uow)
+        result = await point_at_photo(catalog, product_id, photo)
+        await uow.commit()
+        return result
+
+
+async def _drop_unused(
+    product_id: str, photo: StoredPhoto, image_store: ImageStorePort
+) -> None:
+    """Delete a photo after a failed write, unless the commit landed anyway.
+
+    A connection lost while COMMIT was answered can leave the row pointing at
+    the new photo; deleting it then would break the product's image.
+    """
+    try:
+        async with AsyncUnitOfWork() as uow:
+            item = await uow.supplement_catalog.review_item(product_id)
+    except Exception as error:
+        log_left_in_storage(
+            photo.image_id, reason="write failed", error=type(error).__name__
+        )
+        return
+    if item is not None and item.product.image_id == photo.image_id:
+        return
+    await delete_photo(image_store, photo.image_id, reason="product update failed")
 
 
 async def _catalog(uow: AsyncUnitOfWork) -> SupplementCatalogPort:

@@ -68,6 +68,11 @@ class WeeklyBudgetService:
         return value is not False
 
     @staticmethod
+    def activity_calories_enabled(value: object) -> bool:
+        """Whether logged movement raises the budget. Only explicit False stops it."""
+        return value is not False
+
+    @staticmethod
     def _aggregate_meals_consumed(
         meals: list[Any],
         *,
@@ -119,8 +124,13 @@ class WeeklyBudgetService:
         exclude_date: date | None = None,
         exclude_dates: list[date] | None = None,
         user_timezone: str | None = None,
+        activity_calories: bool = True,
     ) -> dict[str, float]:
-        """Async version of calculate_weekly_consumed for AsyncUnitOfWork."""
+        """Async version of calculate_weekly_consumed for AsyncUnitOfWork.
+
+        Movement kcal net out of consumed calories only while activity
+        calories are on.
+        """
         week_end = end_date or week_start + timedelta(days=6)
 
         try:
@@ -159,16 +169,17 @@ class WeeklyBudgetService:
             user_timezone=user_timezone,
         )
 
-        movement_kcal = await WeeklyBudgetService._calculate_movement_kcal_async(
-            uow=uow,
-            user_id=user_id,
-            week_start=week_start,
-            end_date=week_end,
-            exclude_date=exclude_date,
-            exclude_dates=exclude_dates,
-            user_timezone=user_timezone,
-        )
-        consumed["calories"] -= movement_kcal
+        if WeeklyBudgetService.activity_calories_enabled(activity_calories):
+            movement_kcal = await WeeklyBudgetService._calculate_movement_kcal_async(
+                uow=uow,
+                user_id=user_id,
+                week_start=week_start,
+                end_date=week_end,
+                exclude_date=exclude_date,
+                exclude_dates=exclude_dates,
+                user_timezone=user_timezone,
+            )
+            consumed["calories"] -= movement_kcal
 
         return consumed
 
@@ -384,8 +395,15 @@ class WeeklyBudgetService:
         week_start: date,
         target_date: date,
         user_timezone: str,
+        activity_calories: bool = True,
     ) -> WeeklyEffectivePreload:
-        """Build per-user preload maps from batch-fetched rows (one timezone group)."""
+        """Build per-user preload maps from batch-fetched rows (one timezone group).
+
+        Movement kcal net out of consumed calories only while activity
+        calories are on.
+        """
+        if not WeeklyBudgetService.activity_calories_enabled(activity_calories):
+            movement_by_date = {}
         past_end = target_date - timedelta(days=1)
         past_days_count = (target_date - week_start).days
         past_cheat_dates = [d for d in cheat_dates if d < target_date]
@@ -594,8 +612,13 @@ class WeeklyBudgetService:
         cheat_dates: list[date] | None = None,
         weekly_preload: WeeklyEffectivePreload | None = None,
         auto_adjust: bool = True,
+        activity_calories: bool = True,
     ) -> EffectiveAdjustedResult:
-        """Async version of get_effective_adjusted_daily for AsyncUnitOfWork."""
+        """Async version of get_effective_adjusted_daily for AsyncUnitOfWork.
+
+        Movement kcal net out of consumed calories only while activity
+        calories are on. A weekly_preload must be built with the same flag.
+        """
         calc = WeeklyBudgetService
         reset_on = await pace_reset_on_for_user(uow, user_id)
         fresh_base = reset_on is not None and reset_on == target_date
@@ -665,12 +688,16 @@ class WeeklyBudgetService:
                 user_timezone=user_timezone,
             )
 
-        movement_by_date = await calc._build_daily_movement_map_async(
-            uow=uow,
-            user_id=user_id,
-            week_start=week_start,
-            end_date=week_end,
-            user_timezone=user_timezone,
+        movement_by_date = (
+            await calc._build_daily_movement_map_async(
+                uow=uow,
+                user_id=user_id,
+                week_start=week_start,
+                end_date=week_end,
+                user_timezone=user_timezone,
+            )
+            if calc.activity_calories_enabled(activity_calories)
+            else {}
         )
         drink_entries = await calc._week_hydration_entries(
             uow, user_id, week_start, week_end, user_timezone

@@ -75,9 +75,10 @@ Run the catalog file before the review file. The build never puts the same key i
 
 The queue holds held-back catalog rows and people's readable label scans. It never holds Ghi nhanh estimates.
 
-- `GET /v1/admin/supplements/review?kind=catalog|scan&q&status&limit&offset` returns the queue, oldest first. `status=approved` lists live catalog products instead of those waiting. `q` matches a catalog key exactly, or part of a name or brand. Each item shows:
+- `GET /v1/admin/supplements/review?kind=catalog|scan&q&status&has_image&limit&offset` returns the queue, oldest first. `status=approved` lists live catalog products instead of those waiting. `q` matches a catalog key exactly, or part of a name or brand. `has_image=false` keeps only products without a photo, `true` only those with one. Each item shows:
   - its `reasons`;
   - its `source_url`, or for a scan its `label_image_url`;
+  - its `image_url`, the product photo people see (see [Photos](#photos));
   - the label rows and the nutrients read from them;
   - for a scan, `barcode_match`: the shared row its barcode already belongs to. When it is approved, approving merges into it. When it is waiting, decide that row first.
 - `POST /v1/admin/supplements/review/{id}` takes `{action: "approve" | "edit" | "reject", changes?}`. The `changes` are applied first.
@@ -102,6 +103,17 @@ Every action records `reviewed_by` and `reviewed_at`, so re-imports leave the ro
 - Approving or rejecting a live product. Rejecting is final too: a rejected row takes no further action.
 - A Ghi nhanh estimate.
 - Two reviews racing on the same barcode, or on the same person's list. Reload and retry. Any other integrity error is a server error, not a 409.
+
+## Photos
+
+A catalog product can carry one photo, which the app shows next to it. A scan's `label_image_url` is a different thing: the person's own picture of the label, kept for review and never sent to the app.
+
+- `POST /v1/admin/supplements/{id}/image` takes a multipart `file`: JPEG, PNG or WebP, up to 5 MB. The server re-encodes it as a JPEG of at most 1024 px with no metadata, like an avatar, and stores it in the image store (Cloudflare Images). It answers the product as in the queue, with its new `image_url`. A replaced photo is deleted from the store.
+- `DELETE /v1/admin/supplements/{id}/image` takes the photo off and deletes it. A product without a photo answers 200 unchanged.
+- Only catalog rows take a photo: held-back rows waiting for review, and live approved products. A person's scan takes one once approved; until then it answers 409, because the scan is still its owner's row and approving it may merge it into another product. A rejected row answers 409 too.
+- Other answers: 415 for another file type or an unreadable image, 413 for a file or image that is too large, 502 when the image store refuses the upload.
+
+A photo is not a review. Setting or removing one leaves `reviewed_at` alone, and re-imports and review actions never clear it. When a store delete fails, the log line `Supplement photo left in storage` names the image id to remove by hand.
 
 ## Rebuilding the catalog
 

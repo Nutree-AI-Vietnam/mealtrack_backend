@@ -3,7 +3,7 @@ Command to update user metrics (weight, job type, training, body fat).
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 
 @dataclass
@@ -12,6 +12,7 @@ class UpdateUserMetricsCommand:
 
     user_id: str
     age: int | None = None
+    date_of_birth: date | None = None
     height_cm: float | None = None
     weight_kg: float | None = None
     biological_sex: str | None = None

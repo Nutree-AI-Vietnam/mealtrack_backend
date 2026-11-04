@@ -1,8 +1,17 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from src.domain.model.user.core_user import age_on
 
 
 class GoalEnum(StrEnum):
@@ -37,6 +46,13 @@ class UpdateMetricsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     age: int | None = Field(None, ge=12, le=120, description="User age")
+    date_of_birth: date | None = Field(
+        None,
+        description=(
+            "Date of birth as YYYY-MM-DD. Sets age as of today and wins over an "
+            "age sent with it."
+        ),
+    )
     height_cm: float | None = Field(None, ge=100, le=272, description="Height in cm")
     weight_kg: float | None = Field(None, description="Weight in kg", gt=0)
     biological_sex: str | None = Field(
@@ -115,6 +131,18 @@ class UpdateMetricsRequest(BaseModel):
             "the saved list; an empty list clears it."
         ),
     )
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_date_of_birth(cls, value: date | None) -> date | None:
+        if value is None:
+            return None
+        today = date.today()
+        if value > today:
+            raise ValueError("Date of birth cannot be in the future")
+        if not 12 <= age_on(value, today) <= 120:
+            raise ValueError("Date of birth must give an age between 12 and 120")
+        return value
 
     @model_validator(mode="after")
     def validate_pair_when_complete(self):

@@ -62,6 +62,8 @@ async def resolve_today_live_target(
     base_cal: float,
     protein_t: float,
     bmr: float,
+    *,
+    activity_calories: bool = True,
 ) -> float | None:
     if today < start or today > end:
         return None
@@ -85,6 +87,7 @@ async def resolve_today_live_target(
         bmr=bmr,
         user_timezone=user_tz_str,
         auto_adjust=auto_adjust,
+        activity_calories=activity_calories,
     )
     return effective.adjusted.calories
 
@@ -166,6 +169,7 @@ async def read_summary_cache(
     auto_adjust: bool = True,
     *,
     include_trends: bool = False,
+    activity_calories: bool = True,
 ) -> tuple[dict[str, Any] | None, int | None]:
     """Return the cached summary when still current, and the intake revision.
 
@@ -188,6 +192,10 @@ async def read_summary_cache(
             cached.get("weekly_auto_adjust", True)
         )
         == auto_adjust
+        and WeeklyBudgetService.activity_calories_enabled(
+            cached.get("activity_calories", True)
+        )
+        == activity_calories
     ):
         return cached, intake_revision
     return None, intake_revision

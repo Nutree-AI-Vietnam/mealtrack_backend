@@ -52,6 +52,8 @@ BODY_LIMITS: dict[str, int] = {
     "/v1/admin/meal-catalog/enrich": CATALOG_MANIFEST_BODY_MAX_BYTES,
     "/v1/admin/supplements/import": CATALOG_MANIFEST_BODY_MAX_BYTES,
     "/v1/users/avatar/photo": AVATAR_PHOTO_BODY_MAX_BYTES,
+    # Catalog supplement photos take the avatar's 5 MiB file cap.
+    "/v1/admin/supplements/{product_id}/image": AVATAR_PHOTO_BODY_MAX_BYTES,
 }
 
 

@@ -60,6 +60,7 @@ from src.app.commands.user import (
     DeleteUserCommand,
     SaveBodyFatVisualProfileCommand,
     SaveUserOnboardingCommand,
+    UpdateActivityCaloriesCommand,
     UpdateCustomMacrosCommand,
     UpdateLanguageCommand,
     UpdateTimezoneCommand,
@@ -108,6 +109,7 @@ from src.app.handlers.command_handlers import (
     ScanByUrlCommandHandler,
     SyncUserCommandHandler,
     UnfavoriteMealCommandHandler,
+    UpdateActivityCaloriesCommandHandler,
     UpdateCustomMacrosCommandHandler,
     UpdateLanguageCommandHandler,
     UpdateMovementEntryCommandHandler,
@@ -152,6 +154,7 @@ from src.app.handlers.command_handlers.unmark_cheat_day_command_handler import (
 
 # Import all query handlers from module
 from src.app.handlers.query_handlers import (
+    GetActivityCaloriesQueryHandler,
     GetBodyFatVisualProfileQueryHandler,
     GetBulkActivitiesQueryHandler,
     GetDailyActivitiesQueryHandler,
@@ -251,6 +254,7 @@ from src.app.queries.progress import (
 from src.app.queries.saved_suggestion import GetSavedSuggestionsQuery
 from src.app.queries.tdee import GetUserTdeeQuery, PreviewTdeeQuery
 from src.app.queries.user import (
+    GetActivityCaloriesQuery,
     GetBodyFatVisualProfileQuery,
     GetUserMetricsQuery,
     GetUserProfileQuery,
@@ -1089,6 +1093,22 @@ def get_configured_event_bus() -> EventBus:
             environment=settings.ENVIRONMENT,
         ),
     )
+    from src.api.services.write_cache_invalidation import (
+        apply_activity_calories_cache_invalidation,
+    )
+
+    async def purge_activity_calories_caches(user_id: str, today: date) -> None:
+        await apply_activity_calories_cache_invalidation(cache_service, user_id, today)
+
+    event_bus.register_handler(
+        UpdateActivityCaloriesCommand,
+        UpdateActivityCaloriesCommandHandler(
+            uow_factory=AsyncUnitOfWork,
+            event_publisher=queue_publisher,
+            environment=settings.ENVIRONMENT,
+            purge_caches=purge_activity_calories_caches,
+        ),
+    )
     event_bus.register_handler(
         UpdateUserAvatarCommand,
         UpdateUserAvatarCommandHandler(
@@ -1124,6 +1144,10 @@ def get_configured_event_bus() -> EventBus:
     event_bus.register_handler(
         GetWeeklyAutoAdjustQuery,
         GetWeeklyAutoAdjustQueryHandler(AsyncUnitOfWork),
+    )
+    event_bus.register_handler(
+        GetActivityCaloriesQuery,
+        GetActivityCaloriesQueryHandler(AsyncUnitOfWork),
     )
     event_bus.register_handler(
         GetUserByFirebaseUidQuery, GetUserByFirebaseUidQueryHandler()

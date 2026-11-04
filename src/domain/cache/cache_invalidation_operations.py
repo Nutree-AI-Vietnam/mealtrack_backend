@@ -215,6 +215,22 @@ def build_supplement_invalidation_operations(
     ]
 
 
+def build_activity_calories_invalidation_operations(
+    user_id: str, today: date
+) -> list[dict[str, str]]:
+    """Build cache invalidation operations after the activity calories switch.
+
+    The switch changes every day's totals. Day macros, weekly budgets read in
+    a session and progress summaries compare the flag they were built with.
+    This week's budget keys, which can be served before the flag is read, are
+    deleted, and the intake revision bump fences the range caches.
+    """
+    return [
+        *_weekly_budget_deletes(user_id, _week_start(today)),
+        _intake_revision_bump(user_id),
+    ]
+
+
 def build_profile_invalidation_operations(user_id: str) -> list[dict[str, str]]:
     """Build cache invalidation operations after a user profile or targets write."""
     return [
