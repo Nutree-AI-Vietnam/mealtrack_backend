@@ -20,8 +20,8 @@ from __future__ import annotations
 import re
 import unicodedata
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from random import Random
 
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.plausibility import per_100g_problem
@@ -30,6 +30,7 @@ from src.domain.model.weekly_meal_planner.saved_recipe import (
     SavedRecipeSnapshot,
     SavedRecipeStep,
 )
+from src.domain.model.weekly_meal_planner.weekly_meal_plan import SLOT_MEAL_TYPES
 from src.domain.services.prompts.system_prompts import SystemPrompts
 from src.domain.services.weekly_meal_planner.recipe_publication import (
     DraftIngredient,
@@ -349,9 +350,11 @@ NAME_SPARES = 2
 # against the ordinary budget it cost two dinners their dish outright, which
 # is the trade this rule exists to avoid.
 PROTEIN_RETRY_BONUS = 1
-# How many reference dishes are worth showing. More is noise, and the
-# catalogue is crawled, so these are a hint and never an instruction.
-MAX_REFERENCE_DISHES = 8
+# How much of the catalogue to show. Eight was right for a style hint and
+# far too few for a knowledge base: a meal type needs seven distinct dishes
+# out of it, and the rows it draws on include headlines that yield nothing.
+# Forty rows cost about 500 tokens on a call that already runs to 1,500.
+MAX_REFERENCE_DISHES = 40
 
 
 # The protein a dish is built on, as the ingredient names say it. These are
@@ -464,11 +467,6 @@ class DishRequest:
     note: str = ""
     # Minutes this slot is worth, when the region says less than the default.
     minutes: int | None = None
-    # Real dishes this slot picks from, from the region's pack. Empty lets a
-    # model invent the names, which is right for a region we have no list
-    # for and wrong for one we do: asked to vary the base and the protein it
-    # multiplies them and writes "Phở cá hồi".
-    dishes: tuple[str, ...] = ()
 
     @property
     def slot(self) -> tuple[int, int]:
@@ -485,19 +483,34 @@ class WeekOfDishes:
 
 
 def reference_block(names: tuple[str, ...]) -> str:
-    """The catalogue's dishes as a hint, which is all they are.
+    """The catalogue as what this kitchen knows, which is what it is.
 
-    The catalogue is crawled, so its rows carry blog headlines and noise. It
-    is shown so a dish lands in the right kitchen, never copied: the plan
-    hands back what the model writes, not a catalogue row.
+    This block used to end "Write your own dish. Do not reuse these names."
+    Eight names were shown and then forbidden, and the week that came back
+    was "Phở cá hồi" and "Cơm cà tím cà ri đậu gà" — a model doing exactly
+    as it was told, with nothing real left to reach for.
+
+    Measured over three wordings against the same catalogue sample: the old
+    one put 0 of 21 real dishes on the table, this one 19, and a third that
+    allowed nothing but the list pasted a blog headline into a slot. This
+    one also reads a dish back out of a headline — "Gỏi cuốn tôm thịt" out
+    of "Gỏi cuốn tôm thịt chuẩn vị miền Tây ai cũng mê" — which is the only
+    way a crawled table is usable at all.
     """
     usable = [name.strip() for name in names if name and name.strip()]
     if not usable:
         return ""
-    listed = ", ".join(usable[:MAX_REFERENCE_DISHES])
+    listed = "\n".join(f"- {name}" for name in usable[:MAX_REFERENCE_DISHES])
     return (
-        f"\nDishes this kitchen already cooks, for flavour and style only: {listed}."
-        "\nWrite your own dish. Do not reuse these names."
+        "\nThis kitchen's recipe catalogue, as the rows were entered — some"
+        f" are dish names, some are blog headlines:\n{listed}"
+        "\nUse it as knowledge of what this kitchen cooks. Prefer a dish"
+        " that is in it. Where a row is a headline rather than a dish, take"
+        " the dish out of it and use that name, not the headline."
+        "\nYou may name a dish that is not in the list, but only one a home"
+        " cook here would recognise by that name."
+        "\nNever invent a dish by combining one dish's base with another's"
+        " protein."
     )
 
 
@@ -510,6 +523,19 @@ def _day_so_far_block(eaten: tuple[str, ...]) -> str:
         f"\nEarlier today this person eats: {', '.join(usable)}."
         "\nBuild this meal on a different main protein."
     )
+
+
+def _catalogue_by_meal(
+    reference: Mapping[str, tuple[str, ...]] | tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    """The catalogue keyed by meal type, whichever shape the caller sent.
+
+    A flat tuple is the older shape and every meal type sees all of it.
+    """
+    if isinstance(reference, Mapping):
+        return {str(key): tuple(value) for key, value in reference.items()}
+    rows = tuple(reference)
+    return dict.fromkeys(SLOT_MEAL_TYPES, rows) if rows else {}
 
 
 def _slot_note_block(note: str) -> str:
@@ -610,11 +636,10 @@ async def generate_week_of_dishes(
     build_names_prompt,
     build_recipe_prompt,
     price=None,
-    reference_dishes: tuple[str, ...] = (),
+    reference_dishes: Mapping[str, tuple[str, ...]] | tuple[str, ...] = (),
     memory_text: str = "",
     cuisine_region: str | None = None,
     language: str | None = None,
-    seed: int = 0,
     new_id=None,
 ) -> WeekOfDishes:
     """Fill every slot with a dish the model wrote, each one checked.
@@ -649,7 +674,8 @@ async def generate_week_of_dishes(
     # at noon and "Cơm áp chảo bò húng quế" at night.
     day_proteins: dict[int, set[str]] = {}
     day_dishes: dict[int, list[str]] = {}
-    hint = reference_block(reference_dishes) + _memory_block(memory_text)
+    memory = _memory_block(memory_text)
+    catalogue = _catalogue_by_meal(reference_dishes)
 
     by_meal: dict[str, list[DishRequest]] = {}
     for request in requests:
@@ -667,10 +693,9 @@ async def generate_week_of_dishes(
             build_names_prompt=build_names_prompt,
             meal_type=meal_type,
             slots=slots,
-            hint=hint,
+            hint=reference_block(catalogue.get(meal_type, ())) + memory,
             cuisine_region=cuisine_region,
             taken=taken | offered,
-            seed=seed,
         )
         offered.update(dish_key(name) for name in names)
         for slot, name in zip(slots, names, strict=False):
@@ -717,7 +742,6 @@ async def _dish_names(
     hint,
     cuisine_region,
     taken,
-    seed,
     avoid: tuple[str, ...] = (),
 ) -> list[str]:
     """This meal type's names: picked from the region's list, or asked for.
@@ -725,15 +749,6 @@ async def _dish_names(
     A region with a list costs no call at all, which is three fewer a week.
     """
     wanted = len(slots) + NAME_SPARES
-    roster = slots[0].dishes
-    if roster:
-        return _from_roster(
-            roster,
-            wanted=wanted,
-            taken=taken,
-            seed=seed + slots[0].slot_index,
-            avoid=avoid,
-        )
     prompt = build_names_prompt(
         meal_type=meal_type,
         target_calories=int(slots[0].target_calories),
@@ -749,39 +764,25 @@ async def _dish_names(
         )
     except Exception:  # noqa: BLE001 - a slot can still ask for its own dish
         return []
-    return _names_of(answer)
+    return _arrange_by_day(_names_of(answer), avoid)
 
 
-def _from_roster(
-    roster: tuple[str, ...],
-    *,
-    wanted: int,
-    taken: set[str],
-    seed: int,
-    avoid: tuple[str, ...] = (),
-) -> list[str]:
-    """Dishes off the region's list, shuffled, skipping any the week holds.
+def _arrange_by_day(names: list[str], avoid: tuple[str, ...]) -> list[str]:
+    """Order the names so a day's second meal is not its first's protein.
 
-    Seeded by the week, so asking twice for the same week gives the same
-    dishes and the week after gives different ones.
-
-    ``avoid`` is the protein each day already eats, in slot order. The pick
-    for a day steps past dishes built on it, so the day gets two proteins
-    without a model call spent finding out it would not have.
+    The model writes a meal type's names in one answer, knowing nothing of
+    the day each will land on. Reordering costs nothing and spares the
+    recipe call that would otherwise cook a second helping of chicken and
+    throw it away. Names it cannot place keep their order.
     """
-    pool = [dish for dish in roster if dish_key(dish) not in taken]
-    Random(seed).shuffle(pool)
-    if not avoid:
-        return pool[:wanted]
-    picked: list[str] = []
-    for index in range(wanted):
+    if not avoid or not names:
+        return names
+    pool, picked = list(names), []
+    for index in range(len(names)):
         unwanted = avoid[index] if index < len(avoid) else ""
         choice = next(
-            (dish for dish in pool if protein_of_name(dish) != unwanted),
-            pool[0] if pool else None,
+            (name for name in pool if protein_of_name(name) != unwanted), pool[0]
         )
-        if choice is None:
-            break
         picked.append(choice)
         pool.remove(choice)
     return picked

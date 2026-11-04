@@ -60,25 +60,6 @@ class MealLocale:
     breakfast_note: str = ""
     # Minutes a weekday breakfast is worth. Nobody grills chicken at 7am.
     breakfast_minutes: int = 15
-    # Dishes this region actually eats, per slot: breakfast, then the mains
-    # that lunch and dinner share. A week picks from here instead of asking
-    # a model to invent names.
-    #
-    # Asked to vary the base and the main protein, a model multiplies the
-    # two and writes the cross product: "Phở cá hồi", "Cuốn cơm giấy bánh
-    # tráng bò rau", "Cơm cà tím cà ri đậu gà". Each is a grammatical
-    # Vietnamese dish name for a dish nobody cooks. No wording fixes that,
-    # because inventing names was the wrong job to hand over. Choosing a
-    # real one is a job a list does perfectly, and writing its recipe —
-    # the grams, the steps, the macros, sized to this person's day — is
-    # the job a model does well.
-    slot_dishes: tuple[tuple[str, ...], ...] = ()
-
-    def dishes_for(self, slot_index: int) -> tuple[str, ...]:
-        """The dishes this slot picks from, or () to let a model invent."""
-        if slot_index < len(self.slot_dishes):
-            return self.slot_dishes[slot_index]
-        return ()
 
     def slot_note(self, slot_index: int) -> str:
         """What this slot is, in words a prompt can carry. Empty when nothing."""
@@ -101,77 +82,6 @@ class MealLocale:
             return False
         return _says(folded_name, self.staple_dish_words)
 
-
-# What a Vietnamese kitchen actually cooks in the morning: a bowl bought or
-# reheated, something steamed, or the lighter things a desk job wants. Every
-# one is a dish by name, not a description, so there is nothing for a model
-# to recombine.
-VIETNAM_BREAKFASTS = (
-    "Phở bò",
-    "Phở gà",
-    "Bún bò Huế",
-    "Bún riêu cua",
-    "Hủ tiếu Nam Vang",
-    "Mì Quảng",
-    "Bánh canh cua",
-    "Bánh mì trứng ốp la",
-    "Bánh mì thịt nguội",
-    "Bánh cuốn nhân thịt",
-    "Bánh giò",
-    "Xôi xéo",
-    "Xôi đậu xanh",
-    "Xôi gà",
-    "Cháo gà",
-    "Cháo thịt bằm",
-    "Cháo đậu xanh",
-    "Yến mạch sữa chua trái cây",
-    "Sữa chua nếp cẩm",
-    "Khoai lang luộc trứng luộc",
-    "Chuối yến mạch sữa",
-    "Trứng ốp la bánh mì bơ",
-)
-
-# Lunch and dinner are the same meal in Viet Nam — a main, a soup or a
-# vegetable, and rice beside it — so they draw on one list. A week needs
-# fourteen of these and no two the same, which is why the list runs long.
-VIETNAM_MAINS = (
-    "Thịt kho tàu",
-    "Thịt kho trứng",
-    "Cá kho tộ",
-    "Cá basa kho tiêu",
-    "Gà kho gừng",
-    "Gà kho sả ớt",
-    "Sườn ram mặn",
-    "Sườn xào chua ngọt",
-    "Tôm rim thịt ba chỉ",
-    "Tôm rang me",
-    "Mực xào cần tỏi",
-    "Bò lúc lắc",
-    "Bò xào hành tây",
-    "Bò kho",
-    "Cơm tấm sườn nướng",
-    "Cơm gà xối mỡ",
-    "Cơm gà Hải Nam",
-    "Bún chả",
-    "Bún thịt nướng",
-    "Bún bò xào",
-    "Mì xào bò",
-    "Hủ tiếu xào",
-    "Canh chua cá lóc",
-    "Canh cải thịt bằm",
-    "Canh bí đỏ nấu tôm",
-    "Canh rau ngót thịt bằm",
-    "Cá diêu hồng hấp hành gừng",
-    "Gà luộc lá chanh",
-    "Trứng đúc thịt",
-    "Trứng chiên thịt bằm",
-    "Đậu hũ nhồi thịt sốt cà",
-    "Đậu hũ sốt cà chua",
-    "Thịt luộc cuốn bánh tráng",
-    "Nem rán",
-    "Chả cá Lã Vọng",
-    "Gà rang muối",
-)
 
 # Viet Nam NIN counts a cereal serving as 55 g steamed rice (20 g carbohydrate).
 # Breakfast is pho, banh mi, xoi or chao, eaten on its own, so rice goes with
@@ -220,7 +130,6 @@ VIETNAM = MealLocale(
         " two breakfasts in this list on the same base."
     ),
     breakfast_minutes=15,
-    slot_dishes=(VIETNAM_BREAKFASTS, VIETNAM_MAINS, VIETNAM_MAINS),
 )
 
 # For somebody we cannot place. It plans no staple beside a dish, because

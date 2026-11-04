@@ -143,7 +143,7 @@ async def test_a_call_that_raises_costs_one_slot_not_the_week():
 
 
 @pytest.mark.asyncio
-async def test_the_catalogue_is_shown_as_a_hint_and_told_not_to_be_copied():
+async def test_the_catalogue_and_the_user_s_own_log_reach_the_names_call():
     model = _Model(["Grilled chicken bowl"])
 
     await generate_week_of_dishes(
@@ -157,7 +157,7 @@ async def test_the_catalogue_is_shown_as_a_hint_and_told_not_to_be_copied():
 
     names_prompt = model.prompts[0]
     assert "Thịt kho tàu" in names_prompt
-    assert "Do not reuse these names" in names_prompt
+    assert "Prefer a dish" in names_prompt
     assert "Cuisines eaten: Vietnamese" in names_prompt
 
 
@@ -167,10 +167,11 @@ class TestTheReferenceBlock:
         assert reference_block(("", "   ")) == ""
 
     def test_a_long_catalogue_is_cut_down(self):
-        block = reference_block(tuple(f"Dish {index}" for index in range(30)))
+        """Forty rows is a knowledge base; the whole table is a token bill."""
+        block = reference_block(tuple(f"Dish {index}" for index in range(60)))
 
-        assert "Dish 7" in block
-        assert "Dish 8" not in block
+        assert "Dish 39" in block
+        assert "Dish 40" not in block
 
 
 class TestTheLanguageTheWeekIsWrittenIn:
@@ -688,8 +689,8 @@ class TestTwiceTheSameProteinInOneDay:
         }
 
     @pytest.mark.asyncio
-    async def test_a_second_helping_is_turned_away_while_there_is_a_try_left(self):
-        """Chicken at noon and chicken at night costs a try, not a slot."""
+    async def test_a_name_that_gives_the_protein_away_costs_no_try_at_all(self):
+        """Reordering the names catches it before anything is cooked."""
         chicken = {"name": "chicken breast", "protein": 38}
         salmon = {"name": "salmon fillet", "protein": 30, "fat": 18}
         model = _Model(
@@ -722,6 +723,46 @@ class TestTwiceTheSameProteinInOneDay:
         )
 
         assert sorted(d.name for d in week.dishes.values()) == ["Cá hấp", "Gà nướng"]
+        assert week.rejected == ()
+
+    @pytest.mark.asyncio
+    async def test_a_name_that_hides_its_protein_is_caught_after_cooking(self):
+        """Reordering cannot place "Lunch bowl"; the priced lines can."""
+        chicken = {"name": "chicken breast", "protein": 38}
+        salmon = {"name": "salmon fillet", "protein": 30, "fat": 18}
+        model = _Model(
+            ["Lunch bowl", "Dinner bowl", "Dinner plate"],
+            recipes={
+                "Lunch bowl": self._of("Bữa trưa", chicken),
+                "Dinner bowl": self._of("Bữa tối một", chicken),
+                "Dinner plate": self._of("Bữa tối hai", salmon),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0,
+                    slot_index=1,
+                    meal_type="lunch",
+                    target_calories=600,
+                ),
+                DishRequest(
+                    day_index=0,
+                    slot_index=2,
+                    meal_type="dinner",
+                    target_calories=600,
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert sorted(d.name for d in week.dishes.values()) == [
+            "Bữa trưa",
+            "Bữa tối hai",
+        ]
         assert any(r.reasons == ("SAME_PROTEIN_TODAY_CHICKEN",) for r in week.rejected)
 
     @pytest.mark.asyncio
@@ -797,96 +838,113 @@ class TestASpareNameForTheLastSlot:
         assert "Generate 5 different" in model.prompts[0]
 
 
-class TestPickingFromTheRegionsOwnList:
-    """A model asked to invent names multiplies attributes: "Phở cá hồi"."""
+class TestTheCatalogueAsKnowledge:
+    """The catalogue is what this kitchen knows, not a style hint.
 
-    ROSTER = ("Phở bò", "Cháo gà", "Xôi đậu xanh", "Bánh cuốn nhân thịt")
+    The block used to end "Write your own dish. Do not reuse these names."
+    Measured against one catalogue sample, three wordings put 0, 19 and 20
+    of 21 real dishes on the table; the one that allowed nothing but the
+    list pasted a blog headline into a slot. This is the middle one.
+    """
 
-    def _requests_with(self, roster, count=2, slot=0, meal="breakfast"):
-        return tuple(
-            DishRequest(
-                day_index=day,
-                slot_index=slot,
-                meal_type=meal,
-                target_calories=450,
-                dishes=roster,
-            )
-            for day in range(count)
+    CATALOG = ("Thịt kho tàu", "Canh chua cá lóc", "Phở bò")
+
+    def test_the_catalogue_is_offered_rather_than_forbidden(self):
+        block = reference_block(self.CATALOG)
+
+        assert "Prefer a dish" in block
+        assert "Do not reuse these names" not in block
+
+    def test_a_headline_is_to_be_read_for_its_dish(self):
+        """A crawled table is only usable if the dish can be pulled out."""
+        block = reference_block(("Gỏi cuốn tôm thịt chuẩn vị miền Tây ai cũng mê",))
+
+        assert "take the dish out of it" in block
+        assert "not the headline" in block
+
+    def test_the_cross_product_that_made_pho_ca_hoi_is_named(self):
+        assert "combining one dish's base with another's protein" in (
+            reference_block(self.CATALOG)
         )
 
-    @pytest.mark.asyncio
-    async def test_a_region_with_a_list_spends_no_call_on_names(self):
-        model = _Model([])
-
-        week = await generate_week_of_dishes(
-            self._requests_with(self.ROSTER),
-            ask=model.ask,
-            seed=1,
-            new_id=lambda: "x",
-            **BUILDERS,
-        )
-
-        # Two slots, two recipe calls, and no names call at all.
-        assert len(model.prompts) == 2
-        assert all("Generate complete recipe" in p for p in model.prompts)
-        assert len(week.dishes) == 2
+    def test_a_dish_outside_the_list_must_still_be_a_real_one(self):
+        assert "a home cook here would recognise" in reference_block(self.CATALOG)
 
     @pytest.mark.asyncio
-    async def test_every_dish_comes_off_the_list(self):
-        model = _Model([])
-
-        week = await generate_week_of_dishes(
-            self._requests_with(self.ROSTER),
-            ask=model.ask,
-            seed=3,
-            new_id=lambda: "x",
-            **BUILDERS,
-        )
-
-        assert {d.name for d in week.dishes.values()} <= set(self.ROSTER)
-
-    @pytest.mark.asyncio
-    async def test_a_region_with_no_list_still_asks_a_model(self):
-        model = _Model(["Invented bowl", "Invented plate"])
+    async def test_each_meal_type_sees_its_own_catalogue_rows(self):
+        model = _Model(["Cháo gà", "Thịt kho tàu"])
 
         await generate_week_of_dishes(
-            self._requests_with(()),
+            (
+                DishRequest(
+                    day_index=0,
+                    slot_index=0,
+                    meal_type="breakfast",
+                    target_calories=450,
+                ),
+                DishRequest(
+                    day_index=0,
+                    slot_index=1,
+                    meal_type="lunch",
+                    target_calories=675,
+                ),
+            ),
             ask=model.ask,
+            reference_dishes={
+                "breakfast": ("Cháo gà", "Xôi xéo"),
+                "lunch": ("Thịt kho tàu", "Cá kho tộ"),
+            },
             new_id=lambda: "x",
             **BUILDERS,
         )
 
-        assert any("meals, each" in p for p in model.prompts)
+        names_calls = [p for p in model.prompts if "meals, each" in p]
+        assert len(names_calls) == 2
+        breakfast, lunch = names_calls
+        assert "Xôi xéo" in breakfast and "Cá kho tộ" not in breakfast
+        assert "Cá kho tộ" in lunch and "Xôi xéo" not in lunch
 
     @pytest.mark.asyncio
-    async def test_the_same_week_asked_twice_gets_the_same_dishes(self):
-        async def run():
-            model = _Model([])
-            week = await generate_week_of_dishes(
-                self._requests_with(self.ROSTER),
-                ask=model.ask,
-                seed=740000,
-                new_id=lambda: "x",
-                **BUILDERS,
-            )
-            return sorted(d.name for d in week.dishes.values())
+    async def test_a_flat_catalogue_is_shown_to_every_meal(self):
+        """The older shape still works; every meal type sees all of it."""
+        model = _Model(["Cháo gà"])
 
-        assert await run() == await run()
+        await generate_week_of_dishes(
+            _requests(1),
+            ask=model.ask,
+            reference_dishes=("Thịt kho tàu", "Canh chua cá lóc"),
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
 
-    @pytest.mark.asyncio
-    async def test_a_different_week_gets_different_dishes(self):
-        async def run(seed):
-            model = _Model([])
-            week = await generate_week_of_dishes(
-                self._requests_with(self.ROSTER, count=2),
-                ask=model.ask,
-                seed=seed,
-                new_id=lambda: "x",
-                **BUILDERS,
-            )
-            return [d.name for d in week.dishes.values()]
+        assert "Thịt kho tàu" in model.prompts[0]
 
-        assert await run(1) != await run(2)
+
+class TestOrderingWhatTheModelNamed:
+    """One answer names a whole meal type, knowing nothing of the days."""
+
+    def test_the_second_meal_steps_past_the_day_s_protein(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import _arrange_by_day
+
+        names = ["Gà kho gừng", "Cá kho tộ", "Bò lúc lắc"]
+
+        assert _arrange_by_day(names, ("chicken", "beef", "")) == [
+            "Cá kho tộ",
+            "Gà kho gừng",
+            "Bò lúc lắc",
+        ]
+
+    def test_nothing_to_avoid_leaves_the_order_alone(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import _arrange_by_day
+
+        names = ["Gà kho gừng", "Cá kho tộ"]
+        assert _arrange_by_day(names, ()) == names
+
+    def test_no_way_round_it_still_returns_every_name(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import _arrange_by_day
+
+        names = ["Gà kho gừng", "Gà rang muối"]
+        assert sorted(_arrange_by_day(names, ("chicken", "chicken"))) == sorted(names)
 
 
 class TestReadingTheProteinOffTheName:
@@ -913,120 +971,3 @@ class TestReadingTheProteinOffTheName:
         assert protein_of_name("Đậu hũ sốt cà chua") == "tofu"
         assert protein_of_name("Cà tím nướng mỡ hành") == ""
         assert protein_of_name("Cá basa kho tiêu") == "fish"
-
-    def test_every_dish_on_the_region_s_list_reads_the_same_way_twice(self):
-        """A list the picker cannot place is a list it picks blind from."""
-        from src.domain.model.weekly_meal_planner.meal_locale import VIETNAM
-        from src.domain.services.weekly_meal_planner.ai_dish import protein_of_name
-
-        placed = {
-            dish: protein_of_name(dish) for slot in VIETNAM.slot_dishes for dish in slot
-        }
-        named = [dish for dish, protein in placed.items() if protein]
-
-        # Most of the list is a protein dish, and every one that is must be
-        # placed, or the day-apart rule quietly stops working for it.
-        assert len(named) >= len(placed) * 0.7
-
-    @pytest.mark.asyncio
-    async def test_the_second_meal_of_a_day_steps_past_the_first_s_protein(self):
-        """Two chicken dishes in a row used to cost two calls to discover."""
-        # Wide enough that the pick has somewhere to go: lunch takes its
-        # name plus two spares before dinner looks.
-        roster = (
-            "Gà kho gừng",
-            "Gà kho sả ớt",
-            "Gà rang muối",
-            "Cá kho tộ",
-            "Cá basa kho tiêu",
-            "Bò lúc lắc",
-            "Bò kho",
-            "Tôm rang me",
-        )
-        # The fake cooks what its name says, as the real model does.
-        meat = {
-            "Gà kho gừng": "chicken breast",
-            "Gà kho sả ớt": "chicken thigh",
-            "Gà rang muối": "chicken wing",
-            "Cá kho tộ": "catfish",
-            "Cá basa kho tiêu": "basa fish",
-            "Bò lúc lắc": "beef sirloin",
-            "Bò kho": "beef shank",
-            "Tôm rang me": "shrimp",
-        }
-        model = _Model(
-            [],
-            recipes={
-                name: {
-                    "name": name,
-                    "ingredients": [
-                        {"name": cut, "amount": 150, "unit": "g", "protein": 35},
-                        {"name": "carrot", "amount": 80, "unit": "g", "carbs": 8},
-                    ],
-                    "recipe_steps": [{"instruction": "Nấu chín kỹ rồi dọn ra."}],
-                }
-                for name, cut in meat.items()
-            },
-        )
-
-        week = await generate_week_of_dishes(
-            (
-                DishRequest(
-                    day_index=0,
-                    slot_index=1,
-                    meal_type="lunch",
-                    target_calories=600,
-                    dishes=roster,
-                ),
-                DishRequest(
-                    day_index=0,
-                    slot_index=2,
-                    meal_type="dinner",
-                    target_calories=600,
-                    dishes=roster,
-                ),
-            ),
-            ask=model.ask,
-            seed=1,
-            new_id=lambda: "x",
-            **BUILDERS,
-        )
-
-        from src.domain.services.weekly_meal_planner.ai_dish import main_protein
-
-        assert len(week.dishes) == 2
-        proteins = [main_protein(d) for d in week.dishes.values()]
-        assert proteins[0] != proteins[1]
-        # Nothing was cooked and thrown away to learn it.
-        assert not any("SAME_PROTEIN" in r for d in week.rejected for r in d.reasons)
-
-    @pytest.mark.asyncio
-    async def test_a_list_too_short_to_step_aside_still_fills_the_slot(self):
-        """An empty slot is worse than two chicken dishes in a day."""
-        roster = ("Gà kho gừng", "Gà kho sả ớt", "Gà rang muối", "Gà luộc lá chanh")
-        model = _Model([])
-
-        week = await generate_week_of_dishes(
-            (
-                DishRequest(
-                    day_index=0,
-                    slot_index=1,
-                    meal_type="lunch",
-                    target_calories=600,
-                    dishes=roster,
-                ),
-                DishRequest(
-                    day_index=0,
-                    slot_index=2,
-                    meal_type="dinner",
-                    target_calories=600,
-                    dishes=roster,
-                ),
-            ),
-            ask=model.ask,
-            seed=1,
-            new_id=lambda: "x",
-            **BUILDERS,
-        )
-
-        assert len(week.dishes) == 2

@@ -26,8 +26,10 @@ from src.domain.services.weekly_meal_planner.ai_dish import (
 
 logger = logging.getLogger(__name__)
 
-# How many catalogue dishes are worth showing the model as a hint.
-REFERENCE_DISH_LIMIT = 8
+# How many catalogue rows each meal type is shown. The catalogue is this
+# kitchen's knowledge now, not a style hint, so a meal type needs enough of
+# it to find seven distinct dishes among rows that include headlines.
+REFERENCE_DISH_LIMIT = 40
 
 
 @handles(WriteWeeklyPlanDishesCommand)
@@ -54,9 +56,6 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
 
         week = await generate_week_of_dishes(
             _requests(command),
-            # The week's own date, so asking twice for one week gives the
-            # same dishes and the week after gives different ones.
-            seed=command.week_start_date.toordinal(),
             ask=self._ask,
             price=self._price if self._nutrition is not None else None,
             build_names_prompt=PromptTemplateManager.build_discovery_prompt,
@@ -123,7 +122,6 @@ def _requests(command: WriteWeeklyPlanDishesCommand) -> tuple[DishRequest, ...]:
                     fat=_share(command.daily_fat, share),
                     note=locale.slot_note(index),
                     minutes=locale.breakfast_minutes if index == 0 else None,
-                    dishes=locale.dishes_for(index),
                 )
             )
     return tuple(requests)
@@ -133,19 +131,36 @@ def _share(total: float | None, share: float) -> float | None:
     return round(total * share, 1) if total else None
 
 
-async def _reference_dishes(uow) -> tuple[str, ...]:
-    """A few catalogue names, shown as a hint and never as an answer."""
+async def _reference_dishes(uow) -> dict[str, tuple[str, ...]]:
+    """The catalogue this kitchen cooks from, split by the meal it suits.
+
+    A row carries its own ``meal_types``, so breakfast is shown breakfast
+    rows. A row that says nothing is shown to every meal: an untagged
+    catalogue should still be usable, just less precisely.
+    """
     repo = getattr(uow, "catalog_recipes", None)
     lister = getattr(repo, "list_selection_candidates", None)
     if lister is None:
-        return ()
+        return {}
     try:
         meals = await lister()
-    except Exception:  # noqa: BLE001 - a hint is never worth failing a week
+    except Exception:  # noqa: BLE001 - never worth failing a week over
         logger.warning("Could not read catalogue dishes for the planner prompt")
-        return ()
-    names = [str(meal.name).strip() for meal in meals if getattr(meal, "name", "")]
-    return tuple(names[:REFERENCE_DISH_LIMIT])
+        return {}
+
+    by_meal: dict[str, list[str]] = {meal: [] for meal in SLOT_MEAL_TYPES}
+    for meal in meals:
+        name = str(getattr(meal, "name", "") or "").strip()
+        if not name:
+            continue
+        tags = {
+            str(tag).strip().casefold() for tag in getattr(meal, "meal_types", ()) or ()
+        }
+        wanted = tags & set(SLOT_MEAL_TYPES) or set(SLOT_MEAL_TYPES)
+        for meal_type in wanted:
+            if len(by_meal[meal_type]) < REFERENCE_DISH_LIMIT:
+                by_meal[meal_type].append(name)
+    return {meal: tuple(names) for meal, names in by_meal.items() if names}
 
 
 async def _memory_text(uow, command: WriteWeeklyPlanDishesCommand) -> str:
