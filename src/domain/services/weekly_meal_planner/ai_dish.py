@@ -338,9 +338,65 @@ DISH_RECIPE_SYSTEM = (
 # A rejected dish gets one replacement; a model that writes an unsafe recipe
 # twice for the same slot is not going to write a safe one on the third try.
 MAX_DISH_ATTEMPTS = 2
+# Names asked for beyond the slots that need them. One call writes a meal
+# type's names and the last slot gets whatever is left, so a single repeat
+# earlier in the list used to leave it with nothing and the day short a
+# dish. Two spares cost about twenty tokens and give every slot a fallback.
+NAME_SPARES = 2
+# A dish turned away only for repeating the day's protein buys its slot one
+# more try. Preferring a second protein is not the same as failing: counted
+# against the ordinary budget it cost two dinners their dish outright, which
+# is the trade this rule exists to avoid.
+PROTEIN_RETRY_BONUS = 1
 # How many reference dishes are worth showing. More is noise, and the
 # catalogue is crawled, so these are a hint and never an instruction.
 MAX_REFERENCE_DISHES = 8
+
+
+# The protein a dish is built on, as the ingredient names say it. These are
+# the English pricing keys, so the list stays English however the week reads.
+# "chicken thigh" and "chicken breast" are one protein: a day that eats both
+# ate chicken twice, whatever the two dishes were called.
+PROTEIN_FAMILIES = (
+    "chicken",
+    "pork",
+    "beef",
+    "duck",
+    "turkey",
+    "lamb",
+    "salmon",
+    "tuna",
+    "mackerel",
+    "fish",
+    "shrimp",
+    "prawn",
+    "squid",
+    "crab",
+    "clam",
+    "tofu",
+    "tempeh",
+    "egg",
+    "lentil",
+    "chickpea",
+    "bean",
+)
+
+
+def main_protein(snapshot: SavedRecipeSnapshot) -> str:
+    """What this dish is built on, or "" when nothing stands out.
+
+    Read off the priced lines rather than the dish name: the name is the
+    model's prose and may be in any language, while the lines carry real
+    grams of protein against canonical English names.
+    """
+    best, most = "", 0.0
+    for line in snapshot.ingredients:
+        grams = float(line.protein or 0.0)
+        if grams > most:
+            best, most = str(line.name or "").casefold(), grams
+    if not best:
+        return ""
+    return next((family for family in PROTEIN_FAMILIES if family in best), best)
 
 
 @dataclass(frozen=True)
@@ -394,6 +450,17 @@ def reference_block(names: tuple[str, ...]) -> str:
     )
 
 
+def _day_so_far_block(eaten: tuple[str, ...]) -> str:
+    """What this day already holds, so the next meal is not the same again."""
+    usable = [item for item in eaten if item]
+    if not usable:
+        return ""
+    return (
+        f"\nEarlier today this person eats: {', '.join(usable)}."
+        "\nBuild this meal on a different main protein."
+    )
+
+
 def _slot_note_block(note: str) -> str:
     """What this slot is in the user's region, for the prompt."""
     stripped = (note or "").strip()
@@ -435,7 +502,7 @@ def language_block(language: str | None) -> str:
         " cook would say."
         f'\nAdd a "local_name" field holding the dish name in {name} — the name'
         " a home cook would call this dish, not a word-for-word translation."
-        "\nKeep each ingredient's \"name\" in plain English, and give each one a"
+        '\nKeep each ingredient\'s "name" in plain English, and give each one a'
         f' "local_name" holding what that ingredient is called in {name}.'
     )
 
@@ -502,10 +569,24 @@ async def generate_week_of_dishes(
     rejected: list[RejectedDish] = []
     unfilled: list[tuple[int, int]] = []
     taken: set[str] = set()
-    # The English working names already handed out. ``taken`` holds the
+    # Every English working name handed to the model, so the next meal
+    # type's call can be told not to write them again. ``taken`` holds the
     # stored names, which are Vietnamese for a Vietnamese week, so it cannot
-    # tell the next meal type's English call what it has already written.
+    # do this job.
     offered: set[str] = set()
+    # The working names a slot actually spent. A slot used to be able to ask
+    # for a name another slot had already cooked — the candidate filter
+    # compared English working names against Vietnamese stored ones and so
+    # never matched anything — and the attempt was lost to
+    # ALREADY_IN_THE_WEEK before a different name was ever tried.
+    used: set[str] = set()
+    # Per day, the main protein of every dish already placed, and the names
+    # of those dishes. Meal types are written one at a time — every
+    # breakfast, then every lunch — so without this a day's dinner knows
+    # nothing of its own lunch, and the week served "Cơm xào bò húng quế"
+    # at noon and "Cơm áp chảo bò húng quế" at night.
+    day_proteins: dict[int, set[str]] = {}
+    day_dishes: dict[int, list[str]] = {}
     hint = reference_block(reference_dishes) + _memory_block(memory_text)
 
     by_meal: dict[str, list[DishRequest]] = {}
@@ -529,10 +610,13 @@ async def generate_week_of_dishes(
                 ask=ask,
                 build_recipe_prompt=build_recipe_prompt,
                 names=names[index:],
+                used=used,
                 price=price,
                 cuisine_region=cuisine_region,
                 language=language,
                 taken=taken,
+                eaten_today=tuple(day_dishes.get(request.day_index, ())),
+                proteins_today=frozenset(day_proteins.get(request.day_index, ())),
                 rejected=rejected,
                 mint=mint,
             )
@@ -541,6 +625,10 @@ async def generate_week_of_dishes(
                 continue
             dishes[request.slot] = snapshot
             taken.add(dish_key(snapshot.name))
+            day_dishes.setdefault(request.day_index, []).append(snapshot.name)
+            protein = main_protein(snapshot)
+            if protein:
+                day_proteins.setdefault(request.day_index, set()).add(protein)
 
     return WeekOfDishes(
         dishes=dishes, rejected=tuple(rejected), unfilled=tuple(unfilled)
@@ -558,10 +646,11 @@ async def _dish_names(
     taken,
 ) -> list[str]:
     """One call for this meal type's names, in the order the slots want them."""
+    wanted = len(slots) + NAME_SPARES
     prompt = build_names_prompt(
         meal_type=meal_type,
         target_calories=int(slots[0].target_calories),
-        count=len(slots),
+        count=wanted,
         cuisine_region=cuisine_region,
         exclude_meal_names=sorted(taken) or None,
     )
@@ -569,7 +658,7 @@ async def _dish_names(
     try:
         answer = await ask(
             prompt + note + VARIETY_RULE + hint,
-            DISH_NAME_SYSTEM.format(count=len(slots)),
+            DISH_NAME_SYSTEM.format(count=wanted),
         )
     except Exception:  # noqa: BLE001 - a slot can still ask for its own dish
         return []
@@ -593,21 +682,25 @@ async def _dish_for_slot(
     ask,
     build_recipe_prompt,
     names: list[str],
+    used: set[str],
     price,
     cuisine_region,
     language,
     taken: set[str],
+    eaten_today: tuple[str, ...] = (),
+    proteins_today: frozenset[str] = frozenset(),
     rejected: list[RejectedDish],
     mint,
 ) -> SavedRecipeSnapshot | None:
     """The dish this slot keeps, after at most MAX_DISH_ATTEMPTS tries."""
-    candidates = [name for name in names if dish_key(name) not in taken]
+    candidates = [name for name in names if dish_key(name) not in taken | used]
     if names and not candidates:
         # Every name offered is already on the table this week. Asking again
         # with no name invites the model to repeat itself a third time.
         rejected.append(RejectedDish(name=names[0], reasons=("ALREADY_IN_THE_WEEK",)))
         return None
-    for attempt in range(MAX_DISH_ATTEMPTS):
+    attempt, budget, bonus = 0, MAX_DISH_ATTEMPTS, PROTEIN_RETRY_BONUS
+    while attempt < budget:
         name = candidates[attempt] if attempt < len(candidates) else None
         prompt = build_recipe_prompt(
             meal_name=name or "",
@@ -619,10 +712,12 @@ async def _dish_for_slot(
             carbs_target=request.carbs,
             fat_target=request.fat,
         )
+        attempt += 1
         try:
             payload = await ask(
                 prompt
                 + _slot_note_block(request.note)
+                + _day_so_far_block(eaten_today)
                 + COOKING_FAT_RULE
                 + ("" if name else NAME_IT_YOURSELF_RULE)
                 + language_block(language),
@@ -651,7 +746,35 @@ async def _dish_for_slot(
                 )
                 continue
         reasons = review_ai_dish(snapshot, taken=frozenset(taken))
+        if (
+            not reasons
+            and attempt < len(candidates)
+            and _repeats_today(snapshot, proteins_today)
+        ):
+            # Only while another name is left to try. A second helping of
+            # chicken is a worse week; an empty slot is a broken one, so the
+            # last name standing is taken whatever it is built on. The try
+            # is given back once, so the extra name can actually be reached.
+            budget += bonus
+            bonus = 0
+            rejected.append(
+                RejectedDish(
+                    name=snapshot.name,
+                    reasons=(f"SAME_PROTEIN_TODAY_{main_protein(snapshot).upper()}",),
+                )
+            )
+            continue
         if not reasons:
+            if name:
+                used.add(dish_key(name))
             return snapshot
         rejected.append(RejectedDish(name=snapshot.name, reasons=reasons))
     return None
+
+
+def _repeats_today(
+    snapshot: SavedRecipeSnapshot, proteins_today: frozenset[str]
+) -> bool:
+    """Whether this dish eats again what the day has already eaten."""
+    protein = main_protein(snapshot)
+    return bool(protein) and protein in proteins_today

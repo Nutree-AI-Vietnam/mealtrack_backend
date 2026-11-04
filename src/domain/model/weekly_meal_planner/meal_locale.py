@@ -124,6 +124,10 @@ VIETNAM = MealLocale(
         " yogurt, eggs, a bread roll, or a bowl of pho, chao, xoi or banh mi"
         " eaten as it comes. Not a cooked rice plate, and nothing grilled or"
         " marinated. Three to five ingredients, little or no cooking."
+        # Given the list and nothing else, the model picked one item and
+        # wrote it six mornings running — banh mi and a fried egg, all week.
+        " Each morning starts from a different one of those: do not build"
+        " two breakfasts in this list on the same base."
     ),
     breakfast_minutes=15,
 )
@@ -150,6 +154,8 @@ GENERIC = MealLocale(
     breakfast_note=(
         "Breakfast on a weekday is quick and light: oats, yogurt, fruit,"
         " eggs or bread. Three to five ingredients, little or no cooking."
+        " Each morning starts from a different one of those: do not build"
+        " two breakfasts in this list on the same base."
     ),
     breakfast_minutes=15,
 )

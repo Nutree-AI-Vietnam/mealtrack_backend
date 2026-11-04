@@ -540,3 +540,241 @@ class TestTheSameDishNamedTwice:
 
         names = sorted(dish.name for dish in week.dishes.values())
         assert names == ["Canh gừng đậu hũ", "Thịt heo nướng sả"]
+
+
+class TestTwiceTheSameProteinInOneDay:
+    """Meal types are written one at a time, so a day must remember itself."""
+
+    def test_the_protein_is_read_off_the_priced_lines(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            main_protein,
+            snapshot_from_ai_recipe,
+        )
+
+        snapshot = snapshot_from_ai_recipe(
+            {
+                "name": "Cơm gà",
+                "ingredients": [
+                    {
+                        "name": "jasmine rice",
+                        "amount": 200,
+                        "unit": "g",
+                        "protein": 5,
+                        "carbs": 56,
+                    },
+                    {
+                        "name": "chicken thigh",
+                        "amount": 150,
+                        "unit": "g",
+                        "protein": 38,
+                    },
+                ],
+                "recipe_steps": [{"instruction": "Nấu cơm."}],
+            },
+            dish_id="ai-1",
+        )
+
+        assert main_protein(snapshot) == "chicken"
+
+    def test_a_cut_does_not_make_a_second_protein(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            main_protein,
+            snapshot_from_ai_recipe,
+        )
+
+        def dish(cut):
+            return snapshot_from_ai_recipe(
+                {
+                    "name": cut,
+                    "ingredients": [
+                        {"name": cut, "amount": 150, "unit": "g", "protein": 38},
+                        {"name": "carrot", "amount": 60, "unit": "g", "carbs": 6},
+                    ],
+                    "recipe_steps": [{"instruction": "Nấu."}],
+                },
+                dish_id="ai-1",
+            )
+
+        assert main_protein(dish("chicken thigh")) == main_protein(
+            dish("chicken breast")
+        )
+
+    def test_a_dish_with_no_protein_names_none(self):
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            main_protein,
+            snapshot_from_ai_recipe,
+        )
+
+        snapshot = snapshot_from_ai_recipe(
+            {
+                "name": "Rau luộc",
+                "ingredients": [
+                    {"name": "bok choy", "amount": 200, "unit": "g", "carbs": 4},
+                    {"name": "carrot", "amount": 60, "unit": "g", "carbs": 6},
+                ],
+                "recipe_steps": [{"instruction": "Luộc rau."}],
+            },
+            dish_id="ai-1",
+        )
+
+        assert main_protein(snapshot) == ""
+
+    @pytest.mark.asyncio
+    async def test_dinner_is_told_what_lunch_was(self):
+        model = _Model(["Lunch bowl", "Dinner plate"])
+
+        await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0, slot_index=1, meal_type="lunch", target_calories=600
+                ),
+                DishRequest(
+                    day_index=0, slot_index=2, meal_type="dinner", target_calories=600
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        dinner_prompt = model.prompts[-1]
+        assert "Earlier today this person eats" in dinner_prompt
+        assert "different main protein" in dinner_prompt
+
+    @pytest.mark.asyncio
+    async def test_the_first_meal_of_a_day_is_told_nothing(self):
+        model = _Model(["Lunch bowl"])
+
+        await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0, slot_index=1, meal_type="lunch", target_calories=600
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert "Earlier today" not in model.prompts[1]
+
+    @staticmethod
+    def _of(name, protein_line):
+        """A distinct dish, so the week's name check is not what fires."""
+        return {
+            "name": name,
+            "ingredients": [
+                {**protein_line, "amount": 150, "unit": "g"},
+                {"name": "carrot", "amount": 80, "unit": "g", "carbs": 8},
+            ],
+            "recipe_steps": [{"instruction": "Nấu chín kỹ rồi dọn ra."}],
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_second_helping_is_turned_away_while_there_is_a_try_left(self):
+        """Chicken at noon and chicken at night costs a try, not a slot."""
+        chicken = {"name": "chicken breast", "protein": 38}
+        salmon = {"name": "salmon fillet", "protein": 30, "fat": 18}
+        model = _Model(
+            ["Chicken lunch", "Chicken dinner", "Fish dinner"],
+            recipes={
+                "Chicken lunch": self._of("Gà nướng", chicken),
+                "Chicken dinner": self._of("Gà kho", chicken),
+                "Fish dinner": self._of("Cá hấp", salmon),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0,
+                    slot_index=1,
+                    meal_type="lunch",
+                    target_calories=600,
+                ),
+                DishRequest(
+                    day_index=0,
+                    slot_index=2,
+                    meal_type="dinner",
+                    target_calories=600,
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert sorted(d.name for d in week.dishes.values()) == ["Cá hấp", "Gà nướng"]
+        assert any(r.reasons == ("SAME_PROTEIN_TODAY_CHICKEN",) for r in week.rejected)
+
+    @pytest.mark.asyncio
+    async def test_the_last_try_takes_what_it_is_given(self):
+        """An empty slot is worse than a second helping of chicken."""
+        chicken = {"name": "chicken breast", "protein": 38}
+        model = _Model(
+            ["Chicken lunch", "Chicken dinner", "More chicken"],
+            recipes={
+                "Chicken lunch": self._of("Gà nướng", chicken),
+                "Chicken dinner": self._of("Gà kho", chicken),
+                # Not a stir-fry: "xào" with no oil trips the safety gate,
+                # which would hide what this test is about.
+                "More chicken": self._of("Gà luộc", chicken),
+            },
+        )
+
+        week = await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0,
+                    slot_index=1,
+                    meal_type="lunch",
+                    target_calories=600,
+                ),
+                DishRequest(
+                    day_index=0,
+                    slot_index=2,
+                    meal_type="dinner",
+                    target_calories=600,
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert week.unfilled == ()
+        assert sorted(d.name for d in week.dishes.values()) == ["Gà luộc", "Gà nướng"]
+        assert [r.reasons for r in week.rejected] == [("SAME_PROTEIN_TODAY_CHICKEN",)]
+
+    @pytest.mark.asyncio
+    async def test_another_day_may_eat_the_same_protein(self):
+        """Variety is a rule about one day, not about the week."""
+        model = _Model(["Chicken one", "Chicken two"])
+
+        week = await generate_week_of_dishes(
+            (
+                DishRequest(
+                    day_index=0, slot_index=1, meal_type="lunch", target_calories=600
+                ),
+                DishRequest(
+                    day_index=1, slot_index=1, meal_type="lunch", target_calories=600
+                ),
+            ),
+            ask=model.ask,
+            new_id=lambda: "x",
+            **BUILDERS,
+        )
+
+        assert len(week.dishes) == 2
+
+
+class TestASpareNameForTheLastSlot:
+    @pytest.mark.asyncio
+    async def test_more_names_are_asked_for_than_slots_need(self):
+        model = _Model(["A", "B", "C", "D", "E"])
+
+        await generate_week_of_dishes(
+            _requests(3), ask=model.ask, new_id=lambda: "x", **BUILDERS
+        )
+
+        assert "Generate 5 different" in model.prompts[0]
