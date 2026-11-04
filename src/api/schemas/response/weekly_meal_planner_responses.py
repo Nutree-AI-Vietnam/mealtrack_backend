@@ -42,6 +42,25 @@ class WeeklyMealSlotResponse(BaseModel):
     # "diary": an existing diary meal was linked (unlog keeps it).
     log_source: Literal["plan", "diary"] | None = None
     is_skipped: bool = False
+    # What the plan asks the user to eat: how much of the dish, and the rice
+    # beside it in 55 g half-bowl servings. Logging defaults to these.
+    planned_portion: float = 1.0
+    planned_rice_steps: int = 0
+    planned_rice_grams: int = 0
+
+
+class WeeklyDaySummaryResponse(BaseModel):
+    """What a planned day adds up to, and what it still leaves on the table."""
+
+    day_index: int
+    # Calories the planned meals come to, at their planned portions and rice.
+    planned_calories: int
+    # The day's target, when the plan was generated with one.
+    target_calories: int | None = None
+    # Calories still short of the target, rounded to the nearest 10 and only
+    # when the gap is worth eating. Null when the day is on target or over,
+    # so a client can show "an them bua phu" on exactly these days.
+    snack_calories: int | None = None
 
 
 class WeeklyMealPlanResponse(BaseModel):
@@ -52,6 +71,8 @@ class WeeklyMealPlanResponse(BaseModel):
     people: int
     preferences: dict
     plan: list[list[WeeklyMealSlotResponse]]
+    # One entry per day, in day order.
+    days: list[WeeklyDaySummaryResponse] = Field(default_factory=list)
     total_meals_planned: int
     to_buy_count: int | None = None
     # How the week was selected: "v2", or "v3-compact" when each dinner is

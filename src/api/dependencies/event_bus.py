@@ -37,12 +37,6 @@ from src.app.commands.meal_planner import (
     UpdateMealPlanPantryStockCommand,
     UpdateWeeklyMealPlanCommand,
 )
-from src.app.commands.meal_recommendation import (
-    CreateThreeDayMealRecommendationCommand,
-    LogRecommendedMealCommand,
-    SkipMealRecommendationSlotCommand,
-    SwapMealRecommendationSlotCommand,
-)
 from src.app.commands.meal_suggestion import (
     DiscoverMealsCommand,
     GenerateMealRecipesCommand,
@@ -101,8 +95,8 @@ from src.app.handlers.command_handlers import (
     DescribeMovementCommandHandler,
     DiscoverMealsCommandHandler,
     EditMealCommandHandler,
-    FixMealResultCommandHandler,
     FavoriteMealCommandHandler,
+    FixMealResultCommandHandler,
     GenerateMealRecipesCommandHandler,
     LogMovementCommandHandler,
     ParseMealTextHandler,
@@ -151,12 +145,6 @@ from src.app.handlers.command_handlers.meal_planner import (
     UpdateMealPlanPantryStockCommandHandler,
     UpdateWeeklyMealPlanCommandHandler,
 )
-from src.app.handlers.command_handlers.meal_recommendation import (
-    CreateThreeDayMealRecommendationCommandHandler,
-    LogRecommendedMealCommandHandler,
-    SkipMealRecommendationSlotCommandHandler,
-    SwapMealRecommendationSlotCommandHandler,
-)
 from src.app.handlers.command_handlers.sync_weight_entries_command_handler import (
     SyncWeightEntriesCommandHandler,
 )
@@ -204,12 +192,6 @@ from src.app.handlers.query_handlers.get_activities_presence_query_handler impor
 )
 from src.app.handlers.query_handlers.get_cheat_days_query_handler import (
     GetCheatDaysQueryHandler,
-)
-from src.app.handlers.query_handlers.get_meal_recommendation_plan_query_handler import (
-    GetMealRecommendationPlanQueryHandler,
-)
-from src.app.handlers.query_handlers.get_meal_recommendation_slot_detail_query_handler import (
-    GetMealRecommendationSlotDetailQueryHandler,
 )
 from src.app.handlers.query_handlers.get_nutrition_bulk_query_handler import (
     GetNutritionBulkQueryHandler,
@@ -260,10 +242,6 @@ from src.app.queries.meal_planner import (
     GetWeeklyGroceriesQuery,
     ListRecipesQuery,
 )
-from src.app.queries.meal_recommendation import (
-    GetMealRecommendationPlanQuery,
-    GetMealRecommendationSlotDetailQuery,
-)
 from src.app.queries.movement import GetDailyMovementQuery, GetMovementCatalogQuery
 from src.app.queries.notification import GetNotificationPreferencesQuery
 from src.app.queries.nutrition import GetActivitiesPresenceQuery, GetNutritionBulkQuery
@@ -297,9 +275,6 @@ from src.app.services.food_search_background_completion import (
     FoodSearchBackgroundCompletions,
 )
 from src.app.services.food_search_translation_cache import CachedTextTranslation
-from src.app.services.meal_recommendation_history_projector import (
-    MealRecommendationHistoryProjector,
-)
 from src.bootstrap.integration_services import get_integration_event_publisher
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceSearchProjection,
@@ -564,9 +539,6 @@ def get_configured_event_bus() -> EventBus:
         FoodReferenceValidationService,
     )
     from src.app.services.meal_analyze_workflow import MealAnalyzeWorkflow
-    from src.domain.services.meal_recommendation.three_day_plan_optimizer import (
-        ThreeDayPlanOptimizer,
-    )
     from src.infra.database.uow_async import AsyncUnitOfWork
 
     queue_publisher = get_integration_event_publisher()
@@ -577,7 +549,6 @@ def get_configured_event_bus() -> EventBus:
     from src.api.base_dependencies import get_catalog_meal_snapshot_service
 
     recommendation_snapshot = get_catalog_meal_snapshot_service()
-    recommendation_history = MealRecommendationHistoryProjector()
     graph_settings = get_meal_analyze_graph_settings()
 
     async def find_food_references_by_normalized_names(
@@ -929,37 +900,7 @@ def get_configured_event_bus() -> EventBus:
 
     event_bus.register_handler(GetMealsByDateQuery, GetMealsByDateQueryHandler())
 
-    event_bus.register_handler(
-        CreateThreeDayMealRecommendationCommand,
-        CreateThreeDayMealRecommendationCommandHandler(
-            uow_factory=AsyncUnitOfWork,
-            optimizer=ThreeDayPlanOptimizer(),
-            catalog_snapshot_service=recommendation_snapshot,
-        ),
-    )
-    event_bus.register_handler(
-        SwapMealRecommendationSlotCommand,
-        SwapMealRecommendationSlotCommandHandler(
-            uow_factory=AsyncUnitOfWork,
-            optimizer=ThreeDayPlanOptimizer(),
-            catalog_snapshot_service=recommendation_snapshot,
-            history_projector=recommendation_history,
-        ),
-    )
-    event_bus.register_handler(
-        LogRecommendedMealCommand,
-        LogRecommendedMealCommandHandler(
-            uow_factory=AsyncUnitOfWork,
-            meal_translation_service=meal_translation_service,
-            event_publisher=queue_publisher,
-            event_bus=event_bus,
-            environment=settings.ENVIRONMENT,
-        ),
-    )
     from src.api.base_dependencies import get_catalog_meal_browse_service
-    from src.app.services.remaining_recommendation_recalculator import (
-        RemainingRecommendationRecalculator,
-    )
 
     event_bus.register_handler(
         LogCatalogMealCommand,
@@ -970,12 +911,6 @@ def get_configured_event_bus() -> EventBus:
             event_publisher=queue_publisher,
             event_bus=event_bus,
             environment=settings.ENVIRONMENT,
-            recalculator=RemainingRecommendationRecalculator(
-                AsyncUnitOfWork,
-                optimizer=ThreeDayPlanOptimizer(),
-                snapshot_service=recommendation_snapshot,
-                history_projector=recommendation_history,
-            ),
         ),
     )
     event_bus.register_handler(
@@ -984,18 +919,6 @@ def get_configured_event_bus() -> EventBus:
             AsyncUnitOfWork,
             recommendation_snapshot,
         ),
-    )
-    event_bus.register_handler(
-        SkipMealRecommendationSlotCommand,
-        SkipMealRecommendationSlotCommandHandler(uow_factory=AsyncUnitOfWork),
-    )
-    event_bus.register_handler(
-        GetMealRecommendationPlanQuery,
-        GetMealRecommendationPlanQueryHandler(AsyncUnitOfWork),
-    )
-    event_bus.register_handler(
-        GetMealRecommendationSlotDetailQuery,
-        GetMealRecommendationSlotDetailQueryHandler(AsyncUnitOfWork),
     )
 
     # Recipe detail overlays micronutrients prepared at catalog import.
@@ -1009,6 +932,7 @@ def get_configured_event_bus() -> EventBus:
         GenerateWeeklyMealPlanCommandHandler(
             AsyncUnitOfWork,
             compact_week_percent=settings.MEAL_PLAN_COMPACT_WEEK_PERCENT,
+            basket_target=settings.MEAL_PLAN_BASKET_TARGET,
         ),
     )
     event_bus.register_handler(

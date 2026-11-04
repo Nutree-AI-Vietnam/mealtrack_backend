@@ -63,6 +63,9 @@ class TdeeRequest:
     training_level: TrainingLevel | None = None
     macro_preset: MacroPreset = MacroPreset.STANDARD
     weight_loss_kg_per_week: float | None = None
+    # Conditions that change what a safe target is, e.g. pregnancy or
+    # kidney disease. Empty means none were reported.
+    health_conditions: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Validate invariants."""
@@ -168,6 +171,10 @@ class TdeeResponse:
     macro_preset: MacroPreset = MacroPreset.STANDARD
     # Only for a cut goal.
     pace_range: PaceRange | None = None
+    # Set when a weight-loss goal was planned at maintenance instead:
+    # "minor", "underweight" or "health_condition". The goal field still
+    # echoes what the user asked for.
+    deficit_blocked_reason: str | None = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary format for API response."""
@@ -187,4 +194,6 @@ class TdeeResponse:
             result["formula_used"] = self.formula_used
         if self.pace_range:
             result["pace_range"] = self.pace_range.to_dict()
+        if self.deficit_blocked_reason:
+            result["deficit_blocked_reason"] = self.deficit_blocked_reason
         return result

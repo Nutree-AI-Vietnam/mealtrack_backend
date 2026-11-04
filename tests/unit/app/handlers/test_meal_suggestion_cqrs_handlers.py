@@ -647,7 +647,14 @@ def _recipe(recipe_id: str, name: str, calories: float) -> MealSuggestion:
         meal_type=MealType.LUNCH,
         macros=MacroEstimate(calories=calories, protein=30, carbs=20, fat=10),
         ingredients=[Ingredient(name="carp", amount=120, unit="g")],
-        recipe_steps=[RecipeStep(step=1, instruction="Cook.", duration_minutes=15)],
+        # A real step says the food is cooked; the safety review requires it.
+        recipe_steps=[
+            RecipeStep(
+                step=1,
+                instruction="Grill for 12 minutes until cooked through.",
+                duration_minutes=15,
+            )
+        ],
         prep_time_minutes=20,
         confidence_score=0.9,
     )

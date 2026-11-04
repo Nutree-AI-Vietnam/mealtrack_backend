@@ -10,6 +10,10 @@ from .saved_recipe import (
     SavedRecipeStep,
 )
 from .weekly_meal_plan import (
+    MAX_PLANNED_RICE_STEPS,
+    PLANNED_PORTIONS,
+    RICE_STEP_GRAMS,
+    RICE_STEP_MACROS,
     SLOT_LOG_SOURCE_DIARY,
     SLOT_LOG_SOURCE_PLAN,
     SLOT_MEAL_TYPES,
@@ -28,6 +32,10 @@ __all__ = [
     "SLOT_LOG_SOURCE_PLAN",
     "SLOT_MEAL_TYPES",
     "WEEKLY_DAYS",
+    "MAX_PLANNED_RICE_STEPS",
+    "PLANNED_PORTIONS",
+    "RICE_STEP_GRAMS",
+    "RICE_STEP_MACROS",
     "WEEKLY_PLAN_SLOT_COUNT",
     "WEEKLY_SLOTS_PER_DAY",
     "SavedRecipeIngredient",

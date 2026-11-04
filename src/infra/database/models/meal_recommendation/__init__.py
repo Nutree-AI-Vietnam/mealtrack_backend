@@ -19,10 +19,6 @@ from .catalog_recipe import (
     MealCatalogORM,
     MealCatalogStepORM,
 )
-from .meal_recommendation_plan import (
-    MealRecommendationOperationORM,
-    MealRecommendationORM,
-)
 
 __all__ = [
     "CatalogPreparationJobORM",
@@ -36,6 +32,4 @@ __all__ = [
     "MealCatalogORM",
     "MealCatalogStepORM",
     "MealCatalogMicronutrientEnrichmentORM",
-    "MealRecommendationORM",
-    "MealRecommendationOperationORM",
 ]

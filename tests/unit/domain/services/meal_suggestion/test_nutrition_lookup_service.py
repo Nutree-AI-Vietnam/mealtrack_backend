@@ -227,13 +227,15 @@ async def test_t1_t2_miss_uses_t3_ai_fallback(caplog):
 
 @pytest.mark.asyncio
 async def test_t3_ai_failure_returns_zero_macros_no_exception():
-    """T3 AI failure → zero macros returned, no exception bubbled."""
+    """T3 AI failure → zeros that say so, no exception bubbled."""
     svc = _make_service(ref_result=None, resolver_result=None, gen_result=None)
     # gen_result=None causes generate_meal_plan_async to raise RuntimeError
 
     result = await svc._lookup_ingredient("mystery ingredient", 50.0)
 
-    assert result.source_tier == "T3_ai_estimate"
+    # Not "T3_ai_estimate": nothing estimated anything. A zero wearing the
+    # name of a tier is a number nobody stands behind.
+    assert result.source_tier == "unresolved"
     assert result.calories == 0.0
     assert result.protein == 0.0
     assert result.carbs == 0.0
@@ -512,7 +514,8 @@ async def test_t3_ai_estimate_respects_10s_timeout():
     """_ai_estimate wraps generate_meal_plan_async in wait_for(timeout=10.0).
 
     Verify that when wait_for raises TimeoutError (the internal 10s budget),
-    _ai_estimate catches it and returns zero-macro fallback instead of propagating.
+    _ai_estimate catches it and returns an unresolved result rather than
+    propagating or passing zeros off as an estimate.
     """
     repo = MagicMock()
     repo.find_by_normalized_name.return_value = None
@@ -547,8 +550,8 @@ async def test_t3_ai_estimate_respects_10s_timeout():
     ):
         result = await svc._lookup_ingredient("slow ingredient", 50.0)
 
-    # TimeoutError caught → zero macros fallback, no exception propagated
-    assert result.source_tier == "T3_ai_estimate"
+    # TimeoutError caught → unresolved, no exception propagated
+    assert result.source_tier == "unresolved"
     assert result.calories == 0.0
 
 
@@ -662,3 +665,95 @@ async def test_chicken_fried_rice_realistic_totals():
     # Sanity: calories consistent with formula
     expected_cal = _derive_calories(meal.protein, meal.carbs, meal.fat, meal.fiber)
     assert meal.calories == pytest.approx(round(expected_cal, 1))
+
+
+# ---------------------------------------------------------------------------
+# No tier is believed on sight
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_impossible_t1_row_falls_through_to_t2():
+    """The live staging row: 475g protein and 475g fat in 100g of chicken."""
+    svc = _make_service(
+        ref_result=_make_ref(protein=475.0, carbs=0.0, fat=475.0),
+        resolver_result=PerHundredGramsMacros(protein=24.9, carbs=0.0, fat=15.4),
+    )
+
+    result = await svc._lookup_ingredient("chicken thigh, bone-in", 100.0)
+
+    assert result.source_tier == "T2_fatsecret"
+    assert result.protein == pytest.approx(24.9)
+    # 6175 kcal would have been served before the gate existed.
+    assert result.calories < 300
+
+
+@pytest.mark.asyncio
+async def test_impossible_t2_answer_falls_through_to_t3():
+    svc = _make_service(
+        ref_result=None,
+        resolver_result=PerHundredGramsMacros(protein=0.0, carbs=0.0, fat=900.0),
+        gen_result={"protein": 2.0, "carbs": 7.0, "fat": 0.5, "fiber": 1.0,
+                    "sugar": 3.0},
+    )
+
+    result = await svc._lookup_ingredient("lemongrass", 100.0)
+
+    assert result.source_tier == "T3_ai_estimate"
+    assert result.fat == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_impossible_t3_answer_is_not_served_at_all():
+    """Nothing is left below T3, so an impossible estimate becomes a zero."""
+    svc = _make_service(
+        ref_result=None,
+        resolver_result=None,
+        gen_result={"protein": 300.0, "carbs": 300.0, "fat": 300.0, "fiber": 0.0,
+                    "sugar": 0.0},
+    )
+
+    result = await svc._lookup_ingredient("mystery powder", 100.0)
+
+    assert result.source_tier == "unresolved"
+    assert result.calories == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_believable_t1_row_is_still_used():
+    """The gate is physics, not suspicion — ordinary food goes straight through."""
+    svc = _make_service(ref_result=_make_ref(protein=23.0, carbs=0.0, fat=2.5))
+
+    result = await svc._lookup_ingredient("chicken breast", 100.0)
+
+    assert result.source_tier == "T1_food_reference"
+    assert result.protein == pytest.approx(23.0)
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_ingredient_is_never_cached():
+    """A zero must not be written to Redis and served as a reading tomorrow."""
+    redis = MagicMock()
+    redis.get = AsyncMock(return_value=None)
+    redis.setex = AsyncMock()
+    svc = _make_service(
+        ref_result=None, resolver_result=None, gen_result=None, redis_client=redis
+    )
+
+    result = await svc._lookup_ingredient("mystery ingredient", 50.0)
+
+    assert result.source_tier == "unresolved"
+    redis.setex.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unresolved_ingredients_are_counted_on_the_meal():
+    svc = _make_service(ref_result=None, resolver_result=None, gen_result=None)
+    svc._find_batch_by_normalized_names = AsyncMock(return_value={})
+
+    meal = await svc.calculate_meal_macros(
+        [{"name": "mystery ingredient", "amount": 100, "unit": "g"}]
+    )
+
+    assert meal.unresolved_count == 1
+    assert meal.t3_count == 0

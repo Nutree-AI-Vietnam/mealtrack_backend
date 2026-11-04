@@ -31,6 +31,8 @@ LATER_COLUMNS = {
         "is_skipped",
         "saved_suggestion_id",
         "saved_recipe",
+        "planned_portion",
+        "planned_rice_steps",
     )
 }
 

@@ -77,4 +77,5 @@ async def preview_tdee(
         ),
         target_revision=result.get("target_revision", 0),
         pace_range=PaceRangeResponse.from_result(result),
+        deficit_blocked_reason=result.get("deficit_blocked_reason"),
     )

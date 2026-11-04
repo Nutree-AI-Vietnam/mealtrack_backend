@@ -20,9 +20,6 @@ from src.app.services.catalog_meal_log_service import (
     LogCatalogMealResult,
 )
 from src.app.services.meal_translation_persistence import persist_meal_translation
-from src.app.services.remaining_recommendation_recalculator import (
-    RemainingRecommendationRecalculator,
-)
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
 )
@@ -63,7 +60,6 @@ class LogCatalogMealCommandHandler(
         event_publisher: IntegrationEventPublisherPort | None = None,
         event_bus: Any | None = None,
         environment: str = "development",
-        recalculator: RemainingRecommendationRecalculator | None = None,
     ) -> None:
         self.uow_factory: Any = uow_factory or (lambda: uow)
         self.browse_service = browse_service
@@ -72,7 +68,6 @@ class LogCatalogMealCommandHandler(
         self.event_publisher = event_publisher
         self.event_bus = event_bus
         self.environment = environment
-        self.recalculator = recalculator
 
     async def handle(self, command: LogCatalogMealCommand) -> LogCatalogMealResult:
         try:
@@ -101,17 +96,6 @@ class LogCatalogMealCommandHandler(
             )
         except Exception as exc:
             logger.warning("Failed to persist catalog meal translation: %s", exc)
-        if self.recalculator is not None:
-            try:
-                await self.recalculator.recalculate(
-                    user_id=command.user_id,
-                    meal_date=command.meal_date,
-                    logged_catalog_meal_id=command.catalog_meal_id,
-                    logged_slot_id=result.slot_id,
-                    request_id=command.request_id,
-                )
-            except Exception as exc:
-                logger.warning("Failed to recalculate recommendations: %s", exc)
         logger.info(
             "catalog_log.timing meal_id=%s write_ms=%.0f",
             result.meal_id,

@@ -210,6 +210,8 @@ class TestTdeeServiceGoalSpecificMacros:
     def test_fat_clamped_to_min(self, service, base_request):
         """Verify fat is clamped to MIN_FAT_G for light users."""
         base_request.weight = 30  # 30kg * 0.8 = 24g < 40 min
+        # Short enough for BMI >= 18.5: underweight users get no deficit.
+        base_request.height = 125
         base_request.goal = Goal.CUT
         response = service.calculate_tdee(base_request)
 

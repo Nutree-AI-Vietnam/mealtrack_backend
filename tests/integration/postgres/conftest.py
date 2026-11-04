@@ -66,8 +66,6 @@ async def _truncate_test_tables(session: AsyncSession) -> None:
         text(
             """
             TRUNCATE TABLE
-              meal_recommendation_operations,
-              meal_recommendations,
               meal_catalog_ingredients,
               meal_catalog,
               food_reference,

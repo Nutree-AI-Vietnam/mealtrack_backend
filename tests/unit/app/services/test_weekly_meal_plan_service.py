@@ -1468,11 +1468,12 @@ async def test_week_proposal_keeps_a_logged_saved_slot_and_projects_its_grocerie
     changed = {(c["day_index"], c["slot_index"]): c for c in proposal.slot_changes}
     assert (1, 2) not in changed
     assert changed[(3, 2)]["previous_recipe_id"] == _SAVED_ID
-    # The logged saved recipe's chicken is still on the list (100 g a person).
+    # The logged saved recipe's chicken is still on the list (100 g a person),
+    # merged into the one chicken line with the catalog meal's 100 g.
     chicken = next(
-        item for item in proposal.proposed_groceries if item.ingredient_id == 3
+        item for item in proposal.proposed_groceries if item.name == "Chicken"
     )
-    assert chicken.total_needed == 100
+    assert chicken.total_needed == 200
 
 
 @pytest.mark.asyncio
@@ -1527,3 +1528,63 @@ async def test_regeneration_replaces_unlogged_saved_slots_and_keeps_logged_ones(
     assert (1, 2) not in slots
     assert slots[(2, 2)] in {"tofu", "lentils"}
     assert all(not value.startswith("saved:") for value in slots.values() if value)
+
+
+@pytest.mark.asyncio
+async def test_generate_applies_profile_allergies_in_vietnamese():
+    plan = _plan(recipe_id=None)
+    uow = _GenerateUow(
+        plan,
+        (
+            _meal("shrimp", "Tôm rang", allergen_codes=("shellfish",)),
+            _meal("chicken", "Gà luộc", allergen_codes=("egg",)),
+            _meal("tofu", "Đậu hũ sốt cà", allergen_codes=("soy",)),
+        ),
+        _Reservation("replay"),
+    )
+    uow.profile = SimpleNamespace(allergies=["tôm"], dietary_preferences=[])
+    service = WeeklyMealPlanService(lambda: uow)
+
+    await service.generate(_generate_command(plan))
+
+    assert uow.update_args["preferences"].allergies == ("shellfish",)
+    assert "shrimp" not in set(uow.update_args["slots"].values())
+
+
+@pytest.mark.asyncio
+async def test_generate_refuses_an_allergy_it_cannot_check():
+    plan = _plan(recipe_id=None)
+    uow = _GenerateUow(
+        plan,
+        (_meal("chicken", "Gà luộc", allergen_codes=("egg",)),),
+        _Reservation("replay"),
+    )
+    uow.profile = SimpleNamespace(allergies=["kiwi"], dietary_preferences=[])
+    service = WeeklyMealPlanService(lambda: uow)
+
+    with pytest.raises(ValidationException) as error:
+        await service.generate(_generate_command(plan))
+
+    assert error.value.error_code == "ALLERGY_UNRESOLVED"
+    assert uow.update_args is None
+
+
+def test_vegan_profile_plans_vegetarian_without_milk_or_egg():
+    preferences = weekly_meal_plan_service._resolve_plan_preferences(
+        WeeklyMealPlanPreferences(allergies=("peanuts",)),
+        SimpleNamespace(allergies=[], dietary_preferences=["vegan"]),
+        ("milk", "egg", "peanut"),
+    )
+
+    assert preferences.diet == "vegetarian"
+    assert preferences.allergies == ("egg", "milk", "peanut")
+
+
+def test_an_explicit_request_diet_wins_over_the_profile():
+    preferences = weekly_meal_plan_service._resolve_plan_preferences(
+        WeeklyMealPlanPreferences(diet="no-pork"),
+        SimpleNamespace(allergies=[], dietary_preferences=["vegetarian"]),
+        ("milk",),
+    )
+
+    assert preferences.diet == "no-pork"

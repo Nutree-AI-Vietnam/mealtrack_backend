@@ -4,6 +4,10 @@ Three-tier nutrition lookup orchestration service.
 Tier resolution order per ingredient:
   Redis — cached per-100g macros (24-hour TTL)
   T1 — exact match on food_reference.name_normalized (MySQL, no fuzzy)
+
+Every tier is checked against domain.model.nutrition.plausibility before it
+is believed: none of the three is verified, and a tier that returns a
+physically impossible reading is skipped rather than served.
   T2 — fatsecret via IngredientNutritionResolver (caches result to T1)
   T3 — AI single-ingredient estimate (last resort, logged as WARNING)
 
@@ -21,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from src.domain.constants.food_density import get_density
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.plausibility import per_100g_problem
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
     normalize_food_name,
@@ -36,6 +41,9 @@ _cache_metrics = {
     "t1_hits": 0,
     "t2_hits": 0,
     "t3_hits": 0,
+    "t1_rejected": 0,
+    "t2_rejected": 0,
+    "t3_rejected": 0,
 }
 
 NUTRITION_CACHE_TTL = 86400  # 24 hours
@@ -80,7 +88,8 @@ class IngredientMacros:
     fat: float
     fiber: float
     sugar: float
-    source_tier: str  # "T1_food_reference" | "T2_fatsecret" | "T3_ai_estimate"
+    # "T1_food_reference" | "T2_fatsecret" | "T3_ai_estimate" | "unresolved"
+    source_tier: str
     food_reference_id: int | None = field(default=None)
 
 
@@ -98,6 +107,7 @@ class MealMacros:
     t1_count: int  # resolved via food_reference
     t2_count: int  # resolved via fatsecret
     t3_count: int  # resolved via AI fallback
+    unresolved_count: int = 0  # no tier produced a believable answer
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +257,19 @@ class NutritionLookupService:
         cache_key = f"nutrition:{normalized}"
 
         # T1: exact match on name_normalized (already fetched by the caller).
+        if t1_ref and _ref_problem(t1_ref):
+            logger.error(
+                "T1 food_reference row is not food (%s): id=%s name=%s "
+                "P=%s C=%s F=%s — falling through to T2",
+                _ref_problem(t1_ref),
+                t1_ref.get("id"),
+                name,
+                t1_ref.get("protein_100g"),
+                t1_ref.get("carbs_100g"),
+                t1_ref.get("fat_100g"),
+            )
+            _cache_metrics["t1_rejected"] += 1
+            t1_ref = None
         if t1_ref:
             _cache_metrics["t1_hits"] += 1
             result = self._calculate_from_ref(
@@ -264,6 +287,18 @@ class NutritionLookupService:
             logger.warning("T2 fatsecret timeout for %s", name)
             per100 = None
         if per100 is not None:
+            problem = per_100g_problem(
+                per100.protein, per100.carbs, per100.fat, per100.fiber
+            )
+            if problem:
+                logger.error(
+                    "T2 fatsecret returned impossible macros (%s) for '%s': "
+                    "P=%s C=%s F=%s — falling through to T3",
+                    problem, name, per100.protein, per100.carbs, per100.fat,
+                )
+                _cache_metrics["t2_rejected"] += 1
+                per100 = None
+        if per100 is not None:
             _cache_metrics["t2_hits"] += 1
             result = self._build_from_per100(per100, name, quantity_g, "T2_fatsecret")
             await self._cache_result(cache_key, result)
@@ -275,21 +310,23 @@ class NutritionLookupService:
             result = await asyncio.wait_for(
                 self._ai_estimate(name, quantity_g), timeout=T3_TIMEOUT
             )
-            await self._cache_result(cache_key, result)
-            return result
         except TimeoutError:
             logger.warning("T3 AI timeout for %s", name)
-            return IngredientMacros(
-                name=name,
-                quantity_g=round(quantity_g, 1),
-                calories=0.0,
-                protein=0.0,
-                carbs=0.0,
-                fat=0.0,
-                fiber=0.0,
-                sugar=0.0,
-                source_tier="T3_ai_estimate",
+            return _unresolved(name, quantity_g)
+        problem = _result_problem(result)
+        if problem:
+            logger.error(
+                "T3 AI estimate is not food (%s) for '%s': P=%s C=%s F=%s",
+                problem, name, result.protein, result.carbs, result.fat,
             )
+            _cache_metrics["t3_rejected"] += 1
+            return _unresolved(name, quantity_g)
+        # An ingredient nothing could price is zeroed, not guessed, so the
+        # zero is never cached as if it were a real reading.
+        if result.source_tier == "unresolved":
+            return result
+        await self._cache_result(cache_key, result)
+        return result
 
     async def _lookup_ingredient(
         self, name: str, quantity_g: float
@@ -471,17 +508,7 @@ class NutritionLookupService:
             )
         except Exception as exc:
             logger.error("T3 AI estimate failed for ingredient '%s': %s", name, exc)
-            return IngredientMacros(
-                name=name,
-                quantity_g=round(quantity_g, 1),
-                calories=0.0,
-                protein=0.0,
-                carbs=0.0,
-                fat=0.0,
-                fiber=0.0,
-                sugar=0.0,
-                source_tier="T3_ai_estimate",
-            )
+            return _unresolved(name, quantity_g)
 
     # ------------------------------------------------------------------
     # Unit conversion
@@ -602,6 +629,9 @@ class NutritionLookupService:
             ),
             t2_count=sum(1 for i in ingredients if i.source_tier == "T2_fatsecret"),
             t3_count=sum(1 for i in ingredients if i.source_tier == "T3_ai_estimate"),
+            unresolved_count=sum(
+                1 for i in ingredients if i.source_tier == "unresolved"
+            ),
         )
 
     @staticmethod
@@ -620,13 +650,17 @@ class NutritionLookupService:
         """Log current cache metrics at INFO level."""
         metrics = NutritionLookupService.get_cache_metrics()
         logger.info(
-            "[NUTRITION-CACHE] hits=%d misses=%d hit_rate=%.1f%% | T1=%d T2=%d T3=%d",
+            "[NUTRITION-CACHE] hits=%d misses=%d hit_rate=%.1f%% | T1=%d T2=%d T3=%d"
+            " | rejected T1=%d T2=%d T3=%d",
             metrics["redis_hits"],
             metrics["redis_misses"],
             metrics["redis_hit_rate_pct"],
             metrics["t1_hits"],
             metrics["t2_hits"],
             metrics["t3_hits"],
+            metrics["t1_rejected"],
+            metrics["t2_rejected"],
+            metrics["t3_rejected"],
         )
 
 
@@ -638,3 +672,46 @@ class NutritionLookupService:
 def _derive_calories(protein: float, carbs: float, fat: float, fiber: float) -> float:
     """Fiber-aware calorie derivation: P×4 + (C−fiber)×4 + fiber×2 + F×9."""
     return Macros.raw_total_calories(protein, carbs, fat, fiber)
+
+
+def _ref_problem(ref: dict[str, Any]) -> str | None:
+    """Why a food_reference row cannot be food, or None when it can."""
+    return per_100g_problem(
+        ref.get("protein_100g"),
+        ref.get("carbs_100g"),
+        ref.get("fat_100g"),
+        ref.get("fiber_100g") or 0.0,
+    )
+
+
+def _result_problem(result: IngredientMacros) -> str | None:
+    """Why a resolved ingredient cannot be food, read back as per-100g."""
+    if result.quantity_g <= 0:
+        return None
+    factor = 100.0 / result.quantity_g
+    return per_100g_problem(
+        result.protein * factor,
+        result.carbs * factor,
+        result.fat * factor,
+        result.fiber * factor,
+    )
+
+
+def _unresolved(name: str, quantity_g: float) -> IngredientMacros:
+    """Zeros that say so, for an ingredient no tier could price.
+
+    The meal is short by this ingredient, which is visible in
+    ``MealMacros.unresolved_count``, rather than carrying a number nobody
+    stands behind.
+    """
+    return IngredientMacros(
+        name=name,
+        quantity_g=round(quantity_g, 1),
+        calories=0.0,
+        protein=0.0,
+        carbs=0.0,
+        fat=0.0,
+        fiber=0.0,
+        sugar=0.0,
+        source_tier="unresolved",
+    )

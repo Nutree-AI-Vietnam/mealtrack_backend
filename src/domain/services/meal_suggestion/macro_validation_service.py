@@ -36,11 +36,21 @@ class MacroValidationService:
             meal_macros unchanged — this is a validator/logger, not a transformer.
         """
         logger.info(
-            "Macro sources: T1=%d, T2=%d, T3=%d",
+            "Macro sources: T1=%d, T2=%d, T3=%d, unresolved=%d",
             meal_macros.t1_count,
             meal_macros.t2_count,
             meal_macros.t3_count,
+            meal_macros.unresolved_count,
         )
+
+        if meal_macros.unresolved_count:
+            logger.error(
+                "%d ingredient(s) priced by no tier — the meal is short by "
+                "whatever they carry: %s",
+                meal_macros.unresolved_count,
+                [i.name for i in meal_macros.ingredients
+                 if i.source_tier == "unresolved"],
+            )
 
         if meal_macros.calories <= 0:
             logger.error(

@@ -82,6 +82,14 @@ class TdeeCalculationResponse(BaseModel):
     pace_range: PaceRangeResponse | None = Field(
         None, description="Lose-weight pace range; present for a cut goal"
     )
+    deficit_blocked_reason: str | None = Field(
+        None,
+        description=(
+            "Set when a weight-loss goal was planned at maintenance instead: "
+            "'minor', 'underweight' or 'health_condition'. The goal field "
+            "still echoes what the user asked for"
+        ),
+    )
 
     class Config:
         json_schema_extra = {

@@ -346,8 +346,8 @@ handler/schema when implementing; the bullets below are the durable WHY.
   with `ranking_source=curated`; a personalized warm path reports
   `ranking_source=personalized`.
 - `allergy_evaluated` remains false until canonical allergen evaluation exists.
-- Browse requests do not create recommendation plans, candidate rows, or meal
-  logs; Home's three-day recommendation endpoints remain a separate flow.
+- Browse requests do not create meal logs. The week is the only plan: see
+  `/v1/meal-plans/*` below.
 
 ### Weekly meal planner and recipe aliases
 

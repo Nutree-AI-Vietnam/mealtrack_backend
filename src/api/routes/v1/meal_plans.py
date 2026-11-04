@@ -60,6 +60,7 @@ from src.api.schemas.response.weekly_meal_planner_responses import (
     WeeklyAiProposalGroceryItemResponse,
     WeeklyAiProposalResponse,
     WeeklyAiSlotChangeResponse,
+    WeeklyDaySummaryResponse,
     WeeklyGroceriesResponse,
     WeeklyMealPlanResponse,
     WeeklyMealSlotResponse,
@@ -98,8 +99,11 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanNotFoundError,
 )
 from src.domain.model.meal_recommendation import CatalogMeal
+from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros import Micros
 from src.domain.model.weekly_meal_planner import (
+    RICE_STEP_GRAMS,
+    RICE_STEP_MACROS,
     SavedRecipeSnapshot,
     WeeklyMealPlanPreferences,
     meal_type_for_slot,
@@ -182,6 +186,7 @@ async def get_current_weekly_plan(
                         f"auto-gen-{user_id}-{week.isoformat()}"
                     ),
                     daily_calories=daily_calories,
+                    **_macro_targets(budget),
                 )
             )
 
@@ -246,6 +251,7 @@ async def generate_weekly_plan(
                 preferences=preferences,
                 idempotency_key=_idempotency_key(idempotency_key),
                 daily_calories=daily_calories,
+                **_macro_targets(budget),
             )
         )
         return await _plan_response(
@@ -707,6 +713,7 @@ async def log_weekly_slot(
                 meal_type=body.meal_type,
                 expected_recipe_id=body.expected_recipe_id,
                 portion_multiplier=body.portion_multiplier,
+                rice_steps=body.rice_steps,
                 timezone=timezone,
             )
         )
@@ -1045,6 +1052,7 @@ async def _plan_response(
         people=plan.people,
         preferences=plan.preferences.to_dict(),
         plan=grouped,
+        days=_day_summaries(plan, by_id),
         total_meals_planned=sum(slot.has_recipe for slot in plan.slots),
         to_buy_count=to_buy_count,
         algorithm_version=getattr(plan, "algorithm_version", None),
@@ -1052,6 +1060,60 @@ async def _plan_response(
         updated_at=plan.updated_at,
         features=list(WEEKLY_PLAN_FEATURES),
     )
+
+
+# A gap smaller than this is not worth telling anybody to eat. Below it the
+# day counts as on target.
+SNACK_WORTH_EATING_KCAL = 80
+
+
+def _slot_calories(slot, meal: CatalogMeal | None) -> float:
+    """What the plan asks the user to eat in this slot, dish plus staple."""
+    saved = getattr(slot, "saved_recipe", None)
+    portion = float(getattr(slot, "planned_portion", 1.0) or 1.0)
+    steps = int(getattr(slot, "planned_rice_steps", 0) or 0)
+    if saved is not None:
+        base = float(getattr(saved, "calories", 0) or 0)
+    elif meal is not None:
+        base = float(meal.calories or 0)
+    else:
+        return 0.0
+    rice_protein, rice_carbs, rice_fat = RICE_STEP_MACROS
+    rice = Macros.raw_total_calories(
+        rice_protein * steps, rice_carbs * steps, rice_fat * steps
+    )
+    return base * portion + rice
+
+
+def _day_summaries(plan, by_id) -> list[WeeklyDaySummaryResponse]:
+    """Per-day calories, and the gap a snack would close.
+
+    Reported only where it is worth eating. A day on or over target carries
+    no snack, so a client can show the prompt on exactly the days that need
+    one without deciding the threshold itself.
+    """
+    target = getattr(plan, "daily_calories", None)
+    summaries: list[WeeklyDaySummaryResponse] = []
+    for day in range(7):
+        planned = sum(
+            _slot_calories(slot, by_id.get(slot.recipe_id))
+            for slot in plan.slots
+            if slot.day_index == day
+        )
+        gap = None
+        if target and planned > 0:
+            short = float(target) - planned
+            if short >= SNACK_WORTH_EATING_KCAL:
+                gap = int(round(short / 10) * 10)
+        summaries.append(
+            WeeklyDaySummaryResponse(
+                day_index=day,
+                planned_calories=int(round(planned)),
+                target_calories=int(target) if target else None,
+                snack_calories=gap,
+            )
+        )
+    return summaries
 
 
 def _slot_response(slot, meal: CatalogMeal | None) -> WeeklyMealSlotResponse:
@@ -1071,7 +1133,26 @@ def _slot_response(slot, meal: CatalogMeal | None) -> WeeklyMealSlotResponse:
         logged_meal_id=slot.logged_meal_id,
         log_source=getattr(slot, "log_source", None),
         is_skipped=bool(getattr(slot, "is_skipped", False)),
+        planned_portion=float(getattr(slot, "planned_portion", 1.0) or 1.0),
+        planned_rice_steps=int(getattr(slot, "planned_rice_steps", 0) or 0),
+        planned_rice_grams=int(getattr(slot, "planned_rice_steps", 0) or 0)
+        * RICE_STEP_GRAMS,
     )
+
+
+def _macro_targets(budget: dict | None) -> dict[str, float]:
+    """The day's protein, carb and fat targets, when the budget has them."""
+    names = {
+        "daily_protein": "daily_protein",
+        "daily_carbs": "adjusted_daily_carbs",
+        "daily_fat": "adjusted_daily_fat",
+    }
+    targets = {}
+    for field, key in names.items():
+        value = (budget or {}).get(key)
+        if value:
+            targets[field] = float(value)
+    return targets
 
 
 def _recipe_summary(meal: CatalogMeal) -> WeeklyRecipeSummaryResponse:

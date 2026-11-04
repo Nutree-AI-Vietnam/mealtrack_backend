@@ -115,6 +115,8 @@ class LogMealPlanSlotRequest(BaseModel):
     meal_type: WeeklyPlannerMealType
     expected_recipe_id: str = Field(min_length=1, max_length=128)
     portion_multiplier: Literal[0.5, 1.0, 1.5, 2.0] = 1.0
+    # Rice eaten with the dish, in 55 g half-bowl servings (0-2 bowls).
+    rice_steps: int = Field(default=0, ge=0, le=4)
 
 
 class LinkMealPlanSlotRequest(BaseModel):
