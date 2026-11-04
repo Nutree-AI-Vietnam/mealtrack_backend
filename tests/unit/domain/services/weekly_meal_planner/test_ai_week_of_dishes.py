@@ -1206,3 +1206,22 @@ class TestSoftAndHardNo:
         assert week.dishes == {}
         assert week.unfilled == ((0, 1),)
         assert any("raw or rare" in r for d in week.rejected for r in d.reasons)
+
+
+class TestTheCatalogueHoldsThingsThatAreNotMeals:
+    """Read off staging's own meal_catalog, lunch-eligible, in the order
+    candidates() returns: Bingsu Oreo, Bloody Mary cocktail, Bim bim mì
+    gói, "Bột ngọt ăn dặm", "Nước mã đề giúp", a weight-loss drink and
+    several desserts. Roughly a fifth of the forty rows shown.
+    """
+
+    def test_the_model_is_told_to_skip_them(self):
+        block = reference_block(("Bingsu Oreo", "Bột ngọt ăn dặm"))
+
+        assert "not a meal somebody sits down to eat" in block
+        for kind in ("drink", "dessert", "snack", "baby food", "seasoning"):
+            assert kind in block
+
+    def test_it_is_said_as_a_fact_about_the_catalogue(self):
+        """Not a warning about the model: the rows really are in there."""
+        assert "The catalogue holds those too" in reference_block(("Bingsu",))
