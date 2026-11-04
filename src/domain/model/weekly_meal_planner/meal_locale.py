@@ -12,7 +12,22 @@ timezone. Viet Nam stays the default, and its numbers are unchanged.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+
+def _says(text: str, phrases: tuple[str, ...]) -> bool:
+    """Whether any phrase appears in ``text`` as whole words.
+
+    Substring matching looked the same and was wrong: the Vietnamese cooking
+    syllables are short enough to hide inside ordinary English words, so
+    "scramble" and "caramel" contain "ram", "orange" contains "rang", and
+    "chapati" contains "hap". Each of those used to come to the table with a
+    bowl of rice beside it.
+    """
+    return any(
+        re.search(rf"\b{re.escape(phrase.strip())}\b", text) for phrase in phrases
+    )
 
 
 @dataclass(frozen=True)
@@ -45,7 +60,7 @@ class MealLocale:
         folded = " ".join(str(name or "").strip().casefold().split())
         if not folded:
             return False
-        return any(word in folded for word in self.staple_item_words)
+        return _says(folded, self.staple_item_words)
 
     def takes_staple(self, folded_name: str) -> bool:
         """Whether a dish of this name is eaten with the staple.
@@ -53,9 +68,9 @@ class MealLocale:
         ``folded_name`` is the dish name lowercased with its diacritics
         stripped, so the word lists can stay plain ASCII.
         """
-        if any(word in folded_name for word in self.standalone_dish_words):
+        if _says(folded_name, self.standalone_dish_words):
             return False
-        return any(word in folded_name for word in self.staple_dish_words)
+        return _says(folded_name, self.staple_dish_words)
 
 
 # Viet Nam NIN counts a cereal serving as 55 g steamed rice (20 g carbohydrate).
@@ -80,16 +95,53 @@ VIETNAM = MealLocale(
         "hap",
         "luoc",
     ),
-    standalone_dish_words=("pho", "bun", "mi ", "chao", "com", "banh", "sup"),
+    # "rice" because the AI names dishes in English before they are
+    # translated, and "Ga Nuong Sa Rice Bowl" used to be served with a second
+    # helping of rice beside it.
+    standalone_dish_words=(
+        "pho",
+        "bun",
+        "mi",
+        "chao",
+        "com",
+        "banh",
+        "sup",
+        "rice",
+    ),
     staple_item_words=("cơm", "com trang", "gạo", "steamed rice", "white rice"),
 )
 
+# For somebody we cannot place. It plans no staple beside a dish, because
+# guessing one is how a person in Paris ended up with rice: every timezone
+# without a pack used to resolve to Viet Nam. Its numbers match Viet Nam's so
+# that anything reading them by accident still reads something sane, but no
+# dish ever takes a staple, so they are never used.
+GENERIC = MealLocale(
+    code="generic",
+    staple_name="",
+    staple_step_grams=VIETNAM.staple_step_grams,
+    staple_step_macros=VIETNAM.staple_step_macros,
+    max_staple_steps=VIETNAM.max_staple_steps,
+    min_staple_steps=0,
+    staple_slots=frozenset(),
+    # No regional habit to lean on, so the day is split close to evenly with
+    # breakfast the lighter meal.
+    slot_calorie_shares=(0.30, 0.35, 0.35),
+    staple_dish_words=(),
+    standalone_dish_words=(),
+    staple_item_words=(),
+)
+
+# What the stored plan is measured in: the rice step and its ceiling are
+# written to weekly_meal_plan_slots and guarded by a CHECK constraint, so this
+# stays Viet Nam. Which pack a given user is planned with is decided by
+# locale_for_timezone, not by this.
 DEFAULT_LOCALE = VIETNAM
 
-_LOCALES: dict[str, MealLocale] = {locale.code: locale for locale in (VIETNAM,)}
+_LOCALES: dict[str, MealLocale] = {locale.code: locale for locale in (VIETNAM, GENERIC)}
 
-# Only zones a pack exists for. An unknown zone falls back to the default
-# rather than guessing a region's eating habits from its offset.
+# Only zones a pack exists for. An unknown zone falls back to the generic
+# pack rather than guessing a region's eating habits from its offset.
 _TIMEZONE_LOCALES = {
     "asia/ho_chi_minh": "vn",
     "asia/saigon": "vn",
@@ -116,4 +168,4 @@ def locale_for_timezone(timezone: str | None) -> MealLocale:
     """
     key = str(timezone or "").strip().casefold()
     code = _TIMEZONE_LOCALES.get(key)
-    return _LOCALES.get(code or "", DEFAULT_LOCALE)
+    return _LOCALES.get(code or "", GENERIC)
