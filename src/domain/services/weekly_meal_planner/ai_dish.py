@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import unicodedata
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.plausibility import per_100g_problem
@@ -29,6 +29,7 @@ from src.domain.model.weekly_meal_planner.saved_recipe import (
     SavedRecipeSnapshot,
     SavedRecipeStep,
 )
+from src.domain.services.prompts.system_prompts import SystemPrompts
 from src.domain.services.weekly_meal_planner.recipe_publication import (
     DraftIngredient,
     RecipeDraft,
@@ -61,13 +62,20 @@ def dish_key(name: str) -> str:
 
     Accents and case go, so "Cá Kho Tộ" and "ca kho to" are one dish, and a
     model that answers the same thing twice in different dress is caught.
+
+    Word order goes too. Asked for a varied week the model answered "Canh
+    gừng đậu hũ" and "Canh đậu hũ gừng" — one soup, named twice, and both
+    passed an exact-name check. Sorting the words catches that, and the only
+    names it merges are permutations of the same words, which name the same
+    dish in Vietnamese as in English.
     """
     stripped = "".join(
         char
         for char in unicodedata.normalize("NFKD", name or "")
         if not unicodedata.combining(char)
     )
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", stripped.casefold()).split())
+    words = re.sub(r"[^a-z0-9]+", " ", stripped.casefold()).split()
+    return " ".join(sorted(words))
 
 
 def review_ai_dish(
@@ -137,7 +145,18 @@ def snapshot_from_ai_recipe(
     total the model volunteered, and calories are never read at all: the
     snapshot derives them from the macros, as every logged meal does.
     """
-    name = str(payload.get("name") or "").strip()
+    # The model answers with "name" most of the time and "dish_name" the
+    # rest, and a recipe whose name landed under the other key used to be
+    # thrown away whole. "local_name" is the one asked for when the week is
+    # written in the reader's language: the prompt pins the English working
+    # name hard enough that asking the model to replace it only worked some
+    # runs, so it is asked for a new field instead and that field wins.
+    name = str(
+        payload.get("local_name")
+        or payload.get("name")
+        or payload.get("dish_name")
+        or ""
+    ).strip()
     lines = payload.get("ingredients")
     if not name or not isinstance(lines, list):
         return None
@@ -242,15 +261,76 @@ def dish_calories(snapshot: SavedRecipeSnapshot) -> float:
     )
 
 
+def priced_snapshot(snapshot: SavedRecipeSnapshot, priced) -> SavedRecipeSnapshot:
+    """The dish with the macros the backend worked out for its ingredients.
+
+    A generated recipe carries grams and nothing else — the recipe prompt
+    asks for no macros on purpose, because the backend prices every
+    ingredient through food_reference, FatSecret and, failing both, an
+    estimate. Without this step a dish sums to nothing and is turned away
+    for having no calories, which is how a week came back empty.
+
+    ``priced`` is what NutritionLookupService.calculate_meal_macros returns.
+    """
+    by_name = {
+        str(line.name).strip().casefold(): line
+        for line in getattr(priced, "ingredients", []) or []
+    }
+    lines = tuple(
+        _with_macros(line, by_name.get(str(line.name).strip().casefold()))
+        for line in snapshot.ingredients
+    )
+    return replace(
+        snapshot,
+        ingredients=lines,
+        protein=round(float(getattr(priced, "protein", 0.0) or 0.0), 2),
+        carbs=round(float(getattr(priced, "carbs", 0.0) or 0.0), 2),
+        fat=round(float(getattr(priced, "fat", 0.0) or 0.0), 2),
+        fiber=round(float(getattr(priced, "fiber", 0.0) or 0.0), 2),
+        sugar=round(float(getattr(priced, "sugar", 0.0) or 0.0), 2),
+    )
+
+
+def _with_macros(line: SavedRecipeIngredient, priced) -> SavedRecipeIngredient:
+    if priced is None:
+        return line
+    return replace(
+        line,
+        grams=line.grams
+        if line.grams is not None
+        else getattr(priced, "quantity_g", None),
+        protein=getattr(priced, "protein", None),
+        carbs=getattr(priced, "carbs", None),
+        fat=getattr(priced, "fat", None),
+        fiber=getattr(priced, "fiber", None),
+        sugar=getattr(priced, "sugar", None),
+        food_reference_id=getattr(priced, "food_reference_id", None),
+    )
+
+
+def pricing_lines(snapshot: SavedRecipeSnapshot) -> list[dict]:
+    """The dish's ingredients in the shape the nutrition lookup reads."""
+    return [
+        {
+            "name": line.name,
+            "amount": line.grams if line.grams is not None else (line.amount or 0),
+            "unit": "g" if line.grams is not None else (line.unit or "g"),
+        }
+        for line in snapshot.ingredients
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Asking for a week of dishes
 # ---------------------------------------------------------------------------
 
 # Names come back in one call per meal type, so a week is three cheap calls
 # plus one per slot for the recipe itself.
-DISH_NAME_SYSTEM = (
-    "You are a creative chef. Generate diverse meal names with different cuisines."
-)
+# The discovery prompt describes the meals but never asks for JSON: the
+# system prompt is what does that, and without it the model answers in
+# markdown prose and every name is lost. The suggestion path has always
+# paired the two; this one did not, and a whole week came back empty.
+DISH_NAME_SYSTEM = SystemPrompts.DISCOVERY_SYSTEM
 DISH_RECIPE_SYSTEM = (
     "You are a professional chef. Generate complete recipe details as valid JSON."
 )
@@ -310,12 +390,82 @@ def _memory_block(text: str) -> str:
     return f"\nWhat this person eats:\n{stripped}" if stripped else ""
 
 
+# The shared recipe prompt says it always answers in English, because the
+# suggestion path translates afterwards from text prepared at catalog import.
+# A dish invented here has no such prepared text, so nothing would translate
+# it and a Vietnamese user would read an English week. Ask for the language
+# up front instead.
+LANGUAGE_NAMES = {
+    "vi": "Vietnamese",
+    "en": "English",
+}
+
+
+def language_block(language: str | None) -> str:
+    """Write the dish in the user's own language, since nothing translates it.
+
+    The ingredient names stay English on purpose. They are the key the
+    backend prices a line by: ``normalize_food_name`` strips every character
+    outside ``a-z0-9``, so "thịt gà" normalises to "th g", misses
+    food_reference and FatSecret alike, and every line falls through to the
+    AI estimate. The grocery list still reads Vietnamese, because it shows
+    ``food_reference.name_vi`` for the row the pricing resolved.
+    """
+    code = (language or "").strip().casefold()[:2]
+    name = LANGUAGE_NAMES.get(code)
+    if not name or code == "en":
+        return ""
+    return (
+        f"\nWrite every step in {name}, using the everyday {name} words a home"
+        " cook would say."
+        f'\nAdd a "local_name" field holding the dish name in {name} — the name'
+        " a home cook would call this dish, not a word-for-word translation."
+        "\nKeep each ingredient name in plain English."
+    )
+
+
+# The names call stays in English, and the recipe call writes the Vietnamese
+# name the week keeps. This is measured, not a preference: asked in English
+# the model answered chicken, then fish, then tofu-and-pork; asked in
+# Vietnamese it answered "Cơm gà xào sả", "Cơm gà sả ớt" and "Cơm gà sả
+# gừng" — three names, one dish, every exact-name check passed. The English
+# working name is a scaffold nobody sees; what reaches a slot is whatever
+# the recipe call wrote.
+#
+# One discovery call writes a whole meal type's names at once, so excluding
+# names already taken does nothing within that call: the model answered
+# "Cơm gà xối mỡ", "Cơm gà sả nướng" and "Cơm gà nướng sả" in one breath and
+# every one passed the exact-name check. Variety has to be asked for.
+VARIETY_RULE = (
+    "\n- Every name must use a different main protein and a different cooking"
+    " method from the others in this list."
+)
+
+
+# A slot whose names were all used asks for a recipe with an empty dish
+# name, and the model answers with an empty name too — a dish that cooks
+# fine and is then thrown away for having no name. Ask it to name its own.
+NAME_IT_YOURSELF_RULE = (
+    '\nNo dish name was given. Invent one and return it in the "name" field;'
+    " never leave that field empty."
+)
+
+# The safety reviewer turns away a fried dish that lists no cooking fat. The
+# model writes one often enough to cost a slot, and it only does so because
+# nothing told it the oil counts as an ingredient.
+COOKING_FAT_RULE = (
+    "\nIf the dish is fried, stir-fried or sauteed, list the cooking oil or fat"
+    " as an ingredient with its amount in grams."
+)
+
+
 async def generate_week_of_dishes(
     requests: tuple[DishRequest, ...],
     *,
     ask,
     build_names_prompt,
     build_recipe_prompt,
+    price=None,
     reference_dishes: tuple[str, ...] = (),
     memory_text: str = "",
     cuisine_region: str | None = None,
@@ -324,9 +474,11 @@ async def generate_week_of_dishes(
 ) -> WeekOfDishes:
     """Fill every slot with a dish the model wrote, each one checked.
 
-    ``ask`` runs one prompt and returns the parsed answer; everything that
-    talks to a model lives behind it, so this can be read and tested on its
-    own. A slot nobody could fill is reported rather than quietly left
+    ``ask`` runs one prompt and returns the parsed answer and ``price``
+    works out what a dish's ingredients come to; everything that talks to a
+    model or a database lives behind them, so this can be read and tested on
+    its own. Without ``price`` a dish keeps whatever macros the model
+    volunteered, which for the recipe prompt is none. A slot nobody could fill is reported rather than quietly left
     holding something unsafe or a repeat of another day.
     """
     mint = new_id or (lambda: uuid.uuid4().hex)
@@ -334,6 +486,10 @@ async def generate_week_of_dishes(
     rejected: list[RejectedDish] = []
     unfilled: list[tuple[int, int]] = []
     taken: set[str] = set()
+    # The English working names already handed out. ``taken`` holds the
+    # stored names, which are Vietnamese for a Vietnamese week, so it cannot
+    # tell the next meal type's English call what it has already written.
+    offered: set[str] = set()
     hint = reference_block(reference_dishes) + _memory_block(memory_text)
 
     by_meal: dict[str, list[DishRequest]] = {}
@@ -348,14 +504,16 @@ async def generate_week_of_dishes(
             slots=slots,
             hint=hint,
             cuisine_region=cuisine_region,
-            taken=taken,
+            taken=taken | offered,
         )
+        offered.update(dish_key(name) for name in names)
         for index, request in enumerate(slots):
             snapshot = await _dish_for_slot(
                 request,
                 ask=ask,
                 build_recipe_prompt=build_recipe_prompt,
                 names=names[index:],
+                price=price,
                 cuisine_region=cuisine_region,
                 language=language,
                 taken=taken,
@@ -374,7 +532,14 @@ async def generate_week_of_dishes(
 
 
 async def _dish_names(
-    *, ask, build_names_prompt, meal_type, slots, hint, cuisine_region, taken
+    *,
+    ask,
+    build_names_prompt,
+    meal_type,
+    slots,
+    hint,
+    cuisine_region,
+    taken,
 ) -> list[str]:
     """One call for this meal type's names, in the order the slots want them."""
     prompt = build_names_prompt(
@@ -385,7 +550,10 @@ async def _dish_names(
         exclude_meal_names=sorted(taken) or None,
     )
     try:
-        answer = await ask(prompt + hint, DISH_NAME_SYSTEM)
+        answer = await ask(
+            prompt + VARIETY_RULE + hint,
+            DISH_NAME_SYSTEM.format(count=len(slots)),
+        )
     except Exception:  # noqa: BLE001 - a slot can still ask for its own dish
         return []
     return _names_of(answer)
@@ -408,6 +576,7 @@ async def _dish_for_slot(
     ask,
     build_recipe_prompt,
     names: list[str],
+    price,
     cuisine_region,
     language,
     taken: set[str],
@@ -433,18 +602,35 @@ async def _dish_for_slot(
             fat_target=request.fat,
         )
         try:
-            payload = await ask(prompt, DISH_RECIPE_SYSTEM)
+            payload = await ask(
+                prompt
+                + COOKING_FAT_RULE
+                + ("" if name else NAME_IT_YOURSELF_RULE)
+                + language_block(language),
+                DISH_RECIPE_SYSTEM,
+            )
         except Exception:  # noqa: BLE001 - one failed call is not the week
             continue
         if not isinstance(payload, dict):
             continue
-        payload.setdefault("name", name or "")
+        if name and not str(payload.get("name") or "").strip():
+            payload["name"] = name
         snapshot = snapshot_from_ai_recipe(
             payload, dish_id=f"ai_{mint()}", language=language
         )
         if snapshot is None:
             rejected.append(RejectedDish(name=str(name or ""), reasons=("UNREADABLE",)))
             continue
+        if price is not None:
+            try:
+                snapshot = priced_snapshot(
+                    snapshot, await price(pricing_lines(snapshot))
+                )
+            except Exception:  # noqa: BLE001 - an unpriced dish is turned away
+                rejected.append(
+                    RejectedDish(name=snapshot.name, reasons=("NOT_PRICED",))
+                )
+                continue
         reasons = review_ai_dish(snapshot, taken=frozenset(taken))
         if not reasons:
             return snapshot

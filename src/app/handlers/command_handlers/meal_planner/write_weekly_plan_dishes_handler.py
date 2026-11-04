@@ -40,9 +40,12 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
     nobody could write stays as it is and the job reports the failure.
     """
 
-    def __init__(self, uow_factory: Any, generation_service: Any):
+    def __init__(
+        self, uow_factory: Any, generation_service: Any, nutrition_lookup: Any = None
+    ):
         self._uow_factory = uow_factory
         self._generation = generation_service
+        self._nutrition = nutrition_lookup
 
     async def handle(self, command: WriteWeeklyPlanDishesCommand) -> dict[str, Any]:
         async with self._uow_factory() as uow:
@@ -52,6 +55,7 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
         week = await generate_week_of_dishes(
             _requests(command),
             ask=self._ask,
+            price=self._price if self._nutrition is not None else None,
             build_names_prompt=PromptTemplateManager.build_discovery_prompt,
             build_recipe_prompt=PromptTemplateManager.build_recipe_details_prompt,
             reference_dishes=reference,
@@ -81,6 +85,15 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
             "dishes": len(week.dishes),
             "unfilled": [list(slot) for slot in week.unfilled],
         }
+
+    async def _price(self, lines):
+        """What this dish's ingredients come to, through the usual tiers.
+
+        A generated recipe carries grams and no macros, by design: the
+        backend prices every line against food_reference, then FatSecret,
+        then an estimate, with the same plausibility gate as everywhere.
+        """
+        return await self._nutrition.calculate_meal_macros(lines)
 
     async def _ask(self, prompt: str, system_message: str):
         return await self._generation.generate_meal_plan_async(
