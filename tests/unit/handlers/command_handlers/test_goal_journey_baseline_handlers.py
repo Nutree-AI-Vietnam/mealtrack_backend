@@ -116,6 +116,7 @@ async def test_target_weight_change_resets_journey_seed(monkeypatch):
         (),
         {
             "age": 30,
+            "date_of_birth": None,
             "height_cm": 180.0,
             "gender": "male",
             "job_type": "desk",

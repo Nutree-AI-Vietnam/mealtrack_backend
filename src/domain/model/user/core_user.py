@@ -15,6 +15,15 @@ from src.domain.model.user.user_avatar import UserAvatar
 from src.domain.utils.timezone_utils import utc_now
 
 
+def age_on(date_of_birth: date, today: date) -> int:
+    """Whole years from a date of birth to today."""
+    return (
+        today.year
+        - date_of_birth.year
+        - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+    )
+
+
 @dataclass(kw_only=True)
 class UserProfileDomainModel(BaseDomainModel):
     """Domain model for a user's profile."""
