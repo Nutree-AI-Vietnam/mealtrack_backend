@@ -604,6 +604,22 @@ class TestUserRepository:
         )
         self.db.commit()
 
+    def get_activity_calories(self, user_id) -> bool:
+        entity = (
+            self.db.query(User)
+            .filter(User.id == str(user_id), User.is_active.is_(True))
+            .first()
+        )
+        if entity is None:
+            return True
+        return bool(getattr(entity, "activity_calories", True))
+
+    def update_user_activity_calories(self, user_id, enabled: bool) -> None:
+        self.db.query(User).filter(User.id == str(user_id)).update(
+            {"activity_calories": enabled}
+        )
+        self.db.commit()
+
     def update_user_avatar(self, user_id, avatar) -> str | None:
         entity = (
             self.db.query(User)
@@ -704,6 +720,12 @@ class AsyncTestUserRepository:
 
     async def update_user_weekly_auto_adjust(self, *args, **kwargs):
         return self._repo.update_user_weekly_auto_adjust(*args, **kwargs)
+
+    async def get_activity_calories(self, *args, **kwargs):
+        return self._repo.get_activity_calories(*args, **kwargs)
+
+    async def update_user_activity_calories(self, *args, **kwargs):
+        return self._repo.update_user_activity_calories(*args, **kwargs)
 
     async def update_user_avatar(self, *args, **kwargs):
         return self._repo.update_user_avatar(*args, **kwargs)

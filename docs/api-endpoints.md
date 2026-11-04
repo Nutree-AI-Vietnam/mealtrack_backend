@@ -182,6 +182,17 @@ handler/schema when implementing; the bullets below are the durable WHY.
   unit is not allowed by the authoritative snapshot, `NUTRITION_PROVIDER_UNAVAILABLE`
   returns 503 for temporary provider capacity loss, and other integrity rejects
   return 422 `NUTRITION_INTEGRITY_REJECTED`.
+- `GET` and `PATCH /v1/users/activity-calories` (body `{"enabled": bool}`) both
+  answer `{"enabled": bool}`; users who never set it get `true`. While it is
+  off, logged movement no longer raises the food budget: day, bulk and weekly
+  consumed calories equal food calories, and adjusted daily targets, the weekly
+  leftover split, the progress live target and meal suggestions count food
+  only. `movement_kcal_burned`, progress `burned_calories` and each entry's
+  `include_in_balance` still report the activity as logged.
+- A switch drops today's stored target snapshot, so the next read stores it
+  under the new setting, deletes this week's weekly budget keys and bumps the
+  intake revision before it returns. Day macros, weekly budgets and progress
+  summaries also refuse a cached payload built under the other setting.
 
 ### Coach nutrition snapshots
 
@@ -190,8 +201,9 @@ handler/schema when implementing; the bullets below are the durable WHY.
   additive `nutrition_snapshot` sidecar for completed replies. It is versioned
   as `chat_nutrition_v1` and scoped by `local_date`, `timezone`, and `as_of`.
 - The snapshot is the backend-owned rendering input: `food_calories` is gross
-  intake, `movement_kcal_burned` is activity credit, and `remaining_calories`
-  is the authoritative net-budget result. Clients must not replace a
+  intake, `movement_kcal_burned` is the logged activity (credited only while
+  activity calories are on), and `remaining_calories` is the authoritative
+  net-budget result. Clients must not replace a
   historical snapshot with current-day data or recompute its values.
 - If authoritative context is incomplete, the sidecar is omitted. Consumers
   must render the reply text without nutrition cards rather than inventing

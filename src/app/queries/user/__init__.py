@@ -1,5 +1,6 @@
 """User queries."""
 
+from .get_activity_calories_query import GetActivityCaloriesQuery
 from .get_body_fat_visual_profile_query import GetBodyFatVisualProfileQuery
 from .get_user_by_firebase_uid_query import GetUserByFirebaseUidQuery
 from .get_user_metrics_query import GetUserMetricsQuery
@@ -12,6 +13,7 @@ __all__ = [
     "GetUserProfileQuery",
     "GetUserTimezoneQuery",
     "GetWeeklyAutoAdjustQuery",
+    "GetActivityCaloriesQuery",
     "GetBodyFatVisualProfileQuery",
     "GetUserMetricsQuery",
     "GetUserByFirebaseUidQuery",

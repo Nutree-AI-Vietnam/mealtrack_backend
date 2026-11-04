@@ -6,6 +6,7 @@ import pytest
 
 from src.api.services import write_cache_invalidation
 from src.api.services.write_cache_invalidation import (
+    apply_activity_calories_cache_invalidation,
     apply_hydration_write_cache_invalidation,
     apply_meal_write_cache_invalidation,
     apply_movement_write_cache_invalidation,
@@ -177,5 +178,34 @@ async def test_movement_write_invalidation_failure_does_not_fail_the_write() -> 
     cache.purge.side_effect = ConnectionError("redis down")
 
     await apply_movement_write_cache_invalidation(cache, "user-1", date(2026, 10, 20))
+
+    cache.purge.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_activity_calories_switch_purges_this_week_budget_in_one_call() -> None:
+    cache = _hosted_cache()
+    user_id = "user-1"
+    today = date(2026, 10, 21)  # Wednesday
+    week_start = date(2026, 10, 19)
+
+    await apply_activity_calories_cache_invalidation(cache, user_id, today)
+
+    deleted = _deleted(cache)
+    assert CacheKeys.weekly_budget(user_id, week_start)[0] in deleted
+    assert CacheKeys.weekly_budget(user_id, week_start, today)[0] in deleted
+    cache.purge.assert_awaited_once()
+    assert _bumped(cache) == dict([CacheKeys.intake_revision(user_id)])
+    cache.invalidate_pattern.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_activity_calories_purge_failure_does_not_fail_the_switch() -> None:
+    cache = _hosted_cache()
+    cache.purge.side_effect = ConnectionError("redis down")
+
+    await apply_activity_calories_cache_invalidation(
+        cache, "user-1", date(2026, 10, 21)
+    )
 
     cache.purge.assert_awaited()

@@ -122,6 +122,30 @@ async def test_update_weekly_auto_adjust(async_db_session):
 
 
 @pytest.mark.asyncio
+async def test_activity_calories_defaults_enabled(async_db_session):
+    user = await _insert_user(async_db_session, "firebase-uid-t11")
+    user_id = uuid.UUID(user.id)
+
+    repo = AsyncUserRepository(async_db_session)
+    enabled = await repo.get_activity_calories(user_id)
+    assert enabled is True
+
+
+@pytest.mark.asyncio
+async def test_update_activity_calories(async_db_session):
+    user = await _insert_user(async_db_session, "firebase-uid-t12")
+    user_id = uuid.UUID(user.id)
+
+    repo = AsyncUserRepository(async_db_session)
+    await repo.update_user_activity_calories(user_id, False)
+    await async_db_session.flush()
+
+    assert await repo.get_activity_calories(user_id) is False
+    # The other budget switch is a separate column.
+    assert await repo.get_weekly_auto_adjust(user_id) is True
+
+
+@pytest.mark.asyncio
 async def test_update_profile_reuses_existing_preference_rows(async_db_session):
     user = await _insert_user(async_db_session, "firebase-uid-t08")
     repo = AsyncUserRepository(async_db_session)

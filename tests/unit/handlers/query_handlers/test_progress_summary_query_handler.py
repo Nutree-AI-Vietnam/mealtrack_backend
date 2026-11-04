@@ -543,3 +543,113 @@ async def test_default_summary_highlights_count_doses_like_home():
     assert first["iron_mg"] == 18.0
     assert first["nrf_coverage"] == 0  # the food score stays food-only
     assert "supplement_micros" not in first
+
+
+@pytest.mark.asyncio
+async def test_activity_calories_off_reaches_the_live_target_and_keeps_burn_visible():
+    """Trends still shows the burn; only today's live target stops counting it."""
+    today = date(2026, 9, 1)
+    uow = _uow(movement=[(datetime(2026, 9, 1, 18, 0, tzinfo=UTC), 250.0)])
+    uow.users.get_activity_calories = AsyncMock(return_value=False)
+    live_target = AsyncMock(return_value=1850.0)
+    handler = GetProgressSummaryQueryHandler()
+    with (
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.AsyncUnitOfWork",
+            return_value=uow,
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_user_timezone_async",
+            new=AsyncMock(return_value="UTC"),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.datetime"
+        ) as mock_dt,
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.load_tdee_targets",
+            new=AsyncMock(return_value=_targets()),
+        ),
+        patch(
+            "src.app.handlers.query_handlers.get_progress_summary_query_handler.resolve_today_live_target",
+            new=live_target,
+        ),
+    ):
+        mock_dt.now.return_value = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+        result = await handler.handle(
+            GetProgressSummaryQuery(user_id=USER_ID, start_date=today, end_date=today)
+        )
+
+    assert live_target.await_args.kwargs["activity_calories"] is False
+    assert result["activity_calories"] is False
+    assert result["days"][-1]["burned_calories"] == 250.0
+    assert result["days"][-1]["target_calories"] == 1850.0
+
+
+@pytest.mark.asyncio
+async def test_summary_cache_from_the_other_activity_setting_is_not_served():
+    from src.app.handlers.query_handlers.progress_summary_support import (
+        read_summary_cache,
+    )
+
+    day = date(2026, 9, 1)
+    cached = {"target_revision": 3, "intake_revision": 5, "days": []}
+    cache = MagicMock()
+    cache.get_json_with_revision = AsyncMock(return_value=(cached, 5))
+
+    served_off, revision = await read_summary_cache(
+        cache, USER_ID, day, day, 3, True, activity_calories=False
+    )
+    served_on, _ = await read_summary_cache(
+        cache, USER_ID, day, day, 3, True, activity_calories=True
+    )
+
+    # A summary cached before the setting existed counted movement.
+    assert served_off is None
+    assert revision == 5
+    assert served_on == cached
+
+
+@pytest.mark.asyncio
+async def test_live_target_passes_the_activity_setting_to_the_budget_math():
+    from src.app.handlers.query_handlers.progress_summary_support import (
+        resolve_today_live_target,
+    )
+    from src.domain.services.weekly_budget_service import (
+        AdjustedDailyTargets,
+        EffectiveAdjustedResult,
+    )
+
+    day = date(2026, 9, 1)
+    uow = MagicMock()
+    uow.weekly_budgets.find_by_user_and_week = AsyncMock(
+        return_value=MagicMock(target_carbs=1400.0, target_fat=490.0)
+    )
+    uow.users.get_weekly_auto_adjust = AsyncMock(return_value=True)
+    effective = EffectiveAdjustedResult(
+        adjusted=AdjustedDailyTargets(1900.0, 200.0, 70.0, 140.0, False, 6),
+        consumed_before_today={},
+        consumed_total={},
+        logged_past_days=1,
+        skipped_days=0,
+        show_logging_prompt=False,
+    )
+    with patch(
+        "src.app.handlers.query_handlers.progress_summary_support."
+        "WeeklyBudgetService.get_effective_adjusted_daily_async",
+        new=AsyncMock(return_value=effective),
+    ) as get_effective:
+        live = await resolve_today_live_target(
+            uow,
+            USER_ID,
+            day,
+            day,
+            day,
+            "UTC",
+            2000.0,
+            140.0,
+            1600.0,
+            activity_calories=False,
+        )
+
+    assert live == 1900.0
+    assert get_effective.await_args.kwargs["activity_calories"] is False

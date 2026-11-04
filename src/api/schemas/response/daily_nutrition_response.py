@@ -61,7 +61,8 @@ class DailyNutritionResponse(BaseModel):
     consumed_calories: float = Field(
         ...,
         description="NET calories consumed (food intake minus movement burn). "
-        "Clients must NOT subtract burn again from this value.",
+        "Equals food_calories while the user's activity calories setting is "
+        "off. Clients must NOT subtract burn again from this value.",
     )
     food_calories: float | None = Field(
         None,
@@ -70,7 +71,11 @@ class DailyNutritionResponse(BaseModel):
         "double-subtraction.",
     )
     movement_kcal_burned: float = Field(
-        0.0, ge=0, description="Active calories burned from movement in the balance"
+        0.0,
+        ge=0,
+        description="Active calories burned from movement in the balance. "
+        "Reported either way, but subtracted from consumed_calories only "
+        "while the user's activity calories setting is on.",
     )
     consumed_macros: MacrosResponse = Field(..., description="Macros consumed so far")
     remaining_calories: float = Field(..., description="Remaining calories for the day")

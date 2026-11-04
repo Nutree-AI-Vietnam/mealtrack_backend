@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +11,8 @@ from src.infra.database.models.daily_target_snapshot import DailyTargetSnapshotO
 
 
 class AsyncDailyTargetSnapshotRepository:
-    """Write-once snapshots, plus a same-day replace for a pace change."""
+    """Write-once snapshots, plus a same-day replace for a pace change and a
+    same-day delete for an activity calories change."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -50,6 +51,16 @@ class AsyncDailyTargetSnapshotRepository:
             )
         )
         await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def delete_for_date(self, user_id: str, target_date: date) -> None:
+        """Drop one day's snapshot so the next read stores it again."""
+        await self.session.execute(
+            delete(DailyTargetSnapshotORM).where(
+                DailyTargetSnapshotORM.user_id == user_id,
+                DailyTargetSnapshotORM.date == target_date,
+            )
+        )
         await self.session.flush()
 
     async def find_calories_by_range(

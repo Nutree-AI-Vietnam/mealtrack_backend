@@ -97,6 +97,9 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
                 auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                     await uow.users.get_weekly_auto_adjust(query.user_id)
                 )
+            activity_calories = WeeklyBudgetService.activity_calories_enabled(
+                await uow.users.get_activity_calories(query.user_id)
+            )
             user_tz_str = await resolve_user_timezone_async(
                 query.user_id, uow, query.header_timezone
             )
@@ -178,6 +181,7 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
                     target_macros,
                     movement_kcal=movement_by_date.get(current, 0.0),
                     hydration_entries=hydration_by_date.get(current, []),
+                    activity_calories=activity_calories,
                 )
                 current += timedelta(days=1)
 
@@ -211,6 +215,7 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
                             bmr=bmr,
                             user_timezone=user_tz_str,
                             auto_adjust=auto_adjust,
+                            activity_calories=activity_calories,
                         )
                     )
                     adjusted = effective.adjusted
@@ -259,6 +264,7 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
             "profile_target_revision": target_revision,
             "target_revision": target_revision,
             "weekly_auto_adjust": auto_adjust,
+            "activity_calories": activity_calories,
             "macro_preset": macro_preset.value,
         }
 
@@ -293,8 +299,13 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
         target_macros: dict | None,
         movement_kcal: float = 0.0,
         hydration_entries: list | None = None,
+        activity_calories: bool = True,
     ) -> dict[str, Any]:
-        """Build summary for a single date."""
+        """Build summary for a single date.
+
+        Movement kcal net out of consumed calories only while activity
+        calories are on; ``movement_kcal_burned`` reports the burn either way.
+        """
         total_protein = 0.0
         total_carbs = 0.0
         total_fat = 0.0
@@ -324,7 +335,9 @@ class GetNutritionBulkQueryHandler(EventHandler[GetNutritionBulkQuery, dict[str,
                 fat=entry.fat_g or 0,
                 fiber=entry.fiber_g or 0,
             ).total_calories
-        net_calories = food_calories - movement_kcal
+        net_calories = (
+            food_calories - movement_kcal if activity_calories else food_calories
+        )
 
         target_cal = target_calories or 2000
         target_prot = (target_macros or {}).get("protein", 70)

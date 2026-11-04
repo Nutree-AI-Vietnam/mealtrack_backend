@@ -61,6 +61,9 @@ from .update_movement_entry_command_handler import UpdateMovementEntryCommandHan
 from .update_notification_preferences_command_handler import (
     UpdateNotificationPreferencesCommandHandler,
 )
+from .update_activity_calories_command_handler import (
+    UpdateActivityCaloriesCommandHandler,
+)
 from .update_timezone_command_handler import UpdateTimezoneCommandHandler
 from .update_user_avatar_command_handler import UpdateUserAvatarCommandHandler
 from .update_weekly_auto_adjust_command_handler import (
@@ -100,6 +103,7 @@ __all__ = [
     "UpdateLanguageCommandHandler",
     "UpdateTimezoneCommandHandler",
     "UpdateWeeklyAutoAdjustCommandHandler",
+    "UpdateActivityCaloriesCommandHandler",
     "UpdateUserAvatarCommandHandler",
     "UploadUserAvatarPhotoCommandHandler",
     # Meal Suggestion handlers
