@@ -210,6 +210,7 @@ async def get_user_tdee(
     response.activity_multiplier = result["activity_multiplier"]
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
+    response.deficit_blocked_reason = result.get("deficit_blocked_reason")
     response.is_custom = result.get("is_custom", False)
 
     return response
@@ -268,6 +269,8 @@ async def update_user_metrics(
         weight_loss_kg_per_week=request.weight_loss_kg_per_week,
         weight_gain_kg_per_week=request.weight_gain_kg_per_week,
         dietary_preferences=request.dietary_preferences,
+        allergies=request.allergies,
+        health_conditions=request.health_conditions,
     )
 
     await event_bus.send(command)
@@ -295,6 +298,7 @@ async def update_user_metrics(
     response.activity_multiplier = result["activity_multiplier"]
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
+    response.deficit_blocked_reason = result.get("deficit_blocked_reason")
     response.is_custom = result.get("is_custom", False)
     return response
 
@@ -346,5 +350,6 @@ async def update_custom_macros(
     response.activity_multiplier = result["activity_multiplier"]
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
+    response.deficit_blocked_reason = result.get("deficit_blocked_reason")
     response.is_custom = result.get("is_custom", False)
     return response

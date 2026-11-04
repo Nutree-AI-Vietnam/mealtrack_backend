@@ -109,7 +109,6 @@ async def test_delete_meal_command_uses_user_timezone_for_meal_date():
         )
     )
     uow.meals.delete = AsyncMock()
-    uow.meal_recommendation_plans.clear_links_for_deleted_meal = AsyncMock()
     uow.weekly_meal_plans.clear_links_for_deleted_meal = AsyncMock()
     uow.users.find_by_id = AsyncMock(
         return_value=MagicMock(timezone="Asia/Ho_Chi_Minh")

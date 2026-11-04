@@ -11,7 +11,7 @@ from src.api.schemas.response.meal_catalog_responses import MealCatalogItemRespo
 class LogCatalogMealResponse(BaseModel):
     meal_id: str
     catalog_meal_id: str
-    logged_via: Literal["slot", "catalog"]
+    logged_via: Literal["catalog"]
     plan_id: str | None
     slot_id: str | None
     logged_meal_id: str

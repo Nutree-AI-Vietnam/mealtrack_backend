@@ -403,14 +403,17 @@ downloading Cloudinary bytes. Graph nodes must not import provider SDKs,
 6. `VisionResponseParser` maps validated label data into `Nutrition` and `food_label_metadata`.
 7. Handler persists a READY `Meal(source="food_label")`, invalidates meal caches, and does not create hydration side effects.
 
-## Data Flow Example: Meal Recommendation Plan
+## Meal catalog
 
-1. `POST /v1/meal-recommendations/three-day` resolves timezone and daily calories, then builds or replays a durable recommendation plan.
-2. The plan-level response is compact: it includes only the selected slots, with ingredients for each selected meal. Alternatives, scores, and full meal-detail fields stay out of the summary payload.
-3. `GET /v1/meal-recommendations/{plan_id}/slots/{slot_id}` hydrates one selected slot and its alternatives when the client needs drill-down data.
-4. `swap`, `log`, and `skip` return the changed-slot detail shape so the mobile client can patch its cached plan without reloading everything.
-5. Recommendation analytics are scheduled through `BackgroundTaskManager` when available. Catalog meals are read from the process-local snapshot service with revision-aware TTL, single-flight refresh, and last-good fallback. Meal-history affinity is projected from aggregate linked ingredient buckets instead of loading the full meal graph, and logging a recommended meal reuses the already loaded selected catalog projection without fabricating image data. Translation persistence and remaining-slot recalculation are post-commit secondary jobs. The current plan-creation endpoint still returns generated content synchronously; moving generation itself to a durable job requires a status/accepted-response contract.
-6. Candidate rows retain `seen_at` and `retired_at`. Swap locks only the requested slot, consumes unseen active candidates, and when exhausted retires that slot's inactive pool before inserting five deterministic fresh alternatives. Replenishment never mutates another slot or changes the response contract; daily jobs remain out of scope.
+The catalog is a read-only knowledge base of crawled, reviewed recipes. It is
+read through `/v1/meal-catalog` for browsing and by the weekly planner as
+reference material; it is not itself a plan. Catalog meals are read from the
+process-local snapshot service with revision-aware TTL, single-flight refresh
+and last-good fallback. Meal-history affinity is projected from aggregate
+linked ingredient buckets rather than loading the full meal graph.
+
+Logging a catalog meal writes a diary meal directly; it does not open or close
+a plan slot. The week in `/v1/meal-plans/*` is the only plan.
 
 ---
 

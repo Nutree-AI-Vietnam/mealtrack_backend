@@ -16,7 +16,7 @@ from src.domain.constants import NutritionConstants, TDEEConstants
 from src.domain.mappers.activity_goal_mapper import ActivityGoalMapper
 from src.domain.model.user import MacroPreset, Sex, TdeeRequest, UnitSystem
 from src.domain.ports.cache_port import CachePort
-from src.domain.services.tdee_service import TdeeCalculationService
+from src.domain.services.tdee_service import TdeeCalculationService, calorie_floor
 from src.infra.database.models.user.profile import UserProfile
 from src.infra.database.uow_async import AsyncUnitOfWork
 
@@ -119,6 +119,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                 unit_system=UnitSystem.METRIC,
                 training_level=training_level,
                 macro_preset=macro_preset,
+                health_conditions=tuple(profile.health_conditions or ()),
                 weight_loss_kg_per_week=profile.weight_loss_kg_per_week,
                 weight_gain_kg_per_week=profile.weight_gain_kg_per_week,
             )
@@ -140,6 +141,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
             return {
                 "user_id": query.user_id,
                 "bmr": result.bmr,
+                "calorie_floor": round(calorie_floor(result.bmr, sex), 1),
                 "tdee": result.tdee,
                 "target_calories": macros["calories"],
                 "activity_multiplier": round(base_multiplier, 3),
@@ -151,6 +153,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                 "pace_range": (
                     result.pace_range.to_dict() if result.pace_range else None
                 ),
+                "deficit_blocked_reason": result.deficit_blocked_reason,
                 "macros": macros,
                 "profile_data": {
                     "age": profile.age,
@@ -196,6 +199,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
             unit_system=UnitSystem.METRIC,
             training_level=training_level,
             macro_preset=macro_preset,
+            health_conditions=tuple(profile.health_conditions or ()),
         )
         result = self.tdee_service.calculate_tdee(tdee_request)
 
@@ -204,6 +208,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
         return {
             "user_id": query.user_id,
             "bmr": result.bmr,
+            "calorie_floor": round(calorie_floor(result.bmr, sex), 1),
             "tdee": result.tdee,
             "target_calories": macros["calories"],
             "activity_multiplier": round(base_multiplier, 3),
@@ -213,6 +218,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
             "profile_target_revision": profile.profile_target_revision,
             "target_revision": profile.profile_target_revision,
             "pace_range": result.pace_range.to_dict() if result.pace_range else None,
+            "deficit_blocked_reason": result.deficit_blocked_reason,
             "macros": macros,
             "profile_data": {
                 "age": profile.age,

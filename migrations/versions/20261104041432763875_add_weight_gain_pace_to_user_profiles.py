@@ -1,7 +1,7 @@
 """add weight gain pace to user profiles
 
 Revision ID: 20261104041432763875
-Revises: 20261103163630071544
+Revises: 20261103103408775030
 Create Date: 2026-11-04 11:14:32.776888
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "20261104041432763875"
-down_revision: str | None = "20261103163630071544"
+down_revision: str | None = "20261103103408775030"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

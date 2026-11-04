@@ -7,7 +7,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, cast
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, noload, selectinload
@@ -121,6 +121,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         catalog_revision: str | None = None,
         recipe_ids: dict[tuple[int, int], str | None] | None = None,
         algorithm_version: str | None = None,
+        servings: dict[tuple[int, int], tuple[float, int]] | None = None,
     ) -> WeeklyMealPlan:
         plan = WeeklyMealPlanORM(
             id=str(uuid.uuid4()),
@@ -136,12 +137,15 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             or WeeklyPlanGenerationService.algorithm_version,
         )
         selected = recipe_ids or {}
+        served = servings or {}
         plan.slots = [
             WeeklyMealPlanSlotORM(
                 id=str(uuid.uuid4()),
                 day_index=day,
                 slot_index=slot,
                 catalog_meal_id=selected.get((day, slot)),
+                planned_portion=served.get((day, slot), (1.0, 0))[0],
+                planned_rice_steps=served.get((day, slot), (1.0, 0))[1],
             )
             for day in range(WEEKLY_DAYS)
             for slot in range(WEEKLY_SLOTS_PER_DAY)
@@ -162,6 +166,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         expected_revision: int | None = None,
         algorithm_version: str | None = None,
         saved_slots: dict[tuple[int, int], SavedRecipeSnapshot] | None = None,
+        servings: dict[tuple[int, int], tuple[float, int]] | None = None,
     ) -> WeeklyMealPlan:
         row = await self.get_for_update(
             user_id=user_id, plan_id=plan_id, include_pantry=False
@@ -217,6 +222,9 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                 slot.catalog_meal_id = recipe_id
                 slot.saved_suggestion_id = None
                 slot.saved_recipe = None
+                portion, rice_steps = (servings or {}).get(coordinate, (1.0, 0))
+                slot.planned_portion = portion
+                slot.planned_rice_steps = rice_steps
                 slot.version += 1
             for coordinate, snapshot in (saved_slots or {}).items():
                 slot = _replaceable_slot(by_coordinate, coordinate)
@@ -315,6 +323,45 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             }
             for item in result.scalars().all()
         ]
+
+    async def list_plan_recipe_outcomes(
+        self, *, user_id: str, since: date, limit: int = 400
+    ) -> list[tuple[str, str]]:
+        """What became of each planned dish, newest week first.
+
+        "logged" wins over "skipped" on a slot that carries both, which
+        happens when somebody skips a meal and then logs it anyway: they did
+        eat it, so it is not a refusal.
+        """
+        result = await self.session.execute(
+            select(
+                WeeklyMealPlanSlotORM.catalog_meal_id,
+                WeeklyMealPlanSlotORM.is_logged,
+                WeeklyMealPlanSlotORM.is_skipped,
+            )
+            .join(
+                WeeklyMealPlanORM,
+                WeeklyMealPlanORM.id == WeeklyMealPlanSlotORM.plan_id,
+            )
+            .where(
+                WeeklyMealPlanORM.user_id == user_id,
+                WeeklyMealPlanORM.week_start_date >= since,
+                WeeklyMealPlanSlotORM.catalog_meal_id.is_not(None),
+                or_(
+                    WeeklyMealPlanSlotORM.is_logged.is_(True),
+                    WeeklyMealPlanSlotORM.is_skipped.is_(True),
+                ),
+            )
+            .order_by(WeeklyMealPlanORM.week_start_date.desc())
+            .limit(limit)
+        )
+        outcomes: list[tuple[str, str]] = []
+        for recipe_id, is_logged, is_skipped in result.all():
+            if is_logged:
+                outcomes.append((str(recipe_id), "logged"))
+            elif is_skipped:
+                outcomes.append((str(recipe_id), "skipped"))
+        return outcomes
 
     async def list_grocery_interactions(
         self, *, user_id: str, plan_id: str
@@ -685,6 +732,8 @@ def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
                 str | None, getattr(slot, "saved_suggestion_id", None)
             ),
             saved_recipe=_saved_recipe(slot),
+            planned_portion=float(getattr(slot, "planned_portion", None) or 1.0),
+            planned_rice_steps=int(getattr(slot, "planned_rice_steps", None) or 0),
         )
         for slot in sorted(
             data.slots, key=lambda item: (item.day_index, item.slot_index)

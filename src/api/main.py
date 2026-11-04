@@ -67,7 +67,6 @@ from src.api.routes.v1.log_describe import router as log_describe_router
 from src.api.routes.v1.meal_catalog import router as meal_catalog_router
 from src.api.routes.v1.meal_catalog_log import router as meal_catalog_log_router
 from src.api.routes.v1.meal_plans import router as meal_plans_router
-from src.api.routes.v1.meal_recommendations import router as meal_recommendations_router
 from src.api.routes.v1.meal_scan_by_url import router as meal_scan_by_url_router
 from src.api.routes.v1.meal_suggestions import router as meal_suggestions_router
 from src.api.routes.v1.meals import router as meals_router
@@ -379,7 +378,6 @@ app.include_router(capabilities_router)
 app.include_router(ai_jobs_router)
 app.include_router(chat_router)
 app.include_router(meal_suggestions_router)
-app.include_router(meal_recommendations_router)
 app.include_router(meal_catalog_log_router)
 app.include_router(meal_plans_router)
 app.include_router(meal_catalog_router)
