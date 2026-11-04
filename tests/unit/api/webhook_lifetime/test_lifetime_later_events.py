@@ -109,13 +109,14 @@ async def test_a_yearly_renewal_after_the_upgrade_is_still_reported(
     assert lifecycle_types(publisher)[-1] == "subscription_renewal"
 
 
-async def test_a_yearly_billing_issue_after_the_upgrade_is_reported(
+async def test_a_yearly_billing_issue_after_the_upgrade_sends_no_push(
     uow, deliver, publisher
 ):
     await _upgrade_from_yearly(deliver)
 
     await deliver(handle_billing_issue, yearly("BILLING_ISSUE"))
 
+    uow.engagement_pushes.enqueue.assert_not_awaited()
     assert lifecycle_types(publisher)[-1] == "subscription_billing_issue"
 
 
@@ -205,7 +206,9 @@ async def test_beside_lifetime_a_plan_without_its_own_row_changes_nothing(
     assert statuses == {MONTHLY: "active", LIFETIME_PRODUCT_ID: "active"}
 
 
-async def test_a_billing_issue_beside_lifetime_flags_only_the_plan(uow, deliver):
+async def test_a_billing_issue_beside_lifetime_flags_the_plan_without_a_push(
+    uow, deliver
+):
     _add_row(uow, MONTHLY)
     await deliver(handle_lifetime_purchase, lifetime())
 
@@ -213,6 +216,7 @@ async def test_a_billing_issue_beside_lifetime_flags_only_the_plan(uow, deliver)
 
     statuses = {row.product_id: row.status for row in await rows(uow)}
     assert statuses == {MONTHLY: "billing_issue", LIFETIME_PRODUCT_ID: "active"}
+    uow.engagement_pushes.enqueue.assert_not_awaited()
 
 
 async def test_a_plan_that_ended_beside_lifetime_is_not_reported_after_a_refund(

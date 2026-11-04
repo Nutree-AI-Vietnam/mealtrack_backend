@@ -40,11 +40,14 @@ from src.domain.strategies.meal_analysis_strategy import (
     FoodLabelImageAnalysisStrategy,
 )
 from src.domain.utils.image_compression import (
-    compress_image,
+    VISION_JPEG_QUALITY,
+    VISION_MAX_DIM,
     to_compressed_image_url,
 )
+from src.domain.utils.image_compression import compress_vision_image as compress_image
 from src.domain.utils.timezone_utils import (
     get_zone_info,
+    is_same_day_log,
     is_valid_timezone,
     noon_utc_for_date,
     user_today,
@@ -193,6 +196,8 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             download_url = (
                 to_compressed_image_url(
                     command.image_url,
+                    max_dim=VISION_MAX_DIM,
+                    quality=str(VISION_JPEG_QUALITY),
                     custom_domain=self.cloudflare_custom_domain,
                     flexible_variants_enabled=self.cloudflare_flexible_variants_enabled,
                 )
@@ -249,6 +254,10 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
             zone_info = get_zone_info(user_timezone)
             meal_type = determine_meal_type_from_timestamp(
                 meal_datetime.astimezone(zone_info)
+            )
+            # Judged at the request's arrival: analysis can end past midnight.
+            logged_on_day = is_same_day_log(
+                command.target_date, user_timezone, command.received_at
             )
 
             # Vision analysis via bytes path (never sends URL to the AI provider)
@@ -360,6 +369,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                     raw_gpt_json=self.gpt_parser.extract_raw_json(vision_result),
                     food_label_metadata=label_metadata,
                     nutrition=nutrition,
+                    logged_on_day=logged_on_day,
                 )
 
                 saved_meal = await self._save_and_publish_created(
@@ -431,6 +441,7 @@ class ScanByUrlCommandHandler(EventHandler[ScanByUrlCommand, Meal]):
                 ready_at=utc_now(),
                 raw_gpt_json=self.gpt_parser.extract_raw_json(vision_result),
                 nutrition=nutrition,
+                logged_on_day=logged_on_day,
             )
             meal = persist_meal_response_localization(meal, localization)
 

@@ -140,6 +140,46 @@ class TestMealEditDomain:
         assert edited_meal.created_at == updated_at
         assert edited_meal.meal_type == "dinner"
 
+    @pytest.mark.parametrize("logged_on_day", [True, False, None])
+    def test_no_change_to_a_meal_alters_whether_it_was_logged_on_its_day(
+        self, logged_on_day
+    ):
+        meal = Meal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            created_at=datetime(2026, 6, 28, 8, 0),
+            image=MealImage(
+                image_id=str(uuid.uuid4()),
+                format="jpeg",
+                size_bytes=100000,
+                url="https://example.com/image.jpg",
+            ),
+            dish_name="Test Meal",
+            nutrition=Nutrition(
+                macros=Macros(protein=30.0, carbs=50.0, fat=20.0),
+                food_items=[],
+                confidence_score=0.9,
+            ),
+            ready_at=datetime(2026, 6, 28, 8, 1),
+            logged_on_day=logged_on_day,
+        )
+
+        changed = [
+            # A meal-time edit to exactly noon looks like a backfill stamp.
+            meal.mark_edited(
+                meal.nutrition, "Test Meal", created_at=datetime(2026, 6, 28, 12, 0)
+            ),
+            meal.with_image(None),
+            meal.mark_inactive(),
+            meal.mark_analyzing(),
+            meal.mark_enriching("{}"),
+            meal.mark_ready(meal.nutrition, "Test Meal"),
+            meal.mark_failed("timeout"),
+        ]
+
+        assert [m.logged_on_day for m in changed] == [logged_on_day] * len(changed)
+
     def test_meal_preserves_other_fields_when_edited(self):
         """Test that mark_edited preserves other meal fields."""
         # Arrange

@@ -11,10 +11,15 @@ from src.api.exceptions import (
     ValidationException,
 )
 from src.app.commands.meal_planner import LogMealPlanSlotCommand
+from src.app.events.meal.meal_events import invoke_local_cache_invalidation_hook
 from src.app.services.recommended_meal_materialization_service import (
     RecommendedMealMaterializationService,
 )
-from src.domain.model.weekly_meal_planner import meal_type_for_slot
+from src.domain.model.weekly_meal_planner import (
+    SLOT_LOG_SOURCE_PLAN,
+    SavedRecipeSnapshot,
+    meal_type_for_slot,
+)
 from src.domain.utils.fingerprint_utils import canonicalize_fingerprint
 
 
@@ -33,6 +38,16 @@ class WeeklyMealLoggingService:
         self.materializer = materializer or RecommendedMealMaterializationService()
 
     async def log(self, command: LogMealPlanSlotCommand) -> LogMealPlanSlotResult:
+        result = await self._log(command)
+        # A new diary meal changes the day's totals: purge after commit and
+        # before responding, like every other meal write. A replay purges
+        # again in case the first response never got that far.
+        await invoke_local_cache_invalidation_hook(
+            command.user_id, command.meal_date, None
+        )
+        return result
+
+    async def _log(self, command: LogMealPlanSlotCommand) -> LogMealPlanSlotResult:
         if command.portion_multiplier not in {0.5, 1.0, 1.5, 2.0}:
             raise ValidationException(
                 "portion_multiplier must be 0.5, 1, 1.5, or 2",
@@ -111,7 +126,10 @@ class WeeklyMealLoggingService:
                         "date and meal_type must match the selected weekly slot",
                         error_code="WEEKLY_SLOT_MISMATCH",
                     )
-                if slot.catalog_meal_id != command.expected_recipe_id:
+                # A saved recipe is addressed by its saved-suggestion id.
+                saved_suggestion_id = getattr(slot, "saved_suggestion_id", None)
+                planned_id = saved_suggestion_id or slot.catalog_meal_id
+                if planned_id != command.expected_recipe_id:
                     raise ConflictException(
                         "Weekly meal slot has changed; refresh the plan before logging",
                         error_code="WEEKLY_SLOT_STALE_RECIPE",
@@ -121,29 +139,47 @@ class WeeklyMealLoggingService:
                         "Weekly meal slot is already logged",
                         error_code="WEEKLY_SLOT_ALREADY_LOGGED",
                     )
-                if slot.catalog_meal_id is None:
+                if planned_id is None:
                     raise ValidationException(
                         "Cannot log an empty weekly meal slot",
                         error_code="WEEKLY_SLOT_EMPTY",
                     )
-                catalog_meal = await uow.catalog_recipes.get_meal(slot.catalog_meal_id)
-                if catalog_meal is None:
-                    raise ResourceNotFoundException(
-                        "Planned recipe is no longer available"
-                    )
                 effective_timezone = (
                     command.timezone or getattr(slot_plan, "timezone", None) or "UTC"
                 )
-                meal = await self.materializer.materialize_from_catalog(
-                    uow,
-                    user_id=command.user_id,
-                    catalog_meal=catalog_meal,
-                    meal_date=command.meal_date,
-                    meal_type=command.meal_type,
-                    timezone=effective_timezone,
-                    portion_multiplier=command.portion_multiplier,
-                    source="weekly_meal_planner",
-                )
+                if saved_suggestion_id is not None:
+                    # The slot's copy, so a since-deleted saved recipe still logs.
+                    meal = await self.materializer.materialize_from_saved_recipe(
+                        uow,
+                        user_id=command.user_id,
+                        recipe=SavedRecipeSnapshot.from_dict(
+                            slot.saved_recipe, suggestion_id=saved_suggestion_id
+                        ),
+                        meal_date=command.meal_date,
+                        meal_type=command.meal_type,
+                        timezone=effective_timezone,
+                        portion_multiplier=command.portion_multiplier,
+                        source="weekly_meal_planner",
+                    )
+                else:
+                    catalog_meal = await uow.catalog_recipes.get_meal(
+                        slot.catalog_meal_id
+                    )
+                    if catalog_meal is None:
+                        raise ResourceNotFoundException(
+                            "Planned recipe is no longer available"
+                        )
+                    meal = await self.materializer.materialize_from_catalog(
+                        uow,
+                        user_id=command.user_id,
+                        catalog_meal=catalog_meal,
+                        meal_date=command.meal_date,
+                        meal_type=command.meal_type,
+                        timezone=effective_timezone,
+                        portion_multiplier=command.portion_multiplier,
+                        source="weekly_meal_planner",
+                        rice_steps=int(getattr(command, "rice_steps", 0) or 0),
+                    )
                 try:
                     await uow.weekly_meal_plans.mark_slot_logged(
                         user_id=command.user_id,
@@ -151,6 +187,7 @@ class WeeklyMealLoggingService:
                         slot_id=command.slot_id,
                         meal_id=meal.meal_id,
                         slot=slot,
+                        log_source=SLOT_LOG_SOURCE_PLAN,
                     )
                 except TypeError:
                     await uow.weekly_meal_plans.mark_slot_logged(

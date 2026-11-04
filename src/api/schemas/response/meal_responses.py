@@ -279,7 +279,7 @@ class FoodItemResponse(BaseModel):
         None,
         ge=0,
         le=1,
-        description="AI identity/portion confidence for this item when available",
+        description="Model confidence; not a calibrated probability of correctness",
     )
     name: str = Field(..., description="Food item name")
     display_name: str | None = Field(
@@ -345,8 +345,30 @@ class SimpleMealResponse(BaseModel):
     model_config = ConfigDict(json_encoders={datetime: _serialize_datetime_utc})
 
 
+class NutritionSourceSummaryResponse(BaseModel):
+    """Counts of food items by the logical nutrition origin on each item.
+
+    Keys match item ``origin`` (local, usda, provider, custom). ``unknown``
+    is items whose stored origin is missing or not one of those four.
+    This is not a meal-level origin.
+    """
+
+    local: int = Field(0, ge=0, description="Items with origin local")
+    usda: int = Field(0, ge=0, description="Items with origin usda")
+    provider: int = Field(0, ge=0, description="Items with origin provider")
+    custom: int = Field(0, ge=0, description="Items with origin custom")
+    unknown: int = Field(
+        0,
+        ge=0,
+        description="Items with no stored origin, or an unrecognized one",
+    )
+
+
 class DetailedMealResponse(SimpleMealResponse):
     """Response DTO for detailed meal information with nutrition."""
+
+    edit_count: int = Field(0, ge=0)
+    is_manually_edited: bool = False
 
     food_items: list[FoodItemResponse] = Field(
         default_factory=list, description="Food items in the meal"
@@ -355,12 +377,6 @@ class DetailedMealResponse(SimpleMealResponse):
     total_calories: float | None = Field(None, description="Total calories")
     total_weight_grams: float | None = Field(None, gt=0, description="Total weight")
     total_nutrition: MacrosResponse | None = Field(None, description="Total macros")
-    ai_confidence: float | None = Field(
-        None,
-        ge=0,
-        le=1,
-        description="Meal-level vision confidence for scanner meals when available",
-    )
     nutrition_override: NutritionOverrideResponse | None = Field(
         None, description="Independent meal-level nutrition values"
     )
@@ -393,6 +409,31 @@ class DetailedMealResponse(SimpleMealResponse):
         None, description="Per-item nutrient quality when coverage >= 1"
     )
     nrf_coverage: int = Field(0, description="Count of logged NRF micro/limit fields")
+    ai_generated: bool = Field(
+        ...,
+        description=(
+            "True when source is scanner, food_label, prompt, or "
+            "ai_suggestion. False for every other source, including null."
+        ),
+    )
+    ai_confidence: float | None = Field(
+        ...,
+        ge=0,
+        le=1,
+        description=(
+            "Stored vision confidence_score when source is scanner. "
+            "Null for every other source, and null when a scanner meal "
+            "has no nutrition yet. Not a calibrated probability. "
+            "Food-label confidence stays on food_label_metadata.confidence."
+        ),
+    )
+    nutrition_source_summary: NutritionSourceSummaryResponse = Field(
+        ...,
+        description=(
+            "Counts of food items by logical nutrition origin. "
+            "Reconciles with each item's origin field."
+        ),
+    )
 
 
 class MealListResponse(BaseModel):

@@ -16,9 +16,10 @@ from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.weekly import WeeklyMacroBudget
-from src.domain.services.daily_target_snapshot_service import maybe_write_today_snapshot
+from src.domain.services.daily_target_snapshot_service import persist_today_snapshot
 from src.domain.services.hydration_intake import add_unrepresented_drink_totals
 from src.domain.services.meal_calorie_service import effective_meal_calories
+from src.domain.services.tdee_service import pace_reset_on_for_user
 from src.domain.utils.timezone_utils import ensure_utc, get_zone_info
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,11 @@ class WeeklyBudgetService:
     @staticmethod
     def auto_adjust_enabled(value: object) -> bool:
         """Treat missing/unknown as enabled. Only explicit False disables."""
+        return value is not False
+
+    @staticmethod
+    def activity_calories_enabled(value: object) -> bool:
+        """Whether logged movement raises the budget. Only explicit False stops it."""
         return value is not False
 
     @staticmethod
@@ -118,8 +124,13 @@ class WeeklyBudgetService:
         exclude_date: date | None = None,
         exclude_dates: list[date] | None = None,
         user_timezone: str | None = None,
+        activity_calories: bool = True,
     ) -> dict[str, float]:
-        """Async version of calculate_weekly_consumed for AsyncUnitOfWork."""
+        """Async version of calculate_weekly_consumed for AsyncUnitOfWork.
+
+        Movement kcal net out of consumed calories only while activity
+        calories are on.
+        """
         week_end = end_date or week_start + timedelta(days=6)
 
         try:
@@ -158,16 +169,17 @@ class WeeklyBudgetService:
             user_timezone=user_timezone,
         )
 
-        movement_kcal = await WeeklyBudgetService._calculate_movement_kcal_async(
-            uow=uow,
-            user_id=user_id,
-            week_start=week_start,
-            end_date=week_end,
-            exclude_date=exclude_date,
-            exclude_dates=exclude_dates,
-            user_timezone=user_timezone,
-        )
-        consumed["calories"] -= movement_kcal
+        if WeeklyBudgetService.activity_calories_enabled(activity_calories):
+            movement_kcal = await WeeklyBudgetService._calculate_movement_kcal_async(
+                uow=uow,
+                user_id=user_id,
+                week_start=week_start,
+                end_date=week_end,
+                exclude_date=exclude_date,
+                exclude_dates=exclude_dates,
+                user_timezone=user_timezone,
+            )
+            consumed["calories"] -= movement_kcal
 
         return consumed
 
@@ -383,8 +395,15 @@ class WeeklyBudgetService:
         week_start: date,
         target_date: date,
         user_timezone: str,
+        activity_calories: bool = True,
     ) -> WeeklyEffectivePreload:
-        """Build per-user preload maps from batch-fetched rows (one timezone group)."""
+        """Build per-user preload maps from batch-fetched rows (one timezone group).
+
+        Movement kcal net out of consumed calories only while activity
+        calories are on.
+        """
+        if not WeeklyBudgetService.activity_calories_enabled(activity_calories):
+            movement_by_date = {}
         past_end = target_date - timedelta(days=1)
         past_days_count = (target_date - week_start).days
         past_cheat_dates = [d for d in cheat_dates if d < target_date]
@@ -448,6 +467,7 @@ class WeeklyBudgetService:
         consumed_before_today: dict[str, float],
         consumed_for_redistribution: dict[str, float],
         auto_adjust: bool = True,
+        fresh_base: bool = False,
     ) -> EffectiveAdjustedResult:
         """Shared effective-adjusted policy for async and batch-preloaded callers."""
         calc = WeeklyBudgetService
@@ -466,6 +486,37 @@ class WeeklyBudgetService:
                 and past_days_count >= 3
             ):
                 show_logging_prompt = True
+
+        if fresh_base:
+            # A pace change rebuilds today from the new standard daily.
+            # Earlier days in the week do not reduce or raise that target.
+            adjusted = calc.calculate_adjusted_daily(
+                replace(
+                    weekly_budget,
+                    target_calories=base_daily_cal * remaining_days,
+                    target_protein=base_daily_protein * remaining_days,
+                    target_carbs=base_daily_carbs * remaining_days,
+                    target_fat=base_daily_fat * remaining_days,
+                    consumed_calories=0,
+                    consumed_protein=0,
+                    consumed_carbs=0,
+                    consumed_fat=0,
+                ),
+                standard_daily_calories=base_daily_cal,
+                standard_daily_carbs=base_daily_carbs,
+                standard_daily_fat=base_daily_fat,
+                standard_daily_protein=base_daily_protein,
+                bmr=bmr,
+                remaining_days=remaining_days,
+            )
+            return EffectiveAdjustedResult(
+                adjusted=adjusted,
+                consumed_before_today=consumed_before_today,
+                consumed_total=consumed_total,
+                logged_past_days=logged_past_days,
+                skipped_days=skipped_days,
+                show_logging_prompt=False,
+            )
 
         if not calc.auto_adjust_enabled(auto_adjust):
             return EffectiveAdjustedResult(
@@ -561,9 +612,16 @@ class WeeklyBudgetService:
         cheat_dates: list[date] | None = None,
         weekly_preload: WeeklyEffectivePreload | None = None,
         auto_adjust: bool = True,
+        activity_calories: bool = True,
     ) -> EffectiveAdjustedResult:
-        """Async version of get_effective_adjusted_daily for AsyncUnitOfWork."""
+        """Async version of get_effective_adjusted_daily for AsyncUnitOfWork.
+
+        Movement kcal net out of consumed calories only while activity
+        calories are on. A weekly_preload must be built with the same flag.
+        """
         calc = WeeklyBudgetService
+        reset_on = await pace_reset_on_for_user(uow, user_id)
+        fresh_base = reset_on is not None and reset_on == target_date
 
         if cheat_dates is None:
             cheat_day_records = await uow.cheat_days.find_by_user_and_date_range(
@@ -589,9 +647,15 @@ class WeeklyBudgetService:
                 consumed_before_today=weekly_preload.consumed_before_today,
                 consumed_for_redistribution=weekly_preload.consumed_for_redistribution,
                 auto_adjust=auto_adjust,
+                fresh_base=fresh_base,
             )
-            await maybe_write_today_snapshot(
-                uow, user_id, target_date, result.adjusted.calories, user_timezone
+            await persist_today_snapshot(
+                uow,
+                user_id,
+                target_date,
+                result.adjusted.calories,
+                user_timezone,
+                replace=fresh_base,
             )
             return result
 
@@ -624,12 +688,16 @@ class WeeklyBudgetService:
                 user_timezone=user_timezone,
             )
 
-        movement_by_date = await calc._build_daily_movement_map_async(
-            uow=uow,
-            user_id=user_id,
-            week_start=week_start,
-            end_date=week_end,
-            user_timezone=user_timezone,
+        movement_by_date = (
+            await calc._build_daily_movement_map_async(
+                uow=uow,
+                user_id=user_id,
+                week_start=week_start,
+                end_date=week_end,
+                user_timezone=user_timezone,
+            )
+            if calc.activity_calories_enabled(activity_calories)
+            else {}
         )
         drink_entries = await calc._week_hydration_entries(
             uow, user_id, week_start, week_end, user_timezone
@@ -719,9 +787,15 @@ class WeeklyBudgetService:
             consumed_before_today=consumed_before_today,
             consumed_for_redistribution=consumed_for_redistribution,
             auto_adjust=auto_adjust,
+            fresh_base=fresh_base,
         )
-        await maybe_write_today_snapshot(
-            uow, user_id, target_date, result.adjusted.calories, user_timezone
+        await persist_today_snapshot(
+            uow,
+            user_id,
+            target_date,
+            result.adjusted.calories,
+            user_timezone,
+            replace=fresh_base,
         )
         return result
 

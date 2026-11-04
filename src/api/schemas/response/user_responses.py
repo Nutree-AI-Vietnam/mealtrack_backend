@@ -2,8 +2,8 @@
 User management response schemas for Firebase integration.
 """
 
-from datetime import datetime
-from typing import Optional
+from datetime import date, datetime
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -33,6 +33,27 @@ class SubscriptionInfo(BaseModel):
     platform: str = Field(..., description="Platform (ios, android, web)")
 
 
+class AvatarResponse(BaseModel):
+    """The avatar a person chose.
+
+    With kind `auto`, show `photo_url` when the profile has one, otherwise
+    initials on a colour the app derives from the user id.
+    """
+
+    kind: Literal["auto", "photo", "character", "initials"] = Field(
+        ..., description="Which avatar to show"
+    )
+    image_url: str | None = Field(
+        None, description="Uploaded photo URL; set only when kind is photo"
+    )
+    character: str | None = Field(
+        None, description="Nutree character id; set only when kind is character"
+    )
+    color: int | None = Field(
+        None, description="Initials palette index 0-7; set only when kind is initials"
+    )
+
+
 class UserProfileResponse(BaseModel):
     """Response containing user profile information."""
 
@@ -45,6 +66,7 @@ class UserProfileResponse(BaseModel):
     phone_number: Optional[str] = Field(None, description="Phone number")
     display_name: Optional[str] = Field(None, description="Display name")
     photo_url: Optional[str] = Field(None, description="Profile photo URL")
+    avatar: AvatarResponse = Field(..., description="Avatar the user chose")
     provider: AuthProviderEnum = Field(..., description="Authentication provider")
     is_active: bool = Field(..., description="Whether user account is active")
     onboarding_completed: bool = Field(
@@ -112,6 +134,9 @@ class UserMetricsResponse(BaseModel):
 
     user_id: str = Field(..., description="User internal ID")
     age: int = Field(..., description="User age")
+    date_of_birth: date | None = Field(
+        None, description="Date of birth as YYYY-MM-DD, or null when not stored"
+    )
     gender: str = Field(..., description="User gender")
     height_cm: float = Field(..., description="Height in centimeters")
     weight_kg: float = Field(..., description="Current weight in kilograms")
@@ -140,6 +165,32 @@ class UserMetricsResponse(BaseModel):
         0.0, description="Starting journey percent granted from historical actions"
     )
     updated_at: datetime = Field(..., description="Last update timestamp")
+    weight_loss_kg_per_week: Optional[float] = Field(
+        None, description="Saved lose-weight pace in kg per week, or unset"
+    )
+    weight_loss_lb_per_week: Optional[float] = Field(
+        None, description="Display conversion of the same kg per week"
+    )
+    weight_gain_kg_per_week: float | None = Field(
+        None, description="Saved gain-weight pace in kg per week, or unset"
+    )
+    weight_gain_lb_per_week: float | None = Field(
+        None, description="Display conversion of the same kg per week"
+    )
+    pace_clinician_disclaimer: bool = Field(
+        False,
+        description="Show the clinician disclaimer when the user answered yes",
+    )
+    dietary_preferences: list[str] = Field(
+        default_factory=list, description="Saved diets such as vegetarian or keto"
+    )
+    allergies: list[str] = Field(
+        default_factory=list, description="Saved allergies, such as tôm or milk"
+    )
+    health_conditions: list[str] = Field(
+        default_factory=list,
+        description="Saved conditions such as pregnancy or kidney_disease",
+    )
 
 
 class UserDeleteResponse(BaseModel):

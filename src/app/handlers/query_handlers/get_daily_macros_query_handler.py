@@ -10,6 +10,7 @@ from uuid import UUID
 
 from src.app.events.base import EventHandler, handles
 from src.app.queries.meal import GetDailyMacrosQuery
+from src.app.services.supplement_days import dose_watermark, doses_between
 from src.app.services.weekly_budget_target_sync import (
     sync_weekly_budget_targets_if_stale,
 )
@@ -19,6 +20,7 @@ from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import merge_micros
+from src.domain.model.supplement.day_totals import supplement_day_totals
 from src.domain.model.user import MacroPreset, MacroTargets
 from src.domain.ports.cache_port import CachePort
 from src.domain.services.hydration_goal_service import resolve_hydration_goal_ml
@@ -111,6 +113,9 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                 await uow.users.get_weekly_auto_adjust(query.user_id)
             )
+            activity_calories = WeeklyBudgetService.activity_calories_enabled(
+                await uow.users.get_activity_calories(query.user_id)
+            )
 
             # A 24h cache is safe only while its log fingerprint still matches
             # the newest meal, drink, and workout on this local day. A missed
@@ -124,6 +129,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 target_revision,
                 auto_adjust,
                 logs_watermark,
+                activity_calories=activity_calories,
             )
             if cached_result is not None:
                 return cached_result
@@ -195,6 +201,12 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 total_calories += drink.total_calories
                 day_micros = merge_micros(day_micros, entry.micros)
 
+            # Supplement doses add vitamins and minerals only, never calories
+            # or a meal; Ghi nhanh estimates count too, except toward sodium.
+            doses = await doses_between(uow, query.user_id, target_date, target_date)
+            supplements = supplement_day_totals(doses)
+            day_micros = merge_micros(day_micros, supplements.home_highlight_micros())
+
             # Pre-fetch weekly budget eagerly here (must be inside this UoW — fetching it
             # later would require a second connection open). Only consumed when target_calories
             # is available; cheap indexed lookup so the overhead is negligible.
@@ -253,7 +265,13 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 )
 
             food_calories = total_calories
-            net_calories = food_calories - movement_kcal_burned
+            # Logged movement raises the budget only while activity calories
+            # are on; the burn is still reported either way.
+            net_calories = (
+                food_calories - movement_kcal_burned
+                if activity_calories
+                else food_calories
+            )
 
             if target_calories:
                 weekly_context = await self._get_weekly_context(
@@ -270,9 +288,10 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                     is_custom,
                     target_revision,
                     auto_adjust,
+                    activity_calories,
                 )
 
-        result = {
+        result: dict[str, Any] = {
             "date": target_date.isoformat(),
             "user_id": query.user_id,
             "total_calories": round(net_calories, 1),
@@ -284,11 +303,19 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
             "meal_count": meal_count,
             "meals_with_nutrition": meals_with_nutrition,
             "weekly_auto_adjust": auto_adjust,
+            "activity_calories": activity_calories,
             **highlight_amounts(day_micros),
+            # The doses' share of the highlights, so the app can add it to
+            # totals it rebuilds from its own meal cache.
+            "supplement_micros": {
+                key: round(value, 2)
+                for key, value in sorted(supplements.home_micros().items())
+            },
         }
         if user_profile is not None:
             result["gender"] = user_profile.gender
             result["age"] = user_profile.age
+            result["dietary_preferences"] = list(user_profile.dietary_preferences or [])
 
         if target_calories is not None:
             result["target_calories"] = target_calories
@@ -337,6 +364,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
         is_custom: bool = False,
         target_revision: int | None = None,
         auto_adjust: bool = True,
+        activity_calories: bool = True,
     ) -> dict[str, Any] | None:
         """Get weekly budget context using the weekly-budget adjustment path.
 
@@ -382,6 +410,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 bmr=bmr,
                 user_timezone=user_timezone,
                 auto_adjust=auto_adjust,
+                activity_calories=activity_calories,
             )
             adjusted = effective.adjusted
             policy_targets = TdeeCalculationService.apply_adjusted_macro_policy(
@@ -432,10 +461,11 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                 user_id,
                 user_tz,
             )
+            supplement_at = await dose_watermark(uow, user_id, target_date)
         except Exception as exc:
             logger.warning("Failed to fingerprint logs for %s: %s", user_id, exc)
             return None
-        return intake_watermark(meal_at, hydration_at, movement_at)
+        return intake_watermark(meal_at, hydration_at, movement_at, supplement_at)
 
     async def _try_get_cached_result(
         self,
@@ -444,6 +474,7 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
         revision: int | None,
         auto_adjust: bool,
         logs_watermark: str | None,
+        activity_calories: bool = True,
     ):
         if not self.cache_service or logs_watermark is None:
             return None
@@ -459,6 +490,10 @@ class GetDailyMacrosQueryHandler(EventHandler[GetDailyMacrosQuery, dict[str, Any
                     cached.get("weekly_auto_adjust", True)
                 )
                 == auto_adjust
+                and WeeklyBudgetService.activity_calories_enabled(
+                    cached.get("activity_calories", True)
+                )
+                == activity_calories
             ):
                 return cached
             return None

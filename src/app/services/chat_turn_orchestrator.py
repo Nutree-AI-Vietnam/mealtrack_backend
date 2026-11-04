@@ -340,14 +340,18 @@ class ChatTurnOrchestrator:
         header_timezone: str | None,
         user_language: str | None,
         thread_id: str | None = None,
+        resume: bool = False,
     ) -> PreparedChatTurn:
         """Replace the latest completed reply without adding another user turn.
 
         A different ``content`` edits the stored question before the new answer.
+        ``resume`` is a job retry: it reuses that same turn instead of opening
+        another one, and replays a reply the earlier attempt already saved.
         """
         started = time.perf_counter()
         resolved_locale = resolve_chat_locale(locale, user_language)
-        await self._enforce_daily_budget(user_id)
+        if not resume:
+            await self._enforce_daily_budget(user_id)
         lease = utc_now() + timedelta(seconds=self._generation_lease_seconds)
         async with self._uow_factory() as uow:
             repo = _chat_repo(uow)
@@ -362,10 +366,23 @@ class ChatTurnOrchestrator:
                 lease_expires_at=lease,
                 content=content.strip(),
                 thread_id=thread_id,
+                resume=resume,
             )
         if reopened is None:
             raise ChatRegenerateNotAllowedError()
         claim, prior_intent, content_changed = reopened
+        if claim.kind == ChatClaimKind.REPLAY:
+            return PreparedChatTurn(
+                claim=claim,
+                content=(claim.user_message.content or "").strip(),
+                locale=resolved_locale,
+                header_timezone=header_timezone,
+                started=started,
+                intent=None if content_changed else prior_intent,
+                slot_acquired=False,
+            )
+        if resume:
+            await self._enforce_daily_budget(user_id)
         if self._circuit_is_open():
             await self._fail(
                 claim.assistant_message.id,

@@ -1,6 +1,10 @@
-"""Responses for POST /v1/hydration/describe and /v1/movement/describe."""
+"""Responses for the Ghi nhanh routes: water, activity and the + panel."""
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from src.api.schemas.response.meal_responses import DetailedMealResponse
 
 
 class DescribedDrinkEntry(BaseModel):
@@ -46,3 +50,50 @@ class DescribedMovementEntry(BaseModel):
 
 class DescribeMovementResponse(BaseModel):
     entries: list[DescribedMovementEntry] = Field(..., description="In sentence order")
+
+
+class DescribeAnySavedItem(BaseModel):
+    """One saved entry, with the payload its kind's own route returns."""
+
+    kind: Literal["food", "drink", "activity", "supplement"]
+    id: str = Field(..., description="Meal, drink entry, activity entry or dose id")
+    title: str
+    summary: str = Field(..., description='One line, e.g. "520 kcal" or "250 ml"')
+    estimated: bool = Field(
+        False, description="A supplement saved from the model's guess (ước tính)"
+    )
+    meal: DetailedMealResponse | None = Field(
+        None, description="Food: the meal as POST /v1/meals/manual returns it"
+    )
+    drink: DescribedDrinkEntry | None = None
+    activity: DescribedMovementEntry | None = None
+    intake: dict[str, Any] | None = Field(
+        None, description="Supplement: the dose, as POST /v1/supplements/intakes"
+    )
+    entry: dict[str, Any] | None = Field(
+        None, description="Supplement: the list row with the day's doses"
+    )
+    product: dict[str, Any] | None = None
+
+
+class DescribeAnySkippedItem(BaseModel):
+    kind: Literal["food", "drink", "activity", "supplement"]
+    title: str
+    reason: Literal["not_requested", "supplements_unavailable", "not_recognized"]
+
+
+class DescribeAnyResponse(BaseModel):
+    saved: list[DescribeAnySavedItem] = Field(
+        ..., description="Food, then drinks, activities and supplements"
+    )
+    skipped: list[DescribeAnySkippedItem] = Field(
+        ..., description="Read but not saved; never counted as saved"
+    )
+    nothing_found: bool = Field(
+        ..., description="The sentence logged nothing Nutree recognised"
+    )
+
+
+class UndoDescribeAnyResponse(BaseModel):
+    request_id: str
+    deleted: dict[str, int] = Field(..., description="Entries deleted per kind")

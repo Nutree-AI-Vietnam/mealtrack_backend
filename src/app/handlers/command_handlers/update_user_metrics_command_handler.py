@@ -3,6 +3,7 @@ Command handler for updating user metrics.
 """
 
 import logging
+from datetime import date, datetime
 from typing import Any
 
 from src.api.exceptions import ResourceNotFoundException, ValidationException
@@ -13,13 +14,29 @@ from src.app.events.user.user_profile_updated_event import (
 )
 from src.domain.model.common.enums import FitnessGoal, JobType, TrainingLevel
 from src.domain.model.user.body_fat_visual import remap_visual_profile_selection
+from src.domain.model.user.core_user import age_on
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.integration_event_publisher_port import (
     IntegrationEventPublisherPort,
     require_event_publisher,
 )
+from src.domain.services.meal_suggestion.suggestion_tdee_helpers import (
+    build_tdee_request,
+)
+from src.domain.services.tdee_service import (
+    HEALTH_CONDITIONS,
+    allowed_gain_pace,
+    allowed_pace,
+)
 from src.domain.services.training_policy import normalize_training_pair
-from src.domain.utils.timezone_utils import utc_now
+from src.domain.services.weekly_meal_planner.allergen_constraint import (
+    resolve_allergen_terms,
+)
+from src.domain.utils.timezone_utils import (
+    get_zone_info,
+    resolve_user_timezone_async,
+    utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +54,7 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
                 command.weight_kg,
                 command.height_cm,
                 command.age,
+                command.date_of_birth,
                 command.biological_sex,
                 command.job_type,
                 command.training_days_per_week,
@@ -52,7 +70,69 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         )
         or command.body_fat_percent_provided
         or command.reset_water_goal
+        or command.weight_loss_kg_per_week is not None
+        or command.weight_gain_kg_per_week is not None
+        or command.dietary_preferences is not None
+        or command.health_conditions is not None
+        or command.allergies is not None
     )
+
+
+def _checked_conditions(values: list[str]) -> list[str]:
+    """Only conditions the targets actually act on.
+
+    An unrecognised string would be stored and then silently ignored, which
+    reads to the user as "I told you" while nothing changed.
+    """
+    cleaned = []
+    for value in _clean_diets(values):
+        condition = value.strip().lower().replace(" ", "_").replace("-", "_")
+        if condition not in HEALTH_CONDITIONS:
+            raise ValidationException(
+                f"Unknown health condition: {value}",
+                error_code="HEALTH_CONDITION_UNSUPPORTED",
+            )
+        if condition not in cleaned:
+            cleaned.append(condition)
+    return cleaned
+
+
+async def _checked_allergies(uow, values: list[str]) -> list[str]:
+    """Keep the user's own words, but only terms the recipe data can check.
+
+    Saving a term the planner cannot resolve would leave the user believing
+    an allergy is handled when no recipe is ever excluded for it.
+    """
+    cleaned = _clean_diets(values)
+    if not cleaned:
+        return []
+    lister = getattr(uow.catalog_recipes, "list_allergen_codes", None)
+    known = tuple(await lister()) if callable(lister) else ()
+    _, unresolved = resolve_allergen_terms(cleaned, known)
+    if unresolved:
+        raise ValidationException(
+            "These allergies can't be checked against the recipe data yet: "
+            + ", ".join(unresolved),
+            error_code="ALLERGY_UNRESOLVED",
+        )
+    return cleaned
+
+
+def _clean_diets(values: list[str]) -> list[str]:
+    """Trimmed diets in the order given; blanks and repeats in any case dropped."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        diet = str(value).strip()
+        if diet and diet.casefold() not in seen:
+            seen.add(diet.casefold())
+            cleaned.append(diet)
+    return cleaned
+
+
+def _value_set(values: list[str] | None) -> frozenset[str]:
+    """Values as a set, so reordering or recasing them is not a target change."""
+    return frozenset(value.casefold() for value in _clean_diets(list(values or ())))
 
 
 @handles(UpdateUserMetricsCommand)
@@ -83,8 +163,11 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                     f"User {command.user_id} not found. Profile required to update metrics."
                 )
 
+            # The date of birth sits with the target inputs because the age
+            # comes from it, and GET metrics' cache is fenced by this revision.
             target_inputs_before = (
                 profile.age,
+                profile.date_of_birth,
                 profile.height_cm,
                 profile.weight_kg,
                 profile.gender,
@@ -93,6 +176,13 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.training_minutes_per_session,
                 profile.fitness_goal,
                 profile.training_level,
+                profile.weight_loss_kg_per_week,
+                profile.weight_gain_kg_per_week,
+                _value_set(profile.dietary_preferences),
+                # Conditions change the safe target; allergies only show in GET
+                # metrics, whose cache this revision also fences.
+                _value_set(profile.health_conditions),
+                _value_set(profile.allergies),
             )
             journey_inputs_before = (
                 profile.target_weight_kg,
@@ -101,10 +191,30 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
             )
             sex_changed = False
 
-            # Update provided fields only
-            if command.age is not None:
+            # Update provided fields only. A date of birth sets the age and
+            # wins over an age sent with it.
+            if command.date_of_birth is not None:
+                today = date.today()
+                age = age_on(command.date_of_birth, today)
+                if command.date_of_birth > today or age < 12 or age > 120:
+                    raise ValidationException(
+                        "Date of birth must be past and give an age between 12 and 120"
+                    )
+                profile.date_of_birth = command.date_of_birth
+                profile.age = age
+            elif command.age is not None:
                 if command.age < 12 or command.age > 120:
                     raise ValidationException("Age must be between 12 and 120")
+                # Apps without the date picker send the stored age with every
+                # My Plan save, and it lags the date after a birthday. Only an
+                # age they changed, to one the date does not give, means the
+                # stored date of birth is wrong now.
+                if (
+                    profile.date_of_birth is not None
+                    and command.age != profile.age
+                    and command.age != age_on(profile.date_of_birth, date.today())
+                ):
+                    profile.date_of_birth = None
                 profile.age = command.age
 
             if command.height_cm is not None:
@@ -249,11 +359,61 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                     raise ValidationException("Daily water goal must be greater than 0")
                 profile.daily_water_goal_ml = command.daily_water_goal_ml
 
+            # Before the paces: a condition reported in this same update
+            # decides whether a pace may be saved.
+            if command.health_conditions is not None:
+                profile.health_conditions = _checked_conditions(
+                    command.health_conditions
+                )
+
+            if command.weight_loss_kg_per_week is not None:
+                # Capped where the target would drop below the floor, using the
+                # metrics this same update just set.
+                try:
+                    pace = allowed_pace(
+                        build_tdee_request(profile), command.weight_loss_kg_per_week
+                    )
+                except ValueError as exc:
+                    raise ValidationException(str(exc)) from exc
+                if profile.weight_loss_kg_per_week != pace:
+                    timezone_name = await resolve_user_timezone_async(
+                        command.user_id, uow
+                    )
+                    profile.weight_loss_kg_per_week = pace
+                    profile.weight_loss_pace_reset_on = datetime.now(
+                        get_zone_info(timezone_name)
+                    ).date()
+
+            if command.weight_gain_kg_per_week is not None:
+                # A gain has no floor; only the fast limit caps it. A change
+                # resets today like a loss pace does.
+                try:
+                    gain = allowed_gain_pace(
+                        build_tdee_request(profile), command.weight_gain_kg_per_week
+                    )
+                except ValueError as exc:
+                    raise ValidationException(str(exc)) from exc
+                if profile.weight_gain_kg_per_week != gain:
+                    timezone_name = await resolve_user_timezone_async(
+                        command.user_id, uow
+                    )
+                    profile.weight_gain_kg_per_week = gain
+                    profile.weight_loss_pace_reset_on = datetime.now(
+                        get_zone_info(timezone_name)
+                    ).date()
+
+            if command.dietary_preferences is not None:
+                profile.dietary_preferences = _clean_diets(command.dietary_preferences)
+
+            if command.allergies is not None:
+                profile.allergies = await _checked_allergies(uow, command.allergies)
+
             # Ensure this profile is marked as current
             profile.is_current = True
 
             target_inputs_after = (
                 profile.age,
+                profile.date_of_birth,
                 profile.height_cm,
                 profile.weight_kg,
                 profile.gender,
@@ -262,6 +422,13 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.training_minutes_per_session,
                 profile.fitness_goal,
                 profile.training_level,
+                profile.weight_loss_kg_per_week,
+                profile.weight_gain_kg_per_week,
+                _value_set(profile.dietary_preferences),
+                # Conditions change the safe target; allergies only show in GET
+                # metrics, whose cache this revision also fences.
+                _value_set(profile.health_conditions),
+                _value_set(profile.allergies),
             )
             journey_inputs_after = (
                 profile.target_weight_kg,

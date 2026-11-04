@@ -48,6 +48,10 @@ from src.api.routes.v1.admin_meal_catalog import router as admin_meal_catalog_ro
 from src.api.routes.v1.admin_meal_catalog_import import (
     router as admin_meal_catalog_import_router,
 )
+from src.api.routes.v1.admin_supplement_images import (
+    router as admin_supplement_images_router,
+)
+from src.api.routes.v1.admin_supplements import router as admin_supplements_router
 from src.api.routes.v1.ai_jobs import router as ai_jobs_router
 from src.api.routes.v1.capabilities import router as capabilities_router
 from src.api.routes.v1.chat import router as chat_router
@@ -59,10 +63,10 @@ from src.api.routes.v1.health import root_router as root_health_router
 from src.api.routes.v1.health import router as health_router
 from src.api.routes.v1.hydration import router as hydration_router
 from src.api.routes.v1.ingredients import router as ingredients_router
+from src.api.routes.v1.log_describe import router as log_describe_router
 from src.api.routes.v1.meal_catalog import router as meal_catalog_router
 from src.api.routes.v1.meal_catalog_log import router as meal_catalog_log_router
 from src.api.routes.v1.meal_plans import router as meal_plans_router
-from src.api.routes.v1.meal_recommendations import router as meal_recommendations_router
 from src.api.routes.v1.meal_scan_by_url import router as meal_scan_by_url_router
 from src.api.routes.v1.meal_suggestions import router as meal_suggestions_router
 from src.api.routes.v1.meals import router as meals_router
@@ -73,8 +77,10 @@ from src.api.routes.v1.nutrition import router as nutrition_router
 from src.api.routes.v1.progress import router as progress_router
 from src.api.routes.v1.promo_codes import router as promo_codes_router
 from src.api.routes.v1.recaps import router as recaps_router
+from src.api.routes.v1.recipe_imports import router as recipe_imports_router
 from src.api.routes.v1.referrals import router as referrals_router
 from src.api.routes.v1.saved_suggestions import router as saved_suggestions_router
+from src.api.routes.v1.supplements import router as supplements_router
 from src.api.routes.v1.tdee import router as tdee_router
 from src.api.routes.v1.user_profiles import router as user_profiles_router
 from src.api.routes.v1.users import router as users_router
@@ -260,6 +266,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("AI job worker failed to start")
 
+    # Sends the payment-failed push only when ENGAGEMENT_PUSH_ENABLED is set.
+    try:
+        from src.bootstrap.engagement_push import start_engagement_push_dispatcher
+
+        start_engagement_push_dispatcher()
+    except Exception:
+        logger.exception("Engagement push dispatcher failed to start")
+
     # Re-probe Redis only from this task. Request handling must not ping.
     limiter.start_redis_probe()
     logger.info("MealTrack API started successfully!")
@@ -275,10 +289,17 @@ async def lifespan(app: FastAPI):
     # their outcome on the way out.
     from src.api.dependencies.ai_jobs import shutdown_ai_jobs
     from src.api.dependencies.event_bus import drain_food_search_background_work
+    from src.bootstrap.engagement_push import stop_engagement_push_dispatcher
     from src.bootstrap.integration_services import (
         drain_integration_event_publisher,
         shutdown_firebase_executor,
     )
+
+    # Before the AI job shutdown, which closes the shared FCM send pool.
+    try:
+        await stop_engagement_push_dispatcher()
+    except Exception:
+        logger.exception("Engagement push dispatcher shutdown failed")
 
     try:
         await shutdown_ai_jobs()
@@ -347,6 +368,8 @@ app.include_router(root_health_router)
 app.include_router(health_router)
 app.include_router(admin_meal_catalog_router)
 app.include_router(admin_meal_catalog_import_router)
+app.include_router(admin_supplements_router)
+app.include_router(admin_supplement_images_router)
 app.include_router(meals_router)
 app.include_router(meal_scan_by_url_router)
 app.include_router(activities_router)
@@ -355,7 +378,6 @@ app.include_router(capabilities_router)
 app.include_router(ai_jobs_router)
 app.include_router(chat_router)
 app.include_router(meal_suggestions_router)
-app.include_router(meal_recommendations_router)
 app.include_router(meal_catalog_log_router)
 app.include_router(meal_plans_router)
 app.include_router(meal_catalog_router)
@@ -371,6 +393,7 @@ app.include_router(hydration_router)
 app.include_router(ingredients_router)
 app.include_router(tdee_router)
 app.include_router(saved_suggestions_router)
+app.include_router(recipe_imports_router)
 app.include_router(cheat_days_router)
 app.include_router(capabilities_router)
 app.include_router(referrals_router)
@@ -381,6 +404,8 @@ app.include_router(progress_router)
 app.include_router(recaps_router)
 app.include_router(weight_entries_router)
 app.include_router(movement_router)
+app.include_router(supplements_router)
+app.include_router(log_describe_router)
 app.include_router(well_known_router)
 app.include_router(app_download_router)
 

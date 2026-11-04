@@ -12,3 +12,5 @@ class GetProgressSummaryQuery(Query):
     start_date: date | None = None
     end_date: date | None = None
     header_timezone: str | None = None
+    # Adds per-day micros, meal quality, movement load and the goals.
+    include_trends: bool = False

@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +11,8 @@ from src.infra.database.models.daily_target_snapshot import DailyTargetSnapshotO
 
 
 class AsyncDailyTargetSnapshotRepository:
-    """Never updates a stored snapshot. Callers must not commit."""
+    """Write-once snapshots, plus a same-day replace for a pace change and a
+    same-day delete for an activity calories change."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -30,6 +31,36 @@ class AsyncDailyTargetSnapshotRepository:
             .on_conflict_do_nothing(index_elements=["user_id", "date"])
         )
         await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def replace_calories(
+        self, user_id: str, target_date: date, adjusted_calories: float
+    ) -> None:
+        """Replace today's snapshot only. The conflict key is user and date."""
+        stmt = (
+            pg_insert(DailyTargetSnapshotORM)
+            .values(
+                user_id=user_id,
+                date=target_date,
+                adjusted_target_calories=adjusted_calories,
+                created_at=utc_now(),
+            )
+            .on_conflict_do_update(
+                index_elements=["user_id", "date"],
+                set_={"adjusted_target_calories": adjusted_calories},
+            )
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def delete_for_date(self, user_id: str, target_date: date) -> None:
+        """Drop one day's snapshot so the next read stores it again."""
+        await self.session.execute(
+            delete(DailyTargetSnapshotORM).where(
+                DailyTargetSnapshotORM.user_id == user_id,
+                DailyTargetSnapshotORM.date == target_date,
+            )
+        )
         await self.session.flush()
 
     async def find_calories_by_range(

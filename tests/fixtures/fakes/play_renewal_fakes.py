@@ -21,6 +21,7 @@ from tests.fixtures.fakes.lifetime_webhook_db import (
 )
 
 from src.api.routes.v1.webhooks import revenuecat_webhook
+from src.domain.model.streak import StreakRestorePolicy
 from src.domain.ports.play_subscription_port import PlayCancelOutcome
 from src.domain.utils.timezone_utils import utc_now
 from src.infra.database.models.subscription import Subscription
@@ -138,6 +139,9 @@ def webhook_route(
         )
         mock("_get_affiliate_handler", return_value=None)
         mock("_get_event_publisher", return_value=publisher)
+        mock("get_streak_restore_policy", return_value=StreakRestorePolicy())
+        mock("get_cache_service", return_value=None)
+        mock("purge_streak_cache", new_callable=AsyncMock)
         yield
 
 

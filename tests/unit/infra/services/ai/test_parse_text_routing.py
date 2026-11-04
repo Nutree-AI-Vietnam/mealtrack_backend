@@ -212,3 +212,47 @@ async def test_parse_text_schema_failure_returns_to_application_without_fallback
     cf_mock.generate.assert_not_awaited()
     openai_mock.extract_error_code.assert_not_called()
     manager._circuit_breaker.record_failure.assert_not_called()
+
+
+def test_describe_log_stays_on_openai_even_when_cloudflare_lists_it():
+    settings = _mock_settings(cf_enabled=True, cf_purposes="parse_text,describe_log")
+    with (
+        patch("src.infra.services.ai.ai_model_manager.OpenAIProvider"),
+        patch("src.infra.services.ai.ai_model_manager.CloudflareWorkersAIProvider"),
+    ):
+        manager = AIModelManager(settings)
+
+    assert manager.get_fallback_chain(ModelPurpose.DESCRIBE_LOG) == [
+        "gpt-5.6-luna",
+        "gpt-5.4-mini-2026-03-17",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_describe_log_schema_failure_returns_to_its_correction_pass():
+    settings = _mock_settings(cf_enabled=False)
+    invalid = AIOutputValidationError(
+        "Invalid structured output",
+        purpose="describe_log",
+        attempt_count=1,
+        validation_details=["supplements.0.name: missing"],
+    )
+    openai_mock = Mock(generate=AsyncMock(side_effect=invalid))
+    with patch(
+        "src.infra.services.ai.ai_model_manager.OpenAIProvider",
+        return_value=openai_mock,
+    ):
+        manager = AIModelManager(settings)
+        manager._circuit_breaker = Mock(
+            filter_available=Mock(side_effect=lambda models: models)
+        )
+
+        with pytest.raises(AIOutputValidationError):
+            await manager.generate(
+                purpose=ModelPurpose.DESCRIBE_LOG,
+                prompt="<sentence>1 viên D3</sentence>",
+                system_message="Split the sentence.",
+            )
+
+    # The OpenAI fallback model is not spent on a contract miss.
+    assert openai_mock.generate.await_count == 1

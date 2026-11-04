@@ -193,6 +193,28 @@ def test_new_chat_job_fingerprint_changes_with_the_turn(change):
     assert _chat_job(**change).request_fingerprint != _chat_job().request_fingerprint
 
 
+def test_new_chat_job_carries_a_regenerate_so_a_retry_reuses_the_turn():
+    job = _chat_job(regenerate_assistant_id="m-asst", dedupe_key="original-turn")
+
+    assert job.dedupe_key == "original-turn"
+    assert job.request_payload["regenerate_assistant_id"] == "m-asst"
+    assert job.request_payload["prepare_regeneration"] is True
+    assert job.request_payload["idempotency_key"] == "idem-1"
+    assert job.request_fingerprint == ai_job_request_fingerprint(
+        AiJobType.CHAT,
+        {
+            "content": "What should I eat tonight?",
+            "idempotency_key": "idem-1",
+            "intent": None,
+            "function_name": None,
+            "function_args": None,
+            "regenerate_assistant_id": "m-asst",
+            "prepare_regeneration": True,
+        },
+    )
+    assert job.request_fingerprint != _chat_job().request_fingerprint
+
+
 # --- guards shared by every use case ----------------------------------------
 
 
@@ -256,10 +278,11 @@ async def test_capabilities_describe_what_this_server_runs(
 
     assert await h.service.capabilities() == {
         "ai_jobs": enabled,
-        "types": ["chat", "meal_scan", "parse_text"],
+        "types": ["chat", "meal_scan", "parse_text", "recipe_import"],
         "max_attempts": 4,
         "poll_interval_ms": 2500,
         "chat_background": chat_expected,
+        "chat_regenerate_background": chat_expected,
     }
 
 
@@ -309,12 +332,19 @@ async def test_meal_scan_jobs_get_a_fresh_meal_id_outside_the_fingerprint():
     )
     request = dict(SCAN_REQUEST)
 
-    await _enqueue(h.service, job_type=AiJobType.MEAL_SCAN, request=request)
+    with patch("src.app.services.ai_jobs.service.utc_now", return_value=NOW):
+        await _enqueue(h.service, job_type=AiJobType.MEAL_SCAN, request=request)
 
     new_job = h.uow.ai_jobs.create.await_args.args[0]
     meal_id = new_job.request_payload["meal_id"]
     assert str(UUID(meal_id)) == meal_id
-    assert new_job.request_payload == {**SCAN_REQUEST, "meal_id": meal_id}
+    # The enqueue time decides, on every attempt, whether the meal was logged
+    # on its own day.
+    assert new_job.request_payload == {
+        **SCAN_REQUEST,
+        "meal_id": meal_id,
+        "received_at": NOW.isoformat(),
+    }
     assert new_job.request_fingerprint == SCAN_FINGERPRINT
     assert new_job.dedupe_key is None
     assert request == SCAN_REQUEST

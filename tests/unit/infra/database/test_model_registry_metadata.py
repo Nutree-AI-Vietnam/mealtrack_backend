@@ -27,6 +27,7 @@ def test_model_registry_imports_expected_tables() -> None:
         "meal_image_cache",
         "pending_meal_image_resolution",
         "notification_preferences",
+        "notifications",
         "saved_suggestions",
         "saved_suggestion_items",
         "saved_suggestion_steps",

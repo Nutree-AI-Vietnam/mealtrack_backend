@@ -9,6 +9,30 @@ from src.api.schemas.request.tdee_requests import GoalEnum
 TDEE_PREVIEW_CALCULATION_CONTRACT = "onboarding_preview_v2"
 
 
+class PaceRangeResponse(BaseModel):
+    """Paces this person can pick, in kg per week: a loss for a cut goal, a
+    gain for a bulk goal."""
+
+    min_kg_per_week: float = Field(..., description="Slow limit of the slider")
+    max_kg_per_week: float = Field(
+        ...,
+        description="Cut: fastest pace before the target drops below the calorie "
+        "floor; can be under min_kg_per_week, and 0 when no deficit fits. "
+        "Bulk: the fast limit",
+    )
+    recommended_low_kg: float = Field(
+        ..., description="0.5% of body weight per week for a cut, 0.25% for a bulk"
+    )
+    recommended_high_kg: float = Field(
+        ..., description="1% of body weight per week for a cut, 0.5% for a bulk"
+    )
+
+    @classmethod
+    def from_result(cls, result: dict) -> "PaceRangeResponse | None":
+        pace_range = result.get("pace_range")
+        return cls(**pace_range) if pace_range else None
+
+
 class MacroTargetsResponse(BaseModel):
     """Response DTO for macro targets matching Flutter MacroTargets."""
 
@@ -60,6 +84,24 @@ class TdeeCalculationResponse(BaseModel):
     )
     profile_target_revision: int | None = Field(
         None, description="Profile target revision for cache validation"
+    )
+    pace_range: PaceRangeResponse | None = Field(
+        None, description="Pace range; present for a cut or bulk goal"
+    )
+    deficit_blocked_reason: str | None = Field(
+        None,
+        description=(
+            "Set when a weight-loss goal was planned at maintenance instead: "
+            "'minor', 'underweight' or 'health_condition'. The goal field "
+            "still echoes what the user asked for"
+        ),
+    )
+    gain_pace_blocked_reason: str | None = Field(
+        None,
+        description=(
+            "Set when a bulk keeps the flat +300 surplus because a gain pace is "
+            "not offered: 'minor' or 'health_condition'. pace_range is then null"
+        ),
     )
 
     class Config:

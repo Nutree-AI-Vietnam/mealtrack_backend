@@ -10,7 +10,11 @@ from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
 from src.domain.ports.meal_suggestion_repository_port import (
     MealSuggestionRepositoryPort,
 )
-from src.infra.database.config_async import AsyncSessionLocal, close_async_session
+from src.infra.database.config_async import (
+    AsyncSessionLocal,
+    _caller_was_cancelled,
+    close_async_session,
+)
 from src.infra.repositories.ai_job_repository import AsyncAiJobRepository
 from src.infra.repositories.body_fat_visual_profile_repository_async import (
     AsyncBodyFatVisualProfileRepository,
@@ -26,6 +30,9 @@ from src.infra.repositories.cheat_day_repository_async import AsyncCheatDayRepos
 from src.infra.repositories.daily_target_snapshot_repository_async import (
     AsyncDailyTargetSnapshotRepository,
 )
+from src.infra.repositories.engagement_push_repository import (
+    AsyncEngagementPushRepository,
+)
 from src.infra.repositories.favorite_meal_repository_async import (
     AsyncFavoriteMealRepository,
 )
@@ -36,9 +43,6 @@ from src.infra.repositories.food_reference_repository_async import (
     AsyncFoodReferenceRepository,
 )
 from src.infra.repositories.hydration_repository_async import AsyncHydrationRepository
-from src.infra.repositories.meal_recommendation_plan_repository_async import (
-    AsyncMealRecommendationPlanRepository,
-)
 from src.infra.repositories.meal_repository_async import AsyncMealRepository
 from src.infra.repositories.meal_translation_repository_async import (
     AsyncMealTranslationRepository,
@@ -56,8 +60,18 @@ from src.infra.repositories.referral_repository import ReferralRepository
 from src.infra.repositories.saved_suggestion_db_repository_async import (
     AsyncSavedSuggestionDbRepository,
 )
+from src.infra.repositories.scan_feedback_repository import ScanFeedbackRepository
+from src.infra.repositories.streak_restore_repository_async import (
+    AsyncStreakRestoreRepository,
+)
 from src.infra.repositories.subscription_repository_async import (
     AsyncSubscriptionRepository,
+)
+from src.infra.repositories.supplement_catalog_repository_async import (
+    AsyncSupplementCatalogRepository,
+)
+from src.infra.repositories.supplement_repository_async import (
+    AsyncSupplementRepository,
 )
 from src.infra.repositories.user_repository_async import AsyncUserRepository
 from src.infra.repositories.weekly_budget_repository_async import (
@@ -145,8 +159,8 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
     def _init_repositories(self):
         session = self._require_session()
         self.meals = AsyncMealRepository(session)
+        self.scan_feedback = ScanFeedbackRepository(session)
         self.favorite_meals = AsyncFavoriteMealRepository(session)
-        self.meal_recommendation_plans = AsyncMealRecommendationPlanRepository(session)
         self.meal_suggestions = UnavailableMealSuggestionSessionStore()
         self.body_fat_visual_profiles = AsyncBodyFatVisualProfileRepository(session)
         self.hydration_entries = AsyncHydrationRepository(session)
@@ -175,27 +189,40 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
         self.chat = AsyncChatRepository(session)
         self.ai_jobs = AsyncAiJobRepository(session)
         self.push_tokens = AsyncPushTokenRepository(session)
+        self.engagement_pushes = AsyncEngagementPushRepository(session)
+        self.streak_restores = AsyncStreakRestoreRepository(session)
+        self.supplements = AsyncSupplementRepository(session)
+        self.supplement_catalog = AsyncSupplementCatalogRepository(session)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         session = self.session
         if session is None:
             return
+        # Meal-plan reads keep this session open across Redis. A client
+        # disconnect cancels the request there. Session.rollback returns the
+        # connection, and PlannerNullPool's graceful close then raises
+        # CancelledError on this task (PYTHON-KK). That rollback runs in the
+        # shielded close. A successful commit stays on this task: the close
+        # timeout must not turn a slow or failed commit into a success.
+        cancelled = _caller_was_cancelled() or (
+            exc_type is not None and issubclass(exc_type, asyncio.CancelledError)
+        )
+        read_only_cleanup = self._read_only and exc_type is None and not cancelled
+
+        async def rollback_before_close() -> None:
+            try:
+                await session.rollback()
+            except Exception:
+                logger.warning(
+                    "Rollback failed in read_only mode; connection will be discarded"
+                    if read_only_cleanup
+                    else "Rollback failed; connection will be discarded",
+                    exc_info=True,
+                )
+
         try:
-            if exc_type:
-                try:
-                    await self.rollback()
-                except Exception:
-                    logger.warning(
-                        "Rollback failed; connection will be discarded", exc_info=True
-                    )
-            elif self._read_only:
-                try:
-                    await self.rollback()
-                except Exception:
-                    logger.warning(
-                        "Rollback failed in read_only mode; connection will be discarded",
-                        exc_info=True,
-                    )
+            if cancelled or exc_type is not None or self._read_only:
+                await close_async_session(session, before_close=rollback_before_close)
             else:
                 try:
                     await self.commit()
@@ -208,12 +235,11 @@ class AsyncUnitOfWork(AsyncUnitOfWorkPort):
                             exc_info=True,
                         )
                     raise
+                finally:
+                    await close_async_session(session)
         finally:
-            try:
-                await close_async_session(session)
-            finally:
-                self.session = None
-                self._session_lock.release()
+            self.session = None
+            self._session_lock.release()
 
     @planner_timed("commit")
     async def commit(self) -> None:

@@ -159,6 +159,31 @@ class TestMealDatabaseModelEdit:
         assert meal_model.food_label_metadata == metadata
         assert converted_domain_meal.food_label_metadata == metadata
 
+    @pytest.mark.parametrize("logged_on_day", [True, False, None])
+    def test_meal_model_round_trip_keeps_whether_it_was_logged_on_its_day(
+        self, logged_on_day
+    ):
+        domain_meal = DomainMeal(
+            meal_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4()),
+            status=MealStatus.READY,
+            created_at=datetime.now(),
+            image=None,
+            dish_name="Rice",
+            nutrition=Nutrition(
+                macros=Macros(protein=3.0, carbs=37.0, fat=1.0),
+                food_items=[],
+                confidence_score=0.9,
+            ),
+            ready_at=datetime.now(),
+            logged_on_day=logged_on_day,
+        )
+
+        meal_model = meal_domain_to_orm(domain_meal)
+
+        assert meal_model.logged_on_day is logged_on_day
+        assert meal_orm_to_domain(meal_model).logged_on_day is logged_on_day
+
     def test_meal_model_from_domain_defaults_edit_fields(self):
         """Test that meal model from_domain uses defaults for missing edit fields."""
         # Arrange

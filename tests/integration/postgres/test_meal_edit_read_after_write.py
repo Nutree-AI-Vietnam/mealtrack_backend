@@ -10,7 +10,7 @@ so nothing but the write itself can clear what it made stale.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -210,6 +210,7 @@ async def app_day(async_session_factory, pg_session, monkeypatch):
                 email=f"{user_id}@example.test",
                 username=user_id,
                 password_hash="test",
+                timezone=TZ,
             )
         )
         await uow.session.flush()
@@ -324,10 +325,22 @@ async def _today(client, day: str, headers=VI) -> dict[str, dict]:
     return {row["id"]: row for row in response.json() if row["type"] == "meal"}
 
 
-async def _name(client, meal: Meal, headers) -> str:
+async def _detail(client, meal: Meal, headers) -> dict:
     response = await client.get(f"/v1/meals/{meal.meal_id}", headers=headers)
     assert response.status_code == 200, response.text
-    return response.json()["dish_name"]
+    return response.json()
+
+
+async def _name(client, meal: Meal, headers) -> str:
+    return (await _detail(client, meal, headers))["dish_name"]
+
+
+async def _food_calories(client, day: str) -> float:
+    response = await client.get(
+        "/v1/meals/daily/macros", params={"date": day}, headers=VI
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["food_calories"]
 
 
 @pytest.mark.asyncio
@@ -360,11 +373,45 @@ async def test_portion_change_is_what_home_and_today_read_next(app_day):
     assert total_after == pytest.approx(total_before - (row_before - new_kcal), abs=0.2)
     list_total = sum(row["calories"] for row in rows.values())
     assert total_after == pytest.approx(list_total, abs=0.2)
-    macros = await client.get(
-        "/v1/meals/daily/macros", params={"date": day}, headers=VI
+    assert await _food_calories(client, day) == pytest.approx(list_total, abs=0.2)
+
+
+@pytest.mark.asyncio
+async def test_moved_meal_time_is_what_both_days_read_next(app_day):
+    """A meal moved to 06:30 yesterday reloads there, and both days follow it.
+
+    06:30 in Vietnam is 23:30 UTC the day before, so yesterday's list only
+    refreshes if the write purges the user's local days, not UTC dates.
+    """
+    client, day, meals = app_day
+    label = meals["label"]
+    yesterday = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+    kcal = (await _today(client, day))[label.meal_id]["calories"]
+    assert await _today(client, yesterday) == {}  # both days have synced
+    today_before = await _food_calories(client, day)
+    yesterday_before = await _food_calories(client, yesterday)
+    moved_at = datetime.combine(
+        date.fromisoformat(yesterday), time(6, 30), tzinfo=get_zone_info(TZ)
     )
-    assert macros.status_code == 200, macros.text
-    assert macros.json()["food_calories"] == pytest.approx(list_total, abs=0.2)
+
+    # The app sends UTC: 2 days back by date, though only yesterday locally.
+    await _edit(
+        client,
+        label,
+        {"created_at": moved_at.astimezone(UTC).isoformat(), "meal_type": "snack"},
+    )
+
+    detail = await _detail(client, label, VI)
+    assert datetime.fromisoformat(detail["created_at"]) == moved_at
+    assert detail["meal_type"] == "snack"
+    assert label.meal_id not in await _today(client, day)
+    assert (await _today(client, yesterday))[label.meal_id]["calories"] == kcal
+    assert await _food_calories(client, day) == pytest.approx(
+        today_before - kcal, abs=0.2
+    )
+    assert await _food_calories(client, yesterday) == pytest.approx(
+        yesterday_before + kcal, abs=0.2
+    )
 
 
 @pytest.mark.asyncio

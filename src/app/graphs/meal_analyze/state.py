@@ -21,6 +21,7 @@ class MealAnalyzeGraphState(TypedDict, total=False):
     nutrition_parsed: bool
     reference_validated: bool
     reference_validation_pending: bool
+    reference_grounding_pending: bool
     meal_id: str
     completed: bool
     result: Any

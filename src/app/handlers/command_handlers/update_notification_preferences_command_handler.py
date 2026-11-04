@@ -64,11 +64,21 @@ class UpdateNotificationPreferencesCommandHandler(
                     meal_reminders_enabled=command.meal_reminders_enabled,
                     daily_summary_enabled=command.daily_summary_enabled,
                     hydration_reminders_enabled=command.hydration_reminders_enabled,
+                    streak_reminders_enabled=command.streak_reminders_enabled,
+                    reengagement_enabled=command.reengagement_enabled,
+                    progress_updates_enabled=command.progress_updates_enabled,
+                    offers_enabled=command.offers_enabled,
                     breakfast_time_minutes=command.breakfast_time_minutes,
                     lunch_time_minutes=command.lunch_time_minutes,
                     dinner_time_minutes=command.dinner_time_minutes,
                     daily_summary_time_minutes=command.daily_summary_time_minutes,
                     language=command.language,
+                    breakfast_reminder_enabled=command.breakfast_reminder_enabled,
+                    lunch_reminder_enabled=command.lunch_reminder_enabled,
+                    dinner_reminder_enabled=command.dinner_reminder_enabled,
+                    hydration_reminder_time_minutes=(
+                        command.hydration_reminder_time_minutes
+                    ),
                 )
 
                 final_prefs = await uow.notifications.save_notification_preferences(

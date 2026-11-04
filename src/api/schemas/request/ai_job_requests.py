@@ -14,7 +14,10 @@ class AiJobCreateRequest(BaseModel):
 
     id: UUID = Field(..., description="Client-generated job id; re-sending is safe")
     type: str = Field(
-        ..., min_length=1, max_length=32, description="meal_scan or parse_text"
+        ...,
+        min_length=1,
+        max_length=32,
+        description="meal_scan, parse_text or recipe_import",
     )
     input: dict[str, Any] = Field(default_factory=dict)
 

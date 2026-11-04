@@ -41,6 +41,7 @@ def test_calories_derived_from_macros_one_decimal():
         hydration_ml=1500,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=1850.0,
         target_source="base",
         is_cheat_day=False,
@@ -60,6 +61,7 @@ def test_two_meals_are_full_and_macros_sum_then_round():
         hydration_ml=0,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=1850.0,
         target_source="snapshot",
         is_cheat_day=True,
@@ -78,6 +80,7 @@ def test_empty_day_is_none():
         hydration_ml=0,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -87,7 +90,7 @@ def test_empty_day_is_none():
     assert row["meal_count"] == 0
 
 
-def test_fiber_and_target_come_from_meals_and_calorie_budget():
+def test_fiber_comes_from_meals_and_target_from_personal_goal():
     row = build_progress_day_row(
         date(2026, 9, 1),
         meals=[_meal(10.0, 20.0, 5.0, fiber=8.0)],
@@ -95,12 +98,13 @@ def test_fiber_and_target_come_from_meals_and_calorie_budget():
         hydration_ml=0,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=38.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
     )
     assert row["fiber_g"] == 8.0
-    assert row["fiber_target_g"] == 28.0
+    assert row["fiber_target_g"] == 38.0
 
 
 def test_drink_macros_add_when_no_legacy_hydration_meal():
@@ -112,6 +116,7 @@ def test_drink_macros_add_when_no_legacy_hydration_meal():
         hydration_ml=400,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -137,6 +142,7 @@ def test_food_meal_count_leaves_out_hydration_meals():
         hydration_ml=500,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -153,6 +159,7 @@ def test_water_only_day_has_no_food_meal():
         hydration_ml=250,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -171,6 +178,7 @@ def test_legacy_hydration_meal_still_adds_unrepresented_drink_macros():
         hydration_ml=433,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -189,6 +197,7 @@ def test_nrf_quality_uses_protein_and_fiber_without_micros():
         hydration_ml=0,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -224,6 +233,7 @@ def test_nrf_quality_turns_on_with_four_logged_micros():
         hydration_ml=0,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -244,6 +254,7 @@ def test_missing_micros_leave_highlight_amounts_none():
         hydration_ml=0,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,
@@ -263,6 +274,7 @@ def test_drink_micros_contribute_highlight_amounts():
         hydration_ml=400,
         hydration_goal_ml=2000,
         protein_target_g=140.0,
+        fiber_target_g=25.0,
         target_calories=2000.0,
         target_source="base",
         is_cheat_day=False,

@@ -1,5 +1,5 @@
 import dataclasses
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -7,20 +7,15 @@ import pytest
 from src.app.services.recommended_meal_materialization_service import (
     RecommendedMealMaterializationService,
 )
-from src.domain.exceptions.meal_recommendation_exceptions import (
-    MealRecommendationNotFoundError,
-)
 from src.domain.model.meal_recommendation import (
     CatalogMeal,
     CatalogMealIngredient,
-    PersistedMealRecommendationCandidate,
-    PersistedMealRecommendationPlan,
-    PersistedMealRecommendationSlot,
 )
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
 from src.domain.services.meal_nrf_fields import meal_nrf_fields
+from src.domain.utils.timezone_utils import ensure_utc, utc_now
 
 
 class _CatalogRepo:
@@ -91,19 +86,12 @@ class _Uow:
             self.food_references = food_references
 
 
-def _plan_and_slot():
-    plan = PersistedMealRecommendationPlan(
-        id="plan-1",
-        user_id="00000000-0000-0000-0000-000000000001",
-        status="active",
-        timezone="UTC",
-        start_date=date(2026, 7, 16),
-        daily_calories=2000,
-        operation="three_day",
-        idempotency_key="key",
-        request_fingerprint="f" * 64,
-    )
-    catalog_meal = CatalogMeal(
+_USER_ID = "00000000-0000-0000-0000-000000000001"
+_MEAL_DATE = date(2026, 7, 16)
+
+
+def _catalog_meal() -> CatalogMeal:
+    return CatalogMeal(
         id="catalog-1",
         catalog_key="catalog-key",
         content_hash="a" * 64,
@@ -125,39 +113,19 @@ def _plan_and_slot():
             ),
         ),
     )
-    slot = PersistedMealRecommendationSlot(
-        id="slot-1",
-        slot_date=date(2026, 7, 16),
-        day_index=0,
-        meal_type="breakfast",
-        catalog_meal_id="catalog-1",
-        target_calories=500,
-        score=1.0,
-        position=0,
-        selected=PersistedMealRecommendationCandidate(
-            id="candidate-1",
-            slot_id="slot-1",
-            recommendation_date=date(2026, 7, 16),
-            meal_type="breakfast",
-            catalog_meal_id="catalog-1",
-            candidate_rank=0,
-            is_selected=True,
-            score=Decimal("1.0"),
-            selection_version=1,
-            catalog_meal=catalog_meal,
-        ),
-    )
-    return plan, slot
 
 
 @pytest.mark.asyncio
 async def test_materializer_preserves_food_reference_ids_and_macro_snapshot():
-    plan, slot = _plan_and_slot()
+    catalog_meal = _catalog_meal()
 
-    meal = await RecommendedMealMaterializationService().materialize(
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         _Uow(),
-        plan=plan,
-        slot=slot,
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=_MEAL_DATE,
+        meal_type="breakfast",
+        timezone="UTC",
     )
 
     assert meal.source == "meal_recommendation"
@@ -178,7 +146,7 @@ async def test_materializer_preserves_food_reference_ids_and_macro_snapshot():
 
 @pytest.mark.asyncio
 async def test_materializer_scales_food_reference_macros_onto_items():
-    plan, slot = _plan_and_slot()
+    catalog_meal = _catalog_meal()
     uow = _Uow(
         food_references=_FoodRefRepo(
             {
@@ -198,10 +166,13 @@ async def test_materializer_scales_food_reference_macros_onto_items():
         )
     )
 
-    meal = await RecommendedMealMaterializationService().materialize(
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         uow,
-        plan=plan,
-        slot=slot,
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=_MEAL_DATE,
+        meal_type="breakfast",
+        timezone="UTC",
     )
 
     item = meal.nutrition.food_items[0]
@@ -212,7 +183,7 @@ async def test_materializer_scales_food_reference_macros_onto_items():
 
 @pytest.mark.asyncio
 async def test_materializer_preserves_complete_micros_for_nrf_score_parity():
-    plan, slot = _plan_and_slot()
+    catalog_meal = _catalog_meal()
     source_micros = {
         "vitamin_a_mcg": 900,
         "vitamin_c_mg": 90,
@@ -247,9 +218,9 @@ async def test_materializer_preserves_complete_micros_for_nrf_score_parity():
 
     meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         uow,
-        user_id=plan.user_id,
-        catalog_meal=slot.selected.catalog_meal,
-        meal_date=plan.start_date,
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=_MEAL_DATE,
         meal_type="lunch",
         timezone="UTC",
         portion_multiplier=1.5,
@@ -268,30 +239,17 @@ async def test_materializer_preserves_complete_micros_for_nrf_score_parity():
 
 @pytest.mark.asyncio
 async def test_materializer_attaches_catalog_image_url_when_present():
-    plan, slot = _plan_and_slot()
-    catalog_meal = slot.selected.catalog_meal
-    assert catalog_meal is not None
-    slot = PersistedMealRecommendationSlot(
-        **{
-            **slot.__dict__,
-            "selected": PersistedMealRecommendationCandidate(
-                **{
-                    **slot.selected.__dict__,
-                    "catalog_meal": CatalogMeal(
-                        **{
-                            **catalog_meal.__dict__,
-                            "image_url": "https://cdn.example.com/meals/tuna.jpg",
-                        }
-                    ),
-                }
-            ),
-        }
+    catalog_meal = dataclasses.replace(
+        _catalog_meal(), image_url="https://cdn.example.com/meals/tuna.jpg"
     )
 
-    meal = await RecommendedMealMaterializationService().materialize(
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         _Uow(),
-        plan=plan,
-        slot=slot,
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=_MEAL_DATE,
+        meal_type="breakfast",
+        timezone="UTC",
     )
 
     assert meal.image is not None
@@ -300,36 +258,21 @@ async def test_materializer_attaches_catalog_image_url_when_present():
 
 @pytest.mark.asyncio
 async def test_materializer_keeps_long_catalog_image_urls():
-    plan, slot = _plan_and_slot()
-    catalog_meal = slot.selected.catalog_meal
-    assert catalog_meal is not None
     long_url = (
         "https://res.cloudinary.com/demo/image/upload/"
         "c_fill,w_1200,h_1200,q_auto:good,f_auto,fl_progressive/"
         "v1720000000/mealtrack/" + ("catalog-meal-" + "x" * 1200) + ".jpg"
     )
     assert len(long_url) > 1024
-    slot = PersistedMealRecommendationSlot(
-        **{
-            **slot.__dict__,
-            "selected": PersistedMealRecommendationCandidate(
-                **{
-                    **slot.selected.__dict__,
-                    "catalog_meal": CatalogMeal(
-                        **{
-                            **catalog_meal.__dict__,
-                            "image_url": long_url,
-                        }
-                    ),
-                }
-            ),
-        }
-    )
+    catalog_meal = dataclasses.replace(_catalog_meal(), image_url=long_url)
 
-    meal = await RecommendedMealMaterializationService().materialize(
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         _Uow(),
-        plan=plan,
-        slot=slot,
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=_MEAL_DATE,
+        meal_type="breakfast",
+        timezone="UTC",
     )
 
     assert meal.image is not None
@@ -337,28 +280,14 @@ async def test_materializer_keeps_long_catalog_image_urls():
 
 
 @pytest.mark.asyncio
-async def test_materializer_fails_with_public_error_when_selected_meal_missing():
-    plan, slot = _plan_and_slot()
-    slot = PersistedMealRecommendationSlot(**{**slot.__dict__, "selected": None})
-
-    with pytest.raises(MealRecommendationNotFoundError):
-        await RecommendedMealMaterializationService().materialize(
-            _Uow(),
-            plan=plan,
-            slot=slot,
-        )
-
-
-@pytest.mark.asyncio
 async def test_materializer_scales_backend_macros_for_weekly_portions():
-    plan, slot = _plan_and_slot()
-    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    catalog_meal = _catalog_meal()
 
     meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         _Uow(),
-        user_id=plan.user_id,
-        catalog_meal=slot.selected.catalog_meal,
-        meal_date=plan.start_date,
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=_MEAL_DATE,
         meal_type="lunch",
         timezone="UTC",
         portion_multiplier=1.5,
@@ -377,25 +306,22 @@ async def test_materializer_scales_backend_macros_for_weekly_portions():
 
 @pytest.mark.asyncio
 async def test_materializer_skips_projection_lookup_for_unlinked_ingredients():
-    plan, slot = _plan_and_slot()
-    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    catalog_meal = _catalog_meal()
     unlinked = CatalogMealIngredient(
         food_reference_id=None,
         display_name="Ingredient",
         quantity=Decimal("100"),
         unit="g",
     )
-    catalog_meal = dataclasses.replace(
-        slot.selected.catalog_meal, ingredients=(unlinked, unlinked)
-    )
+    catalog_meal = dataclasses.replace(catalog_meal, ingredients=(unlinked, unlinked))
     food_references = _FoodRefRepo({})
     food_references.get_nutrition_projections = _fail_if_called
 
     meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         _Uow(food_references=food_references),
-        user_id=plan.user_id,
+        user_id=_USER_ID,
         catalog_meal=catalog_meal,
-        meal_date=plan.start_date,
+        meal_date=_MEAL_DATE,
         meal_type="lunch",
         timezone="UTC",
         source="weekly_meal_planner",
@@ -411,12 +337,11 @@ async def _fail_if_called(*args, **kwargs):
 
 @pytest.mark.asyncio
 async def test_materializer_scales_published_recipe_payload_without_mutating_catalog():
-    plan, slot = _plan_and_slot()
-    assert slot.selected is not None and slot.selected.catalog_meal is not None
+    catalog_meal = _catalog_meal()
     catalog_meal = dataclasses.replace(
-        slot.selected.catalog_meal,
+        catalog_meal,
         recipe_payload={
-            "recipe_name": slot.selected.catalog_meal.name,
+            "recipe_name": catalog_meal.name,
             "ingredients": [
                 {"name": "rice", "quantity": 200, "unit": "g"},
                 {"name": "salt", "quantity": None, "unit": None},
@@ -426,9 +351,9 @@ async def test_materializer_scales_published_recipe_payload_without_mutating_cat
 
     meal = await RecommendedMealMaterializationService().materialize_from_catalog(
         _Uow(),
-        user_id=plan.user_id,
+        user_id=_USER_ID,
         catalog_meal=catalog_meal,
-        meal_date=plan.start_date,
+        meal_date=_MEAL_DATE,
         meal_type="lunch",
         timezone="UTC",
         portion_multiplier=0.5,
@@ -437,3 +362,195 @@ async def test_materializer_scales_published_recipe_payload_without_mutating_cat
     assert meal.recipe_snapshot["ingredients"][0]["quantity"] == 100
     assert meal.recipe_snapshot["ingredients"][1]["quantity"] is None
     assert catalog_meal.recipe_payload["ingredients"][0]["quantity"] == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("for_today", [True, False])
+async def test_materializer_stamps_today_now_and_other_days_at_local_noon(for_today):
+    catalog_meal = _catalog_meal()
+    before = utc_now()
+    meal_date = before.date() if for_today else date(2026, 7, 16)
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        _Uow(),
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=meal_date,
+        meal_type="lunch",
+        timezone="UTC",
+    )
+
+    created_at = ensure_utc(meal.created_at)
+    if for_today:
+        assert before <= created_at <= utc_now()
+    else:
+        assert created_at == datetime(2026, 7, 16, 12, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("for_today", [True, False])
+async def test_materializer_marks_only_a_log_for_today_as_logged_on_its_day(
+    for_today,
+):
+    catalog_meal = _catalog_meal()
+    meal_date = utc_now().date() if for_today else date(2026, 7, 16)
+
+    meal = await RecommendedMealMaterializationService().materialize_from_catalog(
+        _Uow(),
+        user_id=_USER_ID,
+        catalog_meal=catalog_meal,
+        meal_date=meal_date,
+        meal_type="lunch",
+        timezone="UTC",
+    )
+
+    assert meal.logged_on_day is for_today
+
+
+def _saved_pho(**overrides):
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    data = {
+        "meal_name": "Chicken pho",
+        "description": "Clear broth",
+        "emoji": "🍜",
+        "macros": {"protein": 30.0, "carbs": 50.0, "fat": 10.0, "fiber": 4.0},
+        "servings": 4,
+        "image_url": "https://images.example/pho.jpg",
+        "prep_time_minutes": 45,
+        "cuisine_type": "Vietnamese",
+        "ingredients": [
+            {
+                "name": "Chicken",
+                "amount": 400,
+                "unit": "g",
+                "food_reference_id": 123,
+                "protein": 100.0,
+                "carbs": 0.0,
+                "fat": 20.0,
+            },
+            # Reference that no longer exists: kept as a custom line.
+            {
+                "name": "Noodles",
+                "amount": 2,
+                "unit": "",
+                "food_reference_id": 999,
+                "protein": 20.0,
+                "carbs": 200.0,
+                "fat": 20.0,
+            },
+            {"name": "Salt", "amount": 0, "unit": ""},
+        ],
+        "recipe_steps": [{"step": 1, "instruction": "Simmer.", "duration_minutes": 30}],
+        "recipe_import": {"servings_estimated": False},
+    }
+    data.update(overrides)
+    return SavedRecipeSnapshot.from_saved_suggestion("recipe_import_imp-1", data)
+
+
+def _projection(food_id):
+    return FoodReferenceNutritionProjection(
+        id=food_id,
+        name="Chicken",
+        source="catalog_seed",
+        is_verified=True,
+        protein_100g=25.0,
+        carbs_100g=0.0,
+        fat_100g=5.0,
+        fiber_100g=0.0,
+        sugar_100g=0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_becomes_a_meal_with_its_per_serving_macros():
+    uow = _Uow(food_references=_FoodRefRepo({123: _projection(123)}))
+
+    meal = await RecommendedMealMaterializationService().materialize_from_saved_recipe(
+        uow,
+        user_id="00000000-0000-0000-0000-000000000001",
+        recipe=_saved_pho(),
+        meal_date=date(2026, 9, 22),
+        meal_type="dinner",
+        timezone="UTC",
+        portion_multiplier=2.0,
+        source="weekly_meal_planner",
+    )
+
+    assert uow.meals.saved is meal
+    assert (meal.dish_name, meal.meal_type, meal.source) == (
+        "Chicken pho",
+        "dinner",
+        "weekly_meal_planner",
+    )
+    macros = meal.nutrition.macros
+    assert (macros.protein, macros.carbs, macros.fat, macros.fiber) == (
+        60.0,
+        100.0,
+        20.0,
+        8.0,
+    )
+    # Backend formula over the doubled per-serving macros.
+    assert meal.nutrition.calories == pytest.approx(60 * 4 + 92 * 4 + 8 * 2 + 20 * 9)
+    assert meal.catalog_meal_id is None
+    assert meal.recipe_snapshot["saved_suggestion_id"] == "recipe_import_imp-1"
+    assert meal.nutrition_snapshot["source"] == "saved_recipe"
+    assert meal.image.url == "https://images.example/pho.jpg"
+    assert meal.instructions == [{"instruction": "Simmer.", "duration_minutes": 30}]
+    assert (meal.cook_time_min, meal.cuisine_type, meal.emoji) == (
+        45,
+        "Vietnamese",
+        "🍜",
+    )
+    chicken, noodles = meal.nutrition.food_items
+    # 400 g for 4 servings, eaten twice over: 200 g.
+    assert (chicken.quantity, chicken.unit, chicken.food_reference_id) == (
+        200.0,
+        "g",
+        123,
+    )
+    assert chicken.macros.protein == pytest.approx(50.0)
+    assert (noodles.quantity, noodles.unit, noodles.food_reference_id) == (
+        1.0,
+        "piece",
+        None,
+    )
+    assert noodles.is_custom and not chicken.is_custom
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_without_line_macros_spreads_the_meal_macros():
+    recipe = _saved_pho(
+        servings=1,
+        ingredients=[
+            {"name": "Tofu", "amount": 300, "unit": "g"},
+            {"name": "Rice", "amount": 100, "unit": "g"},
+        ],
+    )
+
+    meal = await RecommendedMealMaterializationService().materialize_from_saved_recipe(
+        _Uow(),
+        user_id="00000000-0000-0000-0000-000000000001",
+        recipe=recipe,
+        meal_date=date(2026, 9, 22),
+        meal_type="lunch",
+        timezone="UTC",
+    )
+
+    tofu, rice = meal.nutrition.food_items
+    assert tofu.macros.protein == pytest.approx(22.5)
+    assert rice.macros.protein == pytest.approx(7.5)
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_rejects_unsupported_portions():
+    with pytest.raises(ValueError):
+        await RecommendedMealMaterializationService().materialize_from_saved_recipe(
+            _Uow(),
+            user_id="00000000-0000-0000-0000-000000000001",
+            recipe=_saved_pho(),
+            meal_date=date(2026, 9, 22),
+            meal_type="lunch",
+            timezone="UTC",
+            portion_multiplier=3.0,
+        )

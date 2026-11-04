@@ -7,6 +7,7 @@ turn a committed save into a 503 that the app would retry.
 import asyncio
 import json
 import math
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -40,11 +41,25 @@ async def parse_describe_sentence(
     schema: type[BaseModel],
     purpose: str,
     timeout_seconds: float,
+    model_purpose: str = "parse_text",
+    context: str = "",
+    max_tokens: int = DESCRIBE_MAX_TOKENS,
 ) -> dict[str, Any]:
-    """Return the validated model reply, after at most one correction."""
+    """Return the validated model reply, after at most one correction.
+
+    ``context`` is a data block sent ahead of the sentence (the + panel's
+    list of the person's supplements); the system prompt stays the same for
+    everyone, so it can be cached.
+    """
     try:
         return await asyncio.wait_for(
-            _generate(generation_service, sentence, system_prompt, schema, purpose),
+            _generate(
+                generation_service,
+                _Request(sentence, system_prompt, schema, purpose),
+                model_purpose=model_purpose,
+                context=context,
+                max_tokens=max_tokens,
+            ),
             timeout=timeout_seconds,
         )
     except TimeoutError as exc:
@@ -53,41 +68,51 @@ async def parse_describe_sentence(
         ) from exc
 
 
+@dataclass(frozen=True)
+class _Request:
+    sentence: str
+    system_prompt: str
+    schema: type[BaseModel]
+    purpose: str
+
+
 async def _generate(
     generation_service: MealGenerationServicePort,
-    sentence: str,
-    system_prompt: str,
-    schema: type[BaseModel],
-    purpose: str,
+    request: _Request,
+    *,
+    model_purpose: str,
+    context: str,
+    max_tokens: int,
 ) -> dict[str, Any]:
-    prompt = sentence_block(sentence)
+    first_prompt = f"{context}{sentence_block(request.sentence)}"
+    prompt = first_prompt
     for attempt in range(1, DESCRIBE_MAX_ATTEMPTS + 1):
         try:
             raw = await generation_service.generate_meal_plan_async(
                 prompt=prompt,
-                system_message=system_prompt,
+                system_message=request.system_prompt,
                 response_type="json",
-                max_tokens=DESCRIBE_MAX_TOKENS,
-                schema=schema,
-                model_purpose="parse_text",
+                max_tokens=max_tokens,
+                schema=request.schema,
+                model_purpose=model_purpose,
                 thinking_budget=0,
             )
             return validate_ai_output(
-                _payload(raw, purpose),
-                schema=schema,
-                purpose=purpose,
+                _payload(raw, request.purpose),
+                schema=request.schema,
+                purpose=request.purpose,
                 attempt_count=attempt,
             )
         except ConnectionError as exc:
             raise AIUnavailableError(
-                f"Upstream connection failed during {purpose}",
+                f"Upstream connection failed during {request.purpose}",
                 last_error=type(exc).__name__,
             ) from exc
         except AIOutputValidationError as exc:
             if attempt >= DESCRIBE_MAX_ATTEMPTS:
                 raise
-            prompt = build_validation_retry_prompt(sentence_block(sentence), exc)
-    raise RuntimeError(f"{purpose} produced no reply")
+            prompt = build_validation_retry_prompt(first_prompt, exc)
+    raise RuntimeError(f"{request.purpose} produced no reply")
 
 
 def _payload(raw: Any, purpose: str) -> Any:

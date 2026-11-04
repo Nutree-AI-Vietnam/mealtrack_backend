@@ -16,6 +16,9 @@ from .prompt_constants import (
     SYSTEM_MESSAGES,
     DECOMPOSITION_RULES,
     EMOJI_RULES,
+    HEALTHY_EASY_RULE_LINE,
+    HEALTHY_EASY_RULES,
+    default_cooking_minutes,
 )
 
 
@@ -140,9 +143,11 @@ class PromptTemplateManager:
         # Build ingredients string
         ing_str = ", ".join(ingredients[:8]) if ingredients else "common ingredients"
 
-        time_str = f", ≤{cooking_time_minutes}min" if cooking_time_minutes else ""
+        minutes = cooking_time_minutes or default_cooking_minutes(meal_type)
+        time_str = f", ≤{minutes}min"
 
         return f"""Generate 1 {meal_type} meal (~{target_calories} cal{time_str}).
+{HEALTHY_EASY_RULE_LINE}
 
 INGREDIENTS: {ing_str}
 {constraints_str}
@@ -190,10 +195,13 @@ RULES:
         if protein_target and carbs_target and fat_target:
             macro_str = f"\nMacro targets per meal: ~{int(protein_target)}g P, ~{int(carbs_target)}g C, ~{int(fat_target)}g F"
 
-        return f"""Generate {count} different {meal_type} meals, each ~{target_calories} cal.
+        minutes = default_cooking_minutes(meal_type)
+
+        return f"""Generate {count} different {meal_type} meals, each ~{target_calories} cal, ≤{minutes}min.
 MUST USE these ingredients (translate to English if not already): {ing_str}{cuisine_str}{macro_str}
 
 Rules:
+- {HEALTHY_EASY_RULE_LINE}
 - Names: ENGLISH ONLY (no Vietnamese/foreign words like "Gà", "Cơm", "Sốt" — use "Chicken", "Rice", "Sauce")
 - Names: natural, concise (max 5 words), VERY DIFFERENT styles
 - Macros: realistic, calories ≈ protein*4 + carbs*4 + fat*9 (±10%)
@@ -252,10 +260,14 @@ Rules:
         else:
             cuisine_str = f"\nCuisines: {names_count} distinct (Asian, Mediterranean, Latin, American)"
 
-        time_str = f", ≤{cooking_time_minutes}min" if cooking_time_minutes else ""
+        # A dish nobody can cook on a weekday is a dish nobody eats, so fall
+        # back to a sensible ceiling instead of leaving the time open.
+        minutes = cooking_time_minutes or default_cooking_minutes(meal_type)
+        time_str = f", ≤{minutes}min"
 
         return f"""Generate {names_count} different {meal_type} names, ~{target_calories}cal{servings_str}{time_str}.
 MUST USE these ingredients as main components: {ing_str}{constraints_str}{equipment_str}{cuisine_str}
+{HEALTHY_EASY_RULE_LINE}
 Names: Natural, concise (max 5 words), no "Quick/Healthy/Power" tags.{exclude_str}."""
 
     @classmethod
@@ -328,11 +340,11 @@ Names: Natural, concise (max 5 words), no "Quick/Healthy/Power" tags.{exclude_st
                 "plenty of vegetables, small starch portions, and 0-5g oil or added fat."
             )
 
-        time_str = f" | ≤{cooking_time_minutes} min" if cooking_time_minutes else ""
+        minutes = cooking_time_minutes or default_cooking_minutes(meal_type)
+        time_str = f" | ≤{minutes} min"
         time_req_str = (
-            f"\n- 2-6 clear recipe steps with duration\n- Total prep_time ≤{cooking_time_minutes} min"
-            if cooking_time_minutes
-            else "\n- 2-6 clear recipe steps with duration"
+            f"\n- 2-6 clear recipe steps with duration"
+            f"\n- Total prep_time ≤{minutes} min"
         )
 
         return f"""Generate complete recipe for: "{meal_name}"
@@ -346,6 +358,8 @@ REQUIREMENTS:
 - Match name "{meal_name}" exactly
 - 3-8 ingredients in GRAMS, scaled for {servings} serving{'s' if servings > 1 else ''}{time_req_str}
 - Include origin_country and cuisine_type in JSON
+
+{HEALTHY_EASY_RULES}
 
 {DECOMPOSITION_RULES}
 

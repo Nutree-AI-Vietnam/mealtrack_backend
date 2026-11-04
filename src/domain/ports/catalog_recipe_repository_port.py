@@ -122,6 +122,20 @@ class CatalogMealRepositoryPort(ABC):
     async def list_selection_candidates(self) -> list[CatalogMeal]:
         return await self.list_active_meals()
 
+    async def list_selection_ingredient_lines(
+        self,
+    ) -> list[tuple[str, int | None, str]]:
+        """Active recipes' ingredient lines as (recipe id, food reference, name).
+
+        Selection candidates omit ingredients; the weekly generator reads these
+        to count which fresh ingredients a week shares.
+        """
+        return [
+            (meal.id, ingredient.food_reference_id, ingredient.display_name)
+            for meal in await self.list_active_meals()
+            for ingredient in meal.ingredients
+        ]
+
     async def list_active_ingredient_names(self) -> list[str]:
         """Ingredient vocabulary for prompts when candidates omit ingredients."""
         return sorted(
@@ -145,6 +159,7 @@ class CatalogMealRepositoryPort(ABC):
         allergies: tuple[str, ...] = (),
         limit: int = 20,
         offset: int = 0,
+        min_protein: float | None = None,
     ) -> CatalogRecipePage:
         """Apply every eligibility filter before counting and paging."""
         raise NotImplementedError

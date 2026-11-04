@@ -124,6 +124,26 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
             after_id=after_id, limit=limit
         )
 
+    async def list_selection_ingredient_lines(
+        self,
+    ) -> list[tuple[str, int | None, str]]:
+        result = await self._execute_catalog(
+            select(
+                MealCatalogIngredientORM.catalog_meal_id,
+                MealCatalogIngredientORM.food_reference_id,
+                MealCatalogIngredientORM.display_name,
+            )
+            .join(
+                MealCatalogORM,
+                MealCatalogORM.id == MealCatalogIngredientORM.catalog_meal_id,
+            )
+            .where(MealCatalogORM.is_active.is_(True))
+        )
+        return [
+            (str(meal_id), food_reference_id, str(name or ""))
+            for meal_id, food_reference_id, name in result.all()
+        ]
+
     async def list_active_ingredient_names(self) -> list[str]:
         result = await self._execute_catalog(
             select(MealCatalogIngredientORM.display_name)
@@ -269,6 +289,23 @@ class AsyncCatalogMealRepository(CatalogMealRepositoryPort):
         )
         row = result.scalar_one_or_none()
         return _meal_to_domain(row, include_steps=True) if row else None
+
+    async def get_meal_details(
+        self, catalog_meal_ids: Iterable[str]
+    ) -> list[CatalogMeal]:
+        """get_meal_detail for several active recipes in one read; order not kept."""
+        ids = [mid for mid in dict.fromkeys(catalog_meal_ids) if mid]
+        if not ids:
+            return []
+        result = await self._execute_catalog(
+            select(MealCatalogORM)
+            .where(MealCatalogORM.id.in_(ids))
+            .where(MealCatalogORM.is_active.is_(True))
+            .options(*_catalog_meal_detail_load_options())
+        )
+        return [
+            _meal_to_domain(row, include_steps=True) for row in result.scalars().all()
+        ]
 
     async def get_micronutrient_enrichment(
         self, *, catalog_meal_id: str, content_hash: str

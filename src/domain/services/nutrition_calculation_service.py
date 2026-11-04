@@ -11,6 +11,7 @@ from src.domain.constants.food_density import DEFAULT_DENSITY, get_density
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 from src.domain.model.nutrition.extra_nutrients import micros_from_snapshot
 from src.domain.model.nutrition.micros_ops import merge_micros
+from src.domain.model.nutrition.plausibility import MAX_KCAL_PER_100G
 
 logger = logging.getLogger(__name__)
 
@@ -289,7 +290,6 @@ def quantity_to_grams(
     return convert_quantity_to_grams(quantity, unit, food_name)
 
 
-MAX_KCAL_PER_100G = 900.0
 _ENERGY_MISMATCH_RATIO = 5.0
 
 

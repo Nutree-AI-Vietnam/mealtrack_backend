@@ -40,10 +40,11 @@ async def test_ai_job_capabilities_advertise_the_job_contract():
 
     assert body == {
         "ai_jobs": True,
-        "types": ["chat", "meal_scan", "parse_text"],
+        "types": ["chat", "meal_scan", "parse_text", "recipe_import"],
         "max_attempts": 4,
         "poll_interval_ms": 2500,
         "chat_background": True,
+        "chat_regenerate_background": True,
     }
 
 
@@ -65,6 +66,7 @@ async def test_switches_turn_off_jobs_and_background_chat(
 
     assert body["ai_jobs"] is ai_jobs
     assert body["chat_background"] is chat
+    assert body["chat_regenerate_background"] is chat
 
 
 @pytest.mark.asyncio
@@ -105,6 +107,11 @@ def test_ai_job_capabilities_route(ready, status_code):
 
     assert response.status_code == status_code
     if ready:
-        assert response.json()["types"] == ["chat", "meal_scan", "parse_text"]
+        assert response.json()["types"] == [
+            "chat",
+            "meal_scan",
+            "parse_text",
+            "recipe_import",
+        ]
     else:
         assert response.json() == {"detail": UNAVAILABLE}

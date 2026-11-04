@@ -7,7 +7,8 @@
 **Code:** rules in `src/domain/model/ai_jobs/`, use cases, worker and notifier
 in `src/app/services/ai_jobs/`, wiring in `src/bootstrap/ai_jobs.py`
 
-A meal scan, a text parse or a chat reply can run as a background job. The
+A meal scan, a text parse, a recipe import or a chat reply can run as a
+background job. The
 app queues it and moves on, a worker runs it, and the result shows up in the
 app. A user who has left the app gets a push instead.
 
@@ -23,7 +24,8 @@ app. A user who has left the app gets a push instead.
   delay is 5 s × 2^(attempt − 1) with ±20 % jitter, capped at 1 h, so
   retries come roughly 5 s, 10 s and 20 s apart.
 - An attempt that runs longer than `AI_JOBS_EXECUTION_DEADLINE_SECONDS`
-  fails with `AI_TIMEOUT`, which is transient.
+  fails with `AI_TIMEOUT`, which is transient. A `recipe_import` attempt
+  gets at least 120 s, since a video may be downloaded and transcribed.
 - A worker that dies keeps its lease (`AI_JOBS_LEASE_SECONDS`) until the lease
   expires. Another worker then takes the job, and the lost attempt still
   counts. If it was the last attempt, the job fails with `WORKER_INTERRUPTED`.
@@ -47,7 +49,7 @@ app. A user who has left the app gets a push instead.
 
 ## Queue a job — `POST /v1/ai-jobs`
 
-Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text", "input": {…}}`
+Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text" | "recipe_import", "input": {…}}`
 
 | Status | Meaning |
 |--------|---------|
@@ -58,9 +60,11 @@ Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text", "input": {…
 - The client makes the id, so resending the request never creates a second
   job.
 - `input` is checked before anything is queued, with the same rules as
-  `POST /v1/meals/scan-by-url`, `POST /v1/meals/food-label/scan-by-url` and
-  `POST /v1/meals/parse-text`. Field errors are `422` with `loc` starting
-  `["body", "input", …]`.
+  `POST /v1/meals/scan-by-url`, `POST /v1/meals/food-label/scan-by-url`,
+  `POST /v1/meals/parse-text` and `POST /v1/recipe-imports/extract`. Field
+  errors are `422` with `loc` starting `["body", "input", …]`.
+- A `recipe_import` job also counts against the recipe import daily quota
+  (`429 RECIPE_IMPORT_DAILY_LIMIT`); see [Recipe import](api-recipe-import.md).
 - `chat` cannot be queued here (`400 INVALID_JOB_TYPE`); see
   [Chat turns](#chat-turns).
 - The job's language is the request's `Accept-Language`. It picks the push
@@ -75,6 +79,7 @@ Body: `{"id": "<client UUID>", "type": "meal_scan" | "parse_text", "input": {…
 | `meal_scan` | `{"meal_id": "…"}`. The meal is saved like a normal scan, so the app reads it from the meal routes |
 | `parse_text` | The same body `POST /v1/meals/parse-text` returns. Finding no foods is still a result |
 | `chat` | `{"thread_id": "…", "assistant_message_id": "…"}`. The app reloads the thread to show the reply |
+| `recipe_import` | `{"recipe": {…}}`, the unsaved draft `POST /v1/recipe-imports/extract` returns. The app shows it for review and saves it with `POST /v1/recipe-imports/save` |
 
 A meal scan's meal id is fixed when the job is queued, so a retry after a lost
 lease returns the meal that was already saved and never analyzes the image
@@ -120,8 +125,9 @@ plus `meal_id` for a completed meal scan, or `error_code` for a failure.
 | Android | Data-only message, high priority, TTL 1 h, collapse key = job id. The app draws the notification itself, so it can skip one whose result is already on screen |
 
 The push should open the result: `meal_id` opens the meal, `parse_text` opens
-the parse review for `job_id`, `chat` opens the coach thread, and a failure
-opens the job's failure view.
+the parse review for `job_id`, `recipe_import` opens the recipe review for
+`job_id`, `chat` opens the coach thread, and a failure opens the job's
+failure view.
 
 ### Device tokens
 
@@ -150,8 +156,8 @@ opens the job's failure view.
   can also be retried by resending the same message (below).
 - `POST /v1/ai-jobs/{id}/cancel`:
   - a `queued` job is cancelled at once;
-  - a running `parse_text` or `chat` attempt stops within a heartbeat
-    (`AI_JOBS_HEARTBEAT_SECONDS`);
+  - a running `parse_text`, `recipe_import` or `chat` attempt stops within
+    a heartbeat (`AI_JOBS_HEARTBEAT_SECONDS`);
   - a running `meal_scan` finishes. If it succeeds, the job ends `completed`
     and the meal is saved, but no push goes out. If it fails, the job ends
     `cancelled`;
@@ -166,9 +172,9 @@ failure copy.
 
 | Codes | `kind` | `retryable` |
 |-------|--------|-------------|
-| `NOT_FOOD_IMAGE`, `NOT_FOOD_LABEL_IMAGE`, `AI_CONTENT_REJECTED`, `CHAT_DAILY_LIMIT`, `CHAT_STOPPED`, `INVALID_JOB_INPUT` | permanent | false |
-| `AI_OUTPUT_INVALID`, `NUTRITION_INTEGRITY_REJECTED`, `NOT_FOOD_TEXT` | permanent | true |
-| `AI_UNAVAILABLE`, `AI_TIMEOUT`, `NUTRITION_PROVIDER_UNAVAILABLE`, `CHAT_PROVIDER_UNAVAILABLE`, `CHAT_BUSY`, `CHAT_RATE_LIMITED`, `CHAT_TURN_FAILED`, `WORKER_INTERRUPTED`, `INTERNAL_ERROR`, `FAILED_TO_ANALYZE_MEAL_IMAGE`, and any code not listed here | transient | true |
+| `NOT_FOOD_IMAGE`, `NOT_FOOD_LABEL_IMAGE`, `AI_CONTENT_REJECTED`, `CHAT_DAILY_LIMIT`, `CHAT_STOPPED`, `INVALID_JOB_INPUT`, `INVALID_RECIPE_SOURCE`, `RECIPE_URL_NOT_ALLOWED`, `RECIPE_SOURCE_REJECTED` | permanent | false |
+| `AI_OUTPUT_INVALID`, `NUTRITION_INTEGRITY_REJECTED`, `NOT_FOOD_TEXT`, `NOT_A_RECIPE`, `RECIPE_VIDEO_UNAVAILABLE` | permanent | true |
+| `AI_UNAVAILABLE`, `AI_TIMEOUT`, `DB_UNAVAILABLE`, `NUTRITION_PROVIDER_UNAVAILABLE`, `CHAT_PROVIDER_UNAVAILABLE`, `CHAT_BUSY`, `CHAT_RATE_LIMITED`, `CHAT_TURN_FAILED`, `WORKER_INTERRUPTED`, `INTERNAL_ERROR`, `FAILED_TO_ANALYZE_MEAL_IMAGE`, `RECIPE_SOURCE_UNREACHABLE`, and any code not listed here | transient | true |
 
 A transient failure the app sees has already used all of its automatic
 retries.
@@ -180,7 +186,7 @@ The rate limiter is the exception (below).
 
 | Status | `error_code` | When |
 |--------|--------------|------|
-| `400` | `INVALID_JOB_TYPE` | `type` is not `meal_scan` or `parse_text`; `details.supported` lists the types |
+| `400` | `INVALID_JOB_TYPE` | `type` is not `meal_scan`, `parse_text` or `recipe_import`; `details.supported` lists the types |
 | `400` | `INVALID_AI_JOB_ID`, `TOO_MANY_AI_JOB_IDS` | Bad `ids` in a list request |
 | `400` | `INVALID_MEAL_TEXT`, `INVALID_LABEL_CROP_IMAGE`, `INVALID_DATE_FORMAT`, `INVALID_IMAGE_URL`, `INVALID_IMAGE_ID`, `IMAGE_ID_URL_MISMATCH` | Input the synchronous routes reject too |
 | `404` | `AI_JOB_NOT_FOUND` | Unknown id, or another user's job |
@@ -201,7 +207,9 @@ can finish what it already queued.
   also carries `ai_job_status`: `completed`, `queued` (an automatic retry is
   coming), `failed`, `cancelled`, `running` or `null`. Anything but
   `completed` means the app should follow `GET /v1/ai-jobs/{id}`, then reload
-  the thread.
+  the thread. There is no `interrupted` status. `WORKER_INTERRUPTED` is a
+  transient error code: while attempts remain the job is `queued` again and
+  retried after backoff.
 - Resending the same message with the same `Idempotency-Key` and `ai_job_id`
   takes over a queued or failed job, or a running one whose lease has
   expired. A replayed turn streams without `ai_job_id`.
@@ -211,20 +219,30 @@ can finish what it already queued.
   reply.
 - If jobs are off or not migrated, or background chat is disabled, the turn
   streams as a plain turn with no `ai_job_id`.
-- A regenerated reply (`regenerate_assistant_id`) never becomes a job: any
-  `ai_job_id` sent with it is ignored and the reply streams as a plain turn.
+- A regenerated or edited reply (`regenerate_assistant_id` plus `ai_job_id`)
+  is a chat job. The job stores `prepare_regeneration` and
+  `regenerate_assistant_id`, and a retry reopens that same turn. Its
+  `dedupe_key` is the stored user message's idempotency key, so
+  `in_flight.ai_job_id` still matches. Without `ai_job_id` the reply streams
+  the legacy way.
+- When `ai_job_id` already belongs to this same request and another attempt
+  owns it, the response does not generate again. It sends `message.started`
+  with `ai_job_id`, then a terminal event whose `ai_job_status` tells the
+  app to follow that job. A second regenerate of a running or queued job
+  gets that follow stream. Resending a completed regenerate replays the
+  saved reply and does not reopen it.
 - Stopping a chat job ends it `cancelled` with no `error`; the stream's final
   `message.error` has the code `CHAT_STOPPED`. Cancelled jobs are never
   pushed.
 
 ## Capabilities — `GET /v1/capabilities/ai-jobs`
 
-`{"ai_jobs", "types", "max_attempts", "poll_interval_ms", "chat_background"}`
+`{"ai_jobs", "types", "max_attempts", "poll_interval_ms", "chat_background", "chat_regenerate_background"}`
 
 - `ai_jobs` is false while `AI_JOBS_ENABLED` is off. The app then keeps using
   the synchronous endpoints.
-- `chat_background` is true only when both `AI_JOBS_ENABLED` and
-  `AI_JOBS_CHAT_BACKGROUND_ENABLED` are on.
+- `chat_background` and `chat_regenerate_background` are true only when both
+  `AI_JOBS_ENABLED` and `AI_JOBS_CHAT_BACKGROUND_ENABLED` are on.
 - `503 AI_JOBS_UNAVAILABLE` until the migration has run.
 
 ## Configuration
@@ -257,4 +275,4 @@ draining what is already queued until `AI_JOBS_WORKER_ENABLED` is off too.
 - Nothing deletes old `ai_jobs` rows yet.
 - Push copy for languages other than English and Vietnamese.
 - Out of scope for this ticket: quiet hours, and job types other than chat,
-  meal scan and text parse.
+  meal scan, text parse and recipe import.

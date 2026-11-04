@@ -79,7 +79,7 @@ class _MockRedisClient:
 @pytest.mark.asyncio
 async def test_summaries_hits_redis_and_fetches_only_missing(monkeypatch):
     cached_meal = _meal("r1", "Cached Pho")
-    key_r1 = "catalog:summary:v2:test-v1:r1"
+    key_r1 = "catalog:summary:v3:test-v1:r1"
     redis = _MockRedisClient({key_r1: json.dumps(cached_meal.to_dict())})
 
     catalog = _Catalog()
@@ -96,7 +96,7 @@ async def test_summaries_hits_redis_and_fetches_only_missing(monkeypatch):
 
     # r2 should have been saved to Redis
     assert len(redis.mset_calls) == 1
-    key_r2 = "catalog:summary:v2:test-v1:r2"
+    key_r2 = "catalog:summary:v3:test-v1:r2"
     assert key_r2 in redis.mset_calls[0][0]
     assert redis.mset_calls[0][1] == CacheKeys.TTL_7_DAYS
 
@@ -107,8 +107,8 @@ async def test_summaries_all_hits_avoids_db(monkeypatch):
     m2 = _meal("r2", "Dish 2")
     redis = _MockRedisClient(
         {
-            "catalog:summary:v2:test-v1:r1": json.dumps(m1.to_dict()),
-            "catalog:summary:v2:test-v1:r2": json.dumps(m2.to_dict()),
+            "catalog:summary:v3:test-v1:r1": json.dumps(m1.to_dict()),
+            "catalog:summary:v3:test-v1:r2": json.dumps(m2.to_dict()),
         }
     )
 
@@ -195,3 +195,62 @@ async def test_legacy_unversioned_cache_cannot_override_authoritative_summary():
         lambda: _UnitOfWork(), redis_client=redis
     ).summaries(["r1"])
     assert result[0].name == "Meal r1"
+
+
+def test_summary_cache_keeps_browse_labels_taken_before_translation():
+    from src.domain.model.meal_recommendation.recipe_diet_labels import (
+        RecipeDietLabels,
+    )
+
+    labelled = CatalogMeal.from_dict(
+        {
+            **_meal("r1", "Đậu hũ").to_dict(),
+            "browse_labels": {"is_vegetarian": False, "is_pork_free": True},
+        }
+    )
+
+    assert labelled.diet_labels == RecipeDietLabels(False, True)
+    assert CatalogMeal.from_dict(labelled.to_dict()) == labelled
+    # No stored labels: no key, so stored projection payloads keep their digest.
+    assert "browse_labels" not in _meal("r2", "Tofu").to_dict()
+
+
+@pytest.mark.asyncio
+async def test_details_keep_request_order_and_drop_unknown_ids():
+    class _DetailCatalog(_Catalog):
+        async def get_meal_details(self, ids):
+            self.detail_ids = list(ids)
+            return [_meal(mid, f"Meal {mid}") for mid in reversed(ids) if mid != "x"]
+
+    class _Enrichment:
+        async def load_cached_many(self, meals):
+            self.loaded = [meal.id for meal in meals]
+            return meals
+
+    catalog = _DetailCatalog()
+    enrichment = _Enrichment()
+    service = WeeklyRecipeService(
+        lambda: _UnitOfWork(catalog), micronutrient_enrichment=enrichment
+    )
+
+    meals = await service.details(["b", "x", "a", "b"])
+
+    assert [meal.id for meal in meals] == ["b", "a"]
+    assert catalog.detail_ids == ["b", "x", "a"]
+    assert enrichment.loaded == ["b", "a"]
+    assert await service.details([]) == ()
+
+
+@pytest.mark.asyncio
+async def test_list_forwards_min_protein_to_the_catalog_page():
+    from src.domain.ports.catalog_recipe_repository_port import CatalogRecipePage
+
+    class _PageCatalog(_Catalog):
+        async def list_recipe_page(self, **kwargs):
+            self.page_kwargs = kwargs
+            return CatalogRecipePage((), 0)
+
+    catalog = _PageCatalog()
+    await WeeklyRecipeService(lambda: _UnitOfWork(catalog)).list(min_protein=25)
+
+    assert catalog.page_kwargs["min_protein"] == 25

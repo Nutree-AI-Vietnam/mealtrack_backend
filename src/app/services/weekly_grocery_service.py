@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from src.domain.model.weekly_meal_planner import WeeklyMealPlan
+from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot, WeeklyMealPlan
+from src.domain.model.weekly_meal_planner.saved_recipe import SOURCE_RECIPE_IMPORT
 from src.domain.services.weekly_meal_planner.grocery_projection import (
     DerivedGroceryItem,
     GroceryIngredient,
@@ -16,8 +17,16 @@ from src.domain.services.weekly_meal_planner.grocery_projection import (
     GrocerySlot,
     PantryAvailability,
     aggregate_grocery,
+    is_pantry_staple,
+)
+from src.domain.services.weekly_meal_planner.weekly_plan_generation_service import (
+    leftover_lunch_cook_days,
 )
 from src.planner_observability import planner_timed
+
+# Seasonings most kitchens already hold. The group sorts last and clients can
+# fold it; older clients file an unknown group by the item's name.
+STAPLES_CATEGORY = "staples"
 
 
 @dataclass(frozen=True)
@@ -52,31 +61,35 @@ class WeeklyGroceryService:
     def project(self, plan: WeeklyMealPlan, meals) -> tuple[DerivedGroceryItem, ...]:
         """Project proposed-plan requirements without pantry deductions or writes."""
         meals_by_id = {meal.id: meal for meal in meals}
+        cook_days = leftover_lunch_cook_days(plan)
         slots = [
             _slot_from_meal(
                 meals_by_id[slot.recipe_id],
                 plan_people=plan.people,
                 override=getattr(slot, "recipe_override", None),
-                day_index=slot.day_index,
+                day_index=cook_days.get(
+                    (slot.day_index, slot.slot_index), slot.day_index
+                ),
             )
-            for slot in plan.slots
-            if slot.recipe_id is not None and slot.recipe_id in meals_by_id
+            for slot in _shopping_slots(plan)
+            if slot.recipe_id in meals_by_id
         ]
+        slots.extend(_saved_recipe_slots(plan))
         return aggregate_grocery(slots, ())
 
     @planner_timed("mapping")
     async def calculate(self, uow, plan: WeeklyMealPlan) -> tuple[GroceryCategory, ...]:
         slots: list[GrocerySlot] = []
-        needed_ids = {
-            slot.recipe_id for slot in plan.slots if slot.recipe_id is not None
-        }
+        shopping_slots = [
+            slot for slot in _shopping_slots(plan) if slot.recipe_id is not None
+        ]
+        needed_ids = {slot.recipe_id for slot in shopping_slots}
         meals_cache: dict[str, Any] = {}
         if hasattr(uow.catalog_recipes, "get_meals"):
             fetched = await uow.catalog_recipes.get_meals(needed_ids)
             meals_cache = {meal.id: meal for meal in fetched if meal is not None}
-        for slot in plan.slots:
-            if slot.recipe_id is None:
-                continue
+        cook_days = leftover_lunch_cook_days(plan)
+        for slot in shopping_slots:
             if slot.recipe_id not in meals_cache and not hasattr(
                 uow.catalog_recipes, "get_meals"
             ):
@@ -91,9 +104,12 @@ class WeeklyGroceryService:
                     meal,
                     plan_people=plan.people,
                     override=getattr(slot, "recipe_override", None),
-                    day_index=slot.day_index,
+                    day_index=cook_days.get(
+                        (slot.day_index, slot.slot_index), slot.day_index
+                    ),
                 )
             )
+        slots.extend(_saved_recipe_slots(plan))
         pantry_rows = await uow.weekly_meal_plans.list_pantry(
             user_id=plan.user_id, plan_id=plan.id
         )
@@ -120,6 +136,8 @@ class WeeklyGroceryService:
 
 
 def _resolve_grocery_category(name: str, category: str | None) -> str:
+    if is_pantry_staple(name):
+        return STAPLES_CATEGORY
     cat = (category or "").strip().lower()
     if cat in {"produce", "fresh_produce", "vegetable", "fruit"}:
         return "fresh_produce"
@@ -415,3 +433,75 @@ def _decimal_or_none(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
     return Decimal(str(value))
+
+
+def _shopping_slots(plan: WeeklyMealPlan) -> list:
+    """Slots whose recipe needs buying: planned and not skipped."""
+    return [
+        slot
+        for slot in plan.slots
+        if (
+            slot.recipe_id is not None
+            or getattr(slot, "saved_recipe", None) is not None
+        )
+        and not getattr(slot, "is_skipped", False)
+    ]
+
+
+def _saved_recipe_slots(plan: WeeklyMealPlan) -> list[GrocerySlot]:
+    """Saved recipes bought from the slot's copy, on the slot's own day."""
+    return [
+        _slot_from_saved_recipe(
+            slot.saved_recipe, plan_people=plan.people, day_index=slot.day_index
+        )
+        for slot in _shopping_slots(plan)
+        if getattr(slot, "saved_recipe", None) is not None
+    ]
+
+
+def _slot_from_saved_recipe(
+    recipe: SavedRecipeSnapshot, *, plan_people: int, day_index: int
+) -> GrocerySlot:
+    """Lines cover the recipe's servings; groceries scale to the plan's people.
+
+    A line without a food reference is bought under the id its name gives,
+    like catalog lines. A line with no amount uses its grams; a bare count
+    ("2 eggs") is bought in pieces.
+    """
+    ingredients: list[GroceryIngredient] = []
+    for position, item in enumerate(recipe.ingredients, start=1):
+        if _is_non_food_ingredient(item.name, None):
+            continue
+        if item.amount is not None:
+            quantity: Decimal | None = Decimal(str(item.amount))
+            unit = item.unit or "piece"
+        elif item.grams is not None:
+            quantity, unit = Decimal(str(item.grams)), "g"
+        else:
+            quantity, unit = None, item.unit
+        ingredients.append(
+            GroceryIngredient(
+                position=position,
+                food_reference_id=item.food_reference_id,
+                name=item.name,
+                quantity=quantity,
+                unit=unit,
+                category=_resolve_grocery_category(item.name, None),
+            )
+        )
+    return GrocerySlot(
+        recipe_id=f"saved:{recipe.suggestion_id}",
+        publication_status="published",
+        nutrition_status="ready",
+        is_active=True,
+        base_servings=recipe.servings,
+        # An AI meal idea states no servings: its amounts are taken as one.
+        serving_confidence=(
+            "verified"
+            if recipe.source == SOURCE_RECIPE_IMPORT and not recipe.servings_estimated
+            else "estimated"
+        ),
+        people=plan_people,
+        ingredients=tuple(ingredients),
+        day_index=day_index,
+    )

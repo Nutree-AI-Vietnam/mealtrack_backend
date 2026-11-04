@@ -31,7 +31,12 @@ def water_macros(drink: Drink, volume_ml: int) -> Macros:
 
 
 def water_meal_for(
-    drink: Drink, volume_ml: int, logged_at: datetime, user_id: str
+    drink: Drink,
+    volume_ml: int,
+    logged_at: datetime,
+    user_id: str,
+    *,
+    logged_on_day: bool,
 ) -> Meal:
     """The legacy hydration Meal a water-category drink saves beside its entry."""
     return Meal(
@@ -46,4 +51,5 @@ def water_meal_for(
         source="hydration",
         quantity=drink.credited_ml_for_volume(volume_ml),
         nutrition=Nutrition(macros=water_macros(drink, volume_ml), food_items=None),
+        logged_on_day=logged_on_day,
     )

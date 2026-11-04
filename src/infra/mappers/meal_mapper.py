@@ -143,7 +143,11 @@ def nutrition_orm_to_domain(orm: NutritionORM) -> DomainNutrition:
         ),
         micros=micros_from_mapping(getattr(orm, "micros", None)),
         food_items=food_items,
-        confidence_score=orm.confidence_score,
+        # Column is nullable (legacy rows); fall back to the domain default.
+        # Use `is not None` so an explicit stored 0.0 is preserved.
+        confidence_score=(
+            orm.confidence_score if orm.confidence_score is not None else 1.0
+        ),
         nutrition_override=_nutrition_override_from_orm(orm.nutrition_override),
     )
 
@@ -237,6 +241,7 @@ def meal_orm_to_domain(orm: MealORM) -> DomainMeal:
         origin_country=orm.origin_country,
         emoji=orm.emoji,
         quantity=orm.quantity,
+        logged_on_day=getattr(orm, "logged_on_day", None),
     )
 
 
@@ -429,6 +434,7 @@ def meal_domain_to_orm(domain: DomainMeal) -> MealORM:
         origin_country=getattr(domain, "origin_country", None),
         emoji=getattr(domain, "emoji", None),
         quantity=getattr(domain, "quantity", None),
+        logged_on_day=getattr(domain, "logged_on_day", None),
     )
     if domain.image:
         orm.image_id = str(domain.image.image_id)

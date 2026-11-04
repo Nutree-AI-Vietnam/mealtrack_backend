@@ -62,6 +62,11 @@ class TdeeRequest:
     unit_system: UnitSystem = UnitSystem.METRIC
     training_level: TrainingLevel | None = None
     macro_preset: MacroPreset = MacroPreset.STANDARD
+    weight_loss_kg_per_week: float | None = None
+    weight_gain_kg_per_week: float | None = None
+    # Conditions that change what a safe target is, e.g. pregnancy or
+    # kidney disease. Empty means none were reported.
+    health_conditions: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Validate invariants."""
@@ -132,6 +137,30 @@ class MacroTargets:
 
 
 @dataclass
+class PaceRange:
+    """Paces this person can pick, in kg per week: a loss for a cut goal, a
+    gain for a bulk goal.
+
+    For a loss, max_kg_per_week is below min_kg_per_week when the calorie floor
+    allows less than the slow limit, and 0 when it allows no deficit at all. A
+    gain has no floor, so its maximum is the fast limit.
+    """
+
+    min_kg_per_week: float
+    max_kg_per_week: float
+    recommended_low_kg: float
+    recommended_high_kg: float
+
+    def to_dict(self) -> dict:
+        return {
+            "min_kg_per_week": self.min_kg_per_week,
+            "max_kg_per_week": self.max_kg_per_week,
+            "recommended_low_kg": self.recommended_low_kg,
+            "recommended_high_kg": self.recommended_high_kg,
+        }
+
+
+@dataclass
 class TdeeResponse:
     """Domain model for TDEE calculation response matching Flutter TdeeResult."""
 
@@ -143,6 +172,15 @@ class TdeeResponse:
         None  # BMR formula used (e.g., "Mifflin-St Jeor", "Katch-McArdle")
     )
     macro_preset: MacroPreset = MacroPreset.STANDARD
+    # Only for a cut or bulk goal.
+    pace_range: PaceRange | None = None
+    # Set when a weight-loss goal was planned at maintenance instead:
+    # "minor", "underweight" or "health_condition". The goal field still
+    # echoes what the user asked for.
+    deficit_blocked_reason: str | None = None
+    # Set when a bulk keeps the flat surplus because its gain pace is
+    # blocked: "minor" or "health_condition". pace_range is then None.
+    gain_pace_blocked_reason: str | None = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary format for API response."""
@@ -160,4 +198,10 @@ class TdeeResponse:
         }
         if self.formula_used:
             result["formula_used"] = self.formula_used
+        if self.pace_range:
+            result["pace_range"] = self.pace_range.to_dict()
+        if self.deficit_blocked_reason:
+            result["deficit_blocked_reason"] = self.deficit_blocked_reason
+        if self.gain_pace_blocked_reason:
+            result["gain_pace_blocked_reason"] = self.gain_pace_blocked_reason
         return result

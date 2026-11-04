@@ -18,11 +18,17 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
+from src.domain.exceptions.user_exceptions import UserNotFoundError
 from src.domain.model import FoodItem, Macros, Meal, MealImage, MealStatus, Nutrition
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.user.firebase_identity import tombstone_firebase_uid
 from src.domain.parsers.gpt_response_parser import GPTResponseParser
-from src.domain.utils.timezone_utils import get_zone_info, utc_now
+from src.domain.utils.timezone_utils import (
+    ensure_utc,
+    get_zone_info,
+    is_backdated_local,
+    utc_now,
+)
 from src.infra.database.base import Base
 
 # Import all models to ensure they're registered with Base metadata
@@ -126,6 +132,7 @@ class TestMealRepository:
         if existing_meal:
             existing_meal.status = MealStatusMapper.to_db(meal.status)
             existing_meal.dish_name = meal.dish_name
+            existing_meal.created_at = meal.created_at
             existing_meal.meal_type = meal.meal_type
             existing_meal.ready_at = meal.ready_at
             existing_meal.error_message = meal.error_message
@@ -403,6 +410,30 @@ class TestMealRepository:
                 out.append(day_val)
         return out
 
+    def get_streak_log_days(
+        self, user_id: str, user_timezone: str | None = None
+    ) -> list[tuple[date, bool]]:
+        rows = (
+            self.db.query(MealORM.created_at, MealORM.logged_on_day)
+            .filter(
+                MealORM.user_id == user_id,
+                _test_domain_hydratable_active_meal_filter(),
+            )
+            .all()
+        )
+        days: dict[date, bool] = {}
+        for created_at, logged_on_day in rows:
+            local = created_at
+            if user_timezone and user_timezone != "UTC":
+                local = ensure_utc(created_at).astimezone(get_zone_info(user_timezone))
+            same_day = (
+                logged_on_day
+                if logged_on_day is not None
+                else not is_backdated_local(local)
+            )
+            days[local.date()] = days.get(local.date(), False) or same_day
+        return sorted(days.items(), reverse=True)
+
     def count_by_source(self, user_id: str, source: str) -> int:
         return (
             self.db.query(MealORM)
@@ -573,6 +604,40 @@ class TestUserRepository:
         )
         self.db.commit()
 
+    def get_activity_calories(self, user_id) -> bool:
+        entity = (
+            self.db.query(User)
+            .filter(User.id == str(user_id), User.is_active.is_(True))
+            .first()
+        )
+        if entity is None:
+            return True
+        return bool(getattr(entity, "activity_calories", True))
+
+    def update_user_activity_calories(self, user_id, enabled: bool) -> None:
+        self.db.query(User).filter(User.id == str(user_id)).update(
+            {"activity_calories": enabled}
+        )
+        self.db.commit()
+
+    def update_user_avatar(self, user_id, avatar) -> str | None:
+        entity = (
+            self.db.query(User)
+            .filter(User.id == str(user_id), User.is_active.is_(True))
+            .with_for_update()
+            .first()
+        )
+        if entity is None:
+            raise UserNotFoundError(f"No active user {user_id}")
+        previous_image_id = entity.avatar_image_id
+        entity.avatar_kind = avatar.kind.value
+        entity.avatar_image_id = avatar.image_id
+        entity.avatar_image_url = avatar.image_url
+        entity.avatar_character = avatar.character
+        entity.avatar_color = avatar.color
+        self.db.flush()
+        return previous_image_id
+
 
 class AsyncTestMealRepository:
     """Explicit async test facade for legacy sync-session handler tests."""
@@ -609,6 +674,9 @@ class AsyncTestMealRepository:
 
     async def get_dates_with_meals(self, *args, **kwargs):
         return self._repo.get_dates_with_meals(*args, **kwargs)
+
+    async def get_streak_log_days(self, *args, **kwargs):
+        return self._repo.get_streak_log_days(*args, **kwargs)
 
     async def count_by_source(self, *args, **kwargs):
         return self._repo.count_by_source(*args, **kwargs)
@@ -652,6 +720,15 @@ class AsyncTestUserRepository:
 
     async def update_user_weekly_auto_adjust(self, *args, **kwargs):
         return self._repo.update_user_weekly_auto_adjust(*args, **kwargs)
+
+    async def get_activity_calories(self, *args, **kwargs):
+        return self._repo.get_activity_calories(*args, **kwargs)
+
+    async def update_user_activity_calories(self, *args, **kwargs):
+        return self._repo.update_user_activity_calories(*args, **kwargs)
+
+    async def update_user_avatar(self, *args, **kwargs):
+        return self._repo.update_user_avatar(*args, **kwargs)
 
 
 class TestUnitOfWork:
@@ -1098,7 +1175,9 @@ def event_bus(
 
     event_bus.register_handler(
         DeleteUserCommand,
-        DeleteUserCommandHandler(event_publisher=event_publisher),
+        DeleteUserCommandHandler(
+            event_publisher=event_publisher, image_store=mock_image_store
+        ),
     )
 
     return event_bus

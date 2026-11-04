@@ -54,6 +54,15 @@ def capture_exception(
     get_observability_connector().capture_exception(error, context=context)
 
 
+def capture_database_unavailable(error: BaseException) -> None:
+    """Capture a database outage that the HTTP layer answers with 503.
+
+    FastAPI's Sentry integration does not report 503, and this path is logged
+    at WARNING, so nothing else sends it.
+    """
+    get_observability_connector().capture_database_unavailable(error)
+
+
 def capture_message(
     message: str,
     *,
@@ -80,6 +89,21 @@ def log_event(
         message,
         attributes=attributes,
     )
+
+
+def add_breadcrumb(
+    category: str,
+    message: str,
+    *,
+    level: str = "info",
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Attach a breadcrumb when the active connector records them."""
+    connector = get_observability_connector()
+    record = getattr(connector, "add_breadcrumb", None)
+    if record is None:
+        return
+    record(category, message, level=level, data=data)
 
 
 def increment_metric(

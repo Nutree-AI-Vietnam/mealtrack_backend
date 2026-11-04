@@ -46,7 +46,9 @@ from src.observability import distribution_metric
 logger = logging.getLogger(__name__)
 
 # Work that can stop at any await without leaving partial state behind.
-INTERRUPTIBLE_AI_JOB_TYPES = frozenset({AiJobType.PARSE_TEXT, AiJobType.CHAT})
+INTERRUPTIBLE_AI_JOB_TYPES = frozenset(
+    {AiJobType.PARSE_TEXT, AiJobType.CHAT, AiJobType.RECIPE_IMPORT}
+)
 _INTERRUPT_GRACE_SECONDS = 5.0
 _CLEANUP_TIMEOUT_SECONDS = 5.0
 
@@ -67,6 +69,7 @@ class AiJobWorker:
         poll_seconds: float,
         notify_grace_seconds: int,
         max_idle_seconds: float = 5.0,
+        deadline_overrides: Mapping[AiJobType, float] | None = None,
         ready: Callable[[], Awaitable[bool]] | None = None,
         rng: Callable[[], float] = random.random,
         clock: Callable[[], float] = time.monotonic,
@@ -88,6 +91,8 @@ class AiJobWorker:
         self._lease_seconds = lease_seconds
         self._heartbeat_seconds = heartbeat_seconds
         self._deadline_seconds = deadline_seconds
+        # Job types whose single attempt may need longer (video imports).
+        self._deadline_overrides = dict(deadline_overrides or {})
         self._poll_seconds = poll_seconds
         self._max_idle_seconds = max(poll_seconds, max_idle_seconds)
         self._clock = clock
@@ -174,7 +179,8 @@ class AiJobWorker:
                 stop=stop,
                 interruptible=claim.job_type in INTERRUPTIBLE_AI_JOB_TYPES,
                 heartbeat_seconds=self._heartbeat_seconds,
-                deadline=started + self._deadline_seconds,
+                deadline=started
+                + self._deadline_overrides.get(claim.job_type, self._deadline_seconds),
                 clock=self._clock,
             )
         except asyncio.CancelledError:

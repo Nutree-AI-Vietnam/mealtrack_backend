@@ -82,14 +82,7 @@ class CatalogProjectionRepository:
         missing = [identity for identity in ids if identity not in meals]
         if missing:
             fetched = await self.repository.get_meals(missing)
-            meals.update(
-                {
-                    meal.id: replace(
-                        meal, ingredients=(), steps=(), recipe_payload=None
-                    )
-                    for meal in fetched
-                }
-            )
+            meals.update({meal.id: _summary(meal) for meal in fetched})
         return [meals[identity] for identity in ids if identity in meals]
 
     async def candidates(self):
@@ -121,6 +114,7 @@ class CatalogProjectionRepository:
         allergies=(),
         limit=20,
         offset=0,
+        min_protein=None,
     ):
         await self.repository.lock_catalog_publication(shared=True)
         known = await self.repository.list_allergen_codes() if allergies else ()
@@ -138,6 +132,7 @@ class CatalogProjectionRepository:
                 codes=codes,
                 limit=limit,
                 offset=offset,
+                min_protein=min_protein,
             )
         filters = recipe_filters(
             query=query,
@@ -147,6 +142,7 @@ class CatalogProjectionRepository:
             meal_type=meal_type,
             dislikes=dislikes,
             allergen_codes=codes,
+            min_protein=min_protein,
         )
         base = self._base().where(*filters)
         if meal_type in SLOT_MEAL_TYPES:
@@ -185,9 +181,7 @@ class CatalogProjectionRepository:
             # Hydrate after count/page; dirty nutrition never removes matches or changes totals.
             meals.update(
                 {
-                    meal.id: replace(
-                        meal, ingredients=(), steps=(), recipe_payload=None
-                    )
+                    meal.id: _summary(meal)
                     for meal in await self.repository.get_meals(dirty)
                 }
             )
@@ -252,9 +246,7 @@ class CatalogProjectionRepository:
         if dirty:
             meals.update(
                 {
-                    meal.id: replace(
-                        meal, ingredients=(), steps=(), recipe_payload=None
-                    )
+                    meal.id: _summary(meal)
                     for meal in await self.repository.get_meals(dirty)
                 }
             )
@@ -270,3 +262,14 @@ class CatalogProjectionRepository:
         )
 
         return await legacy_recipe_page(self.repository, **kwargs)
+
+
+def _summary(meal):
+    """Drop the heavy parts; keep the diet labels the dropped ingredients gave."""
+    return replace(
+        meal,
+        ingredients=(),
+        steps=(),
+        recipe_payload=None,
+        browse_labels=meal.diet_labels,
+    )

@@ -5,42 +5,66 @@ import re
 from io import BytesIO
 from urllib.parse import urlparse, urlunparse
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
 _MAX_DIM = 768
 _MAX_BYTES = 200 * 1024
+VISION_MAX_DIM = 2048
+VISION_JPEG_QUALITY = 90
 
 
-def compress_image(image_bytes: bytes, max_dim: int = _MAX_DIM) -> bytes:
-    """Resize to max_dim on longest axis, encode as JPEG quality=85.
+def compress_image(
+    image_bytes: bytes,
+    max_dim: int = _MAX_DIM,
+    *,
+    quality: int = 85,
+    passthrough_bytes: int = _MAX_BYTES,
+) -> bytes:
+    """Normalize orientation and resize the longest axis, then encode as JPEG.
 
-    Returns original bytes unchanged if already a small JPEG within limits.
+    Returns upright JPEG bytes unchanged when within the configured limits.
     Never raises — falls back to original on PIL errors.
     """
     try:
-        img = Image.open(BytesIO(image_bytes))
+        img: Image.Image = Image.open(BytesIO(image_bytes))
+        orientation = img.getexif().get(274, 1)
         w, h = img.size
         if (
             img.format == "JPEG"
             and max(w, h) <= max_dim
-            and len(image_bytes) < _MAX_BYTES
+            and len(image_bytes) < passthrough_bytes
+            and orientation == 1
         ):
             return image_bytes
+        img = ImageOps.exif_transpose(img)
+        w, h = img.size
         resampling = getattr(Image, "Resampling", Image).LANCZOS  # type: ignore[attr-defined]
         resized_img: Image.Image = img
         if max(w, h) > max_dim:
             ratio = max_dim / max(w, h)
-            resized_img = img.resize((int(w * ratio), int(h * ratio)), resampling)
+            resized_img = img.resize(
+                (max(1, int(w * ratio)), max(1, int(h * ratio))), resampling
+            )
         if resized_img.mode != "RGB":
             resized_img = resized_img.convert("RGB")
         buf = BytesIO()
-        resized_img.save(buf, format="JPEG", quality=85)
+        resized_img.save(buf, format="JPEG", quality=quality)
         return buf.getvalue()
     except Exception as exc:
         logger.warning("Image compression failed, using original: %s", exc)
         return image_bytes
+
+
+def compress_vision_image(image_bytes: bytes) -> bytes:
+    """Preserve small food details and avoid repeated JPEG encoding on scan paths."""
+    return compress_image(
+        image_bytes,
+        max_dim=VISION_MAX_DIM,
+        quality=VISION_JPEG_QUALITY,
+        passthrough_bytes=5 * 1024 * 1024,
+    )
 
 
 def to_compressed_image_url(

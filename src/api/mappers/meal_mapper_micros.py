@@ -13,7 +13,7 @@ from src.domain.model.nutrition.micros_ops import (
     mapping_from_micros,
     micros_from_mapping,
 )
-from src.domain.services.micronutrient_dri_targets import micronutrient_daily_targets
+from src.domain.services.micronutrient_dri_targets import micronutrient_daily_goals
 
 
 def micros_from_nutrition_payload(data: dict[str, Any] | None) -> Micros | None:
@@ -36,18 +36,16 @@ def daily_micro_targets(
     daily_macros_data: dict[str, Any],
     target_calories: float,
 ) -> MicronutrientTargetsResponse:
-    cached = daily_macros_data.get("micro_targets")
-    if isinstance(cached, dict) and cached:
-        return MicronutrientTargetsResponse.model_validate(cached)
-    dri = micronutrient_daily_targets(
+    personal = micronutrient_daily_goals(
         gender=daily_macros_data.get("gender"),
-        age_years=daily_macros_data.get("age"),
+        age=daily_macros_data.get("age"),
         plan_calories=target_calories,
+        dietary_preferences=daily_macros_data.get("dietary_preferences"),
     )
     return MicronutrientTargetsResponse(
-        iron_mg=dri.iron_mg,
-        fiber_g=dri.fiber_g,
-        potassium_mg=dri.potassium_mg,
-        sodium_mg=dri.sodium_mg,
-        added_sugar_g=dri.added_sugar_g,
+        iron_mg=personal.goals["iron"],
+        fiber_g=personal.fiber_g,
+        potassium_mg=personal.goals["potassium"],
+        sodium_mg=personal.goals["sodium"],
+        added_sugar_g=personal.goals["added_sugar"],
     )

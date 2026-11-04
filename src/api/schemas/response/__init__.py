@@ -66,6 +66,7 @@ from .tdee_responses import (
     TDEE_PREVIEW_CALCULATION_CONTRACT,
     BatchTdeeCalculationResponse,
     MacroTargetsResponse,
+    PaceRangeResponse,
     TdeeCalculationResponse,
     TdeeComparisonResponse,
     TdeeErrorResponse,
@@ -108,6 +109,7 @@ __all__ = [
     "TdeeHistoryResponse",
     "TdeeErrorResponse",
     "MacroTargetsResponse",
+    "PaceRangeResponse",
     "TDEE_PREVIEW_CALCULATION_CONTRACT",
     # Meal suggestion
     "MealSuggestionItem",

@@ -23,9 +23,11 @@ from src.api.schemas.response import (
     SimpleMealResponse,
 )
 from src.api.schemas.response.daily_nutrition_response import DailyNutritionResponse
+from src.api.schemas.response.meal_responses import NutritionSourceSummaryResponse
 from src.app.services.serving_label import overlay_serving_labels
 from src.domain.constants.languages import normalize_language
 from src.domain.model.meal import Meal
+from src.domain.model.meal.meal_accuracy import meal_accuracy_fields
 from src.domain.model.meal.meal_response_localization import (
     MealResponseLocalization,
     parse_meal_response_localization,
@@ -256,14 +258,11 @@ class MealMapper:
                         getattr(item, "food_reference_id", None),
                         getattr(item, "source_snapshot", None),
                     )
-                    item_confidence = getattr(item, "confidence", None)
                     food_item_dto = FoodItemResponse(
                         id=str(item.id),
-                        confidence=(
-                            float(item_confidence)
-                            if isinstance(item_confidence, (int, float))
-                            else None
-                        ),
+                        confidence=item.confidence
+                        if meal.source == "scanner" and not meal.is_manually_edited
+                        else None,
                         name=display_name,
                         display_name=display_name,
                         canonical_name=canonical_name,
@@ -402,6 +401,8 @@ class MealMapper:
                         )
 
         value_insights_response = MealMapper._value_insights_response(value_insights)
+        accuracy = meal_accuracy_fields(meal)
+        source_summary = accuracy["nutrition_source_summary"]
 
         # --- Build translations dict for the response ---
         translations_response = None
@@ -424,14 +425,10 @@ class MealMapper:
                     translated_at=tr.translated_at,
                 )
 
-        meal_confidence = None
-        if meal.nutrition is not None:
-            raw_confidence = getattr(meal.nutrition, "confidence_score", None)
-            if isinstance(raw_confidence, (int, float)):
-                meal_confidence = float(raw_confidence)
-
         return DetailedMealResponse(
             meal_id=meal.meal_id,
+            edit_count=meal.edit_count,
+            is_manually_edited=meal.is_manually_edited,
             status=STATUS_MAPPING.get(meal.status.value, meal.status.value.lower()),
             dish_name=dish_name,
             emoji=meal.emoji,
@@ -448,7 +445,6 @@ class MealMapper:
                 meal.weight_grams if hasattr(meal, "weight_grams") else None
             ),
             total_nutrition=total_nutrition,
-            ai_confidence=meal_confidence,
             nutrition_override=(
                 NutritionOverrideResponse(
                     calories=meal.nutrition.nutrition_override.calories,
@@ -472,6 +468,15 @@ class MealMapper:
             cuisine_type=getattr(meal, "cuisine_type", None),
             origin_country=getattr(meal, "origin_country", None),
             **meal_nrf_fields(meal),
+            ai_generated=accuracy["ai_generated"],
+            ai_confidence=accuracy["ai_confidence"],
+            nutrition_source_summary=NutritionSourceSummaryResponse(
+                local=source_summary["local"],
+                usda=source_summary["usda"],
+                provider=source_summary["provider"],
+                custom=source_summary["custom"],
+                unknown=source_summary["unknown"],
+            ),
         )
 
     @staticmethod
@@ -1007,6 +1012,7 @@ class MealMapper:
             weekly_context=weekly_context,
             hydration=hydration,
             iron_mg=daily_macros_data.get("iron_mg"),
+            supplement_micros=daily_macros_data.get("supplement_micros") or {},
             potassium_mg=daily_macros_data.get("potassium_mg"),
             sodium_mg=daily_macros_data.get("sodium_mg"),
             added_sugar_g=daily_macros_data.get("added_sugar_g"),

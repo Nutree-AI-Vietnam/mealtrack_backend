@@ -3,7 +3,8 @@
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from src.domain.model.meal import Meal
 from src.domain.model.nutrition.extra_nutrients import extra_nutrients_to_micros
@@ -16,6 +17,61 @@ from src.domain.services.nutrition_integrity_policy import NutritionIntegrityPol
 FoodReferenceLookup = Callable[[str], Awaitable[dict[str, Any] | None]]
 FoodReferenceBatchLookup = Callable[[list[str]], Awaitable[dict[str, dict[str, Any]]]]
 MACRO_DIVERGENCE_TOLERANCE = 0.35
+_REFERENCE_SOURCES = frozenset(
+    {"local", "fatsecret", "openfoodfacts", "provider", "usda"}
+)
+ValidationOutcome = Literal[
+    "match", "diverge", "timeout", "error", "skipped", "unresolved"
+]
+ValidationItemOutcome = Literal["match", "diverge", "unresolved"]
+
+
+@dataclass(frozen=True)
+class ValidationItemReport:
+    """One food item's reference check.
+
+    Later grounding and cascade work should add optional fields with defaults.
+    ``outcome`` and ``source`` stay the stable per-item contract.
+    """
+
+    item_id: str
+    outcome: ValidationItemOutcome
+    source: str | None
+    reason_code: str
+
+    def to_audit_dict(self) -> dict[str, str | None]:
+        return {
+            "item_id": self.item_id,
+            "outcome": self.outcome,
+            "source": self.source,
+            "reason_code": self.reason_code,
+        }
+
+
+@dataclass(frozen=True)
+class ValidationReport:
+    """Best-effort reference validation.
+
+    ``meal`` is always safe to persist. Timeouts and provider errors are
+    recorded on this report instead of being discarded or failing the scan.
+    Add optional fields with defaults when a follow-up needs grounding or
+    cascade details; do not replace ``outcome`` or drop ``items``.
+    """
+
+    meal: Meal
+    outcome: ValidationOutcome
+    items: tuple[ValidationItemReport, ...] = ()
+    reason_code: str | None = None
+    error_type: str | None = None
+
+    def to_audit_dict(self) -> dict[str, Any]:
+        """JSON-safe summary. Omits the meal so logs cannot carry food text."""
+        return {
+            "outcome": self.outcome,
+            "reason_code": self.reason_code,
+            "error_type": self.error_type,
+            "items": [item.to_audit_dict() for item in self.items],
+        }
 
 
 class FoodReferenceValidationService:
@@ -38,40 +94,109 @@ class FoodReferenceValidationService:
         self._timeout_seconds = timeout_seconds
         self._integrity_policy = integrity_policy or NutritionIntegrityPolicy()
 
-    async def validate_meal(self, meal: Meal) -> Meal:
-        """Best-effort validation that never blocks a valid meal from returning."""
-        if (
-            meal.source == "food_label"
-            or not meal.nutrition
-            or not meal.nutrition.food_items
-        ):
-            return meal
+    async def validate_meal(self, meal: Meal) -> ValidationReport:
+        """Validate without dropping a meal when a reference check fails."""
+        if meal.source == "food_label":
+            return ValidationReport(
+                meal=meal, outcome="skipped", reason_code="food_label"
+            )
+        if not meal.nutrition:
+            return ValidationReport(
+                meal=meal, outcome="skipped", reason_code="missing_nutrition"
+            )
+        if not meal.nutrition.food_items:
+            return ValidationReport(
+                meal=meal, outcome="skipped", reason_code="no_food_items"
+            )
 
+        item_results: list[ValidationItemReport] = []
         try:
-            await asyncio.wait_for(self._validate_items(meal), self._timeout_seconds)
-        except Exception:
-            return meal
-        return meal
+            await asyncio.wait_for(
+                self._validate_items(meal, item_results),
+                self._timeout_seconds,
+            )
+        except TimeoutError:
+            return ValidationReport(
+                meal=meal,
+                outcome="timeout",
+                reason_code="timeout",
+                error_type="TimeoutError",
+                items=tuple(item_results),
+            )
+        except Exception as exc:
+            return ValidationReport(
+                meal=meal,
+                outcome="error",
+                reason_code="provider_error",
+                error_type=type(exc).__name__,
+                items=tuple(item_results),
+            )
+        return ValidationReport(
+            meal=meal,
+            outcome=_aggregate_outcome(item_results),
+            items=tuple(item_results),
+        )
 
-    async def _validate_items(self, meal: Meal) -> None:
+    async def ground_meal(self, meal: Meal) -> ValidationReport:
+        """Replace scan macros from the shared reference cascade.
+
+        This is the ``AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED`` path.
+        ``validate_meal`` stays the closeness audit and does not call this.
+        """
+        from src.app.services.item_nutrition_cascade import ground_scan_meal
+
+        return await ground_scan_meal(
+            meal,
+            batch_lookup=self._find_local_references,
+            provider=self._nutrition_reference_provider,
+            timeout_seconds=self._timeout_seconds,
+        )
+
+    async def _validate_items(
+        self,
+        meal: Meal,
+        item_results: list[ValidationItemReport],
+    ) -> None:
+        nutrition = meal.nutrition
+        if nutrition is None or not nutrition.food_items:
+            return
+        food_items = nutrition.food_items
         item_names = {
             item.name: self._normalize_name(item.name)
-            for item in meal.nutrition.food_items or []
+            for item in food_items
             if self._normalize_name(item.name)
         }
         local_references = await self._find_local_references(list(item_names.values()))
 
-        for item in meal.nutrition.food_items or []:
+        for item in food_items:
             normalized_name = self._normalize_name(item.name)
             if not normalized_name:
+                item_results.append(
+                    ValidationItemReport(
+                        item_id=item.id,
+                        outcome="unresolved",
+                        source=None,
+                        reason_code="empty_name",
+                    )
+                )
                 continue
 
             local_match = local_references.get(normalized_name)
             if local_match:
-                self._apply_reference_if_close(item, local_match)
+                item_results.append(
+                    self._result_for_reference(item, local_match, fallback="local")
+                )
                 continue
 
             if self._nutrition_reference_provider is None:
+                item_results.append(
+                    ValidationItemReport(
+                        item_id=item.id,
+                        outcome="unresolved",
+                        source=None,
+                        reason_code="no_provider",
+                    )
+                )
                 continue
 
             candidates = (
@@ -81,17 +206,56 @@ class FoodReferenceValidationService:
                 )
             )
             selected = self._select_candidate(candidates, item.name)
-            if selected and selected.get("food_id"):
-                details = await self._nutrition_reference_provider.get_food_details(
-                    str(selected["food_id"])
+            if not selected or not selected.get("food_id"):
+                item_results.append(
+                    ValidationItemReport(
+                        item_id=item.id,
+                        outcome="unresolved",
+                        source=None,
+                        reason_code="no_candidate",
+                    )
                 )
-                if details:
-                    self._apply_reference_if_close(item, details)
+                continue
 
-        if meal.nutrition is not None:
-            meal.nutrition.micros = merge_micros(
-                *(item.micros for item in meal.nutrition.food_items or [])
+            details = await self._nutrition_reference_provider.get_food_details(
+                str(selected["food_id"])
             )
+            if not details:
+                item_results.append(
+                    ValidationItemReport(
+                        item_id=item.id,
+                        outcome="unresolved",
+                        source="provider",
+                        reason_code="no_details",
+                    )
+                )
+                continue
+            item_results.append(
+                self._result_for_reference(item, details, fallback="provider")
+            )
+
+        nutrition.micros = merge_micros(*(item.micros for item in food_items))
+
+    def _result_for_reference(
+        self,
+        item: Any,
+        reference: dict[str, Any],
+        *,
+        fallback: str,
+    ) -> ValidationItemReport:
+        applied, reason_code = self._apply_reference_if_close(item, reference)
+        if applied:
+            outcome: ValidationItemOutcome = "match"
+        elif reason_code == "macro_divergence":
+            outcome = "diverge"
+        else:
+            outcome = "unresolved"
+        return ValidationItemReport(
+            item_id=item.id,
+            outcome=outcome,
+            source=_bounded_source(reference, fallback),
+            reason_code=reason_code,
+        )
 
     def _select_candidate(
         self,
@@ -142,7 +306,9 @@ class FoodReferenceValidationService:
                 references[name] = reference
         return references
 
-    def _apply_reference_if_close(self, item: Any, reference: dict[str, Any]) -> bool:
+    def _apply_reference_if_close(
+        self, item: Any, reference: dict[str, Any]
+    ) -> tuple[bool, str]:
         source = str(reference.get("source") or "").lower()
         integrity = self._integrity_policy.evaluate(
             reference,
@@ -151,14 +317,14 @@ class FoodReferenceValidationService:
             provider_100g_label=source in {"fatsecret", "openfoodfacts", "provider"},
         )
         if not integrity.accepted:
-            return False
+            return False, integrity.reason_code
         if not self._is_macro_close(item, reference):
-            return False
+            return False, "macro_divergence"
 
         if integrity.serving_options:
             item.allowed_units = list(integrity.serving_options)
         self._attach_reference_micros(item, reference)
-        return True
+        return True, "matched"
 
     def _attach_reference_micros(self, item: Any, reference: dict[str, Any]) -> None:
         extras = reference.get("extra_nutrients")
@@ -204,3 +370,21 @@ class FoodReferenceValidationService:
 
     def _normalize_name(self, value: str) -> str:
         return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _aggregate_outcome(
+    items: list[ValidationItemReport],
+) -> Literal["match", "diverge", "unresolved"]:
+    outcomes = {item.outcome for item in items}
+    if "diverge" in outcomes:
+        return "diverge"
+    if "match" in outcomes:
+        return "match"
+    return "unresolved"
+
+
+def _bounded_source(reference: dict[str, Any], fallback: str) -> str:
+    raw = str(reference.get("source") or "").strip().lower()
+    if raw in _REFERENCE_SOURCES:
+        return raw
+    return fallback

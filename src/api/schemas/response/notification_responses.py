@@ -16,13 +16,35 @@ class NotificationPreferencesResponse(BaseModel):
     """Response containing notification preferences."""
 
     meal_reminders_enabled: bool = Field(
-        ..., description="Whether meal reminders are enabled"
+        ..., description="Whether any meal reminder is enabled"
+    )
+    breakfast_reminder_enabled: bool = Field(
+        True, description="Whether the breakfast reminder is enabled"
+    )
+    lunch_reminder_enabled: bool = Field(
+        True, description="Whether the lunch reminder is enabled"
+    )
+    dinner_reminder_enabled: bool = Field(
+        True, description="Whether the dinner reminder is enabled"
     )
     daily_summary_enabled: bool = Field(
         ..., description="Whether daily summary notifications are enabled"
     )
     hydration_reminders_enabled: bool = Field(
         True, description="Whether hydration reminder notifications are enabled"
+    )
+    streak_reminders_enabled: bool = Field(
+        True, description="Whether streak alerts (streak saver, win the day) are on"
+    )
+    reengagement_enabled: bool = Field(
+        True, description="Whether comeback nudges are on"
+    )
+    progress_updates_enabled: bool = Field(
+        True, description="Whether progress notes and recaps are on"
+    )
+    offers_enabled: bool = Field(
+        False,
+        description="Whether the user opted in to offers and new-feature news",
     )
 
     # Meal timing (minutes from midnight: 0-1439)
@@ -39,6 +61,11 @@ class NotificationPreferencesResponse(BaseModel):
     # Daily summary timing
     daily_summary_time_minutes: Optional[int] = Field(
         None, description="Daily summary time (minutes from midnight)"
+    )
+
+    # Water reminder timing
+    hydration_reminder_time_minutes: int = Field(
+        930, description="Water reminder time (minutes from midnight)"
     )
 
     # Preferred notification language

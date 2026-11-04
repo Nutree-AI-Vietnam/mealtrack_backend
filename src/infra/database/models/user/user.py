@@ -2,7 +2,17 @@
 Core user model for authentication and account management.
 """
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Index, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    Enum,
+    Index,
+    SmallInteger,
+    String,
+    Text,
+)
 from sqlalchemy.orm import relationship
 
 from src.api.schemas.common.auth_enums import AuthProviderEnum
@@ -59,6 +69,23 @@ class User(Base, BaseMixin):
         Boolean, default=True, nullable=False, server_default="true"
     )
 
+    # When true, calories burned in logged movement raise the food budget.
+    # When false, movement still logs, but budgets and totals count food only.
+    activity_calories = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+
+    # Chosen avatar. Written only by the repository's update_user_avatar, never
+    # by save(), so sign-in sync and other model saves cannot overwrite it.
+    # 'auto' shows the provider photo, or initials on a colour the app derives.
+    avatar_kind = Column(
+        String(16), nullable=False, default="auto", server_default="auto"
+    )
+    avatar_image_id = Column(String(64), nullable=True)
+    avatar_image_url = Column(Text, nullable=True)
+    avatar_character = Column(String(32), nullable=True)
+    avatar_color = Column(SmallInteger, nullable=True)
+
     # Email preferences
     welcome_email_sent_at = Column(DateTime(timezone=True), nullable=True)
     email_opt_out = Column(Boolean, default=False, nullable=False)
@@ -69,6 +96,14 @@ class User(Base, BaseMixin):
         Index("idx_provider", "provider"),
         Index("idx_onboarding_completed", "onboarding_completed"),
         Index("idx_users_timezone", "timezone"),
+        CheckConstraint(
+            "avatar_kind IN ('auto', 'photo', 'character', 'initials')",
+            name="check_users_avatar_kind",
+        ),
+        CheckConstraint(
+            "avatar_color IS NULL OR (avatar_color >= 0 AND avatar_color < 8)",
+            name="check_users_avatar_color",
+        ),
     )
 
     # Relationships

@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from src.domain.model.user import UserDomainModel, UserProfileDomainModel
+from src.domain.model.user.user_avatar import UserAvatar
 
 
 class UserRepositoryPort(ABC):
@@ -91,4 +92,28 @@ class UserRepositoryPort(ABC):
         self, user_id: UUID, enabled: bool
     ) -> None:
         """Persist leftover-split daily adjustment preference."""
+        pass
+
+    @abstractmethod
+    async def get_activity_calories(self, user_id: UUID | str) -> bool:
+        """Return whether calories burned in logged movement raise the budget."""
+        pass
+
+    @abstractmethod
+    async def update_user_activity_calories(
+        self, user_id: UUID | str, enabled: bool
+    ) -> None:
+        """Persist whether calories burned in logged movement raise the budget."""
+        pass
+
+    @abstractmethod
+    async def update_user_avatar(
+        self, user_id: UUID | str, avatar: UserAvatar
+    ) -> str | None:
+        """Store the avatar on the locked active user row.
+
+        The only writer of the avatar columns. Returns the image id the
+        previous avatar stored, if any, so the caller can delete that image
+        after commit. Raises UserNotFoundError when no active user has the id.
+        """
         pass

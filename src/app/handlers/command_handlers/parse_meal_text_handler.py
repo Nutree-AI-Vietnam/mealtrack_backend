@@ -10,7 +10,6 @@ import os
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
@@ -24,6 +23,30 @@ from src.app.services.food_display_name import (
     apply_glossary_display_names,
     needs_display_localization,
 )
+from src.app.services.item_nutrition_cascade import (
+    ParseTextRequestBudget as _ParseTextRequestBudget,
+)
+from src.app.services.item_nutrition_cascade import (
+    canonicalize_reference_quantity as _canonicalize_reference_quantity,
+)
+from src.app.services.item_nutrition_cascade import (
+    cascade_lookup as _shared_cascade_lookup,
+)
+from src.app.services.item_nutrition_cascade import (
+    derive_calories_from_macros as _shared_derive_calories_from_macros,
+)
+from src.app.services.item_nutrition_cascade import (
+    extract_english_name as _shared_extract_english_name,
+)
+from src.app.services.item_nutrition_cascade import (
+    provider_call as _shared_provider_call,
+)
+from src.app.services.item_nutrition_cascade import (
+    quantity_in_grams as _shared_quantity_in_grams,
+)
+from src.app.services.item_nutrition_cascade import (
+    resolve_legacy_provider as _shared_resolve_legacy_provider,
+)
 from src.app.services.parse_text_custom_estimate import apply_custom_estimate
 from src.app.services.parse_text_response_cache import (
     parse_text_cache_key,
@@ -35,6 +58,7 @@ from src.domain.exceptions.ai_exceptions import (
     AIOutputValidationError,
     AIUnavailableError,
 )
+from src.domain.model.ai.full_micros_contracts import scan_schema
 from src.domain.model.ai.nutrition_contracts import (
     MealTextNutritionResponse,
 )
@@ -42,7 +66,6 @@ from src.domain.model.nutrition.extra_nutrients import (
     extra_nutrients_to_micros,
     extras_from_portion_micros,
 )
-from src.domain.model.nutrition.macros import Macros
 from src.domain.ports.meal_generation_service_port import MealGenerationServicePort
 from src.domain.services.ai_output_validation_service import (
     build_parse_text_correction_prompt,
@@ -51,27 +74,13 @@ from src.domain.services.ai_output_validation_service import (
 )
 from src.domain.services.emoji_validator import validate_emoji
 from src.domain.services.nutrition_calculation_service import (
-    MASS_VOLUME_CANONICAL_UNITS,
-    UNIT_TO_GRAMS,
-    _convert_with_allowed_units,
-    _normalize_unit,
-    canonicalize_mass_volume_unit,
-    convert_quantity_to_grams,
     fallback_custom_serving_options,
-    normalize_unit_for_manual_save,
     scale_per_100g_nutrition,
 )
 from src.domain.services.nutrition_integrity_policy import (
     NUTRITION_INTEGRITY_POLICY_VERSION,
-    normalize_serving_options,
 )
-from src.domain.services.nutrition_resolver import (
-    normalize_food_lookup_name,
-    preparation_matches,
-    select_nutrition_candidate,
-    validate_ai_fallback,
-    validate_reference_candidate,
-)
+from src.domain.services.nutrition_resolver import normalize_food_lookup_name
 from src.domain.services.prompts.input_sanitizer import (
     sanitize_user_description,
     validate_refinement_items,
@@ -83,59 +92,6 @@ PARSE_TEXT_VALIDATION_PURPOSE = "parse_text"
 MAX_VALIDATION_ATTEMPTS = 2
 PARSE_TEXT_RESPONSE_RESERVE_SECONDS = 0.3
 CACHE_STAGE_TIMEOUT_SECONDS = 0.05
-MAX_PROVIDER_SEARCHES = 5
-MAX_PROVIDER_DETAILS = 5
-MAX_PROVIDER_CONCURRENCY = 3
-TRUSTED_QUANTITY_UNITS = {
-    "g",
-    "gram",
-    "grams",
-    "kg",
-    "kilogram",
-    "kilograms",
-    "ml",
-    "l",
-    "liter",
-    "litre",
-    "oz",
-    "ounce",
-    "ounces",
-    "lb",
-    "pound",
-    "pounds",
-}
-COUNTABLE_GRAM_UNITS = set(UNIT_TO_GRAMS) - {"kg", "lb", "oz"}
-
-
-def _preferred_parse_unit(item: dict[str, Any]) -> str:
-    """Prefer the local unit when it is a real mass, volume, or countable unit."""
-    local = str(item.get("unit") or "").strip()
-    english = str(item.get("english_unit") or "").strip()
-    if local:
-        canonical = canonicalize_mass_volume_unit(local)
-        if canonical in MASS_VOLUME_CANONICAL_UNITS:
-            return canonical
-        local_norm = _normalize_unit(local)
-        if local_norm in TRUSTED_QUANTITY_UNITS or local_norm in COUNTABLE_GRAM_UNITS:
-            return local
-    return english or local or "serving"
-
-
-@dataclass
-class _ParseTextRequestBudget:
-    """Request-wide limits shared by AI and staged reference resolution."""
-
-    deadline: float | None = None
-    ai_generations: int = 0
-    provider_searches: int = 0
-    provider_details: int = 0
-    ai_seconds: float = 0.0
-    reference_seconds: float = 0.0
-    cache_hit: bool = False
-    request_deadline: float | None = None
-    semaphore: asyncio.Semaphore = field(
-        default_factory=lambda: asyncio.Semaphore(MAX_PROVIDER_CONCURRENCY)
-    )
 
 
 def _parse_text_fatsecret_timeout_seconds() -> float:
@@ -164,6 +120,7 @@ class ParseMealTextHandler(
         ai_timeout_seconds: float = 10.0,
         cache_namespace: str = "",
         reference_timeout_seconds: float | None = None,
+        full_micros: bool = False,
     ):
         self._meal_generation_service = meal_generation_service
         self._fat_secret_service = fat_secret_service
@@ -175,6 +132,11 @@ class ParseMealTextHandler(
         self._ai_timeout_seconds = ai_timeout_seconds
         self._cache_namespace = cache_namespace
         self._reference_timeout_seconds = reference_timeout_seconds
+        # Ask for all 21 micros keys instead of ten (AI_SCAN_FULL_MICROS_ENABLED).
+        self._full_micros = full_micros
+        self._response_schema = scan_schema(
+            MealTextNutritionResponse, full_micros=full_micros
+        )
         self._pure_ai_mode = (
             pure_ai_mode
             if pure_ai_mode is not None
@@ -226,6 +188,8 @@ class ParseMealTextHandler(
         system_prompt = SystemPrompts.get_meal_text_parsing_prompt(
             language=command.language
         )
+        if self._full_micros:
+            system_prompt = SystemPrompts.with_full_micros(system_prompt)
         cache_context = (
             f"{self._cache_namespace}:{self._pure_ai_mode}:"
             f"{self._structured_reference_enabled}:{command.user_id is None}:"
@@ -598,7 +562,7 @@ class ParseMealTextHandler(
                     system_message=retry_system_prompt,
                     response_type="json",
                     max_tokens=8192,
-                    schema=MealTextNutritionResponse,
+                    schema=self._response_schema,
                     model_purpose="parse_text",
                     thinking_budget=0,
                 )
@@ -606,7 +570,7 @@ class ParseMealTextHandler(
                 previous_response = raw_payload
                 validated_payload = validate_ai_output(
                     raw_payload,
-                    schema=MealTextNutritionResponse,
+                    schema=self._response_schema,
                     purpose=PARSE_TEXT_VALIDATION_PURPOSE,
                     attempt_count=attempt,
                 )
@@ -719,11 +683,80 @@ class ParseMealTextHandler(
 
     @staticmethod
     def _derive_calories_from_macros(macros: dict[str, Any]) -> float:
-        protein = float(macros.get("protein_g", 0.0) or 0.0)
-        carbs = float(macros.get("carbs_g", 0.0) or 0.0)
-        fiber = float(macros.get("fiber_g", 0.0) or 0.0)
-        fat = float(macros.get("fat_g", 0.0) or 0.0)
-        return round(Macros.raw_total_calories(protein, carbs, fat, fiber), 2)
+        return _shared_derive_calories_from_macros(macros)
+
+    async def _cascade_lookup(
+        self,
+        item: dict[str, Any],
+        *,
+        budget: _ParseTextRequestBudget,
+        local_reference: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve local catalog, then FatSecret; otherwise keep a custom g/kg estimate."""
+        return await _shared_cascade_lookup(
+            item,
+            budget=budget,
+            local_reference=local_reference,
+            provider=self._fat_secret_service,
+            structured_reference_enabled=self._structured_reference_enabled,
+            parse_fatsecret_nutrition=parse_fatsecret_nutrition,
+            scale_per_100g_nutrition=scale_per_100g_nutrition,
+        )
+
+    async def _resolve_legacy_provider(
+        self,
+        item: dict[str, Any],
+        lookup_name: str,
+        quantity: float,
+        unit: str,
+        budget: _ParseTextRequestBudget,
+    ) -> dict[str, Any] | None:
+        return await _shared_resolve_legacy_provider(
+            item,
+            lookup_name,
+            quantity,
+            unit,
+            budget,
+            self._fat_secret_service,
+            parse_fatsecret_nutrition=parse_fatsecret_nutrition,
+            scale_per_100g_nutrition=scale_per_100g_nutrition,
+        )
+
+    async def _provider_call(
+        self,
+        awaitable_factory: Callable[[], Awaitable[Any]],
+        budget: _ParseTextRequestBudget,
+    ) -> Any:
+        return await _shared_provider_call(awaitable_factory, budget)
+
+    def _quantity_in_grams(self, item: dict[str, Any], food_name: str) -> float:
+        return _shared_quantity_in_grams(item, food_name)
+
+    @staticmethod
+    def _canonicalize_reference_quantity(
+        item: dict[str, Any],
+        *,
+        quantity_g: float,
+        allowed_units: list[dict[str, Any]],
+    ) -> float:
+        """Keep parsed portions saveable against the same source snapshot."""
+        return _canonicalize_reference_quantity(
+            item,
+            quantity_g=quantity_g,
+            allowed_units=allowed_units,
+        )
+
+    @staticmethod
+    def _extract_english_name(name: str) -> str:
+        """Extract English name for fatsecret lookup.
+
+        AI may return either format:
+        - 'English Name (Local Name)' → extract before parens
+        - 'Local Name (English Name)' → extract inside parens
+        Heuristic: if text inside parens is ASCII, it's English; otherwise
+        the text before parens is English.
+        """
+        return _shared_extract_english_name(name)
 
     async def _find_local_references(
         self,
@@ -797,261 +830,6 @@ class ParseMealTextHandler(
             return {}
         async with self._uow_factory() as uow:
             return await uow.food_references.find_by_locale_names(language, names)
-
-    async def _cascade_lookup(
-        self,
-        item: dict[str, Any],
-        *,
-        budget: _ParseTextRequestBudget,
-        local_reference: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        """Resolve local catalog, then FatSecret; otherwise keep a custom g/kg estimate."""
-        name = str(item.get("name") or "")
-        lookup_name = str(item.get("lookup_name") or self._extract_english_name(name))
-        preparation = str(item.get("preparation") or "unknown")
-        quantity = float(item.get("quantity") or 1.0)
-        unit = item.get("english_unit") or item.get("unit", "serving")
-        quantity_g = self._quantity_in_grams(item, lookup_name)
-
-        if local_reference and self._local_reference_is_usable(
-            local_reference, lookup_name, preparation
-        ):
-            candidate = validate_reference_candidate(
-                local_reference,
-                require_energy=False,
-                require_metric_basis=False,
-            )
-            if candidate:
-                return self._apply_reference(
-                    item, candidate, quantity_g, "local_reference", local_reference
-                )
-
-        if self._fat_secret_service and self._structured_reference_enabled:
-            structured = await self._resolve_staged_provider(
-                item, lookup_name, preparation, quantity_g, budget
-            )
-            if structured is not None:
-                return structured
-        elif self._fat_secret_service:
-            legacy = await self._resolve_legacy_provider(
-                item, lookup_name, quantity, unit, budget
-            )
-            if legacy is not None:
-                return legacy
-
-        return apply_custom_estimate(item)
-
-    async def _resolve_staged_provider(
-        self,
-        item: dict[str, Any],
-        lookup_name: str,
-        preparation: str,
-        quantity_g: float,
-        budget: _ParseTextRequestBudget,
-    ) -> dict[str, Any] | None:
-        provider = self._fat_secret_service
-        if provider is None:
-            return None
-        if not hasattr(provider, "search_food_candidates"):
-            return await self._resolve_legacy_provider(
-                item,
-                lookup_name,
-                float(item.get("quantity") or 1),
-                item.get("english_unit") or item.get("unit", "serving"),
-                budget,
-            )
-        if budget.provider_searches >= MAX_PROVIDER_SEARCHES:
-            return None
-        budget.provider_searches += 1
-        candidates = await self._provider_call(
-            lambda: provider.search_food_candidates(lookup_name, max_results=5),
-            budget,
-        )
-        if candidates is None:
-            return None
-        selected = select_nutrition_candidate(candidates, lookup_name, preparation)
-        if not selected or not selected.get("food_id"):
-            return None
-        if budget.provider_details >= MAX_PROVIDER_DETAILS:
-            return None
-        budget.provider_details += 1
-        details = await self._provider_call(
-            lambda: provider.get_food_details(str(selected["food_id"])),
-            budget,
-        )
-        if not isinstance(details, dict):
-            return None
-        merged = {**selected, **details}
-        candidate = validate_reference_candidate(merged)
-        if candidate is None:
-            return None
-        return self._apply_reference(item, candidate, quantity_g, "fatsecret", merged)
-
-    async def _resolve_legacy_provider(
-        self,
-        item: dict[str, Any],
-        lookup_name: str,
-        quantity: float,
-        unit: str,
-        budget: _ParseTextRequestBudget,
-    ) -> dict[str, Any] | None:
-        provider = self._fat_secret_service
-        if provider is None:
-            return None
-        if budget.provider_searches >= MAX_PROVIDER_SEARCHES:
-            return None
-        budget.provider_searches += 1
-        try:
-            results = await self._provider_call(
-                lambda: provider.search_foods(lookup_name, max_results=5),
-                budget,
-            )
-        except Exception as exc:
-            logger.debug("parse_text legacy provider failed: %s", type(exc).__name__)
-            return None
-        if not results:
-            return None
-        selected = select_nutrition_candidate(results, lookup_name)
-        if selected is None:
-            return None
-        if not self._reference_identity(selected, "fatsecret")["source_food_id"]:
-            return None
-        structured = validate_reference_candidate(selected, require_energy=False)
-        per_100g = (
-            {
-                "calories_100g": selected.get("calories_100g"),
-                "protein_100g": selected.get("protein_100g"),
-                "carbs_100g": selected.get("carbs_100g"),
-                "fat_100g": selected.get("fat_100g"),
-                "fiber_100g": selected.get("fiber_100g", 0),
-                "sugar_100g": selected.get("sugar_100g", 0),
-            }
-            if structured
-            else parse_fatsecret_nutrition(selected)
-        )
-        if not per_100g:
-            return None
-        allowed_units = self._safe_allowed_units(selected.get("allowed_units"))
-        quantity_g = self._canonicalize_reference_quantity(
-            item,
-            quantity_g=self._quantity_in_grams(item, lookup_name),
-            allowed_units=allowed_units,
-        )
-        scaled = scale_per_100g_nutrition(
-            {
-                "calories": per_100g.get("calories_100g", per_100g.get("calories", 0)),
-                "protein": per_100g.get("protein_100g", per_100g.get("protein", 0)),
-                "carbs": per_100g.get("carbs_100g", per_100g.get("carbs", 0)),
-                "fat": per_100g.get("fat_100g", per_100g.get("fat", 0)),
-                "fiber": per_100g.get("fiber_100g", per_100g.get("fiber", 0)),
-                "sugar": per_100g.get("sugar_100g", per_100g.get("sugar", 0)),
-            },
-            item["quantity"],
-            item["unit"],
-            allowed_units=allowed_units,
-            food_name=lookup_name,
-            strict_allowed_units=True,
-        )
-        if not validate_ai_fallback(
-            name=lookup_name,
-            protein=scaled.get("protein"),
-            carbs=scaled.get("carbs"),
-            fat=scaled.get("fat"),
-            fiber=scaled.get("fiber"),
-            quantity_g=quantity_g,
-        ):
-            return None
-        item.update(scaled)
-        item["calories"] = self._derive_calories_from_macros(item)
-        item["allowed_units"] = allowed_units
-        item["data_source"] = "fatsecret"
-        extras = selected.get("extra_nutrients")
-        if extras:
-            item["extra_nutrients"] = extras
-        item.update(self._reference_identity(selected, "fatsecret"))
-        catalog_name = str(
-            selected.get("food_name")
-            or selected.get("description")
-            or selected.get("name")
-            or ""
-        ).strip()
-        if catalog_name:
-            item["canonical_name"] = catalog_name
-        item["nutrition_basis"] = "100g"
-        item["nutrition_contract_version"] = NUTRITION_INTEGRITY_POLICY_VERSION
-        item["calories_per_100g"] = self._derive_calories_from_macros(
-            {
-                "protein_g": per_100g.get("protein_100g", per_100g.get("protein", 0)),
-                "carbs_g": per_100g.get("carbs_100g", per_100g.get("carbs", 0)),
-                "fat_g": per_100g.get("fat_100g", per_100g.get("fat", 0)),
-                "fiber_g": per_100g.get("fiber_100g", per_100g.get("fiber", 0)),
-            }
-        )
-        item["protein_per_100g"] = per_100g.get(
-            "protein_100g", per_100g.get("protein", 0)
-        )
-        item["carbs_per_100g"] = per_100g.get("carbs_100g", per_100g.get("carbs", 0))
-        item["fat_per_100g"] = per_100g.get("fat_100g", per_100g.get("fat", 0))
-        item["fiber_per_100g"] = per_100g.get("fiber_100g", per_100g.get("fiber", 0))
-        item["sugar_per_100g"] = per_100g.get("sugar_100g", per_100g.get("sugar", 0))
-        return item
-
-    async def _provider_call(
-        self,
-        awaitable_factory: Callable[[], Awaitable[Any]],
-        budget: _ParseTextRequestBudget,
-    ) -> Any:
-        deadline = budget.deadline
-        if deadline is None:
-            return None
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return None
-        async with budget.semaphore:
-            deadline = budget.deadline
-            if deadline is None:
-                return None
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None
-            try:
-                return await asyncio.wait_for(awaitable_factory(), timeout=remaining)
-            except Exception as exc:
-                logger.debug("parse_text provider call failed: %s", type(exc).__name__)
-                return None
-
-    def _quantity_in_grams(self, item: dict[str, Any], food_name: str) -> float:
-        unit = _preferred_parse_unit(item)
-        normalized_unit = normalize_unit_for_manual_save(unit)
-        # Volume units must convert with food density, never assumed 1g = 1ml
-        if normalized_unit in {"ml", "l", "cup", "tbsp", "tsp", "floz"}:
-            quantity = float(item.get("quantity") or 1)
-            return convert_quantity_to_grams(quantity, normalized_unit, food_name)
-        if item.get("quantity_g") is not None:
-            return float(item["quantity_g"])
-        quantity = float(item.get("quantity") or 1)
-        return convert_quantity_to_grams(quantity, normalized_unit, food_name)
-
-    def _local_reference_is_usable(
-        self, reference: dict[str, Any], lookup_name: str, preparation: str
-    ) -> bool:
-        if not reference.get("is_verified"):
-            return False
-        source = str(reference.get("source") or "").lower()
-        if source not in {
-            "usda",
-            "usda_fdc",
-            "fooddata_central",
-            "fatsecret",
-            "food_reference",
-            "seed",
-            "catalog_seed",
-            "nin",
-        }:
-            return False
-        return preparation_matches(
-            str(reference.get("name") or lookup_name), preparation
-        )
 
     async def _adopt_fatsecret_items(
         self,
@@ -1148,200 +926,6 @@ class ParseMealTextHandler(
             snapshot = item.get("source_snapshot")
             if isinstance(snapshot, dict):
                 snapshot["origin"] = "local"
-
-    def _apply_reference(
-        self,
-        item: dict[str, Any],
-        candidate: Any,
-        quantity_g: float,
-        source: str,
-        raw: dict[str, Any],
-    ) -> dict[str, Any]:
-        allowed_units = self._safe_allowed_units(
-            raw.get("allowed_units") or raw.get("serving_sizes")
-        )
-        if not allowed_units:
-            allowed_units = list(candidate.allowed_units or [])
-        quantity_g = self._canonicalize_reference_quantity(
-            item,
-            quantity_g=quantity_g,
-            allowed_units=allowed_units,
-        )
-        factor = quantity_g / 100.0
-        item.update(
-            {
-                "protein": round(candidate.protein_per_100g * factor, 2),
-                "carbs": round(candidate.carbs_per_100g * factor, 2),
-                "fat": round(candidate.fat_per_100g * factor, 2),
-                "fiber": round(candidate.fiber_per_100g * factor, 2),
-                "sugar": round(candidate.sugar_per_100g * factor, 2),
-            }
-        )
-        item["calories"] = self._derive_calories_from_macros(item)
-        item["data_source"] = (
-            "fatsecret"
-            if source == "fatsecret"
-            or str(raw.get("source", "")).lower() == "fatsecret"
-            else "usda"
-        )
-        item["fdc_id"] = raw.get("fdc_id")
-        item.update(self._reference_identity(raw, source))
-        catalog_name = str(
-            raw.get("food_name")
-            or raw.get("description")
-            or raw.get("name")
-            or item.get("lookup_name")
-            or ""
-        ).strip()
-        if catalog_name:
-            item["canonical_name"] = catalog_name
-        item["nutrition_basis"] = "100g"
-        item["nutrition_contract_version"] = NUTRITION_INTEGRITY_POLICY_VERSION
-        item["calories_per_100g"] = self._derive_calories_from_macros(
-            {
-                "protein_g": candidate.protein_per_100g,
-                "carbs_g": candidate.carbs_per_100g,
-                "fat_g": candidate.fat_per_100g,
-                "fiber_g": candidate.fiber_per_100g,
-            }
-        )
-        item["protein_per_100g"] = candidate.protein_per_100g
-        item["carbs_per_100g"] = candidate.carbs_per_100g
-        item["fat_per_100g"] = candidate.fat_per_100g
-        item["fiber_per_100g"] = candidate.fiber_per_100g
-        item["sugar_per_100g"] = candidate.sugar_per_100g
-        item["allowed_units"] = allowed_units
-        extras = raw.get("extra_nutrients")
-        if extras:
-            item["extra_nutrients"] = extras
-        return item
-
-    @staticmethod
-    def _canonicalize_reference_quantity(
-        item: dict[str, Any],
-        *,
-        quantity_g: float,
-        allowed_units: list[dict[str, Any]],
-    ) -> float:
-        """Keep parsed portions saveable against the same source snapshot."""
-        quantity = float(item.get("quantity") or 1.0)
-        source_unit = canonicalize_mass_volume_unit(
-            str(item.get("english_unit") or item.get("unit") or "g")
-        )
-        try:
-            authoritative_grams = _convert_with_allowed_units(
-                quantity,
-                source_unit,
-                allowed_units,
-                str(item.get("lookup_name") or item.get("name") or ""),
-                strict=True,
-            )
-        except ValueError:
-            item["quantity"] = quantity_g
-            item["unit"] = "g"
-            item["english_unit"] = "g"
-            item["quantity_g"] = quantity_g
-            return quantity_g
-
-        item["unit"] = source_unit
-        item["english_unit"] = source_unit
-        item["quantity_g"] = authoritative_grams
-        return authoritative_grams
-
-    @staticmethod
-    def _reference_identity(raw: dict[str, Any], source: str) -> dict[str, Any]:
-        raw_source = str(raw.get("source") or source or "").lower()
-        if (
-            source == "local_reference"
-            or raw_source == "food_reference"
-            or raw.get("food_reference_id") is not None
-        ):
-            reference_id = raw.get("food_reference_id") or raw.get("id")
-            return {
-                "origin": "local",
-                "food_reference_id": reference_id,
-                "food_id": f"food_reference:{reference_id}",
-                "source_namespace": "food_reference",
-                "source_food_id": str(reference_id),
-            }
-        if raw.get("fdc_id") is not None or raw.get("fdcId") is not None:
-            fdc_id = raw.get("fdc_id") or raw.get("fdcId")
-            return {
-                "origin": "usda",
-                "food_id": f"usda_fdc:{fdc_id}",
-                "source_namespace": "usda_fdc",
-                "source_food_id": str(fdc_id),
-            }
-        namespace = str(raw.get("source_namespace") or raw_source or "fatsecret")
-        source_id = str(raw.get("source_food_id") or raw.get("food_id") or "")
-        if source_id.startswith(f"{namespace}:"):
-            source_id = source_id[len(namespace) + 1 :]
-        if not source_id:
-            return {
-                "origin": "provider",
-                "food_id": None,
-                "source_namespace": namespace,
-                "source_food_id": None,
-            }
-        return {
-            "origin": "provider",
-            "food_id": f"{namespace}:{source_id}",
-            "source_namespace": namespace,
-            "source_food_id": source_id,
-        }
-
-    @staticmethod
-    def _safe_allowed_units(raw: Any) -> list[dict[str, Any]]:
-        if not isinstance(raw, list):
-            return []
-        units: list[dict[str, Any]] = []
-        for entry in raw[:12]:
-            if not isinstance(entry, dict):
-                continue
-            unit = str(entry.get("unit") or entry.get("name") or "").strip()
-            description = str(entry.get("description") or "").strip()
-            raw_gram_weight = entry.get("gram_weight") or entry.get("grams")
-            if raw_gram_weight is None:
-                continue
-            try:
-                gram_weight = float(raw_gram_weight)
-            except (TypeError, ValueError):
-                continue
-            if (
-                not unit
-                or len(unit) > 100
-                or len(description) > 100
-                or not gram_weight > 0
-                or not all(ord(char) >= 32 for char in unit + description)
-            ):
-                continue
-            units.append(
-                {
-                    "unit": unit,
-                    "gram_weight": gram_weight,
-                    "description": description,
-                }
-            )
-        return normalize_serving_options(units, provider_100g_label=True) or []
-
-    @staticmethod
-    def _extract_english_name(name: str) -> str:
-        """Extract English name for fatsecret lookup.
-
-        AI may return either format:
-        - 'English Name (Local Name)' → extract before parens
-        - 'Local Name (English Name)' → extract inside parens
-        Heuristic: if text inside parens is ASCII, it's English; otherwise
-        the text before parens is English.
-        """
-        match = re.search(r"^(.+?)\s*\(([^)]+)\)$", name.strip())
-        if not match:
-            return name
-        before, inside = match.group(1), match.group(2)
-        # If inside parens is mostly ASCII → it's the English name
-        if all(ord(c) < 256 for c in inside.replace(" ", "")):
-            return inside
-        return before
 
     @staticmethod
     def _extract_display_name(name: str, language: str) -> str:

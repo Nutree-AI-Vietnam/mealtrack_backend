@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Protocol
 
 from src.app.commands.meal.parse_meal_text_command import ParseMealTextCommand
@@ -18,9 +18,10 @@ from src.app.services.chat_turn_orchestrator import (
 )
 from src.domain.exceptions.ai_job_exceptions import AiJobExecutionError
 from src.domain.model.ai_jobs import AiJobClaim
-from src.domain.model.chat.models import ChatSseEvent
+from src.domain.model.chat.models import ChatClaimKind, ChatSseEvent
 from src.domain.model.meal import MealStatus
 from src.domain.model.meal_projection import MealProjection
+from src.domain.utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,8 @@ class MealScanJobExecutor:
                 label_crop_public_id=_optional_str(payload, "label_crop_public_id"),
                 crop_metadata=_optional_dict(payload, "crop_metadata"),
                 meal_id=meal_id,
+                # Jobs queued before the enqueue time was stored use this attempt's.
+                received_at=_optional_datetime(payload, "received_at") or utc_now(),
             )
         )
         if getattr(meal, "status", None) == MealStatus.FAILED:
@@ -150,7 +153,32 @@ class ChatJobExecutor:
         thread_id = _optional_str(payload, "thread_id")
         if thread_id is not None:
             prepare_kwargs["thread_id"] = thread_id
-        prepared = await orchestrator.prepare_turn(**prepare_kwargs)
+        # A WORKER_INTERRUPTED requeue claims the job again. prepare is
+        # idempotent: a finished turn is replayed and a live lease raises
+        # ChatBusyError, so this attempt does not generate a second reply.
+        regenerate_id = _optional_str(payload, "regenerate_assistant_id")
+        if regenerate_id is not None or payload.get("prepare_regeneration") is True:
+            if regenerate_id is None:
+                raise AiJobExecutionError(
+                    "INVALID_JOB_INPUT", "missing regenerate_assistant_id"
+                )
+            prepared = await orchestrator.prepare_regeneration(
+                user_id=claim.user_id,
+                assistant_message_id=regenerate_id,
+                content=prepare_kwargs["content"],
+                locale=prepare_kwargs["locale"],
+                header_timezone=prepare_kwargs["header_timezone"],
+                user_language=prepare_kwargs["user_language"],
+                thread_id=thread_id,
+                resume=True,
+            )
+        else:
+            prepared = await orchestrator.prepare_turn(**prepare_kwargs)
+        if prepared.claim.kind == ChatClaimKind.REPLAY:
+            return {
+                "thread_id": prepared.claim.thread.id,
+                "assistant_message_id": prepared.claim.assistant_message.id,
+            }
         terminal = await run_chat_turn(
             orchestrator, user_id=claim.user_id, prepared=prepared, interrupt=interrupt
         )
@@ -249,5 +277,15 @@ def _optional_date(payload: Mapping[str, Any], key: str) -> date | None:
         return None
     try:
         return date.fromisoformat(value)
+    except ValueError as exc:
+        raise AiJobExecutionError("INVALID_JOB_INPUT", f"invalid {key}") from exc
+
+
+def _optional_datetime(payload: Mapping[str, Any], key: str) -> datetime | None:
+    value = _optional_str(payload, key)
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
     except ValueError as exc:
         raise AiJobExecutionError("INVALID_JOB_INPUT", f"invalid {key}") from exc

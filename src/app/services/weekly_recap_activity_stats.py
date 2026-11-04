@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 from typing import Any
 
 from src.domain.model.hydration.hydration_entry import HydrationEntry
@@ -13,12 +13,11 @@ from src.domain.model.weekly_recap import Workout
 from src.domain.model.weight.weight_entry import WeightEntry
 from src.domain.services.hydration_catalog_service import find_by_id
 from src.domain.services.weekly_recap import goal_progress, monday_of
-from src.domain.utils.timezone_utils import ensure_utc
+from src.domain.utils.timezone_utils import ensure_utc, is_backdated_local
 
 STRENGTH_ACTIVITY_ID = "gym_strength"
 GOALS = frozenset({"cut", "bulk", "recomp"})
 DEFAULT_GOAL = "recomp"
-_BACKDATED_AT = time(12, 0)
 
 
 def recap_goal(fitness_goal: Any) -> str:
@@ -53,7 +52,7 @@ def workout_starts(
     return [
         (day, logged_at - timedelta(minutes=entry.duration_min))
         for day, logged_at, entry in _week_entries(entries, week_start, tz)
-        if logged_at.time() != _BACKDATED_AT
+        if not is_backdated_local(logged_at)
     ]
 
 

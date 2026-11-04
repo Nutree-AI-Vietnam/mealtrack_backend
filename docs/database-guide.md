@@ -117,7 +117,7 @@ instead of the request/runtime session factory.
 | **catalog_preparation_jobs** | Durable projection/translation/micronutrient preparation | task, recipe, facet version, locale, contract, status, lease token, next attempt |
 | **catalog_recipe_translations** | Prepared locale overlays tied to source text inputs | catalog_meal_id, locale, input_facet_version, contract_version, translations |
 | **weekly_meal_plans** | Owner-scoped Monday-based weekly plan aggregate | user_id, week_start_date, status, revision, people, preferences |
-| **weekly_meal_plan_slots** | Durable lunch/dinner coordinates and diary links | plan_id, day_index, slot_index, catalog_meal_id, logged_meal_id |
+| **weekly_meal_plan_slots** | Durable breakfast/lunch/dinner coordinates and diary links; a slot holds a catalog recipe or a copy of a saved recipe | plan_id, day_index, slot_index, catalog_meal_id, saved_suggestion_id, saved_recipe, logged_meal_id |
 | **weekly_meal_plan_pantry_items** | Per-plan canonical pantry quantities | plan_id, food_reference_id, custom_amount, custom_unit, stock_kind |
 | **meal_recommendations** | Durable selected and alternative recommendation candidates | batch_id, slot_id, catalog_meal_id, score, selection_version, shown/skipped/logged state |
 | **meal_recommendation_operations** | Idempotent recommendation mutation replay | request_id, operation_type, request_fingerprint, result fields |
@@ -209,6 +209,8 @@ migration/admin URLs.
 
 | Version | Changes |
 |---------|---------|
+| 20261102154908763403 | Add saved_suggestion_id and saved_recipe (JSONB copy) to weekly_meal_plan_slots, with checks for one recipe per slot and a copy for every saved id |
+| 20261026185557393061 | Add engagement toggles to notification_preferences: streak, comeback, progress (default on) and offers (default off) |
 | 20261004125027631936 | Skip catalog epoch bumps and preparation jobs for reference rows used by no recipe; index claimable preparation jobs |
 | 20261003102324493409 | Add leased preparation jobs, versioned translations, micronutrient facet metadata, and source-change job publication |
 | 20261003042253928494 | Add catalog projections and publication fence; add internal weekly-slot version for final generation validation |

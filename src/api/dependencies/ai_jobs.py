@@ -11,6 +11,7 @@ from typing import Any
 from src.api.dependencies.chat import get_chat_turn_orchestrator
 from src.api.dependencies.event_bus import get_configured_event_bus
 from src.api.routes.v1.meals_route_helpers import parse_meal_text_response
+from src.api.schemas.response.recipe_import_responses import ImportedRecipeResponse
 from src.app.services.ai_jobs.executors import AiJobExecutor
 from src.bootstrap.ai_jobs import (
     build_ai_job_executors,
@@ -42,7 +43,13 @@ def _build_executors() -> dict[AiJobType, AiJobExecutor]:
         send=bus.send,
         orchestrator_factory=get_chat_turn_orchestrator,
         parse_text_result=_parse_text_result,
+        recipe_import_result=_recipe_import_result,
     )
+
+
+def _recipe_import_result(recipe: Any) -> dict[str, Any]:
+    # The same draft POST /v1/recipe-imports/extract returns.
+    return ImportedRecipeResponse.from_domain(recipe).model_dump(mode="json")
 
 
 def _parse_text_result(app_response: Any) -> dict[str, Any]:

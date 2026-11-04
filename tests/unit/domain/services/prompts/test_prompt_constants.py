@@ -97,10 +97,12 @@ class TestBasicAnalysisPromptConstraints:
     def test_basic_analysis_prompt_requires_json_schema_and_item_limit(self):
         """Keep output JSON-only and within the vision food-item limit."""
 
+        from src.domain.model.ai.nutrition_contracts import MAX_AI_FOOD_ITEMS
+
         prompt = BasicAnalysisStrategy().get_analysis_prompt().lower()
 
         assert "return only json matching the existing vision response schema" in prompt
-        assert "up to the existing 8-item limit" in prompt
+        assert f"up to the existing {MAX_AI_FOOD_ITEMS}-item limit" in prompt
 
     def test_basic_analysis_prompt_returns_vision_analysis(self):
         """BasicAnalysisStrategy must return SystemPrompts.VISION_ANALYSIS."""

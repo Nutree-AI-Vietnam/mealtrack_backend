@@ -55,7 +55,8 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
 
         # Cache-first when X-Timezone is usable: week_start needs no DB.
         # auto_adjust flips publish UserProfileUpdated which wipes
-        # weekly_budget Redis keys, so a revision-matched hit is safe
+        # weekly_budget Redis keys, and an activity calories flip deletes this
+        # week's keys before it returns, so a revision-matched hit is safe
         # without opening a SQLAlchemy session.
         cached_hit = await self._try_cache_before_uow(query, profile_revision)
         if cached_hit is not None:
@@ -87,6 +88,9 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                 auto_adjust = WeeklyBudgetService.auto_adjust_enabled(
                     await uow.users.get_weekly_auto_adjust(query.user_id)
                 )
+                activity_calories = WeeklyBudgetService.activity_calories_enabled(
+                    await uow.users.get_activity_calories(query.user_id)
+                )
                 if self.cache_service:
                     cached = await self.cache_service.get_json(cache_key)
                     if (
@@ -96,6 +100,10 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                             cached.get("weekly_auto_adjust", True)
                         )
                         == auto_adjust
+                        and WeeklyBudgetService.activity_calories_enabled(
+                            cached.get("activity_calories", True)
+                        )
+                        == activity_calories
                     ):
                         return cached
 
@@ -162,6 +170,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                         user_timezone=user_tz_str,
                         cheat_dates=past_cheat_dates,
                         auto_adjust=auto_adjust,
+                        activity_calories=activity_calories,
                     )
                 )
                 adjusted = effective.adjusted
@@ -310,6 +319,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
                     "target_revision": weekly_budget.target_revision,
                     "bmr_floor_active": adjusted.bmr_floor_active,
                     "weekly_auto_adjust": auto_adjust,
+                    "activity_calories": activity_calories,
                     "cheat_days": [cd.date.isoformat() for cd in cheat_days],
                     "skipped_days": skipped_days,
                     "show_logging_prompt": show_logging_prompt,
@@ -411,7 +421,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
         import uuid
 
         daily_macros = tdee_result["macros"]
-        bmr = tdee_result["bmr"]
+        bmr = _adjustment_floor(tdee_result)
         target_revision = tdee_result.get("profile_target_revision", 1)
         weekly_targets = self._weekly_targets_from_daily_macros(daily_macros)
 
@@ -441,7 +451,7 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
     ) -> tuple[WeeklyMacroBudget, float]:
         """Check if weekly targets match current TDEE; update if stale. Returns (budget, bmr)."""
         daily_macros = tdee_result["macros"]
-        bmr = tdee_result["bmr"]
+        bmr = _adjustment_floor(tdee_result)
         target_revision = tdee_result.get(
             "profile_target_revision", weekly_budget.target_revision
         )
@@ -493,3 +503,13 @@ class GetWeeklyBudgetQueryHandler(EventHandler[GetWeeklyBudgetQuery, dict[str, A
             "target_carbs": target_carbs,
             "target_fat": target_fat,
         }
+
+
+def _adjustment_floor(tdee_result: dict[str, Any]) -> float:
+    """Lowest calories auto-adjust may set: BMR and the clinical minimum.
+
+    The weekly redistribution floors at max(BMR, 85-90 % of base), which alone
+    can drop a 1,200 kcal base below the 1,200 / 1,500 kcal minimum.
+    """
+    bmr = float(tdee_result["bmr"])
+    return max(bmr, float(tdee_result.get("calorie_floor") or 0.0))

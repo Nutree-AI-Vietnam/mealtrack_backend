@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from fnmatch import fnmatch
 
 import pytest
 
@@ -6,9 +7,12 @@ from src.domain.cache.cache_invalidation_operations import (
     BUMP_REVISION,
     DELETE_KEY,
     DELETE_PATTERN,
+    build_activity_calories_invalidation_operations,
     build_hydration_invalidation_operations,
     build_meal_invalidation_operations,
     build_movement_invalidation_operations,
+    build_profile_invalidation_operations,
+    build_supplement_invalidation_operations,
 )
 from src.domain.cache.cache_keys import CacheKeys
 
@@ -71,3 +75,46 @@ def test_backdated_meal_operations_include_current_week() -> None:
     keys = {operation.get("key") for operation in operations}
     assert CacheKeys.weekly_budget("user1", date(2026, 5, 18))[0] in keys
     assert CacheKeys.weekly_budget("user1", date(2026, 6, 1))[0] in keys
+
+
+def test_profile_purge_pattern_covers_the_versioned_daily_macros_key() -> None:
+    key, _ = CacheKeys.daily_macros("user-1", date(2026, 11, 1))
+    assert key == "user:user-1:macros:v2:2026-11-01"
+    patterns = [
+        op["pattern"]
+        for op in build_profile_invalidation_operations("user-1")
+        if "pattern" in op
+    ]
+    assert any(fnmatch(key, pattern) for pattern in patterns)
+
+
+def test_supplement_operations_purge_the_day_streak_and_revision_not_the_budget() -> None:
+    day = date(2026, 11, 1)
+    operations = build_supplement_invalidation_operations("user1", day)
+    deleted = {op["key"] for op in operations if op["op"] == DELETE_KEY}
+
+    assert CacheKeys.daily_macros("user1", day)[0] in deleted
+    assert CacheKeys.user_streak("user1")[0] in deleted
+    assert "user:user1:activities:2026-11-01:vi" in deleted
+    assert {op["key"] for op in operations if op["op"] == BUMP_REVISION} == {
+        CacheKeys.intake_revision("user1")[0]
+    }
+    # A dose has no calories, so weekly budget keys stay.
+    assert not any("budget" in key for key in deleted)
+
+
+def test_activity_calories_switch_purges_week_budget_and_bumps_revision() -> None:
+    """The switch changes every day's totals without naming a SCAN pattern."""
+    today = date(2026, 11, 4)  # Wednesday
+    week_start = date(2026, 11, 2)
+    operations = build_activity_calories_invalidation_operations("user1", today)
+    deleted = {op["key"] for op in operations if op["op"] == DELETE_KEY}
+
+    assert CacheKeys.weekly_budget("user1", week_start)[0] in deleted
+    for offset in range(7):
+        target = week_start + timedelta(days=offset)
+        assert CacheKeys.weekly_budget("user1", week_start, target)[0] in deleted
+    assert {op["key"] for op in operations if op["op"] == BUMP_REVISION} == {
+        CacheKeys.intake_revision("user1")[0]
+    }
+    assert all(op["op"] != DELETE_PATTERN for op in operations)

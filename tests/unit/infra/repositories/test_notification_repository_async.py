@@ -41,7 +41,18 @@ class _FakeSession:
         return None
 
 
-def _prefs(*, hydration_reminders_enabled: bool) -> NotificationPreferences:
+ENGAGEMENT_DEFAULTS = {
+    "streak_reminders_enabled": True,
+    "reengagement_enabled": True,
+    "progress_updates_enabled": True,
+    "offers_enabled": False,
+}
+ENGAGEMENT_FLIPPED = {name: not value for name, value in ENGAGEMENT_DEFAULTS.items()}
+
+
+def _prefs(
+    *, hydration_reminders_enabled: bool = True, **engagement: bool
+) -> NotificationPreferences:
     now = datetime(2026, 9, 16, 15, 17, tzinfo=timezone.utc)
     return NotificationPreferences(
         preferences_id="00000000-0000-0000-0000-000000000001",
@@ -49,6 +60,7 @@ def _prefs(*, hydration_reminders_enabled: bool) -> NotificationPreferences:
         meal_reminders_enabled=True,
         daily_summary_enabled=True,
         hydration_reminders_enabled=hydration_reminders_enabled,
+        **{**ENGAGEMENT_DEFAULTS, **engagement},
         breakfast_time_minutes=510,
         lunch_time_minutes=690,
         dinner_time_minutes=1080,
@@ -59,18 +71,23 @@ def _prefs(*, hydration_reminders_enabled: bool) -> NotificationPreferences:
     )
 
 
-def _existing_row(*, hydration_reminders_enabled: bool = True):
+def _existing_row(*, hydration_reminders_enabled: bool = True, **engagement: bool):
     now = datetime(2026, 9, 16, 11, 7, tzinfo=timezone.utc)
     return SimpleNamespace(
         id="00000000-0000-0000-0000-000000000001",
         user_id="00000000-0000-0000-0000-000000000002",
         meal_reminders_enabled=True,
+        breakfast_reminder_enabled=True,
+        lunch_reminder_enabled=True,
+        dinner_reminder_enabled=True,
         daily_summary_enabled=True,
         hydration_reminders_enabled=hydration_reminders_enabled,
+        **{**ENGAGEMENT_DEFAULTS, **engagement},
         breakfast_time_minutes=510,
         lunch_time_minutes=690,
         dinner_time_minutes=1080,
         daily_summary_time_minutes=1260,
+        hydration_reminder_time_minutes=930,
         language="vi",
         created_at=now,
         updated_at=now,
@@ -102,3 +119,81 @@ async def test_save_inserts_hydration_reminders_on_new_row():
     assert len(session.added) == 1
     assert session.added[0].hydration_reminders_enabled is False
     assert saved.hydration_reminders_enabled is False
+
+
+def _engagement(obj) -> dict[str, bool]:
+    return {name: getattr(obj, name) for name in ENGAGEMENT_DEFAULTS}
+
+
+@pytest.mark.asyncio
+async def test_save_updates_engagement_toggles_on_existing_row():
+    existing = _existing_row()
+    repository = AsyncNotificationRepository(_FakeSession(existing=existing))
+
+    saved = await repository.save_notification_preferences(_prefs(**ENGAGEMENT_FLIPPED))
+
+    assert _engagement(existing) == ENGAGEMENT_FLIPPED
+    assert _engagement(saved) == ENGAGEMENT_FLIPPED
+
+
+@pytest.mark.asyncio
+async def test_save_inserts_engagement_toggles_on_new_row():
+    session = _FakeSession(existing=None)
+    repository = AsyncNotificationRepository(session)
+
+    saved = await repository.save_notification_preferences(_prefs(**ENGAGEMENT_FLIPPED))
+
+    assert len(session.added) == 1
+    assert _engagement(session.added[0]) == ENGAGEMENT_FLIPPED
+    assert _engagement(saved) == ENGAGEMENT_FLIPPED
+
+
+@pytest.mark.asyncio
+async def test_find_maps_engagement_toggles_from_the_row():
+    row = _existing_row(offers_enabled=True, reengagement_enabled=False)
+    repository = AsyncNotificationRepository(_FakeSession(existing=row))
+
+    found = await repository.find_notification_preferences_by_user(row.user_id)
+
+    assert _engagement(found) == {
+        **ENGAGEMENT_DEFAULTS,
+        "offers_enabled": True,
+        "reengagement_enabled": False,
+    }
+
+
+def _per_meal_prefs() -> NotificationPreferences:
+    return _prefs(hydration_reminders_enabled=True).update_preferences(
+        dinner_reminder_enabled=False, hydration_reminder_time_minutes=780
+    )
+
+
+def _assert_per_meal_values(target) -> None:
+    assert target.breakfast_reminder_enabled is True
+    assert target.lunch_reminder_enabled is True
+    assert target.dinner_reminder_enabled is False
+    assert target.meal_reminders_enabled is True
+    assert target.hydration_reminder_time_minutes == 780
+
+
+@pytest.mark.asyncio
+async def test_save_round_trips_meal_switches_and_water_time_on_existing_row():
+    existing = _existing_row()
+    repository = AsyncNotificationRepository(_FakeSession(existing=existing))
+
+    saved = await repository.save_notification_preferences(_per_meal_prefs())
+
+    _assert_per_meal_values(existing)
+    _assert_per_meal_values(saved)
+
+
+@pytest.mark.asyncio
+async def test_save_round_trips_meal_switches_and_water_time_on_new_row():
+    session = _FakeSession(existing=None)
+    repository = AsyncNotificationRepository(session)
+
+    saved = await repository.save_notification_preferences(_per_meal_prefs())
+
+    assert len(session.added) == 1
+    _assert_per_meal_values(session.added[0])
+    _assert_per_meal_values(saved)

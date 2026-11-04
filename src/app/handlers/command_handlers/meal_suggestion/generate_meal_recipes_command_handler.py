@@ -2,15 +2,30 @@
 Handler for selected-discovery recipe generation.
 """
 
+import logging
 import uuid
 
-from src.api.exceptions import ExternalServiceException, ResourceNotFoundException, ValidationException
+from src.api.exceptions import (
+    ExternalServiceException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.app.commands.meal_suggestion import GenerateMealRecipesCommand
 from src.app.events.base import EventHandler, handles
 from src.domain.model.meal_suggestion import MealSuggestion, SuggestionSession
+from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
+    normalize_ingredient_quantity,
+)
 from src.domain.services.meal_suggestion.suggestion_orchestration_service import (
     SuggestionOrchestrationService,
 )
+from src.domain.services.weekly_meal_planner.recipe_publication import (
+    DraftIngredient,
+    RecipeDraft,
+    review_recipe_safety,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @handles(GenerateMealRecipesCommand)
@@ -67,20 +82,29 @@ class GenerateMealRecipesCommandHandler(
 
         if selected_meals:
             try:
-                recipes = await self.service._recipe_generator.generate_selected_recipes(
-                    session, selected_meals
+                recipes = (
+                    await self.service._recipe_generator.generate_selected_recipes(
+                        session, selected_meals
+                    )
                 )
             except RuntimeError as exc:
                 raise ExternalServiceException(
                     "Could not generate recipes. Please retry.",
                     error_code="RECIPE_GENERATION_FAILED",
-                    details={"requested": len(selected_meals), "generated": 0, "reason": str(exc)},
+                    details={
+                        "requested": len(selected_meals),
+                        "generated": 0,
+                        "reason": str(exc),
+                    },
                 ) from exc
             if len(recipes) != len(selected_meals):
                 raise ExternalServiceException(
                     "Could not generate all selected recipes. Please retry.",
                     error_code="RECIPE_GENERATION_FAILED",
-                    details={"requested": len(selected_meals), "generated": len(recipes)},
+                    details={
+                        "requested": len(selected_meals),
+                        "generated": len(recipes),
+                    },
                 )
         else:
             recipes = await self.service._recipe_generator._phase2_generate_recipes(
@@ -91,6 +115,13 @@ class GenerateMealRecipesCommandHandler(
                 min_acceptable_override=1,
             )
 
+        recipes = _drop_unsafe_recipes(recipes)
+        if not recipes:
+            raise ExternalServiceException(
+                "Could not generate a safe recipe. Please retry.",
+                error_code="RECIPE_GENERATION_UNSAFE",
+            )
+
         if command.language != "en" and recipes:
             translation_service = self.service._recipe_generator._translation_service
             if translation_service:
@@ -99,6 +130,52 @@ class GenerateMealRecipesCommandHandler(
                 )
 
         return recipes
+
+
+def _drop_unsafe_recipes(recipes: list[MealSuggestion]) -> list[MealSuggestion]:
+    """Keep only the recipes a person can safely be told to cook.
+
+    The food-safety half of the publication review, which reads the dish,
+    its steps and its ingredient names. The nutrition half is left out on
+    purpose: it rejects any unidentified ingredient over 10 g, and nothing
+    in this path resolves ingredients yet, so it would discard every recipe
+    including correct ones.
+    """
+    safe: list[MealSuggestion] = []
+    for recipe in recipes:
+        rejections = review_recipe_safety(_draft_from(recipe))
+        if rejections:
+            logger.warning(
+                "Dropped generated recipe %r: %s",
+                recipe.meal_name,
+                "; ".join(rejections),
+            )
+            continue
+        safe.append(recipe)
+    return safe
+
+
+def _draft_from(recipe: MealSuggestion) -> RecipeDraft:
+    """Read a generated suggestion as the review rules expect it."""
+    return RecipeDraft(
+        name=recipe.meal_name or "",
+        ingredients=tuple(
+            DraftIngredient(name=line.name or "", grams=_grams(line))
+            for line in recipe.ingredients or ()
+        ),
+        steps=tuple(
+            step.instruction for step in recipe.recipe_steps or () if step.instruction
+        ),
+    )
+
+
+def _grams(line) -> float:
+    """The line's weight, or zero when it is counted rather than weighed."""
+    amount = getattr(line, "amount", None)
+    if amount is None:
+        return 0.0
+    normalized = normalize_ingredient_quantity(amount, getattr(line, "unit", "") or "")
+    return float(normalized.amount) if normalized.dimension == "weight" else 0.0
 
 
 def _normalise_selected_discovery_meal(meal: dict) -> dict:

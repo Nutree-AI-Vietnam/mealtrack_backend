@@ -6,11 +6,29 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 
+from .meal_locale import DEFAULT_LOCALE
+from .saved_recipe import SavedRecipeSnapshot
+
 WEEKLY_DAYS = 7
 # Slot order is breakfast, lunch, dinner.
 WEEKLY_SLOTS_PER_DAY = 3
 WEEKLY_PLAN_SLOT_COUNT = WEEKLY_DAYS * WEEKLY_SLOTS_PER_DAY
 SLOT_MEAL_TYPES: tuple[str, ...] = ("breakfast", "lunch", "dinner")
+# Who put the diary meal behind a logged slot: the plan's log endpoint created
+# it ("plan"), or the user linked a meal they had already logged ("diary").
+SLOT_LOG_SOURCE_PLAN = "plan"
+SLOT_LOG_SOURCE_DIARY = "diary"
+# Servings POST /slots/{id}/log accepts, and the staple a plan may ask for,
+# in the default locale's steps. Derived from the pack rather than written
+# again, so the two can never drift apart.
+PLANNED_PORTIONS: tuple[float, ...] = (0.5, 1.0, 1.5, 2.0)
+MAX_PLANNED_RICE_STEPS = DEFAULT_LOCALE.max_staple_steps
+RICE_STEP_GRAMS = DEFAULT_LOCALE.staple_step_grams
+RICE_STEP_MACROS = DEFAULT_LOCALE.staple_step_macros
+
+SLOT_LOG_SOURCES: frozenset[str] = frozenset(
+    {SLOT_LOG_SOURCE_PLAN, SLOT_LOG_SOURCE_DIARY}
+)
 
 
 def ensure_slot_coordinate(day_index: int, slot_index: int) -> None:
@@ -90,9 +108,52 @@ class WeeklyMealPlanSlot:
     logged_meal_id: str | None = None
     version: int = 1
     recipe_override: dict | None = None
+    log_source: str | None = None
+    is_skipped: bool = False
+    # A saved recipe of the user's instead of a catalog recipe, with the
+    # copy taken when it was put in the slot.
+    saved_suggestion_id: str | None = None
+    saved_recipe: SavedRecipeSnapshot | None = None
+    # How much of the dish to serve, and the rice beside it in 55 g half-bowl
+    # servings. A plan made before composing is one plain serving, no rice.
+    planned_portion: float = 1.0
+    planned_rice_steps: int = 0
 
     def __post_init__(self) -> None:
         ensure_slot_coordinate(self.day_index, self.slot_index)
+        if self.planned_portion not in PLANNED_PORTIONS:
+            raise ValueError("planned_portion must be 0.5, 1, 1.5 or 2")
+        if not 0 <= self.planned_rice_steps <= MAX_PLANNED_RICE_STEPS:
+            raise ValueError("planned_rice_steps must be between 0 and 4")
+        if self.log_source is not None and self.log_source not in SLOT_LOG_SOURCES:
+            raise ValueError("log_source must be plan, diary, or None")
+        if self.recipe_id is not None and self.saved_suggestion_id is not None:
+            raise ValueError("a slot holds a catalog recipe or a saved recipe")
+        if (self.saved_suggestion_id is None) != (self.saved_recipe is None):
+            raise ValueError("a saved recipe slot needs its snapshot")
+
+    @property
+    def has_recipe(self) -> bool:
+        return self.recipe_id is not None or self.saved_suggestion_id is not None
+
+    @property
+    def recipe_ref(self) -> str | None:
+        """The id clients see for the slot's recipe, catalog or saved."""
+        return self.saved_suggestion_id or self.recipe_id
+
+    @property
+    def unlog_deletes_meal(self) -> bool:
+        """Unlogging deletes the diary meal only when the plan created it.
+
+        A linked meal is the user's own entry and stays in the diary. A logged
+        slot without a source predates the column; only the log endpoint
+        could have logged it then.
+        """
+        return (
+            self.is_logged
+            and self.logged_meal_id is not None
+            and self.log_source != SLOT_LOG_SOURCE_DIARY
+        )
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,7 @@ import uuid
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from src.api.base_dependencies import get_cache_service, get_streak_restore_policy
 from src.api.routes.v1.webhook_lifetime_purchase import (
     fetch_revenuecat_plan,
     handle_lifetime_purchase,
@@ -36,6 +37,7 @@ from src.api.routes.v1.webhook_referral_funnel import (
     revoke_referral_on_refund,
     sync_redeemed_target_subscription,
 )
+from src.api.routes.v1.webhook_streak_restore import handle_streak_restore_event
 from src.api.routes.v1.webhook_subscription_lifecycle import (
     handle_billing_issue,
     handle_cancellation,
@@ -45,6 +47,7 @@ from src.api.routes.v1.webhook_subscription_lifecycle import (
     handle_refund,
     handle_renewal,
 )
+from src.app.services.streak_restore_state import purge_streak_cache
 from src.app.services.web_funnel_claim_payment import reconcile_revenuecat_event
 from src.bootstrap.integration_services import (
     get_affiliate_service,
@@ -237,8 +240,14 @@ async def revenuecat_webhook(
                 return {"status": "ignored", "reason": "user_not_found"}
             raise HTTPException(status_code=404, detail="User not found")
 
+        pack = await handle_streak_restore_event(
+            uow, user, event, get_streak_restore_policy()
+        )
+
         # Handle events — commit/rollback is owned by the AsyncUnitOfWork context manager
-        if event_type == "INITIAL_PURCHASE":
+        if pack is not None:
+            pass  # a streak restore pack never reaches the subscription handlers
+        elif event_type == "INITIAL_PURCHASE":
             await handle_purchase(uow, user, event, affiliate_handler, event_publisher)
             play_renewals = await play_plan_beside_lifetime(uow, user, event)
 
@@ -281,7 +290,11 @@ async def revenuecat_webhook(
         elif event_type == "REFUND":
             await handle_refund(uow, user, event, affiliate_handler, event_publisher)
 
-    # After the commit: the event is stored whatever Google does.
+    # After the commit, so a read that refills the cache sees the new balance.
+    if pack is not None and pack.owner_id:
+        await purge_streak_cache(get_cache_service(), pack.owner_id)
+
+    # After the commit too: the event is stored whatever Google does.
     await cancel_play_renewals(event, play_renewals)
 
     increment_metric(

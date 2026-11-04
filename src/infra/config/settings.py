@@ -3,6 +3,7 @@ Application configuration settings loaded from environment variables.
 """
 
 import json
+from datetime import date
 from functools import lru_cache
 from typing import Any
 
@@ -83,6 +84,14 @@ class Settings(BaseSettings):
     ASYNC_POOL_TIMEOUT: int | None = Field(
         default=None,
         description="Async pool connection timeout seconds (overrides POOL_TIMEOUT)",
+    )
+    ASYNC_CONNECT_TIMEOUT: int | None = Field(
+        default=None,
+        description=(
+            "asyncpg TCP/TLS connect timeout seconds for neon_pooler. "
+            "Blank is unset (the engine uses 10). Values below 1 and "
+            "non-integers fall back to 10. direct_pool keeps the driver default."
+        ),
     )
     ASYNC_POOL_RECYCLE: int = Field(
         default=120,
@@ -220,6 +229,39 @@ class Settings(BaseSettings):
         ge=1,
         description="Describe sentences per user per local day, across both routes.",
     )
+    # Supplement logging: products, a person's list and doses (own tables).
+    SUPPLEMENTS_ENABLED: bool = Field(
+        default=False,
+        description="Advertise supplement logging in GET /v1/capabilities/supplements.",
+    )
+    SUPPLEMENT_LABEL_SCANS_PER_DAY: int = Field(
+        default=20,
+        ge=1,
+        description="Supplement label photos per user per local day.",
+    )
+    # Streak restore: a restored day bridges a streak; packs are store consumables.
+    STREAK_SAME_DAY_LOGS_FROM: date | None = Field(
+        default=None,
+        description=(
+            "From this local date on, only logs made on the day itself keep a "
+            "streak. Unset counts every day with a log."
+        ),
+    )
+    STREAK_RESTORE_SPEND_ENABLED: bool = Field(
+        default=False,
+        description="Offer restores in GET /v1/meals/streak and accept spending them.",
+    )
+    STREAK_RESTORE_CLAIM_ENABLED: bool = Field(
+        default=False,
+        description="Accept restore pack purchase claims from the app.",
+    )
+    STREAK_RESTORE_SANDBOX_USER_IDS: str = Field(
+        default="",
+        description=(
+            "Comma-separated user ids whose sandbox pack purchases credit in "
+            "production (App Review, QA)."
+        ),
+    )
     OPENAI_TRANSLATION_MODEL: str = Field(default="gpt-5.4-mini-2026-03-17")
     OPENAI_TRANSLATION_TIMEOUT_SECONDS: float = Field(default=8.0)
     OPENAI_REQUEST_TIMEOUT_SECONDS: int = Field(default=20)
@@ -295,6 +337,24 @@ class Settings(BaseSettings):
     AI_JOBS_CHAT_BACKGROUND_ENABLED: bool = Field(
         default=True,
         description="Let chat turns with ai_job_id keep generating after disconnect.",
+    )
+    # Recipe import (docs/api-recipe-import.md). Its limits are fixed in code;
+    # only the speech-to-text model for video imports is configurable.
+    RECIPE_IMPORT_TRANSCRIPTION_MODEL: str = Field(default="gpt-4o-mini-transcribe")
+    YOUTUBE_API_KEY: str | None = Field(
+        default=None,
+        description=(
+            "YouTube Data API v3 key. Reads a video's full description when "
+            "YouTube refuses yt-dlp from the server; unset skips that fallback."
+        ),
+    )
+    # Server-sent engagement pushes (payment failed) through the notifications outbox
+    ENGAGEMENT_PUSH_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Queue the payment-failed push on RevenueCat BILLING_ISSUE and run "
+            "the dispatcher that sends it in this process."
+        ),
     )
     # Image search (meal discovery photos)
     PEXELS_API_KEY: str | None = Field(
@@ -472,7 +532,27 @@ class Settings(BaseSettings):
     )
     AI_MEAL_ANALYZE_FATSECRET_VALIDATION_ENABLED: bool = Field(
         default=False,
-        description="Enable optional FatSecret nutrition reference validation for meal analysis.",
+        description=(
+            "Audit meal-scan items against a nutrition reference and attach "
+            "micros when macros are already close. Does not replace macros. "
+            "AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED is the macro-replacement path."
+        ),
+    )
+    AI_MEAL_SCAN_REFERENCE_GROUNDING_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Replace meal-scan item macros through the shared nutrition cascade: "
+            "local food reference, then FatSecret, otherwise the vision estimate. "
+            "Off leaves scan output unchanged. When on, this path is used instead "
+            "of the closeness-only FatSecret validation flag."
+        ),
+    )
+    AI_SCAN_FULL_MICROS_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Ask photo, label and text logging for all 21 micronutrient keys "
+            "instead of ten. Off sends today's ten-key contract and prompts."
+        ),
     )
     AI_MEAL_ANALYZE_EXTERNAL_PROVIDER_TIMEOUT_SECONDS: float = Field(
         default=5.0,
@@ -519,6 +599,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Weekly meal planner. Share of users (0-100, stable per user) who get a
+    # compact week: two alternating breakfasts, each dinner eaten again at the
+    # next lunch, and dishes that share fresh ingredients. 0 turns it off.
+    MEAL_PLAN_COMPACT_WEEK_PERCENT: int = Field(default=0, ge=0, le=100)
+
+    # Fresh ingredients a compact week aims to buy. Once the basket is full,
+    # a dish that reuses what is already bought outranks one closer on
+    # calories. 0 turns the budget off and keeps calorie closeness first.
+    MEAL_PLAN_BASKET_TARGET: int = Field(default=15, ge=0, le=100)
+
     # Referral system (multi-currency)
     REFERRAL_COMMISSIONS: dict = Field(
         default={"USD": 2, "VND": 50000, "EUR": 1.8, "default": 2},
@@ -539,6 +629,22 @@ class Settings(BaseSettings):
         if "://" in cleaned:
             cleaned = cleaned.split("://", 1)[1]
         return cleaned.split("/")[0]
+
+    @field_validator("STREAK_SAME_DAY_LOGS_FROM", mode="before")
+    @classmethod
+    def unset_blank_date(cls, value: Any) -> Any:
+        return None if value == "" else value
+
+    @field_validator("ASYNC_CONNECT_TIMEOUT", mode="before")
+    @classmethod
+    def normalize_async_connect_timeout(cls, value: Any) -> int | None:
+        """Blank stays unset. Invalid values fall back to 10 without crashing."""
+        from src.infra.database.connection_policy import (
+            interpret_async_connect_timeout,
+        )
+
+        seconds, _warning = interpret_async_connect_timeout(value)
+        return seconds
 
     @field_validator("NUTRITION_PROVIDER_GLOBAL_RPM", mode="before")
     @classmethod

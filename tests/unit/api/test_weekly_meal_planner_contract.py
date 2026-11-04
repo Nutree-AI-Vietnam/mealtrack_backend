@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from time import perf_counter
 from types import SimpleNamespace
@@ -16,8 +16,14 @@ from src.api.base_dependencies import (
 )
 from src.api.dependencies.auth import get_current_user_id
 from src.api.dependencies.event_bus import get_configured_event_bus
+from src.api.exceptions import (
+    BusinessLogicException,
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.api.middleware.accept_language import AcceptLanguageMiddleware
-from src.api.routes.v1.meal_plans import router
+from src.api.routes.v1.meal_plans import WEEKLY_PLAN_FEATURES, router
 from src.app.handlers.query_handlers.meal_planner.weekly_meal_planner_query_handlers import (
     ListRecipesQueryHandler,
 )
@@ -178,6 +184,31 @@ def test_current_plan_returns_three_meals_each_day():
     assert body["plan"][0][0]["slot_name"] == "breakfast"
     assert body["plan"][0][1]["slot_name"] == "lunch"
     assert body["plan"][0][2]["slot_name"] == "dinner"
+
+
+def test_current_plan_opens_next_week_but_not_the_one_after():
+    today = datetime.now(UTC).date()
+    monday = today - timedelta(days=today.weekday())
+    client = TestClient(_app())
+
+    def status_for(week_start):
+        return client.get(
+            f"/v1/meal-plans/current?week_start_date={week_start.isoformat()}",
+            headers={"X-Timezone": "UTC"},
+        ).status_code
+
+    assert status_for(monday + timedelta(days=7)) == 200
+    assert status_for(monday + timedelta(days=14)) == 400
+
+
+def test_current_plan_says_how_the_week_was_selected():
+    plan = replace(_plan(), algorithm_version="v3-compact")
+
+    response = TestClient(_app(bus=_Bus(plan=plan))).get(
+        "/v1/meal-plans/current?week_start_date=2026-09-21"
+    )
+
+    assert response.json()["algorithm_version"] == "v3-compact"
 
 
 def test_current_plan_without_week_start_resolves_to_current_monday():
@@ -569,3 +600,561 @@ def test_patch_requires_people_when_preferences_are_updated():
     )
 
     assert response.status_code == 422
+
+
+class _SlotBus(_Bus):
+    """Answers slot state commands with the plan, slot 0-1 logged from diary."""
+
+    def __init__(self, error=None):
+        super().__init__()
+        self.error = error
+        self.slot_commands = []
+
+    async def send(self, query):
+        name = query.__class__.__name__
+        if name in {
+            "UnlogMealPlanSlotCommand",
+            "LinkMealPlanSlotCommand",
+            "SetMealPlanSlotSkipCommand",
+        }:
+            self.slot_commands.append(query)
+            if self.error is not None:
+                raise self.error
+            plan = _plan()
+            return replace(
+                plan,
+                slots=tuple(
+                    replace(
+                        slot,
+                        is_logged=True,
+                        logged_meal_id="meal-1",
+                        log_source="diary",
+                    )
+                    if slot.id == "slot-0-1"
+                    else replace(slot, is_skipped=slot.id == "slot-0-2")
+                    for slot in plan.slots
+                ),
+            )
+        return await super().send(query)
+
+
+def _slot_json(body, slot_id):
+    return next(
+        slot for day in body["plan"] for slot in day if slot["slot_id"] == slot_id
+    )
+
+
+def test_plan_payload_lists_features_and_slot_log_state():
+    body = (
+        TestClient(_app())
+        .get("/v1/meal-plans/current?week_start_date=2026-09-21")
+        .json()
+    )
+
+    assert body["features"] == [
+        "slot_unlog",
+        "slot_link",
+        "slot_skip",
+        "slot_suggestions",
+        "recipe_labels",
+        "recipe_batch",
+        "saved_recipe_slots",
+    ]
+    slot = _slot_json(body, "slot-0-0")
+    assert slot["log_source"] is None and slot["is_skipped"] is False
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json"),
+    [
+        ("delete", "/v1/meal-plans/plan-1/slots/slot-0-1/log", None),
+        ("post", "/v1/meal-plans/plan-1/slots/slot-0-1/link", {"meal_id": "m"}),
+        ("post", "/v1/meal-plans/plan-1/slots/slot-0-1/skip", None),
+        ("delete", "/v1/meal-plans/plan-1/slots/slot-0-1/skip", None),
+    ],
+)
+def test_slot_state_writes_require_idempotency_key(method, path, json):
+    bus = _SlotBus()
+    client = TestClient(_app(bus=bus))
+    kwargs = {"json": json} if json is not None else {}
+
+    missing = getattr(client, method)(path, **kwargs)
+    blank = getattr(client, method)(path, headers={"Idempotency-Key": " "}, **kwargs)
+
+    assert missing.status_code == 422
+    assert blank.status_code == 400
+    assert bus.slot_commands == []
+
+
+def test_unlog_returns_the_plan():
+    bus = _SlotBus()
+
+    response = TestClient(_app(bus=bus)).delete(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/log",
+        headers={"Idempotency-Key": "unlog-1"},
+    )
+
+    assert response.status_code == 200
+    (command,) = bus.slot_commands
+    assert (command.plan_id, command.slot_id, command.idempotency_key) == (
+        "plan-1",
+        "slot-0-1",
+        "unlog-1",
+    )
+    slot = _slot_json(response.json(), "slot-0-1")
+    assert slot["log_source"] == "diary" and slot["logged_meal_id"] == "meal-1"
+    assert response.json()["features"] == list(WEEKLY_PLAN_FEATURES)
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (
+            ConflictException("not logged", error_code="WEEKLY_SLOT_NOT_LOGGED"),
+            409,
+            "WEEKLY_SLOT_NOT_LOGGED",
+        ),
+        (
+            ValidationException("mismatch", error_code="WEEKLY_SLOT_MISMATCH"),
+            400,
+            "WEEKLY_SLOT_MISMATCH",
+        ),
+        (
+            ResourceNotFoundException("missing", error_code="MEAL_NOT_FOUND"),
+            404,
+            "MEAL_NOT_FOUND",
+        ),
+    ],
+)
+def test_slot_state_errors_keep_their_codes(error, status_code, error_code):
+    response = TestClient(_app(bus=_SlotBus(error))).post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-1"},
+        json={"meal_id": "meal-1"},
+    )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"]["error_code"] == error_code
+
+
+def test_link_sends_meal_and_header_timezone():
+    bus = _SlotBus()
+    client = TestClient(_app(bus=bus))
+
+    response = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-1", "X-Timezone": "Asia/Ho_Chi_Minh"},
+        json={"meal_id": "meal-1"},
+    )
+    invalid_tz = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-2", "X-Timezone": "Mars/Base"},
+        json={"meal_id": "meal-1"},
+    )
+    empty_meal = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/link",
+        headers={"Idempotency-Key": "link-3"},
+        json={"meal_id": ""},
+    )
+
+    assert response.status_code == 200 and invalid_tz.status_code == 200
+    assert empty_meal.status_code == 422
+    assert [(c.meal_id, c.timezone) for c in bus.slot_commands] == [
+        ("meal-1", "Asia/Ho_Chi_Minh"),
+        ("meal-1", None),
+    ]
+
+
+def test_skip_and_unskip_send_the_flag():
+    bus = _SlotBus()
+    client = TestClient(_app(bus=bus))
+
+    skipped = client.post(
+        "/v1/meal-plans/plan-1/slots/slot-0-2/skip",
+        headers={"Idempotency-Key": "skip-1"},
+    )
+    unskipped = client.delete(
+        "/v1/meal-plans/plan-1/slots/slot-0-2/skip",
+        headers={"Idempotency-Key": "skip-2"},
+    )
+
+    assert skipped.status_code == 200 and unskipped.status_code == 200
+    assert [c.skipped for c in bus.slot_commands] == [True, False]
+    assert _slot_json(skipped.json(), "slot-0-2")["is_skipped"] is True
+
+
+def _labelled(recipe_id, name, *, vegetarian, pork_free):
+    from src.domain.model.meal_recommendation.recipe_diet_labels import (
+        RecipeDietLabels,
+    )
+
+    return replace(
+        _recipe(),
+        id=recipe_id,
+        name=name,
+        browse_labels=RecipeDietLabels(vegetarian, pork_free),
+    )
+
+
+def test_recipe_list_labels_items_and_forwards_min_protein():
+    class _ListBus(_Bus):
+        async def send(self, query):
+            if query.__class__.__name__ == "ListRecipesQuery":
+                self.recipe_query = query
+                return SimpleNamespace(
+                    items=(
+                        _labelled("tofu", "Tofu", vegetarian=True, pork_free=True),
+                        _labelled("ga", "Gà", vegetarian=False, pork_free=True),
+                    ),
+                    total=2,
+                )
+            return await super().send(query)
+
+    bus = _ListBus()
+    client = TestClient(_app(bus=bus))
+
+    response = client.get("/v1/recipes?min_protein=12.5")
+    negative = client.get("/v1/recipes?min_protein=-1")
+
+    assert response.status_code == 200 and negative.status_code == 422
+    assert bus.recipe_query.min_protein == 12.5
+    assert [
+        (item["id"], item["is_vegetarian"], item["is_pork_free"])
+        for item in response.json()["items"]
+    ] == [("tofu", True, True), ("ga", False, True)]
+
+
+def test_plan_recipe_summary_carries_diet_labels():
+    plan = _plan()
+    plan = replace(
+        plan,
+        slots=tuple(
+            replace(slot, recipe_id="ga") if slot.id == "slot-0-1" else slot
+            for slot in plan.slots
+        ),
+    )
+
+    class _SummaryBus(_Bus):
+        async def send(self, query):
+            if query.__class__.__name__ == "GetRecipeSummariesQuery":
+                return (_labelled("ga", "Gà", vegetarian=False, pork_free=True),)
+            return await super().send(query)
+
+    body = (
+        TestClient(_app(bus=_SummaryBus(plan=plan)))
+        .get("/v1/meal-plans/current?week_start_date=2026-09-21")
+        .json()
+    )
+
+    recipe = _slot_json(body, "slot-0-1")["recipe"]
+    assert (recipe["is_vegetarian"], recipe["is_pork_free"]) == (False, True)
+
+
+class _BatchBus(_Bus):
+    def __init__(self):
+        super().__init__()
+        self.detail_queries = []
+
+    async def send(self, query):
+        if query.__class__.__name__ == "GetRecipeDetailsQuery":
+            self.detail_queries.append(query)
+            return tuple(
+                replace(_recipe(), id=recipe_id, name=f"Recipe {recipe_id}")
+                for recipe_id in query.recipe_ids
+                if recipe_id != "gone"
+            )
+        return await super().send(query)
+
+
+def test_recipe_batch_returns_details_in_order_and_lists_missing():
+    bus = _BatchBus()
+
+    response = TestClient(_app(bus=bus)).post(
+        "/v1/recipes/batch", json={"ids": ["b", "gone", "a", "b", " a "]}
+    )
+
+    assert response.status_code == 200
+    assert bus.detail_queries[0].recipe_ids == ("b", "gone", "a")
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == ["b", "a"]
+    assert body["items"][0]["nutrition_per_serving"]["protein"] == 30
+    assert body["missing"] == ["gone"]
+
+
+@pytest.mark.parametrize(
+    "ids", [[], [str(index) for index in range(31)], [""], ["x" * 65]]
+)
+def test_recipe_batch_validates_ids(ids):
+    bus = _BatchBus()
+
+    response = TestClient(_app(bus=bus)).post("/v1/recipes/batch", json={"ids": ids})
+
+    assert response.status_code == 422
+    assert bus.detail_queries == []
+
+
+def test_recipe_batch_requires_auth_and_is_not_a_recipe_id():
+    bus = _BatchBus()
+
+    unauthenticated = TestClient(_app(bus=bus, authenticated=False)).post(
+        "/v1/recipes/batch", json={"ids": ["a"]}
+    )
+    detail = TestClient(_app(recipe=_recipe())).get("/v1/recipes/batch")
+
+    assert unauthenticated.status_code in {401, 403}
+    assert bus.detail_queries == []
+    # GET still reads "batch" as a recipe id; only POST is the batch route.
+    assert detail.status_code == 200
+
+
+class _SuggestionBus(_Bus):
+    def __init__(self, error=None):
+        super().__init__()
+        self.error = error
+        self.suggestion_queries = []
+
+    async def send(self, query):
+        if query.__class__.__name__ == "GetMealPlanSlotSuggestionsQuery":
+            self.suggestion_queries.append(query)
+            if self.error is not None:
+                raise self.error
+            return (_labelled("tofu", "Tofu", vegetarian=True, pork_free=True),)
+        return await super().send(query)
+
+
+def test_slot_suggestions_return_recipe_list_items():
+    bus = _SuggestionBus()
+
+    response = TestClient(_app(bus=bus)).get(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/suggestions"
+        "?diet=vegetarian&max_cook_time=30&min_protein=15&limit=5"
+    )
+
+    assert response.status_code == 200
+    (query,) = bus.suggestion_queries
+    assert (query.plan_id, query.slot_id, query.user_id) == (
+        "plan-1",
+        "slot-0-1",
+        "user-1",
+    )
+    assert (query.diet, query.max_cook_time, query.min_protein, query.limit) == (
+        "vegetarian",
+        30,
+        15,
+        5,
+    )
+    (item,) = response.json()["items"]
+    assert item["id"] == "tofu" and item["slug"] == "sample-recipe"
+    assert item["is_vegetarian"] is True and item["is_pork_free"] is True
+    assert set(response.json()) == {"items"}
+
+
+@pytest.mark.parametrize(
+    "query", ["diet=keto", "limit=0", "limit=31", "min_protein=-1", "max_cook_time=-5"]
+)
+def test_slot_suggestions_validate_filters(query):
+    bus = _SuggestionBus()
+
+    response = TestClient(_app(bus=bus)).get(
+        f"/v1/meal-plans/plan-1/slots/slot-0-1/suggestions?{query}"
+    )
+
+    assert response.status_code == 422
+    assert bus.suggestion_queries == []
+
+
+def test_slot_suggestions_default_limit_and_missing_slot():
+    bus = _SuggestionBus()
+    ok = TestClient(_app(bus=bus)).get(
+        "/v1/meal-plans/plan-1/slots/slot-0-1/suggestions"
+    )
+    missing = TestClient(
+        _app(
+            bus=_SuggestionBus(
+                ResourceNotFoundException("missing", error_code="WEEKLY_SLOT_NOT_FOUND")
+            )
+        )
+    ).get("/v1/meal-plans/plan-1/slots/nope/suggestions")
+
+    assert ok.status_code == 200 and bus.suggestion_queries[0].limit == 10
+    assert bus.suggestion_queries[0].diet is None
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error_code"] == "WEEKLY_SLOT_NOT_FOUND"
+
+
+# Saved recipes in slots ------------------------------------------------------
+
+_SAVED_ID = "recipe_import_imp-1"
+
+
+def _saved_snapshot():
+    from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
+
+    return SavedRecipeSnapshot.from_saved_suggestion(
+        _SAVED_ID,
+        {
+            "meal_name": "Chicken pho",
+            "macros": {"protein": 30.0, "carbs": 50.0, "fat": 10.0, "fiber": 4.0},
+            "image_url": "https://images.example/pho.jpg",
+            "servings": 4,
+            "recipe_import": {"total_time_minutes": 50},
+        },
+    )
+
+
+def _plan_with_saved_slot():
+    plan = _plan()
+    return replace(
+        plan,
+        slots=tuple(
+            replace(slot, saved_suggestion_id=_SAVED_ID, saved_recipe=_saved_snapshot())
+            if slot.id == "slot-1-2"
+            else replace(slot, recipe_id="ga")
+            if slot.id == "slot-0-1"
+            else slot
+            for slot in plan.slots
+        ),
+    )
+
+
+class _SavedPlanBus(_Bus):
+    def __init__(self, error=None):
+        super().__init__(plan=_plan_with_saved_slot())
+        self.error = error
+        self.update_commands = []
+        self.summary_queries = []
+
+    async def send(self, query):
+        name = query.__class__.__name__
+        if name == "UpdateWeeklyMealPlanCommand":
+            self.update_commands.append(query)
+            if self.error is not None:
+                raise self.error
+            return self.plan
+        if name == "GetRecipeSummariesQuery":
+            self.summary_queries.append(query)
+            return (_labelled("ga", "Gà", vegetarian=False, pork_free=True),)
+        return await super().send(query)
+
+
+def test_patch_sends_saved_recipes_apart_from_catalog_recipes():
+    bus = _SavedPlanBus()
+
+    response = TestClient(_app(bus=bus)).patch(
+        "/v1/meal-plans/plan-1",
+        headers={"Idempotency-Key": "patch-saved"},
+        json={
+            "expected_revision": 4,
+            "slots": [
+                # Serializers that write nulls send recipe_id: null.
+                {
+                    "day_index": 1,
+                    "slot_index": 2,
+                    "recipe_id": None,
+                    "saved_suggestion_id": _SAVED_ID,
+                },
+                {"day_index": 0, "slot_index": 1, "recipe_id": "ga"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    (command,) = bus.update_commands
+    assert command.saved_slots == {(1, 2): _SAVED_ID}
+    assert command.slots == {(0, 1): "ga"}
+    assert command.expected_revision == 4
+    assert command.idempotency_key == "patch-saved"
+
+
+def test_plan_payload_marks_saved_and_catalog_recipes():
+    bus = _SavedPlanBus()
+
+    body = (
+        TestClient(_app(bus=bus))
+        .get("/v1/meal-plans/current?week_start_date=2026-09-21")
+        .json()
+    )
+
+    assert "saved_recipe_slots" in body["features"]
+    assert body["total_meals_planned"] == 2
+    saved = _slot_json(body, "slot-1-2")["recipe"]
+    assert saved == {
+        "id": _SAVED_ID,
+        "name": "Chicken pho",
+        "image_url": "https://images.example/pho.jpg",
+        "cook_time_minutes": 50,
+        "calories": 402,
+        "nutrition_per_serving": {
+            "calories": 402.0,
+            "protein": 30.0,
+            "carbs": 50.0,
+            "fat": 10.0,
+            "fiber": 4.0,
+        },
+        "is_vegetarian": False,
+        "is_pork_free": False,
+        "kind": "saved",
+    }
+    assert _slot_json(body, "slot-0-1")["recipe"]["kind"] == "catalog"
+    # Only catalog ids go to the catalog summary query.
+    assert [query.recipe_ids for query in bus.summary_queries] == [("ga",)]
+
+
+def test_patch_rejects_a_slot_with_both_recipe_kinds_before_dispatch():
+    bus = _SavedPlanBus()
+
+    response = TestClient(_app(bus=bus)).patch(
+        "/v1/meal-plans/plan-1",
+        headers={"Idempotency-Key": "patch-both"},
+        json={
+            "slots": [
+                {
+                    "day_index": 1,
+                    "slot_index": 2,
+                    "recipe_id": "ga",
+                    "saved_suggestion_id": _SAVED_ID,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert bus.update_commands == []
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (
+            ResourceNotFoundException("gone", error_code="SAVED_RECIPE_NOT_FOUND"),
+            404,
+            "SAVED_RECIPE_NOT_FOUND",
+        ),
+        (
+            BusinessLogicException("no macros", error_code="SAVED_RECIPE_UNUSABLE"),
+            422,
+            "SAVED_RECIPE_UNUSABLE",
+        ),
+        (
+            WeeklyMealPlanConflictError(
+                "Weekly meal plan changed since it was loaded",
+                error_code="WEEKLY_PLAN_STALE_REVISION",
+            ),
+            409,
+            "WEEKLY_PLAN_STALE_REVISION",
+        ),
+    ],
+)
+def test_patch_saved_recipe_errors_keep_their_codes(error, status_code, error_code):
+    response = TestClient(_app(bus=_SavedPlanBus(error))).patch(
+        "/v1/meal-plans/plan-1",
+        headers={"Idempotency-Key": "patch-saved-error"},
+        json={
+            "slots": [
+                {"day_index": 1, "slot_index": 2, "saved_suggestion_id": _SAVED_ID}
+            ]
+        },
+    )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"]["error_code"] == error_code

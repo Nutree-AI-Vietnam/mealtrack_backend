@@ -6,9 +6,9 @@ from typing import Any
 from src.domain.model.nutrition.extra_nutrients import food_item_effective_micros
 
 from .meal_text_nutrition_eval_models import (
+    FULL_MICRO_FLOORS,
+    FULL_MICRO_UNITS,
     TEXT_MACROS,
-    TEXT_MICRO_FLOORS,
-    TEXT_MICRO_UNITS,
 )
 
 
@@ -45,7 +45,7 @@ def sum_raw_macros(items: list[dict[str, Any]]) -> dict[str, float]:
 
 def sum_complete_micros(items: list[dict[str, Any]]) -> dict[str, float | None]:
     totals: dict[str, float | None] = {}
-    for name in TEXT_MICRO_UNITS:
+    for name in FULL_MICRO_UNITS:
         values = [(item.get("micros") or {}).get(name) for item in items]
         totals[name] = (
             sum(float(value) for value in values)
@@ -62,7 +62,7 @@ def any_micro_present(items: list[dict[str, Any]], nutrient: str) -> bool:
 def sum_effective_micros(items: list[Any]) -> dict[str, float | None]:
     portions = [food_item_effective_micros(_effective_item(item)) for item in items]
     totals: dict[str, float | None] = {}
-    for name in TEXT_MICRO_UNITS:
+    for name in FULL_MICRO_UNITS:
         values = [getattr(portion, name, None) for portion in portions]
         totals[name] = (
             sum(float(value) for value in values)
@@ -128,18 +128,18 @@ def score_micro_references(
         else:
             reference_value = reference["value"]
             errors[name] = interval_error(value, reference_value) / max(
-                midpoint(reference_value), TEXT_MICRO_FLOORS[name]
+                midpoint(reference_value), FULL_MICRO_FLOORS[name]
             )
     return coverage, errors, unknown
 
 
 def validate_micro(name: str, reference: dict[str, Any]) -> None:
-    if name not in TEXT_MICRO_UNITS:
+    if name not in FULL_MICRO_UNITS:
         raise ValueError(f"unsupported micronutrient: {name}")
     if reference.get("status") not in {"known", "unknown", "masked"}:
         raise ValueError(f"{name} reference status must be known, unknown, or masked")
-    if reference.get("unit") != TEXT_MICRO_UNITS[name]:
-        raise ValueError(f"{name} unit must be {TEXT_MICRO_UNITS[name]}")
+    if reference.get("unit") != FULL_MICRO_UNITS[name]:
+        raise ValueError(f"{name} unit must be {FULL_MICRO_UNITS[name]}")
     if reference["status"] == "known" and "value" not in reference:
         raise ValueError(f"known {name} reference requires a value or interval")
 

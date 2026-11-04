@@ -4,6 +4,7 @@ Handler for editing meal ingredients.
 
 import logging
 from dataclasses import replace
+from datetime import date
 from typing import Any
 
 from src.api.exceptions import (
@@ -22,7 +23,7 @@ from src.app.events.meal.meal_events import (
 from src.app.services.manual_meal_nutrition_resolver import (
     ManualMealNutritionResolver,
 )
-from src.domain.model.meal import FoodItemTranslation, MealStatus
+from src.domain.model.meal import FoodItemTranslation, Meal, MealStatus
 from src.domain.model.meal_projection import MealProjection
 from src.domain.model.nutrition import Macros, NutritionOverride
 from src.domain.ports.async_unit_of_work_port import AsyncUnitOfWorkPort
@@ -38,7 +39,12 @@ from src.domain.services.nutrition_calculation_service import (
     authoritative_units_match,
     canonicalize_authoritative_quantity,
 )
-from src.domain.utils.timezone_utils import utc_now
+from src.domain.utils.timezone_utils import (
+    ensure_utc,
+    get_zone_info,
+    resolve_user_timezone_async,
+    utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +222,9 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                         },
                     )
 
-                old_meal_date = (meal.created_at or utc_now()).date()
-                meal_date = (saved_meal.created_at or utc_now()).date()
+                old_meal_date, meal_date = await self._local_meal_days(
+                    uow, meal, saved_meal
+                )
                 await uow.commit()
 
                 await publish_meal_event(
@@ -405,8 +412,9 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
                     target_meal_id=saved_meal.meal_id,
                     response=replay_response,
                 )
-                old_meal_date = (meal.created_at or utc_now()).date()
-                meal_date = (saved_meal.created_at or utc_now()).date()
+                old_meal_date, meal_date = await self._local_meal_days(
+                    uow, meal, saved_meal
+                )
                 await uow.commit()
 
                 await publish_meal_event(
@@ -767,6 +775,20 @@ class EditMealCommandHandler(EventHandler[EditMealCommand, dict[str, Any]]):
         if not (command.dish_name or "").strip():
             return updated_meal
         return carry_dish_name_to_locales(updated_meal)
+
+    @staticmethod
+    async def _local_meal_days(uow, before: Meal, after: Meal) -> tuple[date, date]:
+        """The user's local days the meal left and landed on.
+
+        Day caches are keyed by local date, so a meal moved to another day
+        must purge both, and an early-morning meal's UTC date is the day before.
+        """
+        tz = get_zone_info(await resolve_user_timezone_async(after.user_id, uow))
+
+        def local_day(meal: Meal) -> date:
+            return (ensure_utc(meal.created_at) or utc_now()).astimezone(tz).date()
+
+        return local_day(before), local_day(after)
 
     async def _save_realigned_translations(self, uow, translations):
         if not translations:

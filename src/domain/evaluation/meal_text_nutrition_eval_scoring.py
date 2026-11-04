@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from statistics import mean
+from typing import Any
 
 from src.domain.model.nutrition.macros import Macros
 
@@ -27,14 +28,14 @@ def evaluate_case(
 ) -> ParseTextEvalCaseResult:
     response_items = list(getattr(observation.response, "items", []) or [])
     raw_items = list(observation.extracted_items)
-    expected_items = list(case.expected_items) or [
-        {
-            "aliases": [case.expected_lookup_name],
-            "quantity_g": case.expected_quantity_g,
-            "candidate_id": case.expected_candidate_id,
-            "source": case.expected_source,
-        }
-    ]
+    fallback_item: dict[str, Any] = {
+        "aliases": [case.expected_lookup_name],
+        "candidate_id": case.expected_candidate_id,
+        "source": case.expected_source,
+    }
+    if case.expected_quantity_g is not None:
+        fallback_item["quantity_g"] = case.expected_quantity_g
+    expected_items = list(case.expected_items) or [fallback_item]
     if not raw_items:
         raw_items = [
             {
@@ -76,9 +77,13 @@ def evaluate_case(
     total_calories = sum(
         float(getattr(item, "calories", 0.0) or 0.0) for item in response_items
     )
-    low, high = case.expected_calorie_range
-    catastrophic = not low <= total_calories <= high
-    calories_error = interval_error(total_calories, (low, high))
+    if case.expected_calorie_range is None:
+        catastrophic = False
+        calories_error = None
+    else:
+        low, high = case.expected_calorie_range
+        catastrophic = not low <= total_calories <= high
+        calories_error = interval_error(total_calories, (low, high))
     macros = sum_item_macros(response_items)
     macro_errors = {
         name: interval_error(macros[name], reference)
@@ -109,6 +114,11 @@ def evaluate_case(
         raw_macros["carbs_g"],
         raw_macros["fat_g"],
         raw_macros["fiber_g"],
+    )
+    raw_calorie_error = (
+        None
+        if case.expected_calorie_range is None
+        else interval_error(raw_calories, case.expected_calorie_range)
     )
     reasons = tuple(
         name
@@ -146,7 +156,7 @@ def evaluate_case(
         handler_total_calories_kcal=total_calories if is_handler_output else None,
         handler_calories_error_kcal=calories_error if is_handler_output else None,
         raw_model_food_count=len(raw_items),
-        raw_model_calories_error_kcal=interval_error(raw_calories, (low, high)),
+        raw_model_calories_error_kcal=raw_calorie_error,
         raw_model_macro_mae_g=raw_macro_errors,
         raw_model_micro_coverage=raw_coverage,
         raw_model_micro_normalized_mae=raw_errors,

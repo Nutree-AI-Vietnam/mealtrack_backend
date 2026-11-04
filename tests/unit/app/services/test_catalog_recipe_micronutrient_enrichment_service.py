@@ -171,3 +171,47 @@ async def test_fdc_id_alone_does_not_claim_existing_micros_are_usda_sourced():
 
     assert result is not None
     assert result.nutrition_micros_sources == {"vitamin_c": "food_reference"}
+
+
+@pytest.mark.asyncio
+async def test_batch_overlay_matches_single_detail_with_one_reference_read():
+    from dataclasses import replace
+
+    from src.app.services.catalog_recipe_micronutrient_enrichment_service import (
+        CatalogRecipeMicronutrientEnrichmentService,
+    )
+
+    orange = CatalogMealIngredient(
+        food_reference_id=7, display_name="Orange", quantity=Decimal("100"), unit="g"
+    )
+    usda = {"vitamin_c": {"amount": 12, "unit": "mg", "source": "usda_fdc"}}
+    with_micros = _meal(
+        ingredient=orange,
+        micros=extra_nutrients_to_micros(usda, validate_units=True),
+    )
+    plain = replace(_meal(), id="catalog-2")
+    catalog = _CatalogRepository(
+        with_micros,
+        overlay={"micros": _complete_estimate(), "sources": {}},
+    )
+
+    class _CountingReferences(_FoodReferenceRepository):
+        reads = 0
+
+        async def get_by_ids(self, ids):
+            type(self).reads += 1
+            return await super().get_by_ids(ids)
+
+    references = _CountingReferences([{"id": 7, "extra_nutrients": usda}], catalog)
+    service = CatalogRecipeMicronutrientEnrichmentService(
+        _uow_factory(catalog, references)
+    )
+
+    batch = await service.load_cached_many((with_micros, plain))
+    single = await service.load_cached(with_micros)
+
+    assert batch[0] == single
+    assert batch[0].nutrition_micros_sources["vitamin_c"] == "usda_fdc"
+    assert batch[1].id == "catalog-2" and batch[1].nutrition_micros_enrichment_loaded
+    assert _CountingReferences.reads == 2  # one for the batch, one for the single
+    assert await service.load_cached_many(()) == ()

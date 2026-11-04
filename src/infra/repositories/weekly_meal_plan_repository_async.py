@@ -7,7 +7,8 @@ import uuid
 from datetime import date, datetime
 from typing import Any, cast
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
+from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, noload, selectinload
 
@@ -15,8 +16,10 @@ from src.domain.exceptions.weekly_meal_planner_exceptions import (
     WeeklyMealPlanConflictError,
 )
 from src.domain.model.weekly_meal_planner import (
+    SLOT_LOG_SOURCE_PLAN,
     WEEKLY_DAYS,
     WEEKLY_SLOTS_PER_DAY,
+    SavedRecipeSnapshot,
     WeeklyMealPlan,
     WeeklyMealPlanPreferences,
     WeeklyMealPlanSlot,
@@ -117,6 +120,8 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         daily_calories: int | None = None,
         catalog_revision: str | None = None,
         recipe_ids: dict[tuple[int, int], str | None] | None = None,
+        algorithm_version: str | None = None,
+        servings: dict[tuple[int, int], tuple[float, int]] | None = None,
     ) -> WeeklyMealPlan:
         plan = WeeklyMealPlanORM(
             id=str(uuid.uuid4()),
@@ -128,15 +133,19 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             timezone=timezone,
             daily_calories=daily_calories,
             catalog_revision=catalog_revision,
-            algorithm_version=WeeklyPlanGenerationService.algorithm_version,
+            algorithm_version=algorithm_version
+            or WeeklyPlanGenerationService.algorithm_version,
         )
         selected = recipe_ids or {}
+        served = servings or {}
         plan.slots = [
             WeeklyMealPlanSlotORM(
                 id=str(uuid.uuid4()),
                 day_index=day,
                 slot_index=slot,
                 catalog_meal_id=selected.get((day, slot)),
+                planned_portion=served.get((day, slot), (1.0, 0))[0],
+                planned_rice_steps=served.get((day, slot), (1.0, 0))[1],
             )
             for day in range(WEEKLY_DAYS)
             for slot in range(WEEKLY_SLOTS_PER_DAY)
@@ -156,6 +165,8 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slots: dict[tuple[int, int], str | None] | None = None,
         expected_revision: int | None = None,
         algorithm_version: str | None = None,
+        saved_slots: dict[tuple[int, int], SavedRecipeSnapshot] | None = None,
+        servings: dict[tuple[int, int], tuple[float, int]] | None = None,
     ) -> WeeklyMealPlan:
         row = await self.get_for_update(
             user_id=user_id, plan_id=plan_id, include_pantry=False
@@ -202,26 +213,36 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             ):
                 raise WeeklyMealPlanConflictError()
             row.status = status
-        if slots:
+        if slots or saved_slots:
             by_coordinate = {
                 (slot.day_index, slot.slot_index): slot for slot in row.slots
             }
-            for coordinate, recipe_id in slots.items():
-                slot = by_coordinate.get(coordinate)
-                if slot is None:
-                    raise ValueError("unknown weekly meal slot")
-                if slot.is_logged:
-                    raise WeeklyMealPlanConflictError(
-                        "Logged weekly meal slots cannot be replaced"
-                    )
+            for coordinate, recipe_id in (slots or {}).items():
+                slot = _replaceable_slot(by_coordinate, coordinate)
                 slot.catalog_meal_id = recipe_id
+                slot.saved_suggestion_id = None
+                slot.saved_recipe = None
+                portion, rice_steps = (servings or {}).get(coordinate, (1.0, 0))
+                slot.planned_portion = portion
+                slot.planned_rice_steps = rice_steps
+                slot.version += 1
+            for coordinate, snapshot in (saved_slots or {}).items():
+                slot = _replaceable_slot(by_coordinate, coordinate)
+                slot.catalog_meal_id = None
+                slot.recipe_override = None
+                slot.saved_suggestion_id = snapshot.suggestion_id
+                slot.saved_recipe = snapshot.to_dict()
                 slot.version += 1
         if algorithm_version is not None:
             row.algorithm_version = algorithm_version
-        changed = any(
-            value is not None
-            for value in (people, preferences, status, algorithm_version)
-        ) or bool(slots)
+        changed = (
+            any(
+                value is not None
+                for value in (people, preferences, status, algorithm_version)
+            )
+            or bool(slots)
+            or bool(saved_slots)
+        )
         if changed:
             row.revision += 1
         await self.session.flush()
@@ -302,6 +323,45 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
             }
             for item in result.scalars().all()
         ]
+
+    async def list_plan_recipe_outcomes(
+        self, *, user_id: str, since: date, limit: int = 400
+    ) -> list[tuple[str, str]]:
+        """What became of each planned dish, newest week first.
+
+        "logged" wins over "skipped" on a slot that carries both, which
+        happens when somebody skips a meal and then logs it anyway: they did
+        eat it, so it is not a refusal.
+        """
+        result = await self.session.execute(
+            select(
+                WeeklyMealPlanSlotORM.catalog_meal_id,
+                WeeklyMealPlanSlotORM.is_logged,
+                WeeklyMealPlanSlotORM.is_skipped,
+            )
+            .join(
+                WeeklyMealPlanORM,
+                WeeklyMealPlanORM.id == WeeklyMealPlanSlotORM.plan_id,
+            )
+            .where(
+                WeeklyMealPlanORM.user_id == user_id,
+                WeeklyMealPlanORM.week_start_date >= since,
+                WeeklyMealPlanSlotORM.catalog_meal_id.is_not(None),
+                or_(
+                    WeeklyMealPlanSlotORM.is_logged.is_(True),
+                    WeeklyMealPlanSlotORM.is_skipped.is_(True),
+                ),
+            )
+            .order_by(WeeklyMealPlanORM.week_start_date.desc())
+            .limit(limit)
+        )
+        outcomes: list[tuple[str, str]] = []
+        for recipe_id, is_logged, is_skipped in result.all():
+            if is_logged:
+                outcomes.append((str(recipe_id), "logged"))
+            elif is_skipped:
+                outcomes.append((str(recipe_id), "skipped"))
+        return outcomes
 
     async def list_grocery_interactions(
         self, *, user_id: str, plan_id: str
@@ -401,6 +461,7 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slot_id: str,
         meal_id: str,
         slot: WeeklyMealPlanSlotORM | None = None,
+        log_source: str = SLOT_LOG_SOURCE_PLAN,
     ) -> None:
         if slot is None:
             result = await self.session.execute(
@@ -419,7 +480,85 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
         slot = cast(Any, slot)
         slot.is_logged = True
         slot.logged_meal_id = meal_id
+        slot.log_source = log_source
+        # Eating the meal ends a skip.
+        slot.is_skipped = False
         slot.version += 1
+        await self.session.flush()
+
+    async def get_plan_for_slot_write(
+        self, *, user_id: str, plan_id: str
+    ) -> WeeklyMealPlan | None:
+        """Lock the plan and its slots for a single-slot state change.
+
+        Same lock order as PATCH (parent, then slots). Follow with
+        update_slot_state in the same unit of work.
+        """
+        row = await self.get_for_update(
+            user_id=user_id, plan_id=plan_id, include_pantry=False
+        )
+        if row is None:
+            return None
+        await self._repair_late_legacy_slots(row)
+        return _to_domain(row)
+
+    async def update_slot_state(
+        self,
+        *,
+        user_id: str,
+        plan_id: str,
+        slot_id: str,
+        **changes: Any,
+    ) -> WeeklyMealPlan:
+        """Set log/skip columns on a slot locked by get_plan_for_slot_write."""
+        allowed = {"is_logged", "logged_meal_id", "log_source", "is_skipped"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unsupported slot state fields: {sorted(unknown)}")
+        row = cast(Any, await self.session.get(WeeklyMealPlanORM, plan_id))
+        if row is None or row.user_id != user_id:
+            raise ValueError("weekly meal plan is not locked for this write")
+        slot = next((item for item in row.slots if item.id == slot_id), None)
+        if slot is None:
+            raise ValueError("weekly meal slot not found")
+        for field, value in changes.items():
+            setattr(slot, field, value)
+        slot.version += 1
+        await self.session.flush()
+        return _to_domain(row)
+
+    async def find_slot_id_for_logged_meal(
+        self, *, user_id: str, meal_id: str
+    ) -> str | None:
+        """Return the owner's slot that a diary meal is logged against, if any."""
+        result = await self.session.execute(
+            select(WeeklyMealPlanSlotORM.id)
+            .join(WeeklyMealPlanORM)
+            .where(
+                WeeklyMealPlanSlotORM.logged_meal_id == meal_id,
+                WeeklyMealPlanORM.user_id == user_id,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def clear_links_for_deleted_meal(self, *, meal_id: str) -> None:
+        """Release slots logged with a meal that is about to be hard-deleted.
+
+        ``logged_meal_id`` is ON DELETE SET NULL, which alone leaves
+        ``is_logged`` true: the slot then refuses a new log or a swap.
+        """
+        await self.session.execute(
+            sql_update(WeeklyMealPlanSlotORM)
+            .where(WeeklyMealPlanSlotORM.logged_meal_id == meal_id)
+            .values(
+                is_logged=False,
+                logged_meal_id=None,
+                log_source=None,
+                version=WeeklyMealPlanSlotORM.version + 1,
+            )
+            .execution_options(synchronize_session="fetch")
+        )
         await self.session.flush()
 
     @planner_timed("lock")
@@ -534,11 +673,30 @@ class AsyncWeeklyMealPlanRepository(WeeklyMealPlanRepositoryPort):
                     day_index=day,
                     slot_index=0,
                     is_logged=False,
+                    is_skipped=False,
                     version=1,
                 )
             )
         await self.session.flush()
         return True
+
+
+def _replaceable_slot(by_coordinate: dict, coordinate: tuple[int, int]) -> Any:
+    slot = by_coordinate.get(coordinate)
+    if slot is None:
+        raise ValueError("unknown weekly meal slot")
+    if slot.is_logged:
+        raise WeeklyMealPlanConflictError("Logged weekly meal slots cannot be replaced")
+    return slot
+
+
+def _saved_recipe(slot: Any) -> SavedRecipeSnapshot | None:
+    saved_suggestion_id = getattr(slot, "saved_suggestion_id", None)
+    if saved_suggestion_id is None:
+        return None
+    return SavedRecipeSnapshot.from_dict(
+        getattr(slot, "saved_recipe", None), suggestion_id=saved_suggestion_id
+    )
 
 
 def _is_late_legacy_row(row: WeeklyMealPlanORM) -> bool:
@@ -568,6 +726,14 @@ def _to_domain(row: WeeklyMealPlanORM | None) -> WeeklyMealPlan:
             logged_meal_id=cast(str | None, slot.logged_meal_id),
             version=cast(int, slot.version),
             recipe_override=cast(dict | None, getattr(slot, "recipe_override", None)),
+            log_source=cast(str | None, getattr(slot, "log_source", None)),
+            is_skipped=bool(getattr(slot, "is_skipped", False)),
+            saved_suggestion_id=cast(
+                str | None, getattr(slot, "saved_suggestion_id", None)
+            ),
+            saved_recipe=_saved_recipe(slot),
+            planned_portion=float(getattr(slot, "planned_portion", None) or 1.0),
+            planned_rice_steps=int(getattr(slot, "planned_rice_steps", None) or 0),
         )
         for slot in sorted(
             data.slots, key=lambda item: (item.day_index, item.slot_index)

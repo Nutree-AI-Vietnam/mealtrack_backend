@@ -5,6 +5,7 @@ All items must provide their own nutrition (via custom_nutrition).
 
 import logging
 import time
+from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -33,6 +34,7 @@ from src.domain.services.nutrition_calculation_service import (
     NutritionCalculationService,
 )
 from src.domain.utils.timezone_utils import (
+    is_same_day_log,
     noon_utc_for_date,
     resolve_user_timezone_async,
     user_today,
@@ -75,12 +77,17 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         )
 
     async def handle(self, event: CreateManualMealCommand):
+        # Whether the log is for its own day is decided before any provider
+        # lookup can carry the save past midnight.
+        received_at = utc_now()
         if event.nutrition_contract_version == 2 and self.uow_factory is not None:
-            return await self._handle_v2(event)
+            return await self._handle_v2(event, received_at)
         # Use provided meal_repository for legacy callers while preserving the
         # same committed-write publication contract as the UoW path.
         if self.meal_repository:
-            saved_meal = await self._process_meal(event, self.meal_repository, uow=None)
+            saved_meal = await self._process_meal(
+                event, self.meal_repository, received_at, uow=None
+            )
             meal_date = (saved_meal.created_at or utc_now()).date()
             await publish_meal_event(
                 self.event_publisher,
@@ -111,7 +118,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
                 else:
                     try:
                         saved_meal, meal_date = await self._process_meal(
-                            event, uow.meals, uow=uow
+                            event, uow.meals, received_at, uow=uow
                         )
                         cache_event_needed = True
                         if reservation:
@@ -163,7 +170,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             )
             return saved_meal
 
-    async def _handle_v2(self, event: CreateManualMealCommand):
+    async def _handle_v2(self, event: CreateManualMealCommand, received_at: datetime):
         """Reserve briefly, then persist prepared nutrition atomically.
 
         Parse/scan flows already produce portion nutrition for custom items.
@@ -207,38 +214,20 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             else:
                 resolved_items = list(event.items)
 
-            resolved_items = [
-                ManualMealNutritionResolver.ensure_source_snapshot(item)
-                for item in resolved_items
-            ]
-
             async with self.uow_factory() as uow:
                 if items_needing_resolution:
                     await self.nutrition_resolver.revalidate_local_items(
                         resolved_source_items, uow.food_references
                     )
-                saved_meal, meal_date = await self._process_meal(
-                    event,
-                    uow.meals,
-                    uow=uow,
-                    resolved_items=resolved_items,
-                    revalidate_local=False,
+                saved_meal, meal_date = await self.save_prepared_meal(
+                    uow, event, received_at, resolved_items
                 )
                 await uow.meal_write_operations.complete(
                     reservation,
                     target_meal_id=saved_meal.meal_id,
                     response={"meal_id": saved_meal.meal_id},
                 )
-            await publish_meal_event(
-                self.event_publisher,
-                saved_meal,
-                event_type="created",
-                environment=self.environment,
-                meal_date=meal_date,
-                language=event.language,
-                event_bus=self.event_bus,
-                source="manual_meal",
-            )
+            await self.publish_created(saved_meal, meal_date, event.language)
 
             return saved_meal
         except ValueError as exc:
@@ -248,6 +237,43 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         except Exception:
             await self._release_v2_write(reservation)
             raise
+
+    async def save_prepared_meal(
+        self,
+        uow: Any,
+        event: CreateManualMealCommand,
+        received_at: datetime,
+        items: list[Any] | None = None,
+    ) -> tuple[Meal, date]:
+        """Insert a meal whose items carry prepared nutrition, in the caller's
+        unit of work; the caller commits, then calls ``publish_created``."""
+        prepared = [
+            ManualMealNutritionResolver.ensure_source_snapshot(item)
+            for item in (items if items is not None else event.items)
+        ]
+        return await self._process_meal(
+            event,
+            uow.meals,
+            received_at,
+            uow=uow,
+            resolved_items=prepared,
+            revalidate_local=False,
+        )
+
+    async def publish_created(
+        self, meal: Meal, meal_date: date, language: str, source: str = "manual_meal"
+    ) -> None:
+        """Publish a committed meal and purge its day before the write returns."""
+        await publish_meal_event(
+            self.event_publisher,
+            meal,
+            event_type="created",
+            environment=self.environment,
+            meal_date=meal_date,
+            language=language,
+            event_bus=self.event_bus,
+            source=source,
+        )
 
     @staticmethod
     def _is_prepared_nutrition(item: Any) -> bool:
@@ -296,6 +322,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
         self,
         event: CreateManualMealCommand,
         meal_repo,
+        received_at: datetime,
         uow=None,
         resolved_items=None,
         revalidate_local=True,
@@ -368,6 +395,7 @@ class CreateManualMealCommandHandler(EventHandler[CreateManualMealCommand, Any])
             ready_at=meal_datetime,
             meal_type=event.meal_type,
             source=source,
+            logged_on_day=is_same_day_log(event.target_date, user_tz, received_at),
         )
 
         try:

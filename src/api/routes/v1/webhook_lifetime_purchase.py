@@ -29,6 +29,7 @@ from src.api.routes.v1.webhook_referral_funnel import (
     credit_referral_on_purchase,
     revoke_referral_on_refund,
 )
+from src.api.routes.v1.webhook_subscription_lifecycle import _drop_billing_issue_push
 from src.api.routes.v1.webhook_subscription_rows import (
     apply_subscription_info,
     had_paid_purchase,
@@ -137,6 +138,7 @@ async def handle_lifetime_purchase(
             event_publisher=event_publisher,
             user_id=str(user.id),
         )
+    await _drop_billing_issue_push(uow, user)
     return play_renewals
 
 

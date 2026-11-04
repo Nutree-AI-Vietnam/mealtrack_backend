@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 from uuid import UUID
 
+from src.app.services.supplement_days import with_dose_dates
 from src.app.services.weekly_recap_activity_stats import recap_goal
 from src.app.services.weekly_recap_meal_stats import FoodMeal, food_meals
 from src.domain.model.hydration.hydration_entry import HydrationEntry
@@ -71,7 +72,11 @@ async def load_week_logs(
     """
     tz = get_zone_info(tz_name)
     log_dates = tuple(
-        await uow.meals.get_dates_with_meals(user_id, user_timezone=tz_name)
+        await with_dose_dates(
+            uow,
+            user_id,
+            await uow.meals.get_dates_with_meals(user_id, user_timezone=tz_name),
+        )
     )
     created = sign_up_day(created_at, tz, fallback=min(log_dates, default=week_start))
     if week_days(week_start, created) < min_week_days:

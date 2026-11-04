@@ -78,3 +78,16 @@ def test_deleting_a_drink_changes_the_fingerprint_even_if_a_meal_is_newer():
     after = intake_watermark(meal_touch, None, None)
     assert before != after
     assert after == "2026-10-12T08:00:00+00:00||"
+
+
+def test_a_dose_touch_extends_the_watermark_only_on_days_with_doses():
+    from datetime import UTC, datetime
+
+    meal_touch = datetime(2026, 11, 1, 1, 0, tzinfo=UTC)
+    dose_touch = datetime(2026, 11, 1, 2, 0, tzinfo=UTC)
+
+    without = intake_watermark(meal_touch, None, None)
+    with_dose = intake_watermark(meal_touch, None, None, dose_touch)
+
+    assert without == intake_watermark(meal_touch, None, None, None)
+    assert with_dose.startswith(without + "|") and with_dose != without

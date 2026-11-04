@@ -7,21 +7,17 @@ from datetime import date
 from typing import Any
 from uuid import uuid4
 
-from src.domain.exceptions.meal_recommendation_exceptions import (
-    MealRecommendationNotFoundError,
-)
 from src.domain.model.meal import Meal, MealImage, MealStatus
 from src.domain.model.meal_recommendation import (
     CatalogMeal,
     CatalogMealIngredient,
-    PersistedMealRecommendationPlan,
-    PersistedMealRecommendationSlot,
 )
 from src.domain.model.nutrition import FoodItem, Macros, Nutrition
 from src.domain.model.nutrition.extra_nutrients import (
     complete_micros_from_per_100g_portions,
 )
 from src.domain.model.nutrition.micros_ops import scale_micros
+from src.domain.model.weekly_meal_planner import SavedRecipeSnapshot
 from src.domain.ports.food_reference_repository_port import (
     FoodReferenceNutritionProjection,
 )
@@ -33,7 +29,7 @@ from src.domain.services.weekly_meal_planner.meal_log_snapshot import (
     build_logged_meal_snapshot,
     select_logged_nutrition,
 )
-from src.domain.utils.timezone_utils import noon_utc_for_date
+from src.domain.utils.timezone_utils import is_same_day_log, log_moment, utc_now
 
 _CATALOG_CONVERTER = IngredientQuantityConversionService(
     allow_unverified=True,
@@ -41,6 +37,9 @@ _CATALOG_CONVERTER = IngredientQuantityConversionService(
     allow_implausible_macros=True,
     allow_common_unit_fallbacks=True,
 )
+# Nutrition holds at most this many food items.
+_MAX_FOOD_ITEMS = 50
+_MAX_FOOD_ITEM_QUANTITY = 10_000.0
 _WEIGHT_UNITS_TO_GRAMS = {
     "g": 1.0,
     "gram": 1.0,
@@ -56,25 +55,6 @@ _WEIGHT_UNITS_TO_GRAMS = {
 class RecommendedMealMaterializationService:
     """Build and persist normal meals from immutable catalog recipe snapshots."""
 
-    async def materialize(
-        self,
-        uow,
-        *,
-        plan: PersistedMealRecommendationPlan,
-        slot: PersistedMealRecommendationSlot,
-    ) -> Meal:
-        if slot.selected is None or slot.selected.catalog_meal is None:
-            raise MealRecommendationNotFoundError
-        catalog_meal = slot.selected.catalog_meal
-        return await self.materialize_from_catalog(
-            uow,
-            user_id=plan.user_id,
-            catalog_meal=catalog_meal,
-            meal_date=slot.slot_date,
-            meal_type=slot.meal_type,
-            timezone=plan.timezone,
-        )
-
     async def materialize_from_catalog(
         self,
         uow,
@@ -86,6 +66,7 @@ class RecommendedMealMaterializationService:
         timezone: str,
         portion_multiplier: float = 1.0,
         source: str = "meal_recommendation",
+        rice_steps: int = 0,
     ) -> Meal:
         if portion_multiplier not in {0.5, 1.0, 1.5, 2.0}:
             raise ValueError("portion_multiplier must be one of 0.5, 1, 1.5, or 2")
@@ -102,11 +83,15 @@ class RecommendedMealMaterializationService:
             food_items = _distribute_catalog_macros(
                 food_items, catalog_meal, portion_multiplier
             )
+        rice = _rice_food_item(rice_steps)
+        if rice is not None:
+            food_items = [*food_items, rice]
         recipe_micros = complete_micros_from_per_100g_portions(
             _ingredient_micro_portions(catalog_meal, projections)
         )
         recipe_micros = scale_micros(recipe_micros, portion_multiplier)
-        meal_time = noon_utc_for_date(meal_date, timezone)
+        now = utc_now()
+        meal_time = log_moment(meal_date, timezone, now)
         verified_nutrition = {
             "calories": int(round(catalog_meal.calories * portion_multiplier)),
             "protein_g": float(catalog_meal.protein_g) * portion_multiplier,
@@ -147,8 +132,141 @@ class RecommendedMealMaterializationService:
             catalog_meal_content_hash=logged.catalog_meal_content_hash,
             recipe_snapshot=logged.recipe_snapshot,
             nutrition_snapshot=logged.nutrition_snapshot,
+            logged_on_day=is_same_day_log(meal_date, timezone, now),
         )
         return await uow.meals.save(meal)
+
+    async def materialize_from_saved_recipe(
+        self,
+        uow,
+        *,
+        user_id: str,
+        recipe: SavedRecipeSnapshot,
+        meal_date: date,
+        meal_type: str,
+        timezone: str,
+        portion_multiplier: float = 1.0,
+        source: str = "weekly_meal_planner",
+    ) -> Meal:
+        """Persist a normal meal from a plan slot's copy of a saved recipe.
+
+        Macros are the saved per-serving macros times the portion; calories
+        follow from them with the backend formula. Ingredients are the
+        recipe's lines divided by its servings, times the portion.
+        """
+        if portion_multiplier not in {0.5, 1.0, 1.5, 2.0}:
+            raise ValueError("portion_multiplier must be one of 0.5, 1, 1.5, or 2")
+        macros = recipe.macros(portion_multiplier)
+        food_items = await _saved_recipe_food_items(uow, recipe, portion_multiplier)
+        now = utc_now()
+        meal_time = log_moment(meal_date, timezone, now)
+        meal = Meal(
+            meal_id=str(uuid4()),
+            user_id=user_id,
+            status=MealStatus.READY,
+            created_at=meal_time,
+            ready_at=meal_time,
+            image=MealImage(
+                image_id=str(uuid4()), format="jpeg", size_bytes=1, url=recipe.image_url
+            ),
+            dish_name=recipe.name,
+            nutrition=Nutrition(macros=macros, food_items=food_items or None),
+            meal_type=meal_type,
+            source=source,
+            recipe_snapshot={
+                "recipe_name": recipe.name,
+                "saved_suggestion_id": recipe.suggestion_id,
+                "servings": recipe.servings,
+                "ingredients": [item.to_dict() for item in recipe.ingredients],
+                "portion_multiplier": portion_multiplier,
+            },
+            nutrition_snapshot={
+                "calories": macros.total_calories,
+                "protein_g": macros.protein,
+                "carbs_g": macros.carbs,
+                "fat_g": macros.fat,
+                "fiber_g": macros.fiber,
+                "source": "saved_recipe",
+            },
+            description=recipe.description,
+            instructions=[step.to_dict() for step in recipe.steps] or None,
+            cook_time_min=recipe.cook_time_minutes,
+            cuisine_type=recipe.cuisine_type,
+            origin_country=recipe.origin_country,
+            emoji=recipe.emoji,
+            logged_on_day=is_same_day_log(meal_date, timezone, now),
+        )
+        return await uow.meals.save(meal)
+
+
+async def _saved_recipe_food_items(
+    uow, recipe: SavedRecipeSnapshot, portion_multiplier: float
+) -> list[FoodItem]:
+    """One food item per usable line, scaled to the eaten portion.
+
+    Line macros cover the whole recipe and are divided like the amounts. When
+    no line has macros, the meal's macros are spread by weight. A food
+    reference id is kept only while that reference still exists.
+    """
+    factor = portion_multiplier / recipe.servings
+    known_ids = set(
+        await _load_nutrition_projections_by_id(
+            uow,
+            [
+                item.food_reference_id
+                for item in recipe.ingredients
+                if item.food_reference_id is not None
+            ],
+        )
+    )
+    items: list[FoodItem] = []
+    for line in recipe.ingredients:
+        if len(items) == _MAX_FOOD_ITEMS:
+            break
+        if line.amount is not None:
+            quantity, unit = line.amount * factor, line.unit or "piece"
+        elif line.grams is not None:
+            quantity, unit = line.grams * factor, "g"
+        else:
+            continue
+        if not 0 < quantity <= _MAX_FOOD_ITEM_QUANTITY:
+            continue
+        items.append(
+            FoodItem(
+                id=str(uuid4()),
+                name=line.name,
+                quantity=quantity,
+                unit=unit,
+                macros=Macros(
+                    protein=(line.protein or 0.0) * factor,
+                    carbs=(line.carbs or 0.0) * factor,
+                    fat=(line.fat or 0.0) * factor,
+                    fiber=(line.fiber or 0.0) * factor,
+                    sugar=(line.sugar or 0.0) * factor,
+                ),
+                food_reference_id=(
+                    line.food_reference_id
+                    if line.food_reference_id in known_ids
+                    else None
+                ),
+                is_custom=line.food_reference_id not in known_ids,
+            )
+        )
+    if _needs_catalog_macro_fallback(items):
+        items = _distribute_macros(items, recipe.macros(portion_multiplier))
+    return items
+
+
+async def _load_nutrition_projections_by_id(
+    uow, food_reference_ids: list[int]
+) -> dict[int, FoodReferenceNutritionProjection]:
+    if not food_reference_ids:
+        return {}
+    repo = getattr(uow, "food_references", None)
+    loader = getattr(repo, "get_nutrition_projections", None)
+    if loader is None:
+        return {}
+    return await loader(food_reference_ids)
 
 
 def _recipe_payload(catalog_meal: CatalogMeal, portion_multiplier: float = 1.0) -> dict:
@@ -232,6 +350,28 @@ def _ingredient_micro_portions(
     return portions
 
 
+# Viet Nam NIN counts a cereal serving as 55 g steamed rice: 20 g
+# carbohydrate, 1.5 g protein, 0.15 g fat. Calories come from the canonical
+# backend formula over those macros, never from a stored number.
+RICE_STEP_GRAMS = 55
+_RICE_STEP_MACROS = (1.5, 20.0, 0.15)
+_RICE_ITEM_NAME = "Cơm trắng"
+
+
+def _rice_food_item(rice_steps: int) -> FoodItem | None:
+    """The rice served beside a dish, as its own line on the logged meal."""
+    if rice_steps <= 0:
+        return None
+    protein, carbs, fat = (value * rice_steps for value in _RICE_STEP_MACROS)
+    return FoodItem(
+        id=str(uuid4()),
+        name=_RICE_ITEM_NAME,
+        quantity=float(rice_steps * RICE_STEP_GRAMS),
+        unit="g",
+        macros=Macros(protein=protein, carbs=carbs, fat=fat, fiber=0.0, sugar=0.0),
+    )
+
+
 def _food_item_for_ingredient(
     ingredient: CatalogMealIngredient,
     projection: FoodReferenceNutritionProjection | None,
@@ -297,14 +437,25 @@ def _distribute_catalog_macros(
     catalog_meal: CatalogMeal,
     portion_multiplier: float = 1.0,
 ) -> list[FoodItem]:
+    return _distribute_macros(
+        food_items,
+        Macros(
+            protein=float(catalog_meal.protein_g) * portion_multiplier,
+            carbs=float(catalog_meal.carbs_g) * portion_multiplier,
+            fat=float(catalog_meal.fat_g) * portion_multiplier,
+            fiber=float(catalog_meal.fiber_g) * portion_multiplier,
+            sugar=float(catalog_meal.sugar_g) * portion_multiplier,
+        ),
+    )
+
+
+def _distribute_macros(food_items: list[FoodItem], totals: Macros) -> list[FoodItem]:
+    """Spread meal-level macros over the items by estimated weight."""
     total_weight = sum(_estimated_grams(item) for item in food_items)
     if total_weight <= 0:
         return food_items
-    protein = float(catalog_meal.protein_g) * portion_multiplier
-    carbs = float(catalog_meal.carbs_g) * portion_multiplier
-    fat = float(catalog_meal.fat_g) * portion_multiplier
-    fiber = float(catalog_meal.fiber_g) * portion_multiplier
-    sugar = float(catalog_meal.sugar_g) * portion_multiplier
+    protein, carbs, fat = totals.protein, totals.carbs, totals.fat
+    fiber, sugar = totals.fiber, totals.sugar
     distributed: list[FoodItem] = []
     for item in food_items:
         ratio = _estimated_grams(item) / total_weight
@@ -322,6 +473,7 @@ def _distribute_catalog_macros(
                     sugar=round(sugar * ratio, 1),
                 ),
                 food_reference_id=item.food_reference_id,
+                is_custom=item.is_custom,
             )
         )
     return distributed

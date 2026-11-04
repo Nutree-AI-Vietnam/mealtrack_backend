@@ -2,8 +2,22 @@
 
 import logging
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import DateTime, and_, cast, delete, func, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    DateTime,
+    Time,
+    and_,
+    bindparam,
+    cast,
+    delete,
+    func,
+    literal_column,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, joinedload, noload, selectinload
 
@@ -14,11 +28,16 @@ from src.domain.model.nutrition import FoodItem, Nutrition
 from src.domain.model.nutrition.extra_nutrients import merge_meal_micros
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.micros_ops import mapping_from_micros
+from src.domain.model.weekly_meal_planner.user_food_memory import LoggedMealShape
 from src.domain.ports.meal_repository_port import MealRepositoryPort
 from src.domain.services.meal_recommendation.ingredient_affinity_service import (
     IngredientHistoryBucket,
 )
-from src.domain.utils.timezone_utils import get_zone_info, utc_now
+from src.domain.utils.timezone_utils import (
+    BACKDATED_LOCAL_TIME,
+    get_zone_info,
+    utc_now,
+)
 from src.infra.database.models.enums import MealStatusEnum
 from src.infra.database.models.meal.food_item_translation_model import (
     FoodItemTranslationORM,
@@ -92,6 +111,12 @@ def _domain_hydratable_active_meal_filter():
     )
 
 
+# Same exclusion as the filter above, spelled as a constant so PostgreSQL can
+# prove the partial predicate of ix_meal_streak_user_created. A bound
+# parameter (``status != $1``) does not.
+_STREAK_INDEX_PREDICATE = MealORM.status.op("<>")(literal_column("'INACTIVE'"))
+
+
 def _map_domain_hydratable_meals(db_meals: list[MealORM]) -> list[Meal]:
     meals: list[Meal] = []
     for db_meal in db_meals:
@@ -138,6 +163,8 @@ class AsyncMealRepository(MealRepositoryPort):
         if existing_meal:
             existing_meal.status = MealStatusMapper.to_db(meal.status)
             existing_meal.dish_name = meal.dish_name
+            # An edit can move the meal's log time, and with it the meal type.
+            existing_meal.created_at = meal.created_at
             existing_meal.meal_type = meal.meal_type
             existing_meal.ready_at = meal.ready_at
             existing_meal.error_message = meal.error_message
@@ -179,6 +206,7 @@ class AsyncMealRepository(MealRepositoryPort):
                     )
 
             await self.session.flush()
+            await self._capture_scan_baseline(meal)
             return await self._reload_meal_domain(
                 meal.meal_id, fallback_image=meal.image
             )
@@ -193,9 +221,17 @@ class AsyncMealRepository(MealRepositoryPort):
 
         self.session.add(db_meal)
         await self.session.flush()
+        await self._capture_scan_baseline(meal)
         return await self._reload_meal_domain(
             db_meal.meal_id, fallback_image=meal.image
         )
+
+    async def _capture_scan_baseline(self, meal: Meal) -> None:
+        from src.infra.repositories.scan_feedback_repository import (
+            ScanFeedbackRepository,
+        )
+
+        await ScanFeedbackRepository(self.session).capture_baseline(meal)
 
     async def find_by_id(
         self, meal_id: str, projection: MealProjection = MealProjection.FULL
@@ -522,6 +558,91 @@ class AsyncMealRepository(MealRepositoryPort):
             rows.append((str(meal_id), dish_name, raw))
         return rows
 
+    async def recent_logged_meal_shapes(
+        self,
+        *,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+        user_timezone: str | None = None,
+        limit: int = 120,
+    ) -> list[LoggedMealShape]:
+        """Recent logged meals, reduced to how this person eats.
+
+        The food item names come back as they were logged; whether one of
+        them is a staple is a regional question the domain answers.
+        """
+        tz = get_zone_info(user_timezone) if user_timezone else UTC
+        start_dt = datetime.combine(
+            start_date, datetime.min.time(), tzinfo=tz
+        ).astimezone(UTC)
+        end_dt = (
+            datetime.combine(end_date, datetime.min.time(), tzinfo=tz)
+            + timedelta(days=1)
+        ).astimezone(UTC)
+        occurred_at = func.coalesce(MealORM.ready_at, MealORM.created_at)
+
+        result = await self.session.execute(
+            select(
+                MealORM.meal_id,
+                MealORM.dish_name,
+                MealORM.meal_type,
+                MealORM.cuisine_type,
+                NutritionORM.protein,
+                NutritionORM.carbs,
+                NutritionORM.fat,
+                NutritionORM.fiber,
+                occurred_at.label("occurred_at"),
+            )
+            .outerjoin(NutritionORM, NutritionORM.meal_id == MealORM.meal_id)
+            .where(
+                MealORM.user_id == user_id,
+                occurred_at >= start_dt,
+                occurred_at < end_dt,
+                _domain_hydratable_active_meal_filter(),
+            )
+            .order_by(occurred_at.desc())
+            .limit(limit)
+        )
+        rows = result.all()
+        if not rows:
+            return []
+
+        meal_ids = [str(row[0]) for row in rows]
+        items = await self.session.execute(
+            select(NutritionORM.meal_id, FoodItemORM.name)
+            .select_from(NutritionORM)
+            .join(FoodItemORM, FoodItemORM.nutrition_id == NutritionORM.id)
+            .where(
+                NutritionORM.meal_id.in_(meal_ids),
+                FoodItemORM.is_deleted.is_(False),
+            )
+        )
+        names_by_meal: dict[str, list[str]] = {}
+        for meal_id, name in items.all():
+            names_by_meal.setdefault(str(meal_id), []).append(str(name or ""))
+
+        shapes: list[LoggedMealShape] = []
+        for row in rows:
+            meal_id, dish_name, meal_type, cuisine = row[0], row[1], row[2], row[3]
+            protein, carbs, fat, fiber = row[4], row[5], row[6], row[7]
+            names = names_by_meal.get(str(meal_id), [])
+            shapes.append(
+                LoggedMealShape(
+                    dish_name=str(dish_name or ""),
+                    meal_type=str(meal_type) if meal_type else None,
+                    cuisine=str(cuisine) if cuisine else None,
+                    item_names=tuple(names),
+                    calories=Macros.raw_total_calories(
+                        float(protein or 0),
+                        float(carbs or 0),
+                        float(fat or 0),
+                        float(fiber or 0),
+                    ),
+                )
+            )
+        return shapes
+
     async def aggregate_linked_ingredient_history(
         self,
         *,
@@ -688,6 +809,48 @@ class AsyncMealRepository(MealRepositoryPort):
                 day_val = date.fromisoformat(day_val)
             if isinstance(day_val, date):
                 out.append(day_val)
+        return out
+
+    async def get_streak_log_days(
+        self, user_id: str, user_timezone: str | None = None
+    ) -> list[tuple[date, bool]]:
+        """Each local day with a log, and whether one was made on the day itself.
+
+        ``logged_on_day`` is stored when a log is created. Older rows fall back
+        to the stamp: a log made later for a past day sits at local noon
+        (``BACKDATED_LOCAL_TIME``). Water counts, as it saves a meal row too.
+        """
+        local_ts: ColumnElement[Any] = MealORM.created_at
+        if user_timezone and user_timezone != "UTC":
+            created_at = cast(MealORM.created_at, DateTime(timezone=True))
+            local_ts = func.timezone(user_timezone, created_at)
+        local_day = func.date(local_ts)
+        same_day = func.bool_or(
+            func.coalesce(
+                MealORM.logged_on_day,
+                cast(local_ts, Time) != bindparam("noon", BACKDATED_LOCAL_TIME, Time),
+            )
+        )
+        # No created_at lower bound. best_streak is the longest run ever, and
+        # last_logged_date is the newest logged day even when it is old. A
+        # lookback that stops at a gap would drop both. ix_meal_streak_user_created
+        # is what keeps this full history off the heap.
+        result = await self.session.execute(
+            select(local_day, same_day)
+            .where(
+                MealORM.user_id == user_id,
+                _STREAK_INDEX_PREDICATE,
+                _domain_hydratable_active_meal_filter(),
+            )
+            .group_by(local_day)
+            .order_by(local_day.desc())
+        )
+        out: list[tuple[date, bool]] = []
+        for day_val, has_same_day in result.all():
+            if isinstance(day_val, str):
+                day_val = date.fromisoformat(day_val)
+            if isinstance(day_val, date):
+                out.append((day_val, bool(has_same_day)))
         return out
 
     async def count_by_source(self, user_id: str, source: str) -> int:

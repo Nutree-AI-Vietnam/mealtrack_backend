@@ -11,7 +11,17 @@ from uuid import UUID
 
 from src.domain.model.auth.auth_provider import AuthProvider
 from src.domain.model.base import BaseDomainModel
+from src.domain.model.user.user_avatar import UserAvatar
 from src.domain.utils.timezone_utils import utc_now
+
+
+def age_on(date_of_birth: date, today: date) -> int:
+    """Whole years from a date of birth to today."""
+    return (
+        today.year
+        - date_of_birth.year
+        - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+    )
 
 
 @dataclass(kw_only=True)
@@ -49,6 +59,11 @@ class UserProfileDomainModel(BaseDomainModel):
     journey_progress_seed_percent: float = 0.0
     daily_water_goal_ml: int | None = None
     profile_target_revision: int = 1
+    weight_loss_kg_per_week: float | None = None
+    weight_gain_kg_per_week: float | None = None
+    pace_clinician_disclaimer: bool = False
+    # Local date of the latest pace change, loss or gain.
+    weight_loss_pace_reset_on: date | None = None
 
 
 @dataclass(kw_only=True)
@@ -71,6 +86,8 @@ class UserDomainModel(BaseDomainModel):
     photo_url: str | None = None
     deleted_at: datetime | None = None
     language_code: str | None = None
+    # Read-only here: only the repository's update_user_avatar writes it.
+    avatar: UserAvatar = field(default_factory=UserAvatar)
     profiles: list[UserProfileDomainModel] = field(default_factory=list)
 
     @property

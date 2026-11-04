@@ -21,14 +21,11 @@ from src.domain.utils.food_search_text import (
     clip_food_search_query,
     food_search_words,
     required_food_search_words,
+    search_word_pattern,
 )
 from src.infra.database.models.food_reference_model import FoodReferenceModel
 
 GLOBAL_REGION = "global"
-
-# Shorter fragments only match at a word start: an infix "bo" would hit
-# "jumbo" and "bolognese" for every "bò" query.
-_INFIX_MIN_LENGTH = 3
 
 # A whole-word phrase hit also accepts these English plural endings on its
 # last word, so "egg" ranks "Eggs, scrambled" with "Egg, boiled".
@@ -76,9 +73,7 @@ def build_local_search_statement(
 
 
 def _word_match(word: str) -> ColumnElement[bool]:
-    # Folded words are [a-z0-9]+, so they never carry LIKE wildcards.
-    pattern = f"%{word}%" if len(word) >= _INFIX_MIN_LENGTH else f"% {word}%"
-    return FoodReferenceModel.name_search.like(pattern)
+    return FoodReferenceModel.name_search.like(search_word_pattern(word))
 
 
 def _relevance_order(raw_query: str) -> tuple[Any, ...]:
