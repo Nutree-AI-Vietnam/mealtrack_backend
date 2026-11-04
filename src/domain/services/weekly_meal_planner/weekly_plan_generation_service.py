@@ -11,6 +11,7 @@ from functools import lru_cache
 
 from src.domain.model.meal_recommendation import CatalogMeal
 from src.domain.model.nutrition.macros import Macros
+from src.domain.model.nutrition.plausibility import MAX_KCAL_PER_100G
 from src.domain.model.weekly_meal_planner import (
     SLOT_MEAL_TYPES,
     WEEKLY_DAYS,
@@ -561,7 +562,6 @@ def _word_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
 #
 # Pure fat is about 900 kcal per 100 g, so anything denser is arithmetic that
 # went wrong rather than food.
-MAX_KCAL_PER_100G = 900.0
 # A serving under this is a garnish; over it is a party.
 MIN_SERVING_KCAL = 80.0
 MAX_SERVING_KCAL = 1600.0
