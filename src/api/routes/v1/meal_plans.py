@@ -161,6 +161,7 @@ async def _prepared_plan_response(
     budget: dict | None,
     translation_service,
     include_grocery_count: bool,
+    respond: bool = True,
 ):
     """Open the week and let a background job write its dishes.
 
@@ -194,6 +195,8 @@ async def _prepared_plan_response(
             )
         except Exception:  # noqa: BLE001 - the week is still shown, empty
             logger.exception("Could not queue the write of plan %s", plan.id)
+    if not respond:
+        return None
     return await _plan_response(
         plan,
         event_bus,
@@ -202,6 +205,67 @@ async def _prepared_plan_response(
         include_grocery_count=include_grocery_count,
         localization_timeout_seconds=1.5,
     )
+
+
+# The last day of the plan week. Somebody who opens the app on Sunday has
+# next week written before they go looking for it; anybody else still gets
+# it the moment they ask, as before.
+PREPARE_NEXT_WEEK_WEEKDAY = 6
+
+
+async def _prepare_next_week(
+    request,
+    *,
+    event_bus,
+    user_id: str,
+    week: date,
+    timezone: str,
+    plan,
+) -> None:
+    """Start next week's dishes while this week is being read.
+
+    Only on the last day of the week, and only when next week has no plan.
+    Writing a week takes minutes, so starting it a day early is the
+    difference between a user seeing their week and watching it appear.
+
+    Never raises: this is a head start, not part of the answer.
+    """
+    try:
+        today = datetime.now(get_zone_info(timezone)).date()
+        if today.weekday() != PREPARE_NEXT_WEEK_WEEKDAY or today < week:
+            return
+        next_week = week + timedelta(days=7)
+        existing = await event_bus.send(
+            GetCurrentWeeklyPlanQuery(user_id=user_id, week_start_date=next_week)
+        )
+        if existing is not None:
+            return
+        budget = await _weekly_budget(
+            event_bus,
+            GetWeeklyBudgetQuery(
+                user_id=user_id, target_date=today, header_timezone=timezone
+            ),
+        )
+        daily_calories = (
+            int(round(budget.get("adjusted_daily_calories") or 0)) if budget else 0
+        )
+        if daily_calories <= 0:
+            daily_calories = 2000
+        await _prepared_plan_response(
+            request,
+            event_bus=event_bus,
+            user_id=user_id,
+            week=next_week,
+            timezone=timezone,
+            preferences=plan.preferences,
+            daily_calories=daily_calories,
+            budget=budget,
+            translation_service=None,
+            include_grocery_count=False,
+            respond=False,
+        )
+    except Exception:  # noqa: BLE001 - this week's answer is what was asked for
+        logger.warning("Could not start next week for user %s", user_id)
 
 
 @router.get("/v1/meal-plans/current", response_model=WeeklyMealPlanResponse)
@@ -270,6 +334,16 @@ async def get_current_weekly_plan(
                     daily_calories=daily_calories,
                     **_macro_targets(budget),
                 )
+            )
+
+        if get_settings().WEEKLY_PLAN_AI_DISHES_ENABLED:
+            await _prepare_next_week(
+                request,
+                event_bus=event_bus,
+                user_id=user_id,
+                week=week,
+                timezone=timezone,
+                plan=plan,
             )
 
         return await _plan_response(

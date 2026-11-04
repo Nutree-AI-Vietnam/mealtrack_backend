@@ -150,3 +150,94 @@ class TestWhatTheClientIsTold:
     def test_the_catalogue_path_is_still_what_runs_while_it_is_off(self):
         """The generate command is untouched; only the branch in front moved."""
         assert GenerateWeeklyMealPlanCommand is not PrepareWeeklyMealPlanCommand
+
+
+class TestAHeadStartOnNextWeek:
+    """Sunday opens next week so nobody watches theirs being written."""
+
+    @pytest.fixture
+    def week(self, monkeypatch):
+        seen = SimpleNamespace(prepared=[], looked_up=[])
+
+        async def send(command):
+            name = type(command).__name__
+            if name == "GetCurrentWeeklyPlanQuery":
+                seen.looked_up.append(command.week_start_date)
+                return None
+            return _plan()
+
+        async def prepared(request, **kwargs):
+            seen.prepared.append(kwargs["week"])
+            return None
+
+        async def budget(event_bus, query):
+            return {"adjusted_daily_calories": 1800}
+
+        monkeypatch.setattr(route, "_prepared_plan_response", prepared)
+        monkeypatch.setattr(route, "_weekly_budget", budget)
+        seen.send = send
+        return seen
+
+    async def _run(self, week, *, today):
+        import datetime as real_datetime
+
+        class _Clock(real_datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real_datetime.datetime(
+                    today.year, today.month, today.day, 9, tzinfo=tz
+                )
+
+        original = route.datetime
+        route.datetime = _Clock
+        try:
+            await route._prepare_next_week(
+                SimpleNamespace(),
+                event_bus=SimpleNamespace(send=week.send),
+                user_id="user-1",
+                week=date(2026, 11, 2),
+                timezone="Asia/Ho_Chi_Minh",
+                plan=SimpleNamespace(preferences=WeeklyMealPlanPreferences(people=1)),
+            )
+        finally:
+            route.datetime = original
+
+    @pytest.mark.asyncio
+    async def test_sunday_starts_the_week_after(self, week):
+        await self._run(week, today=date(2026, 11, 8))
+
+        assert week.prepared == [date(2026, 11, 9)]
+        assert week.looked_up == [date(2026, 11, 9)]
+
+    @pytest.mark.asyncio
+    async def test_any_other_day_leaves_it_alone(self, week):
+        await self._run(week, today=date(2026, 11, 4))
+
+        assert week.prepared == []
+        assert week.looked_up == []
+
+    @pytest.mark.asyncio
+    async def test_a_week_already_opened_is_not_opened_again(self, week, monkeypatch):
+        async def send(command):
+            if type(command).__name__ == "GetCurrentWeeklyPlanQuery":
+                return _plan()
+            return _plan()
+
+        week.send = send
+
+        await self._run(week, today=date(2026, 11, 8))
+
+        assert week.prepared == []
+
+    @pytest.mark.asyncio
+    async def test_a_head_start_that_fails_is_never_the_user_s_problem(
+        self, week, monkeypatch
+    ):
+        async def boom(event_bus, query):
+            raise RuntimeError("the budget service is down")
+
+        monkeypatch.setattr(route, "_weekly_budget", boom)
+
+        await self._run(week, today=date(2026, 11, 8))
+
+        assert week.prepared == []
