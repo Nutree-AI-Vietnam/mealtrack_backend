@@ -30,6 +30,9 @@ from src.domain.model.weekly_meal_planner.user_food_memory import (
 from src.domain.services.meal_recommendation.calorie_allocation_policy import (
     CalorieAllocationPolicy,
 )
+from src.domain.services.meal_recommendation.ingredient_quantity_normalization import (
+    normalize_ingredient_quantity,
+)
 from src.domain.services.weekly_meal_planner.allergen_constraint import (
     normalize_allergen_code,
     recipe_excluded_by_allergen,
@@ -42,6 +45,7 @@ from src.domain.services.weekly_meal_planner.meal_practicality import (
     practicality_rank,
 )
 from src.domain.services.weekly_meal_planner.recipe_publication import (
+    MIN_SERVING_GRAMS,
     is_planner_eligible,
 )
 
@@ -341,6 +345,8 @@ class WeeklyPlanGenerationService:
         non_meal = features.non_meal if features else _is_non_meal_recipe(meal)
         if non_meal:
             return False
+        if not is_edible_serving(meal):
+            return False
         if not any(
             meal_type_for_slot(slot) in meal.meal_types
             for slot in range(WEEKLY_SLOTS_PER_DAY)
@@ -545,6 +551,54 @@ def _word_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
     return re.compile(
         r"(?<!\w)(?:" + "|".join(re.escape(word) for word in words) + r")(?!\w)"
     )
+
+
+# What a serving of food can physically be. The database says every one of
+# its recipes is published, nutrition-ready and active; staging has 920 such
+# rows of which 100 carry no calories at all and 157 are syrups, preserves
+# and how-to posts. A status column is a claim, not a measurement, so the
+# planner checks the numbers itself before it plans anybody's week on them.
+#
+# Pure fat is about 900 kcal per 100 g, so anything denser is arithmetic that
+# went wrong rather than food.
+MAX_KCAL_PER_100G = 900.0
+# A serving under this is a garnish; over it is a party.
+MIN_SERVING_KCAL = 80.0
+MAX_SERVING_KCAL = 1600.0
+
+
+def is_edible_serving(meal: CatalogMeal) -> bool:
+    """Whether this row describes food a person could be served.
+
+    Independent of publication_status and nutrition_status: those are what
+    the import believed, and the import was wrong often enough to matter.
+    """
+    protein, carbs, fat, fiber = meal_macros(meal)
+    if protein <= 0 and carbs <= 0 and fat <= 0:
+        return False
+    kcal = Macros.raw_total_calories(protein, carbs, fat, fiber)
+    if not MIN_SERVING_KCAL <= kcal <= MAX_SERVING_KCAL:
+        return False
+    grams = _weighed_serving_grams(meal)
+    # Only judge density when the weighed lines plausibly cover the dish. A
+    # recipe that lists its rice in grams and its herbs in bó would otherwise
+    # read as impossibly dense and be thrown away for a bookkeeping reason.
+    if grams >= MIN_SERVING_GRAMS and kcal / grams * 100 > MAX_KCAL_PER_100G:
+        return False
+    return True
+
+
+def _weighed_serving_grams(meal: CatalogMeal) -> float:
+    """Grams of one serving that are actually weighed, liquids aside."""
+    total = 0.0
+    for line in meal.ingredients or ():
+        quantity = getattr(line, "quantity", None)
+        if quantity is None:
+            continue
+        normalized = normalize_ingredient_quantity(quantity, getattr(line, "unit", ""))
+        if normalized.dimension == "weight":
+            total += float(normalized.amount)
+    return total / max(catalog_meal_servings(meal), 1)
 
 
 def _is_non_meal_recipe(meal: CatalogMeal) -> bool:
