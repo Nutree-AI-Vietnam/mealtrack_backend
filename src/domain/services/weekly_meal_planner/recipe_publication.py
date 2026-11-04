@@ -332,6 +332,10 @@ _DONENESS_WORDS = (
     "đun sôi",
     "cooked through",
     "until cooked",
+    "until done",
+    "cook through",
+    "fully cooked",
+    "well done",
     "no longer pink",
     "boil",
     "steam",
@@ -422,10 +426,21 @@ def estimate_servings_from_weight(weighed_grams: float) -> int | None:
     return max(1, min(servings, MAX_ESTIMATED_SERVINGS))
 
 
-def review_recipe_draft(draft: RecipeDraft) -> DraftReview:
-    """Apply every rule a generated recipe must pass before it is shown."""
+def review_recipe_safety(draft: RecipeDraft) -> tuple[str, ...]:
+    """Reasons this recipe is unsafe to put in front of anybody.
+
+    Only rules that read the words: the dish, its steps and its ingredient
+    names. Nothing here depends on an ingredient having been matched to a
+    food reference, so it holds for a recipe an AI just wrote as well as for
+    one on its way into the catalog.
+
+    Keeping it separate matters. The nutrition rules below reject any
+    unidentified line over 10 g, which is right for a recipe being published
+    with macros attached and wrong for a suggestion shown to one user: with
+    no resolver in that path every recipe would be thrown away, including a
+    perfectly cooked thit kho.
+    """
     rejections: list[str] = []
-    flags: list[str] = []
     steps_text = " ".join(draft.steps)
     whole_text = f"{draft.name} {steps_text} " + " ".join(
         line.name for line in draft.ingredients
@@ -435,8 +450,6 @@ def review_recipe_draft(draft: RecipeDraft) -> DraftReview:
         rejections.append("recipe has no ingredients")
     if draft.servings < 1:
         rejections.append("recipe has no servings")
-
-    # Food safety comes first: these are not fixable by re-resolving.
     if _mentions(whole_text, _BLOCKED_DISHES):
         rejections.append("dish is unsafe to generate")
     if _mentions(steps_text, _RAW_PREPARATIONS) or _mentions(
@@ -456,6 +469,18 @@ def review_recipe_draft(draft: RecipeDraft) -> DraftReview:
         rejections.append("no step says the food is cooked through")
     if _mentions(whole_text, _FRYING_WORDS) and not _mentions(whole_text, _FAT_WORDS):
         rejections.append("a fried dish must list its cooking fat")
+    return tuple(dict.fromkeys(rejections))
+
+
+def review_recipe_draft(draft: RecipeDraft) -> DraftReview:
+    """Apply every rule a generated recipe must pass before it is shown.
+
+    Food safety first, then the nutrition rules that need the ingredients to
+    have been resolved. Use review_recipe_safety alone where no resolver has
+    run yet.
+    """
+    rejections: list[str] = list(review_recipe_safety(draft))
+    flags: list[str] = []
 
     # Nutrition: a large unidentified line makes the numbers meaningless.
     unresolved = [
