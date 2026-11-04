@@ -85,6 +85,17 @@ class WeeklyMealPlanSlotORM(Base, TimestampMixin):
         CheckConstraint("day_index BETWEEN 0 AND 6", name="ck_weekly_slot_day_index"),
         CheckConstraint("slot_index BETWEEN 0 AND 2", name="ck_weekly_slot_slot_index"),
         CheckConstraint("version > 0", name="ck_weekly_slot_version"),
+        # The composed serving: a portion the slot-log endpoint accepts, and
+        # at most two bowls of rice. Stated here as well as in the migration,
+        # so a database built from the models carries the same guard.
+        CheckConstraint(
+            "planned_portion IN (0.5, 1, 1.5, 2)",
+            name="ck_weekly_slot_planned_portion",
+        ),
+        CheckConstraint(
+            "planned_rice_steps BETWEEN 0 AND 4",
+            name="ck_weekly_slot_planned_rice_steps",
+        ),
         CheckConstraint(
             "log_source IS NULL OR log_source IN ('plan', 'diary')",
             name="ck_weekly_slot_log_source",
