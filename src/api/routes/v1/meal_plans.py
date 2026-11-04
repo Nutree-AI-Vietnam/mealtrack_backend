@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid
 from datetime import date, datetime, timedelta
 from functools import wraps
 from time import monotonic
@@ -149,6 +150,23 @@ def _plan_features() -> list[str]:
     return features
 
 
+# ai_jobs.id is VARCHAR(36) — one UUID, which is what every other job id
+# is. "weekly-plan-" plus a plan's UUID is 48 characters, and staging threw
+# StringDataRightTruncationError on the first real week: the plan was
+# created, the job was not, and the planner sat in 'preparing' with nobody
+# coming. Every test had used a short fake plan id, where it fitted.
+#
+# The id still has to be derived from the plan rather than minted fresh, so
+# a second tab asking for the same week does not start a second write. A
+# version 5 UUID over the plan id is both: stable, and 36 characters.
+_WEEKLY_PLAN_JOB_NAMESPACE = uuid.UUID("6f1f1a4e-0f5f-4b2a-9a3b-0c4a2d9e7b10")
+
+
+def weekly_plan_job_id(plan_id: str) -> str:
+    """The job that writes this plan's dishes, named so it fits the column."""
+    return str(uuid.uuid5(_WEEKLY_PLAN_JOB_NAMESPACE, f"weekly-plan-{plan_id}"))
+
+
 async def _prepared_plan_response(
     request: Request,
     *,
@@ -182,7 +200,7 @@ async def _prepared_plan_response(
     if plan.status.value == WeeklyMealPlanStatus.PREPARING.value:
         try:
             await get_ai_job_service().start_weekly_plan_job(
-                job_id=f"weekly-plan-{plan.id}",
+                job_id=weekly_plan_job_id(plan.id),
                 user_id=user_id,
                 language=get_request_language(request),
                 request={

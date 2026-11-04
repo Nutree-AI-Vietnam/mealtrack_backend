@@ -75,7 +75,8 @@ class TestOpeningTheWeek:
         assert body["status"] == "preparing"
         assert isinstance(harness.sent[0], PrepareWeeklyMealPlanCommand)
         job = harness.jobs.started[0]
-        assert job["job_id"] == "weekly-plan-plan-1"
+        # Not the literal: that is what sized the id past its column.
+        assert job["job_id"] == route.weekly_plan_job_id("plan-1")
         assert job["request"]["plan_id"] == "plan-1"
         assert job["request"]["week_start_date"] == "2026-11-02"
         assert job["request"]["daily_calories"] == 1800
@@ -242,3 +243,57 @@ class TestAHeadStartOnNextWeek:
         await self._run(week, today=date(2026, 11, 8))
 
         assert week.prepared == []
+
+
+class TestTheJobIdFitsItsColumn:
+    """Staging's first real week created the plan and lost the job.
+
+    ai_jobs.id is VARCHAR(36). "weekly-plan-" plus a plan's UUID is 48, and
+    asyncpg raised StringDataRightTruncationError inside the try that only
+    logs — so the planner sat in 'preparing' with nobody coming. Every test
+    had used a short fake plan id ("plan-1"), where it fitted.
+    """
+
+    PLAN_ID = "bd143a63-5a5a-4054-ba4b-6315fecb2943"
+
+    def test_it_fits_the_column_the_model_declares(self):
+        from src.infra.database.models.ai_job import AiJobORM
+
+        width = AiJobORM.__table__.c.id.type.length
+        assert len(route.weekly_plan_job_id(self.PLAN_ID)) <= width
+
+    def test_a_uuid_plan_id_is_what_broke_it(self):
+        """The literal that shipped, measured against the same column."""
+        from src.infra.database.models.ai_job import AiJobORM
+
+        width = AiJobORM.__table__.c.id.type.length
+        assert len(f"weekly-plan-{self.PLAN_ID}") > width
+
+    def test_the_same_plan_always_gets_the_same_job(self):
+        """A second tab must not start a second write of the same week."""
+        assert route.weekly_plan_job_id(self.PLAN_ID) == route.weekly_plan_job_id(
+            self.PLAN_ID
+        )
+
+    def test_another_plan_gets_another_job(self):
+        assert route.weekly_plan_job_id(self.PLAN_ID) != route.weekly_plan_job_id(
+            "aaaaaaaa-5a5a-4054-ba4b-6315fecb2943"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_route_queues_an_id_that_fits(self, harness, monkeypatch):
+        """End of the path: what the route actually hands the job service."""
+        from src.infra.database.models.ai_job import AiJobORM
+
+        async def send(command):
+            return SimpleNamespace(
+                id=self.PLAN_ID, status=WeeklyMealPlanStatus.PREPARING
+            )
+
+        harness.send = send
+
+        await _call(harness)
+
+        queued = harness.jobs.started[0]["job_id"]
+        assert len(queued) <= AiJobORM.__table__.c.id.type.length
+        assert queued == route.weekly_plan_job_id(self.PLAN_ID)
