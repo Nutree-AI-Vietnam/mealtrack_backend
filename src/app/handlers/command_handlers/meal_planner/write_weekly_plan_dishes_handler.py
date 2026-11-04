@@ -54,6 +54,9 @@ class WriteWeeklyPlanDishesCommandHandler(EventHandler):
 
         week = await generate_week_of_dishes(
             _requests(command),
+            # The week's own date, so asking twice for one week gives the
+            # same dishes and the week after gives different ones.
+            seed=command.week_start_date.toordinal(),
             ask=self._ask,
             price=self._price if self._nutrition is not None else None,
             build_names_prompt=PromptTemplateManager.build_discovery_prompt,
@@ -120,6 +123,7 @@ def _requests(command: WriteWeeklyPlanDishesCommand) -> tuple[DishRequest, ...]:
                     fat=_share(command.daily_fat, share),
                     note=locale.slot_note(index),
                     minutes=locale.breakfast_minutes if index == 0 else None,
+                    dishes=locale.dishes_for(index),
                 )
             )
     return tuple(requests)

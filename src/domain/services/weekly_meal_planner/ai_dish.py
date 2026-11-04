@@ -21,6 +21,7 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass, replace
+from random import Random
 
 from src.domain.model.nutrition.macros import Macros
 from src.domain.model.nutrition.plausibility import per_100g_problem
@@ -382,6 +383,51 @@ PROTEIN_FAMILIES = (
 )
 
 
+# The same families as PROTEIN_FAMILIES, as a dish name says them. A dish
+# off the region's list can be placed before it is cooked, which is the
+# difference between picking a second protein and paying a model call to
+# find out you picked one.
+#
+# These keep their diacritics, and must. dish_key strips them so that "Cá
+# Kho Tộ" and "ca kho to" are one dish, but stripped of its accent "cà
+# chua" — a tomato — reads as "cá", and "Đậu hũ sốt cà chua" was placed as
+# a fish dish. A tone mark is the whole word here.
+PROTEIN_WORDS = {
+    "gà": "chicken",
+    "chicken": "chicken",
+    "bò": "beef",
+    "beef": "beef",
+    "heo": "pork",
+    "lợn": "pork",
+    "sườn": "pork",
+    "thịt": "pork",
+    "nem": "pork",
+    "pork": "pork",
+    "cá": "fish",
+    "fish": "fish",
+    "tôm": "shrimp",
+    "shrimp": "shrimp",
+    "mực": "squid",
+    "cua": "crab",
+    "trứng": "egg",
+    "egg": "egg",
+    "hũ": "tofu",
+    "phụ": "tofu",
+    "tofu": "tofu",
+}
+
+
+def protein_of_name(name: str) -> str:
+    """What a dish of this name is built on, or "" when the name is silent.
+
+    Only safe on a curated list: "Cơm gà xối mỡ" is chicken, but so is
+    "Canh gà cốt dừa kiểu Thái Lan", and a crawled headline could say
+    anything. The region's own list is written to be read this way.
+    """
+    words = re.split(r"[^\w]+", str(name or "").casefold(), flags=re.UNICODE)
+    return next((PROTEIN_WORDS[word] for word in words if word in PROTEIN_WORDS), "")
+
+
 def main_protein(snapshot: SavedRecipeSnapshot) -> str:
     """What this dish is built on, or "" when nothing stands out.
 
@@ -418,6 +464,11 @@ class DishRequest:
     note: str = ""
     # Minutes this slot is worth, when the region says less than the default.
     minutes: int | None = None
+    # Real dishes this slot picks from, from the region's pack. Empty lets a
+    # model invent the names, which is right for a region we have no list
+    # for and wrong for one we do: asked to vary the base and the protein it
+    # multiplies them and writes "Phở cá hồi".
+    dishes: tuple[str, ...] = ()
 
     @property
     def slot(self) -> tuple[int, int]:
@@ -533,12 +584,22 @@ NAME_IT_YOURSELF_RULE = (
     " never leave that field empty."
 )
 
-# The safety reviewer turns away a fried dish that lists no cooking fat. The
-# model writes one often enough to cost a slot, and it only does so because
-# nothing told it the oil counts as an ingredient.
-COOKING_FAT_RULE = (
-    "\nIf the dish is fried, stir-fried or sauteed, list the cooking oil or fat"
-    " as an ingredient with its amount in grams."
+# What review_recipe_safety reads the steps for, said plainly. Seven of nine
+# dishes lost in a week were real Vietnamese dishes the gate was right to
+# stop — phở whose steps never said the chicken was cooked, thịt luộc cuốn
+# with no oil named, bò tái. The gate is not the problem: nothing had told
+# the model what the steps have to say, so it wrote a recipe a cook would
+# follow fine and a reviewer could not clear.
+KITCHEN_RULES = (
+    "\nThe steps are checked before this dish is used. They must say:"
+    "\n- that every meat, fish, seafood or egg is cooked through — use"
+    ' "chín", "chín kỹ" or a cooking word like luộc, hấp, kho, rang, chiên,'
+    " xào or nướng in the step that cooks it."
+    "\n- the cooking oil or fat, listed as an ingredient in grams, whenever"
+    " the dish is fried, stir-fried, deep-fried or sauteed."
+    "\n- boiling, for fresh bamboo shoots, cassava or kidney beans."
+    "\nNothing may be served rare or raw: no tái, no sống, no sashimi. Write"
+    " the fully cooked version of the dish instead."
 )
 
 
@@ -553,6 +614,7 @@ async def generate_week_of_dishes(
     memory_text: str = "",
     cuisine_region: str | None = None,
     language: str | None = None,
+    seed: int = 0,
     new_id=None,
 ) -> WeekOfDishes:
     """Fill every slot with a dish the model wrote, each one checked.
@@ -593,8 +655,14 @@ async def generate_week_of_dishes(
     for request in requests:
         by_meal.setdefault(request.meal_type, []).append(request)
 
+    # Per day, the protein the names already picked. Filled from the names
+    # themselves rather than the cooked dish, so the next meal type can step
+    # around it before a single call is spent.
+    planned: dict[int, str] = {}
+
     for meal_type, slots in by_meal.items():
         names = await _dish_names(
+            avoid=tuple(planned.get(slot.day_index, "") for slot in slots),
             ask=ask,
             build_names_prompt=build_names_prompt,
             meal_type=meal_type,
@@ -602,8 +670,13 @@ async def generate_week_of_dishes(
             hint=hint,
             cuisine_region=cuisine_region,
             taken=taken | offered,
+            seed=seed,
         )
         offered.update(dish_key(name) for name in names)
+        for slot, name in zip(slots, names, strict=False):
+            protein = protein_of_name(name)
+            if protein:
+                planned[slot.day_index] = protein
         for index, request in enumerate(slots):
             snapshot = await _dish_for_slot(
                 request,
@@ -644,9 +717,23 @@ async def _dish_names(
     hint,
     cuisine_region,
     taken,
+    seed,
+    avoid: tuple[str, ...] = (),
 ) -> list[str]:
-    """One call for this meal type's names, in the order the slots want them."""
+    """This meal type's names: picked from the region's list, or asked for.
+
+    A region with a list costs no call at all, which is three fewer a week.
+    """
     wanted = len(slots) + NAME_SPARES
+    roster = slots[0].dishes
+    if roster:
+        return _from_roster(
+            roster,
+            wanted=wanted,
+            taken=taken,
+            seed=seed + slots[0].slot_index,
+            avoid=avoid,
+        )
     prompt = build_names_prompt(
         meal_type=meal_type,
         target_calories=int(slots[0].target_calories),
@@ -663,6 +750,41 @@ async def _dish_names(
     except Exception:  # noqa: BLE001 - a slot can still ask for its own dish
         return []
     return _names_of(answer)
+
+
+def _from_roster(
+    roster: tuple[str, ...],
+    *,
+    wanted: int,
+    taken: set[str],
+    seed: int,
+    avoid: tuple[str, ...] = (),
+) -> list[str]:
+    """Dishes off the region's list, shuffled, skipping any the week holds.
+
+    Seeded by the week, so asking twice for the same week gives the same
+    dishes and the week after gives different ones.
+
+    ``avoid`` is the protein each day already eats, in slot order. The pick
+    for a day steps past dishes built on it, so the day gets two proteins
+    without a model call spent finding out it would not have.
+    """
+    pool = [dish for dish in roster if dish_key(dish) not in taken]
+    Random(seed).shuffle(pool)
+    if not avoid:
+        return pool[:wanted]
+    picked: list[str] = []
+    for index in range(wanted):
+        unwanted = avoid[index] if index < len(avoid) else ""
+        choice = next(
+            (dish for dish in pool if protein_of_name(dish) != unwanted),
+            pool[0] if pool else None,
+        )
+        if choice is None:
+            break
+        picked.append(choice)
+        pool.remove(choice)
+    return picked
 
 
 def _names_of(answer) -> list[str]:
@@ -718,7 +840,7 @@ async def _dish_for_slot(
                 prompt
                 + _slot_note_block(request.note)
                 + _day_so_far_block(eaten_today)
-                + COOKING_FAT_RULE
+                + KITCHEN_RULES
                 + ("" if name else NAME_IT_YOURSELF_RULE)
                 + language_block(language),
                 DISH_RECIPE_SYSTEM,
