@@ -134,6 +134,8 @@ async def test_target_weight_change_resets_journey_seed(monkeypatch):
             "weight_gain_kg_per_week": None,
             "weight_loss_pace_reset_on": None,
             "dietary_preferences": [],
+            "allergies": [],
+            "health_conditions": [],
             "is_current": True,
         },
     )()

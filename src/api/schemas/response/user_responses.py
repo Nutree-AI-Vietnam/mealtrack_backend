@@ -184,6 +184,13 @@ class UserMetricsResponse(BaseModel):
     dietary_preferences: list[str] = Field(
         default_factory=list, description="Saved diets such as vegetarian or keto"
     )
+    allergies: list[str] = Field(
+        default_factory=list, description="Saved allergies, such as tôm or milk"
+    )
+    health_conditions: list[str] = Field(
+        default_factory=list,
+        description="Saved conditions such as pregnancy or kidney_disease",
+    )
 
 
 class UserDeleteResponse(BaseModel):

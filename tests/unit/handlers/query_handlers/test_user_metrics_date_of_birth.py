@@ -37,6 +37,8 @@ def _profile(date_of_birth: date | None) -> SimpleNamespace:
         weight_loss_kg_per_week=None,
         weight_gain_kg_per_week=None,
         dietary_preferences=[],
+        allergies=[],
+        health_conditions=[],
         pace_clinician_disclaimer=False,
         profile_target_revision=4,
     )

@@ -73,6 +73,8 @@ def _has_metric_update(command: UpdateUserMetricsCommand) -> bool:
         or command.weight_loss_kg_per_week is not None
         or command.weight_gain_kg_per_week is not None
         or command.dietary_preferences is not None
+        or command.health_conditions is not None
+        or command.allergies is not None
     )
 
 
@@ -128,9 +130,9 @@ def _clean_diets(values: list[str]) -> list[str]:
     return cleaned
 
 
-def _diet_set(values: list[str] | None) -> frozenset[str]:
-    """Diets as a set, so reordering or recasing them is not a target change."""
-    return frozenset(diet.casefold() for diet in _clean_diets(list(values or ())))
+def _value_set(values: list[str] | None) -> frozenset[str]:
+    """Values as a set, so reordering or recasing them is not a target change."""
+    return frozenset(value.casefold() for value in _clean_diets(list(values or ())))
 
 
 @handles(UpdateUserMetricsCommand)
@@ -176,7 +178,11 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
                 profile.weight_gain_kg_per_week,
-                _diet_set(profile.dietary_preferences),
+                _value_set(profile.dietary_preferences),
+                # Conditions change the safe target; allergies only show in GET
+                # metrics, whose cache this revision also fences.
+                _value_set(profile.health_conditions),
+                _value_set(profile.allergies),
             )
             journey_inputs_before = (
                 profile.target_weight_kg,
@@ -418,7 +424,11 @@ class UpdateUserMetricsCommandHandler(EventHandler[UpdateUserMetricsCommand, Non
                 profile.training_level,
                 profile.weight_loss_kg_per_week,
                 profile.weight_gain_kg_per_week,
-                _diet_set(profile.dietary_preferences),
+                _value_set(profile.dietary_preferences),
+                # Conditions change the safe target; allergies only show in GET
+                # metrics, whose cache this revision also fences.
+                _value_set(profile.health_conditions),
+                _value_set(profile.allergies),
             )
             journey_inputs_after = (
                 profile.target_weight_kg,

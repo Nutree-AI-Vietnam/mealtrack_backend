@@ -188,6 +188,8 @@ def _metrics_profile(gain: float | None) -> SimpleNamespace:
         weight_loss_kg_per_week=None,
         weight_gain_kg_per_week=gain,
         dietary_preferences=[],
+        allergies=[],
+        health_conditions=[],
         pace_clinician_disclaimer=False,
         profile_target_revision=1,
     )

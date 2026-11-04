@@ -19,6 +19,10 @@ from src.infra.database.uow_async import AsyncUnitOfWork
 
 logger = logging.getLogger(__name__)
 
+# Keys added after metrics were already being cached. A payload without one
+# would answer empty for stored data, so it is rebuilt once.
+_KEYS_ADDED_SINCE_CACHING = ("date_of_birth", "allergies", "health_conditions")
+
 
 @handles(GetUserMetricsQuery)
 class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any]]):
@@ -32,9 +36,9 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
         cache_key, ttl = CacheKeys.user_metrics(query.user_id)
         if self.cache_service:
             cached = await self.cache_service.get_json(cache_key)
-            # A payload cached before date_of_birth existed would answer null
-            # for a stored date, so it is rebuilt once.
-            if cached is not None and "date_of_birth" in cached:
+            if cached is not None and all(
+                key in cached for key in _KEYS_ADDED_SINCE_CACHING
+            ):
                 cached_revision = cached.get("profile_target_revision")
                 if cached_revision == await self._current_profile_revision(
                     query.user_id
@@ -88,6 +92,8 @@ class GetUserMetricsQueryHandler(EventHandler[GetUserMetricsQuery, Dict[str, Any
                 "updated_at": profile.updated_at,
                 "weight_loss_kg_per_week": profile.weight_loss_kg_per_week,
                 "dietary_preferences": list(profile.dietary_preferences or []),
+                "allergies": list(profile.allergies or []),
+                "health_conditions": list(profile.health_conditions or []),
                 "weight_loss_lb_per_week": kg_to_lb(profile.weight_loss_kg_per_week),
                 "weight_gain_kg_per_week": profile.weight_gain_kg_per_week,
                 "weight_gain_lb_per_week": kg_to_lb(profile.weight_gain_kg_per_week),
