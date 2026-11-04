@@ -96,6 +96,13 @@ class TdeeCalculationResponse(BaseModel):
             "still echoes what the user asked for"
         ),
     )
+    gain_pace_blocked_reason: str | None = Field(
+        None,
+        description=(
+            "Set when a bulk keeps the flat +300 surplus because a gain pace is "
+            "not offered: 'minor' or 'health_condition'. pace_range is then null"
+        ),
+    )
 
     class Config:
         json_schema_extra = {

@@ -40,6 +40,7 @@ def _bulk_profile(gain: float | None) -> MagicMock:
         has_custom_macros=False,
         weight_loss_kg_per_week=None,
         weight_gain_kg_per_week=gain,
+        health_conditions=[],
         profile_target_revision=1,
         created_at=None,
         updated_at=None,
@@ -78,6 +79,44 @@ async def test_user_target_adds_the_gain_pace_surplus():
     )
     assert half_kg["pace_range"]["max_kg_per_week"] == 1.0
     assert half_kg["pace_range"]["recommended_high_kg"] == 0.36
+
+
+@pytest.mark.asyncio
+async def test_user_target_explains_a_blocked_gain_pace():
+    profile = _bulk_profile(0.5)
+    profile.health_conditions = ["breastfeeding"]
+    with patch(
+        f"{_QUERIES}.get_user_tdee_query_handler.AsyncUnitOfWork",
+        return_value=_uow_returning(profile),
+    ):
+        result = await GetUserTdeeQueryHandler()._compute_tdee(
+            GetUserTdeeQuery(user_id="user-1")
+        )
+    flat = await _user_tdee(None)
+
+    assert result["pace_range"] is None
+    assert result["gain_pace_blocked_reason"] == "health_condition"
+    assert result["target_calories"] == pytest.approx(flat["target_calories"], abs=1)
+
+
+@pytest.mark.asyncio
+async def test_preview_blocks_the_gain_pace_for_an_under_18():
+    result = await PreviewTdeeQueryHandler().handle(
+        PreviewTdeeQuery(
+            age=16,
+            sex="male",
+            height=170,
+            weight=60,
+            job_type="on_feet",
+            training_days_per_week=0,
+            training_minutes_per_session=0,
+            goal="bulk",
+            weight_gain_kg_per_week=1.0,
+        )
+    )
+
+    assert result["pace_range"] is None
+    assert result["gain_pace_blocked_reason"] == "minor"
 
 
 @pytest.mark.asyncio

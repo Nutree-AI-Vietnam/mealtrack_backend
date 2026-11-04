@@ -178,6 +178,9 @@ class TdeeResponse:
     # "minor", "underweight" or "health_condition". The goal field still
     # echoes what the user asked for.
     deficit_blocked_reason: str | None = None
+    # Set when a bulk keeps the flat surplus because its gain pace is
+    # blocked: "minor" or "health_condition". pace_range is then None.
+    gain_pace_blocked_reason: str | None = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary format for API response."""
@@ -199,4 +202,6 @@ class TdeeResponse:
             result["pace_range"] = self.pace_range.to_dict()
         if self.deficit_blocked_reason:
             result["deficit_blocked_reason"] = self.deficit_blocked_reason
+        if self.gain_pace_blocked_reason:
+            result["gain_pace_blocked_reason"] = self.gain_pace_blocked_reason
         return result

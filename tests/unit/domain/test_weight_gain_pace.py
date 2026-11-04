@@ -118,3 +118,101 @@ def test_profile_requests_carry_the_saved_gain_pace():
     )
 
     assert build_tdee_request(profile).weight_gain_kg_per_week == 0.5
+
+
+# A gain pace is a clinician's call for under-18s and these conditions.
+
+
+@pytest.mark.parametrize(
+    "condition",
+    ["pregnancy", "breastfeeding", "eating_disorder_history", "kidney_disease"],
+)
+def test_a_blocking_condition_keeps_the_flat_bulk_and_offers_no_range(condition):
+    service = TdeeCalculationService()
+    flat = service.calculate_tdee(_bulk_request(health_conditions=(condition,)))
+    paced = service.calculate_tdee(
+        _bulk_request(health_conditions=(condition,), weight_gain_kg_per_week=1.0)
+    )
+
+    assert paced.pace_range is None
+    assert paced.gain_pace_blocked_reason == "health_condition"
+    assert paced.to_dict()["gain_pace_blocked_reason"] == "health_condition"
+    assert paced.macros.calories == flat.macros.calories
+    assert flat.macros.calories == pytest.approx(
+        flat.tdee + TDEEConstants.BULKING_SURPLUS, abs=1
+    )
+
+
+def test_an_under_18_keeps_the_flat_bulk_and_offers_no_range():
+    result = TdeeCalculationService().calculate_tdee(
+        _bulk_request(age=16, weight=60, height=170, weight_gain_kg_per_week=1.0)
+    )
+
+    assert result.pace_range is None
+    assert result.gain_pace_blocked_reason == "minor"
+    assert result.macros.calories == pytest.approx(
+        result.tdee + TDEEConstants.BULKING_SURPLUS, abs=1
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"health_conditions": ("insulin_treated_diabetes",)},
+        # BMI 16.3: gaining is the point, so the pace stays.
+        {"weight": 50, "height": 175},
+    ],
+    ids=["insulin-treated-diabetes", "underweight-adult"],
+)
+def test_insulin_treated_diabetes_and_underweight_adults_keep_the_gain_pace(
+    overrides,
+):
+    result = TdeeCalculationService().calculate_tdee(
+        _bulk_request(weight_gain_kg_per_week=1.0, **overrides)
+    )
+
+    assert result.gain_pace_blocked_reason is None
+    assert result.pace_range.max_kg_per_week == 1.0
+    assert result.macros.calories == pytest.approx(result.tdee + 1100, abs=1)
+
+
+def test_a_blocked_user_cannot_save_a_gain_pace():
+    assert (
+        allowed_gain_pace(_bulk_request(health_conditions=("pregnancy",)), 0.5) is None
+    )
+    assert allowed_gain_pace(_bulk_request(age=16, weight=60, height=170), 0.5) is None
+    assert (
+        allowed_gain_pace(
+            _bulk_request(health_conditions=("insulin_treated_diabetes",)), 0.5
+        )
+        == 0.5
+    )
+
+
+def test_a_cut_never_reports_a_gain_block():
+    result = TdeeCalculationService().calculate_tdee(
+        _bulk_request(goal=Goal.CUT, health_conditions=("pregnancy",))
+    )
+
+    assert result.gain_pace_blocked_reason is None
+    assert result.deficit_blocked_reason == "health_condition"
+
+
+def test_profile_requests_carry_the_saved_conditions():
+    profile = SimpleNamespace(
+        age=30,
+        gender="female",
+        height_cm=165,
+        weight_kg=60,
+        job_type="desk",
+        training_days_per_week=0,
+        training_minutes_per_session=0,
+        training_level="beginner",
+        fitness_goal="bulk",
+        body_fat_percentage=None,
+        dietary_preferences=[],
+        health_conditions=["pregnancy"],
+        weight_gain_kg_per_week=0.5,
+    )
+
+    assert build_tdee_request(profile).health_conditions == ("pregnancy",)

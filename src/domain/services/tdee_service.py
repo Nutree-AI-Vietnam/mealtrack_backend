@@ -46,6 +46,16 @@ class TdeeCalculationService:
             else None
         )
         deficit_blocked = block_reason is not None
+        # Under-18s and some conditions keep the flat bulk surplus: how fast
+        # they gain is a clinician's call, not a slider's.
+        gain_block_reason = (
+            gain_pace_block_reason(
+                age=request.age, health_conditions=request.health_conditions
+            )
+            if request.goal == Goal.BULK
+            else None
+        )
+        gain_blocked = gain_block_reason is not None
         macro_targets = self._calculate_all_macro_targets(
             tdee,
             request.weight_kg,
@@ -55,7 +65,9 @@ class TdeeCalculationService:
             sex=request.sex,
             macro_preset=request.macro_preset,
             weight_loss_kg_per_week=request.weight_loss_kg_per_week,
-            weight_gain_kg_per_week=request.weight_gain_kg_per_week,
+            weight_gain_kg_per_week=(
+                None if gain_blocked else request.weight_gain_kg_per_week
+            ),
             health_conditions=request.health_conditions,
         )
         return TdeeResponse(
@@ -66,11 +78,12 @@ class TdeeCalculationService:
             formula_used=formula_name,
             macro_preset=request.macro_preset,
             deficit_blocked_reason=block_reason,
+            gain_pace_blocked_reason=gain_block_reason,
             pace_range=(
                 pace_range(request.weight_kg, tdee, bmr, request.sex)
                 if request.goal == Goal.CUT and not deficit_blocked
                 else gain_pace_range(request.weight_kg)
-                if request.goal == Goal.BULK
+                if request.goal == Goal.BULK and not gain_blocked
                 else None
             ),
         )
@@ -341,6 +354,16 @@ HEALTH_CONDITIONS = (
 NO_DEFICIT_CONDITIONS = frozenset(
     {"pregnancy", "breastfeeding", "eating_disorder_history"}
 )
+# Reported conditions where a chosen gain pace is a clinician's call; a bulk
+# keeps the flat +300 surplus instead. Pregnancy: IOM 2009 puts 2nd and 3rd
+# trimester gain at 0.17-0.58 kg a week by BMI, and the DRI adds 0, 340 and
+# 452 kcal a day by trimester. Breastfeeding: the DRI adds 330-400 kcal a day.
+# Eating-disorder history: APA 2023 has the treatment team set weekly gain.
+# Kidney disease: KDOQI 2020 puts intake at 25-35 kcal/kg a day, and with
+# protein capped a fast surplus is mostly fat.
+NO_GAIN_PACE_CONDITIONS = frozenset(
+    {"pregnancy", "breastfeeding", "eating_disorder_history", "kidney_disease"}
+)
 # KDIGO suggests about 0.8 g/kg a day for adults with CKD G3-G5, against the
 # 1.6-1.8 g/kg these formulas otherwise use.
 CKD_PROTEIN_PER_KG = 0.8
@@ -378,6 +401,24 @@ def deficit_block_reason(
     bmi = weight_kg / (height_cm / 100) ** 2
     if bmi < UNDERWEIGHT_BMI:
         return DEFICIT_BLOCK_UNDERWEIGHT
+    return None
+
+
+def gain_pace_block_reason(
+    *, age: int, health_conditions: Iterable[str] = ()
+) -> str | None:
+    """Why this user must not pick a gain pace, or None.
+
+    Under-18s are still growing and every formula here is an adult one. The
+    conditions in NO_GAIN_PACE_CONDITIONS have their own gain or intake
+    targets. Insulin-treated diabetes and underweight adults may gain.
+    """
+    if age < ADULT_AGE:
+        return DEFICIT_BLOCK_MINOR
+    if NO_GAIN_PACE_CONDITIONS & {
+        str(condition).strip().lower() for condition in health_conditions
+    }:
+        return DEFICIT_BLOCK_HEALTH_CONDITION
     return None
 
 
@@ -476,8 +517,13 @@ def allowed_pace(request: TdeeRequest, kg_per_week: float | None) -> float | Non
 
 
 def allowed_gain_pace(request: TdeeRequest, kg_per_week: float | None) -> float | None:
-    """The requested gain pace, capped only at the fast limit; None for a non-bulk goal."""
+    """The requested gain pace, capped only at the fast limit; None for a
+    non-bulk goal or a user whose gain pace is blocked."""
     if kg_per_week is None or request.goal != Goal.BULK:
+        return None
+    if gain_pace_block_reason(
+        age=request.age, health_conditions=request.health_conditions
+    ):
         return None
     return clamp_pace(kg_per_week, gain_pace_range(request.weight_kg))
 

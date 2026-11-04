@@ -648,8 +648,13 @@ handler/schema when implementing; the bullets below are the durable WHY.
   the person's maximum with a 0.5–1% of body weight band; for bulk, 0.25–1.0 kg
   with a 0.25–0.5% band; null for recomp, and for a cut whose deficit is
   blocked (`deficit_blocked_reason`: minors, underweight adults, or a condition
-  such as pregnancy). Only a cut is blocked; a bulk keeps its range. Band ends
-  are clamped into 0.25–1.0.
+  such as pregnancy). Band ends are clamped into 0.25–1.0.
+- A bulk gets no gain range, and keeps the flat +300 even with a saved gain
+  pace, for under-18s and for pregnancy, breastfeeding, an eating-disorder
+  history or kidney disease, each of which has its own gain or intake target.
+  `gain_pace_blocked_reason` (`minor` or `health_condition`) says why, and a
+  gain pace sent then is not saved. Insulin-treated diabetes and underweight
+  adults keep the gain pace.
 - `GET /v1/user-profiles/metrics` returns both paces and their `_lb_per_week`
   conversions, null when unset. Apps send `weight_gain_kg_per_week` only to a
   server whose `GET` carries the key, because metrics requests forbid unknown

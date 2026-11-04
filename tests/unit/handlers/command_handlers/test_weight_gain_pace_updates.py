@@ -94,6 +94,16 @@ async def test_my_plan_does_not_save_a_gain_pace_for_a_cut():
     assert profile.weight_loss_pace_reset_on is None
 
 
+@pytest.mark.asyncio
+async def test_my_plan_does_not_save_a_gain_pace_while_pregnant():
+    profile = _profile(gender="female", health_conditions=["pregnancy"])
+
+    await _update(profile, weight_gain_kg_per_week=0.5)
+
+    assert profile.weight_gain_kg_per_week is None
+    assert profile.weight_loss_pace_reset_on is None
+
+
 def _onboarding_profile() -> SimpleNamespace:
     return SimpleNamespace(
         age=30,
@@ -172,3 +182,12 @@ async def test_onboarding_does_not_save_a_gain_pace_for_another_goal():
 
     assert profile.weight_gain_kg_per_week is None
     assert profile.weight_loss_pace_reset_on is None
+
+
+@pytest.mark.asyncio
+async def test_onboarding_does_not_save_a_gain_pace_for_an_under_18():
+    profile = _onboarding_profile()
+
+    await _onboard(profile, age=16, weight_gain_kg_per_week=0.5)
+
+    assert profile.weight_gain_kg_per_week is None

@@ -96,6 +96,7 @@ class PreviewTdeeQueryHandler(EventHandler[PreviewTdeeQuery, dict[str, Any]]):
             "target_revision": 0,
             "pace_range": result.pace_range.to_dict() if result.pace_range else None,
             "deficit_blocked_reason": result.deficit_blocked_reason,
+            "gain_pace_blocked_reason": result.gain_pace_blocked_reason,
             "macros": {
                 "protein": macros.protein,
                 "carbs": macros.carbs,

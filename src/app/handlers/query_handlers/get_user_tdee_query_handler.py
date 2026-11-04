@@ -154,6 +154,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
                     result.pace_range.to_dict() if result.pace_range else None
                 ),
                 "deficit_blocked_reason": result.deficit_blocked_reason,
+                "gain_pace_blocked_reason": result.gain_pace_blocked_reason,
                 "macros": macros,
                 "profile_data": {
                     "age": profile.age,
@@ -219,6 +220,7 @@ class GetUserTdeeQueryHandler(EventHandler[GetUserTdeeQuery, dict[str, Any]]):
             "target_revision": profile.profile_target_revision,
             "pace_range": result.pace_range.to_dict() if result.pace_range else None,
             "deficit_blocked_reason": result.deficit_blocked_reason,
+            "gain_pace_blocked_reason": result.gain_pace_blocked_reason,
             "macros": macros,
             "profile_data": {
                 "age": profile.age,
