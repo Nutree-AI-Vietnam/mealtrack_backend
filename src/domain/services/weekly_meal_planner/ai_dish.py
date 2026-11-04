@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import uuid
 from dataclasses import dataclass
 
 from src.domain.model.nutrition.macros import Macros
@@ -239,3 +240,213 @@ def dish_calories(snapshot: SavedRecipeSnapshot) -> float:
     return Macros.raw_total_calories(
         snapshot.protein, snapshot.carbs, snapshot.fat, snapshot.fiber
     )
+
+
+# ---------------------------------------------------------------------------
+# Asking for a week of dishes
+# ---------------------------------------------------------------------------
+
+# Names come back in one call per meal type, so a week is three cheap calls
+# plus one per slot for the recipe itself.
+DISH_NAME_SYSTEM = (
+    "You are a creative chef. Generate diverse meal names with different cuisines."
+)
+DISH_RECIPE_SYSTEM = (
+    "You are a professional chef. Generate complete recipe details as valid JSON."
+)
+# A rejected dish gets one replacement; a model that writes an unsafe recipe
+# twice for the same slot is not going to write a safe one on the third try.
+MAX_DISH_ATTEMPTS = 2
+# How many reference dishes are worth showing. More is noise, and the
+# catalogue is crawled, so these are a hint and never an instruction.
+MAX_REFERENCE_DISHES = 8
+
+
+@dataclass(frozen=True)
+class DishRequest:
+    """One slot to fill, and what it should come to."""
+
+    day_index: int
+    slot_index: int
+    meal_type: str
+    target_calories: int
+    protein: float | None = None
+    carbs: float | None = None
+    fat: float | None = None
+
+    @property
+    def slot(self) -> tuple[int, int]:
+        return (self.day_index, self.slot_index)
+
+
+@dataclass(frozen=True)
+class WeekOfDishes:
+    """What came back: a dish per slot, and what was turned away."""
+
+    dishes: dict[tuple[int, int], SavedRecipeSnapshot]
+    rejected: tuple[RejectedDish, ...] = ()
+    unfilled: tuple[tuple[int, int], ...] = ()
+
+
+def reference_block(names: tuple[str, ...]) -> str:
+    """The catalogue's dishes as a hint, which is all they are.
+
+    The catalogue is crawled, so its rows carry blog headlines and noise. It
+    is shown so a dish lands in the right kitchen, never copied: the plan
+    hands back what the model writes, not a catalogue row.
+    """
+    usable = [name.strip() for name in names if name and name.strip()]
+    if not usable:
+        return ""
+    listed = ", ".join(usable[:MAX_REFERENCE_DISHES])
+    return (
+        f"\nDishes this kitchen already cooks, for flavour and style only: {listed}."
+        "\nWrite your own dish. Do not reuse these names."
+    )
+
+
+def _memory_block(text: str) -> str:
+    stripped = (text or "").strip()
+    return f"\nWhat this person eats:\n{stripped}" if stripped else ""
+
+
+async def generate_week_of_dishes(
+    requests: tuple[DishRequest, ...],
+    *,
+    ask,
+    build_names_prompt,
+    build_recipe_prompt,
+    reference_dishes: tuple[str, ...] = (),
+    memory_text: str = "",
+    cuisine_region: str | None = None,
+    language: str | None = None,
+    new_id=None,
+) -> WeekOfDishes:
+    """Fill every slot with a dish the model wrote, each one checked.
+
+    ``ask`` runs one prompt and returns the parsed answer; everything that
+    talks to a model lives behind it, so this can be read and tested on its
+    own. A slot nobody could fill is reported rather than quietly left
+    holding something unsafe or a repeat of another day.
+    """
+    mint = new_id or (lambda: uuid.uuid4().hex)
+    dishes: dict[tuple[int, int], SavedRecipeSnapshot] = {}
+    rejected: list[RejectedDish] = []
+    unfilled: list[tuple[int, int]] = []
+    taken: set[str] = set()
+    hint = reference_block(reference_dishes) + _memory_block(memory_text)
+
+    by_meal: dict[str, list[DishRequest]] = {}
+    for request in requests:
+        by_meal.setdefault(request.meal_type, []).append(request)
+
+    for meal_type, slots in by_meal.items():
+        names = await _dish_names(
+            ask=ask,
+            build_names_prompt=build_names_prompt,
+            meal_type=meal_type,
+            slots=slots,
+            hint=hint,
+            cuisine_region=cuisine_region,
+            taken=taken,
+        )
+        for index, request in enumerate(slots):
+            snapshot = await _dish_for_slot(
+                request,
+                ask=ask,
+                build_recipe_prompt=build_recipe_prompt,
+                names=names[index:],
+                cuisine_region=cuisine_region,
+                language=language,
+                taken=taken,
+                rejected=rejected,
+                mint=mint,
+            )
+            if snapshot is None:
+                unfilled.append(request.slot)
+                continue
+            dishes[request.slot] = snapshot
+            taken.add(dish_key(snapshot.name))
+
+    return WeekOfDishes(
+        dishes=dishes, rejected=tuple(rejected), unfilled=tuple(unfilled)
+    )
+
+
+async def _dish_names(
+    *, ask, build_names_prompt, meal_type, slots, hint, cuisine_region, taken
+) -> list[str]:
+    """One call for this meal type's names, in the order the slots want them."""
+    prompt = build_names_prompt(
+        meal_type=meal_type,
+        target_calories=int(slots[0].target_calories),
+        count=len(slots),
+        cuisine_region=cuisine_region,
+        exclude_meal_names=sorted(taken) or None,
+    )
+    try:
+        answer = await ask(prompt + hint, DISH_NAME_SYSTEM)
+    except Exception:  # noqa: BLE001 - a slot can still ask for its own dish
+        return []
+    return _names_of(answer)
+
+
+def _names_of(answer) -> list[str]:
+    items = answer.get("meals") if isinstance(answer, dict) else answer
+    names: list[str] = []
+    for item in items or []:
+        name = item if isinstance(item, str) else (item or {}).get("name")
+        text = str(name or "").strip()
+        if text:
+            names.append(text)
+    return names
+
+
+async def _dish_for_slot(
+    request: DishRequest,
+    *,
+    ask,
+    build_recipe_prompt,
+    names: list[str],
+    cuisine_region,
+    language,
+    taken: set[str],
+    rejected: list[RejectedDish],
+    mint,
+) -> SavedRecipeSnapshot | None:
+    """The dish this slot keeps, after at most MAX_DISH_ATTEMPTS tries."""
+    candidates = [name for name in names if dish_key(name) not in taken]
+    if names and not candidates:
+        # Every name offered is already on the table this week. Asking again
+        # with no name invites the model to repeat itself a third time.
+        rejected.append(RejectedDish(name=names[0], reasons=("ALREADY_IN_THE_WEEK",)))
+        return None
+    for attempt in range(MAX_DISH_ATTEMPTS):
+        name = candidates[attempt] if attempt < len(candidates) else None
+        prompt = build_recipe_prompt(
+            meal_name=name or "",
+            meal_type=request.meal_type,
+            target_calories=int(request.target_calories),
+            cuisine_region=cuisine_region,
+            protein_target=request.protein,
+            carbs_target=request.carbs,
+            fat_target=request.fat,
+        )
+        try:
+            payload = await ask(prompt, DISH_RECIPE_SYSTEM)
+        except Exception:  # noqa: BLE001 - one failed call is not the week
+            continue
+        if not isinstance(payload, dict):
+            continue
+        payload.setdefault("name", name or "")
+        snapshot = snapshot_from_ai_recipe(
+            payload, dish_id=f"ai_{mint()}", language=language
+        )
+        if snapshot is None:
+            rejected.append(RejectedDish(name=str(name or ""), reasons=("UNREADABLE",)))
+            continue
+        reasons = review_ai_dish(snapshot, taken=frozenset(taken))
+        if not reasons:
+            return snapshot
+        rejected.append(RejectedDish(name=snapshot.name, reasons=reasons))
+    return None
