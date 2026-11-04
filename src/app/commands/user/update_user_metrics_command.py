@@ -29,6 +29,7 @@ class UpdateUserMetricsCommand:
     daily_water_goal_ml: int | None = None
     reset_water_goal: bool = False
     weight_loss_kg_per_week: float | None = None
+    weight_gain_kg_per_week: float | None = None
     dietary_preferences: list[str] | None = None
     allergies: list[str] | None = None
     health_conditions: list[str] | None = None

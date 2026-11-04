@@ -129,6 +129,7 @@ async def save_user_onboarding(
             custom_carbs_g=request.custom_carbs_g,
             custom_fat_g=request.custom_fat_g,
             weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+            weight_gain_kg_per_week=request.weight_gain_kg_per_week,
             pace_clinician_disclaimer=request.pace_clinician_disclaimer,
         )
 
@@ -210,6 +211,7 @@ async def get_user_tdee(
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
     response.deficit_blocked_reason = result.get("deficit_blocked_reason")
+    response.gain_pace_blocked_reason = result.get("gain_pace_blocked_reason")
     response.is_custom = result.get("is_custom", False)
 
     return response
@@ -266,6 +268,7 @@ async def update_user_metrics(
         daily_water_goal_ml=request.daily_water_goal_ml,
         reset_water_goal=request.reset_water_goal,
         weight_loss_kg_per_week=request.weight_loss_kg_per_week,
+        weight_gain_kg_per_week=request.weight_gain_kg_per_week,
         dietary_preferences=request.dietary_preferences,
         allergies=request.allergies,
         health_conditions=request.health_conditions,
@@ -297,6 +300,7 @@ async def update_user_metrics(
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
     response.deficit_blocked_reason = result.get("deficit_blocked_reason")
+    response.gain_pace_blocked_reason = result.get("gain_pace_blocked_reason")
     response.is_custom = result.get("is_custom", False)
     return response
 
@@ -349,5 +353,6 @@ async def update_custom_macros(
     response.formula_used = result["formula_used"]
     response.pace_range = PaceRangeResponse.from_result(result)
     response.deficit_blocked_reason = result.get("deficit_blocked_reason")
+    response.gain_pace_blocked_reason = result.get("gain_pace_blocked_reason")
     response.is_custom = result.get("is_custom", False)
     return response

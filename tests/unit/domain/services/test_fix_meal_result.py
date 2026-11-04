@@ -51,6 +51,102 @@ def test_merge_keeps_unmentioned_items_dropped_by_model():
     assert rice.quantity == 180
 
 
+def test_merge_does_not_duplicate_plate_stored_with_localized_names():
+    # Non-English scans store display names on the items, while Fix result
+    # returns the whole plate under canonical English names.
+    old = [
+        _item(
+            item_id="1", name="Ức gà nướng", quantity=120, protein=30, carbs=0, fat=5
+        ),
+        _item(item_id="2", name="Cơm trắng", quantity=180, protein=4, carbs=40, fat=1),
+    ]
+    new = [
+        _item(
+            item_id="x", name="grilled fish", quantity=120, protein=28, carbs=0, fat=4
+        ),
+        _item(item_id="y", name="white rice", quantity=180, protein=4, carbs=40, fat=1),
+    ]
+
+    merged = merge_fix_result_items(old, new, "đây là cá, không phải gà")
+
+    assert [item.name for item in merged] == ["grilled fish", "white rice"]
+
+
+def test_merge_removes_named_item_without_keeping_renamed_ones():
+    old = [
+        _item(
+            item_id="1", name="Ức gà nướng", quantity=120, protein=30, carbs=0, fat=5
+        ),
+        _item(item_id="2", name="Cơm trắng", quantity=180, protein=4, carbs=40, fat=1),
+        _item(item_id="3", name="Nước sốt", quantity=30, protein=0, carbs=6, fat=3),
+    ]
+    new = [
+        _item(
+            item_id="x",
+            name="grilled chicken",
+            quantity=120,
+            protein=30,
+            carbs=0,
+            fat=5,
+        ),
+        _item(item_id="y", name="white rice", quantity=180, protein=4, carbs=40, fat=1),
+    ]
+
+    merged = merge_fix_result_items(old, new, "bỏ nước sốt")
+
+    assert [item.name for item in merged] == ["grilled chicken", "white rice"]
+
+
+def test_merge_drops_item_the_model_renamed_without_the_correction_naming_it():
+    old = [
+        _item(
+            item_id="1",
+            name="Grilled chicken",
+            quantity=120,
+            protein=30,
+            carbs=0,
+            fat=5,
+        ),
+        _item(item_id="2", name="Rice", quantity=180, protein=4, carbs=40, fat=1),
+    ]
+    new = [
+        _item(
+            item_id="x",
+            name="Grilled salmon",
+            quantity=120,
+            protein=25,
+            carbs=0,
+            fat=12,
+        ),
+        _item(item_id="y", name="Rice", quantity=180, protein=4, carbs=40, fat=1),
+    ]
+
+    merged = merge_fix_result_items(old, new, "it's salmon")
+
+    assert [item.name for item in merged] == ["Grilled salmon", "Rice"]
+    assert merged[1].id == "2"
+
+
+def test_merge_keeps_item_the_model_forgot_while_renaming_another():
+    old = [
+        _item(
+            item_id="1", name="Ức gà nướng", quantity=120, protein=30, carbs=0, fat=5
+        ),
+        _item(item_id="2", name="Cơm trắng", quantity=180, protein=4, carbs=40, fat=1),
+    ]
+    # The model renamed the chicken and forgot the rice.
+    new = [
+        _item(
+            item_id="x", name="grilled fish", quantity=120, protein=28, carbs=0, fat=4
+        ),
+    ]
+
+    merged = merge_fix_result_items(old, new, "đây là cá")
+
+    assert [item.name for item in merged] == ["grilled fish", "Cơm trắng"]
+    assert merged[1].id == "2"
+
+
 def test_merge_preserves_id_when_name_matches():
     old = [
         _item(item_id="keep-me", name="Rice", quantity=200, protein=4, carbs=45, fat=1)
