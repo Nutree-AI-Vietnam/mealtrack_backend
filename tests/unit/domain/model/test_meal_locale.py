@@ -2,6 +2,7 @@
 
 from src.domain.model.weekly_meal_planner.meal_locale import (
     DEFAULT_LOCALE,
+    GENERIC,
     VIETNAM,
     MealLocale,
     locale_by_code,
@@ -36,10 +37,14 @@ def test_a_vietnamese_timezone_plans_with_the_vietnam_pack():
 
 
 def test_an_unknown_timezone_falls_back_rather_than_guessing():
-    """Nothing about New York says how its users eat, so do not pretend."""
-    assert locale_for_timezone("America/New_York") is DEFAULT_LOCALE
-    assert locale_for_timezone(None) is DEFAULT_LOCALE
-    assert locale_for_timezone("") is DEFAULT_LOCALE
+    """Nothing about New York says how its users eat, so do not pretend.
+
+    It used to fall back to Viet Nam, which is a guess, and a loud one: the
+    day came with rice beside it.
+    """
+    assert locale_for_timezone("America/New_York") is GENERIC
+    assert locale_for_timezone(None) is GENERIC
+    assert locale_for_timezone("") is GENERIC
 
 
 def test_an_unregistered_code_resolves_to_nothing():
@@ -80,3 +85,53 @@ def test_a_region_can_eat_its_staple_at_every_meal():
     assert 0 in everywhere.staple_slots
     assert everywhere.takes_staple("beef stew") is True
     assert everywhere.takes_staple("tomato soup") is False
+
+
+class TestAStapleIsNotGuessed:
+    """Short Vietnamese syllables used to hide inside English words."""
+
+    def test_a_dish_is_read_by_whole_words(self):
+        for name in (
+            "orange chicken",
+            "ramen",
+            "chapati wrap",
+            "spinach cheddar scramble",
+            "caramel latte",
+        ):
+            assert not VIETNAM.takes_staple(name), name
+
+    def test_a_vietnamese_dish_still_comes_with_rice(self):
+        assert VIETNAM.takes_staple("thit kho tau")
+        assert VIETNAM.takes_staple("ca chien gion")
+        assert VIETNAM.takes_staple("ga nuong sa")
+
+    def test_a_dish_already_built_on_rice_takes_no_more(self):
+        """The AI names dishes in English before they are translated."""
+        assert not VIETNAM.takes_staple("ga nuong sa rice bowl")
+        assert not VIETNAM.takes_staple("ca kho to with rice")
+
+    def test_a_logged_item_is_read_by_whole_words_too(self):
+        assert VIETNAM.is_staple_item("cơm trắng")
+        assert VIETNAM.is_staple_item("steamed rice")
+        assert not VIETNAM.is_staple_item("thịt kho")
+
+
+class TestSomebodyWeCannotPlace:
+    def test_an_unknown_timezone_is_planned_without_a_staple(self):
+        for zone in ("America/Los_Angeles", "Europe/Paris", "Asia/Tokyo", None):
+            locale = locale_for_timezone(zone)
+            assert locale.code == "generic", zone
+            assert locale.staple_slots == frozenset()
+            assert not locale.takes_staple("thit kho tau")
+
+    def test_vietnam_is_unchanged(self):
+        locale = locale_for_timezone("Asia/Ho_Chi_Minh")
+        assert locale.code == "vn"
+        assert locale.staple_step_grams == 55
+        assert locale.staple_slots == frozenset({1, 2})
+
+    def test_the_stored_plan_is_still_measured_in_vietnam_s_steps(self):
+        """The rice step and its ceiling are what the database guards."""
+        assert DEFAULT_LOCALE.code == "vn"
+        assert DEFAULT_LOCALE.staple_step_grams == 55
+        assert DEFAULT_LOCALE.max_staple_steps == 4
