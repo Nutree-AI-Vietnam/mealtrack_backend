@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from src.domain.model.meal_recommendation import CatalogMeal, CatalogMealIngredient
 from src.domain.services.weekly_meal_planner.grocery_projection import (
+    CountedUnit,
     GroceryIngredient,
     GrocerySlot,
     aggregate_grocery,
@@ -37,6 +38,27 @@ from src.domain.services.weekly_meal_planner.weekly_plan_generation_service impo
 # in with the shopping, preparation words on the line.
 CATALOG = [
     # id, name, meal types, ingredients (name, grams), rice dish?
+    (
+        "sua-chua-yen-mach",
+        "Sữa chua yến mạch",
+        ("breakfast",),
+        [("sữa chua không đường", 200), ("yến mạch", 45), ("chuối", 80)],
+        False,
+    ),
+    (
+        "banh-mi-bo",
+        "Bánh mì bơ trái bơ",
+        ("breakfast",),
+        [("bánh mì", 80), ("bơ trái", 70)],
+        False,
+    ),
+    (
+        "yen-mach-chuoi",
+        "Yến mạch chuối",
+        ("breakfast",),
+        [("yến mạch", 60), ("sữa chua không đường", 150), ("chuối", 100)],
+        False,
+    ),
     (
         "pho-ga",
         "Phở gà",
@@ -145,6 +167,10 @@ CATALOG = [
 
 # Per 100 g, roughly: protein, carbs, fat, fiber.
 MACROS_100G = {
+    "sữa chua không đường": (10, 4, 5, 0),
+    "yến mạch": (13, 60, 7, 10),
+    "chuối": (1, 23, 0, 3),
+    "bơ trái": (2, 9, 15, 7),
     "thịt gà": (23, 0, 8, 0),
     "thịt heo xay": (20, 0, 18, 0),
     "thịt ba chỉ": (15, 0, 30, 0),
@@ -216,6 +242,15 @@ MEALS = [_meal(entry) for entry in CATALOG]
 BY_ID = {meal.id: meal for meal in MEALS}
 LINES = {entry[0]: entry[3] for entry in CATALOG}
 RICE_DISHES = frozenset(entry[0] for entry in CATALOG if entry[4])
+# What a shopper actually buys by the piece. In production these come from
+# food_reference_serving_sizes; here they are written out so the demo can
+# show the same thing.
+COUNTED_UNITS = {
+    FOOD_IDS["trứng gà"]: CountedUnit(grams=55.0, unit_name="quả"),
+    FOOD_IDS["chuối"]: CountedUnit(grams=100.0, unit_name="quả"),
+    FOOD_IDS["bơ trái"]: CountedUnit(grams=170.0, unit_name="quả"),
+}
+
 SLOT_NAMES = ("Sáng", "Trưa", "Tối")
 DAY_NAMES = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
 
@@ -308,7 +343,7 @@ def main() -> None:
         f"· {len(served)} món khác nhau trong tuần"
     )
 
-    items = aggregate_grocery(slots_for_grocery, [])
+    items = aggregate_grocery(slots_for_grocery, [], counted_units=COUNTED_UNITS)
     fresh = [item for item in items if not is_pantry_staple(item.name)]
     staples = [item for item in items if is_pantry_staple(item.name)]
     written = sum(len(LINES[s.recipe_id]) for s in slots_for_grocery)
@@ -317,7 +352,7 @@ def main() -> None:
         f"(từ {written} dòng nguyên liệu trong công thức)"
     )
     for item in sorted(fresh, key=lambda i: -i.total_needed):
-        print(f"   {item.name:<16} {item.total_needed:>6.0f} {item.unit}")
+        print(f"   {item.name:<22} {item.shopping_label:>10}")
     print(
         f"\nGia vị có sẵn nhà ({len(staples)}): "
         + ", ".join(sorted(item.name for item in staples))

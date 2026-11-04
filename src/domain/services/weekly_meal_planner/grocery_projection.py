@@ -24,6 +24,9 @@ from src.domain.services.weekly_meal_planner.recipe_publication import (
 )
 
 SYNTHETIC_INGREDIENT_ID_OFFSET = 1_000_000_000
+# Buying 2.05 eggs means buying 2, not 3. A twentieth of a unit over is
+# rounding noise from scaled portions, not a reason to buy another one.
+_COUNT_ROUNDING_SLACK = 0.05
 
 
 def deterministic_ingredient_id(name: str) -> int:
@@ -417,6 +420,30 @@ class PantryAvailability:
 
 
 @dataclass(frozen=True)
+class CountedUnit:
+    """How a food is bought when nobody buys it by the gram.
+
+    Comes from food_reference_serving_sizes, so turning 1090 g of egg into
+    20 eggs is a lookup, not a conversion this module invented. Without a
+    row the amount stays in grams: ingredient_quantity_normalization refuses
+    to guess that a tomato weighs 120 g, and so does this.
+    """
+
+    grams: float
+    # What one of them is called, e.g. "quả" or "piece".
+    unit_name: str
+    plural_name: str | None = None
+
+    def count_for(self, grams: float) -> int | None:
+        """How many to buy for this many grams, rounded up to a whole one."""
+        if self.grams <= 0 or grams <= 0:
+            return None
+        from math import ceil
+
+        return max(1, ceil(grams / self.grams - _COUNT_ROUNDING_SLACK))
+
+
+@dataclass(frozen=True)
 class GroceryInteraction:
     food_reference_id: int
     checked: bool = False
@@ -440,6 +467,17 @@ class DerivedGroceryItem:
     do_not_buy: bool = False
     manually_owned: bool = False
     daily_amounts: tuple[tuple[int, float, float], ...] = ()
+    # Set for a food bought by the piece: how many to buy and what one is
+    # called. The gram amount stays authoritative for the macros.
+    count_needed: int | None = None
+    count_unit: str | None = None
+
+    @property
+    def shopping_label(self) -> str:
+        """What the list should say: "20 quả" for eggs, "660 g" for fish."""
+        if self.count_needed is not None and self.count_unit:
+            return f"{self.count_needed} {self.count_unit}"
+        return f"{self.total_needed:.0f} {self.unit}"
 
 
 def apply_recipe_override(
@@ -481,7 +519,14 @@ def aggregate_grocery(
     slots: tuple[GrocerySlot, ...] | list[GrocerySlot],
     pantry: tuple[PantryAvailability, ...] | list[PantryAvailability],
     interactions: tuple[GroceryInteraction, ...] | list[GroceryInteraction] = (),
+    counted_units: Mapping[int, CountedUnit] | None = None,
 ) -> tuple[DerivedGroceryItem, ...]:
+    """Aggregate the week's recipe lines into one shopping list.
+
+    ``counted_units`` maps a food reference to how it is bought when nobody
+    buys it by the gram, so eggs come back as "20 quả" instead of "1090 g".
+    A food without an entry keeps its grams.
+    """
     totals: dict[tuple[str, str, str], dict] = defaultdict(
         lambda: {
             "category": "pantry",
@@ -551,6 +596,9 @@ def aggregate_grocery(
         )
         status, remaining = grocery_status(value["amount"], available)
         flags = _merged_flags(ingredient_id, food_ids, interaction_by_food)
+        counted, counted_unit = _counted_amount(
+            counted_units, food_ids, dimension, float(value["amount"])
+        )
         stock_remaining = max(available or Decimal("0"), Decimal("0"))
         daily_amounts = []
         for day_index, day_needed in sorted(value["day_amounts"].items()):
@@ -579,9 +627,36 @@ def aggregate_grocery(
                 do_not_buy=flags.do_not_buy,
                 manually_owned=flags.manually_owned,
                 daily_amounts=tuple(daily_amounts),
+                count_needed=counted,
+                count_unit=counted_unit,
             )
         )
     return tuple(items)
+
+
+def _counted_amount(
+    counted_units: Mapping[int, CountedUnit] | None,
+    food_ids: set[int],
+    dimension: str,
+    grams: float,
+) -> tuple[int | None, str | None]:
+    """How many to buy, for a food people buy by the piece.
+
+    Only weighed lines convert: a line already counted in quả is a count
+    already, and one measured in bó has no gram weight to divide.
+    """
+    if not counted_units or dimension != "weight":
+        return None, None
+    for food_id in sorted(food_ids):
+        unit = counted_units.get(food_id)
+        if unit is None:
+            continue
+        count = unit.count_for(grams)
+        if count is None:
+            continue
+        name = unit.plural_name if count != 1 and unit.plural_name else unit.unit_name
+        return count, name
+    return None, None
 
 
 def grocery_status(required: Decimal, available: Decimal | None) -> tuple[str, Decimal]:

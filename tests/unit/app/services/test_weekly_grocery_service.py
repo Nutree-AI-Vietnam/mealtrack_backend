@@ -21,6 +21,7 @@ from src.domain.services.meal_recommendation.ingredient_quantity_normalization i
     normalize_ingredient_quantity,
 )
 from src.domain.services.weekly_meal_planner.grocery_projection import (
+    CountedUnit,
     SYNTHETIC_INGREDIENT_ID_OFFSET,
     GroceryIngredient,
     GroceryInteraction,
@@ -865,3 +866,86 @@ def test_preparation_words_do_not_split_a_line():
 
     assert len(items) == 1
     assert items[0].total_needed == 250.0
+
+
+def test_eggs_are_bought_by_the_piece_not_by_the_gram():
+    """Nobody walks into a market and asks for 1090 g of egg."""
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "330", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    item = items[0]
+    assert item.total_needed == 330
+    assert item.count_needed == 6
+    assert item.shopping_label == "6 quả"
+
+
+def test_a_part_egg_still_means_buying_a_whole_one():
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "140", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    # 140 g is two and a half eggs; the shopper buys three.
+    assert items[0].count_needed == 3
+
+
+def test_rounding_noise_does_not_buy_another_egg():
+    """A scaled portion landing at 2.02 eggs is two eggs."""
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "111", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    assert items[0].count_needed == 2
+
+
+def test_a_food_with_no_serving_size_keeps_its_grams():
+    """The same refusal to invent weights as everywhere else."""
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "thịt heo", "500", 11),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    item = items[0]
+    assert item.count_needed is None
+    assert item.shopping_label == "500 g"
+
+
+def test_a_line_already_counted_in_pieces_is_not_converted_twice():
+    items = aggregate_grocery(
+        [
+            _merge_slot(
+                "r1",
+                (
+                    GroceryIngredient(
+                        position=0,
+                        food_reference_id=7,
+                        name="trứng gà",
+                        quantity=Decimal("3"),
+                        unit="quả",
+                    ),
+                ),
+            )
+        ],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="quả")},
+    )
+
+    assert items[0].count_needed is None
+    assert items[0].total_needed == 3
+
+
+def test_one_of_something_uses_its_singular_name():
+    items = aggregate_grocery(
+        [_merge_slot("r1", (_line(0, "trứng gà", "50", 7),))],
+        [],
+        counted_units={7: CountedUnit(grams=55.0, unit_name="egg", plural_name="eggs")},
+    )
+
+    assert items[0].shopping_label == "1 egg"

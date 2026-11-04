@@ -1004,10 +1004,16 @@ def day_totals(
 # its weight is shared out among them.
 # ---------------------------------------------------------------------------
 
-_FIT_WEIGHT = 0.4
-_BASKET_WEIGHT = 0.25
-_TASTE_WEIGHT = 0.2
+_FIT_WEIGHT = 0.35
+_BASKET_WEIGHT = 0.2
+_TASTE_WEIGHT = 0.15
 _SEMANTIC_WEIGHT = 0.15
+# Whether the dish suits the slot and how much work it is. Without this leg
+# a shortlist can be nutritionally perfect and still put pho on a Tuesday
+# morning: breakfast at home is yogurt, oats, banh mi, not a stock pot.
+_EASE_WEIGHT = 0.15
+# practicality_rank returns (occasion, simplicity), each 0 to 2.
+_WORST_PRACTICALITY = 4.0
 # A serving this far off the slot's calorie target scores nothing for fit.
 _FIT_TOLERANCE = 0.5
 
@@ -1037,6 +1043,7 @@ class ScoredDish:
     basket: float
     taste: float
     semantic: float
+    ease: float = 0.0
 
     @property
     def reasons(self) -> tuple[str, ...]:
@@ -1091,6 +1098,16 @@ def _overlap(ingredients: frozenset[int], against: frozenset[int]) -> float:
     return len(ingredients & against) / len(ingredients)
 
 
+def _ease_score(meal: CatalogMeal, slot_index: int) -> float:
+    """How well the dish suits the slot and how little work it is, [0, 1].
+
+    One for an easy dish that belongs at this meal, zero for a fussy one
+    that does not.
+    """
+    occasion, simplicity = _practicality(meal, slot_index)
+    return 1.0 - (occasion + simplicity) / _WORST_PRACTICALITY
+
+
 def rank_reference_dishes(
     meals: Iterable[CatalogMeal],
     brief: SlotBrief,
@@ -1126,6 +1143,7 @@ def rank_reference_dishes(
         basket = _overlap(fresh, brief.basket)
         taste = _overlap(fresh, brief.liked_ingredients)
         semantic = max(0.0, min(1.0, float(scores.get(meal.id, 0.0))))
+        ease = _ease_score(meal, brief.slot_index)
         ranked.append(
             ScoredDish(
                 meal=meal,
@@ -1134,11 +1152,13 @@ def rank_reference_dishes(
                     + basket_weight * basket
                     + taste_weight * taste
                     + semantic_weight * semantic
+                    + _EASE_WEIGHT * ease
                 ),
                 fit=fit,
                 basket=basket,
                 taste=taste,
                 semantic=semantic,
+                ease=ease,
             )
         )
     ranked.sort(key=lambda dish: (-round(dish.score, 9), dish.meal.id))
