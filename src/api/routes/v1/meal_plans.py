@@ -286,6 +286,65 @@ async def _prepare_next_week(
         logger.warning("Could not start next week for user %s", user_id)
 
 
+async def _ensure_the_week_is_being_written(
+    request: Request,
+    *,
+    event_bus,
+    user_id: str,
+    plan,
+    week: date,
+    timezone: str,
+) -> None:
+    """Queue this plan's write when it is waiting and nothing is coming.
+
+    _prepared_plan_response claims the next request queues the job again
+    when queueing failed. It does not: the job is only queued where a plan
+    is created, and a plan that already exists never reaches that branch.
+    Staging's first real week proved it — the insert failed on a too-long
+    id, and the plan sat in 'preparing' through every later refresh with
+    nobody coming for it.
+
+    The job id is derived from the plan, and creating it is ON CONFLICT DO
+    NOTHING, so asking again is free once one exists. It is looked up first
+    anyway, because the payload needs the day's budget and the app polls
+    this endpoint every few seconds while a week is being written.
+    """
+    jobs = get_ai_job_service()
+    job_id = weekly_plan_job_id(plan.id)
+    try:
+        await jobs.get(user_id=user_id, job_id=job_id)
+        return
+    except Exception:  # noqa: BLE001 - no job yet, or we cannot tell
+        pass
+    try:
+        budget = await _weekly_budget(
+            event_bus,
+            GetWeeklyBudgetQuery(
+                user_id=user_id,
+                target_date=datetime.now(get_zone_info(timezone)).date(),
+                header_timezone=timezone,
+            ),
+        )
+        daily_calories = (
+            int(round((budget or {}).get("adjusted_daily_calories") or 0)) or 2000
+        )
+        await jobs.start_weekly_plan_job(
+            job_id=job_id,
+            user_id=user_id,
+            language=get_request_language(request),
+            request={
+                "plan_id": plan.id,
+                "week_start_date": week.isoformat(),
+                "daily_calories": daily_calories,
+                "timezone": timezone,
+                **_macro_targets(budget),
+            },
+        )
+        logger.info("Re-queued the write of plan %s", plan.id)
+    except Exception:  # noqa: BLE001 - the week is still shown as it is
+        logger.exception("Could not re-queue the write of plan %s", plan.id)
+
+
 @router.get("/v1/meal-plans/current", response_model=WeeklyMealPlanResponse)
 @limiter.limit("30/minute")
 async def get_current_weekly_plan(
@@ -308,6 +367,21 @@ async def get_current_weekly_plan(
         plan = await event_bus.send(
             GetCurrentWeeklyPlanQuery(user_id=user_id, week_start_date=week)
         )
+        if (
+            plan is not None
+            and auto_generate
+            and getattr(plan.status, "value", plan.status)
+            == WeeklyMealPlanStatus.PREPARING.value
+            and weekly_plan_ai_dishes_enabled()
+        ):
+            await _ensure_the_week_is_being_written(
+                request,
+                event_bus=event_bus,
+                user_id=user_id,
+                plan=plan,
+                week=week,
+                timezone=timezone,
+            )
         if plan is None:
             if not auto_generate:
                 raise HTTPException(
