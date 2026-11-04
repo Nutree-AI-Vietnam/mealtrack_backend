@@ -236,3 +236,64 @@ class TestWritingTheWeek:
         assert list(update["saved_slots"]) == [(0, 1)]
         assert result["dishes"] == 1
         assert result["unfilled"] == [[0, 0]]
+
+
+class TestWhatABreakfastIs:
+    """The locale already said breakfast takes no rice; nothing passed it on."""
+
+    def test_the_breakfast_slot_carries_its_region_s_note(self):
+        requests = _requests(
+            WriteWeeklyPlanDishesCommand(
+                user_id="u",
+                plan_id="p",
+                week_start_date=date(2026, 11, 2),
+                daily_calories=1800,
+                timezone="Asia/Ho_Chi_Minh",
+            )
+        )
+        first_day = sorted(
+            (r for r in requests if r.day_index == 0), key=lambda r: r.slot_index
+        )
+
+        assert "oats" in first_day[0].note
+        assert "Not a cooked rice plate" in first_day[0].note
+        assert first_day[0].minutes == 15
+
+    def test_lunch_and_dinner_carry_none(self):
+        requests = _requests(
+            WriteWeeklyPlanDishesCommand(
+                user_id="u",
+                plan_id="p",
+                week_start_date=date(2026, 11, 2),
+                daily_calories=1800,
+                timezone="Asia/Ho_Chi_Minh",
+            )
+        )
+        later = [r for r in requests if r.slot_index in (1, 2)]
+
+        assert all(r.note == "" for r in later)
+        assert all(r.minutes is None for r in later)
+
+    def test_a_user_we_cannot_place_still_gets_a_simple_breakfast(self):
+        requests = _requests(
+            WriteWeeklyPlanDishesCommand(
+                user_id="u",
+                plan_id="p",
+                week_start_date=date(2026, 11, 2),
+                daily_calories=2000,
+                timezone="America/Los_Angeles",
+            )
+        )
+        breakfast = next(r for r in requests if r.slot_index == 0)
+
+        assert "quick and light" in breakfast.note
+        assert "rice plate" not in breakfast.note
+
+    def test_the_locale_serves_no_rice_at_breakfast(self):
+        """The note and the staple rule must not drift apart."""
+        from src.domain.model.weekly_meal_planner.meal_locale import VIETNAM
+
+        assert 0 not in VIETNAM.staple_slots
+        assert VIETNAM.slot_note(0)
+        assert VIETNAM.slot_note(1) == ""
+        assert VIETNAM.slot_note(2) == ""

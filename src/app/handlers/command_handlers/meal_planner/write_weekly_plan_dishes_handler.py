@@ -118,6 +118,8 @@ def _requests(command: WriteWeeklyPlanDishesCommand) -> tuple[DishRequest, ...]:
                     protein=_share(command.daily_protein, share),
                     carbs=_share(command.daily_carbs, share),
                     fat=_share(command.daily_fat, share),
+                    note=locale.slot_note(index),
+                    minutes=locale.breakfast_minutes if index == 0 else None,
                 )
             )
     return tuple(requests)

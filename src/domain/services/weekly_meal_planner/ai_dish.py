@@ -175,6 +175,7 @@ def snapshot_from_ai_recipe(
         ingredients.append(
             SavedRecipeIngredient(
                 name=line_name,
+                display_name=str(raw.get("local_name") or "").strip() or None,
                 amount=_number(raw.get("amount")),
                 unit=str(raw.get("unit") or ""),
                 grams=grams,
@@ -353,6 +354,14 @@ class DishRequest:
     protein: float | None = None
     carbs: float | None = None
     fat: float | None = None
+    # What this slot is in the user's own region, from the locale pack. The
+    # model knows what "breakfast" means in general and gets it wrong here:
+    # asked only for a 450 kcal breakfast it wrote seven cooked rice plates,
+    # grilled chicken at 7am included. The locale already knew better — it
+    # serves no rice at breakfast — and nothing was passing that on.
+    note: str = ""
+    # Minutes this slot is worth, when the region says less than the default.
+    minutes: int | None = None
 
     @property
     def slot(self) -> tuple[int, int]:
@@ -383,6 +392,12 @@ def reference_block(names: tuple[str, ...]) -> str:
         f"\nDishes this kitchen already cooks, for flavour and style only: {listed}."
         "\nWrite your own dish. Do not reuse these names."
     )
+
+
+def _slot_note_block(note: str) -> str:
+    """What this slot is in the user's region, for the prompt."""
+    stripped = (note or "").strip()
+    return f"\n{stripped}" if stripped else ""
 
 
 def _memory_block(text: str) -> str:
@@ -420,7 +435,8 @@ def language_block(language: str | None) -> str:
         " cook would say."
         f'\nAdd a "local_name" field holding the dish name in {name} — the name'
         " a home cook would call this dish, not a word-for-word translation."
-        "\nKeep each ingredient name in plain English."
+        "\nKeep each ingredient's \"name\" in plain English, and give each one a"
+        f' "local_name" holding what that ingredient is called in {name}.'
     )
 
 
@@ -549,9 +565,10 @@ async def _dish_names(
         cuisine_region=cuisine_region,
         exclude_meal_names=sorted(taken) or None,
     )
+    note = _slot_note_block(slots[0].note)
     try:
         answer = await ask(
-            prompt + VARIETY_RULE + hint,
+            prompt + note + VARIETY_RULE + hint,
             DISH_NAME_SYSTEM.format(count=len(slots)),
         )
     except Exception:  # noqa: BLE001 - a slot can still ask for its own dish
@@ -596,6 +613,7 @@ async def _dish_for_slot(
             meal_name=name or "",
             meal_type=request.meal_type,
             target_calories=int(request.target_calories),
+            cooking_time_minutes=request.minutes,
             cuisine_region=cuisine_region,
             protein_target=request.protein,
             carbs_target=request.carbs,
@@ -604,6 +622,7 @@ async def _dish_for_slot(
         try:
             payload = await ask(
                 prompt
+                + _slot_note_block(request.note)
                 + COOKING_FAT_RULE
                 + ("" if name else NAME_IT_YOURSELF_RULE)
                 + language_block(language),

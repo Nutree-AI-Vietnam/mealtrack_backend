@@ -182,14 +182,78 @@ class TestTheLanguageTheWeekIsWrittenIn:
         assert "Vietnamese" in block
         assert "home cook" in block
 
-    def test_the_ingredient_names_stay_english_so_pricing_can_find_them(self):
-        """A Vietnamese ingredient name normalises to rubble and misses T1."""
+    def test_the_pricing_key_stays_english_and_the_shown_name_does_not(self):
+        """A Vietnamese name normalises to rubble, so it cannot be the key."""
         from src.domain.services.meal_suggestion.ingredient_name_normalizer import (
             normalize_food_name,
         )
 
         assert normalize_food_name("thịt gà") != "thịt gà"
-        assert "Keep each ingredient name in plain English" in language_block("vi")
+        block = language_block("vi")
+        assert 'ingredient\'s "name" in plain English' in block
+        assert '"local_name" holding what that ingredient is called' in block
+
+    def test_the_reader_is_shown_the_local_name_when_there_is_one(self):
+        from src.domain.model.weekly_meal_planner.saved_recipe import (
+            SavedRecipeIngredient,
+        )
+
+        line = SavedRecipeIngredient(name="fish sauce", display_name="nước mắm")
+        assert line.shown_name == "nước mắm"
+        assert line.name == "fish sauce"
+
+    def test_a_line_with_no_local_name_is_shown_as_it_is(self):
+        from src.domain.model.weekly_meal_planner.saved_recipe import (
+            SavedRecipeIngredient,
+        )
+
+        assert SavedRecipeIngredient(name="fish sauce").shown_name == "fish sauce"
+        assert (
+            SavedRecipeIngredient(name="fish sauce", display_name="  ").shown_name
+            == "fish sauce"
+        )
+
+    def test_the_local_name_survives_being_stored_and_read_back(self):
+        from src.domain.model.weekly_meal_planner.saved_recipe import (
+            SavedRecipeSnapshot,
+        )
+        from src.domain.services.weekly_meal_planner.ai_dish import (
+            snapshot_from_ai_recipe,
+        )
+
+        snapshot = snapshot_from_ai_recipe(
+            {
+                "name": "Rice bowl",
+                "ingredients": [
+                    {
+                        "name": "fish sauce",
+                        "local_name": "nước mắm",
+                        "amount": 10,
+                        "unit": "g",
+                    },
+                    {
+                        "name": "jasmine rice",
+                        "local_name": "gạo",
+                        "amount": 150,
+                        "unit": "g",
+                        "carbs": 45,
+                    },
+                ],
+                "recipe_steps": [{"instruction": "Nấu cơm."}],
+            },
+            dish_id="ai-1",
+            language="vi",
+        )
+        read_back = SavedRecipeSnapshot.from_dict(snapshot.to_dict())
+
+        assert [line.shown_name for line in read_back.ingredients] == [
+            "nước mắm",
+            "gạo",
+        ]
+        assert [line.name for line in read_back.ingredients] == [
+            "fish sauce",
+            "jasmine rice",
+        ]
 
     def test_english_and_the_unknown_ask_for_nothing(self):
         assert language_block("en") == ""

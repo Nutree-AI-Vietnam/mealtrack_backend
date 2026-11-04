@@ -54,6 +54,16 @@ class MealLocale:
     # Names a logged food item goes by when it is the staple itself, used to
     # read back from the diary whether a meal came with one.
     staple_item_words: tuple[str, ...]
+    # What a weekday breakfast here actually is. A planner asked only for
+    # "breakfast, 450 kcal" wrote seven cooked rice plates, because that is
+    # what the rest of the day looks like and nothing said otherwise.
+    breakfast_note: str = ""
+    # Minutes a weekday breakfast is worth. Nobody grills chicken at 7am.
+    breakfast_minutes: int = 15
+
+    def slot_note(self, slot_index: int) -> str:
+        """What this slot is, in words a prompt can carry. Empty when nothing."""
+        return self.breakfast_note if slot_index == 0 else ""
 
     def is_staple_item(self, name: str) -> bool:
         """Whether a logged food item is the staple served beside a dish."""
@@ -109,6 +119,13 @@ VIETNAM = MealLocale(
         "rice",
     ),
     staple_item_words=("cơm", "com trang", "gạo", "steamed rice", "white rice"),
+    breakfast_note=(
+        "Breakfast on a weekday is quick and light: oats, sweet potato,"
+        " yogurt, eggs, a bread roll, or a bowl of pho, chao, xoi or banh mi"
+        " eaten as it comes. Not a cooked rice plate, and nothing grilled or"
+        " marinated. Three to five ingredients, little or no cooking."
+    ),
+    breakfast_minutes=15,
 )
 
 # For somebody we cannot place. It plans no staple beside a dish, because
@@ -130,6 +147,11 @@ GENERIC = MealLocale(
     staple_dish_words=(),
     standalone_dish_words=(),
     staple_item_words=(),
+    breakfast_note=(
+        "Breakfast on a weekday is quick and light: oats, yogurt, fruit,"
+        " eggs or bread. Three to five ingredients, little or no cooking."
+    ),
+    breakfast_minutes=15,
 )
 
 # What the stored plan is measured in: the rice step and its ceiling are

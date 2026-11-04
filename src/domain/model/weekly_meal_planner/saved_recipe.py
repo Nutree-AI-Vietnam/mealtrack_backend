@@ -45,7 +45,12 @@ _MACRO_KEYS = ("protein", "carbs", "fat", "fiber", "sugar")
 class SavedRecipeIngredient:
     """One recipe line; amount, grams and macros cover the whole recipe."""
 
+    # ``name`` is the pricing key, and stays English: normalize_food_name
+    # strips everything outside a-z0-9, so "thịt gà" normalises to "th g"
+    # and misses food_reference and FatSecret alike. ``display_name`` is what
+    # the reader sees, when the writer gave one.
     name: str
+    display_name: str | None = None
     amount: float | None = None
     unit: str = ""
     grams: float | None = None
@@ -61,9 +66,15 @@ class SavedRecipeIngredient:
     def has_macros(self) -> bool:
         return any(value is not None for value in (self.protein, self.carbs, self.fat))
 
+    @property
+    def shown_name(self) -> str:
+        """What a reader is shown: their own language when there is one."""
+        return (self.display_name or "").strip() or self.name
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "display_name": self.display_name,
             "amount": self.amount,
             "unit": self.unit,
             "grams": self.grams,
@@ -338,6 +349,7 @@ def _ingredients(data: Mapping[str, Any]) -> tuple[SavedRecipeIngredient, ...]:
         items.append(
             SavedRecipeIngredient(
                 name=name,
+                display_name=_text(raw.get("display_name"), _MAX_NAME_CHARS),
                 amount=amount if amount is not None and amount > 0 else None,
                 unit=_text(_first(raw, ("unit", "measure")), _MAX_UNIT_CHARS) or "",
                 grams=_positive(raw.get("grams")),
